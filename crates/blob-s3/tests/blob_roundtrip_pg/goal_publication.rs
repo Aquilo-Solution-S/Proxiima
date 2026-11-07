@@ -9,6 +9,10 @@ use proxiima_core::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one publication lifecycle verifies exact capture across a later upload and revocation"
+)]
 async fn goal_publication_reads_only_the_exact_cited_upload_route() {
     if !S3RuntimeConfig::present_in_env() {
         eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
@@ -29,9 +33,10 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
     let source_user = UserId::new(owner.into_inner());
     let source =
         authenticated_context(AuthzContext::for_subject(source_user, AuthPath::HostBearer));
-    let (cited_object_id, _) = complete_upload_fixture(&pg, &store, &config, &pool, &source, owner)
-        .await
-        .expect("completed upload");
+    let (cited_object_id, original_object_key) =
+        complete_upload_fixture(&pg, &store, &config, &pool, &source, owner)
+            .await
+            .expect("completed upload");
     let cited_object_id = Uuid::parse_str(&cited_object_id).expect("cited object id");
     let fact_memory: MemoryId = MemoryId::new(
         sqlx::query_scalar("SELECT t FROM proxiima_core.memory WHERE blob_id = $1")
@@ -74,6 +79,36 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
     assert_eq!(verified.bytes, b"real");
     assert_eq!(verified.filename, "genuine.pdf");
 
+    let delivery = delivery_service(&store);
+    let ordinary_denied = delivery
+        .authorize_delivery(
+            &bob_auth,
+            CitedBlobDeliveryRequest::Owner {
+                owner,
+                cited_object_id,
+            },
+        )
+        .await
+        .expect_err("Goal audience cannot use ordinary owner delivery");
+    assert!(matches!(ordinary_denied, CitedBlobReadError::AccessDenied));
+
+    let admitted = delivery
+        .authorize_delivery(
+            &bob_auth,
+            CitedBlobDeliveryRequest::GoalPublication {
+                owner,
+                goal,
+                fact_memory,
+                cited_object_id,
+            },
+        )
+        .await
+        .expect("published Goal admits delivery");
+    let (_request, target) = admitted.into_parts();
+    assert_eq!(target.object_key, original_object_key);
+    let captured_upload_id = target.upload_id;
+    assert_eq!(target.filename, "genuine.pdf");
+
     let later =
         upload_goal_fixture(&pg, &store, &config, &source, owner, "later.pdf", b"real").await;
     assert_eq!(later.blob.cited_object_id, cited_object_id.to_string());
@@ -82,6 +117,22 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
         .await
         .expect("published metadata snapshot");
     assert_eq!(snapshot.filename, "genuine.pdf");
+    let after_later_upload = delivery
+        .authorize_delivery(
+            &bob_auth,
+            CitedBlobDeliveryRequest::GoalPublication {
+                owner,
+                goal,
+                fact_memory,
+                cited_object_id,
+            },
+        )
+        .await
+        .expect("exact published upload remains admitted");
+    let (_request, after_target) = after_later_upload.into_parts();
+    assert_eq!(after_target.upload_id, captured_upload_id);
+    assert_eq!(after_target.object_key, original_object_key);
+    assert_eq!(after_target.filename, "genuine.pdf");
 
     let unrelated =
         upload_goal_fixture(&pg, &store, &config, &source, owner, "other.pdf", b"other").await;
@@ -96,6 +147,42 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
         CitedBlobReadError::NotFound | CitedBlobReadError::AccessDenied
     ));
 
+    let request = CitedBlobDeliveryRequest::GoalPublication {
+        owner,
+        goal,
+        fact_memory,
+        cited_object_id,
+    };
+    let already_admitted = delivery
+        .authorize_delivery(&bob_auth, request.clone())
+        .await
+        .expect("admit before revocation");
+    for wrong_route in [
+        CitedBlobDeliveryRequest::GoalPublication {
+            owner,
+            goal,
+            fact_memory,
+            cited_object_id: unrelated_id,
+        },
+        CitedBlobDeliveryRequest::GoalPublication {
+            owner,
+            goal,
+            fact_memory: MemoryId::new(Uuid::now_v7()),
+            cited_object_id,
+        },
+        CitedBlobDeliveryRequest::GoalPublication {
+            owner,
+            goal: proxiima_core::GoalHandle::new(Uuid::now_v7()),
+            fact_memory,
+            cited_object_id,
+        },
+    ] {
+        assert!(matches!(
+            delivery.authorize_delivery(&bob_auth, wrong_route).await,
+            Err(CitedBlobReadError::NotFound | CitedBlobReadError::AccessDenied)
+        ));
+    }
+
     engine
         .unpublish_from_goal(&source, goal, fact_memory)
         .await
@@ -108,6 +195,26 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
         revoked,
         CitedBlobReadError::NotFound | CitedBlobReadError::AccessDenied
     ));
+    let revoked_delivery = delivery
+        .authorize_delivery(
+            &bob_auth,
+            CitedBlobDeliveryRequest::GoalPublication {
+                owner,
+                goal,
+                fact_memory,
+                cited_object_id,
+            },
+        )
+        .await
+        .expect_err("revoked Goal route denies a new delivery request");
+    assert!(matches!(
+        revoked_delivery,
+        CitedBlobReadError::NotFound | CitedBlobReadError::AccessDenied
+    ));
+
+    let (admitted_request, admitted_target) = already_admitted.into_parts();
+    assert_eq!(admitted_request, request);
+    assert_eq!(admitted_target.upload_id, captured_upload_id);
 
     drop_db(&db_name).await.expect("drop test database");
 }

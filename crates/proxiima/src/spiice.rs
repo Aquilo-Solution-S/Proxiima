@@ -79,12 +79,29 @@ pub use proxiima_core::spiice0::{BAND_EXACT, BAND_RESCUE, BAND_SUBSTRING};
 /// a spiice faking the port must be able to RETURN the outcome type, and a
 /// spiice batching its digests must be able to read the bound it is being
 /// held to rather than hardcode a copy that drifts from it.
+///
+/// Delivery admission is host-only. The SDK may use the read service for
+/// verified, locator-free bytes, but cannot call its host-coordinate seam:
+///
+/// ```compile_fail
+/// use proxiima::spiice::CitedBlobReadService;
+/// fn no_host_delivery(service: &CitedBlobReadService, authority: &proxiima::AuthzContext, request: proxiima::CitedBlobDeliveryRequest) {
+///     let _ = service.authorize_delivery(authority, request);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// let _: Option<proxiima::spiice::CitedBlobDeliveryTarget> = None;
+/// ```
+///
+/// The admission, request, and target types are intentionally absent here;
+/// hosts obtain them through `proxiima::BuiltProxiima::blob_delivery`.
 pub use proxiima_core::storage_ports::{
     CitedBlobHeld, CitedBlobIntegrityMismatch, CitedBlobOwnerMissingObject,
     CitedBlobOwnerReconcileOutcome, CitedBlobOwnerReconcilePort, CitedBlobOwnerReconcileService,
-    CitedBlobPort, CitedBlobReadError, CitedBlobReadPort, CitedBlobReadService, CitedBlobReadUrl,
-    CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadCompleted,
-    CitedBlobUploadHeader, CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS, VerifiedCitedBlob,
+    CitedBlobPort, CitedBlobReadError, CitedBlobReadPort, CitedBlobReadService, CitedBlobService,
+    CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadCompleted, CitedBlobUploadHeader,
+    CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS, VerifiedCitedBlob,
 };
 /// Transaction-scoped, owner-stamped sidecar precondition reads.
 pub use proxiima_core::storage_ports::{SIDECAR_SESSION_READ_MAX_ROWS, SidecarSessionRead};

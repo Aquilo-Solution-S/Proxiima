@@ -4,6 +4,7 @@ use proxiima_core::count_u64;
 use std::num::NonZeroU64;
 
 use proxiima_core::storage_ports::{
+    CitedBlobDeliveryPermit, CitedBlobDeliveryRequest, CitedBlobDeliveryTarget,
     CitedBlobIntegrityMismatch, CitedBlobReadError, CitedBlobReadPort, VerifiedCitedBlob,
 };
 use proxiima_core::{AuthzContext, GoalHandle, MemoryId, OwnerId};
@@ -12,11 +13,7 @@ use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use super::CitedBlobStore;
-use super::guards::ensure_owner_access;
-use super::rows::{
-    BlobReadRecord, load_blob_read_record_on_connection, load_goal_blob_read_record_on_connection,
-};
-use proxiima_storage_pg::begin_owner_transaction;
+use super::rows::BlobReadRecord;
 
 fn within_ceiling(byte_len: u64, max_bytes: NonZeroU64) -> Result<(), CitedBlobReadError> {
     if byte_len > max_bytes.get() {
@@ -27,21 +24,6 @@ fn within_ceiling(byte_len: u64, max_bytes: NonZeroU64) -> Result<(), CitedBlobR
     } else {
         Ok(())
     }
-}
-
-/// Byte-exact locator provenance, [`CitedBlobStore::mints_locator`].
-///
-/// The key derives from the row's own columns — its `upload_id`, or the
-/// upload row it mounts — so a row can only ever vouch for the object it
-/// was given, and never for one it names by assertion.
-fn canonical_for_store(store: &CitedBlobStore, row: &BlobReadRecord) -> bool {
-    store.mints_locator(
-        &row.object_store,
-        &row.bucket,
-        &row.object_key,
-        row.upload_id,
-        row.mounted_from_upload_id,
-    )
 }
 
 async fn verify_body(
@@ -121,9 +103,6 @@ async fn collect_record_bytes(
     row: &BlobReadRecord,
     max_bytes: NonZeroU64,
 ) -> Result<Vec<u8>, CitedBlobReadError> {
-    if !canonical_for_store(store, row) {
-        return Err(CitedBlobReadError::NotFound);
-    }
     within_ceiling(row.byte_len, max_bytes)?;
     let object = store
         .client()
@@ -154,6 +133,14 @@ async fn collect_record_bytes(
 
 #[async_trait::async_trait]
 impl CitedBlobReadPort for CitedBlobStore {
+    async fn authorize_delivery(
+        &self,
+        permit: CitedBlobDeliveryPermit<'_>,
+    ) -> Result<CitedBlobDeliveryTarget, CitedBlobReadError> {
+        let (authz, request) = permit.into_parts();
+        self.authorize_delivery_record(authz, request).await
+    }
+
     async fn collect_verified(
         &self,
         authz: &AuthzContext,
@@ -161,23 +148,15 @@ impl CitedBlobReadPort for CitedBlobStore {
         cited_object_id: Uuid,
         max_bytes: NonZeroU64,
     ) -> Result<VerifiedCitedBlob, CitedBlobReadError> {
-        // This MUST precede even the owner-scoped row lookup: the row contains
-        // the raw locator, so authorization after SQL would already be late.
-        ensure_owner_access(authz, &owner).map_err(|_| CitedBlobReadError::AccessDenied)?;
-
-        let owner_scope = authz
-            .owner_scope()
-            .ok_or(CitedBlobReadError::AccessDenied)?;
-        let mut tx = begin_owner_transaction(&self.pool, owner_scope)
-            .await
-            .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?;
-        let row = load_blob_read_record_on_connection(tx.as_mut(), &owner, cited_object_id)
-            .await
-            .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?
-            .ok_or(CitedBlobReadError::NotFound)?;
-        tx.commit()
-            .await
-            .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?;
+        let (_, row) = self
+            .authorize_read_record(
+                authz,
+                CitedBlobDeliveryRequest::Owner {
+                    owner,
+                    cited_object_id,
+                },
+            )
+            .await?;
         // Reject from immutable metadata before constructing the S3 client or
         // issuing GET. The stream repeats this bound against the actual bytes.
         let bytes = collect_record_bytes(self, &row, max_bytes).await?;
@@ -202,26 +181,17 @@ impl CitedBlobReadPort for CitedBlobStore {
         cited_object_id: Uuid,
         max_bytes: NonZeroU64,
     ) -> Result<VerifiedCitedBlob, CitedBlobReadError> {
-        let owner_scope = authz
-            .owner_scope()
-            .filter(|scope| scope.goal_principal().is_some())
-            .ok_or(CitedBlobReadError::AccessDenied)?;
-        let mut tx = begin_owner_transaction(&self.pool, owner_scope)
-            .await
-            .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?;
-        let row = load_goal_blob_read_record_on_connection(
-            tx.as_mut(),
-            &owner,
-            goal,
-            fact_memory,
-            cited_object_id,
-        )
-        .await
-        .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?
-        .ok_or(CitedBlobReadError::NotFound)?;
-        tx.commit()
-            .await
-            .map_err(|err| CitedBlobReadError::Unavailable(err.to_string()))?;
+        let (_, row) = self
+            .authorize_read_record(
+                authz,
+                CitedBlobDeliveryRequest::GoalPublication {
+                    owner,
+                    goal,
+                    fact_memory,
+                    cited_object_id,
+                },
+            )
+            .await?;
         let bytes = collect_record_bytes(self, &row, max_bytes).await?;
         Ok(VerifiedCitedBlob {
             cited_object_id: row.cited_object_id,

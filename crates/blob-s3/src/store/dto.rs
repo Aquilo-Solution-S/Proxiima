@@ -53,20 +53,6 @@ pub struct CitedBlobUploadAbortOutcomeTs {
     pub aborted: bool,
 }
 
-/// Tauri/TS-compatible cited-blob read URL request.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CitedBlobReadUrlTs {
-    pub owner: OwnerId,
-    pub cited_object_id: String,
-}
-
-/// Tauri/TS-compatible cited-blob read URL response.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CitedBlobReadUrlOutcomeTs {
-    pub read_url: String,
-    pub expires_at: String,
-}
-
 impl CitedBlobUploadPrepareTs {
     /// The storage `Owner` for this request.
     #[must_use]
@@ -84,14 +70,6 @@ impl CitedBlobUploadCompleteTs {
 }
 
 impl CitedBlobUploadAbortTs {
-    /// The storage `Owner` for this request.
-    #[must_use]
-    pub fn owner(&self) -> OwnerId {
-        self.owner
-    }
-}
-
-impl CitedBlobReadUrlTs {
     /// The storage `Owner` for this request.
     #[must_use]
     pub fn owner(&self) -> OwnerId {

@@ -701,12 +701,8 @@ mod tests {
         );
     }
 
-    /// Method selection is per-action, not per-tool. `core_upload` is a write
-    /// dispatcher, but its `read_url` action is annotated read-only — so the
-    /// action path must offer QUERY while its sibling write actions must not.
-    /// Resolving this at tool level would both hide real reads and, on a
-    /// dispatcher annotated read-only at tool level, offer a safe
-    /// auto-retryable method on a write action added later.
+    /// Method selection is per-action, not per-tool. `core_membership` mixes
+    /// read and write actions, while retired blob downloads are absent.
     #[test]
     fn action_paths_gate_methods_per_action_not_per_tool() {
         let registry = frozen_registry();
@@ -720,21 +716,6 @@ mod tests {
             "the parent dispatcher is a write tool: {parent:#}",
         );
 
-        let read_url = path_item(
-            &document,
-            &format!("/v1/tools/{}/read_url", protocol_tool::CORE_UPLOAD),
-        );
-        assert!(
-            read_url.get("query").is_some(),
-            "a read-only action must advertise QUERY even on a write parent: {read_url:#}",
-        );
-        assert_eq!(
-            read_url
-                .pointer("/query/x-proxiima-read-only")
-                .and_then(Value::as_bool),
-            Some(true),
-        );
-
         let prepare = path_item(
             &document,
             &format!("/v1/tools/{}/prepare", protocol_tool::CORE_UPLOAD),
@@ -742,6 +723,21 @@ mod tests {
         assert!(
             prepare.get("query").is_none(),
             "a write action must not advertise QUERY: {prepare:#}",
+        );
+
+        let membership_read = path_item(
+            &document,
+            &format!("/v1/tools/{}/list_members", protocol_tool::CORE_MEMBERSHIP),
+        );
+        assert!(
+            membership_read.get("query").is_some(),
+            "a read action must advertise QUERY under a write parent: {membership_read:#}",
+        );
+        assert!(
+            document
+                .pointer("/paths/~1v1~1tools~1core_upload~1read_url")
+                .is_none(),
+            "retired blob download route must not be advertised: {document:#}"
         );
     }
 

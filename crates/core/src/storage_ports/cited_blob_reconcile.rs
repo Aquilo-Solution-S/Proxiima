@@ -95,8 +95,8 @@ pub struct CitedBlobReconcileOutcome {
     /// Live uploads naming another bucket or a key not minted for their upload.
     ///
     /// NOT COUNTED AS MISSING, because the cause is different and so is the
-    /// repair. The locator columns are client-writable — `read_url` says so
-    /// in its own comment and refuses to presign such a row — so a non-zero
+    /// repair. Download admission refuses locators not minted by this store.
+    /// A non-zero
     /// count here means rows were written directly rather than through the
     /// upload path, and folding it into `missing_objects` would report a
     /// data loss that never happened.

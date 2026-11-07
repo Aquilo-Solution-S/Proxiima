@@ -277,7 +277,7 @@ async fn owe_an_erase(
     )
     .await?;
     register_group(admin, group).await?;
-    let store = first.host().blobs().expect("configured store").clone();
+    let store = first.blobs().expect("configured store").clone();
     let authz = host_context(owner, AuthPath::HostBearer);
     let prepared = store
         .prepare_upload(
@@ -408,7 +408,7 @@ async fn a_server_sweeps_an_expired_upload() -> TestResult<()> {
         let admin = admin_pool(&database).await?;
         let (running, _base) = serve(&database, owner, config.clone()).await?;
         register_group(&admin, group).await?;
-        let store = running.host().blobs().expect("configured store").clone();
+        let store = running.blobs().expect("configured store").clone();
         let prepared = store
             .prepare_upload(
                 &host_context(owner, AuthPath::HostBearer),

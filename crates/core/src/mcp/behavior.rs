@@ -851,7 +851,7 @@ mod tests {
     }
 
     /// #462: a dispatcher is judged per action, never by its tool-level
-    /// join. `core_upload:read_url` reads, `core_upload:prepare` writes.
+    /// join. `core_membership:list_members` reads, `core_membership:add_member` writes.
     #[test]
     fn a_mixed_dispatcher_admits_only_its_read_action_outside_the_palette() {
         let mut ctx = test_ctx(ToolScope::All);
@@ -859,14 +859,14 @@ mod tests {
             .authz
             .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
         ScopeGateBehavior::enforce_scope(
-            protocol_tool::CORE_UPLOAD,
-            &serde_json::json!({ "action": "read_url" }),
+            protocol_tool::CORE_MEMBERSHIP,
+            &serde_json::json!({ "action": "list_members" }),
             &ctx,
         )
         .expect("the read-only action is admitted");
         let err = ScopeGateBehavior::enforce_scope(
-            protocol_tool::CORE_UPLOAD,
-            &serde_json::json!({ "action": "prepare" }),
+            protocol_tool::CORE_MEMBERSHIP,
+            &serde_json::json!({ "action": "add_member" }),
             &ctx,
         )
         .expect_err("the additive action is refused");
@@ -905,10 +905,6 @@ mod tests {
             ),
             (crate::protocol::resource::MEMORY, serde_json::json!({})),
             (crate::protocol::resource::HOW_TO, serde_json::json!({})),
-            (
-                protocol_tool::CORE_UPLOAD,
-                serde_json::json!({"action":"read_url"}),
-            ),
         ] {
             assert!(
                 matches!(

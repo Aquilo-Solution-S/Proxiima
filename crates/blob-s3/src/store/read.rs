@@ -1,12 +1,10 @@
-//! The read lane: one presigned GET, over a locator this store itself wrote.
+//! Metadata-only cited-blob queries.
 
 use proxiima_core::{AuthzContext, OwnerId};
-use time::OffsetDateTime;
 
 use super::CitedBlobStore;
-use super::dto::{CitedBlobReadUrlOutcomeTs, CitedBlobReadUrlTs};
-use super::guards::{ensure_owner_access, format_time, parse_opaque_identifier, presign_config};
-use super::rows::{find_held_blobs_on_connection, load_blob_location_on_connection};
+use super::guards::ensure_owner_access;
+use super::rows::find_held_blobs_on_connection;
 use crate::error::BlobError;
 use proxiima_core::storage_ports::{CitedBlobHeld, MAX_HELD_BLOB_DIGESTS};
 
@@ -15,7 +13,7 @@ impl CitedBlobStore {
     ///
     /// READ AUTHORITY, NOT WRITE. The caller is asking what the corpus
     /// contains, and the answer is metadata about artefacts it may already
-    /// read — so this gates exactly like [`Self::read_url`] does. Gating it
+    /// read — so this gates exactly like delivery authorization does. Gating it
     /// as a write instead would refuse a group Viewer an answer it is
     /// entitled to, and would make "may I check before uploading" a stricter
     /// question than "may I download the bytes".
@@ -52,62 +50,4 @@ impl CitedBlobStore {
         tx.commit().await.map_err(BlobError::Db)?;
         Ok(result)
     }
-    /// Produce a presigned read URL for a completed cited blob.
-    ///
-    /// # Errors
-    /// Returns `BlobError` when the cited object is missing or S3
-    /// presigning fails.
-    pub async fn read_url(
-        &self,
-        ctx: &AuthzContext,
-        req: CitedBlobReadUrlTs,
-    ) -> Result<CitedBlobReadUrlOutcomeTs, BlobError> {
-        let owner = req.owner();
-        ensure_owner_access(ctx, &owner)?;
-        let cited_object_id = parse_opaque_identifier(&req.cited_object_id)?;
-        let mut tx = self.begin_owner_tx(ctx.owner_scope()).await?;
-        let row = load_blob_location_on_connection(tx.as_mut(), &owner, cited_object_id).await?;
-        tx.commit().await.map_err(BlobError::Db)?;
-        // Only the upload lane writes locator rows, but SigV4 presigning is
-        // offline, with no S3 existence check: a row this store did not
-        // mint (another deployment's store, a hand-written row) would sign
-        // a working GET for any object the substrate's role can read.
-        // Presign only locators this store itself minted, and answer
-        // anything else exactly like a missing row so a probe cannot learn
-        // whether such a row exists.
-        if !self.mints_locator(
-            &row.object_store,
-            &row.bucket,
-            &row.object_key,
-            row.upload_id,
-            row.mounted_from_upload_id,
-        ) {
-            return Err(BlobError::State("cited object not found for Owner".into()));
-        }
-        let client = self.read_presigning_client();
-        let expires_at = OffsetDateTime::now_utc()
-            + time::Duration::seconds(
-                i64::try_from(self.config.read_ttl_seconds).unwrap_or(i64::MAX),
-            );
-        // Force a download disposition and a non-renderable content type on the
-        // presigned GET so a blob whose stored mime is `text/html` (or similar)
-        // cannot execute in the browser as stored XSS when the link is opened.
-        let presigned = client
-            .get_object()
-            .bucket(&row.bucket)
-            .key(&row.object_key)
-            .response_content_disposition("attachment")
-            .response_content_type("application/octet-stream")
-            .presigned(presign_config(self.config.read_ttl_seconds)?)
-            .await
-            .map_err(|e| BlobError::S3(format!("prepare read URL failed: {e}")))?;
-        Ok(CitedBlobReadUrlOutcomeTs {
-            read_url: presigned.uri().to_string(),
-            expires_at: format_time(expires_at)?,
-        })
-    }
 }
-
-// Forced attachment disposition is only assertable through the store:
-// `blob_roundtrip_pg::presigned_put_and_get_carry_the_bytes` (HTTP headers)
-// and `prepare_then_complete_then_read_roundtrip` (production URL).

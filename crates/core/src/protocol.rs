@@ -48,7 +48,6 @@ pub mod action {
     pub const CORE_UPLOAD_PREPARE: &str = "core_upload:prepare";
     pub const CORE_UPLOAD_COMPLETE: &str = "core_upload:complete";
     pub const CORE_UPLOAD_ABORT: &str = "core_upload:abort";
-    pub const CORE_UPLOAD_READ_URL: &str = "core_upload:read_url";
     pub const CORE_FORK: &str = "core_fork";
 }
 

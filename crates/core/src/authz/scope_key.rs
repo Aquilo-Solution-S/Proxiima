@@ -381,7 +381,6 @@ mod tests {
             action::CORE_UPLOAD_PREPARE,
             action::CORE_UPLOAD_COMPLETE,
             action::CORE_UPLOAD_ABORT,
-            action::CORE_UPLOAD_READ_URL,
         ];
         let resources = [
             resource::MEMORY,

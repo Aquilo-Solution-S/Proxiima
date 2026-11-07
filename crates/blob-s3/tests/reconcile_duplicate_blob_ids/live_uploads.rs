@@ -1,7 +1,8 @@
 use super::*;
 
-use proxiima_blob_s3::CitedBlobReadUrlTs;
-use proxiima_core::storage_ports::MAX_RECONCILE_SAMPLE;
+use proxiima_core::storage_ports::{
+    CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobReadService, MAX_RECONCILE_SAMPLE,
+};
 
 const STALE_ROWS: usize = MAX_RECONCILE_SAMPLE + 1;
 const DISTINCT_LOSSES: usize = 1001;
@@ -18,8 +19,20 @@ struct RecoveryObserved {
     fresh_loss: Reports,
     mounted: Reports,
     control_blob_id: Uuid,
-    mounted_read_url_uses_original: bool,
+    mounted_delivery_uses_original: bool,
     mounted_bytes: Vec<u8>,
+}
+
+fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
+    let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let (_, _, runtime_authority) = Engine::new(registry.clone()).into_runtime_authorities();
+    CitedBlobDeliveryService::bind(
+        CitedBlobReadService::new_runtime(Arc::new(store.clone()), &runtime_authority),
+        &registry,
+        proxiima_core::ScopeKey::parse("core_search_memories").expect("registered read scope"),
+        &runtime_authority,
+    )
+    .expect("delivery scope is registered")
 }
 
 #[tokio::test]
@@ -35,7 +48,7 @@ async fn reupload_clears_stale_losses_and_mounted_live_upload_checks_the_minting
     assert_clean(&observed.repaired);
     assert_clean(&observed.mounted);
     assert_eq!(observed.mounted_bytes, SHARED_BODY);
-    assert!(observed.mounted_read_url_uses_original);
+    assert!(observed.mounted_delivery_uses_original);
     for report in [&observed.repaired, &observed.mounted] {
         assert_eq!(
             (report.global.rows_scanned, report.owner.rows_scanned),
@@ -131,28 +144,35 @@ async fn observe_recovery(
         .execute(pg.pool_for_tests())
         .await?;
         let mounted = reports(&store, &authority, &authz, owner).await?;
-        let mounted_read_url = store
-            .read_url(
+        let read_service = CitedBlobReadService::new(Arc::new(store.clone()));
+        let delivery = delivery_service(&store);
+        let admission = delivery
+            .authorize_delivery(
                 &authz,
-                CitedBlobReadUrlTs {
+                CitedBlobDeliveryRequest::Owner {
                     owner,
-                    cited_object_id: first.1.to_string(),
+                    cited_object_id: first.1,
                 },
             )
+            .await?;
+        let (_, target) = admission.into_parts();
+        let mounted_delivery_uses_original = target.object_key == canonical(first.0);
+        let mounted_bytes = read_service
+            .collect_verified(
+                &authz,
+                owner,
+                first.1,
+                std::num::NonZeroU64::new(u64::try_from(SHARED_BODY.len())?)
+                    .ok_or("empty fixture body")?,
+            )
             .await?
-            .read_url;
-        let mounted_bytes = reqwest::get(&mounted_read_url)
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?
-            .to_vec();
+            .bytes;
         Ok(RecoveryObserved {
             repaired,
             fresh_loss,
             mounted,
             control_blob_id: control.1,
-            mounted_read_url_uses_original: mounted_read_url.contains(&canonical(first.0)),
+            mounted_delivery_uses_original,
             mounted_bytes,
         })
     }
@@ -449,19 +469,21 @@ async fn selected_read(
     blob_id: Uuid,
     expected_upload: Uuid,
 ) -> TestResult<SelectedRead> {
-    use proxiima_core::storage_ports::CitedBlobReadPort;
     use std::num::NonZeroU64;
 
-    let url = store
-        .read_url(
+    let read_service = CitedBlobReadService::new(Arc::new(store.clone()));
+    let delivery = delivery_service(store);
+    let admission = delivery
+        .authorize_delivery(
             authz,
-            CitedBlobReadUrlTs {
+            CitedBlobDeliveryRequest::Owner {
                 owner,
-                cited_object_id: blob_id.to_string(),
+                cited_object_id: blob_id,
             },
         )
         .await?;
-    let verified = store
+    let (_, target) = admission.into_parts();
+    let verified = read_service
         .collect_verified(
             authz,
             owner,
@@ -477,7 +499,7 @@ async fn selected_read(
         _ => return Err("held lookup did not resolve exactly the shared blob".into()),
     };
     Ok(SelectedRead {
-        expected_key: url.read_url.contains(&canonical(expected_upload)),
+        expected_key: target.object_key == canonical(expected_upload),
         verified_filename: verified.filename,
         held_filename,
         bytes: verified.bytes,

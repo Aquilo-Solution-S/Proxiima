@@ -62,35 +62,16 @@ fn completed_sha256(row: &sqlx::postgres::PgRow) -> Result<[u8; 32], BlobError> 
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct BlobLocation {
-    pub(super) bucket: String,
-    /// The store the row's bytes were published to; the read gate refuses
-    /// a row naming any other.
-    pub(super) object_store: String,
-    pub(super) object_key: String,
-    /// The upload row's own primary key. The read gate re-derives the
-    /// canonical key from it and demands a byte-exact match, which is what
-    /// stops a locator this store did not mint.
-    pub(super) upload_id: Uuid,
-    /// Set when this row mounts an object minted by another upload row --
-    /// a cross-owner transfer's deduped reference. The gate derives from
-    /// this instead of [`Self::upload_id`] when it is present; carrying it
-    /// alongside rather than folding it in keeps the row's stored columns
-    /// visible at the call site.
-    pub(super) mounted_from_upload_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone)]
 pub(super) struct BlobReadRecord {
     pub(super) cited_object_id: Uuid,
     pub(super) content_hash: [u8; 32],
     pub(super) bucket: String,
-    /// See [`BlobLocation::object_store`].
+    /// The store the row's bytes were published to.
     pub(super) object_store: String,
     pub(super) object_key: String,
-    /// See [`BlobLocation::upload_id`].
+    /// The upload row's primary key.
     pub(super) upload_id: Uuid,
-    /// See [`BlobLocation::mounted_from_upload_id`].
+    /// The source upload when this row mounts a transferred object.
     pub(super) mounted_from_upload_id: Option<Uuid>,
     pub(super) sha256: [u8; 32],
     pub(super) byte_len: u64,
@@ -303,47 +284,6 @@ pub(super) async fn find_held_blobs_on_connection(
             })
         })
         .collect()
-}
-
-pub(super) async fn load_blob_location_on_connection(
-    pool: &mut sqlx::PgConnection,
-    owner: &OwnerId,
-    blob_id: Uuid,
-) -> Result<BlobLocation, BlobError> {
-    // The shared selection requires the blob and upload owners to agree:
-    // a stale upload left behind by a partial transfer cannot locate bytes
-    // for the blob's new owner.
-    const SQL: &str = with_live_blob_upload!(
-        "SELECT u.bucket, u.object_store, u.object_key, u.upload_id, u.mounted_from_upload_id
-           FROM proxiima_core.blob b
-           JOIN",
-        "WHERE b.blob_id = $1
-            AND b.owner_id = $2
-            AND b.schema_id = $3"
-    );
-    let owner_id = owner.into_inner();
-    if let Some(row) = sqlx::query(SQL)
-        .bind(blob_id)
-        .bind(owner_id)
-        .bind(UPLOADED_BLOB_SCHEMA_ID)
-        .fetch_optional(&mut *pool)
-        .await
-        .map_err(BlobError::Db)?
-    {
-        return Ok(BlobLocation {
-            bucket: row.get("bucket"),
-            object_store: row.get("object_store"),
-            object_key: row.get("object_key"),
-            upload_id: row.get("upload_id"),
-            mounted_from_upload_id: row.get("mounted_from_upload_id"),
-        });
-    }
-
-    // No completed upload row for this owner: there is no locator to
-    // return. A blob row alone never yields one, because an owner-free key
-    // derives from the upload's primary key and not from a content hash.
-    // One answer for "absent" and "not yours", so neither is a probe.
-    Err(BlobError::State("cited object not found for Owner".into()))
 }
 
 pub(super) async fn load_blob_read_record_on_connection(

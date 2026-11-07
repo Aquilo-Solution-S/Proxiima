@@ -6,6 +6,7 @@
 mod access;
 mod bundle;
 mod cited_blob;
+mod cited_blob_delivery;
 mod cited_blob_read;
 mod cited_blob_reconcile;
 mod cursors;
@@ -35,9 +36,13 @@ pub(crate) use bundle::{
 };
 pub use bundle::{StoragePorts, StoragePortsBuildError, StoragePortsBuilder};
 pub use cited_blob::{
-    CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged,
-    CitedBlobUploadAborted, CitedBlobUploadCompleted, CitedBlobUploadHeader,
-    CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS,
+    CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+    CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadPrepared,
+    MAX_HELD_BLOB_DIGESTS,
+};
+pub use cited_blob_delivery::{
+    AdmittedCitedBlobDelivery, CitedBlobDeliveryBindingError, CitedBlobDeliveryPermit,
+    CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobDeliveryTarget,
 };
 pub use cited_blob_read::{
     CitedBlobIntegrityMismatch, CitedBlobReadError, CitedBlobReadPort, CitedBlobReadService,

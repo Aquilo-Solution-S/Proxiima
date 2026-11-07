@@ -708,10 +708,9 @@ fn spiice_sdk_exposes_the_cited_blob_lane() {
         CitedBlobHeld, CitedBlobIntegrityMismatch, CitedBlobOwnerMissingObject,
         CitedBlobOwnerReconcileOutcome, CitedBlobOwnerReconcilePort,
         CitedBlobOwnerReconcileService, CitedBlobPort, CitedBlobReadError, CitedBlobReadPort,
-        CitedBlobReadService, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged,
-        CitedBlobUploadAborted, CitedBlobUploadCompleted, CitedBlobUploadHeader,
-        CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS, UploadCompletionExpectation,
-        UploadedBlobPayload, VerifiedCitedBlob,
+        CitedBlobReadService, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+        CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadPrepared,
+        MAX_HELD_BLOB_DIGESTS, UploadCompletionExpectation, UploadedBlobPayload, VerifiedCitedBlob,
     };
     fn _needs_port<T: CitedBlobPort>() {}
     fn _needs_verified_read_port<T: CitedBlobReadPort>() {}
@@ -719,7 +718,6 @@ fn spiice_sdk_exposes_the_cited_blob_lane() {
     let _: Option<(
         &CitedBlobService,
         &CitedBlobOwnerReconcileService,
-        &CitedBlobReadUrl,
         &CitedBlobUploadPrepared,
         &CitedBlobUploadCompleted,
         &CitedBlobUploadAborted,
@@ -1061,11 +1059,9 @@ fn host_api_can_configure_the_blob_lane_without_the_environment() {
         region: "us-east-1".to_owned(),
         key_pair: proxiima::S3KeyPair::new("test-access-key".into(), "test-secret-key".into()),
         endpoint_url: Some("http://localhost:9000".to_owned()),
-        public_endpoint_url: None,
         plaintext_hosts: proxiima::host::PlaintextHosts::none(),
         force_path_style: true,
         upload_ttl_seconds: 900,
-        read_ttl_seconds: 300,
         max_blob_bytes: None,
         store_id: None,
     };
@@ -1108,11 +1104,13 @@ fn host_api_can_configure_the_pg_pool_without_process_environment() {
 #[test]
 fn host_api_names_global_and_owner_reconcile_outcomes() {
     // `CitedBlobStore::reconcile_all` is a `pub async fn` reachable
-    // through `AppContext::blobs` / `BuiltProxiima::blobs` /
+    // through `BuiltProxiima::blobs` /
     // `RunningProxiima::blobs`. Calling it also requires the booted runtime's
     // same-boot, non-Clone `SystemAuthority`. The owner service is a distinct,
     // authorization-carrying lane with a locator-free result.
     use proxiima::{
+        AdmittedCitedBlobDelivery, CitedBlobDeliveryBindingError, CitedBlobDeliveryPermit,
+        CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobDeliveryTarget,
         CitedBlobMissingObject, CitedBlobOwnerMissingObject, CitedBlobOwnerReconcileOutcome,
         CitedBlobOwnerReconcileService, CitedBlobReadError, CitedBlobReadService,
         CitedBlobReconcileOutcome, MAX_RECONCILE_SAMPLE, VerifiedCitedBlob,
@@ -1161,6 +1159,14 @@ fn host_api_names_global_and_owner_reconcile_outcomes() {
     };
     let _: Option<CitedBlobOwnerReconcileService> = None;
     let _: Option<(CitedBlobReadService, CitedBlobReadError, VerifiedCitedBlob)> = None;
+    let _: Option<(
+        CitedBlobDeliveryService,
+        CitedBlobDeliveryBindingError,
+        CitedBlobDeliveryPermit<'static>,
+        CitedBlobDeliveryRequest,
+        CitedBlobDeliveryTarget,
+        AdmittedCitedBlobDelivery,
+    )> = None;
     assert!(!owner_outcome.is_intact());
     assert_eq!(
         owner_outcome.missing_sample[0].cited_object_id,

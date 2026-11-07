@@ -1352,7 +1352,7 @@ const TOOLS: &[ToolContract] = &[
     },
     ToolContract {
         wire_name: tool::CORE_UPLOAD,
-        actions: &["prepare", "complete", "abort", "read_url"],
+        actions: &["prepare", "complete", "abort"],
     },
     ToolContract {
         wire_name: tool::CORE_RETENTION,

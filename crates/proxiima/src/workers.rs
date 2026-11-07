@@ -26,8 +26,7 @@ use tokio_util::sync::CancellationToken;
 /// authenticator.
 /// Delegated-capable Engine methods and the bound `CitedBlobService` /
 /// `CitedBlobReadService` accept that phase; raw delegated `AuthzContext`
-/// values are rejected. `read_url` returns a presigned URL and never the
-/// bucket or object key. `collect_verified` additionally requires a non-zero
+/// values are rejected. `collect_verified` requires a non-zero
 /// byte ceiling and returns bytes only after length, BLAKE3, and SHA-256
 /// verification. Owner reconciliation is not delegated-capable.
 ///

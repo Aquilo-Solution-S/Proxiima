@@ -370,8 +370,7 @@ mod tests {
     use super::*;
     use crate::storage::StorageError;
     use crate::storage_ports::{
-        CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobUploadAborted,
-        CitedBlobUploadPrepared,
+        CitedBlobHeld, CitedBlobPort, CitedBlobUploadAborted, CitedBlobUploadPrepared,
     };
     use crate::{AuthPath, AuthzContext, SpiiceRegistry, UserId};
 
@@ -449,15 +448,6 @@ mod tests {
             _owner: crate::OwnerId,
             _upload_id: &str,
         ) -> Result<CitedBlobUploadAborted, StorageError> {
-            Err(StorageError::Internal("test port: unused".to_owned()))
-        }
-
-        async fn read_url(
-            &self,
-            _authz: &crate::AuthzContext,
-            _owner: crate::OwnerId,
-            _cited_object_id: uuid::Uuid,
-        ) -> Result<CitedBlobReadUrl, StorageError> {
             Err(StorageError::Internal("test port: unused".to_owned()))
         }
 

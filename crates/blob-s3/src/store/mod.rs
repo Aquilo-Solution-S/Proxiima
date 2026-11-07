@@ -19,6 +19,7 @@
 //! stay together.
 
 mod cold;
+mod delivery;
 mod digest;
 mod dto;
 mod erase;
@@ -39,15 +40,13 @@ mod testkit;
 
 pub use cold::S3ColdStore;
 pub use dto::{
-    CitedBlobReadUrlOutcomeTs, CitedBlobReadUrlTs, CitedBlobUploadAbortOutcomeTs,
-    CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareOutcomeTs,
-    CitedBlobUploadPrepareTs, PresignedHeaderTs,
+    CitedBlobUploadAbortOutcomeTs, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs,
+    CitedBlobUploadPrepareOutcomeTs, CitedBlobUploadPrepareTs, PresignedHeaderTs,
 };
 pub use sweep::UploadExpirySweepOutcome;
 
 use crate::config::{
-    DEFAULT_MAX_BLOB_BYTES, PresignedLinkKind, S3RuntimeConfig, validate_endpoint_url,
-    validate_presign_ttl,
+    DEFAULT_MAX_BLOB_BYTES, S3RuntimeConfig, validate_endpoint_url, validate_presign_ttl,
 };
 use crate::error::BlobError;
 use proxiima_core::authz::{SystemAuthority, SystemAuthorityBinding};
@@ -65,11 +64,6 @@ pub struct CitedBlobStore {
     /// S3 client built from the configured static key pair and target,
     /// memoized once per store.
     client: std::sync::OnceLock<aws_sdk_s3::Client>,
-    /// Client that signs upload links for the store endpoint.
-    upload_presigning_client: std::sync::OnceLock<aws_sdk_s3::Client>,
-    /// Client that signs read links for the public endpoint when one is
-    /// configured, and for the store endpoint otherwise.
-    read_presigning_client: std::sync::OnceLock<aws_sdk_s3::Client>,
     /// Set once by normal Proxiima boot and shared by every store clone.
     /// A witness minted by an unrelated disposable Engine cannot authorize
     /// this store's global operations.
@@ -105,18 +99,10 @@ impl CitedBlobStore {
                 &config.plaintext_hosts,
             )?;
         }
-        if let Some(endpoint_url) = &config.public_endpoint_url {
-            validate_endpoint_url(
-                "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-                endpoint_url,
-                &config.plaintext_hosts,
-            )?;
-        }
         // Checked at the consuming boundary too, not only in `from_env`: a
         // host may build this struct directly, and an out-of-range TTL must
         // fail here rather than panic inside a request.
         validate_presign_ttl("PROXIIMA_S3_UPLOAD_TTL_SECONDS", config.upload_ttl_seconds)?;
-        validate_presign_ttl("PROXIIMA_S3_READ_TTL_SECONDS", config.read_ttl_seconds)?;
         let max_blob_bytes = config.max_blob_bytes.unwrap_or(DEFAULT_MAX_BLOB_BYTES);
         let store_id = config.object_store_id()?;
 
@@ -126,8 +112,6 @@ impl CitedBlobStore {
             config,
             max_blob_bytes,
             client: std::sync::OnceLock::new(),
-            upload_presigning_client: std::sync::OnceLock::new(),
-            read_presigning_client: std::sync::OnceLock::new(),
             system_authority: std::sync::Arc::new(std::sync::OnceLock::new()),
             platform_scope,
             stage_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STAGES)),
@@ -187,21 +171,6 @@ impl CitedBlobStore {
         self.client.get_or_init(|| self.config.client())
     }
 
-    /// The memoized client that signs upload links for the store endpoint.
-    pub(super) fn upload_presigning_client(&self) -> &aws_sdk_s3::Client {
-        self.upload_presigning_client
-            .get_or_init(|| self.config.presigning_client(PresignedLinkKind::Upload))
-    }
-
-    /// The memoized client that signs read links.
-    ///
-    /// Uses the public endpoint when one is configured, and the store
-    /// endpoint otherwise. It does not sign upload links.
-    pub(super) fn read_presigning_client(&self) -> &aws_sdk_s3::Client {
-        self.read_presigning_client
-            .get_or_init(|| self.config.presigning_client(PresignedLinkKind::Read))
-    }
-
     pub(super) fn bucket(&self) -> &str {
         &self.config.bucket
     }
@@ -233,16 +202,13 @@ mod tests {
         .unwrap();
         assert!(!format!("{store:?}").contains(secret));
         store.client();
-        store.upload_presigning_client();
-        store.read_presigning_client();
         assert!(!format!("{store:?}").contains(secret));
     }
 
     #[tokio::test]
-    async fn store_clients_keep_internal_io_and_public_signing_addresses_distinct() {
+    async fn store_client_uses_the_internal_endpoint() {
         use aws_sdk_s3::presigning::PresigningConfig;
         let mut config = store_config(Some("https://objects.internal.example/internal/"), None);
-        config.public_endpoint_url = Some("https://files.example/objects/".into());
         config.force_path_style = true;
         let store = CitedBlobStore::new(
             lazy_test_pool(),
@@ -250,32 +216,19 @@ mod tests {
             proxiima_storage_pg::PgPlatformScope::for_tests(),
         )
         .unwrap();
-        for (client, expected) in [
-            (
-                store.client(),
-                "https://objects.internal.example/internal/test-bucket/config-probe?",
-            ),
-            (
-                store.upload_presigning_client(),
-                "https://objects.internal.example/internal/test-bucket/config-probe?",
-            ),
-            (
-                store.read_presigning_client(),
-                "https://files.example/objects/test-bucket/config-probe?",
-            ),
-        ] {
-            let signed = client
-                .get_object()
-                .bucket(store.bucket())
-                .key("config-probe")
-                .presigned(PresigningConfig::expires_in(std::time::Duration::from_mins(1)).unwrap())
-                .await
-                .expect("configuration-only presigning succeeds");
-            assert!(
-                signed.uri().starts_with(expected),
-                "each cached client uses its configured purpose"
-            );
-        }
+        let signed = store
+            .client()
+            .get_object()
+            .bucket(store.bucket())
+            .key("config-probe")
+            .presigned(PresigningConfig::expires_in(std::time::Duration::from_mins(1)).unwrap())
+            .await
+            .expect("configuration-only presigning succeeds");
+        assert!(
+            signed
+                .uri()
+                .starts_with("https://objects.internal.example/internal/test-bucket/config-probe?")
+        );
     }
 
     #[tokio::test]
@@ -289,63 +242,6 @@ mod tests {
 
         assert!(matches!(error, BlobError::Config(_)));
         assert!(error.to_string().contains("must use https"));
-    }
-
-    #[tokio::test]
-    async fn store_rejects_an_invalid_public_endpoint_from_direct_configuration() {
-        for endpoint in [
-            "http://s3.example.com",
-            "s3.example.com",
-            "ftp://s3.example.com",
-            "https://",
-        ] {
-            let mut config = store_config(Some("http://localhost:9000"), Some(1_024));
-            config.public_endpoint_url = Some(endpoint.to_owned());
-            let error = CitedBlobStore::new(
-                lazy_test_pool(),
-                config,
-                proxiima_storage_pg::PgPlatformScope::for_tests(),
-            )
-            .expect_err("direct public endpoint configuration must be validated");
-            assert!(
-                matches!(error, BlobError::Config(message) if message.contains("PROXIIMA_S3_PUBLIC_ENDPOINT_URL"))
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn store_public_endpoint_inherits_loopback_and_named_host_policy() {
-        for (endpoint, named) in [
-            ("https://files.example/objects/", None),
-            ("http://127.0.0.1:9001/objects/", None),
-            (
-                "http://public-gateway:9090/objects/",
-                Some("public-gateway"),
-            ),
-        ] {
-            let mut config = store_config(None, None);
-            config.public_endpoint_url = Some(endpoint.to_owned());
-            if let Some(named) = named {
-                config.plaintext_hosts = proxiima_core::PlaintextHosts::parse(named).unwrap();
-            }
-            CitedBlobStore::new(
-                lazy_test_pool(),
-                config,
-                proxiima_storage_pg::PgPlatformScope::for_tests(),
-            )
-            .expect("public endpoint follows the existing transport policy");
-        }
-        let mut config = store_config(None, None);
-        config.public_endpoint_url = Some("http://other-gateway:9090".into());
-        config.plaintext_hosts = proxiima_core::PlaintextHosts::parse("public-gateway").unwrap();
-        assert!(matches!(
-            CitedBlobStore::new(
-                lazy_test_pool(),
-                config,
-                proxiima_storage_pg::PgPlatformScope::for_tests()
-            ),
-            Err(BlobError::Config(_))
-        ));
     }
 
     #[tokio::test]
@@ -413,30 +309,9 @@ mod tests {
         assert!(matches!(error, BlobError::State(_)));
     }
 
-    /// An out-of-range TTL is a startup error, not a request-path panic.
-    ///
-    /// `read_url` and `prepare_upload` compute `now + Duration::seconds(ttl)`
-    /// before ever reaching `PresigningConfig::expires_in`, and that
-    /// addition panics on overflow — so the only validator sat downstream of
-    /// the arithmetic it was supposed to guard, and a misconfigured host
-    /// took down every read instead of refusing to boot.
+    /// An out-of-range upload TTL is a startup error, not a request-path panic.
     #[tokio::test]
     async fn store_rejects_a_ttl_no_presigned_url_could_carry() {
-        let mut config = store_config(None, None);
-        config.read_ttl_seconds = u64::MAX;
-
-        let error = CitedBlobStore::new(
-            lazy_test_pool(),
-            config,
-            proxiima_storage_pg::PgPlatformScope::for_tests(),
-        )
-        .expect_err("an unusable read TTL is refused at construction");
-        assert!(matches!(error, BlobError::Config(_)));
-        assert!(
-            error.to_string().contains("PROXIIMA_S3_READ_TTL_SECONDS"),
-            "the refusal names the variable to fix: {error}"
-        );
-
         let mut config = store_config(None, None);
         config.upload_ttl_seconds = 0;
         let error = CitedBlobStore::new(
@@ -452,7 +327,7 @@ mod tests {
 
         // The boundary itself is usable, so the bound is not merely small.
         let mut config = store_config(None, None);
-        config.read_ttl_seconds = crate::config::MAX_PRESIGN_TTL_SECONDS;
+        config.upload_ttl_seconds = crate::config::MAX_PRESIGN_TTL_SECONDS;
         CitedBlobStore::new(
             lazy_test_pool(),
             config,

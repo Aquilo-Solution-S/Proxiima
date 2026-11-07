@@ -7,7 +7,9 @@ use std::sync::{Arc, LazyLock};
 
 use proxiima::host::MigrationError;
 use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegistryError};
-use proxiima::testkit::{HostTemplate, SplitRoleDb, TemplateFamily, database_exists, drop_db};
+use proxiima::testkit::{
+    HostTemplate, SplitRoleDb, TemplateFamily, database_exists, drop_db, wait_until_database_idle,
+};
 use proxiima::{AppInfo, BuiltProxiima, Proxiima, ServedSurface, SpiiceApp};
 use proxiima_core::{OwnerId, UserId};
 use proxiima_storage_pg::PgPoolConfig;
@@ -425,6 +427,9 @@ async fn a_changed_migration_is_a_new_template_and_the_old_one_is_collected() {
         .await
         .expect("first");
     let first_after_build = exists(&first.template_name()).await;
+    wait_until_database_idle(&first.template_name())
+        .await
+        .expect("first template lease leaves pg_stat_activity");
     // The first template has no session on it (a clone is another database),
     // so the second build collects it.
     let two = second

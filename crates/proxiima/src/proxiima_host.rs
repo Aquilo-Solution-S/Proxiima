@@ -50,12 +50,6 @@ impl ProxiimaHost {
         &self.registry
     }
 
-    /// The S3 cited-blob store; `None` unless S3 is configured.
-    #[must_use]
-    pub const fn blobs(&self) -> Option<&CitedBlobStore> {
-        self.blobs.as_ref()
-    }
-
     /// The configured engine `Owner`, if any.
     #[must_use]
     pub const fn owner(&self) -> Option<OwnerId> {

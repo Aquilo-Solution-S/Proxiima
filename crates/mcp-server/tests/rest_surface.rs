@@ -1511,25 +1511,19 @@ async fn query_on_a_write_action_is_405_with_allow_post() {
 }
 
 /// Read/write is resolved per action, never inherited from the parent tool.
-/// `core_upload` and `core_membership` are write-annotated dispatchers with
-/// one read-only leaf each; gating on the tool would strip `QUERY` from a
-/// genuine read, and — the direction that actually bites — would hand
-/// `QUERY` to a write the day one is added under a read-only parent.
+/// `core_membership` is a write-annotated dispatcher with one read-only leaf;
+/// gating on the tool would strip `QUERY` from a genuine read, and — the
+/// direction that actually bites — would hand `QUERY` to a write the day one
+/// is added under a read-only parent.
 #[tokio::test]
 async fn a_read_only_action_under_a_write_parent_keeps_query() {
     let router = app(host());
     let ctx = auth(ToolScope::All);
 
-    for (uri, sibling) in [
-        (
-            "/v1/tools/core_upload/read_url",
-            "/v1/tools/core_upload/abort",
-        ),
-        (
-            "/v1/tools/core_membership/list_members",
-            "/v1/tools/core_membership/add_member",
-        ),
-    ] {
+    for (uri, sibling) in [(
+        "/v1/tools/core_membership/list_members",
+        "/v1/tools/core_membership/add_member",
+    )] {
         let read = call(
             &router,
             Method::QUERY,

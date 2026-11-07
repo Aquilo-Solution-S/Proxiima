@@ -983,16 +983,15 @@ async fn facade_lists_and_dispatches_core_mcp_tools() {
         // #489: exact caller scope admits only the named search key.
         assert_eq!(palette.len(), 1);
         assert_eq!(palette[0].name, "core_search_memories");
-        let upload_palette = tools.list_core_tools_for_scope(&palette_of(&["core_upload:read_url"]));
-        // The explicitly admitted read leaf still projects a read-only schema.
-        let upload = upload_palette
+        assert!(
+            tools.list_core_tools_for_scope(&palette_of(&["core_upload:read_url"])).is_empty(),
+            "retired download action must not advertise a tool"
+        );
+        let upload = listed
             .iter()
             .find(|tool| tool.name == "core_upload")
-            .expect("core_upload is listed for its read action");
-        assert_eq!(upload.effect, Some(ToolEffect::ReadOnly));
-        let upload_schema = upload.args_schema.to_string();
-        assert!(upload_schema.contains("read_url"), "{upload_schema}");
-        assert!(!upload_schema.contains("\"prepare\""), "{upload_schema}");
+            .expect("core_upload remains listed");
+        assert!(!upload.args_schema.to_string().contains("read_url"));
         let palette_names: HashSet<_> = palette.into_iter().map(|tool| tool.name).collect();
         assert!(palette_names.contains("core_search_memories"));
         assert!(!palette_names.contains("core_remember"));

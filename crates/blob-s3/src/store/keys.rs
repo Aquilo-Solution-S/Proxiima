@@ -76,9 +76,9 @@ impl CitedBlobStore {
     /// Did this store mint the locator a row names: its object store, its
     /// bucket, and the key derived from the row's own columns?
     ///
-    /// The ONE rule shared by `read_url`, the verified read and both of
+    /// The ONE rule shared by delivery admission, the verified read and both of
     /// reconcile's foreign-locator counts. A locator that fails it is not
-    /// this store's to presign, read or repair, and is answered like a
+    /// this store's to deliver, read or repair, and is answered like a
     /// missing row.
     pub(super) fn mints_locator(
         &self,
@@ -247,7 +247,7 @@ mod tests {
     /// The first four are the reason this is `==` and not `starts_with`.
     /// A prefix test honours every one of them, and each names a DIFFERENT
     /// S3 object than the row does — so weakening the comparison hands out
-    /// a presigned GET for bytes the row never claimed. The rest pin the
+    /// a delivery target for bytes the row never claimed. The rest pin the
     /// other plausible slips: trimming, case folding, and any test that
     /// looks at only part of the key.
     #[test]

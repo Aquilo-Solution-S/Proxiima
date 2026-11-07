@@ -79,6 +79,60 @@ at publication. It verifies the bytes and refuses an absent or revoked route;
 a later upload cannot replace its filename or object version. This read does
 not grant access to other uploads or uncited objects.
 
+## Blob download delivery
+
+A consuming host binds its download boundary once, while constructing its
+HTTP route, to one registered read tool or exact read action through `BuiltProxiima::blob_delivery(operation)` (or the running handle's equivalent). Binding
+refuses absent, resource, and write-operation keys; a dispatcher needs an exact
+read action. The retained boot witness must match the read service; a spiice cannot bind
+its shared service using another engine's witness or registry. The resulting
+host-only `CitedBlobDeliveryService` fixes that
+operation for its lifetime. The host chooses a key whose declared meaning
+includes byte delivery; that policy choice belongs to the consuming host's
+catalog, for example its own document-download action.
+
+Call `authorize_delivery` on that handle for each new download request.
+`CitedBlobDeliveryRequest` selects either `Owner` access or an exact
+`GoalPublication` (owner, Goal, Fact admission and cited object). Admission
+checks the caller's `CapabilitySet` against the bound operation using the
+existing dispatch policy, then validates authority expiry, runtime binding,
+and the owner row or exact publication route. This preserves existing
+mandatory-read behavior for the deployment's served surface; it does not
+create another capability policy. A caller or delegated phase scoped only to
+an unrelated command is refused before locator lookup.
+
+The backend returns the captured upload's canonical object and metadata. It
+makes no object-storage request and collects no bytes. The delivery handle
+and locator-bearing types are host-only; they are neither in the spiice SDK
+nor published in the shared services bag. Spiices retain `CitedBlobReadService`
+for bounded, locator-free verified byte reads.
+
+The returned `AdmittedCitedBlobDelivery` has no public constructor, `Clone`,
+or serialization. Consume it with `into_parts()` to hand the bound request
+and `CitedBlobDeliveryTarget` to the host's trusted delivery adapter. The target
+names the private object store, bucket, key, upload and immutable content
+metadata. These coordinates are host-only and must not enter client responses
+or logs. Hosts supply storage credentials and transfer the admitted object;
+Proxiima supplies neither a download URL nor a gateway implementation.
+The backend delivery port requires a private `CitedBlobDeliveryPermit` binding
+the checked caller and request. Only the service can mint it after admission;
+the concrete store and boot witness stay on `BuiltProxiima` and
+`RunningProxiima`, outside `AppContext` and shared spiice services.
+
+Every GET, HEAD, range, retry and cache-hit request needs a new admission using
+the authenticated caller's existing authority model. Refuse delivery if
+admission fails; do not cache successful authorization decisions. A transfer
+already admitted may finish. Preserve the exact admitted object and upload;
+never replace a Goal publication's captured upload with a later same-content
+upload. Serve untrusted files as attachments with a non-renderable content
+type and `X-Content-Type-Options: nosniff`. Client-side cached or downloaded
+bytes cannot be recalled. The [decision](decisions.md#blob-downloads-separate-authorization-from-delivery)
+records this authority and delivery boundary.
+
+`collect_verified` and `collect_verified_for_goal` remain bounded in-process
+reads for workers that need integrity-checked bytes. They share authorization
+with delivery admission and verify the complete body before returning it.
+
 ## Boot a composed host
 
 Implement `SpiiceApp` for the application bundle. Defaults are applied first;
@@ -338,7 +392,7 @@ caller's exact key set, including reads and resources. `CapabilitySet` applies
 both policies before the independent owner-role gate. Neither policy supplies
 owner authority.
 
-A dispatcher requires its declared action key, such as `core_upload:read_url`.
+A dispatcher requires its declared action key, such as `core_upload:prepare`.
 A resource requires its template or static key, such as `resource:memory`;
 `resource:how-to` controls the guide too. A bare dispatcher does not grant its
 actions. Listings and calls use the same actual declaration, including dynamic

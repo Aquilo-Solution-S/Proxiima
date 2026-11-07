@@ -12,8 +12,8 @@ use axum::response::IntoResponse;
 use proxiima_blob_s3::{CitedBlobStore, S3RuntimeConfig};
 use proxiima_core::authz::SystemAuthority;
 use proxiima_core::storage_ports::{
-    CitedBlobOwnerReconcileService, CitedBlobReadService, CitedBlobService,
-    DelegatedAuthorityService, OwnerDropProofHandle,
+    CitedBlobDeliveryBindingError, CitedBlobDeliveryService, CitedBlobOwnerReconcileService,
+    CitedBlobReadService, CitedBlobService, DelegatedAuthorityService, OwnerDropProofHandle,
 };
 use proxiima_core::{
     Authenticator, AuthzContext, DelegationRuntimeAuthority, EmbeddingClient, EmbeddingRouter,
@@ -639,6 +639,8 @@ struct Runtime {
     /// Shared with the object-purge worker, which sweeps every owner's
     /// expired uploads under it.
     system_authority: Arc<SystemAuthority>,
+    /// Kept on host runtime handles, never on `AppContext` or shared services.
+    delegation_runtime_authority: DelegationRuntimeAuthority,
     host_state_maintenance_authority: Option<proxiima_core::engine::HostStateMaintenanceAuthority>,
     handle: EngineHandle,
     /// The runtime's own token. Every task it started observes a child of
@@ -713,6 +715,7 @@ impl Runtime {
         Self {
             host,
             system_authority,
+            delegation_runtime_authority: booted.delegation_runtime_authority,
             host_state_maintenance_authority: booted.host_state_maintenance_authority,
             handle,
             _cancel_on_drop: cancel.clone().drop_guard(),
@@ -763,9 +766,63 @@ macro_rules! runtime_handle_methods {
             &self.runtime.host
         }
 
+        /// The S3 cited-blob store; `None` unless S3 is configured.
+        ///
+        /// This concrete backend accessor belongs to the boot handle. The
+        /// authority-free `AppContext::host()` intentionally exposes only
+        /// host-safe capabilities.
+        #[must_use]
+        pub const fn blobs(&self) -> Option<&CitedBlobStore> {
+            self.runtime.host.blobs.as_ref()
+        }
+
         #[must_use]
         pub fn system_authority(&self) -> &SystemAuthority {
             &self.runtime.system_authority
+        }
+
+        /// Bind host-managed download admission to this boot's registered read operation.
+        ///
+        /// Construct this handle once for the host's route. The retained boot
+        /// witness keeps a spiice's shared read service from creating its own
+        /// locator-bearing delivery handle with another engine or registry.
+        /// Returns `None` when this runtime has no cited-blob backend.
+        ///
+        /// The request-facing `AppContext` carries no boot witness:
+        ///
+        /// ```compile_fail
+        /// fn no_boot_delivery(context: &proxiima::AppContext, operation: proxiima::ScopeKey) {
+        ///     let _ = context.host().blob_delivery(operation);
+        /// }
+        /// ```
+        ///
+        /// It also cannot reach the concrete object-store backend:
+        ///
+        /// ```compile_fail
+        /// fn no_context_store(context: &proxiima::AppContext) {
+        ///     let _: Option<&proxiima::CitedBlobStore> = context.host().blobs();
+        /// }
+        /// ```
+        ///
+        /// # Errors
+        ///
+        /// Returns a binding error for an absent, write or inexact operation
+        /// key, or for a read service from another runtime.
+        pub fn blob_delivery(
+            &self,
+            operation: proxiima_core::ScopeKey,
+        ) -> Result<Option<CitedBlobDeliveryService>, CitedBlobDeliveryBindingError> {
+            let host = &self.runtime.host;
+            let Some(read) = host.services.get::<CitedBlobReadService>() else {
+                return Ok(None);
+            };
+            CitedBlobDeliveryService::bind(
+                (*read).clone(),
+                &host.registry,
+                operation,
+                &self.runtime.delegation_runtime_authority,
+            )
+            .map(Some)
         }
 
         /// Every owner's retention rows, for the host's retention clock
@@ -1183,7 +1240,7 @@ fn runtime_owner_access(
 
 /// Spiice services plus the substrate-owned services every composed
 /// binary gets for free. When S3 is configured, the store is published as
-/// [`CitedBlobService`] for presigned upload/read, [`CitedBlobReadService`]
+/// [`CitedBlobService`] for presigned uploads, [`CitedBlobReadService`]
 /// for bounded verified bytes, and the separately authorized
 /// [`CitedBlobOwnerReconcileService`] for redacted owner reports. Tools,
 /// REST, and spiice workers receive the same immutable service set.
@@ -1548,11 +1605,9 @@ mod tests {
                 region: "eu-central-1".to_string(),
                 key_pair: S3KeyPair::new("test-access-key".into(), "test-secret-key".into()),
                 endpoint_url: None,
-                public_endpoint_url: None,
                 plaintext_hosts: proxiima_core::PlaintextHosts::none(),
                 force_path_style: false,
                 upload_ttl_seconds: 900,
-                read_ttl_seconds: 300,
                 max_blob_bytes: None,
                 store_id: None,
             },

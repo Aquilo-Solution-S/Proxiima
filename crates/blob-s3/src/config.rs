@@ -9,10 +9,9 @@ use crate::BlobError;
 
 pub(crate) const DEFAULT_UPLOAD_TTL_SECONDS: u64 = 900;
 pub(crate) const DEFAULT_MAX_BLOB_BYTES: u64 = 100 * 1024 * 1024;
-pub(crate) const DEFAULT_READ_TTL_SECONDS: u64 = 300;
 
-/// `SigV4` ceiling on a presigned URL (7 days). Bound here: `read_url` /
-/// `prepare_upload` compute `now + Duration::seconds(ttl)` before
+/// `SigV4` ceiling on a presigned URL (7 days). Bound here: `prepare_upload`
+/// computes `now + Duration::seconds(ttl)` before
 /// `PresigningConfig::expires_in`, and that add panics on overflow.
 pub(crate) const MAX_PRESIGN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
@@ -68,16 +67,6 @@ impl std::fmt::Debug for S3KeyPair {
     }
 }
 
-/// Which presigned link a client signs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PresignedLinkKind {
-    /// A prepared upload `PUT`, signed for the store endpoint only.
-    Upload,
-    /// A completed object's `GET`. Signed for the public endpoint when one
-    /// is configured, otherwise for the store endpoint.
-    Read,
-}
-
 /// Runtime S3 target and TTL settings for cited-blob uploads.
 #[derive(Debug, Clone)]
 pub struct S3RuntimeConfig {
@@ -87,17 +76,12 @@ pub struct S3RuntimeConfig {
     /// Endpoint for internal object I/O and for presigned upload links.
     /// `None` uses AWS endpoint resolution.
     pub endpoint_url: Option<String>,
-    /// Endpoint presigned read links are signed for when holders reach a
-    /// different address from the store. `None` signs read links for
-    /// `endpoint_url`. Upload links never use this field.
-    pub public_endpoint_url: Option<String>,
-    /// Hosts, besides loopback, that may be named in either endpoint over
+    /// Hosts, besides loopback, that may be named in the endpoint over
     /// plaintext `http://`. Empty by default ([`PlaintextHosts::none`]).
     /// `from_lookup` reads it from `PROXIIMA_PLAINTEXT_HOSTS`.
     pub plaintext_hosts: PlaintextHosts,
     pub force_path_style: bool,
     pub upload_ttl_seconds: u64,
-    pub read_ttl_seconds: u64,
     /// Hard cap on a single blob's byte length. `None` selects the 100 MiB
     /// default when the store is constructed. Enforced at prepare time (declared
     /// `byte_len`) and again while streaming the uploaded object at completion,
@@ -170,31 +154,17 @@ impl S3RuntimeConfig {
             proxiima_core::ObjectStoreId::operator(store_id)
                 .map_err(|error| BlobError::Config(format!("PROXIIMA_S3_STORE_ID: {error}")))?;
         }
-        let public_endpoint_url = env_value(lookup, "PROXIIMA_S3_PUBLIC_ENDPOINT_URL");
-        if let Some(endpoint_url) = &public_endpoint_url {
-            validate_endpoint_url(
-                "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-                endpoint_url,
-                &plaintext_hosts,
-            )?;
-        }
         Ok(Some(Self {
             bucket,
             region,
             key_pair,
             endpoint_url,
-            public_endpoint_url,
             plaintext_hosts,
             force_path_style: parse_bool_env(lookup, "PROXIIMA_S3_FORCE_PATH_STYLE")?,
             upload_ttl_seconds: parse_presign_ttl_env(
                 lookup,
                 "PROXIIMA_S3_UPLOAD_TTL_SECONDS",
                 DEFAULT_UPLOAD_TTL_SECONDS,
-            )?,
-            read_ttl_seconds: parse_presign_ttl_env(
-                lookup,
-                "PROXIIMA_S3_READ_TTL_SECONDS",
-                DEFAULT_READ_TTL_SECONDS,
             )?,
             // Left `None` when unset rather than defaulted here: the field's
             // own contract is that `None` selects the default at store
@@ -237,31 +207,6 @@ impl S3RuntimeConfig {
     #[must_use]
     pub fn client(&self) -> Client {
         self.client_for_endpoint(self.endpoint_url.as_deref())
-    }
-
-    /// The endpoint one link kind is signed for.
-    ///
-    /// Upload selects `endpoint_url` and does not read `public_endpoint_url`.
-    /// Read selects `public_endpoint_url` when that field is set. When no
-    /// public endpoint is configured, read selects `endpoint_url`. A
-    /// configured public endpoint is never used for an upload, and a
-    /// configured store endpoint is never substituted for a configured
-    /// public read endpoint.
-    #[must_use]
-    pub(crate) fn presign_endpoint(&self, kind: PresignedLinkKind) -> Option<&str> {
-        match kind {
-            PresignedLinkKind::Upload => self.endpoint_url.as_deref(),
-            PresignedLinkKind::Read => match self.public_endpoint_url.as_deref() {
-                Some(endpoint) => Some(endpoint),
-                None => self.endpoint_url.as_deref(),
-            },
-        }
-    }
-
-    /// Client that signs one link kind. Object I/O stays on [`Self::client`].
-    #[must_use]
-    pub(crate) fn presigning_client(&self, kind: PresignedLinkKind) -> Client {
-        self.client_for_endpoint(self.presign_endpoint(kind))
     }
 
     fn client_for_endpoint(&self, endpoint_url: Option<&str>) -> Client {
@@ -423,97 +368,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn from_lookup_rejects_an_invalid_public_endpoint() {
-        for endpoint in [
-            "http://s3.example.com",
-            "s3.example.com",
-            "ftp://s3.example.com",
-            "https://",
-        ] {
-            let extra = [("PROXIIMA_S3_PUBLIC_ENDPOINT_URL", endpoint)];
-            let pairs = bucketed(&extra);
-            let error = S3RuntimeConfig::from_lookup(&env(&pairs))
-                .expect_err("invalid public endpoint must fail configuration");
-            let BlobError::Config(message) = error else {
-                panic!("wrong error variant");
-            };
-            assert!(
-                message.contains("PROXIIMA_S3_PUBLIC_ENDPOINT_URL"),
-                "public endpoint error must name its setting"
-            );
-        }
-    }
-
-    #[test]
-    fn public_endpoint_is_optional_and_an_unconfigured_lane_stays_absent() {
-        for value in [None, Some(""), Some("   ")] {
-            let extra: Vec<_> = value
-                .into_iter()
-                .map(|value| ("PROXIIMA_S3_PUBLIC_ENDPOINT_URL", value))
-                .collect();
-            let pairs = bucketed(&extra);
-            let config = S3RuntimeConfig::from_lookup(&env(&pairs))
-                .unwrap()
-                .expect("bucket is set");
-            assert!(config.public_endpoint_url.is_none());
-        }
-        let no_bucket = [("PROXIIMA_S3_PUBLIC_ENDPOINT_URL", "not an endpoint")];
-        assert!(
-            S3RuntimeConfig::from_lookup(&env(&no_bucket))
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn public_endpoint_uses_the_existing_endpoint_transport_policy() {
-        for (endpoint, hosts) in [
-            ("https://files.example/objects/", None),
-            ("http://localhost:9001/objects/", None),
-            ("http://127.0.0.1:9001/objects/", None),
-            ("http://[::1]:9001/objects/", None),
-            (
-                "http://public-gateway:9090/objects/",
-                Some("public-gateway"),
-            ),
-        ] {
-            let mut extra = vec![("PROXIIMA_S3_PUBLIC_ENDPOINT_URL", endpoint)];
-            if let Some(hosts) = hosts {
-                extra.push(("PROXIIMA_PLAINTEXT_HOSTS", hosts));
-            }
-            let pairs = bucketed(&extra);
-            let config = S3RuntimeConfig::from_lookup(&env(&pairs))
-                .unwrap()
-                .expect("bucket is set");
-            assert_eq!(config.public_endpoint_url.as_deref(), Some(endpoint));
-            assert!(config.endpoint_url.is_none());
-        }
-        let pairs = bucketed(&[(
-            "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-            "  https://files.example/objects/  ",
-        )]);
-        assert_eq!(
-            S3RuntimeConfig::from_lookup(&env(&pairs))
-                .unwrap()
-                .unwrap()
-                .public_endpoint_url
-                .as_deref(),
-            Some("https://files.example/objects/")
-        );
-        let pairs = bucketed(&[
-            (
-                "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-                "http://other-gateway:9090",
-            ),
-            ("PROXIIMA_PLAINTEXT_HOSTS", "public-gateway"),
-        ]);
-        let error = S3RuntimeConfig::from_lookup(&env(&pairs)).unwrap_err();
-        assert!(
-            matches!(error, BlobError::Config(message) if message.contains("PROXIIMA_S3_PUBLIC_ENDPOINT_URL") && message.contains("PROXIIMA_PLAINTEXT_HOSTS"))
-        );
-    }
-
     fn assert_missing_key_is_refused(missing: &str) {
         let pairs = bucketed(&[]);
         let lookup = |key: &str| {
@@ -617,31 +471,15 @@ mod tests {
                 "PROXIIMA_S3_ENDPOINT_URL",
                 "https://objects.internal.example/internal/",
             ),
-            (
-                "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-                "https://files.example/objects/",
-            ),
             ("PROXIIMA_S3_FORCE_PATH_STYLE", "true"),
         ])))
         .unwrap()
         .expect("bucket is set");
-        for (client, host, path) in [
-            (
-                config.client(),
-                "objects.internal.example",
-                "/internal/b/config-probe",
-            ),
-            (
-                config.presigning_client(PresignedLinkKind::Upload),
-                "objects.internal.example",
-                "/internal/b/config-probe",
-            ),
-            (
-                config.presigning_client(PresignedLinkKind::Read),
-                "files.example",
-                "/objects/b/config-probe",
-            ),
-        ] {
+        for (client, host, path) in [(
+            config.client(),
+            "objects.internal.example",
+            "/internal/b/config-probe",
+        )] {
             let url = presign_config_probe(&config, &client).await;
             assert_eq!(url.host_str(), Some(host));
             assert_eq!(url.path(), path);
@@ -661,81 +499,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unset_public_endpoint_presigns_the_internal_endpoint() {
+    async fn upload_signing_uses_the_configured_internal_endpoint() {
         let config = S3RuntimeConfig::from_lookup(&env(&bucketed(&[
             ("PROXIIMA_S3_ENDPOINT_URL", "http://127.0.0.1:9000"),
             ("PROXIIMA_S3_FORCE_PATH_STYLE", "true"),
         ])))
         .unwrap()
         .expect("bucket is set");
-        assert!(config.public_endpoint_url.is_none());
         let internal = presign_config_probe(&config, &config.client()).await;
-        let upload = presign_config_probe(
-            &config,
-            &config.presigning_client(PresignedLinkKind::Upload),
-        )
-        .await;
-        let read =
-            presign_config_probe(&config, &config.presigning_client(PresignedLinkKind::Read)).await;
-        for url in [&internal, &upload, &read] {
-            assert_eq!(url.scheme(), "http");
-            assert_eq!(url.host_str(), Some("127.0.0.1"));
-            assert_eq!(url.port(), Some(9000));
-            assert_eq!(url.path(), "/b/config-probe");
-        }
-    }
-
-    #[tokio::test]
-    async fn the_public_endpoint_prefix_is_part_of_the_signed_path() {
-        let config = S3RuntimeConfig::from_lookup(&env(&bucketed(&[
-            (
-                "PROXIIMA_S3_PUBLIC_ENDPOINT_URL",
-                "https://files.example/objects/",
-            ),
-            ("PROXIIMA_S3_FORCE_PATH_STYLE", "true"),
-        ])))
-        .unwrap()
-        .expect("bucket is set");
-        assert!(config.endpoint_url.is_none());
-        let internal = presign_config_probe(&config, &config.client()).await;
-        let upload = presign_config_probe(
-            &config,
-            &config.presigning_client(PresignedLinkKind::Upload),
-        )
-        .await;
-        assert!(
-            internal.host_str() != Some("files.example"),
-            "public-only configuration leaves internal endpoint resolution unchanged"
-        );
-        assert_eq!(
-            upload.host_str(),
-            internal.host_str(),
-            "an upload link does not fall back to the public endpoint"
-        );
-        let prefixed =
-            presign_config_probe(&config, &config.presigning_client(PresignedLinkKind::Read)).await;
-        let mut root_endpoint = config.clone();
-        root_endpoint.public_endpoint_url = Some("https://files.example".into());
-        let unprefixed = presign_config_probe(
-            &root_endpoint,
-            &root_endpoint.presigning_client(PresignedLinkKind::Read),
-        )
-        .await;
-        assert_eq!(prefixed.path(), "/objects/b/config-probe");
-        assert_eq!(unprefixed.path(), "/b/config-probe");
-        assert!(
-            signed_query_value(&prefixed, "X-Amz-Date")
-                == signed_query_value(&unprefixed, "X-Amz-Date")
-        );
-        assert!(
-            signed_query_value(&prefixed, "X-Amz-Credential")
-                == signed_query_value(&unprefixed, "X-Amz-Credential")
-        );
-        assert!(
-            signed_query_value(&prefixed, "X-Amz-Signature")
-                != signed_query_value(&unprefixed, "X-Amz-Signature"),
-            "the SDK signs the endpoint prefix before returning the URL"
-        );
+        assert_eq!(internal.scheme(), "http");
+        assert_eq!(internal.host_str(), Some("127.0.0.1"));
+        assert_eq!(internal.port(), Some(9000));
+        assert_eq!(internal.path(), "/b/config-probe");
     }
 
     #[test]

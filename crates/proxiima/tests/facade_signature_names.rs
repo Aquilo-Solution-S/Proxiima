@@ -91,10 +91,10 @@ facade_names! {
         both_tiers: [],
     }
 
-    // Needed by `CitedBlobStore::{prepare_upload, stage_upload, abort_upload, read_url,
+    // Needed by `CitedBlobStore::{prepare_upload, stage_upload, abort_upload,
     // cold_store, sweep_expired_uploads}`.
     s3_lane {
-        host_only: [CitedBlobReadUrlOutcomeTs, CitedBlobReadUrlTs, CitedBlobUploadAbortOutcomeTs, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareOutcomeTs, CitedBlobUploadPrepareTs, PresignedHeaderTs, S3ColdStore, UploadExpirySweepOutcome],
+        host_only: [CitedBlobUploadAbortOutcomeTs, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareOutcomeTs, CitedBlobUploadPrepareTs, PresignedHeaderTs, S3ColdStore, UploadExpirySweepOutcome],
         both_tiers: [],
     }
 
@@ -208,8 +208,8 @@ facade_names! {
 
     // Needed by `CitedBlobService`, `CitedBlobStore`, `Engine::complete_upload_as_fact`.
     cited_blob_service {
-        host_only: [],
-        both_tiers: [CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadPrepared, UploadedBlobPayload],
+        host_only: [AdmittedCitedBlobDelivery, CitedBlobDeliveryBindingError, CitedBlobDeliveryPermit, CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobDeliveryTarget],
+        both_tiers: [CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadPrepared, UploadedBlobPayload],
     }
 
     // Needed by `CoreMcpTools::into_dynamic_handler`, `McpStreamableService`.

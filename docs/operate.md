@@ -159,12 +159,22 @@ request headers.
 
 ## Object storage
 
-Set `PROXIIMA_S3_PUBLIC_ENDPOINT_URL` when holders of presigned read links
-reach a different address from the host. Presigned upload links are signed
-for `PROXIIMA_S3_ENDPOINT_URL` and do not use the public endpoint. The
-presigner shares the configured credentials, region, bucket, path style and
-lifetimes with the object client. Staging, verified reads, reconciliation
-and object purge use `PROXIIMA_S3_ENDPOINT_URL`.
+Consuming hosts own download delivery. Use the
+[download authorization interface](host-integration.md#blob-download-delivery)
+before serving any new request, including a CDN cache hit or range retry.
+Keep the object origin private; give storage coordinates only to the trusted
+delivery adapter. Proxiima authorizes the exact object without fetching its
+bytes. Delivery infrastructure and data transfer still incur their own costs.
+
+When replacing a deployment that issued presigned GET URLs, stop old issuers
+and account for outstanding links before claiming per-request authorization.
+Removing the issuing API does not revoke a URL already held by a client; let
+those URLs expire or revoke their signing authority. Their validity follows
+[S3's signing-credential and expiry rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html).
+
+Presigned upload links, staging, verified reads, reconciliation and object
+purge use `PROXIIMA_S3_ENDPOINT_URL` with the configured credentials, region,
+bucket and path style.
 
 The upload `PUT` signs the declared `byte_len` as its `Content-Length`, so the
 store refuses a body of any other length before it lands; a proxy in front of
@@ -173,11 +183,10 @@ the declared length, at most eight uploads at a time per process; a ninth
 waits for a slot.
 
 SigV4 signs the Host, including its port, the complete path, including any
-endpoint prefix, and the query. A proxy in front of a read link must forward
+endpoint prefix, and the query. A proxy in front of an upload link must forward
 these unchanged to the store, or verify that original signed request itself
 before translating it. Configure each address before signing; a signed link
-cannot be rewritten to another address or path. Both endpoint settings use
-the same HTTPS or allowed-plaintext host policy.
+cannot be rewritten to another address or path. The endpoint uses the HTTPS or allowed-plaintext host policy.
 
 Every upload and every purge debt names the object store that holds its
 bytes. By default the name is derived from `PROXIIMA_S3_ENDPOINT_URL` and

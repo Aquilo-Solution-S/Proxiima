@@ -6,8 +6,8 @@
 //! change belongs in `upload.rs` or `read.rs`, never in this file.
 
 use proxiima_core::storage_ports::{
-    CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobStaged, CitedBlobUploadAborted,
-    CitedBlobUploadHeader, CitedBlobUploadPrepared,
+    CitedBlobHeld, CitedBlobPort, CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadHeader,
+    CitedBlobUploadPrepared,
 };
 use proxiima_core::{AuthzContext, OwnerId, StorageError};
 use time::OffsetDateTime;
@@ -15,9 +15,7 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use super::CitedBlobStore;
-use super::dto::{
-    CitedBlobReadUrlTs, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareTs,
-};
+use super::dto::{CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareTs};
 use crate::error::BlobError;
 
 /// Map a [`BlobError`] onto the core storage-error taxonomy for the
@@ -136,28 +134,6 @@ impl CitedBlobPort for CitedBlobStore {
         .map_err(blob_error_to_storage)?;
         Ok(CitedBlobUploadAborted {
             aborted: outcome.aborted,
-        })
-    }
-
-    async fn read_url(
-        &self,
-        authz: &AuthzContext,
-        owner: OwnerId,
-        cited_object_id: uuid::Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError> {
-        let outcome = Self::read_url(
-            self,
-            authz,
-            CitedBlobReadUrlTs {
-                owner,
-                cited_object_id: cited_object_id.to_string(),
-            },
-        )
-        .await
-        .map_err(blob_error_to_storage)?;
-        Ok(CitedBlobReadUrl {
-            read_url: outcome.read_url,
-            expires_at: parse_port_time(&outcome.expires_at)?,
         })
     }
 

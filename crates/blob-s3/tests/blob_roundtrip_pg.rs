@@ -1,16 +1,16 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::primitives::ByteStream;
 use proxiima_blob_s3::{
-    BlobError, CitedBlobReadUrlOutcomeTs, CitedBlobReadUrlTs, CitedBlobStore,
-    CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareTs, S3RuntimeConfig,
+    BlobError, CitedBlobStore, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs,
+    CitedBlobUploadPrepareTs, S3RuntimeConfig,
 };
 use proxiima_core::engine::{Engine, UploadCompleted, UploadCompletionExpectation};
 use proxiima_core::error::ProtocolError;
 use proxiima_core::storage_ports::{
-    CitedBlobHeld, CitedBlobIntegrityMismatch, CitedBlobPort, CitedBlobReadError,
-    CitedBlobReadPort, CitedBlobReadUrl, CitedBlobReconcileOutcome, CitedBlobService,
-    CitedBlobStaged, CitedBlobUploadAborted, CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS,
-    OwnerInversePort,
+    CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobHeld, CitedBlobIntegrityMismatch,
+    CitedBlobPort, CitedBlobReadError, CitedBlobReadPort, CitedBlobReadService,
+    CitedBlobReconcileOutcome, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+    CitedBlobUploadPrepared, MAX_HELD_BLOB_DIGESTS, OwnerInversePort,
 };
 use proxiima_core::test_fixtures::owner_fixture;
 use proxiima_core::{
@@ -35,9 +35,6 @@ use proxiima_pg_testkit::{db_url, drop_db, unique_db_name};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::create_core_db;
 use uuid::Uuid;
-
-#[path = "blob_roundtrip_pg/public_endpoint.rs"]
-mod public_endpoint;
 
 #[path = "blob_roundtrip_pg/lifecycle.rs"]
 mod lifecycle;
@@ -198,15 +195,6 @@ impl CitedBlobPort for CountingBlobPort {
         CitedBlobPort::abort_upload(&self.inner, authz, owner, upload_id).await
     }
 
-    async fn read_url(
-        &self,
-        authz: &AuthzContext,
-        owner: OwnerId,
-        cited_object_id: Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError> {
-        CitedBlobPort::read_url(&self.inner, authz, owner, cited_object_id).await
-    }
-
     async fn find_held_blobs(
         &self,
         authz: &AuthzContext,
@@ -282,7 +270,6 @@ fn s3_config_for_dev() -> S3RuntimeConfig {
             .expect("S3 target required: start docker-compose.dev.yml and set PROXIIMA_S3_*"),
         region: std::env::var("PROXIIMA_S3_REGION").expect("PROXIIMA_S3_REGION"),
         endpoint_url: std::env::var("PROXIIMA_S3_ENDPOINT_URL").ok(),
-        public_endpoint_url: None,
         plaintext_hosts: proxiima_core::PlaintextHosts::none(),
         key_pair: proxiima_blob_s3::S3KeyPair::new(
             std::env::var("PROXIIMA_S3_ACCESS_KEY_ID").expect("PROXIIMA_S3_ACCESS_KEY_ID"),
@@ -290,7 +277,6 @@ fn s3_config_for_dev() -> S3RuntimeConfig {
         ),
         force_path_style: true,
         upload_ttl_seconds: 900,
-        read_ttl_seconds: 900,
         max_blob_bytes: None,
         store_id: None,
     }
@@ -507,20 +493,8 @@ async fn prepare_then_complete_then_read_roundtrip() {
         .await
         .expect("complete")
         .blob;
-    let url = store
-        .read_url(
-            &ctx,
-            CitedBlobReadUrlTs {
-                owner,
-                cited_object_id: completed.cited_object_id.clone(),
-            },
-        )
-        .await
-        .expect("read url");
-    // `complete` moves the object from its pending key to the final key
-    // derived from the upload row (docs/data-and-erasure.md §Large artefact storage), so the
-    // presigned GET must reference the completed blob's key, not the
-    // pending upload's.
+    // `complete` moves the object from its pending key to the final key;
+    // authorization returns that immutable locator to the trusted host.
     let cited_object_id = Uuid::parse_str(&completed.cited_object_id).expect("cited object id");
     let final_key: (String,) =
         sqlx::query_as("SELECT object_key FROM proxiima_core.blob_uploads WHERE blob_id = $1")
@@ -528,18 +502,13 @@ async fn prepare_then_complete_then_read_roundtrip() {
             .fetch_one(&pool)
             .await
             .expect("completed blob row");
-    assert!(
-        url.read_url.contains(&final_key.0),
-        "presigned GET references the final object key"
-    );
+    let target = authorize_owner_delivery(&store, &ctx, owner, cited_object_id)
+        .await
+        .expect("delivery authorization");
+    assert_eq!(target.object_key, final_key.0);
     assert!(
         final_key.0.starts_with("objects/"),
         "completed blob moved out of pending/"
-    );
-    assert!(
-        url.read_url
-            .contains("response-content-disposition=attachment"),
-        "presigned GET forces an attachment disposition (no inline stored-XSS)"
     );
 
     drop(pool);
@@ -1073,15 +1042,6 @@ async fn conflicting_canonical_object_is_not_overwritten() {
     drop_db(&db_name).await.expect("drop db");
 }
 
-/// One response header as a string, or empty when absent.
-fn header<'a>(response: &'a reqwest::Response, name: &str) -> &'a str {
-    response
-        .headers()
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-}
-
 /// Prepare an upload and put its bytes at the pending key, returning the
 /// `upload_id`. The concurrency tests below need several of these.
 async fn staged_upload(
@@ -1214,19 +1174,11 @@ async fn a_completion_racing_an_abort_never_reports_a_committed_write_as_failed(
     drop_db(&db_name).await.expect("drop db");
 }
 
-/// The whole transfer contract, executed rather than described: PUT the
-/// bytes to the presigned URL as a real client does, complete, then GET the
-/// presigned download and compare what comes back.
-///
-/// Every other test in this file substitutes the SDK for the upload hop and
-/// asserts on the *shape* of the download URL. Neither presigned URL was
-/// ever dereferenced, so "a completed PDF is retrievable from Proxiima" had
-/// no carrier at any layer — the two hops that actually carry bytes were
-/// the untested ones. The headers matter: `prepare_upload` presigns with
-/// `content_type`, so a client that ignores `prepared.headers` gets
-/// `SignatureDoesNotMatch`, and that contract was documented but unproven.
+/// Exercise the client's presigned PUT with its required headers, complete
+/// the upload, and compare the bytes returned by the verified-read service.
+/// External download delivery belongs to the consuming host.
 #[tokio::test]
-async fn presigned_put_and_get_carry_the_bytes() {
+async fn presigned_put_and_verified_read_carry_the_bytes() {
     if !S3RuntimeConfig::present_in_env() {
         eprintln!("skipped: PROXIIMA_S3_* unset");
         return;
@@ -1280,41 +1232,20 @@ async fn presigned_put_and_get_carry_the_bytes() {
         .expect("complete")
         .blob;
 
-    // Hop 2: the client's GET.
-    let url = store
-        .read_url(
+    // Hop 2: trusted in-process verification; external delivery consumes the
+    // authorization interface and is intentionally not exercised here.
+    let fetched = CitedBlobReadService::new(Arc::new(store.clone()))
+        .collect_verified(
             &ctx,
-            CitedBlobReadUrlTs {
-                owner,
-                cited_object_id: completed.cited_object_id.clone(),
-            },
+            owner,
+            Uuid::parse_str(&completed.cited_object_id).expect("cited object id"),
+            NonZeroU64::new(body.len() as u64).expect("non-zero body"),
         )
         .await
-        .expect("read url");
-    let response = http.get(&url.read_url).send().await.expect("presigned GET");
-    assert!(
-        response.status().is_success(),
-        "presigned GET failed: {}",
-        response.status()
-    );
-
-    // Asserted on the RESPONSE, not on the URL string we asked for: this is
-    // what a browser actually receives, and it is the only assertion in the
-    // repo that fails if the production overrides are removed.
+        .expect("verified read")
+        .bytes;
     assert_eq!(
-        header(&response, "content-disposition"),
-        "attachment",
-        "the download must not render inline"
-    );
-    assert_eq!(
-        header(&response, "content-type"),
-        "application/octet-stream",
-        "a stored text/html mime must not execute in the browser"
-    );
-
-    let fetched = response.bytes().await.expect("read body");
-    assert_eq!(
-        fetched.as_ref(),
+        fetched.as_slice(),
         body,
         "the bytes that came back are not the bytes that went up"
     );
@@ -1330,6 +1261,7 @@ async fn forge_uploaded_blob_row(
     bucket: &str,
     object_key: &str,
     content_hash_seed: u8,
+    object_store: &proxiima_core::ObjectStoreId,
 ) -> Uuid {
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind)
@@ -1363,15 +1295,7 @@ async fn forge_uploaded_blob_row(
     .bind(object_key)
     .bind(blob_id)
     .bind(vec![content_hash_seed; 32])
-    // The store a row in this bucket would record: only the key is forged.
-    .bind(
-        proxiima_core::ObjectStoreId::derive_s3(
-            std::env::var("PROXIIMA_S3_ENDPOINT_URL").ok().as_deref(),
-            bucket,
-        )
-        .expect("forged store id")
-        .to_string(),
-    )
+    .bind(object_store.as_str())
     .execute(pool)
     .await
     .expect("forged blob_uploads row");
@@ -1385,6 +1309,9 @@ async fn forge_foreign_locator(pool: &sqlx::PgPool, owner_id: Uuid) {
         "some-other-bucket",
         "elsewhere/object",
         0xAB,
+        &s3_config_for_dev()
+            .object_store_id()
+            .expect("fixture store id"),
     )
     .await;
 }
@@ -1431,13 +1358,44 @@ async fn complete_upload_fixture(
     Ok((completed.cited_object_id, stored.0))
 }
 
-/// `read_url` presigns only locators the store itself wrote. Presigning is
-/// offline — without the gate, a locator row the store did not mint (here
-/// written by hand) yields a working GET, signed with the substrate's
-/// credentials, for any object the substrate's role can read. Forged rows
-/// must answer exactly like missing ones.
+async fn assert_delivery_needs_no_object_io(
+    pg: &PgStorage,
+    config: &S3RuntimeConfig,
+    ctx: &AuthzContext,
+    owner: OwnerId,
+    object: Uuid,
+    expected_key: &str,
+) {
+    // A private delivery adapter gets metadata without an S3 request. Keep an
+    // unserved endpoint open so any accidental I/O is both observable and bounded.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe endpoint");
+    listener.set_nonblocking(true).expect("nonblocking probe");
+    let mut metadata_only_config = config.clone();
+    metadata_only_config.endpoint_url = Some(format!("http://{}", listener.local_addr().unwrap()));
+    let metadata_only = CitedBlobStore::new(
+        pg.clone_pool_for_backend(),
+        metadata_only_config,
+        pg.platform_scope_for_host(),
+    )
+    .expect("same store identity at another internal endpoint");
+    let delivery_target = tokio::time::timeout(
+        Duration::from_secs(5),
+        authorize_owner_delivery(&metadata_only, ctx, owner, object),
+    )
+    .await
+    .expect("admission performs no object I/O")
+    .expect("canonical metadata admitted");
+    assert_eq!(delivery_target.object_key, expected_key);
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "delivery admission must make no connection to object storage"
+    );
+}
+
+/// Delivery authorization admits only locators the store itself wrote. A
+/// locator row the store did not mint must answer exactly like a missing row.
 #[tokio::test]
-async fn read_url_refuses_locators_the_store_did_not_write() {
+async fn delivery_authorization_refuses_locators_the_store_did_not_write() {
     if !S3RuntimeConfig::present_in_env() {
         eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
         return;
@@ -1445,7 +1403,8 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
 
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
-    let config = s3_config_for_dev();
+    let mut config = s3_config_for_dev();
+    config.store_id = Some(format!("delivery-{}", Uuid::now_v7()));
     let store = CitedBlobStore::new(
         pg.clone_pool_for_backend(),
         config.clone(),
@@ -1459,14 +1418,7 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
     ));
 
     // The baseline answer for a cited object that does not exist at all.
-    let missing = store
-        .read_url(
-            &ctx,
-            CitedBlobReadUrlTs {
-                owner,
-                cited_object_id: Uuid::now_v7().to_string(),
-            },
-        )
+    let missing = authorize_owner_delivery(&store, &ctx, owner, Uuid::now_v7())
         .await
         .expect_err("missing cited object");
 
@@ -1476,6 +1428,16 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
         complete_upload_fixture(&pg, &store, &config, &pool, &ctx, owner)
             .await
             .expect("genuine upload");
+
+    assert_delivery_needs_no_object_io(
+        &pg,
+        &config,
+        &ctx,
+        owner,
+        Uuid::parse_str(&genuine_id).expect("cited object id"),
+        &genuine_key,
+    )
+    .await;
 
     // Each clause of the gate is forged against on its own, so dropping
     // either one fails a case: (a) another bucket under this owner's real
@@ -1488,6 +1450,7 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
         "not-the-configured-bucket",
         &genuine_key,
         1,
+        store.store_id(),
     )
     .await;
     let foreign_key = forge_uploaded_blob_row(
@@ -1496,6 +1459,7 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
         &config.bucket,
         &format!("objects/{}", Uuid::now_v7()),
         2,
+        store.store_id(),
     )
     .await;
     let both_foreign = forge_uploaded_blob_row(
@@ -1504,6 +1468,7 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
         "not-the-configured-bucket",
         &format!("objects/{}", Uuid::now_v7()),
         3,
+        store.store_id(),
     )
     .await;
 
@@ -1513,8 +1478,15 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
     // Every owner predicate passes. Only re-deriving the key from the
     // forged row's own `upload_id` — a server-minted primary key the
     // forger cannot choose — refuses it.
-    let own_owner_foreign_key =
-        forge_uploaded_blob_row(&pool, owner.into_inner(), &config.bucket, &genuine_key, 4).await;
+    let own_owner_foreign_key = forge_uploaded_blob_row(
+        &pool,
+        owner.into_inner(),
+        &config.bucket,
+        &genuine_key,
+        4,
+        store.store_id(),
+    )
+    .await;
 
     for (case, forged_id) in [
         ("foreign bucket, own key", foreign_bucket),
@@ -1522,16 +1494,9 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
         ("foreign bucket and key", both_foreign),
         ("own owner, another row's key", own_owner_foreign_key),
     ] {
-        let err = store
-            .read_url(
-                &ctx,
-                CitedBlobReadUrlTs {
-                    owner,
-                    cited_object_id: forged_id.to_string(),
-                },
-            )
+        let err = authorize_owner_delivery(&store, &ctx, owner, forged_id)
             .await
-            .expect_err(&format!("forged locator ({case}) must not presign"));
+            .expect_err(&format!("forged locator ({case}) must not authorize"));
         assert_eq!(
             err.to_string(),
             missing.to_string(),
@@ -1541,16 +1506,14 @@ async fn read_url_refuses_locators_the_store_did_not_write() {
 
     // The same bytes at the same key, reached through the row the store
     // wrote: the gate discriminates on provenance, not on the locator.
-    store
-        .read_url(
-            &ctx,
-            CitedBlobReadUrlTs {
-                owner,
-                cited_object_id: genuine_id,
-            },
-        )
-        .await
-        .expect("a locator this store wrote still presigns");
+    authorize_owner_delivery(
+        &store,
+        &ctx,
+        owner,
+        Uuid::parse_str(&genuine_id).expect("id"),
+    )
+    .await
+    .expect("a locator this store wrote still authorizes");
 
     drop(pool);
     drop_db(&db_name).await.expect("drop db");
@@ -1644,17 +1607,10 @@ async fn a_transfer_moves_the_citation_without_copying_the_object() {
     assert!(versions.delete_markers().is_empty());
 
     // The destination reads the citation; the source cannot.
-    dest_ctx_reads(&store, &dest_ctx, destination, completed.cited_object_id)
+    authorize_owner_delivery(&store, &dest_ctx, destination, completed.cited_object_id)
         .await
         .expect("destination reads the transferred citation");
-    store
-        .read_url(
-            &ctx,
-            CitedBlobReadUrlTs {
-                owner: source,
-                cited_object_id: completed.cited_object_id.to_string(),
-            },
-        )
+    authorize_owner_delivery(&store, &ctx, source, completed.cited_object_id)
         .await
         .expect_err("the source no longer holds the citation");
 
@@ -1732,7 +1688,7 @@ async fn erase_follows_the_transfer_rather_than_the_key() {
             .is_some(),
         "a source erase must not reach bytes it transferred away"
     );
-    dest_ctx_reads(&store, &dest_ctx, destination, completed.cited_object_id)
+    authorize_owner_delivery(&store, &dest_ctx, destination, completed.cited_object_id)
         .await
         .expect("the destination still reads its citation after the source erase");
 
@@ -1837,21 +1793,34 @@ async fn head(
         })
 }
 
-async fn dest_ctx_reads(
+async fn authorize_owner_delivery(
     store: &CitedBlobStore,
     ctx: &AuthzContext,
     owner: OwnerId,
     cited_object_id: Uuid,
-) -> Result<CitedBlobReadUrlOutcomeTs, BlobError> {
-    store
-        .read_url(
+) -> Result<proxiima_core::storage_ports::CitedBlobDeliveryTarget, CitedBlobReadError> {
+    delivery_service(store)
+        .authorize_delivery(
             ctx,
-            CitedBlobReadUrlTs {
+            CitedBlobDeliveryRequest::Owner {
                 owner,
-                cited_object_id: cited_object_id.to_string(),
+                cited_object_id,
             },
         )
         .await
+        .map(|admitted| admitted.into_parts().1)
+}
+
+fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
+    let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let (_, _, runtime_authority) = Engine::new(registry.clone()).into_runtime_authorities();
+    CitedBlobDeliveryService::bind(
+        CitedBlobReadService::new_runtime(Arc::new(store.clone()), &runtime_authority),
+        &registry,
+        proxiima_core::ScopeKey::parse("core_search_memories").expect("registered read scope"),
+        &runtime_authority,
+    )
+    .expect("delivery scope is registered")
 }
 
 /// Once the authz gate has passed for the caller's own owner, the SQL
@@ -1860,10 +1829,6 @@ async fn dest_ctx_reads(
 /// its own authority, must be refused on A's upload and cited-object ids
 /// — and must not disturb A's rows in the attempt.
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one two-owner scenario verifies refusal and retained upload state"
-)]
 async fn cross_owner_ids_are_refused_under_the_other_owners_authz() {
     if !S3RuntimeConfig::present_in_env() {
         eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
@@ -1949,30 +1914,29 @@ async fn cross_owner_ids_are_refused_under_the_other_owners_authz() {
             .expect("status");
     assert_eq!(status.0, "completed");
 
-    let err = store
-        .read_url(
-            &ctx_b,
-            CitedBlobReadUrlTs {
-                owner: owner_b,
-                cited_object_id: completed.cited_object_id.clone(),
-            },
-        )
-        .await
-        .expect_err("A's cited object id under B's owner must be refused");
-    assert!(matches!(err, BlobError::State(_)), "got {err:?}");
+    let err = authorize_owner_delivery(
+        &store,
+        &ctx_b,
+        owner_b,
+        Uuid::parse_str(&completed.cited_object_id).expect("cited object id"),
+    )
+    .await
+    .expect_err("A's cited object id under B's owner must be refused");
+    assert!(matches!(err, CitedBlobReadError::NotFound), "got {err:?}");
 
     // Naming A's owner outright fails the authz gate before any SQL runs.
-    let err = store
-        .read_url(
-            &ctx_b,
-            CitedBlobReadUrlTs {
-                owner: owner_a,
-                cited_object_id: completed.cited_object_id,
-            },
-        )
-        .await
-        .expect_err("A's owner under B's authz must be denied");
-    assert!(matches!(err, BlobError::Denied(_)), "got {err:?}");
+    let err = authorize_owner_delivery(
+        &store,
+        &ctx_b,
+        owner_a,
+        Uuid::parse_str(&completed.cited_object_id).expect("cited object id"),
+    )
+    .await
+    .expect_err("A's owner under B's authz must be denied");
+    assert!(
+        matches!(err, CitedBlobReadError::AccessDenied),
+        "got {err:?}"
+    );
 
     drop(pool);
     drop_db(&db_name).await.expect("drop db");

@@ -53,15 +53,6 @@ impl CitedBlobPort for AbortAfterStagePort {
         CitedBlobPort::abort_upload(&self.inner, authz, owner, upload_id).await
     }
 
-    async fn read_url(
-        &self,
-        authz: &AuthzContext,
-        owner: OwnerId,
-        cited_object_id: Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError> {
-        CitedBlobPort::read_url(&self.inner, authz, owner, cited_object_id).await
-    }
-
     async fn find_held_blobs(
         &self,
         authz: &AuthzContext,

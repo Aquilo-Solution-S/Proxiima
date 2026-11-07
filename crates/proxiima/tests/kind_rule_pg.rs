@@ -23,8 +23,8 @@ use proxiima_blob_s3::CitedBlobUploadPrepareTs;
 use proxiima_core::error::{ErrorCode, ProtocolError};
 use proxiima_core::llm::BoundEmbeddingClient;
 use proxiima_core::storage_ports::{
-    CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged,
-    CitedBlobUploadAborted, CitedBlobUploadPrepared,
+    CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+    CitedBlobUploadPrepared,
 };
 use proxiima_core::test_fixtures::{ConstantEmbedding, TestEmbeddingRouter};
 use proxiima_core::{
@@ -659,15 +659,6 @@ impl CitedBlobPort for StagedBlobs {
         Ok(CitedBlobUploadAborted { aborted: true })
     }
 
-    async fn read_url(
-        &self,
-        _: &AuthzContext,
-        _: OwnerId,
-        _: Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError> {
-        Err(StorageError::Internal("completion only".into()))
-    }
-
     async fn find_held_blobs(
         &self,
         _: &AuthzContext,
@@ -719,7 +710,7 @@ async fn assert_s3_writes(
     let authz = context(group, role)
         .narrowed_to_owner(group)
         .expect("the role names the group");
-    let store = built.host().blobs().ok_or("S3 configured")?;
+    let store = built.blobs().ok_or("S3 configured")?;
     let upload: TestResult = async {
         let prepared = store
             .prepare_upload(

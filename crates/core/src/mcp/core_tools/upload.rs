@@ -2,9 +2,8 @@
 //!
 //! The MCP transport caps request bodies, so artefact bytes never travel
 //! through a tool call: `prepare` mints a presigned S3 `PUT`, the client
-//! uploads the bytes directly, `complete` verifies and returns the
-//! canonical `cited_object_id`, and `read_url` mints a presigned `GET`
-//! later. The tool talks to the host-wired
+//! uploads the bytes directly, and `complete` verifies and returns the
+//! canonical `cited_object_id`. The tool talks to the host-wired
 //! [`CitedBlobService`] service; a host without S3 configured fails
 //! typed at call time with a `PROXIIMA_S3_*` hint.
 
@@ -23,7 +22,6 @@ use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::storage_ports::CitedBlobService;
 use crate::{AccessKind, AuthzContext, OwnerId};
 
-use super::facts_citing_object::parse_cited_object_id;
 use super::memory_spaces::resolve_space_for_write;
 
 pub const CORE_UPLOAD_ACTIONS: &[CoreActionMeta] = &[
@@ -45,12 +43,6 @@ pub const CORE_UPLOAD_ACTIONS: &[CoreActionMeta] = &[
         scope_key: protocol_action::CORE_UPLOAD_ABORT,
         produces_schema_ids: &[],
     },
-    CoreActionMeta {
-        tool: CoreUploadTool::NAME,
-        action: "read_url",
-        scope_key: protocol_action::CORE_UPLOAD_READ_URL,
-        produces_schema_ids: &[],
-    },
 ];
 
 #[derive(Debug, Default)]
@@ -67,9 +59,7 @@ pub struct UploadPrepareArgs {
     )]
     pub byte_len: u64,
     #[serde(default)]
-    #[schemars(
-        description = "Memory space key from core_memory_spaces; omit for current owner. complete and abort need prepare's space, read_url the cited object's space."
-    )]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
     pub space: Option<String>,
 }
 
@@ -78,9 +68,7 @@ pub struct UploadCompleteArgs {
     #[schemars(description = "The `upload_id` returned by the prepare action.")]
     pub upload_id: String,
     #[serde(default)]
-    #[schemars(
-        description = "Memory space key from core_memory_spaces; omit for current owner. complete and abort need prepare's space, read_url the cited object's space."
-    )]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
     pub space: Option<String>,
 }
 
@@ -89,22 +77,7 @@ pub struct UploadAbortArgs {
     #[schemars(description = "The `upload_id` returned by the prepare action.")]
     pub upload_id: String,
     #[serde(default)]
-    #[schemars(
-        description = "Memory space key from core_memory_spaces; omit for current owner. complete and abort need prepare's space, read_url the cited object's space."
-    )]
-    pub space: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UploadReadUrlArgs {
-    #[schemars(
-        description = "Cited object uuid from the complete action (or a citation read-back), as a bare UUID."
-    )]
-    pub cited_object_id: String,
-    #[serde(default)]
-    #[schemars(
-        description = "Memory space key from core_memory_spaces; omit for current owner. complete and abort need prepare's space, read_url the cited object's space."
-    )]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
     pub space: Option<String>,
 }
 
@@ -118,8 +91,6 @@ pub enum CoreUploadArgs {
     Complete(UploadCompleteArgs),
     /// Abort a pending upload and discard its pending object.
     Abort(UploadAbortArgs),
-    /// Mint a presigned download URL for a completed cited blob.
-    ReadUrl(UploadReadUrlArgs),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -185,20 +156,11 @@ pub struct UploadAbortOutput {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-pub struct UploadReadUrlOutput {
-    pub read_url: String,
-    #[serde(with = "time::serde::rfc3339")]
-    #[schemars(with = "String")]
-    pub expires_at: time::OffsetDateTime,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum CoreUploadOutput {
     Prepare(UploadPrepareOutput),
     Complete(UploadCompleteOutput),
     Abort(UploadAbortOutput),
-    ReadUrl(UploadReadUrlOutput),
 }
 
 impl McpTool for CoreUploadTool {
@@ -209,7 +171,7 @@ impl McpTool for CoreUploadTool {
          `headers`; HTTP PUT the raw bytes there with exactly those headers before `expires_at`; \
          `complete` verifies them, returns the `cited_object_id`, and records a `core/upload-v1` \
          Fact citing it (`fact`), findable by file name. Cite the artefact from further Facts via \
-         core_remember's `citation.cited_object_id`; `read_url` returns a download URL.";
+         core_remember's `citation.cited_object_id`.";
     const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
         McpActionArgSpec {
             action: "prepare",
@@ -235,14 +197,6 @@ impl McpTool for CoreUploadTool {
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
         },
-        McpActionArgSpec {
-            action: "read_url",
-            title: "Get a read URL",
-            allowed_fields: &["cited_object_id", "space"],
-            required_fields: &["cited_object_id"],
-            effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
-        },
     ];
     type Args = CoreUploadArgs;
     type Output = CoreUploadOutput;
@@ -254,8 +208,7 @@ impl McpTool for CoreUploadTool {
         Box::pin(async move {
             match args {
                 CoreUploadArgs::Prepare(args) => {
-                    let (authz, owner) =
-                        narrowed_space(&ctx, args.space.as_deref(), SpaceAuthority::Write)?;
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
                     let service = blob_service(&ctx)?;
                     let outcome = service
                         .prepare_upload(
@@ -281,8 +234,7 @@ impl McpTool for CoreUploadTool {
                     }))
                 }
                 CoreUploadArgs::Complete(args) => {
-                    let (authz, owner) =
-                        narrowed_space(&ctx, args.space.as_deref(), SpaceAuthority::Write)?;
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
                     let service = blob_service(&ctx)?;
                     let engine = ctx.require_engine()?;
                     // No extension sidecars from the MCP surface: a tool
@@ -300,8 +252,7 @@ impl McpTool for CoreUploadTool {
                     Ok(CoreUploadOutput::Complete(completed.into()))
                 }
                 CoreUploadArgs::Abort(args) => {
-                    let (authz, owner) =
-                        narrowed_space(&ctx, args.space.as_deref(), SpaceAuthority::Write)?;
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
                     let service = blob_service(&ctx)?;
                     let outcome = service
                         .abort_upload(&authz, owner, args.upload_id.trim())
@@ -310,31 +261,13 @@ impl McpTool for CoreUploadTool {
                         aborted: outcome.aborted,
                     }))
                 }
-                CoreUploadArgs::ReadUrl(args) => {
-                    let cited_object_id = parse_cited_object_id(&args.cited_object_id)?;
-                    let (authz, owner) =
-                        narrowed_space(&ctx, args.space.as_deref(), SpaceAuthority::Read)?;
-                    let service = blob_service(&ctx)?;
-                    let outcome = service.read_url(&authz, owner, cited_object_id).await?;
-                    Ok(CoreUploadOutput::ReadUrl(UploadReadUrlOutput {
-                        read_url: outcome.read_url,
-                        expires_at: outcome.expires_at,
-                    }))
-                }
             }
         })
     }
 }
 
 /// The authority an upload action needs on the resolved space owner:
-/// prepare/complete/abort mutate rows under it, `read_url` only reads a
-/// completed blob.
-#[derive(Debug, Clone, Copy)]
-enum SpaceAuthority {
-    Write,
-    Read,
-}
-
+/// prepare/complete/abort mutate rows under it.
 /// Space resolution + authz narrowing, exactly like `core_remember`: the
 /// key is a selector only, and the narrowed context is what the port
 /// re-authorizes against.
@@ -348,19 +281,12 @@ enum SpaceAuthority {
 fn narrowed_space(
     ctx: &McpToolCtx,
     space: Option<&str>,
-    authority: SpaceAuthority,
 ) -> Result<(AuthzContext, OwnerId), McpToolError> {
     let (space, authz) = resolve_space_for_write(ctx, space)?;
-    let (allowed, denied) = match authority {
-        SpaceAuthority::Write => (
-            authz.may_write(&space.owner, AccessKind::Fact),
-            "requires Fact write on this owner",
-        ),
-        SpaceAuthority::Read => (
-            authz.may_read(&space.owner, AccessKind::Fact),
-            "requires Fact read on this owner",
-        ),
-    };
+    let (allowed, denied) = (
+        authz.may_write(&space.owner, AccessKind::Fact),
+        "requires Fact write on this owner",
+    );
     if !allowed {
         return Err(McpToolError::Protocol(ProtocolError::forbidden(denied)));
     }
@@ -386,8 +312,8 @@ mod tests {
     use crate::access::Role;
     use crate::mcp::{McpToolErrorKind, validate_action_args};
     use crate::storage_ports::{
-        CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged,
-        CitedBlobUploadAborted, CitedBlobUploadPrepared,
+        CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+        CitedBlobUploadPrepared,
     };
     use crate::{AuthzContext, GroupId, OwnerId, SpiiceServices, StorageError, UserId};
 
@@ -479,19 +405,6 @@ mod tests {
         ) -> Result<CitedBlobUploadAborted, StorageError> {
             self.record("abort", authz, owner);
             Ok(CitedBlobUploadAborted { aborted: true })
-        }
-
-        async fn read_url(
-            &self,
-            authz: &AuthzContext,
-            owner: OwnerId,
-            _cited_object_id: uuid::Uuid,
-        ) -> Result<CitedBlobReadUrl, StorageError> {
-            self.record("read_url", authz, owner);
-            Ok(CitedBlobReadUrl {
-                read_url: "https://s3.test/get".into(),
-                expires_at: time::OffsetDateTime::UNIX_EPOCH,
-            })
         }
 
         async fn find_held_blobs(
@@ -613,45 +526,6 @@ mod tests {
         ));
         assert_eq!(err.kind(), remember_denial.kind());
         assert_eq!(err.client_message(), remember_denial.client_message());
-        assert!(port.calls.lock().expect("lock").is_empty());
-    }
-
-    /// `read_url` needs read authority only: the same Viewer that cannot
-    /// prepare can mint a download URL for the group's blobs.
-    #[tokio::test]
-    async fn viewer_read_url_reaches_the_port() {
-        let subject = UserId::new(uuid::Uuid::now_v7());
-        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
-        let (ctx, port) = ctx_with_port(subject, vec![(group, Role::viewer())]);
-        let space_key = super::super::memory_spaces::MemorySpaceKey::owner(group).to_wire();
-
-        CoreUploadTool::call(
-            ctx,
-            CoreUploadArgs::ReadUrl(UploadReadUrlArgs {
-                cited_object_id: uuid::Uuid::now_v7().to_string(),
-                space: Some(space_key),
-            }),
-        )
-        .await
-        .expect("viewer read_url reaches the port");
-        assert_eq!(port.calls.lock().expect("lock")[0].action, "read_url");
-    }
-
-    #[tokio::test]
-    async fn read_url_rejects_a_malformed_cited_object_id() {
-        let subject = UserId::new(uuid::Uuid::now_v7());
-        let (ctx, port) = ctx_with_port(subject, vec![]);
-
-        let err = CoreUploadTool::call(
-            ctx,
-            CoreUploadArgs::ReadUrl(UploadReadUrlArgs {
-                cited_object_id: "C:not-a-uuid".into(),
-                space: None,
-            }),
-        )
-        .await
-        .expect_err("malformed id rejected");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
         assert!(port.calls.lock().expect("lock").is_empty());
     }
 

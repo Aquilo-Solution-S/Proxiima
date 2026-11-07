@@ -39,13 +39,10 @@ pub use crate::runtime_config::{
 };
 /// The S3-backed cited-blob lane.
 ///
-/// [`ProxiimaHost::blobs`] returns `Option<&CitedBlobStore>`
-/// and [`crate::Proxiima::s3`] is a `pub` method taking `S3RuntimeConfig`, so
-/// both types were already part of the public surface — just not nameable
-/// from `proxiima`. A spiice could reach them by inference and could not
-/// write either one in a signature, store one in a struct, or configure S3
-/// programmatically; `S3RuntimeConfig::from_env` was the only route in, and
-/// it reads process environment a library has no business requiring.
+/// [`crate::BuiltProxiima::blobs`] and [`crate::RunningProxiima::blobs`]
+/// expose the configured store to host maintenance and delivery adapters;
+/// [`crate::Proxiima::s3`] takes `S3RuntimeConfig`. Hosts can name these
+/// types in their adapters and configure S3 programmatically.
 ///
 /// `BlobError` comes with them because `from_env` returns it.
 pub use proxiima_blob_s3::{BlobError, CitedBlobStore, S3KeyPair, S3RuntimeConfig};
@@ -138,11 +135,7 @@ pub use proxiima_core::storage_ports::other_stores::{
     RemoteOriginRead, RemoteRead, RemoteSearch, RemoteSearchResult, StoreCaller, StoreInfo,
     StoreInventory,
 };
-pub use proxiima_core::storage_ports::{
-    CandidateBound, VectorCandidate, VectorCandidateFilter, VectorCandidatePage, VectorEntry,
-    VectorIndex, VectorKey,
-};
-/// Cited-blob verified-read and reconciliation surfaces.
+/// Cited-blob delivery admission, verified reads and reconciliation.
 ///
 /// Global [`CitedBlobStore::reconcile_all`] requires the booted runtime's
 /// [`crate::SystemAuthority`] and returns the operator DTO, including raw
@@ -150,7 +143,10 @@ pub use proxiima_core::storage_ports::{
 /// authorized owner port/service; its DTO carries cited-object ids and counts
 /// but never bucket names or object keys. Verified reads are a separate
 /// owner-authorized service with a required byte ceiling and locator-free DTO.
+/// Host delivery admission resolves private storage metadata without fetching bytes.
 pub use proxiima_core::storage_ports::{
+    AdmittedCitedBlobDelivery, CitedBlobDeliveryBindingError, CitedBlobDeliveryPermit,
+    CitedBlobDeliveryRequest, CitedBlobDeliveryService, CitedBlobDeliveryTarget,
     CitedBlobIntegrityMismatch, CitedBlobMissingObject, CitedBlobOwnerMissingObject,
     CitedBlobOwnerReconcileOutcome, CitedBlobOwnerReconcilePort, CitedBlobOwnerReconcileService,
     CitedBlobReadError, CitedBlobReadPort, CitedBlobReadService, CitedBlobReconcileOutcome,
@@ -159,6 +155,10 @@ pub use proxiima_core::storage_ports::{
     HostStateParticipantDescriptor, HostStateParticipantId, HostStateReply, HostStateReplyKind,
     HostStateRequest, HostStateWriteOrigin, HostStateWritePermit, MAX_RECONCILE_SAMPLE,
     StateSurfaceName, VerifiedCitedBlob,
+};
+pub use proxiima_core::storage_ports::{
+    CandidateBound, VectorCandidate, VectorCandidateFilter, VectorCandidatePage, VectorEntry,
+    VectorIndex, VectorKey,
 };
 pub use proxiima_core::verbs::fact_ingest::{
     CitationSpec, FactIngestOutcome, FactReceiptDraft, FactWriteCommand, IngestReceipt,
@@ -376,14 +376,14 @@ pub fn served_surface_excluding(
     ))
 }
 
-/// The S3 lane's upload, abort and read-url DTOs, its cold store and the
+/// The S3 lane's upload and abort DTOs, its cold store and the
 /// expiry sweep's outcome, which [`CitedBlobStore`]'s `prepare_upload`,
-/// `stage_upload`, `abort_upload`, `read_url`, `cold_store` and
+/// `stage_upload`, `abort_upload`, `cold_store` and
 /// `sweep_expired_uploads` take or return.
 pub use proxiima_blob_s3::{
-    CitedBlobReadUrlOutcomeTs, CitedBlobReadUrlTs, CitedBlobUploadAbortOutcomeTs,
-    CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs, CitedBlobUploadPrepareOutcomeTs,
-    CitedBlobUploadPrepareTs, PresignedHeaderTs, S3ColdStore, UploadExpirySweepOutcome,
+    CitedBlobUploadAbortOutcomeTs, CitedBlobUploadAbortTs, CitedBlobUploadCompleteTs,
+    CitedBlobUploadPrepareOutcomeTs, CitedBlobUploadPrepareTs, PresignedHeaderTs, S3ColdStore,
+    UploadExpirySweepOutcome,
 };
 /// The per-call marker behaviors see for host-served MCP tools
 /// ([`RuntimeBuilder::host_tools`]).
@@ -546,15 +546,14 @@ pub use proxiima_core::{
 /// a host fills when it runs a tool directly.
 pub use proxiima_core::{ToolCaller, ToolCtx, ToolServices};
 /// The cited-blob service port's types: [`CitedBlobService`]'s `new`,
-/// `prepare_upload`, `abort_upload` and `read_url`, the staged and held blobs
+/// `prepare_upload` and `abort_upload`, the staged and held blobs
 /// [`CitedBlobStore`] returns, and what [`Engine::complete_upload_as_fact`]
 /// reports.
 pub use proxiima_core::{
     UploadedBlobPayload, storage_ports::CitedBlobHeld, storage_ports::CitedBlobPort,
-    storage_ports::CitedBlobReadUrl, storage_ports::CitedBlobService,
-    storage_ports::CitedBlobStaged, storage_ports::CitedBlobUploadAborted,
-    storage_ports::CitedBlobUploadCompleted, storage_ports::CitedBlobUploadHeader,
-    storage_ports::CitedBlobUploadPrepared,
+    storage_ports::CitedBlobService, storage_ports::CitedBlobStaged,
+    storage_ports::CitedBlobUploadAborted, storage_ports::CitedBlobUploadCompleted,
+    storage_ports::CitedBlobUploadHeader, storage_ports::CitedBlobUploadPrepared,
 };
 /// The Fact-with-citation write path: [`FactWriteCommand`],
 /// [`Engine::authorize_fact_with_citation`],

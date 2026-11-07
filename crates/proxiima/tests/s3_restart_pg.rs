@@ -5,15 +5,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use proxiima::UploadCompleted;
 use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegistryError};
 use proxiima::{
-    AppInfo, AuthPath, AuthzContext, BuiltProxiima, FactWrite, GroupId, OwnerEraseOutcome, OwnerId,
-    Proxiima, Role, ServedSurface, SpiiceApp, UserId,
+    AppInfo, AuthPath, AuthzContext, BuiltProxiima, CitedBlobDeliveryRequest, FactWrite, GroupId,
+    OwnerEraseOutcome, OwnerId, Proxiima, Role, ScopeKey, ServedSurface, SpiiceApp, UserId,
 };
 use proxiima_blob_s3::{CitedBlobUploadPrepareTs, S3RuntimeConfig};
 use proxiima_core::StorageError;
 use proxiima_core::error::{ErrorCode, ProtocolError};
 use proxiima_core::storage_ports::{
-    CitedBlobHeld, CitedBlobPort, CitedBlobReadUrl, CitedBlobService, CitedBlobStaged,
-    CitedBlobUploadAborted, CitedBlobUploadPrepared,
+    CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+    CitedBlobUploadPrepared,
 };
 use proxiima_core::{AgentNoteV1, ColdObjectStore};
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls, unique_db_name};
@@ -89,7 +89,11 @@ async fn fresh_database_without_s3_still_erases_database_only_facts() -> TestRes
         let owner = OwnerId::from(group);
         let boot = boot(&database, owner, None).await?;
         register_group(&admin_pool(&database).await?, group).await?;
-        assert!(boot.host().blobs().is_none());
+        assert!(boot.blobs().is_none());
+        assert!(
+            boot.blob_delivery(ScopeKey::parse("core_search_memories")?)?
+                .is_none()
+        );
         let authz = host_context(owner, AuthPath::HostBearer);
         boot.host()
             .engine()
@@ -186,15 +190,6 @@ impl CitedBlobPort for FaultAfterCorpusCommit {
         CitedBlobPort::abort_upload(&self.inner, authz, owner, upload_id).await
     }
 
-    async fn read_url(
-        &self,
-        authz: &AuthzContext,
-        owner: OwnerId,
-        cited_object_id: Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError> {
-        CitedBlobPort::read_url(&self.inner, authz, owner, cited_object_id).await
-    }
-
     async fn find_held_blobs(
         &self,
         authz: &AuthzContext,
@@ -239,7 +234,7 @@ async fn observe_failed_upload_finish(
     let pool = admin_pool(database).await?;
     register_group(&pool, group).await?;
     let authz = host_context(owner, AuthPath::HostBearer);
-    let store = built.host().blobs().ok_or("S3 store")?.clone();
+    let store = built.blobs().ok_or("S3 store")?.clone();
     let prepared = store
         .prepare_upload(
             &authz,
@@ -281,9 +276,7 @@ async fn observe_failed_upload_finish(
         sqlx::query("UPDATE proxiima_core.blob_uploads SET expires_at = now() - interval '1 hour' WHERE upload_id = $1")
             .bind(Uuid::parse_str(&prepared.upload_id)?).execute(&pool).await?;
         let restarted = boot(database, owner, Some(config.clone())).await?;
-        let service = CitedBlobService::new(Arc::new(
-            restarted.host().blobs().ok_or("S3 store")?.clone(),
-        ));
+        let service = CitedBlobService::new(Arc::new(restarted.blobs().ok_or("S3 store")?.clone()));
         let result = restarted
             .host()
             .engine()
@@ -368,7 +361,7 @@ async fn upload_without_arrived_bytes_expires() -> TestResult<()> {
         let built = boot(&database, owner, Some(S3RuntimeConfig::from_env()?)).await?;
         register_group(&admin_pool(&database).await?, group).await?;
         let authz = host_context(owner, AuthPath::HostBearer);
-        let store = built.host().blobs().expect("S3 store");
+        let store = built.blobs().expect("S3 store");
         let prepared = store.prepare_upload(&authz, CitedBlobUploadPrepareTs {
             owner, filename: "missing.txt".into(), mime: "text/plain".into(), byte_len: BODY.len() as u64,
         }).await?;
@@ -406,7 +399,6 @@ async fn run_reboot(database: &str, keep_s3: bool) -> TestResult<EraseObservatio
     let initial = boot(database, owner, Some(config.clone())).await?;
     register_group(&admin_pool(database).await?, group).await?;
     let store = initial
-        .host()
         .blobs()
         .expect("configured facade exposes blob store");
     let authz = host_context(owner, AuthPath::HostBearer);
@@ -447,13 +439,17 @@ async fn run_reboot(database: &str, keep_s3: bool) -> TestResult<EraseObservatio
     assert_eq!(corpus_counts(&admin_pool(database).await?).await?, (1, 1));
     assert_eq!(s3_get(&config, &canonical).await?, BODY);
     assert_eq!(object_versions(&config, &canonical).await?, 1);
+    assert_host_delivery(&initial, &authz, owner, &completed, &canonical).await?;
     drop(service);
     stop(initial).await;
 
     // Reconnect and compose from scratch, without injecting or replacing any
     // storage port. The second boot therefore uses the actual facade wiring.
     let restarted = boot(database, owner, keep_s3.then(|| config.clone())).await?;
-    assert_eq!(restarted.host().blobs().is_some(), keep_s3);
+    assert_eq!(restarted.blobs().is_some(), keep_s3);
+    if keep_s3 {
+        assert_host_delivery(&restarted, &authz, owner, &completed, &canonical).await?;
+    }
     let system = host_context(owner, AuthPath::System);
     let receipt = restarted
         .host()
@@ -492,6 +488,30 @@ async fn run_reboot(database: &str, keep_s3: bool) -> TestResult<EraseObservatio
     })
 }
 
+async fn assert_host_delivery(
+    host: &BuiltProxiima,
+    authz: &AuthzContext,
+    owner: OwnerId,
+    completed: &UploadCompleted,
+    canonical: &str,
+) -> TestResult<()> {
+    let delivery = host
+        .blob_delivery(ScopeKey::parse("core_search_memories")?)?
+        .ok_or("configured host delivery service")?;
+    let request = CitedBlobDeliveryRequest::Owner {
+        owner,
+        cited_object_id: Uuid::parse_str(&completed.blob.cited_object_id)?,
+    };
+    let (admitted, target) = delivery
+        .authorize_delivery(authz, request.clone())
+        .await?
+        .into_parts();
+    assert_eq!(admitted, request);
+    assert_eq!(target.object_key, canonical);
+    assert_eq!(target.byte_len, BODY.len() as u64);
+    Ok(())
+}
+
 async fn recover_and_cleanup(
     database: &str,
     owner: OwnerId,
@@ -505,7 +525,7 @@ async fn recover_and_cleanup(
     // the public maintenance retry with this fresh facade's real S3 adapter.
     // This never supplies the no-S3 boot's original erase service.
     let cleanup = boot(database, owner, Some(config.clone())).await?;
-    let cold = cleanup.host().blobs().expect("cleanup store").cold_store();
+    let cold = cleanup.blobs().expect("cleanup store").cold_store();
     if versions_after_erase > 0 {
         assert_eq!(
             s3_get(config, canonical).await?,

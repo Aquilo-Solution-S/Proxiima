@@ -292,7 +292,7 @@ async fn run_maintain_blobs(config: MaintainBlobsConfig) -> Result<(), CliError>
     let built = blob_maintenance_app(config.database_url, s3, &proxiima_core::process_env)?
         .build()
         .await?;
-    let outcome = match built.host().blobs() {
+    let outcome = match built.blobs() {
         Some(store) => store
             .reconcile_all(built.system_authority())
             .await
@@ -1783,7 +1783,6 @@ mod tests {
         let registered = registered_tool_ids().expect("registered ids");
         for read in [
             protocol_tool::CORE_SEARCH_MEMORIES,
-            "core_upload:read_url",
             protocol_resource::MEMORY,
             protocol_resource::HOW_TO,
             protocol_action::CORE_MEMBERSHIP_LIST_MEMBERS,

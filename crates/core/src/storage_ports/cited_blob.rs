@@ -1,4 +1,4 @@
-//! Host-wired cited-blob upload/read port for MCP tools and spiice
+//! Host-wired cited-blob upload and inventory port for MCP tools and spiice
 //! background workers.
 //!
 //! Core stays blob/storage-agnostic (docs/concepts.md): the S3-backed cited-blob
@@ -12,9 +12,9 @@
 //! service to spiice workers, which need it for the half of artefact
 //! work that outlives a tool call.
 //!
-//! Transfer is by presigned URL only (docs/configuration.md): the
-//! MCP transport caps request bodies, and clients must never see
-//! `bucket`/`object_key`. Every outcome struct here honours that.
+//! Upload bytes use presigned PUT URLs because MCP caps request bodies.
+//! Download admission belongs to [`super::CitedBlobReadService`]; these tool
+//! outcomes never expose private storage coordinates.
 
 use std::sync::Arc;
 
@@ -91,13 +91,6 @@ pub struct CitedBlobStaged {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CitedBlobUploadAborted {
     pub aborted: bool,
-}
-
-/// Presigned download for a completed cited blob.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CitedBlobReadUrl {
-    pub read_url: String,
-    pub expires_at: OffsetDateTime,
 }
 
 /// An artefact this owner already holds, as [`CitedBlobPort::find_held_blobs`]
@@ -217,20 +210,6 @@ pub trait CitedBlobPort: Send + Sync {
         owner: OwnerId,
         upload_id: &str,
     ) -> Result<CitedBlobUploadAborted, StorageError>;
-
-    /// Mint a presigned download URL for a completed cited blob.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError::ConstraintViolation`] when the cited
-    /// object is absent for `owner`, and [`StorageError::Unavailable`]
-    /// for S3/database faults.
-    async fn read_url(
-        &self,
-        authz: &AuthzContext,
-        owner: OwnerId,
-        cited_object_id: uuid::Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError>;
 
     /// Which of `content_hashes` this owner already holds as a
     /// `core/uploaded-blob-v1` artefact.
@@ -421,25 +400,6 @@ impl CitedBlobService {
     {
         let authz = self.operation_context(authority)?;
         self.port.abort_upload(authz, owner, upload_id).await
-    }
-
-    /// Delegated-capable presigned-read entrypoint.
-    ///
-    /// # Errors
-    ///
-    /// Rejects invalid/expired/foreign authority before forwarding backend
-    /// read errors.
-    pub async fn read_url<A>(
-        &self,
-        authority: &A,
-        owner: OwnerId,
-        cited_object_id: uuid::Uuid,
-    ) -> Result<CitedBlobReadUrl, StorageError>
-    where
-        A: EngineAuthority + ?Sized,
-    {
-        let authz = self.operation_context(authority)?;
-        self.port.read_url(authz, owner, cited_object_id).await
     }
 
     /// Delegated-capable held-blob query entrypoint.

@@ -711,7 +711,6 @@ mod tests {
 
         let upload = descriptor(protocol_tool::CORE_UPLOAD);
         assert!(!upload.is_read_only(), "parent is a write tool");
-        assert!(upload.action_is_read_only("read_url"));
         assert!(!upload.action_is_read_only("prepare"));
 
         // The direction that matters for safety: every leaf of a read-only

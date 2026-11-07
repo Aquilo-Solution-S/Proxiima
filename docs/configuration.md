@@ -82,12 +82,10 @@ plus a migration pool of the same size during boot; size the server's
 | PROXIIMA_S3_ACCESS_KEY_ID | S3 access key | S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
 | PROXIIMA_S3_SECRET_ACCESS_KEY | S3 secret key | S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
 | PROXIIMA_S3_ENDPOINT_URL | object I/O endpoint | non-AWS S3 storage | `S3RuntimeConfig::from_lookup` |
-| PROXIIMA_S3_PUBLIC_ENDPOINT_URL | endpoint for presigned read links | holders download from a separate address | `S3RuntimeConfig::from_lookup` |
 | PROXIIMA_S3_STORE_ID | object store identity | processes reach one store by different endpoints, or stores share an endpoint and bucket | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
 | PROXIIMA_PLAINTEXT_HOSTS | plaintext host allowlist | named internal HTTP sidecar | [network policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/net.rs) |
 | PROXIIMA_S3_FORCE_PATH_STYLE | S3 path-style switch | path-style endpoint | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
 | PROXIIMA_S3_UPLOAD_TTL_SECONDS | upload URL lifetime | cited blob uploads | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_READ_TTL_SECONDS | read URL lifetime | cited blob reads | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
 | PROXIIMA_DEV_POSTGRES_PORT | Compose Postgres host port | local Compose | [dev Compose](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docker-compose.dev.yml) |
 | PROXIIMA_DEV_S3_PORT | Compose S3 host port | local Compose | [dev Compose](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docker-compose.dev.yml) |
 | PROXIIMA_TEST_PG_URL | test Postgres admin URL | pg-testkit tests | [PG testkit](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/pg-testkit/src/lib.rs) |
