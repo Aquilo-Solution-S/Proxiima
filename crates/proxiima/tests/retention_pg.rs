@@ -23,15 +23,11 @@ fn schema(id: &str) -> SchemaId {
     SchemaId::new(id.to_owned())
 }
 
-/// A registered person, and the context it signs in with, holding `roles`
+/// An authenticated person not yet admitted to storage, holding `roles`
 /// on other owners.
-async fn person(
-    h: &ExampleEngine,
-    roles: &[(OwnerId, Role)],
-) -> Result<(OwnerId, AuthzContext), sqlx::Error> {
+fn person(roles: &[(OwnerId, Role)]) -> (OwnerId, AuthzContext) {
     let user = UserId::new(Uuid::now_v7());
-    register(h, OwnerId::from(user), "personal").await?;
-    Ok((OwnerId::from(user), context(user, roles)))
+    (OwnerId::from(user), context(user, roles))
 }
 
 fn context(user: UserId, roles: &[(OwnerId, Role)]) -> AuthzContext {
@@ -68,17 +64,89 @@ fn sorted(mut rows: Vec<Retention>) -> Vec<Retention> {
     rows
 }
 
+async fn owner_kind(h: &ExampleEngine, owner: OwnerId) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT kind::text FROM proxiima_core.owners WHERE owner_id = $1")
+        .bind(owner.into_inner())
+        .fetch_optional(&h.pool)
+        .await
+}
+
+#[tokio::test]
+async fn personal_retention_is_a_first_write_and_unset_keeps_for_good()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = ExampleEngine::new("proxiima_retention_first", |_| {}).await;
+    let (owner, authz) = person(&[]);
+    let (other, _) = person(&[]);
+    assert_eq!(owner_kind(&h, owner).await?, None);
+    assert!(h.engine.read_retention(&authz).await?.is_empty());
+    h.engine
+        .set_retention(&authz, &owner, &schema(MAIL), None)
+        .await?;
+    assert_eq!(owner_kind(&h, owner).await?, None, "unset admits no owner");
+
+    for keep in [Some(days(30)), None] {
+        let refused = h
+            .engine
+            .set_retention(&authz, &other, &schema(MAIL), keep)
+            .await
+            .expect_err("one person never sets another's retention");
+        assert_eq!(refused.code, ErrorCode::Forbidden);
+    }
+    assert_eq!(owner_kind(&h, other).await?, None);
+
+    h.engine
+        .set_retention(&authz, &owner, &schema(MAIL), Some(days(30)))
+        .await?;
+    assert_eq!(owner_kind(&h, owner).await?.as_deref(), Some("personal"));
+    assert_eq!(
+        h.engine.read_retention(&authz).await?,
+        vec![row(owner, MAIL, 30)]
+    );
+    h.engine
+        .set_retention(&authz, &owner, &schema(MAIL), None)
+        .await?;
+    assert!(h.engine.read_retention(&authz).await?.is_empty());
+    assert_eq!(owner_kind(&h, owner).await?.as_deref(), Some("personal"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_first_retention_rolls_back_owner_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    let h = ExampleEngine::new("proxiima_retention_rollback", |_| {}).await;
+    let (owner, authz) = person(&[]);
+    assert_eq!(owner_kind(&h, owner).await?, None);
+    sqlx::query(
+        "ALTER TABLE proxiima_core.retention ADD CONSTRAINT refuse_retention CHECK (false)",
+    )
+    .execute(&h.pool)
+    .await?;
+    let refused = h
+        .engine
+        .set_retention(&authz, &owner, &schema(MAIL), Some(days(30)))
+        .await
+        .expect_err("the retention insert is rejected");
+    assert_eq!(refused.code, ErrorCode::Internal);
+    assert_eq!(
+        owner_kind(&h, owner).await?,
+        None,
+        "admission shares the rejected write's transaction"
+    );
+    assert!(h.engine.read_retention(&authz).await?.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
     let h = ExampleEngine::new("proxiima_retention", |_| {}).await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let group = OwnerId::new(Uuid::now_v7());
         register(&h, group, "group").await?;
-        let (admin, admin_authz) = person(&h, &[(group, Role::admin())]).await?;
-        let (editor, editor_authz) = person(&h, &[(group, Role::editor())]).await?;
-        let (viewer, viewer_authz) = person(&h, &[(group, Role::viewer())]).await?;
-        let (ingest, ingest_authz) = person(&h, &[(group, Role::ingest())]).await?;
-        let (outsider, outsider_authz) = person(&h, &[]).await?;
+        let (admin, admin_authz) = person(&[(group, Role::admin())]);
+        let (editor, editor_authz) = person(&[(group, Role::editor())]);
+        let (viewer, viewer_authz) = person(&[(group, Role::viewer())]);
+        let (ingest, ingest_authz) = person(&[(group, Role::ingest())]);
+        let (outsider, outsider_authz) = person(&[]);
 
         for (authz, entry) in [
             (&admin_authz, row(group, MAIL, 30)),
@@ -93,6 +161,7 @@ async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
                 .set_retention(authz, &entry.owner, &entry.schema, Some(entry.keep_days))
                 .await?;
         }
+        assert_eq!(owner_kind(&h, group).await?.as_deref(), Some("group"));
         for (who, authz) in [
             ("editor", &editor_authz),
             ("viewer", &viewer_authz),

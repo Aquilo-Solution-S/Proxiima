@@ -412,7 +412,14 @@ impl RetentionPort for PgStorage {
             crate::owner_scope::require_owner_scope(permit.owner_scope())?,
         )
         .await?;
-        let result = verbs::retention::set_retention(tx.as_mut(), permit, schema, keep_days).await;
+        let result = async {
+            if keep_days.is_some() {
+                access::owner_columns::lock_owner_fence_shared_tx(&mut tx, permit.owner()).await?;
+                access::owner_columns::ensure_owner_row(tx.as_mut(), permit.owner()).await?;
+            }
+            verbs::retention::set_retention(tx.as_mut(), permit, schema, keep_days).await
+        }
+        .await;
         crate::owner_scope::finish_transaction(tx, result).await
     }
 

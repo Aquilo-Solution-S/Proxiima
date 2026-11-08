@@ -548,18 +548,19 @@ pub(crate) async fn blob_upload_object_keys(
 /// Register `owner` in `proxiima_core.owners` if it is not registered yet.
 ///
 /// The only production owners upsert on the data path. Memory / goal /
-/// citation / cited-blob writes all go through this. A group is registered
-/// when it is created (`register_group`), so an id a write reaches unregistered
+/// citation / cited-blob / retention writes all go through this. A group is
+/// registered when it is created (`register_group`), so an id a write reaches unregistered
 /// is a user seen for the first time and is registered as `personal`. A
 /// registered id keeps the kind it was registered with: the registry is never
 /// rewritten from a write.
 ///
-/// No authorization runs, the authorization hooks included: the host vouches
-/// for this write as for its own rows.
-/// The caller must supply a platform-scoped transaction (`&mut *tx`). This
-/// function never begins, commits, rolls back, retries or sets a scope; on a
-/// retryable error, the caller retries its whole transaction. All effects are
-/// database rows in that transaction; no post-commit call is needed.
+/// No authorization runs here. The caller supplies its authorized owner-scoped
+/// transaction (RLS limits admission to its writable owners), or a
+/// platform-scoped transaction for a host operation. Acquire the shared owner
+/// fence before admission, as on memory and Goal writes.
+/// This function never begins, commits, rolls back, retries or sets a scope;
+/// on a retryable error, the caller retries its whole transaction. All effects
+/// are database rows in that transaction; no post-commit call is needed.
 ///
 /// # Errors
 ///
