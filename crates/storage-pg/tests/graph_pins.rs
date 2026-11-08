@@ -293,6 +293,7 @@ async fn pin_node_loads_are_owner_scoped_and_redact_in_memory() {
                 target,
                 kind,
                 &visible,
+                &proxiima_core::verbs::query::UnreadTargets::default(),
             ));
         }
         assert_eq!(listed.len(), 4);
@@ -898,7 +899,11 @@ async fn the_forgotten_probe_keeps_to_the_readers_kind_permits() {
         both.sort_unstable();
         let admin = owner_scope_for_tests(&[owner]);
         assert_eq!(
-            found(pg.forgotten_nodes(Some(&admin), &[owner], &ids).await?),
+            found(
+                pg.unread_targets(Some(&admin), &[owner], &ids)
+                    .await?
+                    .forgotten
+            ),
             both,
             "the owner's admin sees both as forgotten"
         );
@@ -913,8 +918,9 @@ async fn the_forgotten_probe_keeps_to_the_readers_kind_permits() {
         let fact_scope = fact_reader.owner_scope().expect("verified scope").clone();
         assert_eq!(
             found(
-                pg.forgotten_nodes(Some(&fact_scope), &[owner], &ids)
+                pg.unread_targets(Some(&fact_scope), &[owner], &ids)
                     .await?
+                    .forgotten
             ),
             vec![loose.memory_id],
             "a reader limited to Facts learns nothing about the forgotten Abstraction"

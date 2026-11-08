@@ -2,12 +2,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use proxiima_core::verbs::query::{
     EntityKind, MemoryLineageCursor, MemoryLineageDirection, MemoryLineageEdge, MemoryLineageNode,
-    MemoryLineageRequest, MemoryLineageResponse,
+    MemoryLineageRequest, MemoryLineageResponse, UnreadTargets,
 };
 use proxiima_core::verbs::schema::MemorySearchProjection;
 use proxiima_core::{
-    Edge, EdgeEndpoint, EdgeKind, EdgeTargetProjection, EntityRef, MemoryId, OwnerId, SchemaId,
-    StorageError,
+    Edge, EdgeEndpoint, EdgeKind, EntityRef, MemoryId, OwnerId, SchemaId, StorageError,
 };
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -141,8 +140,10 @@ async fn assemble_lineage_page_on_connection(
             external_edges: Vec::new(),
         });
     }
-    let visible: HashMap<Uuid, EntityKind> =
-        rows.iter().map(|(id, kind, _)| (*id, *kind)).collect();
+    let live: HashMap<MemoryId, EntityKind> = rows
+        .iter()
+        .map(|(id, kind, _)| (MemoryId::new(*id), *kind))
+        .collect();
     let nodes = rows
         .into_iter()
         .map(|(id, kind, schema)| MemoryLineageNode {
@@ -156,20 +157,15 @@ async fn assemble_lineage_page_on_connection(
     let unseen: Vec<Uuid> = hops
         .iter()
         .map(|h| h.tgt)
-        .filter(|t| !visible.contains_key(t))
+        .filter(|t| !live.contains_key(&MemoryId::new(*t)))
         .collect();
-    let forgotten: HashSet<Uuid> =
-        forgotten_nodes_on_connection(&mut *connection, &unseen, owner_ids)
-            .await?
-            .into_iter()
-            .map(|node| node.memory_id.into_inner())
-            .collect();
+    let unread = unread_targets_on_connection(&mut *connection, &unseen, owner_ids).await?;
     let edges = hops
         .iter()
-        .map(|h| project_lineage_edge(h, &visible, &forgotten))
+        .map(|h| project_lineage_edge(h, &live, &unread))
         .collect();
     // Other-store edges (origin or reference) of the page's visible nodes.
-    let visible_ids: Vec<Uuid> = visible.keys().copied().collect();
+    let visible_ids: Vec<Uuid> = live.keys().map(|id| id.into_inner()).collect();
     let external_edges =
         external_edges_on_connection(&mut *connection, &visible_ids, owner_ids).await?;
     let next_cursor = truncated.then(|| {
@@ -241,22 +237,29 @@ pub(crate) async fn lineage_nodes_on_connection(
         .collect())
 }
 
-/// The forgotten rows among `memory_ids` the transaction's reader could read
-/// were they not forgotten, as lineage nodes (no snippet; distance 0).
+/// What the transaction's reader may know of the `memory_ids` it cannot
+/// read live: the one probe every "forgotten target" and "erased target"
+/// answer reads (pins, neighbours, lineage).
 ///
-/// The one probe every "forgotten target" answer reads (pins, lineage): it
+/// Forgotten rows, as lineage nodes (no snippet; distance 0): the probe
 /// widens the caller's OWNER transaction to the lifecycle scope for this one
 /// statement, so the owner read policy still applies the reader's owner and
 /// kind permits — an id the reader could not read in either state is absent
-/// and stays redacted. Never run it in platform scope: that would disclose
-/// forgotten rows the reader has no permit for.
-pub(crate) async fn forgotten_nodes_on_connection(
+/// and stays redacted.
+///
+/// Erased ids: the erase witness of an id that a live memory the reader can
+/// read still pins (#671). The witness's owner read policy states the same
+/// rule; the owner filter repeats it for the fixture lane without policies.
+///
+/// Never run it in platform scope: that would disclose forgotten rows and
+/// erasures the reader has no permit for.
+pub(crate) async fn unread_targets_on_connection(
     connection: &mut PgConnection,
     memory_ids: &[Uuid],
     owner_ids: &[Uuid],
-) -> Result<Vec<MemoryLineageNode>, StorageError> {
+) -> Result<UnreadTargets, StorageError> {
     if memory_ids.is_empty() || owner_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(UnreadTargets::default());
     }
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(&mut *connection).await?;
     let rows: Result<Vec<(Uuid, PgMemoryKind, String)>, StorageError> = sqlx::query_as(
@@ -271,16 +274,37 @@ pub(crate) async fn forgotten_nodes_on_connection(
     .await
     .map_err(map_err);
     let rows = lifecycle.finish(&mut *connection, rows).await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, kind, schema)| MemoryLineageNode {
-            memory_id: MemoryId::new(id),
-            kind: kind.into(),
-            schema_id: SchemaId::new(schema),
-            snippet: String::new(),
-            distance: 0,
-        })
-        .collect())
+    let erased: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT erased.t
+           FROM proxiima_core.erased_pin_target erased
+          WHERE erased.t = ANY($1::uuid[])
+            AND EXISTS (
+                SELECT 1
+                  FROM proxiima_core.memory pinning /* FORGET-POLICY: live-only (an erased target is named only through a readable memory that pins it) */
+                 WHERE (pinning.origins @> ARRAY[erased.t] OR pinning.refs @> ARRAY[erased.t]
+                        OR pinning.forked_from = erased.t)
+                   AND pinning.owner_id = ANY($2::uuid[])
+                   AND pinning.forgotten_at IS NULL
+            )",
+    )
+    .bind(memory_ids)
+    .bind(owner_ids)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(map_err)?;
+    Ok(UnreadTargets {
+        forgotten: rows
+            .into_iter()
+            .map(|(id, kind, schema)| MemoryLineageNode {
+                memory_id: MemoryId::new(id),
+                kind: kind.into(),
+                schema_id: SchemaId::new(schema),
+                snippet: String::new(),
+                distance: 0,
+            })
+            .collect(),
+        erased: erased.into_iter().map(MemoryId::new).collect(),
+    })
 }
 
 /// Other-store edges `(memory, other-store memory, kind)` recorded for
@@ -351,16 +375,10 @@ fn node_distance(direction: MemoryLineageDirection, start: Uuid, hops: &[WalkHop
 
 fn project_lineage_edge(
     hop: &WalkHop,
-    visible_kind: &HashMap<Uuid, EntityKind>,
-    forgotten: &HashSet<Uuid>,
+    live: &HashMap<MemoryId, EntityKind>,
+    unread: &UnreadTargets,
 ) -> MemoryLineageEdge {
-    let target = match visible_kind.get(&hop.tgt).copied() {
-        Some(kind) => {
-            EdgeTargetProjection::visible(EdgeEndpoint::memory(kind, MemoryId::new(hop.tgt)))
-        }
-        None if forgotten.contains(&hop.tgt) => EdgeTargetProjection::Forgotten,
-        None => EdgeTargetProjection::Redacted,
-    };
+    let target = proxiima_core::project_memory_target(MemoryId::new(hop.tgt), live, unread);
     MemoryLineageEdge {
         edge: Edge {
             source: EdgeEndpoint::memory(hop.src_kind, MemoryId::new(hop.src)),

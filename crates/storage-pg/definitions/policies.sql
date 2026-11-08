@@ -116,6 +116,17 @@ SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'pr
 -- erased_pin_target
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'erased_pin_target', 'ownerless', NULL);
 
+-- An edge already shows that its target existed, so a reader who can read
+-- a memory pinning an erased id may learn that it was erased (#671). No
+-- other owner-scope read reaches the witness.
+ALTER POLICY proxiima_owner_read ON proxiima_core.erased_pin_target USING (
+    current_setting('app.proxiima_scope', true) = 'owner'
+    AND EXISTS (SELECT 1 FROM proxiima_core.memory pinning
+                WHERE pinning.origins @> ARRAY[erased_pin_target.t]
+                   OR pinning.refs @> ARRAY[erased_pin_target.t]
+                   OR pinning.forked_from = erased_pin_target.t)
+);
+
 -- spiice_surface
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'spiice_surface', 'ownerless', NULL);
 

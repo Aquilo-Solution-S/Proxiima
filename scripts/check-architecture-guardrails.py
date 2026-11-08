@@ -903,7 +903,7 @@ EXPECTED_LIFECYCLE_ENTER_SITES = {
     ("crates/storage-pg/src/verbs/forget.rs", "erase_memory_series"): 1,
     ("crates/storage-pg/src/verbs/memory_timeseries.rs", "load_ingest_replay"): 1,
     ("crates/storage-pg/src/verbs/memory_timeseries.rs", "resolve_natural_series_handle"): 1,
-    ("crates/storage-pg/src/verbs/query/lineage.rs", "forgotten_nodes_on_connection"): 1,
+    ("crates/storage-pg/src/verbs/query/lineage.rs", "unread_targets_on_connection"): 1,
     ("crates/storage-pg/src/verbs/request_keys.rs", "judge_request"): 1,
 }
 LIFECYCLE_GUC_ROOTS = ("crates", "apps", "tools", "spiices")

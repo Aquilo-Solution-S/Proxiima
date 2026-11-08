@@ -9,7 +9,7 @@ use crate::error::ProtocolError;
 use crate::storage_ports::{InboundPinQuery, MemoryReadHandle, PinTargetKind};
 use crate::verbs::query::{
     EdgeExistsRequest, EdgeExistsResponse, EdgeReadCursor, EdgeReadRequest, EdgeReadResponse,
-    SupersessionStatus,
+    SupersessionStatus, UnreadTargets,
 };
 use crate::{Edge, EdgeKind, EntityKind, EntityRef, GoalId, MemoryId, OwnerId, OwnerScope};
 
@@ -142,11 +142,11 @@ fn cursor_key(cursor: Option<EdgeReadCursor>) -> Option<HopKey> {
 }
 
 /// What the reader may see of a page's memory targets: the live readable
-/// ones by kind, and the ones it could read but which are forgotten.
+/// ones by kind, and what it may know of the rest.
 #[derive(Debug, Default)]
 struct Seen {
     live: HashMap<MemoryId, EntityKind>,
-    forgotten: HashSet<MemoryId>,
+    unread: UnreadTargets,
 }
 
 fn page_hops(
@@ -180,20 +180,14 @@ fn page_hops(
 
 fn project_hop_edge(hop: &PinHop, visible: &Seen) -> Edge {
     match hop.target {
-        PinTarget::Memory(target) => {
-            let mut edge = project_listed_edge(
-                hop.source_kind,
-                hop.source_id,
-                target,
-                hop.kind,
-                &visible.live,
-            );
-            if edge.target == EdgeTargetProjection::Redacted && visible.forgotten.contains(&target)
-            {
-                edge.target = EdgeTargetProjection::Forgotten;
-            }
-            edge
-        }
+        PinTarget::Memory(target) => project_listed_edge(
+            hop.source_kind,
+            hop.source_id,
+            target,
+            hop.kind,
+            &visible.live,
+            &visible.unread,
+        ),
         PinTarget::Goal(target) => Edge {
             source: EdgeEndpoint::memory(hop.source_kind, hop.source_id),
             target: EdgeTargetProjection::visible(EdgeEndpoint::goal(target)),
@@ -203,8 +197,8 @@ fn project_hop_edge(hop: &PinHop, visible: &Seen) -> Edge {
     }
 }
 
-/// The live readable rows among `ids`, then — for the rest only — the ones
-/// the reader could read but which are forgotten.
+/// The live readable rows among `ids`, then — for the rest only — what
+/// the reader may know of them (forgotten or erased).
 async fn load_visible(
     memory_read: &MemoryReadHandle,
     owner_scope: Option<&OwnerScope>,
@@ -225,18 +219,15 @@ async fn load_visible(
         .copied()
         .filter(|id| !live.contains_key(id))
         .collect();
-    let forgotten = if rest.is_empty() {
-        HashSet::new()
+    let unread = if rest.is_empty() {
+        UnreadTargets::default()
     } else {
         memory_read
-            .forgotten_nodes(owner_scope, read_owners, &rest)
+            .unread_targets(owner_scope, read_owners, &rest)
             .await
-            .map_err(|err| internal_storage_error("forgotten_nodes", &err))?
-            .into_iter()
-            .map(|node| node.memory_id)
-            .collect()
+            .map_err(|err| internal_storage_error("unread_targets", &err))?
     };
-    Ok(Seen { live, forgotten })
+    Ok(Seen { live, unread })
 }
 
 /// Source and/or inbound pin nodes, then project a newest-first page.
@@ -519,21 +510,43 @@ mod tests {
         ));
     }
 
+    /// The page projects each target through what the probe said of it.
     #[test]
-    fn page_hops_lists_a_forgotten_target_as_forgotten() {
+    fn page_hops_lists_forgotten_and_erased_targets_as_the_probe_says() {
         let source = MemoryId::new(uuid::Uuid::now_v7());
         let forgotten = MemoryId::new(uuid::Uuid::now_v7());
+        let erased = MemoryId::new(uuid::Uuid::now_v7());
         let seen = super::Seen {
             live: HashMap::new(),
-            forgotten: [forgotten].into_iter().collect(),
+            unread: crate::verbs::query::UnreadTargets {
+                forgotten: vec![crate::verbs::query::MemoryLineageNode {
+                    memory_id: forgotten,
+                    kind: EntityKind::Fact,
+                    schema_id: crate::SchemaId::new("test/fact".to_owned()),
+                    snippet: String::new(),
+                    distance: 0,
+                }],
+                erased: vec![erased],
+            },
         };
         let page = page_hops(
-            vec![hop(source, forgotten, EdgeKind::Origin)],
+            vec![
+                hop(source, forgotten, EdgeKind::Origin),
+                hop(source, erased, EdgeKind::Origin),
+            ],
             None,
             10,
             &seen,
         );
-        assert_eq!(page.edges[0].target, EdgeTargetProjection::Forgotten);
+        let targets: Vec<_> = page.edges.iter().map(|edge| edge.target).collect();
+        assert!(
+            targets.contains(&EdgeTargetProjection::Forgotten),
+            "{targets:?}"
+        );
+        assert!(
+            targets.contains(&EdgeTargetProjection::Erased),
+            "{targets:?}"
+        );
     }
 
     struct FakePins {
@@ -719,24 +732,27 @@ mod tests {
             Err(StorageError::Internal("unused".into()))
         }
 
-        async fn forgotten_nodes(
+        async fn unread_targets(
             &self,
             _scope: Option<&crate::OwnerScope>,
             _read_owners: &[OwnerId],
             memory_ids: &[crate::MemoryId],
-        ) -> Result<Vec<crate::verbs::query::MemoryLineageNode>, StorageError> {
-            Ok(self
-                .forgotten
-                .iter()
-                .filter(|id| memory_ids.contains(id))
-                .map(|id| crate::verbs::query::MemoryLineageNode {
-                    memory_id: *id,
-                    kind: EntityKind::Fact,
-                    schema_id: crate::SchemaId::new("test/fact".to_owned()),
-                    snippet: String::new(),
-                    distance: 0,
-                })
-                .collect())
+        ) -> Result<crate::verbs::query::UnreadTargets, StorageError> {
+            Ok(crate::verbs::query::UnreadTargets {
+                forgotten: self
+                    .forgotten
+                    .iter()
+                    .filter(|id| memory_ids.contains(id))
+                    .map(|id| crate::verbs::query::MemoryLineageNode {
+                        memory_id: *id,
+                        kind: EntityKind::Fact,
+                        schema_id: crate::SchemaId::new("test/fact".to_owned()),
+                        snippet: String::new(),
+                        distance: 0,
+                    })
+                    .collect(),
+                erased: Vec::new(),
+            })
         }
 
         async fn owned_series_handle(

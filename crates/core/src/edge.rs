@@ -156,13 +156,16 @@ impl EdgeEndpoint {
 /// returned with the endpoint withheld rather than suppressed, so the
 /// existence of a connection is not itself leaked or hidden by accident.
 /// A target the reader could read but which is forgotten is `Forgotten`;
-/// one the reader could not read in any state stays `Redacted`.
+/// an erased one is `Erased`, since the edge already shows it existed;
+/// any other target the reader cannot read stays `Redacted`.
+/// [`project_memory_target`] is the one rule that picks the variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum EdgeTargetProjection {
     Visible { target: EdgeEndpoint },
     Redacted,
     Forgotten,
+    Erased,
 }
 
 impl EdgeTargetProjection {
@@ -175,7 +178,7 @@ impl EdgeTargetProjection {
     pub const fn endpoint(self) -> Option<EdgeEndpoint> {
         match self {
             Self::Visible { target } => Some(target),
-            Self::Redacted | Self::Forgotten => None,
+            Self::Redacted | Self::Forgotten | Self::Erased => None,
         }
     }
 }
@@ -329,25 +332,40 @@ pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
     edges
 }
 
-/// Listing projection: a pin whose target is not in `visible` is
-/// [`EdgeTargetProjection::Redacted`].
+/// How one reader sees a pin's memory target: visible when `live` holds
+/// it, else forgotten or erased as `unread` says, else redacted. The one
+/// rule every edge read (pins, neighbours, lineage) projects through.
+#[must_use]
+pub fn project_memory_target<S: std::hash::BuildHasher>(
+    target: MemoryId,
+    live: &std::collections::HashMap<MemoryId, EntityKind, S>,
+    unread: &crate::verbs::query::UnreadTargets,
+) -> EdgeTargetProjection {
+    if let Some(kind) = live.get(&target).copied() {
+        EdgeTargetProjection::visible(EdgeEndpoint::memory(kind, target))
+    } else if unread.forgotten.iter().any(|node| node.memory_id == target) {
+        EdgeTargetProjection::Forgotten
+    } else if unread.erased.contains(&target) {
+        EdgeTargetProjection::Erased
+    } else {
+        EdgeTargetProjection::Redacted
+    }
+}
+
+/// Listing projection of one pin; its target through
+/// [`project_memory_target`].
 #[must_use]
 pub fn project_listed_edge<S: std::hash::BuildHasher>(
     source_kind: EntityKind,
     source: MemoryId,
     target: MemoryId,
     kind: EdgeKind,
-    visible: &std::collections::HashMap<MemoryId, EntityKind, S>,
+    live: &std::collections::HashMap<MemoryId, EntityKind, S>,
+    unread: &crate::verbs::query::UnreadTargets,
 ) -> Edge {
-    let target = match visible.get(&target).copied() {
-        Some(target_kind) => {
-            EdgeTargetProjection::visible(EdgeEndpoint::memory(target_kind, target))
-        }
-        None => EdgeTargetProjection::Redacted,
-    };
     Edge {
         source: EdgeEndpoint::memory(source_kind, source),
-        target,
+        target: project_memory_target(target, live, unread),
         kind,
         created_at: pin_created_at(source),
     }
@@ -396,7 +414,8 @@ pub fn validate_not_self_loop(source: EdgeEndpoint, target: EdgeEndpoint) -> Res
 mod tests {
     use super::{
         EdgeEndpoint, EdgeKind, EdgeTargetProjection, PinNode, project_listed_edge,
-        project_window_edges, validate_edge_layering, validate_not_self_loop,
+        project_memory_target, project_window_edges, validate_edge_layering,
+        validate_not_self_loop,
     };
     use crate::{EntityKind, GoalId, MemoryId};
 
@@ -461,6 +480,34 @@ mod tests {
         );
         assert_eq!(EdgeTargetProjection::Redacted.endpoint(), None);
         assert_eq!(EdgeTargetProjection::Forgotten.endpoint(), None);
+        assert_eq!(EdgeTargetProjection::Erased.endpoint(), None);
+    }
+
+    /// Live wins, then forgotten, then erased; a target nothing names is
+    /// redacted.
+    #[test]
+    fn a_target_projects_live_then_forgotten_then_erased_else_redacted() {
+        let [live, forgotten, erased, unknown] =
+            std::array::from_fn(|_| MemoryId::new(uuid::Uuid::now_v7()));
+        let readable = std::collections::HashMap::from([(live, EntityKind::Fact)]);
+        let unread = crate::verbs::query::UnreadTargets {
+            forgotten: vec![crate::verbs::query::MemoryLineageNode {
+                memory_id: forgotten,
+                kind: EntityKind::Fact,
+                schema_id: crate::SchemaId::new("test/pin-v1".into()),
+                snippet: String::new(),
+                distance: 0,
+            }],
+            erased: vec![erased],
+        };
+        let project = |target| project_memory_target(target, &readable, &unread);
+        assert_eq!(
+            project(live),
+            EdgeTargetProjection::visible(EdgeEndpoint::memory(EntityKind::Fact, live))
+        );
+        assert_eq!(project(forgotten), EdgeTargetProjection::Forgotten);
+        assert_eq!(project(erased), EdgeTargetProjection::Erased);
+        assert_eq!(project(unknown), EdgeTargetProjection::Redacted);
     }
 
     #[test]
@@ -523,6 +570,7 @@ mod tests {
             node.refs[0],
             EdgeKind::Reference,
             &std::collections::HashMap::new(),
+            &crate::verbs::query::UnreadTargets::default(),
         );
         assert!(matches!(edges.target, EdgeTargetProjection::Redacted));
     }
@@ -543,20 +591,5 @@ mod tests {
         node.resolve_visible_goal_refs(&[]);
         assert!(node.guided_by.is_empty());
         assert_eq!(node.refs, vec![MemoryId::new(goal.into_inner())]);
-    }
-
-    #[test]
-    fn listed_projection_redacts_targets_absent_from_the_node_set() {
-        let hub = MemoryId::new(uuid::Uuid::now_v7());
-        let missing = MemoryId::new(uuid::Uuid::now_v7());
-        let visible = std::collections::HashMap::new();
-        let edge = project_listed_edge(
-            EntityKind::Abstraction,
-            hub,
-            missing,
-            EdgeKind::Reference,
-            &visible,
-        );
-        assert!(matches!(edge.target, EdgeTargetProjection::Redacted));
     }
 }

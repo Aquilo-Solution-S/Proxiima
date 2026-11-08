@@ -352,6 +352,19 @@ pub struct MemoryLineageNode {
     pub distance: u8,
 }
 
+/// The memory targets one reader cannot read live but may still name, from
+/// the one probe every edge projection reads
+/// ([`crate::project_memory_target`]). Disjoint: an erase deletes the row a
+/// forgotten memory keeps.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnreadTargets {
+    /// Rows the reader's owner and kind permits would reach were they not
+    /// forgotten, as lineage nodes (no snippet; distance 0).
+    pub forgotten: Vec<MemoryLineageNode>,
+    /// Erased ids that a memory the reader can read still pins.
+    pub erased: Vec<MemoryId>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryLineageEdge {
     pub edge: Edge,

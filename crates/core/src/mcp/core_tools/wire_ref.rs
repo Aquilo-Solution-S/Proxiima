@@ -5,6 +5,7 @@ use crate::{EdgeEndpoint, EdgeTargetProjection, EntityRef};
 
 pub(crate) const REDACTED_TARGET: &str = "redacted target";
 pub(crate) const FORGOTTEN_TARGET: &str = "forgotten target";
+pub(crate) const ERASED_TARGET: &str = "erased target";
 
 pub(crate) fn format_endpoint(_ctx: &McpToolCtx, endpoint: EdgeEndpoint) -> String {
     match endpoint.entity {
@@ -18,5 +19,6 @@ pub(crate) fn format_target_projection(ctx: &McpToolCtx, target: EdgeTargetProje
         EdgeTargetProjection::Visible { target } => format_endpoint(ctx, target),
         EdgeTargetProjection::Redacted => REDACTED_TARGET.into(),
         EdgeTargetProjection::Forgotten => FORGOTTEN_TARGET.into(),
+        EdgeTargetProjection::Erased => ERASED_TARGET.into(),
     }
 }

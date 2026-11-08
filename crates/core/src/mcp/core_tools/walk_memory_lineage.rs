@@ -370,8 +370,9 @@ async fn walk_ancestors(
 
 /// Nodes and edges of an ancestors page. Local nodes carry the hop
 /// distance at which the walk first reached them (`reached`; the start is
-/// 0), as edges and other-store nodes do; an unreadable local target is a
-/// redacted edge end. Other-store targets are read in one
+/// 0), as edges and other-store nodes do; a local target the reader cannot
+/// read live is projected by [`crate::project_memory_target`]. Other-store
+/// targets are read in one
 /// bounded batch and placed at their edge's distance.
 async fn render_ancestor_page(
     ctx: &McpToolCtx,
@@ -389,9 +390,12 @@ async fn render_ancestor_page(
     }
     let mut unique = HashSet::new();
     local_ids.retain(|id| unique.insert(*id));
-    let mut nodes: Vec<LineageNodeOutput> = engine
-        .lineage_nodes(&ctx.authz, &local_ids)
-        .await?
+    let readable = engine.lineage_nodes(&ctx.authz, &local_ids).await?;
+    let live: HashMap<MemoryId, crate::EntityKind> = readable
+        .iter()
+        .map(|node| (node.memory_id, node.kind))
+        .collect();
+    let mut nodes: Vec<LineageNodeOutput> = readable
         .into_iter()
         .map(|node| LineageNodeOutput {
             memory: node.memory_id.into_inner().to_string(),
@@ -404,60 +408,43 @@ async fn render_ancestor_page(
             unavailable_reason: None,
         })
         .collect();
-    let visible: HashSet<String> = nodes.iter().map(|node| node.memory.clone()).collect();
-    // Targets the caller could read but which are forgotten: a node with
-    // status `forgotten`, and the walk goes no further (#488 D4).
     let unseen: Vec<MemoryId> = local_ids
         .iter()
         .copied()
-        .filter(|id| !visible.contains(&id.into_inner().to_string()))
+        .filter(|id| !live.contains_key(id))
         .collect();
-    let forgotten: HashSet<String> = if unseen.is_empty() {
-        HashSet::new()
+    let unread = if unseen.is_empty() {
+        crate::verbs::query::UnreadTargets::default()
     } else {
-        let found = engine.forgotten_nodes(&ctx.authz, &unseen).await?;
-        let handles = found
-            .iter()
-            .map(|node| node.memory_id.into_inner().to_string())
-            .collect();
-        nodes.extend(found.into_iter().map(|node| LineageNodeOutput {
-            memory: node.memory_id.into_inner().to_string(),
-            kind: node.kind.as_str().to_string(),
-            schema_id: node.schema_id.as_str().to_string(),
-            snippet: String::new(),
-            distance: reached.get(&node.memory_id).copied().unwrap_or_default(),
-            store: None,
-            status: Some(NodeStatus::Forgotten),
-            unavailable_reason: None,
-        }));
-        handles
+        engine.unread_targets(&ctx.authz, &unseen).await?
     };
+    // Targets the caller could read but which are forgotten: a node with
+    // status `forgotten`, and the walk goes no further (#488 D4).
+    nodes.extend(unread.forgotten.iter().map(|node| LineageNodeOutput {
+        memory: node.memory_id.into_inner().to_string(),
+        kind: node.kind.as_str().to_string(),
+        schema_id: node.schema_id.as_str().to_string(),
+        snippet: String::new(),
+        distance: reached.get(&node.memory_id).copied().unwrap_or_default(),
+        store: None,
+        status: Some(NodeStatus::Forgotten),
+        unavailable_reason: None,
+    }));
     let mut edges = Vec::with_capacity(hops.len());
     let mut external = Vec::new();
     for hop in hops {
-        let source = hop.edge.source.into_inner().to_string();
-        if !visible.contains(&source) {
+        if !live.contains_key(&hop.edge.source) {
             continue;
         }
+        let source = hop.edge.source.into_inner().to_string();
         match hop.edge.target {
             AncestorTarget::Local(id) => {
-                let handle = id.into_inner().to_string();
-                let target = if visible.contains(&handle) {
-                    handle
-                } else if forgotten.contains(&handle) {
-                    super::wire_ref::format_target_projection(
-                        ctx,
-                        crate::EdgeTargetProjection::Forgotten,
-                    )
-                } else {
-                    super::wire_ref::format_target_projection(
-                        ctx,
-                        crate::EdgeTargetProjection::Redacted,
-                    )
-                };
                 edges.push(LineageEdgeOutput {
                     source,
-                    target,
+                    target: super::wire_ref::format_target_projection(
+                        ctx,
+                        crate::project_memory_target(id, &live, &unread),
+                    ),
                     kind: hop.edge.kind,
                     distance: hop.distance,
                 });

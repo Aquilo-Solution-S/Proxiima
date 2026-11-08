@@ -554,14 +554,14 @@ impl MemoryReadPort for PgStorage {
         crate::owner_scope::finish_transaction(tx, result).await
     }
 
-    async fn forgotten_nodes(
+    async fn unread_targets(
         &self,
         owner_scope: Option<&proxiima_core::OwnerScope>,
         read_owners: &[OwnerId],
         memory_ids: &[proxiima_core::MemoryId],
-    ) -> Result<Vec<proxiima_core::verbs::query::MemoryLineageNode>, StorageError> {
+    ) -> Result<proxiima_core::verbs::query::UnreadTargets, StorageError> {
         if read_owners.is_empty() || memory_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(proxiima_core::verbs::query::UnreadTargets::default());
         }
         let owner_ids: Vec<uuid::Uuid> = read_owners
             .iter()
@@ -579,7 +579,7 @@ impl MemoryReadPort for PgStorage {
         )
         .await?;
         let result =
-            async { verbs::query::forgotten_nodes_on_connection(&mut tx, &ids, &owner_ids).await }
+            async { verbs::query::unread_targets_on_connection(&mut tx, &ids, &owner_ids).await }
                 .await;
         crate::owner_scope::finish_transaction(tx, result).await
     }

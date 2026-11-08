@@ -90,8 +90,10 @@ its own process; a debt that keeps failing stays queued, never dropped, and is
 counted in the readiness answer (see [operate](operate.md)).
 
 Each erased target leaves a payload-free, owner-free identity/kind witness.
-Retained source pins stay byte-for-byte; rendering reports a redacted target.
-A pin or lineage edge to a memory the reader could read but which is forgotten
+Retained source pins stay byte-for-byte. A pin or lineage edge to an erased
+memory renders as `erased target` for a reader who can read a memory that
+pins it: the edge already shows that the target existed. The witness's owner
+read policy admits no other reader. A pin or lineage edge to a memory the reader could read but which is forgotten
 renders as `forgotten target` (lineage node status `forgotten`), and lineage
 stops there; a reader without the owner or kind permit still sees a redacted
 target. Other stores' forgotten memories stay `unavailable`.

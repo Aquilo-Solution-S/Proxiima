@@ -84,8 +84,9 @@ impl Engine {
     /// Edge read scoped to the context's read access set (`S_read`). Same
     /// auth shape as `Query`; callers narrow by kind and/or endpoint.
     /// Edges are source-owned: an edge is visible iff its source is
-    /// readable; an unreadable target is rendered as
-    /// `EdgeTargetProjection::Redacted` without id/kind leakage.
+    /// readable; a target the reader cannot read live is projected by
+    /// [`crate::project_memory_target`] (forgotten, erased, else redacted)
+    /// without id/kind leakage.
     ///
     /// # Errors
     ///
@@ -193,28 +194,27 @@ impl Engine {
             .map_err(|e| ProtocolError::internal(e.to_string()))
     }
 
-    /// The forgotten rows among `memory_ids` the context could read were
-    /// they not forgotten, as lineage nodes (no snippet; distance 0). Same
-    /// auth shape as [`Self::lineage_nodes`]; an id it could not read in
-    /// either state is absent.
+    /// What the context may know of the `memory_ids` it cannot read live
+    /// (see [`crate::storage_ports::MemoryReadPort::unread_targets`]). Same
+    /// auth shape as [`Self::lineage_nodes`].
     ///
     /// # Errors
     ///
     /// Returns `Forbidden` when the context authorizes no reads, or
     /// `Internal` when storage fails.
-    pub async fn forgotten_nodes(
+    pub(crate) async fn unread_targets(
         &self,
         authz: &AuthzContext,
         memory_ids: &[crate::MemoryId],
-    ) -> Result<Vec<crate::verbs::query::MemoryLineageNode>, ProtocolError> {
+    ) -> Result<crate::verbs::query::UnreadTargets, ProtocolError> {
         let read_owners = self.authorize_row_read(authz).await?;
         if read_owners.is_empty() || memory_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(crate::verbs::query::UnreadTargets::default());
         }
         self.storage
             .query
             .memory_read
-            .forgotten_nodes(authz.owner_scope(), &read_owners, memory_ids)
+            .unread_targets(authz.owner_scope(), &read_owners, memory_ids)
             .await
             .map_err(|e| ProtocolError::internal(e.to_string()))
     }

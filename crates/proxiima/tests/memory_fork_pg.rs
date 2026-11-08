@@ -202,7 +202,7 @@ async fn erase_grounding_and_clean_fork(
     destination_auth: &AuthzContext,
     fact: MemoryId,
     fork_head: MemoryId,
-) {
+) -> MemoryId {
     let source_owner = OwnerId::from(source_auth.subject().expect("source subject"));
     let destination_owner = OwnerId::from(destination_auth.subject().expect("destination subject"));
     let mut erase = host
@@ -284,6 +284,7 @@ async fn erase_grounding_and_clean_fork(
         .expect("surviving fork revision");
     assert!(row.refs.contains(&replacement));
     assert!(!row.refs.contains(&fact));
+    successor
 }
 
 async fn create_goal(
@@ -1125,7 +1126,8 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             .await
             .is_err()
     );
-    erase_grounding_and_clean_fork(&host, &alice_auth, &bob_auth, fact, revised_fork).await;
+    let fork_successor =
+        erase_grounding_and_clean_fork(&host, &alice_auth, &bob_auth, fact, revised_fork).await;
 
     // Exercise the real owner inverse over the complete core+example
     // composition. The source owner disappears; foreign-owned fork rows and
@@ -1180,6 +1182,32 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
     .expect("Bob fork survives Alice erase");
     assert_eq!(fork_body, "same payload");
     assert_eq!(fork_anchor, source.into_inner());
+    // The surviving fork names its erased source only through `forked_from`
+    // (#671): Bob learns it was erased, not that it is unreadable.
+    let successor_targets: Vec<_> = host
+        .engine
+        .read_edges(
+            &bob_auth,
+            &EdgeReadRequest {
+                filter: EdgeFilter {
+                    kind: Some(EdgeKind::Reference),
+                    source: Some(EntityRef::Memory(fork_successor)),
+                    target: None,
+                },
+                limit: 10,
+                cursor: None,
+            },
+        )
+        .await
+        .expect("read surviving fork edges")
+        .edges
+        .into_iter()
+        .map(|edge| edge.target)
+        .collect();
+    assert!(
+        successor_targets.contains(&proxiima_core::EdgeTargetProjection::Erased),
+        "{successor_targets:?}"
+    );
 
     for memory in [goal_fork.memory_id, revised_goal_fork] {
         let exists: bool =
