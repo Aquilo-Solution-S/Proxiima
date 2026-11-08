@@ -40,7 +40,10 @@ pub fn migrations_for_phase(source: &Migrator, phase: MigrationPhase) -> Migrato
     let migrations = source
         .iter()
         .filter(|migration| migration_phase(source, migration) == phase)
-        .cloned()
+        .map(|migration| match phase {
+            MigrationPhase::Finalize => corrected_finalizer(migration),
+            MigrationPhase::Historical | MigrationPhase::Current => migration.clone(),
+        })
         .collect::<Vec<_>>();
     Migrator {
         migrations: std::borrow::Cow::Owned(migrations),
@@ -51,6 +54,21 @@ pub fn migrations_for_phase(source: &Migrator, phase: MigrationPhase) -> Migrato
         no_tx: source.no_tx,
         table_name: source.table_name.clone(),
         create_schemas: source.create_schemas.clone(),
+    }
+}
+
+/// A finalizer as it runs: its shipped version and checksum, so a ledger that
+/// already records it is unchanged and a new one records the shipped row, with
+/// SQL that keeps policy roles (`keep_policy_roles`). Released files are
+/// immutable; their SQL passed every policy's roles through the word mapper.
+fn corrected_finalizer(migration: &Migration) -> Migration {
+    use sqlx::SqlSafeStr as _;
+
+    let sql = keep_policy_roles(migration.sql.as_str(), "pg_temp.rename_spiice_word");
+    Migration {
+        // SQL-POLICY: fixed-fragment — the embedded finalizer with its policy capture narrowed.
+        sql: sqlx::AssertSqlSafe(sql).into_sql_str(),
+        ..migration.clone()
     }
 }
 
@@ -107,7 +125,7 @@ fn historical_scope_key() -> String {
 }
 
 fn catalog_finalization_sql() -> String {
-    finalizer()
+    let sql = finalizer()
         .sql
         .as_str()
         .split_once(FINALIZATION)
@@ -120,7 +138,41 @@ fn catalog_finalization_sql() -> String {
         WHERE table_name<>pg_temp.rename_spiice_word(table_name);
     END IF;
     IF to_regclass('proxiima_core.memory')",
+        );
+    keep_policy_roles(&sql, "pg_temp.rename_spiice_word")
+}
+
+/// Role identities are operator-owned: a platform role named `proxima_platform`
+/// is not a catalog word. Rewrite a policy's name, relation and expressions,
+/// and keep the TO list the catalog reports. The shipped finalizers passed the
+/// whole statement, roles included, through the word mapper. A finalizer
+/// without that mapped policy capture is returned as it is.
+fn keep_policy_roles(sql: &str, mapper: &str) -> String {
+    let Some((head, policy)) = sql.split_once("SELECT 'policy',") else {
+        return sql.to_owned();
+    };
+    let Some((policy, tail)) = policy.split_once("FROM pg_policy") else {
+        return sql.to_owned();
+    };
+    if !policy.contains(&format!("{mapper}(format(")) {
+        return sql.to_owned();
+    }
+    let policy = policy
+        .replace(&format!("{mapper}(format("), "format(")
+        .replace(
+            "p.polname,n.nspname,c.relname,",
+            &format!("{mapper}(p.polname),{mapper}(n.nspname),{mapper}(c.relname),"),
         )
+        .replace(
+            "pg_get_expr(p.polqual,p.polrelid)",
+            &format!("{mapper}(pg_get_expr(p.polqual,p.polrelid))"),
+        )
+        .replace(
+            "pg_get_expr(p.polwithcheck,p.polrelid)",
+            &format!("{mapper}(pg_get_expr(p.polwithcheck,p.polrelid))"),
+        )
+        .replace(" END))", " END)");
+    format!("{head}SELECT 'policy',{policy}FROM pg_policy{tail}")
 }
 
 /// The historical spelling of an embedded catalog identifier, for migration replay.
@@ -176,7 +228,9 @@ fn restore_historical_catalog_sql() -> String {
     let extension = extension_pattern.replace("u?", "");
     let prefix = historical_namespace_prefix();
     let product = prefix.trim_end_matches('_');
-    let inverse = sql.replace("proxiima", product).replace("spiice", &extension)
+    // The forward policy capture already keeps its TO list (`keep_policy_roles`);
+    // the word inversion below carries that shape over.
+    sql.replace("proxiima", product).replace("spiice", &extension)
         .replace(pattern, "spiice|proxiima")
         .replace(&format!("^({extension_pattern}|{product})"), "^(spiice|proxiima)")
         .replace(&format!("'{}%'", &extension[..3]), "'spi%'")
@@ -188,32 +242,7 @@ fn restore_historical_catalog_sql() -> String {
         .replace("WHERE d.objoid>=16384", "WHERE d.objoid>=16384 AND (
             identified.schema IN (SELECT nspname FROM pg_namespace WHERE nspowner = current_user::regrole)
             OR (d.classoid='pg_namespace'::regclass AND d.objoid IN
-                (SELECT oid FROM pg_namespace WHERE nspowner = current_user::regrole)))");
-    // Role identities are operator-owned. Rewrite policy identifiers and
-    // expressions independently, leaving the catalog-derived TO list intact.
-    let mapper = format!("pg_temp.rename_{extension}_word");
-    let (head, policy) = inverse
-        .split_once("SELECT 'policy',")
-        .expect("catalog policy capture");
-    let (policy, tail) = policy
-        .split_once("FROM pg_policy")
-        .expect("catalog policy source");
-    let policy = policy
-        .replace(&format!("{mapper}(format("), "format(")
-        .replace(
-            "p.polname,n.nspname,c.relname,",
-            &format!("{mapper}(p.polname),{mapper}(n.nspname),{mapper}(c.relname),"),
-        )
-        .replace(
-            "pg_get_expr(p.polqual,p.polrelid)",
-            &format!("{mapper}(pg_get_expr(p.polqual,p.polrelid))"),
-        )
-        .replace(
-            "pg_get_expr(p.polwithcheck,p.polrelid)",
-            &format!("{mapper}(pg_get_expr(p.polwithcheck,p.polrelid))"),
-        )
-        .replace(" END))", " END)");
-    format!("{head}SELECT 'policy',{policy}FROM pg_policy{tail}")
+                (SELECT oid FROM pg_namespace WHERE nspowner = current_user::regrole)))")
 }
 
 pub(crate) fn historical_namespace_prefix() -> String {
@@ -301,6 +330,9 @@ pub async fn run_core_phase(
     if phase == MigrationPhase::Historical {
         crate::definitions::validate_historical_release(connection, policy).await?;
     }
+    if phase == MigrationPhase::Finalize && !state.recorded.contains(&finalizer().version) {
+        hand_over_historical_search_role(connection).await?;
+    }
     migrations_for_phase(&crate::core_migrator_for(vectors), phase)
         .run_direct(None, &mut *connection, false)
         .await
@@ -342,6 +374,81 @@ async fn install_historical_definitions(
     for kind in kinds {
         execute_replay_sql(connection, historical_definition(kind)).await?;
     }
+    Ok(())
+}
+
+/// Move a store built by an earlier release off its historical search role.
+///
+/// That release created the search and vector candidate functions as the
+/// historical search role, which the finalizer would recreate under that
+/// role, out of reach of `proxiima_search`. The platform role already holds
+/// `SET` on it, so this drops those functions as their owner and resets the
+/// role's default privileges; the definitions pass recreates them as
+/// `proxiima_search`. It also moves the role's schema access to
+/// `proxiima_search`. Anything else the role owns needs a superuser, so it
+/// refuses with the statement to run.
+async fn hand_over_historical_search_role(
+    connection: &mut PgConnection,
+) -> Result<(), StorageError> {
+    let historical = format!("{}search", historical_namespace_prefix());
+    let core = format!("{}core", historical_namespace_prefix());
+    // SQL-POLICY: fixed-fragment — role and schema names derive only from embedded historical SQL.
+    let sql = format!(
+        r"DO $handover$
+DECLARE
+    historical oid := to_regrole('{historical}');
+    original name := current_user;
+    object record;
+BEGIN
+    IF historical IS NULL OR NOT EXISTS (
+        SELECT 1 FROM pg_shdepend s JOIN pg_database d ON d.oid = s.dbid
+         WHERE d.datname = current_database() AND s.refobjid = historical
+    ) THEN
+        RETURN;
+    END IF;
+    IF NOT pg_has_role(current_user, historical, 'SET') OR EXISTS (
+        SELECT 1 FROM pg_shdepend s JOIN pg_database d ON d.oid = s.dbid
+         WHERE d.datname = current_database() AND s.refobjid = historical AND s.deptype = 'o'
+           AND s.classid <> 'pg_default_acl'::regclass
+           AND NOT (s.classid = 'pg_proc'::regclass AND EXISTS (
+               SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE p.oid = s.objid AND n.nspowner = current_user::regrole))
+    ) THEN
+        RAISE EXCEPTION 'role % owns objects in this database that migration 61 cannot hand over', '{historical}'
+            USING ERRCODE = '42501',
+                  HINT = 'as a superuser in this database, run: REASSIGN OWNED BY {historical} TO proxiima_search; then migrate again';
+    END IF;
+    EXECUTE format('SET LOCAL ROLE %I', '{historical}');
+    FOR object IN SELECT p.oid::regprocedure AS routine
+                    FROM pg_proc p WHERE p.proowner = historical ORDER BY p.oid LOOP
+        EXECUTE format('DROP ROUTINE %s', object.routine);
+    END LOOP;
+    FOR object IN SELECT d.defaclnamespace, a.grantee,
+                         CASE d.defaclobjtype WHEN 'r' THEN 'TABLES' WHEN 'S' THEN 'SEQUENCES'
+                              WHEN 'f' THEN 'ROUTINES' WHEN 'T' THEN 'TYPES' WHEN 'n' THEN 'SCHEMAS' END AS kind
+                    FROM pg_default_acl d, aclexplode(d.defaclacl) a
+                   WHERE d.defaclrole = historical AND a.grantee NOT IN (0, historical) LOOP
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I %s REVOKE ALL ON %s FROM %I',
+            '{historical}',
+            CASE WHEN object.defaclnamespace = 0 THEN ''
+                 ELSE format('IN SCHEMA %I', object.defaclnamespace::regnamespace) END,
+            object.kind, pg_get_userbyid(object.grantee));
+    END LOOP;
+    EXECUTE format('SET LOCAL ROLE %I', original);
+    FOR object IN SELECT nspname FROM pg_namespace WHERE nspowner = current_user::regrole LOOP
+        EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM %I', object.nspname, '{historical}');
+        EXECUTE format('REVOKE ALL ON SCHEMA %I FROM %I', object.nspname, '{historical}');
+    END LOOP;
+    IF to_regnamespace('{core}') IS NOT NULL THEN
+        GRANT USAGE ON SCHEMA {core} TO proxiima_search;
+    END IF;
+END
+$handover$;"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+        .execute(connection)
+        .await
+        .map_err(internal)?;
     Ok(())
 }
 

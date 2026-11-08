@@ -168,6 +168,99 @@ async fn failing_late_historical_lane_rolls_back_catalog_and_ledgers() {
     }
 }
 
+/// Give an installed historical store the role shapes a released v0.0.x store
+/// has, which the replay's role rebinding does not reproduce: its search
+/// functions owned by the historical search role itself, and a policy whose
+/// TO list names an operator role spelled with the historical product word.
+async fn stage_released_role_shapes(
+    database: &str,
+    old_core: &str,
+    old_example: &str,
+    platform: &str,
+) {
+    use sqlx::Connection as _;
+
+    let historical_search = proxiima_storage_pg::historical_catalog_name("proxiima_search");
+    let operator_role = proxiima_storage_pg::historical_catalog_name("proxiima_rename_operator");
+    let mut admin = sqlx::PgConnection::connect(&proxiima_pg_testkit::db_url(database))
+        .await
+        .expect("superuser connection");
+    // SQL-POLICY: fixed-fragment — role and schema names derive from the embedded catalog and the fixture role.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DO $roles$ BEGIN
+             IF to_regrole('{historical_search}') IS NULL THEN
+                 CREATE ROLE {historical_search} NOLOGIN NOINHERIT;
+             END IF;
+             IF to_regrole('{operator_role}') IS NULL THEN
+                 CREATE ROLE {operator_role} NOLOGIN;
+             END IF;
+         END $roles$;
+         GRANT {historical_search} TO {platform} WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
+         GRANT USAGE ON SCHEMA {old_core} TO {historical_search};
+         REASSIGN OWNED BY proxiima_search TO {historical_search};
+         ALTER DEFAULT PRIVILEGES FOR ROLE {historical_search} GRANT EXECUTE ON FUNCTIONS TO {platform};
+         CREATE POLICY rename_operator ON {old_example}.settings TO {operator_role} USING (true);"
+    )))
+    .execute(&mut admin)
+    .await
+    .expect("released role shapes");
+    let owned: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1 AND p.proowner = to_regrole($2)",
+    )
+    .bind(old_core)
+    .bind(&historical_search)
+    .fetch_one(&mut admin)
+    .await
+    .expect("historical search functions");
+    assert!(
+        owned > 0,
+        "the historical search role owns the search functions"
+    );
+}
+
+/// After the upgrade the historical search role owns nothing in the store, the
+/// search functions belong to `proxiima_search`, and the operator policy still
+/// names its operator role.
+async fn assert_released_role_shapes_upgraded(connection: &mut sqlx::PgConnection) {
+    let historical_search = proxiima_storage_pg::historical_catalog_name("proxiima_search");
+    let operator_role = proxiima_storage_pg::historical_catalog_name("proxiima_rename_operator");
+    let still_owned: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_shdepend s JOIN pg_database d ON d.oid = s.dbid
+          WHERE d.datname = current_database() AND s.refobjid = to_regrole($1) AND s.deptype = 'o'",
+    )
+    .bind(&historical_search)
+    .fetch_one(&mut *connection)
+    .await
+    .expect("historical search ownership");
+    assert_eq!(still_owned, 0, "the historical search role is handed over");
+    let search_functions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'proxiima_core' AND p.proowner = 'proxiima_search'::regrole",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("current search functions");
+    assert!(
+        search_functions > 0,
+        "proxiima_search owns the search functions"
+    );
+    let roles: Vec<String> = sqlx::query_scalar(
+        "SELECT r.rolname::text FROM pg_policy p, unnest(p.polroles) role_oid
+           JOIN pg_roles r ON r.oid = role_oid
+          WHERE p.polname = 'rename_operator'
+            AND p.polrelid = 'proxiima_example.settings'::regclass",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .expect("operator policy roles");
+    assert_eq!(
+        roles,
+        [operator_role],
+        "operator roles are not catalog words"
+    );
+}
+
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
@@ -282,6 +375,11 @@ async fn installed_historical_example_upgrades_in_place_with_its_real_ledger() {
         .await
         .expect("installed historical release");
     drop(connection);
+    let platform: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(&pool)
+        .await
+        .expect("platform role");
+    stage_released_role_shapes(db.name(), &old_core, &old_example, &platform).await;
 
     proxiima::preflight_without_migrations(
         &pg,
@@ -388,5 +486,6 @@ async fn installed_historical_example_upgrades_in_place_with_its_real_ledger() {
     .await
     .expect("current Follows marks");
     assert_eq!(marks, sidecars.owner_follows_memory_sidecar_tables());
+    assert_released_role_shapes_upgraded(transaction.as_mut()).await;
     transaction.rollback().await.expect("inspection finished");
 }

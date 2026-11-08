@@ -53,6 +53,15 @@ to their runtime role. Candidate functions use indexes; ordinary memory RLS gate
 and score. Goal visibility functions resolve exact publications and bound
 series without widening the principal's owner roles.
 
+A store installed before the rename (core migration 61) has its candidate
+functions owned by the earlier search role, `proxima_search`. Keep the platform
+role's `SET` membership in that role until the store is migrated: migration 61
+drops those functions as their owner and clears the role's default privileges
+and schema grants; the definitions pass recreates the functions as
+`proxiima_search`. If `proxima_search` owns anything else in the store, the
+migration refuses and names the `REASSIGN OWNED` statement for a superuser to
+run. Login and operator roles keep their names, whatever words they contain.
+
 Released migrations are immutable. The core migrations restart at
 `0057_baseline.sql` in v0.0.48; the pgvector column and indexes are
 `0058_pgvector_local_vectors.sql`, which a store with a host vector index never
