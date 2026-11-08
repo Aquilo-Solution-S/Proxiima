@@ -707,13 +707,13 @@ impl CitationPort for RejectingStorage {
         })
     }
 
-    async fn citation_of_fact(
+    async fn citations_of_facts(
         &self,
         _scope: Option<&crate::OwnerScope>,
         _read_owners: &[OwnerId],
-        _fact_memory_id: crate::MemoryId,
-    ) -> Result<Option<crate::verbs::query::FactCitationReadback>, StorageError> {
-        Ok(None)
+        _fact_memory_ids: &[crate::MemoryId],
+    ) -> Result<crate::verbs::query::FactCitations, StorageError> {
+        Ok(crate::verbs::query::FactCitations::new())
     }
 }
 

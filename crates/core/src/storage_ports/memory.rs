@@ -297,10 +297,13 @@ pub trait CitationPort: Send + Sync {
         limit: u32,
     ) -> Result<crate::verbs::query::FactCitationPage, StorageError>;
 
-    async fn citation_of_fact(
+    /// The citation of each of `fact_memory_ids` that is a Fact citing an
+    /// object, keyed by that Fact. An id that is not a readable citing Fact
+    /// has no entry.
+    async fn citations_of_facts(
         &self,
         owner_scope: Option<&OwnerScope>,
         read_owners: &[OwnerId],
-        fact_memory_id: crate::MemoryId,
-    ) -> Result<Option<crate::verbs::query::FactCitationReadback>, StorageError>;
+        fact_memory_ids: &[crate::MemoryId],
+    ) -> Result<crate::verbs::query::FactCitations, StorageError>;
 }

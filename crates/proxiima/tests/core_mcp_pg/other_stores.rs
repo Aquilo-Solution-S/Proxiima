@@ -190,6 +190,7 @@ impl OtherStores for FakeStores {
                                 snippet: memory.body.clone(),
                                 created_at: memory.created_at,
                                 tags: memory.tags.clone(),
+                                citation: None,
                             })
                         }
                         _ => None,

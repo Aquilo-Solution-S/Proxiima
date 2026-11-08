@@ -41,7 +41,9 @@ pub(super) async fn citation_of_fact(
     })
 }
 
-fn fact_citation_output(row: &crate::verbs::query::FactCitationReadback) -> FactCitationOutput {
+pub(super) fn fact_citation_output(
+    row: &crate::verbs::query::FactCitationReadback,
+) -> FactCitationOutput {
     FactCitationOutput {
         cited_object_id: row.cited_object_id.to_string(),
         cited_object_schema_id: row.cited_object_schema_id.as_str().to_string(),

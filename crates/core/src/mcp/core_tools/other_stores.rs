@@ -320,6 +320,7 @@ mod tests {
             snippet: "remote result".into(),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             tags: Vec::new(),
+            citation: None,
         };
         let reply = RemoteSearchResult {
             hits: vec![hit],

@@ -596,7 +596,8 @@ names a remote memory through the same owner-authorized read. The adapter also
 supplies the stored owner, payload and occurrence time; display text and writer
 attribution do not establish ownership. A Fact carries its occurrence time,
 including a backdated observation. Single and batch reads preserve these fields.
-The extra-store transaction is separate from a Proxiima
+A search hit of a citing Fact names its cited object (`RemoteHit::citation`),
+as a local `core_search_memories` hit does. The extra-store transaction is separate from a Proxiima
 `UnitOfWork`; use host-state participation when the change must be atomic with
 a Fact write. A spiice never queries `proxiima_core` directly.
 

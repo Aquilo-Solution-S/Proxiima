@@ -285,6 +285,10 @@ pub struct FactCitationReadback {
     pub cited_object_schema_id: SchemaId,
 }
 
+/// Each citing Fact's citation, keyed by the Fact (a Fact cites at most one
+/// object).
+pub type FactCitations = std::collections::HashMap<MemoryId, FactCitationReadback>;
+
 /// Keyset position in the citing-Facts total order
 /// (`created_at DESC, memory_id DESC`): the next page starts strictly
 /// after this Fact.

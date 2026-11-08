@@ -16,6 +16,7 @@ use crate::verbs::query::{
 };
 use crate::{EmbeddingSpace, McpTool, MemoryId, SchemaId};
 
+use super::citation_of_fact::{FactCitationOutput, fact_citation_output};
 use super::memory::search::{NeighborEdge, neighbor_edges_from_rows};
 use super::memory_spaces::ResolvedMemorySpace;
 
@@ -285,6 +286,11 @@ pub struct SearchMemoryOutput {
     /// Both `memory_id` and `memory` retain the hit's original UUID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<u16>,
+    /// The object this Fact cites, as `core_fact` `citation_of_fact` reads
+    /// it; absent for a Fact that cites none and for every Abstraction and
+    /// Perspective.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citation: Option<FactCitationOutput>,
 }
 
 impl McpTool for SearchMemoriesTool {
@@ -529,6 +535,7 @@ fn remote_hit_output(
         body: None,
         body_truncated: None,
         store: Some(store),
+        citation: hit.citation.as_ref().map(fact_citation_output),
     }
 }
 
@@ -951,6 +958,7 @@ async fn search_one_space(
         )
         .await?;
     let rows = response.memories;
+    let mut citations = response.citations;
     let degraded_to_lexical = matches!(lane.arm, LaneArm::Degraded);
     let payloads = response
         .payloads
@@ -980,10 +988,18 @@ async fn search_one_space(
                 Some((text, truncated)) => (Some(text), Some(truncated)),
                 None => (None, None),
             };
+            let citation = citations.remove(&row.memory_id);
             RankedMemoryOutput {
                 memory_id: mid,
                 created_at,
-                output: search_memory_output(&space.key, row, tags, body, body_truncated),
+                output: search_memory_output(
+                    &space.key,
+                    row,
+                    tags,
+                    body,
+                    body_truncated,
+                    citation.as_ref(),
+                ),
             }
         })
         .collect();
@@ -1295,6 +1311,7 @@ fn search_memory_output(
     tags: Vec<String>,
     body: Option<String>,
     body_truncated: Option<bool>,
+    citation: Option<&crate::verbs::query::FactCitationReadback>,
 ) -> SearchMemoryOutput {
     SearchMemoryOutput {
         memory_id: row.memory_id.into_inner(),
@@ -1314,6 +1331,7 @@ fn search_memory_output(
         body,
         body_truncated,
         store: None,
+        citation: citation.map(fact_citation_output),
     }
 }
 

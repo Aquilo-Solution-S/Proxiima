@@ -155,6 +155,7 @@ impl proxiima::host::OtherStores for ForwardTo {
                         snippet: hit.to_string(),
                         created_at: time::OffsetDateTime::UNIX_EPOCH,
                         tags: Vec::new(),
+                        citation: None,
                     })
                 })
                 .collect();

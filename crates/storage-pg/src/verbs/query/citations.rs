@@ -1,5 +1,7 @@
 use proxiima_core::read_models::MemorySchemaSpec;
-use proxiima_core::verbs::query::{FactCitationCursor, FactCitationPage, FactCitationReadback};
+use proxiima_core::verbs::query::{
+    FactCitationCursor, FactCitationPage, FactCitationReadback, FactCitations,
+};
 use proxiima_core::{MemoryId, OwnerId, SchemaId, StorageError};
 use sqlx::PgConnection;
 
@@ -54,29 +56,39 @@ pub(crate) async fn facts_citing_object_on_connection(
     })
 }
 
-pub(crate) async fn citation_of_fact_on_connection(
+pub(crate) async fn citations_of_facts_on_connection(
     connection: &mut PgConnection,
     read_owners: &[proxiima_core::OwnerId],
-    fact_memory_id: MemoryId,
-) -> Result<Option<FactCitationReadback>, StorageError> {
-    if read_owners.is_empty() {
-        return Ok(None);
+    fact_memory_ids: &[MemoryId],
+) -> Result<FactCitations, StorageError> {
+    if read_owners.is_empty() || fact_memory_ids.is_empty() {
+        return Ok(FactCitations::new());
     }
     let owner_ids: Vec<uuid::Uuid> = read_owners
         .iter()
         .copied()
         .map(proxiima_core::OwnerId::into_inner)
         .collect();
-    let row: Option<(uuid::Uuid, String)> = sqlx::query_as(
-        "SELECT m.blob_id, b.schema_id FROM proxiima_core.memory m JOIN proxiima_core.blob b ON b.blob_id = m.blob_id WHERE m.t = $1 AND m.kind = 'fact' AND m.blob_id IS NOT NULL AND m.owner_id = ANY($2::uuid[])",
+    let fact_ids: Vec<uuid::Uuid> = fact_memory_ids
+        .iter()
+        .copied()
+        .map(MemoryId::into_inner)
+        .collect();
+    let rows: Vec<(uuid::Uuid, uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT m.t, m.blob_id, b.schema_id FROM proxiima_core.memory m JOIN proxiima_core.blob b ON b.blob_id = m.blob_id WHERE m.t = ANY($1::uuid[]) AND m.kind = 'fact' AND m.blob_id IS NOT NULL AND m.owner_id = ANY($2::uuid[])",
     )
-    .bind(fact_memory_id.into_inner()).bind(&owner_ids)
-    .fetch_optional(&mut *connection).await.map_err(map_err)?;
-    Ok(row.map(|(blob_id, schema_id)| {
-        let schema_id = SchemaId::new(schema_id);
-        FactCitationReadback {
-            cited_object_id: blob_id,
-            cited_object_schema_id: schema_id,
-        }
-    }))
+    .bind(&fact_ids).bind(&owner_ids)
+    .fetch_all(&mut *connection).await.map_err(map_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|(fact, blob_id, schema_id)| {
+            (
+                MemoryId::new(fact),
+                FactCitationReadback {
+                    cited_object_id: blob_id,
+                    cited_object_schema_id: SchemaId::new(schema_id),
+                },
+            )
+        })
+        .collect())
 }

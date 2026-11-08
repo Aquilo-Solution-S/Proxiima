@@ -8,8 +8,8 @@ use crate::storage::{MemoryGraphIdentity, MemoryGraphPayloadRow, StorageError};
 use crate::storage_ports::ReadVerbStoragePorts;
 use crate::storage_ports::other_stores::ReadAt;
 use crate::verbs::query::{
-    FactCitationReadback, MAX_RELEVANCE_SEARCH_DEPTH, MemorySearchRequest, MemorySearchResult,
-    SearchCursor, SearchMode,
+    FactCitationReadback, FactCitations, MAX_RELEVANCE_SEARCH_DEPTH, MemorySearchRequest,
+    MemorySearchResult, SearchCursor, SearchMode,
 };
 use crate::verbs::schema::{MemorySearchProjection, payload_entity_kind};
 use crate::{MemoryId, OwnerId, SchemaId, SchemaVersion};
@@ -35,6 +35,8 @@ pub struct SearchReadResponse {
     pub candidate_bound: crate::storage_ports::CandidateBound,
     pub payloads: Vec<MemoryGraphPayloadRow>,
     pub neighbor_edges: Vec<Edge>,
+    /// The citation of each returned Fact that cites an object.
+    pub citations: FactCitations,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -562,6 +564,23 @@ pub(in crate::engine) async fn search_authorized(
         .await
         .map_err(|err| storage_error("load_memory_graph_payloads", &err))?
     };
+    let facts = memories
+        .iter()
+        .filter(|row| row.kind == crate::EntityKind::Fact)
+        .map(|row| row.memory_id)
+        .collect::<Vec<_>>();
+    let citations = if facts.is_empty() {
+        FactCitations::new()
+    } else {
+        crate::stage_timing::timed(
+            "storage_citations",
+            ports
+                .citation
+                .citations_of_facts(owner_scope, read_owners, &facts),
+        )
+        .await
+        .map_err(|err| storage_error("citations_of_facts", &err))?
+    };
     let neighbor_edges = if req.include_neighbor_edges {
         crate::stage_timing::timed(
             "storage_neighbors",
@@ -584,6 +603,7 @@ pub(in crate::engine) async fn search_authorized(
         candidate_bound: page.candidate_bound,
         payloads,
         neighbor_edges,
+        citations,
     })
 }
 
@@ -654,11 +674,12 @@ pub(in crate::engine) async fn read_fact_citation_authorized(
     read_owners: &[OwnerId],
     fact_memory_id: MemoryId,
 ) -> Result<Option<FactCitationReadback>, ProtocolError> {
-    ports
+    let mut citations = ports
         .citation
-        .citation_of_fact(owner_scope, read_owners, fact_memory_id)
+        .citations_of_facts(owner_scope, read_owners, &[fact_memory_id])
         .await
-        .map_err(|err| storage_error("citation_of_fact", &err))
+        .map_err(|err| storage_error("citations_of_facts", &err))?;
+    Ok(citations.remove(&fact_memory_id))
 }
 
 pub(in crate::engine) async fn facts_citing_object_authorized(

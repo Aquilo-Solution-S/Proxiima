@@ -2661,6 +2661,8 @@ async fn facade_core_citation_readback_is_owner_scoped() {
         citation_keys.sort_unstable();
         assert_eq!(citation_keys, ["cited_object_id", "cited_object_schema_id"]);
 
+        assert_search_hits_carry_citations(&tools, &authz, owner, &remembered, &citation).await?;
+
         let cross_owner = call_test_model_tool(
             &tools,
             host_authz(&other_owner, ToolScope::All),
@@ -2677,6 +2679,50 @@ async fn facade_core_citation_readback_is_owner_scoped() {
     .await;
 
     result.expect("core citation MCP facade integration test failed");
+}
+
+/// A search hit carries the same citation `citation_of_fact` read; an
+/// uncited Fact's hit carries none.
+async fn assert_search_hits_carry_citations(
+    tools: &CoreMcpTools,
+    authz: &AuthzContext,
+    owner: OwnerId,
+    remembered: &serde_json::Value,
+    citation: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let uncited = call_test_model_tool(
+        tools,
+        authz.clone(),
+        owner,
+        "core_remember",
+        serde_json::json!({
+            "title": "Uncited retrieval",
+            "body": "Fact names an external object without citing it.",
+            "tags": ["citation"],
+            "idempotency_key": "facade-core-citation-uncited",
+        }),
+    )
+    .await?;
+    let found = call_test_model_tool(
+        tools,
+        authz.clone(),
+        owner,
+        "core_search_memories",
+        serde_json::json!({ "query": "external object", "mode": "lexical" }),
+    )
+    .await?;
+    let hit = |handle: &serde_json::Value| {
+        found["memories"]
+            .as_array()
+            .expect("hits")
+            .iter()
+            .find(|hit| hit["memory"] == *handle)
+            .cloned()
+            .expect("both Facts are hits")
+    };
+    assert_eq!(hit(&remembered["handle"])["citation"], citation["citation"]);
+    assert_eq!(hit(&uncited["handle"]).get("citation"), None);
+    Ok(())
 }
 
 async fn ensure_fact_embedding_for_handle(

@@ -148,6 +148,8 @@ pub struct RemoteHit {
     pub snippet: String,
     pub created_at: time::OffsetDateTime,
     pub tags: Vec<String>,
+    /// The object the hit cites, when it is a Fact that cites one.
+    pub citation: Option<crate::verbs::query::FactCitationReadback>,
 }
 
 /// One remote memory, as read.

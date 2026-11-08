@@ -13,7 +13,7 @@ mod search;
 mod series_handle;
 mod sidecar_heads;
 
-pub(crate) use citations::citation_of_fact_on_connection;
+pub(crate) use citations::citations_of_facts_on_connection;
 pub(crate) use citations::facts_citing_object_on_connection;
 pub(crate) use counts::count_memories_on_connection;
 #[cfg(any(test, feature = "test-fixtures", debug_assertions))]

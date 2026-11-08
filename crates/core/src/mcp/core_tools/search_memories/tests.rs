@@ -79,6 +79,7 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
             Vec::new(),
             None,
             None,
+            None,
         );
         let remote = super::remote_hit_output(
             store,
@@ -90,6 +91,7 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
                 snippet: "stored remote note".into(),
                 created_at: time::OffsetDateTime::UNIX_EPOCH,
                 tags: Vec::new(),
+                citation: None,
             },
         );
         for output in [local, remote] {
@@ -97,6 +99,71 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
             assert_eq!(wire["by"], serde_json::json!(writer.by));
             assert_eq!(wire.get("via"), Some(&serde_json::json!(writer.via)));
         }
+    }
+}
+
+#[test]
+fn a_citing_hit_names_its_cited_object_and_an_uncited_hit_has_no_citation() {
+    use crate::storage_ports::other_stores::RemoteHit;
+    use crate::verbs::query::{EntityKind, FactCitationReadback, MemorySearchResult};
+    use crate::{SchemaId, WriterAttribution};
+
+    let writer = WriterAttribution {
+        by: uuid::Uuid::from_u128(2),
+        via: None,
+    };
+    let cited = FactCitationReadback {
+        cited_object_id: uuid::Uuid::from_u128(9),
+        cited_object_schema_id: SchemaId::new("core/uploaded-blob-v1".into()),
+    };
+    let local = |citation: Option<&FactCitationReadback>| {
+        super::search_memory_output(
+            "current",
+            MemorySearchResult {
+                memory_id: MemoryId::new(crate::new_memory_uuid(0)),
+                writer,
+                kind: EntityKind::Fact,
+                schema_id: SchemaId::new("core/agent-note-v1".into()),
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                occurred_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+                snippet: "stored note".into(),
+                score: 1.0,
+                lexical_score: 1.0,
+                similarity_score: 0.0,
+            },
+            Vec::new(),
+            None,
+            None,
+            citation,
+        )
+    };
+    let remote = |citation: Option<FactCitationReadback>| {
+        super::remote_hit_output(
+            1,
+            RemoteHit {
+                handle: crate::new_memory_uuid(1),
+                writer,
+                kind: EntityKind::Fact,
+                schema_id: "remote/note".into(),
+                snippet: "stored remote note".into(),
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                tags: Vec::new(),
+                citation,
+            },
+        )
+    };
+    let expected = serde_json::json!({
+        "cited_object_id": cited.cited_object_id.to_string(),
+        "cited_object_schema_id": "core/uploaded-blob-v1",
+    });
+    for (citing, uncited) in [
+        (local(Some(&cited)), local(None)),
+        (remote(Some(cited.clone())), remote(None)),
+    ] {
+        let citing = serde_json::to_value(citing).expect("wire output");
+        assert_eq!(citing["citation"], expected);
+        let uncited = serde_json::to_value(uncited).expect("wire output");
+        assert_eq!(uncited.get("citation"), None);
     }
 }
 
@@ -382,6 +449,7 @@ mod other_stores {
             body: None,
             body_truncated: None,
             store: None,
+            citation: None,
         }
     }
 
@@ -397,6 +465,7 @@ mod other_stores {
             snippet: String::new(),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             tags: Vec::new(),
+            citation: None,
         }
     }
 

@@ -731,13 +731,13 @@ impl CitationPort for MembershipStorage {
         })
     }
 
-    async fn citation_of_fact(
+    async fn citations_of_facts(
         &self,
         _scope: Option<&crate::OwnerScope>,
         _read_owners: &[OwnerId],
-        _fact_memory_id: MemoryId,
-    ) -> Result<Option<verbs::query::FactCitationReadback>, StorageError> {
-        Ok(None)
+        _fact_memory_ids: &[MemoryId],
+    ) -> Result<verbs::query::FactCitations, StorageError> {
+        Ok(verbs::query::FactCitations::new())
     }
 }
 
