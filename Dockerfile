@@ -2,7 +2,7 @@
 # Build the substrate-only MCP server. cmake + pkg-config are required to
 # build native crypto deps (aws-lc-sys / ring). Pin bookworm so the
 # builder's glibc matches the distroless cc-debian12 runtime.
-FROM rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
+FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
