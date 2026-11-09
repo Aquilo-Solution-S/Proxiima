@@ -39,7 +39,24 @@ pub trait SpiiceApp: SpiiceBundle {
         builder
     }
 
+    /// Routes served behind bearer authentication, beside `/mcp`.
     fn mount_http(router: Router, ctx: AppContext) -> Router {
+        let _ = ctx;
+        router
+    }
+
+    /// Routes served **without** bearer authentication, for a request that
+    /// cannot carry a token: a browser following an OAuth redirect back from
+    /// another provider, or a webhook that signs its own body. Each route
+    /// authenticates its own requests, for example with a single-use `state`
+    /// or a signature check.
+    ///
+    /// The listener guards still apply: the body cap, the Host guard and
+    /// CORS/Origin. A route on a method and path Proxiima or
+    /// [`Self::mount_http`] already serves panics at boot, naming the path, so
+    /// a public route never answers in place of a protected one. When probes
+    /// are enabled, `/healthz` and `/readyz` answer before these routes.
+    fn mount_public_http(router: Router, ctx: AppContext) -> Router {
         let _ = ctx;
         router
     }
@@ -56,9 +73,9 @@ pub trait SpiiceApp: SpiiceBundle {
     }
 }
 
-/// What [`SpiiceApp::services`] and [`SpiiceApp::mount_http`] receive: the
-/// booted runtime's [`ProxiimaHost`], reached as on `BuiltProxiima` and
-/// `RunningProxiima`.
+/// What [`SpiiceApp::services`], [`SpiiceApp::mount_http`] and
+/// [`SpiiceApp::mount_public_http`] receive: the booted runtime's
+/// [`ProxiimaHost`], reached as on `BuiltProxiima` and `RunningProxiima`.
 #[derive(Clone)]
 pub struct AppContext {
     pub(crate) host: ProxiimaHost,
@@ -117,6 +134,12 @@ macro_rules! impl_spiice_app_tuple {
             fn mount_http(router: Router, ctx: AppContext) -> Router {
                 let router = $first::mount_http(router, ctx.clone());
                 $(let router = $rest::mount_http(router, ctx.clone());)*
+                router
+            }
+
+            fn mount_public_http(router: Router, ctx: AppContext) -> Router {
+                let router = $first::mount_public_http(router, ctx.clone());
+                $(let router = $rest::mount_public_http(router, ctx.clone());)*
                 router
             }
 

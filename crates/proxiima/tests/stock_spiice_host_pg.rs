@@ -59,6 +59,7 @@ const TICKET_HEADER: &str = "x-spiice-ticket";
 const SECRET_HEADER: &str = "x-spiice-secret";
 const PROBE_TOOL: &str = "spiicehost_probe";
 const SLOW_PATH: &str = "/spiice/slow";
+const PUBLIC_PATH: &str = "/spiice/callback";
 const SLOW_FOR: Duration = Duration::from_millis(500);
 
 /// Set by the slow route once its handler runs, so the drain test signals
@@ -176,6 +177,42 @@ impl SpiiceApp for SpiiceHost {
 
     fn mount_http(router: Router, _ctx: AppContext) -> Router {
         router.route(SLOW_PATH, get(slow))
+    }
+
+    fn mount_public_http(router: Router, _ctx: AppContext) -> Router {
+        router.route(PUBLIC_PATH, get(public_callback).post(public_callback))
+    }
+}
+
+/// A route a browser reaches without a bearer, e.g. an OAuth redirect.
+async fn public_callback() -> (StatusCode, &'static str) {
+    (StatusCode::OK, "public")
+}
+
+/// A second spiice whose public route claims `/mcp`.
+struct ShadowsMcp;
+
+impl SpiiceBundle for ShadowsMcp {
+    fn register(_registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
+        Ok(())
+    }
+
+    fn migrators() -> Vec<NamedMigrator> {
+        Vec::new()
+    }
+}
+
+impl SpiiceApp for ShadowsMcp {
+    fn app_info() -> AppInfo {
+        AppInfo {
+            id: "shadows-mcp-test",
+            title: "Shadows MCP Test",
+            version: "1",
+        }
+    }
+
+    fn mount_public_http(router: Router, _ctx: AppContext) -> Router {
+        router.route("/mcp", axum::routing::post(public_callback))
     }
 }
 
@@ -1043,6 +1080,78 @@ async fn a_body_over_the_configured_limit_is_refused_413() {
     .await;
     stack.cleanup();
     result.expect("body limit test failed");
+}
+
+// --- public routes -------------------------------------------------------
+
+/// A `mount_public_http` route answers without a bearer, under the same
+/// listener guards as `/mcp`; `/mcp` and the `mount_http` route still demand
+/// one.
+#[tokio::test]
+async fn a_public_route_answers_without_a_bearer_behind_the_listener_guards() {
+    let stack = Stack::new().await;
+    let result: TestResult = async {
+        let (running, base) = stack
+            .boot(&[("PROXIIMA_MAX_REQUEST_BODY_BYTES", "1024")])
+            .await?;
+        let client = reqwest::Client::new();
+        let url = format!("{base}{PUBLIC_PATH}");
+
+        let anonymous = client.get(&url).send().await?;
+        assert_eq!(anonymous.status(), reqwest::StatusCode::OK);
+        assert_eq!(anonymous.text().await?, "public");
+
+        let foreign = client.get(&url).header("Host", FOREIGN_HOST).send().await?;
+        assert_eq!(foreign.status(), reqwest::StatusCode::FORBIDDEN);
+
+        let over = client.post(&url).body(vec![b' '; 2048]).send().await?;
+        assert_eq!(over.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+
+        let mcp = client
+            .post(format!("{base}/mcp"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+            .send()
+            .await?;
+        assert_eq!(mcp.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert!(
+            mcp.headers().contains_key(header::WWW_AUTHENTICATE),
+            "a 401 on /mcp names the resource metadata"
+        );
+        let protected = client.get(format!("{base}{SLOW_PATH}")).send().await?;
+        assert_eq!(protected.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        running.shutdown().await;
+        Ok(())
+    }
+    .await;
+    stack.cleanup();
+    result.expect("public route test failed");
+}
+
+/// A public route on a path Proxiima already serves stops the boot and names
+/// the path; it never answers in place of the protected route.
+#[tokio::test]
+async fn a_public_route_on_mcp_refuses_boot() {
+    use futures::FutureExt as _;
+
+    let stack = Stack::new().await;
+    let boot = std::panic::AssertUnwindSafe(stack.boot_app::<(SpiiceHost, ShadowsMcp)>(&[]))
+        .catch_unwind()
+        .await;
+    stack.cleanup();
+    let Err(panic) = boot else {
+        panic!("a public route on /mcp booted");
+    };
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.contains("/mcp"),
+        "the refusal names the path: {message}"
+    );
 }
 
 // --- 4. SIGTERM drains -----------------------------------------------------

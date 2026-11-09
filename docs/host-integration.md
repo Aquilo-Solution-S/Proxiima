@@ -571,8 +571,13 @@ search and embeddings are not prerequisites. See the executable
 [`QueryRequest` example](https://github.com/Aquilo-Solution-S/Proxiima/blob/main/crates/core/src/verbs/query.rs).
 
 Use `SpiiceApp::services` to expose a typed service, and
-`SpiiceApp::mount_http` to add host-owned routes. The host accessor provides a
-pool and the resolved query policy:
+`SpiiceApp::mount_http` to add host-owned routes behind bearer authentication.
+A route that cannot carry a token, such as an OAuth redirect back from another
+provider or a signed webhook, goes in `SpiiceApp::mount_public_http`: it skips
+bearer authentication, keeps the body cap, Host guard and CORS, and
+authenticates its own requests. A public route on a method and path already
+served refuses boot. The host accessor provides a pool and the resolved query
+policy:
 
 ```rust
 fn services(ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {

@@ -1400,7 +1400,8 @@ fn build_router<A: SpiiceApp>(
     };
     let retention_router =
         crate::retention_http::router(app_ctx.host().engine.clone(), Arc::clone(system_authority));
-    let app_router = A::mount_http(Router::new(), app_ctx);
+    let app_router = A::mount_http(Router::new(), app_ctx.clone());
+    let public_router = A::mount_public_http(Router::new(), app_ctx);
     let auth_layer = proxiima_mcp_server::mcp_auth_layer_with_metadata(
         Arc::clone(&edge.edge_auth),
         edge.revalidation,
@@ -1412,7 +1413,10 @@ fn build_router<A: SpiiceApp>(
         .merge(retention_router)
         .merge(app_router)
         .layer(auth_layer);
-    let mut router = protected_router;
+    // Merged after the auth layer, so these routes carry none. A method and
+    // path already served above makes axum panic here, at boot, before
+    // anything listens.
+    let mut router = protected_router.merge(public_router);
     if let Some(md) = &edge.resource_metadata {
         router = router.merge(proxiima_mcp_server::public_discovery_router(md));
     }
