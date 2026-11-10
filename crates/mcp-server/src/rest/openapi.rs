@@ -221,8 +221,8 @@ struct Operation<'a> {
     parameters: Vec<Value>,
     request_schema: Option<Value>,
     produces_schema_ids: &'a [&'a str],
-    /// The tool's derived reply schema. `None` for resources, which are
-    /// served straight off the dispatch seam and have no descriptor.
+    /// The reply schema derived from the tool's `Output` or the resource's
+    /// answer type. `None` for the guide, whose body is markdown.
     output_schema: Option<&'a Value>,
     annotations: McpToolAnnotations,
 }
@@ -409,6 +409,7 @@ fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<Strin
             "schema": { "type": "string" },
         })
     }));
+    let answer = resource.answer.schema();
     let operation = Operation {
         target: OperationTarget::Resource(resource.name),
         summary: resource.title.to_string(),
@@ -418,7 +419,7 @@ fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<Strin
         // Resources are the browsable read surface; every one of them is a
         // read, which is why they exist as a separate concept from tools.
         produces_schema_ids: &[],
-        output_schema: None,
+        output_schema: Some(&answer),
         annotations: McpToolAnnotations::registered(ToolEffect::ReadOnly),
     };
     let mut item = Map::new();
@@ -503,7 +504,7 @@ fn responses(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Val
 /// `produces_schema_ids` names the *registry* payloads a tool writes and is
 /// kept alongside as an annotation — it answers a different question, and a
 /// tool can write payloads without echoing them. Resources have no
-/// descriptor, so they fall back to an unconstrained object.
+/// descriptor; theirs is the schema of the answer type their contract names.
 fn success_response(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Value {
     let mut schema = if let Some(Value::Object(map)) = output_schema {
         map.clone()
@@ -849,5 +850,42 @@ mod tests {
                 "{document:#}",
             );
         }
+    }
+
+    /// #676: a resource operation answers with the schema of the type its
+    /// contract names, not an unconstrained object.
+    #[test]
+    fn every_resource_operation_publishes_its_answer_schema() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        for resource in all_core_resources() {
+            let (path, _) = super::resource_route(resource.uri_template).expect("a resource route");
+            let schema = document
+                .pointer(&format!(
+                    "/paths/{}/get/responses/200/content/application~1json/schema",
+                    path.replace('~', "~0").replace('/', "~1")
+                ))
+                .unwrap_or_else(|| panic!("{path} publishes a 200 schema: {document:#}"));
+            assert_eq!(*schema, resource.answer.schema(), "{path}");
+            assert!(
+                schema.get("properties").is_some(),
+                "{path} is constrained to its answer's fields: {schema:#}",
+            );
+        }
+        let lineage = document
+            .pointer(
+                "/paths/~1v1~1resources~1memory~1{id}~1lineage/get/responses/200/content/application~1json/schema/properties/nodes/items",
+            )
+            .expect("the lineage answer lists its nodes");
+        assert_eq!(
+            lineage["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"]),
+        );
+        assert!(
+            lineage["required"]
+                .as_array()
+                .is_some_and(|required| required.contains(&serde_json::json!("space"))),
+            "{lineage:#}",
+        );
     }
 }

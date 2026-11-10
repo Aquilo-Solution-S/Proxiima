@@ -7,8 +7,8 @@
 
 use crate::spiice::contract::{
     CounterRule, EmbeddingRecipe, EraseRule, ExportRule, ForgetRule, KeyShape, ProjectionDecl,
-    Provenance, ResourceContract, SchemaContract, SchemaRef, SearchProjectionDecl, SpiiceContract,
-    Surface, ToolContract, TransferRule,
+    Provenance, ResourceAnswer, ResourceContract, SchemaContract, SchemaRef, SearchProjectionDecl,
+    SpiiceContract, Surface, ToolContract, TransferRule,
 };
 use crate::verbs::schema::{PayloadKind, SchemaInfo};
 use crate::{SchemaId, SchemaVersion, SpiiceRegistry};
@@ -94,6 +94,7 @@ pub(super) const RESOURCE: ResourceContract = ResourceContract {
     is_template: false,
     read_only: true,
     reads: &[],
+    answer: ResourceAnswer::of::<serde_json::Value>(),
 };
 
 /// Nothing declared at all: used for the two cases the *registrations*

@@ -16,16 +16,24 @@
 //!   declared comparable projections from every spiice, independently of ordinal.
 
 use crate::SearchProjectionColumnKind as ColumnKind;
+use crate::mcp::core_tools::get_graph::GetGraphOutput;
+use crate::mcp::core_tools::get_memories::GetMemoriesOutput;
+use crate::mcp::core_tools::get_memory::GetMemoryOutput;
+use crate::mcp::core_tools::goal_reads::{GoalItem, ListGoalsOutput};
+use crate::mcp::core_tools::list_schemas::{GetSchemaOutput, ListSchemasOutput};
+use crate::mcp::core_tools::list_substrate_tools::ListSubstrateToolsOutput;
+use crate::mcp::core_tools::memory_counts::MemoryCountsOutput;
+use crate::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageOutput;
 use crate::protocol::resource as scope;
 use crate::protocol::tool;
 use crate::spiice::contract::{
     BAND_NAME_EXACT, BAND_NAME_RESCUE, BAND_NAME_SUBSTRING, Band, BandComparability, CORE_ORDINAL,
     CounterRule, DbConstraint, DbTrigger, EmbedUnit, EmbeddingRecipe, Enforcement, EraseRule,
     ExportRule, ForgetRule, KeyShape, LanguagePolicy, ProjectionDecl, ProjectionSpec, Provenance,
-    RankSource, ResourceContract, SLOT_DEFAULT, SchemaContract, SchemaRef, SearchProjectionDecl,
-    SpiiceContract, SubstringArm, Surface, TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE,
-    TS_RANK_NORMALIZATION_NONE, TS_RANK_NORMALIZATION_SCALE, ToolContract, TransferRule,
-    WEIGHT_UNIFORM, WeightedField,
+    RankSource, ResourceAnswer, ResourceContract, SLOT_DEFAULT, SchemaContract, SchemaRef,
+    SearchProjectionDecl, SpiiceContract, SubstringArm, Surface,
+    TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE, TS_RANK_NORMALIZATION_NONE,
+    TS_RANK_NORMALIZATION_SCALE, ToolContract, TransferRule, WEIGHT_UNIFORM, WeightedField,
 };
 use crate::verbs::schema::PayloadKind;
 
@@ -1380,6 +1388,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: false,
         read_only: true,
         reads: &[],
+        answer: ResourceAnswer::of::<ListSchemasOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://schema/{schema_id}/{schema_version}",
@@ -1391,6 +1400,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: true,
         read_only: true,
         reads: &[],
+        answer: ResourceAnswer::of::<GetSchemaOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://tools",
@@ -1402,6 +1412,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: false,
         read_only: true,
         reads: &[],
+        answer: ResourceAnswer::of::<ListSubstrateToolsOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://graph",
@@ -1413,6 +1424,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: false,
         read_only: true,
         reads: &["proxiima_core.embedding_jobs"],
+        answer: ResourceAnswer::of::<GetGraphOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://memory/{id}{?expand_neighbors,version}",
@@ -1428,6 +1440,7 @@ const RESOURCES: &[ResourceContract] = &[
             "proxiima_core.memory_head",
             "proxiima_core.owners",
         ],
+        answer: ResourceAnswer::of::<GetMemoryOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://memories{?ids}",
@@ -1444,6 +1457,7 @@ const RESOURCES: &[ResourceContract] = &[
             "proxiima_core.memory_head",
             "proxiima_core.owners",
         ],
+        answer: ResourceAnswer::of::<GetMemoriesOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://memory/{id}/lineage{?direction,depth,limit,cursor}",
@@ -1456,6 +1470,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: true,
         read_only: true,
         reads: &["proxiima_core.memory"],
+        answer: ResourceAnswer::of::<WalkMemoryLineageOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://goals{?state,limit,cursor}",
@@ -1471,6 +1486,7 @@ const RESOURCES: &[ResourceContract] = &[
             "proxiima_core.goal_head",
             "proxiima_core.owners",
         ],
+        answer: ResourceAnswer::of::<ListGoalsOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://goal/{id}",
@@ -1486,6 +1502,7 @@ const RESOURCES: &[ResourceContract] = &[
             "proxiima_core.goal_head",
             "proxiima_core.owners",
         ],
+        answer: ResourceAnswer::of::<GoalItem>(),
     },
     ResourceContract {
         uri_template: "proxiima://memories/counts",
@@ -1497,6 +1514,7 @@ const RESOURCES: &[ResourceContract] = &[
         is_template: false,
         read_only: true,
         reads: &["proxiima_core.memory_head", "proxiima_core.goal_head"],
+        answer: ResourceAnswer::of::<MemoryCountsOutput>(),
     },
 ];
 
@@ -1679,6 +1697,26 @@ pub(crate) fn register(
 mod tests {
     use super::SPIICE_0;
     use crate::spiice::contract::{EraseLeg, SearchProjectionDecl, TransferRule};
+
+    /// #676: every declared resource derives an object schema from its
+    /// answer type; a resource added later is covered without a list here.
+    #[test]
+    fn every_core_resource_answers_with_a_schema() {
+        assert!(!SPIICE_0.resources.is_empty());
+        for resource in SPIICE_0.resources {
+            let schema = resource.answer.schema();
+            assert_eq!(
+                schema["type"], "object",
+                "{} answers with an object: {schema}",
+                resource.uri_template
+            );
+            assert!(
+                schema.get("properties").is_some(),
+                "{} lists its fields: {schema}",
+                resource.uri_template
+            );
+        }
+    }
 
     #[test]
     fn publication_origin_is_classified_as_a_bespoke_erase_leg() {

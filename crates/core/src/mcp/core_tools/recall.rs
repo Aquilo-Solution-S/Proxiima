@@ -89,6 +89,11 @@ pub struct RecallOutput {
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 pub struct RecallSketch {
     pub handle: String,
+    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// for the session's own owner, otherwise the owner's key from
+    /// `core_memory_spaces`. Always present; `null` means the owner is
+    /// unknown: the memory is no longer readable.
+    pub space: Option<String>,
     pub kind: EntityKind,
     pub sketch: String,
     pub reason: RecallReason,
@@ -186,18 +191,8 @@ async fn collect_subjects(
     }
     let sketches = engine.load_sketches(&ctx.authz, subjects).await?;
     for sketch in sketches {
-        packet.insert(
-            ctx,
-            sketch.id,
-            sketch.kind,
-            &sketch.text,
-            RecallReason::Subject,
-        );
-        packet.set_meta(
-            sketch.id,
-            Some(sketch.owner),
-            sketch.kind != EntityKind::Perspective,
-        );
+        packet.insert(ctx, &sketch, RecallReason::Subject);
+        packet.set_head(sketch.id, sketch.kind != EntityKind::Perspective);
     }
     Ok(())
 }
@@ -238,14 +233,8 @@ async fn collect_cue_touch(
         if sketch.owner != owner {
             continue;
         }
-        packet.insert(
-            ctx,
-            sketch.id,
-            sketch.kind,
-            &sketch.text,
-            RecallReason::CueTouch,
-        );
-        packet.set_meta(sketch.id, Some(sketch.owner), true);
+        packet.insert(ctx, &sketch, RecallReason::CueTouch);
+        packet.set_head(sketch.id, true);
     }
     Ok(())
 }
@@ -320,14 +309,8 @@ async fn collect_question(
     let ids: Vec<MemoryId> = page.memories.iter().map(|row| row.memory_id).collect();
     let sketches = engine.load_sketches(&ctx.authz, &ids).await?;
     for sketch in sketches {
-        packet.insert(
-            ctx,
-            sketch.id,
-            sketch.kind,
-            &sketch.text,
-            RecallReason::Question,
-        );
-        packet.set_meta(sketch.id, Some(sketch.owner), true);
+        packet.insert(ctx, &sketch, RecallReason::Question);
+        packet.set_head(sketch.id, true);
     }
     Ok(degraded)
 }
@@ -383,12 +366,7 @@ async fn collect_assigned_goals(
         .collect();
     let sketches = engine.load_sketches(&ctx.authz, &goal_ids).await?;
     for sketch in sketches {
-        packet.insert_goal(
-            ctx,
-            crate::GoalId::new(sketch.id.into_inner()),
-            &sketch.text,
-            RecallReason::AssignedGoal,
-        );
+        packet.insert_goal(ctx, &sketch, RecallReason::AssignedGoal);
     }
     Ok(())
 }
@@ -423,12 +401,7 @@ async fn collect_unassigned_goals(
         let sketches = engine.load_sketches(&authz, &goal_ids).await?;
         collected += sketches.len();
         for sketch in sketches {
-            packet.insert_goal(
-                ctx,
-                crate::GoalId::new(sketch.id.into_inner()),
-                &sketch.text,
-                RecallReason::UnassignedGoal,
-            );
+            packet.insert_goal(ctx, &sketch, RecallReason::UnassignedGoal);
         }
         if collected >= limit as usize {
             break;
@@ -446,7 +419,9 @@ struct Entry {
     kind: EntityKind,
     reason: RecallReason,
     sketch: String,
-    owner: Option<crate::OwnerId>,
+    owner: crate::OwnerId,
+    /// `owner`'s space key, built once where the owner is read.
+    space: String,
     is_head: bool,
 }
 
@@ -467,13 +442,31 @@ impl Packet {
 
     fn insert(
         &mut self,
-        _ctx: &McpToolCtx,
-        id: MemoryId,
-        kind: EntityKind,
-        sketch: &str,
+        ctx: &McpToolCtx,
+        sketch: &crate::read_models::MemorySketch,
         reason: RecallReason,
     ) {
-        let key = id.into_inner();
+        self.add(ctx, sketch, sketch.kind, reason, false);
+    }
+
+    fn insert_goal(
+        &mut self,
+        ctx: &McpToolCtx,
+        sketch: &crate::read_models::MemorySketch,
+        reason: RecallReason,
+    ) {
+        self.add(ctx, sketch, EntityKind::Goal, reason, true);
+    }
+
+    fn add(
+        &mut self,
+        ctx: &McpToolCtx,
+        sketch: &crate::read_models::MemorySketch,
+        kind: EntityKind,
+        reason: RecallReason,
+        is_head: bool,
+    ) {
+        let key = sketch.id.into_inner();
         if self.by_id.contains_key(&key) {
             return;
         }
@@ -483,42 +476,18 @@ impl Packet {
                 handle: key,
                 kind,
                 reason,
-                sketch: truncate_sketch(sketch),
-                owner: None,
-                is_head: false,
+                sketch: truncate_sketch(&sketch.text),
+                owner: sketch.owner,
+                space: super::memory_spaces::space_key_for_owner(ctx, sketch.owner),
+                is_head,
             },
         );
     }
 
-    fn set_meta(&mut self, id: MemoryId, owner: Option<crate::OwnerId>, is_head: bool) {
+    fn set_head(&mut self, id: MemoryId, is_head: bool) {
         if let Some(entry) = self.by_id.get_mut(&id.into_inner()) {
-            entry.owner = owner;
             entry.is_head = is_head;
         }
-    }
-
-    fn insert_goal(
-        &mut self,
-        _ctx: &McpToolCtx,
-        id: crate::GoalId,
-        title: &str,
-        reason: RecallReason,
-    ) {
-        let key = id.into_inner();
-        if self.by_id.contains_key(&key) {
-            return;
-        }
-        self.by_id.insert(
-            key,
-            Entry {
-                handle: key,
-                kind: EntityKind::Goal,
-                reason,
-                sketch: truncate_sketch(title),
-                owner: None,
-                is_head: true,
-            },
-        );
     }
 
     fn unverified_perspective_ids(&self) -> Vec<MemoryId> {
@@ -541,7 +510,7 @@ impl Packet {
         self.by_id
             .iter()
             .filter(|(_, entry)| {
-                entry.kind == EntityKind::Perspective && entry.is_head && entry.owner == Some(owner)
+                entry.kind == EntityKind::Perspective && entry.is_head && entry.owner == owner
             })
             .map(|(id, _)| MemoryId::new(*id))
             .collect()
@@ -561,6 +530,7 @@ impl Packet {
             .take(limit as usize)
             .map(|entry| RecallSketch {
                 handle: entry.handle.to_string(),
+                space: Some(entry.space),
                 kind: entry.kind,
                 sketch: entry.sketch,
                 reason: entry.reason,
@@ -643,6 +613,7 @@ mod wire_tests {
     fn a_sketch_keeps_the_words_clients_read() {
         let sketch = RecallSketch {
             handle: "h".into(),
+            space: Some("current".into()),
             kind: EntityKind::Perspective,
             sketch: "s".into(),
             reason: RecallReason::CueTouch,
@@ -650,7 +621,8 @@ mod wire_tests {
         assert_eq!(
             serde_json::to_value(&sketch).expect("serializes"),
             serde_json::json!({
-                "handle": "h", "kind": "Perspective", "sketch": "s", "reason": "cue_touch"
+                "handle": "h", "space": "current", "kind": "Perspective", "sketch": "s",
+                "reason": "cue_touch"
             })
         );
         for (reason, word) in [
@@ -666,6 +638,20 @@ mod wire_tests {
         assert!(
             schema.contains("cue_touch") && schema.contains("Perspective"),
             "{schema}"
+        );
+    }
+
+    /// #676: a sketch always carries `space`, null only when the owner is unknown.
+    #[test]
+    fn sketch_schema_requires_the_nullable_space() {
+        let schema =
+            crate::mcp::schema::mcp_output_schema::<RecallOutput>().expect("recall schema");
+        let sketch = &schema["properties"]["sketches"]["items"];
+        let required = sketch["required"].as_array().expect("required fields");
+        assert!(required.contains(&serde_json::json!("space")));
+        assert_eq!(
+            sketch["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"])
         );
     }
 }

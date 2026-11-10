@@ -1587,6 +1587,61 @@ pub struct ResourceContract {
     pub read_only: bool,
     /// Relations the handler reads, for the erase/export reach argument.
     pub reads: &'static [&'static str],
+    /// The type the resource answers with; every published resource schema
+    /// is derived from it. Required: a resource cannot be declared without
+    /// naming its answer.
+    pub answer: ResourceAnswer,
+}
+
+/// The JSON answer type of one resource, as the source of its published
+/// schema.
+///
+/// Built only by [`Self::of`], so the schema every surface publishes (the
+/// REST `OpenAPI` document and the `proxiima://schemas` catalog) is derived
+/// from the Rust type the handler returns, by the same machinery as a tool's
+/// `outputSchema`.
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceAnswer {
+    schema: fn() -> Result<serde_json::Value, String>,
+}
+
+/// Two answers are the same when they derive their schema from the same
+/// function, which is monomorphized per answer type.
+impl PartialEq for ResourceAnswer {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::fn_addr_eq(self.schema, other.schema)
+    }
+}
+
+impl Eq for ResourceAnswer {}
+
+impl std::hash::Hash for ResourceAnswer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.schema as usize).hash(state);
+    }
+}
+
+impl ResourceAnswer {
+    /// The answer is a `T`.
+    #[must_use]
+    pub const fn of<T: schemars::JsonSchema>() -> Self {
+        Self {
+            schema: crate::mcp::schema::mcp_output_schema::<T>,
+        }
+    }
+
+    /// The draft-2020-12 schema of the answer, `$ref`-free, with the
+    /// normalization a tool's `outputSchema` gets.
+    ///
+    /// # Panics
+    ///
+    /// If the answer type has no valid output schema (recursive, or not an
+    /// object). Core's answers are static, and
+    /// `every_core_resource_answers_with_a_schema` derives each of them.
+    #[must_use]
+    pub fn schema(self) -> serde_json::Value {
+        (self.schema)().unwrap_or_else(|message| panic!("resource answer schema: {message}"))
+    }
 }
 
 impl ResourceContract {

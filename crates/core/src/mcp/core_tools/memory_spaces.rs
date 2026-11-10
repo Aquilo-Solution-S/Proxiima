@@ -175,6 +175,29 @@ pub fn space_key_for_owner(ctx: &McpToolCtx, owner: OwnerId) -> String {
     space_for(ctx, owner).key
 }
 
+/// The space key of each readable memory in `ids`, read from the same
+/// sketch rows `core_think` and `core_recall` take their owner from. An id
+/// the reader cannot read live has no entry.
+///
+/// # Errors
+///
+/// Returns storage failures of the sketch read.
+pub(super) async fn local_space_keys(
+    ctx: &McpToolCtx,
+    engine: &crate::Engine,
+    ids: &[crate::MemoryId],
+) -> Result<std::collections::HashMap<crate::MemoryId, String>, McpToolError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    Ok(engine
+        .load_sketches(&ctx.authz, ids)
+        .await?
+        .into_iter()
+        .map(|sketch| (sketch.id, space_key_for_owner(ctx, sketch.owner)))
+        .collect())
+}
+
 fn sorted_accessible_principals(ctx: &McpToolCtx) -> Vec<OwnerId> {
     let mut owners = ctx.authz.accessible_owners().collect::<Vec<_>>();
     let own = ctx.authz.principal();

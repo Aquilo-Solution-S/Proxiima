@@ -76,6 +76,11 @@ pub struct ThinkOutput {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ThinkVisit {
     pub handle: String,
+    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// for the session's own owner, otherwise the owner's key from
+    /// `core_memory_spaces`. Always present; `null` means the owner is
+    /// unknown: another store's memory, or a memory no longer readable.
+    pub space: Option<String>,
     pub kind: String,
     pub sketch: String,
     pub depth: u8,
@@ -312,12 +317,13 @@ async fn hydrate_visits(
             let handle = visit.id.into_inner();
             let edge = visit.edge;
             if let Some(kind) = visit.kind {
+                let sketch = sketches.iter().find(|row| row.id == visit.id);
                 ThinkVisit {
                     handle: handle.to_string(),
+                    space: sketch
+                        .map(|row| super::memory_spaces::space_key_for_owner(ctx, row.owner)),
                     kind: kind.as_str().to_string(),
-                    sketch: sketches
-                        .iter()
-                        .find(|row| row.id == visit.id)
+                    sketch: sketch
                         .map_or_else(|| kind.as_str().to_string(), |row| row.text.clone()),
                     depth: visit.depth,
                     edge,
@@ -331,6 +337,7 @@ async fn hydrate_visits(
                     .unwrap_or_else(|| super::ancestry::project_remote_read(None, false));
                 ThinkVisit {
                     handle: handle.to_string(),
+                    space: None,
                     kind: read.kind,
                     sketch: read.snippet,
                     depth: visit.depth,
@@ -501,14 +508,12 @@ async fn episode_siblings(
     let visits = page
         .into_iter()
         .map(|node| {
-            let sketch = sketches
-                .iter()
-                .find(|row| row.id == node.id)
-                .map_or_else(|| node.kind.as_str().to_string(), |row| row.text.clone());
+            let row = sketches.iter().find(|row| row.id == node.id);
             ThinkVisit {
                 handle: node.id.into_inner().to_string(),
+                space: row.map(|row| super::memory_spaces::space_key_for_owner(ctx, row.owner)),
                 kind: node.kind.as_str().to_string(),
-                sketch,
+                sketch: row.map_or_else(|| node.kind.as_str().to_string(), |row| row.text.clone()),
                 depth: 1,
                 edge: None,
                 store: None,
@@ -565,5 +570,18 @@ mod tests {
         let err = walk_start(&[], Some(&missing)).expect_err("vanished cursor");
         assert!(err.to_string().contains("does not match"));
         assert!(!should_stop_walk(&[], Some(&missing), 1));
+    }
+
+    /// #676: a visit always carries `space`, null only when the owner is unknown.
+    #[test]
+    fn visit_schema_requires_the_nullable_space() {
+        let schema = crate::mcp::schema::mcp_output_schema::<ThinkOutput>().expect("think schema");
+        let visit = &schema["properties"]["visits"]["items"];
+        let required = visit["required"].as_array().expect("required fields");
+        assert!(required.contains(&serde_json::json!("space")));
+        assert_eq!(
+            visit["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"])
+        );
     }
 }

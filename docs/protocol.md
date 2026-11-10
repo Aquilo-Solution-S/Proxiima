@@ -9,6 +9,7 @@ build-time manifest, authorization, typed inputs, and engine operations.
 | Tools and per-action input schemas | MCP `tools/list`, `proxiima://tools` |
 | Resources and parameterized reads | MCP `resources/list`, `resources/templates/list` |
 | Payload schemas | Live schema resources listed by that server |
+| Resource answer schemas | `proxiima://schemas` (`resources`, keyed by URI template), `/v1/openapi.json` |
 | HTTP operations and schemas | `/v1/openapi.json` on a REST-enabled host |
 | Agent usage instructions | MCP `proxiima://how-to` |
 
@@ -89,6 +90,10 @@ owner, otherwise its UUID. A Goal-authorized read can report an owner outside
 collaborators select authorized work with `working_goal`. A remote read reports
 the owner's UUID as `space` and retains the stored payload and a Fact's
 occurrence time, just as local reads do.
+
+A lineage node, a `core_think` visit and a `core_recall` sketch carry the same
+`space` label, always present. It is `null` only when the owner is unknown: a
+memory on another store, or a lineage node with a `status`.
 
 Pagination uses an opaque cursor bound to the read's filters. Memory recency
 uses `(created_at, t)`; Goal pages use `(handle, t)`, so changing an Active Goal

@@ -47,7 +47,7 @@ pub use contract::{
     DbTrigger, EmbedUnit, EmbeddingRecipe, EmbeddingSlot, Enforcement, EraseLeg, EraseRule,
     ExportRule, ForgetLeg, ForgetRule, HostStateEraseDisposition, KeyShape, LanguagePolicy,
     PROJECTION_MEMORY_COLUMN, PROJECTION_MEMORY_FK, PROJECTION_TABLE_NAME, ProjectionDecl,
-    ProjectionSpec, Provenance, RankSource, ResolvedEmbedUnit, ResourceContract,
+    ProjectionSpec, Provenance, RankSource, ResolvedEmbedUnit, ResourceAnswer, ResourceContract,
     RetiredFactContract, SLOT_DEFAULT, SchemaContract, SchemaRef, SearchProjectionDecl,
     SpiiceContract, SubstringArm, Surface, TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE,
     TS_RANK_NORMALIZATION_NONE, TS_RANK_NORMALIZATION_SCALE, TSVECTOR_WEIGHT_CLASSES, ToolContract,

@@ -161,3 +161,151 @@ async fn a_memory_reads_the_same_from_search_and_by_id() {
 
     result.expect("memory read parity test failed");
 }
+
+/// #676: every memory item a walk or recall names carries its own space, the
+/// key a by-id read reports, whichever space the walk started from.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one fixture: two spaces, three walks, one recall
+async fn lineage_think_and_recall_name_each_memorys_own_space() {
+    let split_db = clone_split_core_db("proxiima_core_walk_spaces")
+        .await
+        .expect("PG required for tests");
+    let (runtime_url, platform_url) = (
+        split_db.runtime_url().to_owned(),
+        split_db.platform_url().to_owned(),
+    );
+
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
+        let built = Proxiima::<AgentMemoryApp>::app()
+            .database_url(runtime_url.clone())
+            .store_number(0)
+            .platform_database_url(platform_url.clone())
+            .owner(personal)
+            .served_surface(proxiima_core::ServedSurface::All)
+            .build()
+            .await?;
+        let tools = built.host().core_mcp_tools();
+        let authz = space_authz(personal, vec![personal, group], Role::admin());
+        let shared = server_issued_group_space_selector(&tools, authz.clone(), personal).await;
+        let call = |name: &'static str, args: serde_json::Value| {
+            call_test_model_tool(&tools, authz.clone(), personal, name, args)
+        };
+        let read = |uri: String| {
+            let (tools, authz) = (&tools, authz.clone());
+            async move { read_test_model_resource(tools, authz, personal, &uri).await }
+        };
+        let handle = |value: serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
+            Ok(value["handle"].as_str().ok_or("handle")?.to_owned())
+        };
+
+        let m_p = handle(
+            call(
+                "core_remember",
+                serde_json::json!({"space":"current","title":"walk personal",
+                    "body":"walkspace personal note","tags":[]}),
+            )
+            .await?,
+        )?;
+        let m_g = handle(
+            call(
+                "core_remember",
+                serde_json::json!({"space":shared.clone(),"title":"walk group",
+                    "body":"walkspace group note","tags":[]}),
+            )
+            .await?,
+        )?;
+        // Written to the group, grounded in a memory of each space.
+        let derived = handle(
+            call(
+                "core_derive",
+                serde_json::json!({"space":shared.clone(),"kind":"Abstraction",
+                    "title":"walk pattern","body":"walkspace pattern","tags":[],
+                    "source_handles":[m_p.clone(), m_g.clone()],"model_id":"test-model"}),
+            )
+            .await?,
+        )?;
+        let expected = [
+            (m_p.clone(), serde_json::json!("current")),
+            (m_g.clone(), serde_json::json!(shared.clone())),
+            (derived.clone(), serde_json::json!(shared.clone())),
+        ];
+        for (memory, space) in &expected {
+            // The anchor: a by-id read says the same.
+            let by_id = read(format!("proxiima://memory/{memory}")).await?;
+            assert_eq!(&by_id["space"], space, "{by_id}");
+        }
+        let space_of = |rows: &serde_json::Value, list: &str, key: &str, memory: &str| {
+            rows[list]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row[key] == memory))
+                .map_or_else(
+                    || panic!("{memory} in {list}: {rows}"),
+                    |row| row["space"].clone(),
+                )
+        };
+
+        let ancestors = read(format!("proxiima://memory/{derived}/lineage")).await?;
+        for (memory, space) in &expected {
+            assert_eq!(
+                &space_of(&ancestors, "nodes", "memory", memory),
+                space,
+                "ancestor lineage node {memory}: {ancestors}"
+            );
+        }
+        let descendants = read(format!(
+            "proxiima://memory/{m_p}/lineage?direction=descendants"
+        ))
+        .await?;
+        for (memory, space) in expected.iter().filter(|(memory, _)| *memory != m_g) {
+            assert_eq!(
+                &space_of(&descendants, "nodes", "memory", memory),
+                space,
+                "descendant lineage node {memory}: {descendants}"
+            );
+        }
+
+        let think = call(
+            "core_think",
+            serde_json::json!({"seeds":[derived.clone()],"direction":"ancestors","depth":2}),
+        )
+        .await?;
+        for (memory, space) in &expected {
+            assert_eq!(
+                &space_of(&think, "visits", "handle", memory),
+                space,
+                "think visit {memory}: {think}"
+            );
+        }
+        let below = call(
+            "core_think",
+            serde_json::json!({"seeds":[m_p.clone()],"direction":"descendants","depth":1}),
+        )
+        .await?;
+        assert_eq!(
+            space_of(&below, "visits", "handle", &derived),
+            serde_json::json!(shared),
+            "{below}"
+        );
+
+        let recall = call(
+            "core_recall",
+            serde_json::json!({"subjects":[m_p.clone(), m_g.clone(), derived.clone()]}),
+        )
+        .await?;
+        for (memory, space) in &expected {
+            assert_eq!(
+                &space_of(&recall, "sketches", "handle", memory),
+                space,
+                "recall sketch {memory}: {recall}"
+            );
+        }
+
+        built.shutdown().await;
+        Ok(())
+    }
+    .await;
+
+    result.expect("walk and recall space test failed");
+}

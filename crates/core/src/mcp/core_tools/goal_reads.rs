@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::GoalId;
@@ -33,14 +34,14 @@ pub struct ListGoalsArgs {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ListGoalsOutput {
     pub goals: Vec<GoalItem>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct GoalItem {
     /// Goal reference (`<uuid>`), as accepted by `core_goal`.
     pub goal: String,
@@ -58,10 +59,12 @@ pub struct GoalItem {
     pub schema_id: String,
     /// When the goal was set: the time of its first version (RFC 3339).
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
     pub set_at: time::OffsetDateTime,
     /// When this version was written (RFC 3339); equal to `set_at` on the
     /// first version.
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
     pub changed_at: time::OffsetDateTime,
     /// Goals this one depends on (`<uuid>`), as declared on its own row.
     pub dependencies: Vec<String>,

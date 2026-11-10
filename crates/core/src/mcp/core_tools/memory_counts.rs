@@ -6,12 +6,13 @@
 //! has. A cheap pull for a client that wants the size of its memory before it
 //! pages one.
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::mcp::{McpToolCtx, McpToolError};
 use crate::read_models::MemoryCounts;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct MemoryCountsOutput {
     /// Every kind is present, zero when the caller can read none of it.
     pub counts: MemoryCounts,

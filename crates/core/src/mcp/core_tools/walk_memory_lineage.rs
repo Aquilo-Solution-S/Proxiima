@@ -67,7 +67,7 @@ impl From<WalkMemoryLineageDirectionArg> for MemoryLineageDirection {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct WalkMemoryLineageOutput {
     pub start: String,
     pub direction: WalkMemoryLineageDirectionArg,
@@ -83,9 +83,15 @@ pub struct WalkMemoryLineageOutput {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct LineageNodeOutput {
     pub memory: String,
+    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// for the session's own owner, otherwise the owner's key from
+    /// `core_memory_spaces`. Always present; `null` means the owner is
+    /// unknown: another store's memory, a node with a `status`, or a memory
+    /// no longer readable.
+    pub space: Option<String>,
     pub kind: String,
     pub schema_id: String,
     pub snippet: String,
@@ -111,7 +117,7 @@ pub struct LineageNodeOutput {
 /// One hop of the walk: `origin` (made from) or, toward ancestors,
 /// `reference` (a declared subject, e.g. an interpretation's). An edge to
 /// another store's memory carries its recorded kind (#480).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct LineageEdgeOutput {
     pub source: String,
     pub target: String,
@@ -211,22 +217,23 @@ pub async fn walk_memory_lineage(
         )));
     }
 
+    let node_ids: Vec<MemoryId> = response.nodes.iter().map(|node| node.memory_id).collect();
+    let mut spaces = super::memory_spaces::local_space_keys(&ctx, engine, &node_ids).await?;
     let nodes = response
         .nodes
         .into_iter()
-        .map(|node| {
-            Ok(LineageNodeOutput {
-                memory: node.memory_id.into_inner().to_string(),
-                kind: node.kind.as_str().to_string(),
-                schema_id: node.schema_id.as_str().to_string(),
-                snippet: node.snippet,
-                distance: node.distance,
-                store: None,
-                status: None,
-                unavailable_reason: None,
-            })
+        .map(|node| LineageNodeOutput {
+            memory: node.memory_id.into_inner().to_string(),
+            space: spaces.remove(&node.memory_id),
+            kind: node.kind.as_str().to_string(),
+            schema_id: node.schema_id.as_str().to_string(),
+            snippet: node.snippet,
+            distance: node.distance,
+            store: None,
+            status: None,
+            unavailable_reason: None,
         })
-        .collect::<Result<Vec<_>, McpToolError>>()?;
+        .collect::<Vec<_>>();
 
     let edges: Vec<LineageEdgeOutput> = response
         .edges
@@ -396,10 +403,13 @@ async fn render_ancestor_page(
         .iter()
         .map(|node| (node.memory_id, node.kind))
         .collect();
+    let readable_ids: Vec<MemoryId> = readable.iter().map(|node| node.memory_id).collect();
+    let mut spaces = super::memory_spaces::local_space_keys(ctx, engine, &readable_ids).await?;
     let mut nodes: Vec<LineageNodeOutput> = readable
         .into_iter()
         .map(|node| LineageNodeOutput {
             memory: node.memory_id.into_inner().to_string(),
+            space: spaces.remove(&node.memory_id),
             kind: node.kind.as_str().to_string(),
             schema_id: node.schema_id.as_str().to_string(),
             snippet: node.snippet,
@@ -423,6 +433,7 @@ async fn render_ancestor_page(
     // status `forgotten`, and the walk goes no further (#488 D4).
     nodes.extend(unread.forgotten.iter().map(|node| LineageNodeOutput {
         memory: node.memory_id.into_inner().to_string(),
+        space: None,
         kind: node.kind.as_str().to_string(),
         schema_id: node.schema_id.as_str().to_string(),
         snippet: String::new(),
@@ -484,6 +495,7 @@ async fn append_external_edges(
         if let Some(remote) = projections.remove(&origin) {
             nodes.push(LineageNodeOutput {
                 memory: handle.clone(),
+                space: None,
                 kind: remote.kind,
                 schema_id: remote.schema_id,
                 snippet: remote.snippet,
@@ -634,6 +646,19 @@ mod tests {
         }
     }
 
+    /// #676: a node always carries `space`, null only when the owner is unknown.
+    #[test]
+    fn lineage_node_schema_requires_the_nullable_space() {
+        let schema = crate::mcp::schema::mcp_output_schema::<LineageNodeOutput>()
+            .expect("lineage node schema");
+        let required = schema["required"].as_array().expect("required fields");
+        assert!(required.contains(&serde_json::json!("space")));
+        assert_eq!(
+            schema["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+    }
+
     struct SlowLineageStore {
         reads: Arc<AtomicUsize>,
     }
@@ -688,6 +713,7 @@ mod tests {
                 let id = MemoryId::new(uuid::Uuid::from_u128(index + 1));
                 LineageNodeOutput {
                     memory: id.into_inner().to_string(),
+                    space: None,
                     kind: "fact".into(),
                     schema_id: "test/fact-v1".into(),
                     snippet: String::new(),
