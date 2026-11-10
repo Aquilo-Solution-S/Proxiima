@@ -338,6 +338,45 @@ theorem viewer_member_works_goals_writes_no_memory (s : OwnerState)
     subst hrole
     simp [Role.mayWrite, Role.viewer] at hw
 
+/-- A Goal work unit — one host-state command declared Goal work on a Goal
+    of the owner — writes Facts on that owner only where the command declares
+    them, under the Goal work rule. It writes no other kind, and it is no
+    memory write permission: `request_may_write` is unchanged. -/
+def request_may_write_goal_work (s : OwnerState) (p : ForwardingPolicy) (r : User)
+    (a : RequestAuthority) (o : OwnerRef) (declared : Bool) (k : AccessKind) : Prop :=
+  k = .fact ∧ declared = true ∧ request_may_work_goals s p r a o
+
+/-- A Fact the command did not declare is not written as Goal work. -/
+theorem goal_work_writes_only_declared (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (a : RequestAuthority) (o : OwnerRef) (k : AccessKind) :
+    ¬ request_may_write_goal_work s p r a o false k := by
+  simp [request_may_write_goal_work]
+
+/-- Goal work writes no Abstraction, Perspective or Goal memory. -/
+theorem goal_work_writes_only_facts (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (a : RequestAuthority) (o : OwnerRef) (d : Bool) (k : AccessKind)
+    (hk : k ≠ .fact) :
+    ¬ request_may_write_goal_work s p r a o d k := by
+  rintro ⟨h, -, -⟩
+  exact hk h
+
+/-- A Goal work write needs Goal work: no forwarding role makes one. -/
+theorem forwarding_no_goal_work_write (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (d : Bool) (k : AccessKind) :
+    ¬ request_may_write_goal_work s p r (.forwarded c) o d k := by
+  rintro ⟨-, -, hw⟩
+  exact forwarding_no_goal_work s p r c o hw
+
+/-- A viewer member writes the declared Facts of its group's Goal work and
+    still writes no kind of the group's memory. -/
+theorem viewer_member_goal_work_writes_declared_facts (s : OwnerState)
+    (p : ForwardingPolicy) (r : User) (o : OwnerRef)
+    (h : s.resolve o r = some Role.viewer) :
+    request_may_write_goal_work s p r .membership o true .fact ∧
+      ∀ k, ¬ request_may_write s p r .membership o k :=
+  let ⟨work, writes⟩ := viewer_member_works_goals_writes_no_memory s p r o h
+  ⟨⟨rfl, rfl, work⟩, writes⟩
+
 theorem forwarding_no_management (s : OwnerState) (r : User)
     (c : VerifiedForwardedOwner) (o : OwnerRef) :
     ¬ request_may_manage s r (.forwarded c) o := by
