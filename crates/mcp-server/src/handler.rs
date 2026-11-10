@@ -1327,10 +1327,7 @@ fn host_tool_allowed_for_auth(caller: Caller<'_>, tool: &McpHostTool) -> bool {
         host_tool_in_scope(ctx.authz.capabilities(), &tool.name, tool.effect)
     });
     in_scope
-        && owner_role_allows(
-            caller.auth,
-            OwnerAccess::declared(tool.effect.is_read_only()),
-        )
+        && owner_role_allows(caller.auth, tool.call_marker().owner_access())
         && caller.behaviors_show(&ToolDescriptorView::host(
             &tool.name,
             &tool.description,
@@ -1595,6 +1592,27 @@ mod tests {
         assert!(!resource_allowed_for_auth(Some(&empty_caller), &write));
         let held = full_auth(ToolScope::Palette(vec![ScopeKey::Resource(write.key())]));
         assert!(resource_allowed_for_auth(Some(&held), &write));
+    }
+
+    /// A host tool declared Goal work is listed to a viewer member, who
+    /// runs it; an undeclared host write is not.
+    #[test]
+    fn a_declared_goal_work_host_tool_is_listed_to_a_viewer_member() {
+        let group = proxiima_core::OwnerId::from(proxiima_core::GroupId::new(uuid::Uuid::now_v7()));
+        let viewer = McpAuthContext {
+            owner: group,
+            authz: proxiima_core::AuthzContext::for_subject_with_role(
+                proxiima_core::UserId::new(uuid::Uuid::now_v7()),
+                [(group, proxiima_core::Role::viewer())],
+                proxiima_core::AuthPath::HostBearer,
+            ),
+        };
+        let write = ToolEffect::Additive(proxiima_core::Replay::NonIdempotent);
+        let host_write = McpHostTool::new("host_write", "write", serde_json::json!({}), write);
+        let host_goal = host_write.clone().with_goal_work();
+        let caller = Caller::new(Some(&viewer));
+        assert!(host_tool_allowed_for_auth(caller, &host_goal));
+        assert!(!host_tool_allowed_for_auth(caller, &host_write));
     }
 
     fn full_auth(scope: ToolScope) -> McpAuthContext {

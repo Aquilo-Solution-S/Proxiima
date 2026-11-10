@@ -210,6 +210,7 @@ impl McpToolCtx {
 pub struct McpHostToolCall {
     name: String,
     effect: ToolEffect,
+    goal_work: bool,
 }
 
 impl McpHostToolCall {
@@ -218,6 +219,28 @@ impl McpHostToolCall {
         Self {
             name: name.into(),
             effect,
+            goal_work: false,
+        }
+    }
+
+    /// Declare the tool's writes Goal work: the owner-role gate admits it
+    /// for every member who [works Goals](crate::Role::works_goals) instead
+    /// of asking for Fact write. It widens no memory write: the tool's
+    /// Fact, Perspective and host-state writes keep the caller's ceiling.
+    #[must_use]
+    pub const fn with_goal_work(mut self) -> Self {
+        self.goal_work = true;
+        self
+    }
+
+    /// What a call of this tool asks of the owner it selects: a read for a
+    /// read-only tool, Goal work for a declared Goal work tool that writes,
+    /// otherwise a write.
+    #[must_use]
+    pub const fn owner_access(&self) -> OwnerAccess {
+        match OwnerAccess::declared(self.effect.is_read_only()) {
+            OwnerAccess::Write if self.goal_work => OwnerAccess::GoalWork,
+            access => access,
         }
     }
 
@@ -335,7 +358,10 @@ impl ScopeGateBehavior {
                 if !allowed {
                     return Err(McpToolError::NotAuthorized(tool.to_string()));
                 }
-                OwnerAccess::of_key(tool, None, declared.is_read())
+                match Self::host_call(tool, descriptor, ctx) {
+                    Some(host) => host.owner_access(),
+                    None => OwnerAccess::of_key(tool, None, declared.is_read()),
+                }
             }
         };
         let owner = Self::resolve_scope_owner(tool, args, ctx)?;
@@ -447,14 +473,26 @@ impl ScopeGateBehavior {
                     resource.declaration()
                 }),
             (_, Some(descriptor)) => descriptor.declaration(None),
-            (_, None) => ctx
-                .services
-                .get::<McpHostToolCall>()
-                .filter(|host| host.name == tool)
+            (_, None) => Self::host_call(tool, None, ctx)
                 .map_or(KeyDeclaration::UNDECLARED, |host| {
                     KeyDeclaration::shared(Some(host.effect))
                 }),
         }
+    }
+
+    /// The host's declaration of `tool`: only for a name the registry does
+    /// not serve, and only the marker that names it.
+    fn host_call(
+        tool: &str,
+        descriptor: Option<&McpToolDescriptor>,
+        ctx: &McpToolCtx,
+    ) -> Option<Arc<McpHostToolCall>> {
+        if descriptor.is_some() {
+            return None;
+        }
+        ctx.services
+            .get::<McpHostToolCall>()
+            .filter(|host| host.name == tool)
     }
 
     /// The owner-role gate: a declared read needs read access to the selected
@@ -1002,6 +1040,29 @@ mod tests {
         .expect_err("viewer cannot call write tool");
         assert!(
             matches!(err, McpToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
+        );
+    }
+
+    /// A host's Goal work declaration turns its write into Goal work and
+    /// leaves a read a read.
+    #[test]
+    fn a_host_goal_work_declaration_classifies_writes_only() {
+        let write = ToolEffect::Destructive(Replay::NonIdempotent);
+        assert_eq!(
+            McpHostToolCall::new("host", write).owner_access(),
+            OwnerAccess::Write
+        );
+        assert_eq!(
+            McpHostToolCall::new("host", write)
+                .with_goal_work()
+                .owner_access(),
+            OwnerAccess::GoalWork
+        );
+        assert_eq!(
+            McpHostToolCall::new("host", ToolEffect::ReadOnly)
+                .with_goal_work()
+                .owner_access(),
+            OwnerAccess::Read
         );
     }
 

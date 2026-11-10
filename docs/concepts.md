@@ -105,7 +105,9 @@ membership, not the write ceiling: every directly authenticated member whose
 role reads Goals works them. A viewer member sets a group Goal and still
 writes none of the group's Facts or Perspectives. Achieving, decomposing and
 sharing a Goal keep the Goal write ceiling, and a forwarded or delegated
-request works Goals only with Goal write. The role representation and its constructors are owned
+request works Goals only with Goal write. A host tool declared Goal work
+(`McpHostTool::with_goal_work`) passes the owner-role gate by the same rule;
+its memory writes keep the write ceiling. The role representation and its constructors are owned
 by the [access rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs).
 
 An owner role is only one part of a tool call:

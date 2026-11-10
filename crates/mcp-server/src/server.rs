@@ -13,9 +13,8 @@ use proxiima_core::mcp::core_tools::{
     walk_memory_lineage::{WalkMemoryLineageArgs, walk_memory_lineage},
 };
 use proxiima_core::mcp::{
-    McpAuthorContext, McpHostToolCall, McpToolCtx, McpToolDescriptor, McpToolError,
-    McpToolErrorKind, Next, TerminalDispatch, ToolCall, ToolContent, ToolReply,
-    resolve_operator_label, tool_name_matches,
+    McpAuthorContext, McpToolCtx, McpToolDescriptor, McpToolError, McpToolErrorKind, Next,
+    TerminalDispatch, ToolCall, ToolContent, ToolReply, resolve_operator_label, tool_name_matches,
 };
 use proxiima_core::protocol::resource as protocol_resource;
 use proxiima_core::spiice::spiice0::resource as core_resource;
@@ -450,18 +449,14 @@ impl McpToolHost {
                 )
             }
             ToolTarget::Host(tool) => {
-                let McpHostTool {
-                    name,
-                    effect,
-                    services,
-                    ..
-                } = *tool;
+                let marker = tool.call_marker();
+                let McpHostTool { name, services, .. } = *tool;
                 let Some(source) = &self.host_tools else {
                     // A host tool only exists in a source's list.
                     return Err(ToolInvocationError::ToolNotFound(name));
                 };
                 request
-                    .try_insert(McpHostToolCall::new(name.clone(), effect))
+                    .try_insert(marker)
                     .map_err(|err| McpToolError::Other(format!("request services: {err}")))?;
                 // After the call marker, so an entry cannot replace it.
                 request
@@ -1154,7 +1149,7 @@ mod tests {
     use crate::auth::McpAuthContext;
     use proxiima_core::mcp::core_tools::get_memory::VersionSelector;
     use proxiima_core::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageDirectionArg;
-    use proxiima_core::mcp::{McpAuthorContext, ToolContent};
+    use proxiima_core::mcp::{McpAuthorContext, McpHostToolCall, ToolContent};
     use proxiima_core::{
         AuthzContext, OwnerId, ScopeKey, ServedSurface, SpiiceRegistry, ToolScope, UserId,
     };
@@ -2077,6 +2072,68 @@ mod tests {
             .expect("the host tool answers");
         assert_eq!(output, serde_json::json!({"resolved": 1, "catalog": 2}));
         assert_eq!(*seen.lock().expect("lock"), [1]);
+    }
+
+    fn member_of(group: OwnerId, role: Option<proxiima_core::Role>) -> McpAuthContext {
+        let user = UserId::new(uuid::Uuid::now_v7());
+        let authz = match role {
+            Some(role) => {
+                AuthzContext::for_subject_with_role(user, [(group, role)], AuthPath::HostBearer)
+            }
+            None => AuthzContext::single_owner(&OwnerId::from(user), AuthPath::HostBearer),
+        };
+        McpAuthContext {
+            owner: group,
+            authz,
+        }
+    }
+
+    fn refused(result: Result<serde_json::Value, ToolInvocationError>, tool: &str) -> bool {
+        matches!(result, Err(ToolInvocationError::NotAuthorized(name)) if name == tool)
+    }
+
+    /// A host tool declared Goal work runs for every member who works the
+    /// group's Goals; an undeclared host write still asks for Fact write.
+    #[tokio::test]
+    async fn a_declared_goal_work_host_tool_runs_for_every_member_who_works_goals() {
+        let (server, _) = scripted(
+            Ok(vec![
+                host_tool("host_goal", WRITE).with_goal_work(),
+                host_tool("host_write", WRITE),
+            ]),
+            ToolReply::Structured(serde_json::json!({"ran": true})),
+        );
+        let group = OwnerId::from(proxiima_core::GroupId::new(uuid::Uuid::now_v7()));
+        let call = |tool: &'static str, auth: McpAuthContext| {
+            server.call_tool(tool, serde_json::json!({}), author(), Some(auth))
+        };
+
+        let viewer = member_of(group, Some(proxiima_core::Role::viewer()));
+        call("host_goal", viewer.clone())
+            .await
+            .expect("a viewer member runs the group's declared Goal work");
+        assert!(
+            refused(call("host_write", viewer).await, "host_write"),
+            "a viewer member runs no undeclared host write"
+        );
+
+        let admin = member_of(group, Some(proxiima_core::Role::admin()));
+        call("host_goal", admin.clone())
+            .await
+            .expect("an admin runs the declared Goal work");
+        call("host_write", admin)
+            .await
+            .expect("an admin runs a host write");
+
+        let ingest = member_of(group, Some(proxiima_core::Role::ingest()));
+        assert!(
+            refused(call("host_goal", ingest).await, "host_goal"),
+            "a member whose role reads no Goals works none"
+        );
+        assert!(
+            refused(call("host_goal", member_of(group, None)).await, "host_goal"),
+            "a non-member works none of the group's Goals"
+        );
     }
 
     /// A listed entry cannot replace the effect declaration the gate reads:
