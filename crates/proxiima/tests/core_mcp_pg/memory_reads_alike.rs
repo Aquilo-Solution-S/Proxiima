@@ -4,6 +4,10 @@
 //! tags, both derived from the schema's search declaration.
 
 use super::*;
+use proxiima_core::mcp::core_tools::{
+    get_memory::GetMemoryOutput, recall::RecallOutput, think::ThinkOutput,
+    walk_memory_lineage::WalkMemoryLineageOutput,
+};
 
 fn find<'a>(rows: &'a serde_json::Value, list: &str, handle: &str) -> &'a serde_json::Value {
     rows[list]
@@ -301,6 +305,16 @@ async fn lineage_think_and_recall_name_each_memorys_own_space() {
                 "recall sketch {memory}: {recall}"
             );
         }
+
+        // An embedder parses each of these answers into its published type.
+        serde_json::from_value::<WalkMemoryLineageOutput>(ancestors)?;
+        serde_json::from_value::<WalkMemoryLineageOutput>(descendants)?;
+        serde_json::from_value::<ThinkOutput>(think)?;
+        serde_json::from_value::<ThinkOutput>(below)?;
+        serde_json::from_value::<RecallOutput>(recall)?;
+        serde_json::from_value::<GetMemoryOutput>(
+            read(format!("proxiima://memory/{derived}")).await?,
+        )?;
 
         built.shutdown().await;
         Ok(())

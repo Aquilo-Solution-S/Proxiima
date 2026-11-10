@@ -311,6 +311,7 @@ mod tests {
     fn a_search_response_must_carry_the_requested_store_number() {
         let hit = RemoteHit {
             handle: crate::new_memory_uuid(2),
+            owner: crate::OwnerId::new(uuid::Uuid::from_u128(2)),
             writer: crate::WriterAttribution {
                 by: uuid::Uuid::from_u128(3),
                 via: None,

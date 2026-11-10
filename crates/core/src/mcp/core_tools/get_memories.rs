@@ -29,7 +29,7 @@ pub struct GetMemoriesArgs {
     pub memories: Vec<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GetMemoriesOutput {
     /// Found memories, in request order (duplicate ids collapse into the
     /// first occurrence).

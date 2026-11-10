@@ -67,7 +67,7 @@ impl From<WalkMemoryLineageDirectionArg> for MemoryLineageDirection {
     }
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WalkMemoryLineageOutput {
     pub start: String,
     pub direction: WalkMemoryLineageDirectionArg,
@@ -83,14 +83,16 @@ pub struct WalkMemoryLineageOutput {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LineageNodeOutput {
     pub memory: String,
     /// The memory's owning space, as `core_get_memory` reports it: `current`
     /// for the session's own owner, otherwise the owner's key from
-    /// `core_memory_spaces`. Always present; `null` means the owner is
-    /// unknown: another store's memory, a node with a `status`, or a memory
-    /// no longer readable.
+    /// `core_memory_spaces`; another store's memory, the owner's UUID that
+    /// store reported. Always present; `null` means the owner is unknown: a
+    /// node with a `status`, or a memory no longer readable.
+    /// A missing `space` is refused, never read as unknown.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub space: Option<String>,
     pub kind: String,
     pub schema_id: String,
@@ -117,7 +119,7 @@ pub struct LineageNodeOutput {
 /// One hop of the walk: `origin` (made from) or, toward ancestors,
 /// `reference` (a declared subject, e.g. an interpretation's). An edge to
 /// another store's memory carries its recorded kind (#480).
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LineageEdgeOutput {
     pub source: String,
     pub target: String,
@@ -495,7 +497,7 @@ async fn append_external_edges(
         if let Some(remote) = projections.remove(&origin) {
             nodes.push(LineageNodeOutput {
                 memory: handle.clone(),
-                space: None,
+                space: remote.space,
                 kind: remote.kind,
                 schema_id: remote.schema_id,
                 snippet: remote.snippet,
@@ -581,6 +583,23 @@ mod tests {
             reason(None, true),
             Some(UnavailableReason::OriginLimitExceeded)
         );
+    }
+
+    /// A node's `space` is required and nullable: `null` parses as an
+    /// unknown owner, and a node without the field is refused, never read
+    /// as unknown.
+    #[test]
+    fn a_node_without_its_space_is_refused_and_null_is_unknown() {
+        let node = serde_json::json!({
+            "memory": crate::new_memory_uuid(0).to_string(), "space": null,
+            "kind": "fact", "schema_id": "test/fact-v1", "snippet": "", "distance": 0,
+        });
+        let unknown: LineageNodeOutput =
+            serde_json::from_value(node.clone()).expect("a null space parses");
+        assert_eq!(unknown.space, None);
+        let mut missing = node;
+        missing.as_object_mut().expect("a node").remove("space");
+        assert!(serde_json::from_value::<LineageNodeOutput>(missing).is_err());
     }
 
     /// The words a client sees are the ones it saw when these were strings.

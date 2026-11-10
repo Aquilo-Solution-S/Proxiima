@@ -184,6 +184,7 @@ impl OtherStores for FakeStores {
                         Entry::Readable(memory) if remote_matches(memory, args) => {
                             Some(RemoteHit {
                                 handle: memory.handle,
+                                owner: memory.owner,
                                 writer: memory.writer,
                                 kind: memory.kind,
                                 schema_id: memory.schema_id.clone(),
@@ -469,6 +470,9 @@ async fn derive_from_a_local_and_a_remote_fact_names_both_and_survives_remote_er
         assert_eq!(remote["store"], 1);
         assert_eq!(remote["kind"], "Fact");
         assert!(remote.get("status").is_none(), "{remote}");
+        // The node names the owner the store reported.
+        let reported = RemoteMemory::fixture(remote_id(1, "fact-1")).owner;
+        assert_eq!(remote["space"], reported.to_string(), "{remote}");
         // #480: a remote source of a derivation is an origin.
         assert_eq!(
             external_edge_kind(&platform_url, &abstraction, remote_id(1, "fact-1")).await,
@@ -493,10 +497,9 @@ async fn derive_from_a_local_and_a_remote_fact_names_both_and_survives_remote_er
         // Abstraction still reads.
         fake.erase(1, remote_id(1, "fact-1"));
         let lineage = read_test_model_resource(&tools, authz.clone(), owner, &lineage_uri).await?;
-        assert_eq!(
-            node(&lineage, remote_id(1, "fact-1").to_string()).expect("remote node")["status"],
-            "erased"
-        );
+        let erased = node(&lineage, remote_id(1, "fact-1").to_string()).expect("remote node");
+        assert_eq!(erased["status"], "erased");
+        assert_eq!(erased["space"], serde_json::Value::Null, "{erased}");
         let read = read_test_model_resource(
             &tools,
             authz.clone(),
@@ -985,6 +988,13 @@ async fn interpret_about_a_remote_memory_reads_it_first_and_walks_it_through_the
         assert_eq!(remote_visit["store"], 1, "{think}");
         assert_eq!(remote_visit["kind"], "Fact", "{think}");
         assert_eq!(remote_visit["depth"], 1, "{think}");
+        assert_eq!(
+            remote_visit["space"],
+            RemoteMemory::fixture(remote_id(1, "page-1"))
+                .owner
+                .to_string(),
+            "{think}"
+        );
         assert!(remote_visit.get("status").is_none(), "{think}");
         assert!(visit(&perspective).expect("seed").get("edge").is_none());
         // #480: lineage ancestors follow the same edges as core_think: the

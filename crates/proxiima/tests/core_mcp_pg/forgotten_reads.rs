@@ -146,6 +146,7 @@ impl proxiima::host::OtherStores for ForwardTo {
                         .ok()?;
                     Some(proxiima::host::RemoteHit {
                         handle,
+                        owner: self.owner,
                         writer: proxiima_core::WriterAttribution {
                             by: self.owner.into_inner(),
                             via: None,

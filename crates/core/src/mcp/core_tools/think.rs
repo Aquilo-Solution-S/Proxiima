@@ -65,7 +65,7 @@ pub enum ThinkDirection {
     EpisodeSiblings,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThinkOutput {
     pub direction: ThinkDirection,
     pub visits: Vec<ThinkVisit>,
@@ -73,13 +73,16 @@ pub struct ThinkOutput {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThinkVisit {
     pub handle: String,
     /// The memory's owning space, as `core_get_memory` reports it: `current`
     /// for the session's own owner, otherwise the owner's key from
-    /// `core_memory_spaces`. Always present; `null` means the owner is
-    /// unknown: another store's memory, or a memory no longer readable.
+    /// `core_memory_spaces`; another store's memory, the owner's UUID that
+    /// store reported. Always present; `null` means the owner is unknown: a
+    /// visit with a `status`, or a memory no longer readable.
+    /// A missing `space` is refused, never read as unknown.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub space: Option<String>,
     pub kind: String,
     pub sketch: String,
@@ -164,7 +167,7 @@ const THINK_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::Fingerprinte
     rebind_hint: "repeat the seed, direction, and depth that produced it",
 };
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, Deserialize)]
 struct ThinkPageCursor {
     depth: u8,
     t: MemoryId,
@@ -337,7 +340,7 @@ async fn hydrate_visits(
                     .unwrap_or_else(|| super::ancestry::project_remote_read(None, false));
                 ThinkVisit {
                     handle: handle.to_string(),
-                    space: None,
+                    space: read.space,
                     kind: read.kind,
                     sketch: read.snippet,
                     depth: visit.depth,

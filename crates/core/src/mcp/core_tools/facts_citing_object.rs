@@ -36,7 +36,7 @@ pub struct FactsCitingObjectArgs {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FactsCitingObjectOutput {
     pub cited_object_id: String,
     pub facts: Vec<GetMemoryOutput>,

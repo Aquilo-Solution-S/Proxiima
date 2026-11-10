@@ -49,7 +49,7 @@ pub struct GetMemoryArgs {
     pub version: VersionSelector,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GetMemoryOutput {
     /// The version this read returned.
     pub handle: String,
@@ -69,6 +69,7 @@ pub struct GetMemoryOutput {
     /// else the write time), in the RFC 3339 form `core_search_memories`
     /// gives `created_at`. Present on every Fact, including another store's.
     #[serde(
+        default,
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none"
     )]

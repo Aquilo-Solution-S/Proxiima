@@ -19,7 +19,17 @@ pub struct MemorySketch {
 /// counts once however many versions it has. Serialized as the body of
 /// `proxiima://memories/counts`; every kind is always present, zero when the
 /// read set holds none.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct MemoryCounts {
     #[serde(rename = "Fact")]
     pub fact: u64,

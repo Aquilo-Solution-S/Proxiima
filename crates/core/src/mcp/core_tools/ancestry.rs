@@ -183,7 +183,7 @@ async fn payload_subjects(
 
 /// `status` of a walk node that is not rendered from a read. The walk never
 /// fails on such a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeStatus {
     /// The other store erased the memory.
@@ -196,7 +196,7 @@ pub enum NodeStatus {
 }
 
 /// Why an `unavailable` other-store memory was not read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
 pub enum UnavailableReason {
     /// The store answered that the caller cannot read it, or there is no
     /// such store.
@@ -241,6 +241,8 @@ impl Unread {
 /// with the reason it could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemoteProjection {
+    /// The owner's UUID as the store reported it; `None` when it did not answer with the memory.
+    pub(crate) space: Option<String>,
     pub(crate) kind: String,
     pub(crate) schema_id: String,
     pub(crate) snippet: String,
@@ -294,6 +296,7 @@ pub(crate) fn project_remote_read(
 ) -> RemoteProjection {
     const SNIPPET_CHARS: usize = 200;
     let unread = |unread| RemoteProjection {
+        space: None,
         kind: String::new(),
         schema_id: String::new(),
         snippet: String::new(),
@@ -302,6 +305,7 @@ pub(crate) fn project_remote_read(
     let unavailable = |reason| unread(Unread::Unavailable(reason));
     match read {
         Some(Ok(RemoteOriginRead::Found(_, memory))) => RemoteProjection {
+            space: Some(memory.owner.to_string()),
             kind: memory.kind.as_str().to_string(),
             schema_id: memory.schema_id.clone(),
             snippet: memory.body.chars().take(SNIPPET_CHARS).collect(),

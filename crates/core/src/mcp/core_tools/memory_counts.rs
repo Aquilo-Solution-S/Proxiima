@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::mcp::{McpToolCtx, McpToolError};
 use crate::read_models::MemoryCounts;
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, serde::Deserialize, JsonSchema)]
 pub struct MemoryCountsOutput {
     /// Every kind is present, zero when the caller can read none of it.
     pub counts: MemoryCounts,

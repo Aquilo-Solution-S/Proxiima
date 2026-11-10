@@ -142,6 +142,8 @@ pub struct RemoteSearchResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemoteHit {
     pub handle: Uuid,
+    /// The memory's owner in the issuing store, independent of its writer.
+    pub owner: OwnerId,
     pub writer: WriterAttribution,
     pub kind: EntityKind,
     pub schema_id: String,

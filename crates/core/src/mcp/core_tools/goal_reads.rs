@@ -34,14 +34,14 @@ pub struct ListGoalsArgs {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListGoalsOutput {
     pub goals: Vec<GoalItem>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GoalItem {
     /// Goal reference (`<uuid>`), as accepted by `core_goal`.
     pub goal: String,

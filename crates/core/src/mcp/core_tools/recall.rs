@@ -73,7 +73,7 @@ pub enum RecallKind {
     Goal,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RecallOutput {
     pub sketches: Vec<RecallSketch>,
     /// The question leg ran lexical-only because the embedding client was
@@ -86,13 +86,15 @@ pub struct RecallOutput {
     pub degraded_to_lexical: bool,
 }
 
-#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
 pub struct RecallSketch {
     pub handle: String,
     /// The memory's owning space, as `core_get_memory` reports it: `current`
     /// for the session's own owner, otherwise the owner's key from
     /// `core_memory_spaces`. Always present; `null` means the owner is
     /// unknown: the memory is no longer readable.
+    /// A missing `space` is refused, never read as unknown.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub space: Option<String>,
     pub kind: EntityKind,
     pub sketch: String,
@@ -100,7 +102,9 @@ pub struct RecallSketch {
 }
 
 /// Why a sketch is in the packet, in packet order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RecallReason {
     Subject,

@@ -83,17 +83,20 @@ Reads return committed rows admitted by owner or Goal authority. A `t` identifie
 different operations. A Goal handle read returns its current head; explicit
 version selectors can retrieve historical rows.
 
-Single and batch memory reads report the stored `owner` UUID independently of
-the writer. Local `space` labels that home owner: `current` for the session's
+Search hits and single and batch memory reads report the stored `owner` UUID
+independently of the writer. Local `space` labels that home owner: `current` for the session's
 owner, otherwise its UUID. A Goal-authorized read can report an owner outside
 `core_memory_spaces`; the label grants no owner role or write authority. Goal
-collaborators select authorized work with `working_goal`. A remote read reports
-the owner's UUID as `space` and retains the stored payload and a Fact's
-occurrence time, just as local reads do.
+collaborators select authorized work with `working_goal`. A remote read,
+another store's search hit and another store's lineage node or `core_think`
+visit report the owner's UUID that store reported as `space`; a remote read
+retains the stored payload and a Fact's occurrence time, just as local reads
+do.
 
 A lineage node, a `core_think` visit and a `core_recall` sketch carry the same
-`space` label, always present. It is `null` only when the owner is unknown: a
-memory on another store, or a lineage node with a `status`.
+`space` label, always present, and every memory answer type parses back from
+its JSON. It is `null` only when the owner is unknown: a node or visit with a
+`status`, or a memory no longer readable.
 
 Pagination uses an opaque cursor bound to the read's filters. Memory recency
 uses `(created_at, t)`; Goal pages use `(handle, t)`, so changing an Active Goal

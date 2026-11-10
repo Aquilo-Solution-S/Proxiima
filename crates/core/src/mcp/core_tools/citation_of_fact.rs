@@ -19,7 +19,7 @@ pub struct CitationOfFactOutput {
     pub citation: Option<FactCitationOutput>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FactCitationOutput {
     pub cited_object_id: String,
     pub cited_object_schema_id: String,

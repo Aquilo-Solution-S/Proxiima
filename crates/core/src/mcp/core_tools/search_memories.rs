@@ -203,7 +203,7 @@ pub struct SearchMemoriesArgs {
     pub stores: Option<Vec<u16>>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SearchMemoriesOutput {
     pub mode: SearchMode,
     pub degraded_to_lexical: bool,
@@ -229,7 +229,7 @@ pub struct SearchMemoriesOutput {
 }
 
 /// One other store that did not answer, and the port or deadline error.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UnansweredStore {
     /// Store number.
     pub store: u16,
@@ -237,19 +237,22 @@ pub struct UnansweredStore {
     pub why: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchRanking {
     Score,
     Rank,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SearchMemoryOutput {
     /// The UUID of this memory admission, also carried by `memory`.
     pub memory_id: uuid::Uuid,
     pub memory: String,
     pub space: String,
+    /// The authoritative owner UUID, independent of the selected space key
+    /// and the principal that wrote this memory.
+    pub owner: uuid::Uuid,
     pub by: uuid::Uuid,
     pub via: Option<uuid::Uuid>,
     pub kind: crate::EntityKind,
@@ -261,6 +264,7 @@ pub struct SearchMemoryOutput {
     /// else the write time). Present on every Fact of this store; ordering
     /// still follows `created_at`.
     #[serde(
+        default,
         with = "time::serde::rfc3339::option",
         skip_serializing_if = "Option::is_none"
     )]
@@ -519,7 +523,9 @@ fn remote_hit_output(
     SearchMemoryOutput {
         memory_id: hit.handle,
         memory: hit.handle.to_string(),
-        space: store.to_string(),
+        // As a read of another store's memory reports it: the owner's UUID.
+        space: hit.owner.to_string(),
+        owner: hit.owner.into_inner(),
         by: hit.writer.by,
         via: hit.writer.via,
         kind: hit.kind,
@@ -993,7 +999,7 @@ async fn search_one_space(
                 memory_id: mid,
                 created_at,
                 output: search_memory_output(
-                    &space.key,
+                    space,
                     row,
                     tags,
                     body,
@@ -1306,7 +1312,7 @@ fn effective_body_max_chars(requested: Option<usize>) -> usize {
 }
 
 fn search_memory_output(
-    space: &str,
+    space: &ResolvedMemorySpace,
     row: crate::verbs::query::MemorySearchResult,
     tags: Vec<String>,
     body: Option<String>,
@@ -1316,7 +1322,8 @@ fn search_memory_output(
     SearchMemoryOutput {
         memory_id: row.memory_id.into_inner(),
         memory: row.memory_id.into_inner().to_string(),
-        space: space.to_string(),
+        space: space.key.clone(),
+        owner: space.owner.into_inner(),
         by: row.writer.by,
         via: row.writer.via,
         kind: row.kind,

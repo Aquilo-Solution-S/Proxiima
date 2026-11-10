@@ -50,6 +50,40 @@ fn stores_require_numbers_in_the_store_number_range() {
     }
 }
 
+/// Another store's hit names the owner its store reported, as a read of that
+/// memory does, and an embedder parses the hit back into its type.
+#[test]
+fn another_stores_hit_names_the_owner_its_store_reported() {
+    use crate::storage_ports::other_stores::RemoteHit;
+    use crate::verbs::query::EntityKind;
+
+    let owner = crate::OwnerId::new(uuid::Uuid::from_u128(7));
+    let hit = super::remote_hit_output(
+        1,
+        RemoteHit {
+            handle: crate::new_memory_uuid(1),
+            owner,
+            writer: crate::WriterAttribution {
+                by: uuid::Uuid::from_u128(3),
+                via: None,
+            },
+            kind: EntityKind::Fact,
+            schema_id: "remote/note".into(),
+            snippet: "stored remote note".into(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            tags: Vec::new(),
+            citation: None,
+        },
+    );
+    let wire = serde_json::to_value(&hit).expect("wire output");
+    assert_eq!(wire["space"], serde_json::json!(owner.to_string()));
+    assert_eq!(wire["owner"], serde_json::json!(owner.into_inner()));
+    assert_eq!(wire["store"], serde_json::json!(1));
+    let parsed: super::SearchMemoryOutput =
+        serde_json::from_value(wire).expect("an embedder parses the hit");
+    assert_eq!(parsed.owner, owner.into_inner());
+}
+
 #[test]
 fn local_and_remote_search_outputs_keep_the_recorded_writer() {
     use crate::storage_ports::other_stores::RemoteHit;
@@ -63,7 +97,11 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
             via,
         };
         let local = super::search_memory_output(
-            "current",
+            &crate::mcp::core_tools::memory_spaces::ResolvedMemorySpace {
+                key: "current".into(),
+                label: "Current owner".into(),
+                owner: crate::OwnerId::new(uuid::Uuid::from_u128(4)),
+            },
             MemorySearchResult {
                 memory_id: MemoryId::new(crate::new_memory_uuid(0)),
                 writer,
@@ -85,6 +123,7 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
             store,
             RemoteHit {
                 handle: crate::new_memory_uuid(store),
+                owner: crate::OwnerId::new(uuid::Uuid::from_u128(2)),
                 writer,
                 kind: EntityKind::Fact,
                 schema_id: "remote/note".into(),
@@ -118,7 +157,11 @@ fn a_citing_hit_names_its_cited_object_and_an_uncited_hit_has_no_citation() {
     };
     let local = |citation: Option<&FactCitationReadback>| {
         super::search_memory_output(
-            "current",
+            &crate::mcp::core_tools::memory_spaces::ResolvedMemorySpace {
+                key: "current".into(),
+                label: "Current owner".into(),
+                owner: crate::OwnerId::new(uuid::Uuid::from_u128(4)),
+            },
             MemorySearchResult {
                 memory_id: MemoryId::new(crate::new_memory_uuid(0)),
                 writer,
@@ -142,6 +185,7 @@ fn a_citing_hit_names_its_cited_object_and_an_uncited_hit_has_no_citation() {
             1,
             RemoteHit {
                 handle: crate::new_memory_uuid(1),
+                owner: crate::OwnerId::new(uuid::Uuid::from_u128(2)),
                 writer,
                 kind: EntityKind::Fact,
                 schema_id: "remote/note".into(),
@@ -435,6 +479,7 @@ mod other_stores {
             memory_id,
             memory: memory_id.to_string(),
             space: "current".into(),
+            owner: uuid::Uuid::from_u128(4),
             by: uuid::Uuid::from_u128(10),
             via: None,
             kind: crate::EntityKind::Fact,
@@ -456,6 +501,7 @@ mod other_stores {
     fn remote_hit(store: u16) -> RemoteHit {
         RemoteHit {
             handle: crate::new_memory_uuid(store),
+            owner: crate::OwnerId::new(uuid::Uuid::from_u128(2)),
             writer: crate::WriterAttribution {
                 by: uuid::Uuid::from_u128(20),
                 via: Some(uuid::Uuid::from_u128(21)),

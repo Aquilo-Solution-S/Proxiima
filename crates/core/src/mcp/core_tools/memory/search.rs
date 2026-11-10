@@ -6,7 +6,7 @@ use serde::Serialize;
 /// One edge touching the memory being read: the same four fields every
 /// other edge-bearing output carries, minus `created_at`, which a
 /// neighbor listing has no use for.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, serde::Deserialize, JsonSchema)]
 pub struct NeighborEdge {
     pub source: String,
     pub target: String,
