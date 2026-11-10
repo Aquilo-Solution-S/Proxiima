@@ -52,12 +52,13 @@ A generalization stored as a Fact flattens the hierarchy and loses its grounding
 
 ## Edge kinds
 
-Two kinds, and the vocabulary is closed. The kind follows the write that produced the row; nobody picks one.
+Three kinds, and the vocabulary is closed. The kind follows the write that produced the row; nobody picks one.
 
 | Kind | Written by | Direction |
 |---|---|---|
 | `origin` | the write that declares what it was made from — `source_handles` on `core_derive` | new Abstraction/Perspective → each source memory |
 | `reference` | a schema-declared payload field of the node itself | referrer → referent |
+| `read` | your host, from the memories your session read before the write; no tool argument | new memory → each memory read |
 
 `core_interpret` writes no edge of its own: its `subjects` are payload fields of the interpretation Perspective, so they arrive as `reference` entries.
 

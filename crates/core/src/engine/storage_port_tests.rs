@@ -284,6 +284,7 @@ async fn goal_helper_accepts_only_goal_command_handles() {
         req.owner,
         crate::access::AccessKind::Goal,
         None,
+        crate::BoundReadSet::default(),
     );
 
     let err = super::goal_write::transition_goal_authorized(

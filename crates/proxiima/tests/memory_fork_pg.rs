@@ -19,8 +19,8 @@ use proxiima_core::{
     AccessKind, AuthPath, AuthzContext, DerivationIdentity, DerivedMemory, EdgeKind, EntityRef,
     FactWrite, ForkMemoryRequest, GoalAudienceGrantInput, GoalHandle, GoalPublicationInput,
     InputContractId, InterpretationSubjectKind, InterpretationV1, MemoryDestination, MemoryId,
-    MemoryTarget, OperatorId, OwnerId, PublicationUse, Role, SeriesHandle, SimpleTextGoalV1,
-    SpiiceRegistry, UserId,
+    MemoryTarget, OperatorId, OwnerId, PublicationUse, ReadPin, ReadSet, Role, SeriesHandle,
+    SimpleTextGoalV1, SpiiceRegistry, UserId,
 };
 use proxiima_example::NoteV1;
 use proxiima_storage_pg::test_fixtures::cited_abstraction_from_template;
@@ -1221,5 +1221,82 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             "Alice-owned Goal work copy survives erase: {memory:?}"
         );
     }
+    host.pool.close().await;
+}
+
+/// #677: a fork made under a host read set keeps it as `read` pins, as
+/// every other memory write does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_keeps_the_host_read_set() {
+    let host = ExampleEngine::new("proxiima_memory_fork_reads", |_| {}).await;
+    let user = UserId::new(Uuid::now_v7());
+    let owner = OwnerId::from(user);
+    let authz = direct(user);
+    let notebook = host.notebook(&owner).await;
+    let note = |key: &'static str| NoteV1 {
+        notebook_id: notebook,
+        key: key.into(),
+        body: key.into(),
+        written_at: time::OffsetDateTime::now_utc(),
+    };
+    let mut unit = host.engine.unit_of_work(&authz).await.expect("open unit");
+    let subject = unit
+        .ingest_fact(FactWrite::new(owner, "fork", &note("subject")))
+        .await
+        .expect("fact")
+        .memory_id;
+    let seen = unit
+        .ingest_fact(FactWrite::new(owner, "fork", &note("seen")))
+        .await
+        .expect("fact")
+        .memory_id;
+    let source = unit
+        .derive_memory(DerivedMemory::interpretation(
+            MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
+            owner,
+            "source perspective",
+            interpretation(subject, "source"),
+        ))
+        .await
+        .expect("perspective")
+        .memory_id;
+    unit.commit().await.expect("commit source");
+    let reading = authz
+        .clone()
+        .with_read_set(
+            // The session read the memory it forks: the fork anchor already
+            // names it, so it is stored once, as that.
+            ReadSet::new([
+                ReadPin::Local {
+                    memory: seen,
+                    space: owner,
+                },
+                ReadPin::Local {
+                    memory: source,
+                    space: owner,
+                },
+            ])
+            .expect("read set"),
+        )
+        .expect("the read set binds");
+    let forked = host
+        .engine
+        .fork_memory(
+            &reading,
+            &ForkMemoryRequest {
+                source,
+                destination: MemoryDestination::Owner(owner),
+                request_id: IdempotencyKey::new("fork-reads").expect("key"),
+            },
+        )
+        .await
+        .expect("fork");
+    let reads: Vec<Uuid> =
+        sqlx::query_scalar("SELECT reads FROM proxiima_core.memory WHERE t = $1")
+            .bind(forked.memory_id.into_inner())
+            .fetch_one(&host.pool)
+            .await
+            .expect("fork reads");
+    assert_eq!(reads, [seen.into_inner()]);
     host.pool.close().await;
 }

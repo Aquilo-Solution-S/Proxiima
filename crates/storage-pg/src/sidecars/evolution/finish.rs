@@ -169,7 +169,7 @@ async fn incoming_pins(
     blobs: &[Uuid],
 ) -> Result<(), StorageError> {
     let dangling:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (all surviving pins need their target) */
-        WHERE m.t<>ALL($1::uuid[]) AND (m.origins&&$1::uuid[] OR m.refs&&$1::uuid[] OR m.forked_from=ANY($1::uuid[])
+        WHERE m.t<>ALL($1::uuid[]) AND (m.origins&&$1::uuid[] OR m.refs&&$1::uuid[] OR m.reads&&$1::uuid[] OR m.forked_from=ANY($1::uuid[])
            OR m.goal_refs&&$2::uuid[] OR m.guided_by&&$2::uuid[] OR m.blob_id=ANY($3::uuid[])))
         OR EXISTS (SELECT 1 FROM proxiima_core.goal g WHERE g.t<>ALL($2::uuid[])
            AND (g.dependency_t&&$2::uuid[] OR g.evidence_t&&$1::uuid[] OR g.motivated_by&&$1::uuid[]

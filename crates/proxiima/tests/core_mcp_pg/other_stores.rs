@@ -1745,3 +1745,167 @@ async fn goal_evidence_in_another_store_is_read_all_at_once() {
     drop(split_db);
     result.expect("concurrent evidence read test failed");
 }
+
+/// `authz` with a host read set naming each memory of another store.
+fn reading_other_stores(
+    authz: &proxiima::AuthzContext,
+    memories: &[Uuid],
+) -> proxiima::AuthzContext {
+    let pins = memories.iter().map(|memory| proxiima::ReadPin::OtherStore {
+        memory: proxiima_core::MemoryId::new(*memory),
+    });
+    authz
+        .clone()
+        .with_read_set(proxiima::ReadSet::new(pins).expect("read set"))
+        .expect("the read set binds")
+}
+
+/// #677: a host read set naming a memory of another store is read as the
+/// caller through the port, the same way an other-store origin is, and
+/// recorded as a `read` pin with its store number. An unreadable one
+/// refuses the whole write; a memory that is both a declared origin and a
+/// read is stored once, as the origin.
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one story: record, refuse, store once
+async fn a_read_in_another_store_is_recorded_as_a_read() {
+    let split_db = clone_split_core_db("proxiima_other_stores_reads")
+        .await
+        .expect("PG required for tests");
+    let (runtime_url, platform_url) = (
+        split_db.runtime_url().to_owned(),
+        split_db.platform_url().to_owned(),
+    );
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let (seen, secret) = (remote_id(1, "seen"), remote_id(1, "secret"));
+        let fake = Arc::new(
+            FakeStores::default()
+                .with(1, seen, Entry::Readable(fact(seen, "seen remotely")))
+                .with(1, secret, Entry::Denied),
+        );
+        let built = Proxiima::<AgentMemoryApp>::app()
+            .database_url(runtime_url.clone())
+            .store_number(0)
+            .platform_database_url(platform_url.clone())
+            .owner(owner)
+            .served_surface(proxiima_core::ServedSurface::All)
+            .other_stores(fake.clone())
+            .build()
+            .await?;
+        let tools = built.host().core_mcp_tools();
+        let authz = space_authz(owner, vec![owner], Role::admin());
+        let remember = |authz: proxiima::AuthzContext, title: &'static str| {
+            call_test_model_tool(
+                &tools,
+                authz,
+                owner,
+                "core_remember",
+                serde_json::json!({"title": title, "body": title, "tags": []}),
+            )
+        };
+
+        // Readable: recorded as a `read` with its store number.
+        let fact_handle =
+            remember(reading_other_stores(&authz, &[seen]), "after reading").await?["handle"]
+                .as_str()
+                .expect("handle")
+                .to_owned();
+        assert_eq!(
+            external_edge_kind(&platform_url, &fact_handle, seen).await,
+            "read"
+        );
+        let lineage = read_test_model_resource(
+            &tools,
+            authz.clone(),
+            owner,
+            &format!("proxiima://memory/{fact_handle}/lineage?direction=ancestors"),
+        )
+        .await?;
+        assert_eq!(
+            edge_kind(&lineage, &fact_handle, seen).as_deref(),
+            Some("read"),
+            "{lineage}"
+        );
+        assert_eq!(
+            node(&lineage, seen.to_string()).expect("read node")["store"],
+            1
+        );
+
+        // Unreadable: the whole write is refused and nothing lands.
+        let before = row_counts(&platform_url).await;
+        let refused = remember(reading_other_stores(&authz, &[seen, secret]), "refused")
+            .await
+            .expect_err("an unreadable read refuses");
+        assert!(
+            refused.to_string().contains(&secret.to_string()),
+            "{refused}"
+        );
+        assert_eq!(row_counts(&platform_url).await, before, "zero rows written");
+
+        // Origin and read at once: stored once, as the origin.
+        let derived = call_test_model_tool(
+            &tools,
+            reading_other_stores(&authz, &[seen]),
+            owner,
+            "core_derive",
+            serde_json::json!({
+                "kind": "Abstraction",
+                "title": "origin and read",
+                "body": "origin and read",
+                "source_handles": [fact_handle, seen.to_string()],
+                "model_id": "test-model"
+            }),
+        )
+        .await?;
+        let derived = derived["handle"].as_str().expect("handle").to_owned();
+        assert_eq!(
+            row_counts(&platform_url).await,
+            (before.0 + 1, before.1 + 1),
+            "one memory, one other-store row"
+        );
+        assert_eq!(
+            external_edge_kind(&platform_url, &derived, seen).await,
+            "origin"
+        );
+        let lineage = read_test_model_resource(
+            &tools,
+            authz.clone(),
+            owner,
+            &format!("proxiima://memory/{derived}/lineage?direction=ancestors&depth=1"),
+        )
+        .await?;
+        assert_eq!(
+            edge_kind(&lineage, &derived, seen).as_deref(),
+            Some("origin"),
+            "{lineage}"
+        );
+        built.shutdown().await;
+
+        // No port: an other-store read is refused, not dropped.
+        let built = Proxiima::<AgentMemoryApp>::app()
+            .database_url(runtime_url)
+            .store_number(0)
+            .platform_database_url(platform_url.clone())
+            .owner(owner)
+            .served_surface(proxiima_core::ServedSurface::All)
+            .build()
+            .await?;
+        let tools = built.host().core_mcp_tools();
+        let before = row_counts(&platform_url).await;
+        let refused = call_test_model_tool(
+            &tools,
+            reading_other_stores(&authz, &[seen]),
+            owner,
+            "core_remember",
+            serde_json::json!({"title": "no port", "body": "no port", "tags": []}),
+        )
+        .await
+        .expect_err("no port refuses");
+        assert!(refused.to_string().contains("not found"), "{refused}");
+        assert_eq!(row_counts(&platform_url).await, before, "zero rows written");
+        built.shutdown().await;
+        Ok(())
+    }
+    .await;
+    result.expect("other-store read test failed");
+}

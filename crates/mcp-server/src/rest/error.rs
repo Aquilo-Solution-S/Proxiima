@@ -299,6 +299,9 @@ const fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'stat
             "forbidden",
             "Membership authorization refused",
         ),
+        StorageError::UnreadableRead { .. } => {
+            (StatusCode::FORBIDDEN, "forbidden", "Read set not readable")
+        }
         StorageError::NotFound => (StatusCode::NOT_FOUND, "not-found", "Not found"),
         StorageError::ScopeMissing { .. } => (
             StatusCode::NOT_FOUND,

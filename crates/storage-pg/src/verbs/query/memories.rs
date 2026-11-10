@@ -453,7 +453,7 @@ fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64)
         "SELECT m.t AS memory_id, m.handle, \
                 proxiima_core.memory_created_at(m.t) AS created_at, \
                 m.owner_id, m.schema_id, m.sidecar_tables, \
-                m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.occurred_at, m.\"by\", m.via \
+                m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
          FROM proxiima_core.memory m \
          {head_join}\
          WHERE m.owner_id = ANY($1::uuid[])",
@@ -474,7 +474,7 @@ fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> String {
            SELECT m.t AS memory_id, m.handle, \
                   proxiima_core.memory_created_at(m.t) AS created_at, \
                   m.owner_id, m.schema_id, m.sidecar_tables, \
-                  m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.occurred_at, m.\"by\", m.via \
+                  m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
            FROM (SELECT h.handle, h.t FROM proxiima_core.memory_head h \
                  WHERE h.owner_id = o.owner_id",
     );
@@ -507,7 +507,7 @@ fn merge_goal_heads_sql(owner_sql: &str, filters: &[MemoryFilter], fetch_limit: 
                     FROM visible ORDER BY memory_handle, memory_t DESC) \
          SELECT m.t AS memory_id, m.handle, proxiima_core.memory_created_at(m.t) AS created_at, \
                 m.owner_id, m.schema_id, m.sidecar_tables, m.kind AS kind, m.origins, m.refs, \
-                m.goal_refs, m.guided_by, m.occurred_at, m.\"by\", m.via \
+                m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
          FROM latest v JOIN proxiima_core.memory m ON m.t = v.memory_t \
          WHERE m.owner_id = ANY($1::uuid[]) \
            AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory_head own_head \

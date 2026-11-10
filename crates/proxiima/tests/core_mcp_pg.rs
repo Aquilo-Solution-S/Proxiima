@@ -39,6 +39,9 @@ mod forgotten_targets;
 #[path = "core_mcp_pg/erased_targets.rs"]
 mod erased_targets;
 
+#[path = "core_mcp_pg/host_reads.rs"]
+mod host_reads;
+
 #[path = "core_mcp_pg/forgotten_reads.rs"]
 mod forgotten_reads;
 

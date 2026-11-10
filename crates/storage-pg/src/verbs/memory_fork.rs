@@ -228,6 +228,7 @@ async fn admit_fork(
             references,
             sidecar_tables: &tables,
             scopes: &scopes,
+            reads: permit.reads(),
         },
         super::memory_timeseries::PreparationOptions {
             identity: Some((identity, identity)),

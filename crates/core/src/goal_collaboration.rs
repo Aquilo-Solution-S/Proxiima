@@ -106,19 +106,31 @@ pub struct GoalWorkPermit {
     command: GoalCommandPermit,
     kind: crate::AccessKind,
     target: MemoryTarget,
+    /// The authorizing context's read set (#677).
+    reads: crate::authz::BoundReadSet,
 }
 
 impl GoalWorkPermit {
+    /// `reads` is the authorizing context's read set
+    /// ([`crate::AuthzContext::bound_reads`]).
     pub(crate) const fn new(
         command: GoalCommandPermit,
         kind: crate::AccessKind,
         target: MemoryTarget,
+        reads: crate::authz::BoundReadSet,
     ) -> Self {
         Self {
             command,
             kind,
             target,
+            reads,
         }
+    }
+
+    /// The memories the host certified this write's session read.
+    #[must_use]
+    pub const fn reads(&self) -> &crate::authz::BoundReadSet {
+        &self.reads
     }
     #[must_use]
     pub const fn command(&self) -> &GoalCommandPermit {
@@ -161,6 +173,8 @@ pub struct ForkCommandPermit {
     source_owner: OwnerId,
     destination: ForkDestinationPermit,
     queued_spaces: Vec<crate::EmbeddingSpace>,
+    /// The authorizing context's read set (#677): the fork keeps it.
+    reads: crate::authz::BoundReadSet,
 }
 
 /// The exact pin declarations read from a forked revision. This is a storage
@@ -318,6 +332,7 @@ impl ForkCommandPermit {
         source_owner: OwnerId,
         destination: ForkDestinationPermit,
         queued_spaces: Vec<crate::EmbeddingSpace>,
+        reads: crate::authz::BoundReadSet,
     ) -> Self {
         Self {
             scope,
@@ -325,6 +340,7 @@ impl ForkCommandPermit {
             source_owner,
             destination,
             queued_spaces,
+            reads,
         }
     }
     #[must_use]
@@ -346,6 +362,13 @@ impl ForkCommandPermit {
     #[must_use]
     pub fn queued_spaces(&self) -> &[crate::EmbeddingSpace] {
         &self.queued_spaces
+    }
+    /// The memories the host certified this fork's session read; storage
+    /// keeps them as `read` pins on the fork and checks each as for any
+    /// other write.
+    #[must_use]
+    pub const fn reads(&self) -> &crate::authz::BoundReadSet {
+        &self.reads
     }
 }
 

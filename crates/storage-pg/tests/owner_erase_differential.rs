@@ -714,6 +714,9 @@ pub const UNPAIRED_COLUMNS: &[(&str, &str)] = &[
     ("goal_head", "authority_generation"),
     ("memory_head", "authority_generation"),
     ("memory", "forked_from"),
+    // 0066 added the host read set after this frozen baseline;
+    // `core_mcp_pg::host_reads` pins its erase and export directly.
+    ("memory", "reads"),
 ];
 
 fn names_relation(table: &str, relation: &str) -> bool {

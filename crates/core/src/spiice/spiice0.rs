@@ -813,7 +813,8 @@ const KERNEL_SURFACES: &[Surface] = &[
         table: "proxiima_core.memory_external_origin",
         // Other-store edges of a memory: (t, remote memory UUID, edge_kind),
         // `origin` for a derivation's sources, `reference` for an
-        // interpretation's subjects (#480).
+        // interpretation's subjects (#480), `read` for the host read set
+        // (#677).
         // No owner column; the owner policy finds the owner through the
         // memory, live OR forgotten, so every verb reaches the rows of a
         // forgotten memory too (#478, #488).

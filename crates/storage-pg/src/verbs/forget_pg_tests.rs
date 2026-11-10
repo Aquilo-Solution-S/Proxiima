@@ -140,6 +140,7 @@ pub(crate) async fn ingest_stamped(
             references: &references,
             sidecar_tables: tables,
             scopes: &[],
+            reads: &proxiima_core::BoundReadSet::default(),
         },
         None,
     )
@@ -181,6 +182,7 @@ async fn append_in_own_transaction(
             references: &[],
             sidecar_tables: &[],
             scopes: &[],
+            reads: &proxiima_core::BoundReadSet::default(),
         },
         None,
     )
@@ -423,6 +425,7 @@ async fn series_erase_includes_hot_append_that_wins_the_handle_lock_first() {
                 references: &[],
                 sidecar_tables: &[],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )
@@ -661,6 +664,7 @@ async fn series_erase_linearizes_with_fully_forgotten_series() {
                 references: &[],
                 sidecar_tables: &[],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )
@@ -886,6 +890,7 @@ async fn non_head_erase_racing_append_preserves_the_greatest_head() {
                 references: &[],
                 sidecar_tables: &[],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )
@@ -2090,6 +2095,7 @@ async fn stale_source_erase_does_not_lock_transferred_series() {
                 references: &[],
                 sidecar_tables: &[],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )

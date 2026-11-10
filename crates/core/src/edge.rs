@@ -1,4 +1,5 @@
-//! Pins — `memory.origins` / `memory.refs`. There is no edge table.
+//! Pins — `memory.origins` / `memory.refs` / `memory.reads`. There is no
+//! edge table.
 //!
 //! docs/concepts.md is the reference.
 //!
@@ -11,21 +12,22 @@
 //!
 //! - **Kind follows operation.** [`EdgeKind`] is never a parameter a
 //!   writer chooses. `Origin` is what a derivation declaration produces;
-//!   `Reference` is what a schema-declared reference field produces. No
-//!   public API takes an `EdgeKind` from a caller.
+//!   `Reference` is what a schema-declared reference field produces;
+//!   `Read` is what the host's [`ReadSet`] produces. No public API takes
+//!   an `EdgeKind` from a caller.
 //! - **The pin is its own identity.** There is no edge row and no edge
-//!   id: a pin is a `MemoryId` in the source row's `origins` or `refs`
-//!   column, so replaying a write re-asserts the same column values and
+//!   id: a pin is a `MemoryId` in the source row's `origins`, `refs` or
+//!   `reads` column, so replaying a write re-asserts the same column values and
 //!   idempotency is structural rather than derived from a content hash.
 //!   The [`Edge`] / [`EdgeKind`] types below are the read-side
 //!   projection of those columns, not a table.
 
 use crate::entity::EntityRef;
-use crate::{EntityKind, GoalId, MemoryId, SchemaId};
+use crate::{EntityKind, GoalId, MemoryId, OwnerId, SchemaId};
 
-/// Closed substrate vocabulary for what an edge *is*. Two variants, not
+/// Closed substrate vocabulary for what an edge *is*. Three variants, not
 /// extensible — not by spiices, not by core features. A feature that
-/// seems to need a third kind fails the node-home test (docs/concepts.md
+/// seems to need a fourth kind fails the node-home test (docs/concepts.md
 /// Thesis) and is missing a node, not a kind.
 ///
 #[derive(
@@ -48,17 +50,150 @@ pub enum EdgeKind {
     /// A payload field points at another node. Derived at ingest from the
     /// schema-declared reference fields of the node's own payload.
     Reference,
+    /// The writing session read the target before this write. Written only
+    /// from the host's [`ReadSet`], never from tool arguments. Context, not
+    /// grounding: it never counts as an origin or a reference, may sit on a
+    /// Fact, and may point at any layer.
+    Read,
 }
 
 impl EdgeKind {
-    /// SQL discriminator. Stable contract — must match the labels of
-    /// `proxiima_core.edge_kind`.
+    /// Wire label. Stable contract — also the label
+    /// `proxiima_core.memory_external_origin.edge_kind` stores for an
+    /// other-store pin.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Origin => "origin",
             Self::Reference => "reference",
+            Self::Read => "read",
         }
+    }
+}
+
+/// One memory the host certifies the writing session read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReadPin {
+    /// A memory of this store, read in `space`. Storage checks, inside the
+    /// write's transaction, that it is live and readable there.
+    Local { memory: MemoryId, space: OwnerId },
+    /// A memory of another store; its id carries the store number. Its
+    /// space is that store's to judge: an MCP write reads it through the
+    /// other-stores port as the caller, as a cross-store derive reads its
+    /// sources, and storage refuses a write naming one nobody read.
+    OtherStore { memory: MemoryId },
+}
+
+impl ReadPin {
+    /// The memory this pin names.
+    #[must_use]
+    pub const fn memory(&self) -> MemoryId {
+        match *self {
+            Self::Local { memory, .. } | Self::OtherStore { memory } => memory,
+        }
+    }
+}
+
+/// The memories a session read before it wrote (#677): the source of every
+/// [`EdgeKind::Read`] pin.
+///
+/// Host-supplied call context, never a tool argument. A host binds it with
+/// [`crate::AuthzContext::with_read_set`]; every memory write the context
+/// authorizes keeps it, and the whole write is refused when the caller
+/// cannot read one of the named memories: a local one in its named space,
+/// inside the write's transaction; an other-store one through the port.
+/// Sorted by memory, one entry per memory; empty by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadSet(Vec<ReadPin>);
+
+/// Why a [`ReadSet`] could not be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReadSetError {
+    /// The same memory was named in two different spaces, or both as a
+    /// local and as an other-store memory.
+    #[error("read memory {} named in two spaces", memory.into_inner())]
+    ConflictingSpace { memory: MemoryId },
+    /// More distinct memories than [`ReadSet::MAX_PINS`].
+    #[error(
+        "read set names {count} memories; at most {} are kept",
+        ReadSet::MAX_PINS
+    )]
+    TooMany { count: usize },
+}
+
+impl ReadSet {
+    /// The most memories one read set names. Every pin is probed inside the
+    /// write's transaction and stored on the written row, so the set is
+    /// bounded where it is built.
+    pub const MAX_PINS: usize = 1024;
+
+    /// The empty read set: what a write no host session made carries.
+    #[must_use]
+    pub const fn new_empty() -> Self {
+        Self(Vec::new())
+    }
+
+    /// The read set naming `pins`. A memory named twice in the same space is
+    /// kept once.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadSetError::ConflictingSpace`] when one memory is named in two
+    /// spaces; [`ReadSetError::TooMany`] above [`Self::MAX_PINS`] distinct
+    /// memories.
+    pub fn new(pins: impl IntoIterator<Item = ReadPin>) -> Result<Self, ReadSetError> {
+        let mut pins: Vec<ReadPin> = pins.into_iter().collect();
+        pins.sort_unstable_by_key(|pin| (pin.memory(), *pin));
+        pins.dedup();
+        if let Some(pair) = pins
+            .windows(2)
+            .find(|pair| pair[0].memory() == pair[1].memory())
+        {
+            return Err(ReadSetError::ConflictingSpace {
+                memory: pair[0].memory(),
+            });
+        }
+        if pins.len() > Self::MAX_PINS {
+            return Err(ReadSetError::TooMany { count: pins.len() });
+        }
+        Ok(Self(pins))
+    }
+
+    /// `self` and `other` together.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadSetError::ConflictingSpace`] when the two name one memory in
+    /// different spaces; [`ReadSetError::TooMany`] when together they pass
+    /// [`Self::MAX_PINS`].
+    pub fn merged(self, other: Self) -> Result<Self, ReadSetError> {
+        Self::new(self.0.into_iter().chain(other.0))
+    }
+
+    #[must_use]
+    pub fn pins(&self) -> &[ReadPin] {
+        &self.0
+    }
+
+    /// The named memories of this store with their spaces, in order.
+    pub fn local(&self) -> impl Iterator<Item = (MemoryId, OwnerId)> + '_ {
+        self.0.iter().filter_map(|pin| match *pin {
+            ReadPin::Local { memory, space } => Some((memory, space)),
+            ReadPin::OtherStore { .. } => None,
+        })
+    }
+
+    /// The named memories of other stores, in order.
+    pub fn other_store(&self) -> impl Iterator<Item = MemoryId> + '_ {
+        self.0.iter().filter_map(|pin| match *pin {
+            ReadPin::Local { .. } => None,
+            ReadPin::OtherStore { memory } => Some(memory),
+        })
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -196,7 +331,7 @@ pub struct Edge {
 }
 
 /// A memory row as a pin carrier. Storage returns these; [`Edge`] is a
-/// view of `origins` / `refs` built in the engine.
+/// view of `origins` / `refs` / `reads` built in the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinNode {
     pub id: MemoryId,
@@ -221,10 +356,12 @@ pub struct PinNode {
     /// Perspective guidance targets. These are projected as ordinary
     /// reference edges, but remain separate from payload-declared Goal refs.
     pub guided_by: Vec<GoalId>,
+    /// The memories the host certified the writing session read (#677).
+    pub reads: Vec<MemoryId>,
 }
 
 impl PinNode {
-    /// Origin pins first, then reference pins.
+    /// Origin pins first, then reference pins, then read pins.
     pub fn pins(&self) -> impl Iterator<Item = (MemoryId, EdgeKind)> + '_ {
         self.origins
             .iter()
@@ -236,6 +373,7 @@ impl PinNode {
                     .copied()
                     .map(|id| (id, EdgeKind::Reference)),
             )
+            .chain(self.reads.iter().copied().map(|id| (id, EdgeKind::Read)))
     }
 
     /// Goal reference pins resolved by an owner-scoped batch read.
@@ -423,18 +561,85 @@ mod tests {
         EdgeEndpoint::memory(kind, MemoryId::new(uuid::Uuid::now_v7()))
     }
 
-    /// The vocabulary is closed at two. A third variant is a design
-    /// change (docs/concepts.md), not a patch, and this is the
-    /// test that says so out loud.
+    /// The vocabulary is closed at three (`read` is #677). A fourth
+    /// variant is a design change (docs/concepts.md), not a patch, and
+    /// this is the test that says so out loud.
     #[test]
-    fn the_vocabulary_is_exactly_two_kinds() {
-        let all = [EdgeKind::Origin, EdgeKind::Reference];
-        assert_eq!(all.len(), 2);
+    fn the_vocabulary_is_exactly_three_kinds() {
+        let all = [EdgeKind::Origin, EdgeKind::Reference, EdgeKind::Read];
+        assert_eq!(all.len(), 3);
         for kind in all {
             match kind {
-                EdgeKind::Origin | EdgeKind::Reference => {}
+                EdgeKind::Origin | EdgeKind::Reference | EdgeKind::Read => {}
             }
         }
+    }
+
+    #[test]
+    fn a_read_set_refuses_one_memory_in_two_spaces() {
+        let memory = MemoryId::new(uuid::Uuid::now_v7());
+        let (a, b) = (
+            crate::OwnerId::new(uuid::Uuid::now_v7()),
+            crate::OwnerId::new(uuid::Uuid::now_v7()),
+        );
+        let pin = |space| super::ReadPin::Local { memory, space };
+        assert_eq!(
+            super::ReadSet::new([pin(a), pin(b)]),
+            Err(super::ReadSetError::ConflictingSpace { memory })
+        );
+        let once = super::ReadSet::new([pin(a), pin(a)]).expect("a repeat is kept once");
+        assert_eq!(once.pins(), &[pin(a)]);
+        assert_eq!(
+            once.clone()
+                .merged(super::ReadSet::new([pin(b)]).expect("one pin")),
+            Err(super::ReadSetError::ConflictingSpace { memory })
+        );
+        // One memory cannot be both of this store and of another.
+        assert_eq!(
+            once.merged(
+                super::ReadSet::new([super::ReadPin::OtherStore { memory }]).expect("one pin")
+            ),
+            Err(super::ReadSetError::ConflictingSpace { memory })
+        );
+    }
+
+    #[test]
+    fn a_read_set_splits_local_and_other_store_reads_in_order() {
+        let space = crate::OwnerId::new(uuid::Uuid::now_v7());
+        let (first, second, third) = (
+            MemoryId::new(uuid::Uuid::from_u128(1)),
+            MemoryId::new(uuid::Uuid::from_u128(2)),
+            MemoryId::new(uuid::Uuid::from_u128(3)),
+        );
+        let reads = super::ReadSet::new([
+            super::ReadPin::OtherStore { memory: third },
+            super::ReadPin::Local {
+                memory: second,
+                space,
+            },
+            super::ReadPin::OtherStore { memory: first },
+        ])
+        .expect("three memories");
+        assert_eq!(reads.local().collect::<Vec<_>>(), [(second, space)]);
+        assert_eq!(reads.other_store().collect::<Vec<_>>(), [first, third]);
+    }
+
+    #[test]
+    fn a_read_set_refuses_more_than_its_cap() {
+        let space = crate::OwnerId::new(uuid::Uuid::now_v7());
+        let pins = |count: usize| {
+            (0..count).map(move |_| super::ReadPin::Local {
+                memory: MemoryId::new(uuid::Uuid::now_v7()),
+                space,
+            })
+        };
+        let full = super::ReadSet::new(pins(super::ReadSet::MAX_PINS)).expect("the cap fits");
+        assert_eq!(
+            full.merged(super::ReadSet::new(pins(1)).expect("one pin")),
+            Err(super::ReadSetError::TooMany {
+                count: super::ReadSet::MAX_PINS + 1
+            })
+        );
     }
 
     #[test]
@@ -524,6 +729,7 @@ mod tests {
                 refs: Vec::new(),
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
+                reads: Vec::new(),
             },
             PinNode {
                 id: hub,
@@ -533,6 +739,7 @@ mod tests {
                 refs: vec![outside],
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
+                reads: Vec::new(),
             },
         ];
         let edges = project_window_edges(&nodes, 50);
@@ -557,6 +764,7 @@ mod tests {
             refs: Vec::new(),
             goal_refs: vec![goal],
             guided_by: Vec::new(),
+            reads: Vec::new(),
         };
         // Storage typed it as a Goal, but this reader cannot see it, so it
         // falls back into the raw carrier and redacts exactly as an
@@ -587,6 +795,7 @@ mod tests {
             refs: Vec::new(),
             goal_refs: Vec::new(),
             guided_by: vec![goal],
+            reads: Vec::new(),
         };
         node.resolve_visible_goal_refs(&[]);
         assert!(node.guided_by.is_empty());

@@ -194,6 +194,12 @@ facade_names! {
         both_tiers: [McpActionArgSpec, McpAuthorContext, RequestHeaders, ToolError],
     }
 
+    // Needed by `AuthzContext::{read_set, with_read_set}` and `OwnerWritePermit::reads`.
+    host_read_set {
+        host_only: [BoundReadSet, ReadPin, ReadSet, ReadSetError],
+        both_tiers: [],
+    }
+
     // Needed by `PublicationExtensions::iter`, `AuthzContext::with_publication_extensions`.
     publication_extensions {
         host_only: [ExtensionEntries, ExtensionEntry, PublicationDraft, PublicationPlan],

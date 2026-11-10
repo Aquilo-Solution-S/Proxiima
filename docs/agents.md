@@ -26,8 +26,10 @@ change with the host build, so this page does not copy their schemas.
    caller-supplied owner roles are not accepted by the core boundary.
 5. **Keep pins meaningful.** Let the write operation derive origin and
    reference pins from typed payloads. The schema and write contracts enforce
-   this; no tool writes an arbitrary connection. The two pin kinds occupy
-   `origins[]`, `refs[]`, and `goal_refs[]`.
+   this; no tool writes an arbitrary connection. Origin and reference pins
+   occupy `origins[]`, `refs[]`, and `goal_refs[]`. The third kind, `read`,
+   records what your session read before a write; your host supplies it, so
+   there is nothing to pass.
 6. **Consolidate at a natural break.** If a durable pattern or decision was
    learned, write the smallest typed memory that can be retrieved later. This
    is a judgment call: do not record transient narration or duplicate an

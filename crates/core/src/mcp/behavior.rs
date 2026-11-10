@@ -236,11 +236,13 @@ impl McpHostToolCall {
 pub struct ScopeGateBehavior;
 
 impl ScopeGateBehavior {
+    /// Admit or refuse one call; an admitted call answers what it asks of
+    /// its owner.
     fn enforce_scope(
         tool: &str,
         args: &serde_json::Value,
         ctx: &McpToolCtx,
-    ) -> Result<(), McpToolError> {
+    ) -> Result<OwnerAccess, McpToolError> {
         ctx.judged.clear();
         let capabilities = ctx.authz.capabilities();
         // The request name is parsed once, here. A name that is no key is in
@@ -338,7 +340,27 @@ impl ScopeGateBehavior {
         };
         let owner = Self::resolve_scope_owner(tool, args, ctx)?;
         Self::enforce_owner_role(tool, access, owner.owner, ctx)?;
-        Ok(())
+        Ok(access)
+    }
+
+    /// Read the host read set's other-store reads (#677) through the
+    /// other-stores port as the caller, the way a cross-store derive reads
+    /// its sources, before a call that may write. A memory the caller
+    /// cannot read, or any other-store read without a port, refuses the
+    /// call; a read-only call reads nothing. Storage refuses a write naming
+    /// an other-store read that was not read here.
+    async fn read_other_store_reads(
+        mut call: ToolCall,
+        access: OwnerAccess,
+    ) -> Result<ToolCall, McpToolError> {
+        let unread = call.ctx.authz.unread_other_store_reads();
+        if access == OwnerAccess::Read || unread.is_empty() {
+            return Ok(call);
+        }
+        let read =
+            super::core_tools::other_stores::resolve_remote_origins(&call.ctx, &unread).await?;
+        call.ctx.authz = call.ctx.authz.with_other_store_reads(read);
+        Ok(call)
     }
 
     /// Record `tool:action` as the key the gate judges this call by.
@@ -456,8 +478,9 @@ impl ScopeGateBehavior {
 #[async_trait]
 impl RequestBehavior for ScopeGateBehavior {
     async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
-        Self::enforce_scope(&call.name, &call.args, &call.ctx)?;
-        next.run(call).await
+        let access = Self::enforce_scope(&call.name, &call.args, &call.ctx)?;
+        next.run(Self::read_other_store_reads(call, access).await?)
+            .await
     }
 }
 

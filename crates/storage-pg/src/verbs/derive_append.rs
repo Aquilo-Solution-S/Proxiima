@@ -220,6 +220,7 @@ async fn append_derived_timeseries(
     tx: &mut Transaction<'_, Postgres>,
     draft: &DerivedDraft<'_>,
     writer: proxiima_core::WriterAttribution,
+    reads: &proxiima_core::BoundReadSet,
     input: DerivedAdmissionInput<'_>,
     sidecar: impl for<'t> FnOnce(
         &'t mut Transaction<'_, Postgres>,
@@ -229,7 +230,7 @@ async fn append_derived_timeseries(
     let mut retried_collision = false;
     let outcome = loop {
         let mut attempt = tx.begin().await.map_err(map_err)?;
-        match admit_derived(&mut attempt, draft, writer, input).await {
+        match admit_derived(&mut attempt, draft, writer, reads, input).await {
             Ok(outcome) => {
                 attempt.commit().await.map_err(map_err)?;
                 break outcome;
@@ -261,6 +262,7 @@ async fn admit_derived(
     tx: &mut Transaction<'_, Postgres>,
     draft: &DerivedDraft<'_>,
     writer: proxiima_core::WriterAttribution,
+    reads: &proxiima_core::BoundReadSet,
     input: DerivedAdmissionInput<'_>,
 ) -> Result<DerivedOutcome, StorageError> {
     let kind = derived_kind(draft)?;
@@ -319,6 +321,7 @@ async fn admit_derived(
             references: input.references,
             sidecar_tables: input.sidecar_tables,
             scopes: input.scopes,
+            reads,
         },
         &supersedes_targets,
         draft.guided_by,
@@ -571,7 +574,7 @@ pub(crate) async fn append_derived_with_content_payloads_in_tx(
 ) -> Result<DerivedOutcome, StorageError> {
     validate_permit_owner(permit, &draft.owner)?;
     let writer = crate::owner_scope::require_owner_scope(permit.owner_scope())?.writer();
-    append_derived_timeseries(tx, draft, writer, input, sidecar).await
+    append_derived_timeseries(tx, draft, writer, permit.reads(), input, sidecar).await
 }
 
 /// Goal-work admission uses the same typed pipeline after the Goal permit has
@@ -593,7 +596,7 @@ pub(crate) async fn append_goal_work_with_content_payloads_in_tx(
         ));
     }
     let writer = permit.command().scope().writer();
-    append_derived_timeseries(tx, draft, writer, input, sidecar).await
+    append_derived_timeseries(tx, draft, writer, permit.reads(), input, sidecar).await
 }
 
 /// Count declared pins; on replay, re-read stored `origins`/`refs` and
@@ -666,7 +669,11 @@ async fn load_stored_pins(
 /// Record the other-store edges of a fresh derived row (`origin` for its
 /// remote sources, `reference` for its remote subjects, #480), or check a
 /// replay declares the same rows, kinds included, as its first write. No
-/// constraint looks at the remote side.
+/// constraint looks at the remote side. The row keys on `(t, memory)`: a
+/// declared edge replaces the `read` row the admission recorded for the same
+/// memory (#677), so a memory both read and declared is stored once, as the
+/// declared edge; a replay compares only declared edges, as it ignores the
+/// read set.
 ///
 /// # Errors
 ///
@@ -697,9 +704,11 @@ pub(crate) async fn record_external_edges(
             None
         };
         let stored: Result<Vec<(uuid::Uuid, String)>, StorageError> = sqlx::query_as(
-            "SELECT memory, edge_kind FROM proxiima_core.memory_external_origin WHERE t = $1",
+            "SELECT memory, edge_kind FROM proxiima_core.memory_external_origin
+              WHERE t = $1 AND edge_kind <> $2",
         )
         .bind(t)
+        .bind(EdgeKind::Read.as_str())
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err);
@@ -723,11 +732,13 @@ pub(crate) async fn record_external_edges(
         "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
          SELECT $1, edge.memory, edge.kind
            FROM unnest($2::uuid[], $3::text[]) AS edge(memory, kind)
-         ON CONFLICT DO NOTHING",
+         ON CONFLICT (t, memory) DO UPDATE SET edge_kind = EXCLUDED.edge_kind
+          WHERE proxiima_core.memory_external_origin.edge_kind = $4",
     )
     .bind(t)
     .bind(&memories)
     .bind(&kinds)
+    .bind(EdgeKind::Read.as_str())
     .execute(&mut **tx)
     .await
     .map_err(map_err)?;

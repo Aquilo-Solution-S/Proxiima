@@ -17,6 +17,7 @@ pub struct MigrationMemoryRow {
     pub(crate) refs: Vec<Uuid>,
     pub(crate) goal_refs: Vec<Uuid>,
     pub(crate) guided_by: Vec<Uuid>,
+    pub(crate) reads: Vec<Uuid>,
     pub(crate) forked_from: Option<Uuid>,
     pub(crate) sidecar_tables: Vec<String>,
     pub(crate) occurred_at: Option<time::OffsetDateTime>,
@@ -66,6 +67,7 @@ impl MigrationMemoryRow {
             goal_references: self.goal_refs.iter().copied().map(GoalId::new).collect(),
             origins: self.origins.iter().copied().map(MemoryId::new).collect(),
             guided_by: self.guided_by.iter().copied().map(GoalId::new).collect(),
+            reads: self.reads.iter().copied().map(MemoryId::new).collect(),
             forked_from: self.forked_from.map(MemoryId::new),
             blob_id: self.blob_id,
         }
@@ -100,6 +102,7 @@ pub(super) fn test_memory(
             refs: Vec::new(),
             goal_refs: Vec::new(),
             guided_by: Vec::new(),
+            reads: Vec::new(),
             forked_from: None,
             sidecar_tables: Vec::new(),
             occurred_at: None,

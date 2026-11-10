@@ -412,13 +412,28 @@ role:
 |---|---|---|
 | Origin | What produced this derived row | `memory.origins[]` |
 | Reference | What a typed payload or explicit causal declaration points at | `memory.refs[]`, `memory.goal_refs[]`, or `memory.guided_by[]`; Goal-owned reference fields |
+| Read | What the writing session read before this write, as its host certified | `memory.reads[]` |
 
 The operation determines the pin kind; no public verb writes an edge. Origins
 and references are source-owned and rebuildable from node content. A source may
-remain visible while an unreadable target is independently redacted. The two
-pin kinds remain distinct from the meanings of motivation and guidance.
+remain visible while an unreadable target is independently redacted. The pin
+kinds remain distinct from the meanings of motivation and guidance.
 `guided_by[]` and `motivated_by[]` are explicit source-owned declarations;
-their pins are ordinary References, not a third pin kind.
+their pins are ordinary References, not another pin kind.
+
+Read pins are context, not grounding. The host binds the read set to the
+call (`AuthzContext::with_read_set`), never a tool argument, and every memory
+that call writes keeps it. Each named memory must be live and readable by the
+caller in the named space when the write commits, or the whole write is
+refused. A read of another store's memory is read there as the caller first,
+the way an other-store origin is; an unreadable one, or one with no
+other-stores port configured, refuses the whole write. A memory named both as
+an origin or reference and as a read is stored once, as the declared pin. A
+read pin never counts as an origin or reference: a Fact may carry one, and it
+may point at any layer. Neighbours and lineage walks return local read pins in
+both directions; an other-store read is a leaf of ancestor walks only, since
+descendant walks cannot see into another store. Erasing either end leaves no
+dangling pin.
 
 ## Goals
 

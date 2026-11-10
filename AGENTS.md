@@ -76,7 +76,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 
 Judgment: if a proposed edge needs its own reason/confidence, find the node
 that owns the statement before adding code. Example: an interpretation belongs
-in a Perspective payload, not a third edge kind.
+in a Perspective payload, not a fourth edge kind.
 
 ## Delegation
 

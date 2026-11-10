@@ -21,6 +21,7 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
               UNION ALL SELECT id,'reference' FROM unnest(m.refs) p(id)
               UNION ALL SELECT id,'goal' FROM unnest(m.goal_refs) p(id)
               UNION ALL SELECT id,'guidance' FROM unnest(m.guided_by) p(id)
+              UNION ALL SELECT id,'read' FROM unnest(m.reads) p(id)
               UNION ALL SELECT m.forked_from,'fork' WHERE m.forked_from IS NOT NULL
             ) pin
             LEFT JOIN proxiima_core.memory target /* FORGET-POLICY: includes-forgotten (retained pin targets) */ ON target.t=pin.id
@@ -36,6 +37,7 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
                     WHEN 'goal' THEN actual.kind='goal'
                     WHEN 'guidance' THEN m.kind='perspective' AND actual.kind='goal' AND (target_goal.t IS NULL OR target_goal.owner_id=m.owner_id)
                     WHEN 'fork' THEN actual.kind=m.kind::text
+                    WHEN 'read' THEN actual.kind IN ('fact','abstraction','perspective')
                   END,false)
           )
         ))")

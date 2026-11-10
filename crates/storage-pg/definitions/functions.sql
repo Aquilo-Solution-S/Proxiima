@@ -363,6 +363,7 @@ BEGIN
     END IF;
     IF NEW.record_kind = 'memory' THEN
         SELECT source.origins || source.refs || source.goal_refs || source.guided_by
+               || source.reads
                || CASE WHEN source.forked_from IS NULL THEN '{}'::uuid[] ELSE ARRAY[source.forked_from] END
           INTO NEW.source_pins
           FROM proxiima_core.memory source
@@ -627,6 +628,41 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+-- The host read set's local probe (#677): `(t, owner_id)` of each live memory
+-- of `ids` the owner scope named by `setting_names`/`setting_values` may read,
+-- under owner RLS. The scope is set inside an exception block that always
+-- ends by raising: its subtransaction rolls back, and with it every setting
+-- the block made, so the reader scope never outlives this one statement (a
+-- cancelled or dropped caller included). Security invoker: the caller's RLS
+-- is the readability rule.
+-- FORGET-POLICY: live-only (a session reads no forgotten memory, under owner RLS) applies to every read in this function
+CREATE OR REPLACE FUNCTION proxiima_core.live_memory_owners_as(
+    setting_names text[],
+    setting_values text[],
+    ids uuid[]
+)
+ RETURNS TABLE (memory_t uuid, memory_owner uuid)
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
+AS $function$
+DECLARE
+    found_t uuid[];
+    found_owner uuid[];
+BEGIN
+    BEGIN
+        PERFORM set_config(s.name, s.value, true)
+           FROM unnest(setting_names, setting_values) AS s(name, value);
+        SELECT array_agg(m.t), array_agg(m.owner_id) INTO found_t, found_owner
+          FROM proxiima_core.memory m
+         WHERE m.t = ANY (ids) AND m.forgotten_at IS NULL;
+        RAISE EXCEPTION 'restore the owner scope' USING ERRCODE = 'P7677';
+    EXCEPTION WHEN SQLSTATE 'P7677' THEN
+        NULL;
+    END;
+    RETURN QUERY SELECT * FROM unnest(found_t, found_owner);
+END;
+$function$;
 
 -- FORGET-POLICY: includes-forgotten (pin integrity holds for forgotten targets) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_erased_pin_target_insert()
@@ -2271,6 +2307,7 @@ BEGIN
        OR NEW.refs IS DISTINCT FROM OLD.refs
        OR NEW.goal_refs IS DISTINCT FROM OLD.goal_refs
        OR NEW.guided_by IS DISTINCT FROM OLD.guided_by
+       OR NEW.reads IS DISTINCT FROM OLD.reads
        OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
        OR NEW.sidecar_tables IS DISTINCT FROM OLD.sidecar_tables THEN
         RAISE EXCEPTION 'append-only: % does not accept UPDATE', TG_TABLE_NAME
@@ -2306,7 +2343,8 @@ DECLARE
     previous_scope text := current_setting('app.proxiima_scope', true);
     pin uuid;
     pin_handle uuid;
-    pin_targets uuid[] := ARRAY[NEW.t] || NEW.origins || NEW.refs || NEW.goal_refs || NEW.guided_by;
+    pin_targets uuid[] := ARRAY[NEW.t] || NEW.origins || NEW.refs || NEW.goal_refs || NEW.guided_by
+                          || NEW.reads;
     pin_lock_mode text := current_setting('proxiima_core.pin_lock_mode', true);
     pin_lock_count integer;
 BEGIN
@@ -2348,10 +2386,10 @@ BEGIN
         PERFORM proxiima_core.lock_pin_targets(pin_targets);
     END IF;
 
-    IF NEW.origins <> '{}' OR NEW.refs <> '{}' THEN
+    IF NEW.origins <> '{}' OR NEW.refs <> '{}' OR NEW.reads <> '{}' THEN
         PERFORM 1
           FROM proxiima_core.memory
-         WHERE t = ANY (NEW.origins || NEW.refs)
+         WHERE t = ANY (NEW.origins || NEW.refs || NEW.reads)
          ORDER BY t
          FOR SHARE;
     END IF;
@@ -2382,6 +2420,7 @@ BEGIN
        AND NEW.refs = '{}'
        AND NEW.goal_refs = '{}'
        AND NEW.guided_by = '{}'
+       AND NEW.reads = '{}'
     THEN
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN NEW;
@@ -2403,7 +2442,7 @@ BEGIN
     END IF;
 
     IF NEW.origins = '{}' AND NEW.refs = '{}' AND NEW.goal_refs = '{}'
-       AND NEW.guided_by = '{}' THEN
+       AND NEW.guided_by = '{}' AND NEW.reads = '{}' THEN
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN NEW;
     END IF;
@@ -2430,6 +2469,19 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'reference pin % does not exist as a Memory', pin
+            USING ERRCODE = '23503';
+    END IF;
+
+    -- `reads` (#677) carries only Memory targets: the memories the host
+    -- certified the writing session read. Context, never grounding.
+    SELECT p.id INTO pin
+      FROM unnest(NEW.reads) AS p(id)
+      LEFT JOIN proxiima_core.memory m ON m.t = p.id
+     WHERE m.t IS NULL
+       AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, p.id)
+     LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'read pin % does not exist as a Memory', pin
             USING ERRCODE = '23503';
     END IF;
 
@@ -2472,7 +2524,7 @@ BEGIN
     SELECT m.handle INTO pin_handle
       FROM proxiima_core.memory m
       JOIN proxiima_core.closed_handle c ON c.handle = m.handle
-     WHERE m.t = ANY (NEW.origins || NEW.refs)
+     WHERE m.t = ANY (NEW.origins || NEW.refs || NEW.reads)
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, m.t)
      LIMIT 1;
     IF FOUND THEN

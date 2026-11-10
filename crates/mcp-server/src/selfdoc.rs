@@ -439,7 +439,7 @@ fn push_edges(out: &mut String, s: Surface) {
         return;
     }
     out.push_str(
-        "## Edge kinds\n\nTwo kinds, and the vocabulary is closed. The kind follows the write \
+        "## Edge kinds\n\nThree kinds, and the vocabulary is closed. The kind follows the write \
          that produced the row; nobody picks one.\n\n",
     );
     out.push_str("| Kind | Written by | Direction |\n|---|---|---|\n");
@@ -452,6 +452,10 @@ fn push_edges(out: &mut String, s: Surface) {
     out.push_str(
         "| `reference` | a schema-declared payload field of the node itself | referrer → \
          referent |\n",
+    );
+    out.push_str(
+        "| `read` | your host, from the memories your session read before the write; no tool \
+         argument | new memory → each memory read |\n",
     );
     if s.interpret {
         out.push_str(

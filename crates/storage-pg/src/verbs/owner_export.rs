@@ -426,6 +426,7 @@ fn pins_from_memories(memories: &[Value]) -> Vec<Value> {
         push_pins(&mut edges, source_t, memory.get("refs"), "reference");
         push_pins(&mut edges, source_t, memory.get("goal_refs"), "reference");
         push_pins(&mut edges, source_t, memory.get("guided_by"), "reference");
+        push_pins(&mut edges, source_t, memory.get("reads"), "read");
         push_scalar_pin(&mut edges, source_t, memory.get("forked_from"), "reference");
     }
     edges.sort_by_key(pin_sort_key);
@@ -583,6 +584,22 @@ mod tests {
         })]);
         assert_eq!(edges[0]["kind"], "reference");
         assert_eq!(goal_edges[0]["kind"], "reference");
+    }
+
+    #[test]
+    fn host_read_pins_export_as_read_edges() {
+        let source = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let read = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        let edges = pins_from_memories(&[json!({
+            "t": source,
+            "origins": [],
+            "refs": [],
+            "reads": [read],
+        })]);
+        assert_eq!(
+            edges,
+            vec![json!({"source_t": source, "target_t": read, "kind": "read"})]
+        );
     }
 
     #[test]

@@ -124,6 +124,7 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.erased_pin_target USING (
     AND EXISTS (SELECT 1 FROM proxiima_core.memory pinning
                 WHERE pinning.origins @> ARRAY[erased_pin_target.t]
                    OR pinning.refs @> ARRAY[erased_pin_target.t]
+                   OR pinning.reads @> ARRAY[erased_pin_target.t]
                    OR pinning.forked_from = erased_pin_target.t)
 );
 

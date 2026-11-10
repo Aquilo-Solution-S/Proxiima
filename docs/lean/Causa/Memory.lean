@@ -8,7 +8,7 @@ The F/A/P cognitive graph as a timeseries (UML §0–§2).
   row     = (handle, t)
 
 No `supersedes` / `text` / `authoring_*` / schema-on-version / `created_at`.
-Pins (`origins`, `refs`) are target `t`, frozen at write. Schema and series
+Pins (`origins`, `refs`, `reads`) are target `t`, frozen at write. Schema and series
 contract live on `MemoryHead`. Typed payload is `Content` (owner-scoped);
 `Memory.content_id` may be shared across admissions. There is no `FactEntity`.
 -/
@@ -202,6 +202,10 @@ structure Memory where
       This is an ordinary source-owned Memory reference, not a new edge kind.
       Later versions on the same handle retain the same anchor. -/
   forked_from : Option MemoryId
+  /-- Memories the host certified this write's session read before it
+      wrote (#677). Context, not grounding: never an origin or reference,
+      may mix layers, and may sit on a Fact. -/
+  reads      : List MemoryId
   blob_id    : Option BlobId
   content_id : Option ContentId
   tick       : Instant
@@ -230,6 +234,7 @@ def memory_refs : Memory → List MemoryId := Memory.refs
 def memory_goal_refs : Memory → List GoalId := Memory.goal_refs
 def memory_guided_by : Memory → List GoalId := Memory.guided_by
 def memory_forked_from : Memory → Option MemoryId := Memory.forked_from
+def memory_reads : Memory → List MemoryId := Memory.reads
 /-- Memory reference pins, including the optional fork anchor. -/
 def memory_reference_ids (m : Memory) : List MemoryId :=
   memory_refs m ++ (memory_forked_from m).toList
@@ -242,7 +247,7 @@ theorem memory_field_projection
     (handle : Handle) (t : MemoryId) (kind : MemoryKind) (owner : Owner)
     (writer : WriterAttribution)
     (origins refs : List MemoryId) (goal_refs guided_by : List GoalId)
-    (forked_from : Option MemoryId)
+    (forked_from : Option MemoryId) (reads : List MemoryId)
     (blob_id : Option BlobId)
     (content_id : Option ContentId) (tick : Instant) (forgotten : Bool)
     (guided_by_only_perspective : kind ≠ .Perspective → guided_by = [])
@@ -250,7 +255,7 @@ theorem memory_field_projection
     (perspective_never_cites : kind = .Perspective → blob_id = none)
     (blob_fa_only : blob_id ≠ none → kind = .Fact ∨ kind = .Abstraction) :
     memory_t
-      (Memory.mk handle t kind owner writer origins refs goal_refs guided_by forked_from blob_id content_id
+      (Memory.mk handle t kind owner writer origins refs goal_refs guided_by forked_from reads blob_id content_id
         tick forgotten guided_by_only_perspective fact_origins_empty
         perspective_never_cites blob_fa_only) = t := rfl
 

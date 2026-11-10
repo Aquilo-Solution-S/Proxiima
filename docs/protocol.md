@@ -246,7 +246,8 @@ unknown store). Lineage keeps such an origin as a node with status
 `unavailable` and an `unavailable_reason`: `not readable`, `store
 unavailable`, `deadline exceeded`, or `origin limit exceeded`. The edge to another
 store's memory carries its recorded kind: `origin` for a derivation's source,
-`reference` for an interpretation's subject. Lineage ancestors and
+`reference` for an interpretation's subject, `read` for a memory the host says
+the session read (descendant walks from that memory cannot see it). Lineage ancestors and
 `core_think` ancestors follow one rule: declared origins (`origin`), declared
 payload subjects such as an interpretation's (`reference`), and other stores'
 memories as leaves. A lineage page holds at most `limit` edges, other-store

@@ -93,6 +93,12 @@ pub enum StorageError {
     /// the message to learn which declaration drifted.
     #[error("{0}")]
     ReplayChanged(ReplayDrift),
+    /// The host's read set (#677) named a memory the caller cannot read in
+    /// the named space, or no such memory, checked inside the write's own
+    /// transaction. The whole write is rolled back. One variant for
+    /// "unreadable" and "nonexistent", so the refusal discloses neither.
+    #[error("read memory {} is not readable in the named space", memory.into_inner())]
+    UnreadableRead { memory: MemoryId },
     #[error("internal storage error: {0}")]
     Internal(String),
 }

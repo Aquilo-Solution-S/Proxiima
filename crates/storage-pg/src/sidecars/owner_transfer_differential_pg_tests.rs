@@ -232,6 +232,7 @@ async fn write_note(
             references: &[],
             sidecar_tables: &tables,
             scopes: &[],
+            reads: &proxiima_core::BoundReadSet::default(),
         },
         None,
     )
@@ -739,6 +740,9 @@ pub async fn dump_database(
             {
                 object.remove("guided_by");
                 object.remove("forked_from");
+                // 0066 host read pins postdate the baseline; the corpus writes
+                // none, and `core_mcp_pg::host_reads` asserts the column.
+                object.remove("reads");
             }
             if matches!(table.as_str(), "memory_head" | "goal_head")
                 && let Some(object) = row.as_object_mut()

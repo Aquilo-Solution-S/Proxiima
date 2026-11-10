@@ -576,7 +576,7 @@ mod tests {
                 .filter(|node| {
                     // Mirrors the backend: reference hops onto a Goal target
                     // come from `goal_refs`, onto a Memory target from `refs`.
-                    // Origin pins are Memory-only in both.
+                    // Origin and read pins are Memory-only in both.
                     let references = |node: &PinNode, t: &MemoryId| {
                         if query.target_kind == crate::PinTargetKind::Goal {
                             node.goal_refs
@@ -590,7 +590,12 @@ mod tests {
                     query.targets.iter().any(|t| match query.kind {
                         Some(EdgeKind::Origin) => node.origins.contains(t),
                         Some(EdgeKind::Reference) => references(node, t),
-                        None => node.origins.contains(t) || references(node, t),
+                        Some(EdgeKind::Read) => node.reads.contains(t),
+                        None => {
+                            node.origins.contains(t)
+                                || references(node, t)
+                                || node.reads.contains(t)
+                        }
                     })
                 })
                 .cloned()
@@ -778,6 +783,7 @@ mod tests {
             refs: Vec::new(),
             goal_refs: Vec::new(),
             guided_by: Vec::new(),
+            reads: Vec::new(),
         }];
         for _ in 0..n {
             nodes.push(PinNode {
@@ -788,6 +794,7 @@ mod tests {
                 refs: Vec::new(),
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
+                reads: Vec::new(),
             });
         }
         (owner, hub, Arc::new(FakePins::new(nodes, Vec::new())))

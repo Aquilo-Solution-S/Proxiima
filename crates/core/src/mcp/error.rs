@@ -100,6 +100,7 @@ impl McpToolError {
                     McpToolErrorKind::NotFound
                 }
                 crate::StorageError::Forbidden(_)
+                | crate::StorageError::UnreadableRead { .. }
                 | crate::StorageError::Conflict(_)
                 | crate::StorageError::Suppressed(_)
                 | crate::StorageError::IdempotencyConflict { .. }

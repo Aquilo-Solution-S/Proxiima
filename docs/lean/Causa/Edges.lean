@@ -2,10 +2,13 @@
 Causa — Pins (no Edge table)
 
 v0.0.8: there is no index table. `origins[]` and `refs[]` live on the
-Memory row (UML §5). The two closed kinds remain:
+Memory row (UML §5). The closed kinds are three:
 
   origin    = made-from   (origins)
   reference = points-at   (refs onto Memory, goal_refs onto Goal)
+  read      = read-before (reads: memories the host certified the writing
+              session read before this write; #677). Context, not grounding:
+              it never feeds origins or refs, and a Fact may carry it.
 
 Rebuildability is identity: the pin set IS node content. Goal pins live on
 the Goal row (`assignment_t`, `dependency_t`, `evidence_t`, `close_fact_t`,
@@ -20,7 +23,7 @@ E1 existence   — origin and refs t are a stored Memory.t, live or forgotten;
   E3 layering    — OriginKindValid (UML CHECKs)
   E4 kind follows — origins vs refs; no verb writes a pin
   E5 / E6        — there is no pin row, so no pin id and no pin payload
-  E7 rebuild     — derivePins m = (m.origins, memory_reference_ids m, m.goal_refs, m.guided_by)
+  E7 rebuild     — derivePins m = (m.origins, memory_reference_ids m, m.goal_refs, m.guided_by, m.reads)
 -/
 
 import Causa.Prelude
@@ -34,15 +37,17 @@ namespace Causa
 inductive EdgeKind where
   | origin
   | reference
+  | read
   deriving DecidableEq, Repr
 
 /-- Pins extracted from a node — THE derivation, and it is identity.
-    Four source-owned columns: the Goal spine has ordinary references and
-    explicit guidance references, kept separate from F/A/P origins. -/
+    Five source-owned columns: the Goal spine has ordinary references and
+    explicit guidance references, kept separate from F/A/P origins; the
+    host-certified read set is a fifth column beside them. -/
 def derivePins (m : Memory) :
-    List MemoryId × List MemoryId × List GoalId × List GoalId :=
+    List MemoryId × List MemoryId × List GoalId × List GoalId × List MemoryId :=
   (memory_origins m, memory_reference_ids m,
-    memory_goal_refs m, memory_guided_by m)
+    memory_goal_refs m, memory_guided_by m, memory_reads m)
 
 /- The new causal fields are still ordinary source-owned Reference pins, but
    remain separate from payload references and F/A/P grounding. -/
@@ -233,12 +238,12 @@ theorem live_origin_target_is_retained
 
 theorem pins_are_node_content (m : Memory) :
     derivePins m =
-      (m.origins, m.refs ++ m.forked_from.toList, m.goal_refs, m.guided_by) := rfl
+      (m.origins, m.refs ++ m.forked_from.toList, m.goal_refs, m.guided_by, m.reads) := rfl
 
 theorem derived_table_rebuildable (m : Memory) :
     derivePins m =
       (memory_origins m, memory_reference_ids m,
-        memory_goal_refs m, memory_guided_by m) :=
+        memory_goal_refs m, memory_guided_by m, memory_reads m) :=
   pins_are_node_content m
 
 /-- E4z — a write with empty origins is legal (interpretation Perspective). -/
@@ -321,12 +326,13 @@ theorem goal_declared_row_count (g : Goal) :
         goal_motivated_by g ++
         (goal_close_fact_t g).toList ++ (goal_write_act_t g).toList).length := rfl
 
-/-- Closed vocabulary: two kinds. -/
-theorem principle_epistemic_edge_kinds_are_exactly_two_aux (k : EdgeKind) :
-    k = .origin ∨ k = .reference := by
+/-- Closed vocabulary: three kinds. -/
+theorem principle_epistemic_edge_kinds_are_exactly_three_aux (k : EdgeKind) :
+    k = .origin ∨ k = .reference ∨ k = .read := by
   cases k with
   | origin => exact Or.inl rfl
-  | reference => exact Or.inr rfl
+  | reference => exact Or.inr (Or.inl rfl)
+  | read => exact Or.inr (Or.inr rfl)
 
 /-- info: 'Causa.pins_are_node_content' does not depend on any axioms -/
 #guard_msgs in

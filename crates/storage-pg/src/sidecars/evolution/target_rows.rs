@@ -80,12 +80,13 @@ pub(super) async fn memory(
         .iter()
         .map(|id| id.into_inner())
         .collect();
+    let reads: Vec<_> = target.pins.reads.iter().map(|id| id.into_inner()).collect();
     if target.id == source.t.into_inner() {
         sqlx::query(
             "UPDATE proxiima_core.memory
                 SET handle=$1, schema_id=$2, source_id=$3, ingest_key=$4, blob_id=$5, content_id=$6,
                     origins=$7, refs=$8, goal_refs=$9, guided_by=$10, sidecar_tables=$11,
-                    forgotten_at=$12, forked_from=$15
+                    forgotten_at=$12, forked_from=$15, reads=$16
               WHERE t=$13 AND owner_id=$14",
         )
         .bind(target.series)
@@ -108,6 +109,7 @@ pub(super) async fn memory(
                 .forked_from
                 .map(proxiima_core::MemoryId::into_inner),
         )
+        .bind(&reads)
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;
@@ -116,9 +118,9 @@ pub(super) async fn memory(
             "INSERT INTO proxiima_core.memory
                 (handle,t,kind,owner_id,schema_id,source_id,ingest_key,blob_id,content_id,
                  origins,refs,goal_refs,guided_by,sidecar_tables,occurred_at,\"by\",via,
-                 forked_from,lexical_language,forgotten_at)
+                 forked_from,lexical_language,forgotten_at,reads)
              VALUES ($1,$2,$3::proxiima_core.memory_kind,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-                     $14,$15,$16,$17,$18,$19::text::regconfig,$20)",
+                     $14,$15,$16,$17,$18,$19::text::regconfig,$20,$21)",
         )
         .bind(target.series)
         .bind(target.id)
@@ -145,6 +147,7 @@ pub(super) async fn memory(
         )
         .bind(&source.lexical_language)
         .bind(source.forgotten_at)
+        .bind(&reads)
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;

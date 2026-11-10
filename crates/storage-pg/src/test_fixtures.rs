@@ -263,10 +263,10 @@ pub async fn cited_abstraction_from_template(
         "INSERT INTO proxiima_core.memory /* FORGET-POLICY: includes-forgotten (fixture preserves the template's forgotten state) */
              (handle, t, kind, owner_id, schema_id, source_id, ingest_key,
               blob_id, content_id, origins, refs, sidecar_tables, goal_refs,
-              guided_by, occurred_at, by, via, lexical_language, forgotten_at)
+              guided_by, reads, occurred_at, by, via, lexical_language, forgotten_at)
          SELECT $1, $2, kind, owner_id, schema_id, NULL, NULL,
                 $3, content_id, origins, refs, sidecar_tables, goal_refs,
-                guided_by, occurred_at, by, via, lexical_language, forgotten_at
+                guided_by, reads, occurred_at, by, via, lexical_language, forgotten_at
            FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (fixture clones the exact stored template) */
           WHERE t = $4",
     )

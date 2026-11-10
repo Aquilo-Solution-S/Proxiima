@@ -120,7 +120,7 @@ async fn a_pin_to_an_erased_memory_reads_erased_target() {
 
 /// An abandoned group: registered as a group, with no members, so its owner
 /// may be erased.
-async fn register_abandoned_group(
+pub(super) async fn register_abandoned_group(
     platform_url: &str,
     group: GroupId,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -158,7 +158,7 @@ async fn witness_visible(
 }
 
 /// Erase `group` with system authority; the erase must complete.
-async fn erase_group(
+pub(super) async fn erase_group(
     engine: &proxiima_core::Engine,
     group: GroupId,
 ) -> Result<(), Box<dyn std::error::Error>> {

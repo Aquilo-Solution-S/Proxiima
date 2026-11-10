@@ -414,6 +414,58 @@ impl OwnerAccess {
     }
 }
 
+/// A host read set (#677), the owner scope its local reads are judged by
+/// (the scope of the context it was bound on, before the write narrowed
+/// it), and the other-store reads the caller has read through the port.
+/// Built by [`AuthzContext::with_read_set`]; storage reads it from the
+/// write permit. The default is the empty set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoundReadSet {
+    reads: crate::ReadSet,
+    // Boxed: every write permit carries one, and an inline scope would
+    // dwarf the permit enums that hold them.
+    reader: Option<Box<OwnerScope>>,
+    /// What [`crate::storage_ports::other_stores::OtherStoresService`]
+    /// returned for the other-store reads it read as the caller.
+    other_store: Vec<crate::storage_ports::other_stores::ReadOrigin>,
+}
+
+impl BoundReadSet {
+    /// The memories the session read.
+    #[must_use]
+    pub const fn reads(&self) -> &crate::ReadSet {
+        &self.reads
+    }
+
+    /// The other-store reads, each read through the port as the caller.
+    ///
+    /// # Errors
+    ///
+    /// The first other-store read nobody read through the port: a write
+    /// that did not come through a tool call, or one whose other-store
+    /// read was never resolved.
+    pub fn other_store_reads(&self) -> Result<Vec<uuid::Uuid>, crate::MemoryId> {
+        self.reads
+            .other_store()
+            .map(|memory| {
+                self.other_store
+                    .iter()
+                    .any(|read| read.handle() == memory.into_inner())
+                    .then_some(memory.into_inner())
+                    .ok_or(memory)
+            })
+            .collect()
+    }
+
+    /// The owner scope that must be able to read each of them; `None` when
+    /// the set was bound on a context without one, and the write's own
+    /// scope judges.
+    #[must_use]
+    pub fn reader(&self) -> Option<&OwnerScope> {
+        self.reader.as_deref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthzContext {
     identity: Identity,
@@ -432,6 +484,11 @@ pub struct AuthzContext {
     /// [`AuthzContext::identity_for_revalidation`] and be re-presented as
     /// authenticated identity material.
     publication_extensions: PublicationExtensions,
+    /// The memories the HOST says this session read before it writes
+    /// (#677). Like `publication_extensions`, context about the run, not
+    /// identity: never re-presented through revalidation and never taken
+    /// from a tool argument.
+    read_set: BoundReadSet,
     /// Uninterpreted verified payload for this request, outside the identity
     /// carried into stream revalidation.
     verified_claims: Option<VerifiedClaims>,
@@ -793,6 +850,39 @@ impl AuthzContext {
         &self.publication_extensions
     }
 
+    /// The memories the host bound as read before this context's writes.
+    /// Empty unless the host bound some.
+    #[must_use]
+    pub const fn read_set(&self) -> &crate::ReadSet {
+        &self.read_set.reads
+    }
+
+    /// The read set with the read authority storage checks it against.
+    pub(crate) fn bound_reads(&self) -> BoundReadSet {
+        self.read_set.clone()
+    }
+
+    /// The other-store reads of the read set not yet read through the port.
+    pub(crate) fn unread_other_store_reads(&self) -> Vec<uuid::Uuid> {
+        let read = &self.read_set.other_store;
+        self.read_set
+            .reads
+            .other_store()
+            .map(crate::MemoryId::into_inner)
+            .filter(|memory| !read.iter().any(|origin| origin.handle() == *memory))
+            .collect()
+    }
+
+    /// Keep what the other-stores port returned for the read set's
+    /// other-store reads, read as this context's caller.
+    pub(crate) fn with_other_store_reads(
+        mut self,
+        read: Vec<crate::storage_ports::other_stores::ReadOrigin>,
+    ) -> Self {
+        self.read_set.other_store.extend(read);
+        self
+    }
+
     /// The owner a request that selects none acts for, if the host named one.
     #[must_use]
     pub const fn default_owner(&self) -> Option<OwnerId> {
@@ -968,6 +1058,7 @@ impl AuthzContext {
             owner_scope: OwnerScopeState::Unsealed { confined_to: None },
             forwarded_owner: None,
             publication_extensions: PublicationExtensions::new(),
+            read_set: BoundReadSet::default(),
             verified_claims: None,
             default_owner: None,
             invoking_tool: None,
@@ -1137,6 +1228,46 @@ impl AuthzContext {
     ) -> Result<Self, PublicationExtensionsError> {
         self.publication_extensions =
             std::mem::take(&mut self.publication_extensions).merged(extensions)?;
+        Ok(self)
+    }
+
+    /// Bind the memories this session read before it writes (#677): every
+    /// memory this context writes keeps them as `read` pins.
+    ///
+    /// **For hosts only**, from the host's own call context — never from a
+    /// tool argument, request body or header a caller controls. Readability
+    /// is not checked here. Storage checks each local read in its named
+    /// space inside the write's own transaction. A write tool call reads
+    /// each other-store read through the other-stores port as the caller
+    /// before the tool runs, and storage refuses one nobody read that way
+    /// (a direct engine write). Either refusal refuses the whole write.
+    ///
+    /// Readability is judged by this context's owner scope as it stands at
+    /// the first bind: a later narrowing to the write space (a write always
+    /// narrows) does not shrink what the session could read. Bind the set on
+    /// the context the host authenticated.
+    ///
+    /// Additive like [`Self::with_publication_extensions`]: a second call
+    /// merges, and there is no call that clears the set.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::ReadSetError::ConflictingSpace`] when the merged set names
+    /// one memory in two spaces; [`crate::ReadSetError::TooMany`] when it
+    /// passes [`crate::ReadSet::MAX_PINS`].
+    pub fn with_read_set(mut self, reads: crate::ReadSet) -> Result<Self, crate::ReadSetError> {
+        let reader = self
+            .read_set
+            .reader
+            .take()
+            .or_else(|| self.owner_scope().cloned().map(Box::new));
+        let reads = std::mem::take(&mut self.read_set.reads).merged(reads)?;
+        let other_store = std::mem::take(&mut self.read_set.other_store);
+        self.read_set = BoundReadSet {
+            reads,
+            reader,
+            other_store,
+        };
         Ok(self)
     }
 
@@ -1328,6 +1459,7 @@ impl AuthzContext {
             owner_scope: OwnerScopeState::Unsealed { confined_to: None },
             forwarded_owner: None,
             publication_extensions: PublicationExtensions::new(),
+            read_set: BoundReadSet::default(),
             verified_claims: None,
             default_owner: None,
             invoking_tool: None,

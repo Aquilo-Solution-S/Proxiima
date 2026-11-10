@@ -265,7 +265,7 @@ CREATE CONSTRAINT TRIGGER memory_align_head_on_update
     EXECUTE FUNCTION proxiima_core.memory_align_head();
 DROP TRIGGER IF EXISTS memory_pin_checks_on_update ON proxiima_core.memory;
 CREATE CONSTRAINT TRIGGER memory_pin_checks_on_update
-    AFTER UPDATE OF origins, refs, goal_refs, guided_by, forked_from ON proxiima_core.memory
+    AFTER UPDATE OF origins, refs, goal_refs, guided_by, reads, forked_from ON proxiima_core.memory
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION proxiima_core.memory_pin_checks();
 

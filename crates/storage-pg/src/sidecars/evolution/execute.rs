@@ -309,6 +309,7 @@ pub(super) async fn run(
             referenced.extend(&memory.row.refs);
             referenced.extend(&memory.row.goal_refs);
             referenced.extend(&memory.row.guided_by);
+            referenced.extend(&memory.row.reads);
             referenced.extend(memory.row.forked_from);
         }
         for goal in &goals {

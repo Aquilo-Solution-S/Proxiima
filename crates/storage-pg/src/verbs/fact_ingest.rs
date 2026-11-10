@@ -142,6 +142,7 @@ struct AuthorizedFactInput<'a> {
     writer: proxiima_core::WriterAttribution,
     draft: &'a FactWriteCommand,
     links: &'a AuthorizedNodeLinks,
+    reads: &'a proxiima_core::BoundReadSet,
 }
 
 impl<'a> AuthorizedFactInput<'a> {
@@ -156,6 +157,7 @@ impl<'a> AuthorizedFactInput<'a> {
             writer: scope.writer(),
             draft,
             links,
+            reads: permit.reads(),
         })
     }
 }
@@ -651,6 +653,7 @@ async fn admit_fact(
         writer,
         draft,
         links,
+        reads,
     } = authorized;
     let prepared = super::memory_timeseries::prepare_memory_admission(
         tx,
@@ -664,6 +667,7 @@ async fn admit_fact(
             references: links.references(),
             sidecar_tables: input.sidecar_tables,
             scopes: input.scopes,
+            reads,
         },
     )
     .await?;

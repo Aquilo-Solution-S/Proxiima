@@ -21,6 +21,8 @@ pub struct OwnerWritePermit {
     owner_scope: Option<OwnerScope>,
     transfer_destination: Option<crate::OwnerId>,
     delegated: Option<DelegatedWriteGuard>,
+    /// The host's read set, minted from the authorizing context (#677).
+    reads: crate::authz::BoundReadSet,
     _private: (),
 }
 
@@ -290,6 +292,7 @@ impl OwnerWritePermit {
             )),
             transfer_destination: None,
             delegated: None,
+            reads: crate::authz::BoundReadSet::default(),
             _private: (),
         }
     }
@@ -320,15 +323,19 @@ impl OwnerWritePermit {
             )),
             transfer_destination: Some(destination),
             delegated: None,
+            reads: crate::authz::BoundReadSet::default(),
             _private: (),
         }
     }
 
+    /// `reads` is the authorizing context's read set
+    /// ([`crate::AuthzContext::bound_reads`]).
     #[must_use]
     pub(crate) fn new(
         owner: OwnerId,
         access_kind: AccessKind,
         owner_scope: Option<OwnerScope>,
+        reads: crate::authz::BoundReadSet,
     ) -> Self {
         Self {
             owner,
@@ -336,6 +343,7 @@ impl OwnerWritePermit {
             owner_scope,
             transfer_destination: None,
             delegated: None,
+            reads,
             _private: (),
         }
     }
@@ -357,6 +365,7 @@ impl OwnerWritePermit {
         runtime_binding: DelegationRuntimeBinding,
         expires_at: SystemTime,
         owner_scope: Option<OwnerScope>,
+        reads: crate::authz::BoundReadSet,
     ) -> Self {
         Self {
             owner,
@@ -367,8 +376,16 @@ impl OwnerWritePermit {
                 runtime_binding,
                 expires_at,
             }),
+            reads,
             _private: (),
         }
+    }
+
+    /// The memories the host certified this write's session read; storage
+    /// keeps them as `read` pins and checks each is readable.
+    #[must_use]
+    pub const fn reads(&self) -> &crate::authz::BoundReadSet {
+        &self.reads
     }
 
     pub(crate) fn validate_for_engine(

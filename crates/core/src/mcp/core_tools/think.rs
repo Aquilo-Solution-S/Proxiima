@@ -80,7 +80,8 @@ pub struct ThinkVisit {
     pub sketch: String,
     pub depth: u8,
     /// Kind of the edge that first reached this visit: `origin` (made
-    /// from) or `reference` (about). Absent on seeds and episode siblings.
+    /// from), `reference` (about) or `read` (read before writing). Absent
+    /// on seeds and episode siblings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge: Option<EdgeKind>,
     /// Set only on a memory of another store: its store number. Such a
@@ -382,14 +383,18 @@ fn page_complete(ordered_len: usize, start: usize, limit: u32) -> bool {
 /// declared payload subjects, and the edges recorded to other stores'
 /// memories, which are leaves.
 ///
-/// `Descendants` is deliberately NOT symmetric. Its inverse question —
+/// `Read` pins are walked both ways: `Ancestors` reach what a node's
+/// writing session read, `Descendants` reach what was written after
+/// reading the frontier.
+///
+/// `Descendants` is otherwise deliberately NOT symmetric. Its inverse question —
 /// "which nodes name me in a declared subject column" — is not one `refs[]`
 /// answers: an inbound `Reference` pin says a node names me in some
 /// declared field, not which one, and picking out the subject columns
 /// would load every such node's payload per hop. Nor are there remote
 /// descendants: a store cannot see who names its memories elsewhere. The
 /// asymmetry is stated here rather than hidden: descendants find what
-/// pinned you as an origin, not what named you.
+/// pinned you as an origin or a read, not what named you.
 async fn next_hop(
     engine: &crate::Engine,
     ctx: &McpToolCtx,
@@ -406,23 +411,24 @@ async fn next_hop(
             })
             .collect()),
         ThinkDirection::Descendants => {
-            let inbound = engine
-                .inbound_pin_nodes(
-                    &ctx.authz,
-                    InboundPinQuery {
-                        targets: frontier,
-                        target_kind: PinTargetKind::Memory,
-                        kind: Some(EdgeKind::Origin),
-                        supersession: SupersessionStatus::IncludeSuperseded,
-                        after: None,
-                        limit: HOP_PAGE,
-                    },
-                )
-                .await?;
-            Ok(inbound
-                .into_iter()
-                .map(|node| (node.id, false, EdgeKind::Origin))
-                .collect())
+            let mut next = Vec::new();
+            for kind in [EdgeKind::Origin, EdgeKind::Read] {
+                let inbound = engine
+                    .inbound_pin_nodes(
+                        &ctx.authz,
+                        InboundPinQuery {
+                            targets: frontier,
+                            target_kind: PinTargetKind::Memory,
+                            kind: Some(kind),
+                            supersession: SupersessionStatus::IncludeSuperseded,
+                            after: None,
+                            limit: HOP_PAGE,
+                        },
+                    )
+                    .await?;
+                next.extend(inbound.into_iter().map(|node| (node.id, false, kind)));
+            }
+            Ok(next)
         }
         ThinkDirection::EpisodeSiblings => Ok(Vec::new()),
     }

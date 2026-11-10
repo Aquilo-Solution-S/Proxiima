@@ -50,9 +50,9 @@ theorem principle_4_facts_connect_non_interpretively :
     ∀ m : Memory, memory_kind m = .Fact → memory_origins m = [] :=
   fun m hk => m.fact_origins_empty hk
 
-theorem principle_epistemic_edge_kinds_are_exactly_two (k : EdgeKind) :
-    k = .origin ∨ k = .reference :=
-  principle_epistemic_edge_kinds_are_exactly_two_aux k
+theorem principle_epistemic_edge_kinds_are_exactly_three (k : EdgeKind) :
+    k = .origin ∨ k = .reference ∨ k = .read :=
+  principle_epistemic_edge_kinds_are_exactly_three_aux k
 
 theorem principle_epistemic_fact_never_interprets
     (p subject : Memory) (h : interpretationOf p subject) :
@@ -128,7 +128,7 @@ theorem principle_9_index_is_a_function_of_node_content :
     ∀ m : Memory,
       derivePins m =
         (memory_origins m, memory_refs m ++ (memory_forked_from m).toList,
-          memory_goal_refs m, memory_guided_by m) :=
+          memory_goal_refs m, memory_guided_by m, memory_reads m) :=
   derived_table_rebuildable
 
 /-- H2 — shared payload does not collapse admission identity. -/

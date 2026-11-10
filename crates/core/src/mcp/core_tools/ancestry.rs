@@ -6,6 +6,9 @@
 //!   `OriginEdges` or declares nothing (fail-open, see `ancestor_edges`);
 //! - the payload references in its declared subject columns
 //!   (`Reference`), when its schema declares `PayloadOnly`;
+//! - its local `reads[]` (`Read`, #677), whatever its declaration: what
+//!   the host certified the writing session read is context, not
+//!   provenance, so no declaration hides or grants it;
 //! - the edges recorded to other stores' memories, with their recorded kind
 //!   (`Origin` for a derivation's source, `Reference` for an
 //!   interpretation's subject).
@@ -90,8 +93,14 @@ pub(crate) async fn ancestor_edges(
     let mut edges = Vec::new();
     let mut grounded: Vec<(MemoryId, &'static [&'static str])> = Vec::new();
     let mut visible = Vec::with_capacity(pins.len());
+    let mut reads = Vec::new();
     for node in pins {
         visible.push(node.id);
+        reads.extend(node.reads.iter().map(|read| AncestorEdge {
+            source: node.id,
+            target: AncestorTarget::Local(*read),
+            kind: EdgeKind::Read,
+        }));
         match ctx.registry.provenance_of(&node.schema_id, node.kind) {
             None | Some(Provenance::OriginEdges) => {
                 edges.extend(node.origins.into_iter().map(|origin| AncestorEdge {
@@ -118,6 +127,10 @@ pub(crate) async fn ancestor_edges(
                 kind,
             }),
     );
+    // Reads last: the stable sort keeps a declared origin or reference ahead
+    // of a read of the same target, and the dedup keeps the first, as
+    // storage stores such a target once, as the declared pin.
+    edges.extend(reads);
     edges.sort_by_key(|edge| std::cmp::Reverse((edge.source, edge.target.uuid())));
     edges.dedup_by_key(|edge| (edge.source, edge.target));
     Ok(edges)

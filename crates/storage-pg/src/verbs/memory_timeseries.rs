@@ -18,7 +18,7 @@ use proxiima_core::edge::EdgeEndpoint;
 use proxiima_core::verbs::fact_ingest::{FactIngestOutcome, FactWriteCommand};
 use proxiima_core::verbs::query::SidecarAtom;
 use proxiima_core::{
-    MemoryId, NaturalKeySnapshot, OwnerId, ReplayDrift, SidecarPayload, StorageError,
+    BoundReadSet, MemoryId, NaturalKeySnapshot, OwnerId, ReplayDrift, SidecarPayload, StorageError,
 };
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
@@ -66,6 +66,10 @@ pub(crate) struct MemoryAdmissionDraft<'a> {
     /// scope and whose caller leaves this empty would admit a row a
     /// concurrent scope erase cannot see.
     pub(crate) scopes: &'a [ScopeFenceTarget],
+    /// The host's read set (#677), kept as `read` pins. Required so each
+    /// admission names where its read set comes from; empty for a write no
+    /// host session made.
+    pub(crate) reads: &'a BoundReadSet,
 }
 
 /// Backend-only natural identity, derived from an authorization-bound typed payload.
@@ -105,6 +109,11 @@ pub(crate) struct PreparedMemoryAdmissionNew {
     refs: Vec<Uuid>,
     goal_refs: Vec<Uuid>,
     guided_by: Vec<Uuid>,
+    /// The host's read set, checked when the admission materializes.
+    reads: BoundReadSet,
+    /// The local reads the row stores: each one that is not also an origin
+    /// or a reference of the row, which the stronger pin already names.
+    read_pins: Vec<Uuid>,
     sidecar_tables: Vec<String>,
     handle: Uuid,
     fresh_handle: bool,
@@ -223,6 +232,8 @@ pub(crate) async fn ingest_unpinned_fact_at(
             // A Goal's lifecycle Facts (write-act, goal change) carry no
             // declared scope.
             scopes: &[],
+            // ... and no read set: the engine writes them, not a session.
+            reads: &BoundReadSet::default(),
         },
         PreparationOptions {
             identity: Some(identity),
@@ -444,24 +455,26 @@ pub(crate) async fn prepare_memory_admission_at(
             .unwrap_or_else(|| MemoryId::new(t).created_at())
     });
 
-    let mut targets = Vec::with_capacity(
-        1 + usize::from(expected_head_t.is_some())
-            + persisted_origins.len()
-            + refs.len()
-            + goal_refs.len()
-            + options.extra_targets.len()
-            + options.guided_by.len(),
-    );
-    targets.push(t);
-    if let Some(head_t) = expected_head_t {
-        targets.push(head_t);
-    }
-    targets.extend(persisted_origins.iter().copied());
-    targets.extend(refs.iter().copied());
-    targets.extend(goal_refs.iter().copied());
-    targets.extend(options.extra_targets.iter().copied());
-    targets.extend(inherited_fork_anchor);
-    targets.extend(options.guided_by.iter().map(|id| id.into_inner()));
+    let guided_by: Vec<Uuid> = options.guided_by.iter().map(|id| id.into_inner()).collect();
+    let stronger: [&[Uuid]; 5] = [
+        &persisted_origins,
+        &refs,
+        &goal_refs,
+        &guided_by,
+        inherited_fork_anchor.as_slice(),
+    ];
+    let read_pins = stored_local_reads(admission.reads, &stronger);
+    // A local read a stronger pin already names is a target through it.
+    let targets: Vec<Uuid> = std::iter::once(t)
+        .chain(expected_head_t)
+        .chain(persisted_origins.iter().copied())
+        .chain(refs.iter().copied())
+        .chain(goal_refs.iter().copied())
+        .chain(options.extra_targets.iter().copied())
+        .chain(inherited_fork_anchor)
+        .chain(guided_by.iter().copied())
+        .chain(read_pins.iter().copied())
+        .collect();
     let mut draft = draft.clone();
     if reobservation_key.is_some() {
         draft.ingest_key = reobservation_key;
@@ -476,7 +489,9 @@ pub(crate) async fn prepare_memory_admission_at(
             origins: persisted_origins,
             refs,
             goal_refs,
-            guided_by: options.guided_by.iter().map(|id| id.into_inner()).collect(),
+            guided_by,
+            reads: admission.reads.clone(),
+            read_pins,
             sidecar_tables: admission.sidecar_tables.to_vec(),
             handle,
             fresh_handle,
@@ -964,9 +979,11 @@ pub(crate) async fn materialize_prepared_memory_admission_after_locks(
     if blob_id.is_some() {
         prepared.draft.blob_id = blob_id;
     }
+    let other_store_reads = validate_read_set(tx, &prepared.reads).await?;
     let content_id = resolve_admission_content_id(tx, &prepared, content_id).await?;
     advance_memory_head(tx, &prepared).await?;
     insert_memory_revision(tx, &prepared, content_id).await?;
+    record_other_store_reads(tx, prepared.t, &other_store_reads).await?;
     refresh_memory_sketch(tx, &prepared).await?;
     Ok(FactIngestOutcome {
         receipt_id: None,
@@ -976,6 +993,83 @@ pub(crate) async fn materialize_prepared_memory_admission_after_locks(
         handle: prepared.handle,
         forgotten: false,
     })
+}
+
+/// The local reads of `reads` that no pin of `stronger` already names, in
+/// order: a memory that is an origin, a reference or the fork anchor of the
+/// row is stored once, as that pin, as an other-store one is in `memory_external_origin`.
+fn stored_local_reads(reads: &BoundReadSet, stronger: &[&[Uuid]]) -> Vec<Uuid> {
+    reads
+        .reads()
+        .local()
+        .map(|(id, _)| id.into_inner())
+        .filter(|id| !stronger.iter().any(|pins| pins.contains(id)))
+        .collect()
+}
+
+/// Every memory the host's read set names must be one the caller can read.
+/// A local one must be live in the space the host named, checked here in
+/// the write's own transaction. Owner RLS is the readability rule: the
+/// probe runs under the read set's reader scope (the caller's scope before
+/// the write narrowed it to its space), so a memory outside the caller's
+/// readable owners is absent exactly like one that does not exist. An
+/// other-store one must have been read through the other-stores port as
+/// the caller before the write; that cannot be repeated inside this
+/// transaction.
+///
+/// Returns the other-store reads to record.
+///
+/// # Errors
+///
+/// [`StorageError::UnreadableRead`] naming the first memory that fails; the
+/// caller's transaction then rolls the whole write back.
+async fn validate_read_set(
+    tx: &mut Transaction<'_, Postgres>,
+    bound: &BoundReadSet,
+) -> Result<Vec<Uuid>, StorageError> {
+    let other_store = bound
+        .other_store_reads()
+        .map_err(|memory| StorageError::UnreadableRead { memory })?;
+    let local: Vec<(MemoryId, OwnerId)> = bound.reads().local().collect();
+    if local.is_empty() {
+        return Ok(other_store);
+    }
+    let ids: Vec<Uuid> = local.iter().map(|(id, _)| id.into_inner()).collect();
+    let readable =
+        crate::owner_scope::live_memory_owners_as(tx.as_mut(), bound.reader(), &ids).await?;
+    let readable: std::collections::HashMap<Uuid, Uuid> = readable.into_iter().collect();
+    match local
+        .iter()
+        .find(|(memory, space)| readable.get(&memory.into_inner()) != Some(&space.into_inner()))
+    {
+        Some((memory, _)) => Err(StorageError::UnreadableRead { memory: *memory }),
+        None => Ok(other_store),
+    }
+}
+
+/// Record the other-store reads of a fresh row in `memory_external_origin`
+/// with kind `read`. An origin or reference this write records for the same
+/// memory afterwards replaces the row ([`super::derive_append::record_external_edges`]).
+async fn record_other_store_reads(
+    tx: &mut Transaction<'_, Postgres>,
+    t: Uuid,
+    reads: &[Uuid],
+) -> Result<(), StorageError> {
+    if reads.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
+         SELECT $1, read.memory, $3 FROM unnest($2::uuid[]) AS read(memory)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(t)
+    .bind(reads)
+    .bind(proxiima_core::EdgeKind::Read.as_str())
+    .execute(tx.as_mut())
+    .await
+    .map_err(map_err)?;
+    Ok(())
 }
 
 /// The owner-scoped content row this admission stores, materializing one from
@@ -1081,10 +1175,10 @@ async fn insert_memory_revision(
         "INSERT INTO proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a new row is live; the insert reads no other row) */
             (handle, t, kind, owner_id, schema_id, source_id, ingest_key, blob_id,
              content_id, origins, refs, goal_refs, guided_by, sidecar_tables, occurred_at, \"by\", via, forked_from,
-             lexical_language)
+             lexical_language, reads)
          VALUES ($1, $2, $3::proxiima_core.memory_kind, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                  $14, $15, $16, $17, $18,
-                 COALESCE($19::regconfig, proxiima_core.lexical_config()))",
+                 COALESCE($19::regconfig, proxiima_core.lexical_config()), $20)",
     )
     .bind(prepared.handle)
     .bind(prepared.t)
@@ -1105,6 +1199,7 @@ async fn insert_memory_revision(
     .bind(prepared.writer.via)
     .bind(prepared.forked_from)
     .bind(stamped_language(draft.lexical_language.as_deref()))
+    .bind(&prepared.read_pins)
     .execute(tx.as_mut())
     .await
     .map_err(map_err)?;

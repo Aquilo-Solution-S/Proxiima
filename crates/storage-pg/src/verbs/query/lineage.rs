@@ -16,12 +16,14 @@ use crate::pg_enums::PgMemoryKind;
 use crate::pg_ident::PgIdent;
 use crate::projection::{projection_key_ident, snippet_sql};
 
-/// Outbound origin pins of the frontier, newest `(src, tgt)` first.
+/// Outbound origin and read pins of the frontier, newest `(src, tgt)` first.
+/// A target that is both an origin and a read of one source is its origin.
 const ANCESTOR_HOP_SQL: &str = "SELECT DISTINCT ON (m.t, pin)
        m.t AS src, m.kind AS src_kind, pin AS tgt,
+       NOT (pin = ANY (m.origins)) AS is_read,
        proxiima_core.memory_created_at(m.t) AS created_at
   FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
-  JOIN unnest(m.origins) AS pin ON true
+  JOIN unnest(m.origins || m.reads) AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])
    AND m.forgotten_at IS NULL
@@ -29,16 +31,17 @@ const ANCESTOR_HOP_SQL: &str = "SELECT DISTINCT ON (m.t, pin)
  ORDER BY m.t DESC, pin DESC
  LIMIT $5";
 
-/// Children whose `origins` overlap the frontier; `tgt` is only a parent
-/// in that frontier (not the child's other pins).
+/// Children whose `origins` or `reads` overlap the frontier; `tgt` is only a
+/// parent in that frontier (not the child's other pins).
 const DESCENDANT_HOP_SQL: &str = "SELECT DISTINCT ON (child.t, pin)
        child.t AS src, child.kind AS src_kind, pin AS tgt,
+       NOT (pin = ANY (child.origins)) AS is_read,
        proxiima_core.memory_created_at(child.t) AS created_at
   FROM proxiima_core.memory child /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
-  JOIN unnest(child.origins) AS pin ON true
+  JOIN unnest(child.origins || child.reads) AS pin ON true
  WHERE child.owner_id = ANY($2::uuid[])
    AND child.forgotten_at IS NULL
-   AND child.origins && $1::uuid[]
+   AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])
    AND pin = ANY($1::uuid[])
    AND ($3::uuid IS NULL OR (child.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY child.t DESC, pin DESC
@@ -46,7 +49,7 @@ const DESCENDANT_HOP_SQL: &str = "SELECT DISTINCT ON (child.t, pin)
 
 const ANCESTOR_FRONTIER_SQL: &str = "SELECT DISTINCT pin
   FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
-  JOIN unnest(m.origins) AS pin ON true
+  JOIN unnest(m.origins || m.reads) AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])
    AND m.forgotten_at IS NULL";
@@ -55,7 +58,7 @@ const DESCENDANT_FRONTIER_SQL: &str = "SELECT DISTINCT child.t
   FROM proxiima_core.memory child /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
  WHERE child.owner_id = ANY($2::uuid[])
    AND child.forgotten_at IS NULL
-   AND child.origins && $1::uuid[]";
+   AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])";
 
 #[cfg(any(test, feature = "test-fixtures", debug_assertions))]
 #[doc(hidden)]
@@ -282,7 +285,7 @@ pub(crate) async fn unread_targets_on_connection(
                 SELECT 1
                   FROM proxiima_core.memory pinning /* FORGET-POLICY: live-only (an erased target is named only through a readable memory that pins it) */
                  WHERE (pinning.origins @> ARRAY[erased.t] OR pinning.refs @> ARRAY[erased.t]
-                        OR pinning.forked_from = erased.t)
+                        OR pinning.reads @> ARRAY[erased.t] OR pinning.forked_from = erased.t)
                    AND pinning.owner_id = ANY($2::uuid[])
                    AND pinning.forgotten_at IS NULL
             )",
@@ -335,9 +338,10 @@ pub(crate) async fn external_edges_on_connection(
             let kind = match kind.as_str() {
                 "origin" => EdgeKind::Origin,
                 "reference" => EdgeKind::Reference,
+                "read" => EdgeKind::Read,
                 other => {
                     return Err(StorageError::Internal(format!(
-                        "memory_external_origin.edge_kind {other:?} is neither origin nor reference"
+                        "memory_external_origin.edge_kind {other:?} is not origin, reference or read"
                     )));
                 }
             };
@@ -383,7 +387,7 @@ fn project_lineage_edge(
         edge: Edge {
             source: EdgeEndpoint::memory(hop.src_kind, MemoryId::new(hop.src)),
             target,
-            kind: EdgeKind::Origin,
+            kind: hop.kind,
             created_at: hop.created_at,
         },
         distance: hop.dist,
@@ -395,6 +399,7 @@ struct HopRow {
     src: Uuid,
     src_kind: PgMemoryKind,
     tgt: Uuid,
+    is_read: bool,
     created_at: time::OffsetDateTime,
 }
 
@@ -403,6 +408,7 @@ struct WalkHop {
     src: Uuid,
     src_kind: EntityKind,
     tgt: Uuid,
+    kind: EdgeKind,
     dist: u8,
     created_at: time::OffsetDateTime,
 }
@@ -461,6 +467,11 @@ async fn walk_lineage_hops_on_connection(
             src: r.src,
             src_kind: r.src_kind.into(),
             tgt: r.tgt,
+            kind: if r.is_read {
+                EdgeKind::Read
+            } else {
+                EdgeKind::Origin
+            },
             dist,
             created_at: r.created_at,
         }));

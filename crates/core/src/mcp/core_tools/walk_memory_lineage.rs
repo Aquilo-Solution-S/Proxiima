@@ -290,8 +290,9 @@ fn resume_point(after: Option<MemoryLineageCursor>) -> (u8, Option<(uuid::Uuid, 
 
 /// The ancestors of `start`, level by level over the ancestor-edge rule
 /// `core_think` follows ([`super::ancestry::ancestor_edges`], #480):
-/// declared origins, declared payload subjects (`reference`), and the
-/// recorded edges to other stores' memories, which are leaves.
+/// declared origins, declared payload subjects (`reference`), host-certified
+/// reads (`read`, #677), and the recorded edges to other stores' memories,
+/// which are leaves. Descendants walk `origin` and `read` pins in storage.
 ///
 /// Every edge of a level is listed, newest `(source, target)` first; only
 /// unseen local targets are expanded. A page holds at most `limit` edges,

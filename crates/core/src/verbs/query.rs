@@ -543,6 +543,9 @@ pub struct MemoryRow {
     /// Exact Goal versions that guided this Perspective version. Targets
     /// the reader cannot see are omitted by the storage projection.
     pub guided_by: Vec<GoalId>,
+    /// Memories the host certified the writing session read
+    /// (`memory.reads`, #677). Context, not grounding.
+    pub reads: Vec<MemoryId>,
     /// When the observation occurred (`memory.occurred_at`): `Some` for
     /// every Fact, `None` for an Abstraction or Perspective. Supersession
     /// and recency still order by `id`.
@@ -562,6 +565,7 @@ impl From<&MemoryRow> for crate::PinNode {
             refs: row.refs.clone(),
             goal_refs: row.goal_refs.clone(),
             guided_by: row.guided_by.clone(),
+            reads: row.reads.clone(),
         }
     }
 }

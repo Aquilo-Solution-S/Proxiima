@@ -106,6 +106,7 @@ async fn write_note(
             references: &[],
             sidecar_tables: &[AGENT_NOTE.to_owned()],
             scopes: &[],
+            reads: &proxiima_core::BoundReadSet::default(),
         },
         None,
     )
@@ -253,6 +254,7 @@ async fn a_per_row_schema_refuses_a_write_that_named_no_language() {
                 references: &[],
                 sidecar_tables: &[AGENT_NOTE.to_owned()],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )
@@ -702,6 +704,7 @@ async fn an_undeclared_sidecar_row_is_caught_and_the_finding_says_there_is_no_re
                 references: &[],
                 sidecar_tables: &[],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )
@@ -781,6 +784,7 @@ async fn a_stamp_with_no_row_is_refused_at_commit() {
                 references: &[],
                 sidecar_tables: &[AGENT_NOTE.to_owned()],
                 scopes: &[],
+                reads: &proxiima_core::BoundReadSet::default(),
             },
             None,
         )

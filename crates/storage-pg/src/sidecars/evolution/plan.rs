@@ -129,6 +129,8 @@ pub struct MigrationPins {
     pub goal_references: Vec<GoalId>,
     pub origins: Vec<MemoryId>,
     pub guided_by: Vec<GoalId>,
+    /// Host-certified read pins (#677), carried unchanged by default.
+    pub reads: Vec<MemoryId>,
     pub forked_from: Option<MemoryId>,
     pub blob_id: Option<Uuid>,
 }

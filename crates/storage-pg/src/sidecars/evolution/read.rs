@@ -217,7 +217,7 @@ async fn read_memories(
 ) -> Result<Vec<MigrationMemory>, StorageError> {
     let rows = sqlx::query(
         "SELECT handle,t,kind::text,owner_id,schema_id,source_id,ingest_key,blob_id,content_id,
-                origins,refs,goal_refs,guided_by,forked_from,sidecar_tables,occurred_at,\"by\",via,
+                origins,refs,goal_refs,guided_by,reads,forked_from,sidecar_tables,occurred_at,\"by\",via,
                 lexical_language::text,forgotten_at
            FROM proxiima_core.memory
           /* FORGET-POLICY: includes-forgotten (all historical representations migrate) */
@@ -252,6 +252,7 @@ async fn read_memories(
                     refs: row.try_get("refs").map_err(crate::error::map_err)?,
                     goal_refs: row.try_get("goal_refs").map_err(crate::error::map_err)?,
                     guided_by: row.try_get("guided_by").map_err(crate::error::map_err)?,
+                    reads: row.try_get("reads").map_err(crate::error::map_err)?,
                     forked_from: row.try_get("forked_from").map_err(crate::error::map_err)?,
                     sidecar_tables: row
                         .try_get("sidecar_tables")

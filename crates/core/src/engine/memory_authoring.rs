@@ -784,7 +784,8 @@ impl Engine {
             )
             .await?;
         let owner = command.controller();
-        let permit = crate::GoalWorkPermit::new(command, kind.into(), memory.target);
+        let permit =
+            crate::GoalWorkPermit::new(command, kind.into(), memory.target, authz.bound_reads());
         let item = self
             .prepare_derived_with_permit(authz, memory, &[], &[], owner, permit)
             .await?;
@@ -1448,7 +1449,12 @@ mod tests {
     async fn author_derived_ftoa_with_origins_passes_manifest_validation() {
         let engine = engine();
         let owner = owner();
-        let permit = OwnerWritePermit::new(owner, crate::access::AccessKind::Perspective, None);
+        let permit = OwnerWritePermit::new(
+            owner,
+            crate::access::AccessKind::Perspective,
+            None,
+            crate::BoundReadSet::default(),
+        );
         let origins = [EdgeEndpoint::memory(
             EntityKind::Fact,
             MemoryId::new(uuid::Uuid::now_v7()),
@@ -1472,7 +1478,12 @@ mod tests {
     async fn a_write_with_no_origins_carries_no_operator_manifest() {
         let engine = engine();
         let owner = owner();
-        let permit = OwnerWritePermit::new(owner, crate::access::AccessKind::Perspective, None);
+        let permit = OwnerWritePermit::new(
+            owner,
+            crate::access::AccessKind::Perspective,
+            None,
+            crate::BoundReadSet::default(),
+        );
         let mut req = request(owner, &[]);
         req.operator_kind = MemoryOperatorKind::AtoP;
         req.kind = EntityKind::Perspective;
@@ -1633,7 +1644,12 @@ mod tests {
                 recorder.clone(),
             ));
         let owner = owner();
-        let permit = OwnerWritePermit::new(owner, crate::access::AccessKind::Perspective, None);
+        let permit = OwnerWritePermit::new(
+            owner,
+            crate::access::AccessKind::Perspective,
+            None,
+            crate::BoundReadSet::default(),
+        );
         let prior = MemoryId::new(uuid::Uuid::now_v7());
         let origins = [
             EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(uuid::Uuid::now_v7())),

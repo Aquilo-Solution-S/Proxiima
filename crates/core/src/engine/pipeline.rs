@@ -234,9 +234,15 @@ impl Engine {
                 self.delegation_runtime_binding.clone(),
                 expires_at,
                 authz.owner_scope().cloned(),
+                authz.bound_reads(),
             )
         } else {
-            OwnerWritePermit::new(resolved, kind, authz.owner_scope().cloned())
+            OwnerWritePermit::new(
+                resolved,
+                kind,
+                authz.owner_scope().cloned(),
+                authz.bound_reads(),
+            )
         };
         Ok(WritePermit { owner_write })
     }

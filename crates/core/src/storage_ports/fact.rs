@@ -30,6 +30,7 @@ pub trait FactIngestPort: Send + Sync {
             *permit.owner(),
             permit.access_kind(),
             permit.owner_scope().cloned(),
+            permit.reads().clone(),
         );
         let authorized =
             AuthorizedFactWrite::new_for_tests(permit, draft.clone(), None, Vec::new());

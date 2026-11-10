@@ -474,6 +474,10 @@ pub use proxiima_core::{
     storage_ports::MembershipWritePermit, storage_ports::OperatorWriteProof,
     storage_ports::OwnerWritePermit,
 };
+/// The memories a session read before it writes
+/// ([`AuthzContext::with_read_set`], #677): the set, one named memory, and
+/// the refusal building one gives.
+pub use proxiima_core::{BoundReadSet, ReadPin, ReadSet, ReadSetError};
 /// The storage ports and their handles. [`StoragePortsBuilder`]'s setters take the
 /// `*Handle` aliases (`Arc<dyn ...Port>`), [`StoragePortsBuilder::try_build`]
 /// returns the `StoragePortsBuildError`, and a host that supplies its own backend

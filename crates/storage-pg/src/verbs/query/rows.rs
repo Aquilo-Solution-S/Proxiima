@@ -27,6 +27,7 @@ pub(super) fn memory_row_from_db(
         refs: r.refs.into_iter().map(MemoryId::new).collect(),
         goal_refs: r.goal_refs.into_iter().map(GoalId::new).collect(),
         guided_by: r.guided_by.into_iter().map(GoalId::new).collect(),
+        reads: r.reads.into_iter().map(MemoryId::new).collect(),
         occurred_at: r.occurred_at,
         payload,
     })
@@ -96,5 +97,6 @@ pub(super) struct MemoryRowDb {
     pub(super) refs: Vec<uuid::Uuid>,
     pub(super) goal_refs: Vec<uuid::Uuid>,
     pub(super) guided_by: Vec<uuid::Uuid>,
+    pub(super) reads: Vec<uuid::Uuid>,
     occurred_at: Option<time::OffsetDateTime>,
 }
