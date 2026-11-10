@@ -36,7 +36,7 @@ use crate::llm::EmbeddingRouter;
 use crate::storage_ports::{EngineStoragePorts, OwnerWritePermit};
 use crate::verbs::schema::SpiiceRegistryFrozen;
 
-pub use crate::storage_ports::{HostStateCommand, HostStateOutcome};
+pub use crate::storage_ports::{GoalWorkCommand, HostStateCommand, HostStateOutcome};
 pub use access_admin::GroupMemberPage;
 pub use embeddings::EmbeddingDrainOutcome;
 pub use goal_write::{
@@ -54,7 +54,10 @@ pub use read_verbs::{
     GetMemoryReadResponse, SearchReadRequest, SearchReadResponse,
 };
 pub use retired_fact::RetiredFactErase;
-pub use unit_of_work::{FactWrite, HostStateMaintenanceAuthority, HostStateUnitOfWork, UnitOfWork};
+pub use unit_of_work::{
+    FactWrite, GoalWorkOutcome, GoalWorkUnitOfWork, HostStateMaintenanceAuthority,
+    HostStateUnitOfWork, UnitOfWork,
+};
 pub use upload::{UploadCompleted, UploadCompletionExpectation};
 
 #[cfg(test)]

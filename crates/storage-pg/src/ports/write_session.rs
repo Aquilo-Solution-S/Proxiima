@@ -207,6 +207,40 @@ impl WriteSessionFactory for PgStorage {
         Ok(self.session_from_transaction(tx))
     }
 
+    async fn begin_goal_work(
+        &self,
+        permit: &OwnerWritePermit,
+        goal: proxiima_core::GoalId,
+    ) -> Result<Box<dyn WriteSession>, StorageError> {
+        let owner = *permit.owner();
+        let named = verbs::goal_write::authority::GoalWorkSources {
+            goals: vec![goal],
+            evidence: &[],
+            memories: Vec::new(),
+            carried_from: None,
+        };
+        let mut tx = verbs::goal_write::authority::begin_goal_work(
+            self,
+            crate::owner_scope::require_owner_scope(permit.owner_scope())?,
+            owner,
+            &named,
+        )
+        .await?;
+        // The named Goal was read under the caller's scope; it must be the
+        // unit owner's, so a Goal of another owner is not found.
+        let of_owner: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM proxiima_core.goal WHERE t = $1 AND owner_id = $2")
+                .bind(goal.into_inner())
+                .bind(owner.into_inner())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(crate::error::map_err)?;
+        if of_owner.is_none() {
+            return Err(StorageError::NotFound);
+        }
+        Ok(self.session_from_transaction(tx))
+    }
+
     async fn retired_fact_owners(
         &self,
         schema: &proxiima_core::SchemaId,

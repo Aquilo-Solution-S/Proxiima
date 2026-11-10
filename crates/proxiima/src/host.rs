@@ -64,8 +64,9 @@ pub use proxiima_core::cursor::Cursor;
 /// selects one schema, while [`MemorySearchRequest::tags`] narrows rows through
 /// its declared tag column; for example, a book tag selects one book's corpus.
 pub use proxiima_core::engine::{
-    FactWrite, HostStateCommand, HostStateMaintenanceAuthority, HostStateOutcome,
-    HostStateUnitOfWork, RetiredFactErase, SearchReadRequest, SearchReadResponse, UnitOfWork,
+    FactWrite, GoalWorkCommand, GoalWorkOutcome, GoalWorkUnitOfWork, HostStateCommand,
+    HostStateMaintenanceAuthority, HostStateOutcome, HostStateUnitOfWork, RetiredFactErase,
+    SearchReadRequest, SearchReadResponse, UnitOfWork,
 };
 /// The owner-authorized batch Memory read already exposed by
 /// [`proxiima_core::Engine::get_memories`].

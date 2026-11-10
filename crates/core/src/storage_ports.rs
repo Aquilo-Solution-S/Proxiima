@@ -79,8 +79,9 @@ pub use handles::{
     OwnerMembershipAdminHandle, OwnerTransferHandle, SourceCursorHandle, WriteSessionFactoryHandle,
 };
 pub use host_state::{
-    HostStateCommand, HostStateOutcome, HostStateParticipantDescriptor, HostStateParticipantId,
-    HostStatePayloadOwners, HostStateReply, HostStateReplyKind, HostStateRequest, StateSurfaceName,
+    GoalWorkCommand, HostStateCommand, HostStateOutcome, HostStateParticipantDescriptor,
+    HostStateParticipantId, HostStatePayloadOwners, HostStateReply, HostStateReplyKind,
+    HostStateRequest, StateSurfaceName,
 };
 pub use host_state_lifecycle::{
     HostStateEraseReceipt, HostStateEraseRequest, HostStateEraseScope, HostStateEraseSelection,

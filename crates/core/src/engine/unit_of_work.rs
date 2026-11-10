@@ -8,8 +8,9 @@ use crate::count_u64;
 use crate::error::ProtocolError;
 use crate::mcp::ToolEffect;
 use crate::storage_ports::{
-    HostStateCommand, HostStateOutcome, HostStateParticipantDescriptor, HostStateReplyKind,
-    HostStateRequest, HostStateWriteOrigin, HostStateWritePermit, SidecarSessionRead, WriteSession,
+    GoalWorkCommand, HostStateCommand, HostStateOutcome, HostStateParticipantDescriptor,
+    HostStateReplyKind, HostStateRequest, HostStateWriteOrigin, HostStateWritePermit,
+    SidecarSessionRead, WriteSession,
 };
 use crate::verbs::fact_ingest::{CitationSpec, FactIngestOutcome, FactWriteCommand};
 use crate::verbs::goal_write::{
@@ -249,6 +250,13 @@ enum UnitAuthorization<'a> {
     /// Host-held system authority, for [`UnitOfWork::erase_own_series`]
     /// only: a retention schedule has no user and no tool.
     System(&'a SystemAuthority),
+    /// One Goal of one owner, worked under the Goal work rule
+    /// ([`GoalWorkUnitOfWork`]).
+    GoalWork {
+        authz: &'a AuthzContext,
+        owner: OwnerId,
+        goal: crate::GoalId,
+    },
 }
 
 /// Uncloneable capability minted for one booted engine's actual, frozen
@@ -272,6 +280,28 @@ impl std::fmt::Debug for HostStateMaintenanceAuthority {
 /// cognitive write or read methods.
 pub struct HostStateUnitOfWork<'a> {
     inner: UnitOfWork<'a>,
+}
+
+/// One Goal of one owner, worked under the Goal work rule
+/// ([`AuthzContext::may_work_goals`]): a viewer member of the owner commits
+/// it. It writes only [`GoalWorkCommand`]s on that Goal and the Facts each
+/// declares, on the Goal's owner, and exposes no other write or read. Opened
+/// by [`Engine::goal_work_unit_of_work`]; shares the ordinary unit's lazy
+/// session, poisoning, commit and rollback.
+pub struct GoalWorkUnitOfWork<'a> {
+    inner: UnitOfWork<'a>,
+    /// A command applied without all of its Facts (an error or a cancelled
+    /// call): the unit then refuses every further call and its commit.
+    incomplete: bool,
+}
+
+/// What [`GoalWorkUnitOfWork::apply_goal_work`] did: the command's outcome,
+/// and the declared Facts it wrote, in order. Facts are written only when the
+/// command was [`HostStateOutcome::Permitted`].
+#[derive(Debug)]
+pub struct GoalWorkOutcome<T> {
+    pub state: HostStateOutcome<T>,
+    pub facts: Vec<FactIngestOutcome>,
 }
 
 fn validate_registration(
@@ -523,6 +553,34 @@ impl Engine {
         })
     }
 
+    /// Open a unit that works `goal` of `owner` under the Goal work rule
+    /// ([`GoalWorkUnitOfWork`]). Authority is judged at the first write and
+    /// again where storage begins the unit.
+    #[must_use]
+    pub const fn goal_work_unit_of_work<'a>(
+        &'a self,
+        authz: &'a AuthzContext,
+        owner: OwnerId,
+        goal: crate::GoalId,
+    ) -> GoalWorkUnitOfWork<'a> {
+        GoalWorkUnitOfWork {
+            inner: UnitOfWork {
+                engine: self,
+                authorization: UnitAuthorization::GoalWork { authz, owner, goal },
+                session: None,
+                committed: false,
+                poisoned: false,
+                written: Vec::new(),
+                written_kinds: Vec::new(),
+                written_goals: Vec::new(),
+                replayed_forgotten: Vec::new(),
+                written_owners: Vec::new(),
+                erased: false,
+            },
+            incomplete: false,
+        }
+    }
+
     /// Persist one typed observation and commit it atomically.
     ///
     /// # Errors
@@ -616,6 +674,7 @@ impl<'a> UnitOfWork<'a> {
             UnitAuthorization::System(_) => Err(ProtocolError::forbidden(
                 "a system unit authorizes only erase_own_series",
             )),
+            UnitAuthorization::GoalWork { .. } => Err(ProtocolError::forbidden(GOAL_WORK_ONLY)),
         }
     }
 
@@ -636,6 +695,22 @@ impl<'a> UnitOfWork<'a> {
         if self.session.is_none() {
             let factory = &self.engine.storage().write_session;
             let session = match &self.authorization {
+                UnitAuthorization::GoalWork { authz, owner, goal } => {
+                    let (authz, owner, goal) = (*authz, *owner, *goal);
+                    let permit = self.engine.authorize_goal_work(authz, &owner).await?;
+                    self.engine
+                        .validate_write_permit(permit.owner_write_permit())?;
+                    let session = factory
+                        .begin_goal_work(permit.owner_write_permit(), goal)
+                        .await
+                        .map_err(|err| {
+                            super::errors::map_write_storage_error(err, "goal", "goal not found")
+                        })?;
+                    self.session = Some(session);
+                    return self.session.as_mut().ok_or_else(|| {
+                        ProtocolError::internal("unit of work session missing after begin")
+                    });
+                }
                 UnitAuthorization::Ordinary(authz) => factory.begin(authz.owner_scope()).await,
                 UnitAuthorization::HostState { owner, descriptor } => {
                     let permit = HostStateWritePermit::new(
@@ -894,6 +969,9 @@ impl<'a> UnitOfWork<'a> {
                     "a system unit authorizes only erase_own_series",
                 ));
             }
+            UnitAuthorization::GoalWork { .. } => {
+                return Err(ProtocolError::forbidden(GOAL_WORK_ONLY));
+            }
             UnitAuthorization::HostState {
                 owner: fixed_owner,
                 descriptor,
@@ -913,6 +991,15 @@ impl<'a> UnitOfWork<'a> {
                 )
             }
         };
+        self.dispatch_host_state(&host_permit, command).await
+    }
+
+    /// Run an authorized host-state command on this unit's session.
+    async fn dispatch_host_state<C: HostStateCommand>(
+        &mut self,
+        host_permit: &HostStateWritePermit,
+        command: C,
+    ) -> Result<HostStateOutcome<C::Outcome>, ProtocolError> {
         let request = HostStateRequest::from_command(command);
         self.ensure_session().await?;
         // Poison after the session is live, before dispatch, so a cancelled
@@ -922,7 +1009,7 @@ impl<'a> UnitOfWork<'a> {
             let session = self.session.as_mut().ok_or_else(|| {
                 ProtocolError::internal("unit of work session missing after begin")
             })?;
-            session.apply_host_state(&host_permit, request).await
+            session.apply_host_state(host_permit, request).await
         };
         let reply = match dispatched {
             Ok(reply) => {
@@ -963,13 +1050,24 @@ impl<'a> UnitOfWork<'a> {
         &mut self,
         spec: FactWrite<'_, P>,
     ) -> Result<FactIngestOutcome, ProtocolError> {
+        let authz = self.authz()?;
         let permit = self
             .engine
-            .authorize_write(self.authz()?, &spec.owner, AccessKind::Fact)
+            .authorize_write(authz, &spec.owner, AccessKind::Fact)
             .await?;
+        self.ingest_fact_permitted(authz, permit, spec).await
+    }
+
+    /// Persist one Fact whose destination `permit` already authorized.
+    async fn ingest_fact_permitted<P: FactPayload + Clone>(
+        &mut self,
+        authz: &AuthzContext,
+        permit: super::pipeline::WritePermit,
+        spec: FactWrite<'_, P>,
+    ) -> Result<FactIngestOutcome, ProtocolError> {
         let references = self
             .engine
-            .resolve_memory_targets(self.authz()?, &spec.refs, &self.written_kinds)
+            .resolve_memory_targets(authz, &spec.refs, &self.written_kinds)
             .await?;
         let mut draft = FactWriteCommand {
             occurred_at: spec.observed_at,
@@ -990,7 +1088,7 @@ impl<'a> UnitOfWork<'a> {
         let authorized = self
             .engine
             .authorize_fact_ingest_permitted_visible(
-                self.authz()?,
+                authz,
                 permit,
                 draft,
                 &sidecars,
@@ -1521,6 +1619,9 @@ async fn authorize_series_erase(
             )
             .into());
         }
+        UnitAuthorization::GoalWork { .. } => {
+            return Err(ProtocolError::forbidden(GOAL_WORK_ONLY).into());
+        }
     };
     let permit = permit.into_owner_write();
     engine.validate_write_permit(&permit)?;
@@ -1613,6 +1714,127 @@ impl HostStateUnitOfWork<'_> {
     /// failure/cancellation.
     pub async fn commit(self) -> Result<(), ProtocolError> {
         self.inner.commit().await
+    }
+}
+
+const GOAL_WORK_ONLY: &str =
+    "a Goal work unit writes only its Goal work commands and the Facts they declare";
+
+impl GoalWorkUnitOfWork<'_> {
+    /// Apply one [`GoalWorkCommand`] on this unit's Goal, then write the
+    /// Facts it declares (`facts`, each on the Goal's owner) when the
+    /// command was [`HostStateOutcome::Permitted`]. Each write is admitted
+    /// by the Goal work gate on the owner, never by the Fact write ceiling,
+    /// and storage holds the owner fence and resolves the membership again
+    /// where the unit begins.
+    ///
+    /// # Errors
+    /// Refuses a command of another owner or Goal, and a Fact on another
+    /// owner, with a pin or with a citation, before any write; a caller who works no Goal of the owner, and
+    /// a Goal storage does not find for that owner and caller. Participant
+    /// faults poison this unit and prevent commit.
+    pub async fn apply_goal_work<C: GoalWorkCommand>(
+        &mut self,
+        command: C,
+        facts: impl IntoIterator<Item = FactWrite<'_, C::Fact>>,
+    ) -> Result<GoalWorkOutcome<C::Outcome>, ProtocolError> {
+        if self.incomplete {
+            return Err(ProtocolError::internal(GOAL_WORK_INCOMPLETE));
+        }
+        let UnitAuthorization::GoalWork { authz, owner, goal } = self.inner.authorization else {
+            return Err(ProtocolError::internal(
+                "a Goal work unit lost its authority",
+            ));
+        };
+        if command.owner() != owner || command.goal() != goal {
+            return Err(ProtocolError::invalid_argument(
+                "goal",
+                "a Goal work command names this unit's owner and Goal",
+            ));
+        }
+        let facts: Vec<_> = facts.into_iter().collect();
+        if facts.iter().any(|fact| fact.owner != owner) {
+            return Err(ProtocolError::invalid_argument(
+                "owner",
+                "a Goal work command declares Facts on its Goal's owner only",
+            ));
+        }
+        if facts
+            .iter()
+            .any(|fact| !fact.refs.is_empty() || fact.citation.is_some())
+        {
+            return Err(ProtocolError::invalid_argument(
+                "refs",
+                "a Goal work Fact pins no memory and cites no object",
+            ));
+        }
+        let engine = self.inner.engine;
+        let permit = engine.authorize_goal_work(authz, &owner).await?;
+        engine.validate_write_permit(permit.owner_write_permit())?;
+        let descriptor = engine
+            .storage()
+            .write_session
+            .host_state_descriptor()
+            .ok_or_else(|| {
+                ProtocolError::invalid_argument(
+                    "host_state",
+                    "no host-state participant is registered",
+                )
+            })?;
+        validate_host_state_command::<C>(engine, descriptor)?;
+        let host_permit = HostStateWritePermit::owner_authorized(
+            *permit.owner_write_permit().owner(),
+            C::PARTICIPANT_ID,
+            C::TABLES,
+            authz,
+        );
+        let state = self
+            .inner
+            .dispatch_host_state(&host_permit, command)
+            .await?;
+        let mut written = Vec::new();
+        if matches!(state, HostStateOutcome::Permitted(_)) {
+            // The command and its Facts land together or not at all.
+            self.incomplete = true;
+            for fact in facts {
+                let permit = engine.authorize_goal_work(authz, &owner).await?;
+                written.push(
+                    self.inner
+                        .ingest_fact_permitted(authz, permit, fact)
+                        .await?,
+                );
+            }
+            self.incomplete = false;
+        }
+        Ok(GoalWorkOutcome {
+            state,
+            facts: written,
+        })
+    }
+
+    /// Commit this Goal work unit.
+    ///
+    /// # Errors
+    /// Returns a storage fault or refuses a unit poisoned by participant
+    /// failure/cancellation, or one whose command landed without all of its
+    /// Facts.
+    pub async fn commit(self) -> Result<(), ProtocolError> {
+        if self.incomplete {
+            return Err(ProtocolError::internal(GOAL_WORK_INCOMPLETE));
+        }
+        self.inner.commit().await
+    }
+}
+
+const GOAL_WORK_INCOMPLETE: &str =
+    "a Goal work command was applied without all of its Facts; the unit was not committed";
+
+impl std::fmt::Debug for GoalWorkUnitOfWork<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoalWorkUnitOfWork")
+            .field("inner", &self.inner)
+            .field("incomplete", &self.incomplete)
+            .finish()
     }
 }
 

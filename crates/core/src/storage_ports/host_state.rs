@@ -103,6 +103,23 @@ pub trait HostStateCommand: Send + 'static {
     fn owner(&self) -> OwnerId;
 }
 
+/// A [`HostStateCommand`] that works one Goal of its owner, and the one Fact
+/// schema it declares for that Goal.
+///
+/// A [`GoalWorkUnitOfWork`](crate::engine::GoalWorkUnitOfWork) runs it with
+/// the Facts it declares under the Goal work rule
+/// ([`Role::works_goals`](crate::Role::works_goals)): a viewer member of the
+/// Goal's owner commits it, and writes no other Fact, Perspective or host
+/// state of that owner (`request_may_write_goal_work` in
+/// `docs/lean/Causa/Authorization.lean`).
+pub trait GoalWorkCommand: HostStateCommand {
+    /// The one Fact payload this command declares for its Goal.
+    type Fact: crate::FactPayload + Clone;
+    /// The Goal this command works. Its owner is [`HostStateCommand::owner`];
+    /// storage refuses a Goal of another owner.
+    fn goal(&self) -> crate::GoalId;
+}
+
 /// The owners a [`HostStateCommand`] payload names, stated by the command
 /// author.
 ///

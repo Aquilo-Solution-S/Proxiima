@@ -77,6 +77,22 @@ pub trait WriteSessionFactory: Send + Sync {
         self.begin(None).await
     }
 
+    /// Begin a Goal work unit on `goal` of `permit`'s owner: a permit minted by
+    /// the Goal work gate. A scope that writes the owner's Goals keeps its
+    /// owner transaction; Goal work by membership alone is fenced the way a
+    /// Goal work write is (the membership is resolved again under the owner
+    /// fence). A Goal of another owner, or one the caller cannot read, is not
+    /// found. Backends without such a fence refuse.
+    async fn begin_goal_work(
+        &self,
+        _permit: &OwnerWritePermit,
+        _goal: crate::GoalId,
+    ) -> Result<Box<dyn WriteSession>, StorageError> {
+        Err(StorageError::ConstraintViolation(
+            "this backend does not fence Goal work units".into(),
+        ))
+    }
+
     /// Begin a transaction. Drop without [`WriteSession::commit`] rolls back.
     async fn begin(
         &self,
