@@ -3,13 +3,15 @@
 use proxiima_core::goal_collaboration::GoalEditPermit;
 use proxiima_core::verbs::goal_write::GoalEvidenceRef;
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerRoles,
-    StorageError,
+    AccessKind, EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerId, OwnerRoles,
+    OwnerScope, Role, StorageError,
 };
 use sqlx::{Postgres, Transaction};
 
 use crate::ports::goal_collaboration::source_reads::SourceReads;
-use crate::ports::goal_collaboration::{current_goal_role, fenced_roles};
+use crate::ports::goal_collaboration::{
+    current_goal_role, current_role, fenced_roles, membership_roles,
+};
 use crate::{PgStorage, error::map_err, pg_enums::PgMemoryKind};
 
 pub(crate) struct GoalEditFence<'a> {
@@ -56,6 +58,114 @@ impl GoalEditFence<'_> {
     }
 }
 
+/// What a Goal work write names besides its owner: its prior Goal and
+/// dependencies, its new evidence, motivations and author Perspective, and
+/// the prior whose evidence it carries.
+pub(crate) struct GoalWorkSources<'a> {
+    pub(crate) goals: Vec<GoalId>,
+    pub(crate) evidence: &'a [GoalEvidenceRef],
+    pub(crate) memories: Vec<MemoryId>,
+    pub(crate) carried_from: Option<GoalId>,
+}
+
+/// Begin one Goal work write on `owner` (set, modify, transition). A scope
+/// whose roles write `owner`'s Goals keeps its owner transaction. Goal work
+/// by membership alone ([`Role::works_goals`]) writes under platform scope,
+/// as a Goal route does: every named source is first read under the
+/// caller's scope, then the owner fences of `owner` and every source owner
+/// are held, the subject's membership is resolved again in this
+/// transaction, and the sources are read again against it. A member
+/// removed or demoted since authentication works no Goal, and no source the
+/// caller cannot read enters the write.
+pub(crate) async fn begin_goal_work(
+    storage: &PgStorage,
+    scope: &OwnerScope,
+    owner: OwnerId,
+    named: &GoalWorkSources<'_>,
+) -> Result<Transaction<'static, Postgres>, StorageError> {
+    if scope.goal_work() != Some(owner) || scope.may_write(&owner, AccessKind::Goal) {
+        return crate::owner_scope::begin_owner_transaction(&storage.pool, scope).await;
+    }
+    let mut tx = storage.platform_transaction().await?;
+    crate::owner_scope::bind_owner_scope(&mut tx, scope).await?;
+    let mut memories = named.memories.clone();
+    if let Some(prior) = named.carried_from {
+        memories.extend(carried_local_evidence(&mut tx, owner, prior, storage.store_number).await?);
+    }
+    let mut endpoints = memory_endpoints(&mut tx, named.evidence, &memories).await?;
+    endpoints.extend(named.goals.iter().map(|goal| EdgeEndpoint::goal(*goal)));
+    let sources = SourceReads::discover(storage, &mut tx, scope, &endpoints).await?;
+    let owners: Vec<_> = sources.owners().chain([owner]).collect();
+    let roles = membership_roles(storage, &mut tx, scope, &owners, &[]).await?;
+    if !current_role(scope, &roles, owner).is_some_and(Role::works_goals) {
+        return Err(StorageError::Forbidden(
+            "Goal work requires membership".into(),
+        ));
+    }
+    sources
+        .revalidate(storage, &mut tx, scope, &roles, &endpoints)
+        .await?;
+    Ok(tx)
+}
+
+/// The local evidence a modify carries from `prior`, read under the
+/// caller's bound scope.
+async fn carried_local_evidence(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: OwnerId,
+    prior: GoalId,
+    store_number: u16,
+) -> Result<Vec<MemoryId>, StorageError> {
+    let ids: Option<Vec<uuid::Uuid>> = sqlx::query_scalar(
+        "SELECT evidence_t FROM proxiima_core.goal WHERE t = $1 AND owner_id = $2",
+    )
+    .bind(prior.into_inner())
+    .bind(owner.into_inner())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_err)?
+    .ok_or(StorageError::NotFound)?;
+    Ok(ids
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| proxiima_core::memory_store_number(*id) == store_number)
+        .map(MemoryId::new)
+        .collect())
+}
+
+/// The named local memories with their kinds, read under the caller's
+/// bound scope: a memory it cannot read is not found.
+async fn memory_endpoints(
+    tx: &mut Transaction<'_, Postgres>,
+    evidence: &[GoalEvidenceRef],
+    memories: &[MemoryId],
+) -> Result<Vec<EdgeEndpoint>, StorageError> {
+    let local: Vec<_> = evidence
+        .iter()
+        .filter(|item| item.remote_origin().is_none())
+        .map(|item| item.memory_id().into_inner())
+        .chain(memories.iter().map(|memory| memory.into_inner()))
+        .collect();
+    let rows: Vec<(uuid::Uuid, PgMemoryKind)> = sqlx::query_as(
+        "SELECT t,kind FROM proxiima_core.memory /* FORGET-POLICY: live-only (new Goal sources under owner RLS) */
+         WHERE t=ANY($1::uuid[]) AND forgotten_at IS NULL",
+    )
+    .bind(&local)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_err)?;
+    if local
+        .iter()
+        .any(|id| !rows.iter().any(|(found, _)| found == id))
+    {
+        return Err(StorageError::NotFound);
+    }
+    Ok(rows
+        .into_iter()
+        .map(|(id, kind)| EdgeEndpoint::memory(EntityKind::from(kind), MemoryId::new(id)))
+        .collect())
+}
+
 /// Select the existing owner transaction or fence a single Goal route. New
 /// source statements are admitted under the original caller RLS before any
 /// platform materialization; carried prior statements are not new reads.
@@ -64,13 +174,23 @@ pub(crate) async fn begin_goal_edit<'a>(
     permit: GoalEditPermit<'a>,
     prior: GoalId,
     evidence: &[GoalEvidenceRef],
+    motivated_by: &[MemoryId],
+    carried_from: Option<GoalId>,
     author_self: Option<MemoryId>,
 ) -> Result<(Transaction<'static, Postgres>, Option<GoalEditFence<'a>>), StorageError> {
     let GoalEditPermit::Goal(command) = permit else {
+        let named = GoalWorkSources {
+            goals: vec![prior],
+            evidence,
+            memories: motivated_by.iter().copied().chain(author_self).collect(),
+            carried_from,
+        };
         return Ok((
-            crate::owner_scope::begin_owner_transaction(
-                &storage.pool,
+            begin_goal_work(
+                storage,
                 crate::owner_scope::require_owner_scope(permit.scope())?,
+                permit.owner(),
+                &named,
             )
             .await?,
             None,

@@ -340,6 +340,16 @@ impl OwnerWritePermit {
         }
     }
 
+    /// This permit's scope working its owner's Goals
+    /// ([`OwnerScope::goal_work`]).
+    #[must_use]
+    pub(crate) fn for_goal_work(mut self) -> Self {
+        self.owner_scope = self
+            .owner_scope
+            .map(|scope| scope.for_goal_work(self.owner));
+        self
+    }
+
     #[must_use]
     pub(crate) fn new_delegated(
         owner: OwnerId,

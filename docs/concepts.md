@@ -97,9 +97,15 @@ The standard relations illustrate the intended jobs:
 | Editor | All four kinds | Facts, Abstractions, Perspectives | No |
 | Admin | All four kinds | All four kinds | Yes |
 
-Thus an ingestion service cannot read Perspectives, an editor cannot author
-Goals, and an admin of one group has no role in another group merely because
-it is called an admin. The role representation and its constructors are owned
+Thus an ingestion service cannot read Perspectives, and an admin of one group
+has no role in another group merely because it is called an admin.
+
+Goal work (setting, modifying and transitioning an owner's Goals) follows
+membership, not the write ceiling: every directly authenticated member whose
+role reads Goals works them. A viewer member sets a group Goal and still
+writes none of the group's Facts or Perspectives. Achieving, decomposing and
+sharing a Goal keep the Goal write ceiling, and a forwarded or delegated
+request works Goals only with Goal write. The role representation and its constructors are owned
 by the [access rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs).
 
 An owner role is only one part of a tool call:

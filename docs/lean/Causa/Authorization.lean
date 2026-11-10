@@ -307,6 +307,37 @@ theorem forwarding_role_no_goal_write (s : OwnerState) (p : ForwardingPolicy)
         simp [ForwardingRole.toRole, Role.mayWrite, AccessKind.rank,
           Role.viewer, Role.ingest, Role.editor]
 
+/-- Goal work — setting, modifying and transitioning a Goal of the owner.
+    Through ordinary membership every member whose role reads Goals works
+    them: the write ceiling bounds the owner's memory, not its work. A
+    forwarded request keeps the Goal write rule. -/
+def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
+    (a : RequestAuthority) (o : OwnerRef) : Prop :=
+  match a with
+  | .membership => request_may_read s p r .membership o .goal
+  | .forwarded c => request_may_write s p r (.forwarded c) o .goal
+
+/-- No forwarding role works Goals. -/
+theorem forwarding_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) :
+    ¬ request_may_work_goals s p r (.forwarded c) o := by
+  unfold request_may_work_goals request_may_write
+  rintro ⟨role, hrole, hw⟩
+  exact forwarding_role_no_goal_write s p r c o role hrole hw
+
+/-- A viewer member works the group's Goals and writes none of its kinds. -/
+theorem viewer_member_works_goals_writes_no_memory (s : OwnerState)
+    (p : ForwardingPolicy) (r : User) (o : OwnerRef)
+    (h : s.resolve o r = some Role.viewer) :
+    request_may_work_goals s p r .membership o ∧
+      ∀ k, ¬ request_may_write s p r .membership o k := by
+  refine ⟨⟨Role.viewer, h, ?_⟩, ?_⟩
+  · simp [Role.mayRead, Role.viewer, AccessKind.rank]
+  · rintro k ⟨role, hrole, hw⟩
+    simp only [request_has_role, h, Option.some.injEq] at hrole
+    subst hrole
+    simp [Role.mayWrite, Role.viewer] at hw
+
 theorem forwarding_no_management (s : OwnerState) (r : User)
     (c : VerifiedForwardedOwner) (o : OwnerRef) :
     ¬ request_may_manage s r (.forwarded c) o := by

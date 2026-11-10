@@ -83,18 +83,33 @@ impl GoalEditAuthority {
     }
 }
 
+/// Which owner rule admits an edit to an existing Goal.
+#[derive(Clone, Copy)]
+enum GoalEdit {
+    /// Modify and transition: Goal work ([`crate::Role::works_goals`]).
+    Work,
+    /// Achieve: the owner's Goal write.
+    Achieve,
+}
+
 impl Engine {
     async fn authorize_goal_edit(
         &self,
         authz: &AuthzContext,
         owner: crate::OwnerId,
         prior: crate::GoalId,
+        edit: GoalEdit,
     ) -> Result<GoalEditAuthority, ProtocolError> {
-        if authz.may_write(&owner, AccessKind::Goal) {
-            return self
-                .authorize_write(authz, &owner, AccessKind::Goal)
-                .await
-                .map(GoalEditAuthority::Owner);
+        let owner_route = match edit {
+            GoalEdit::Work => authz.may_work_goals(&owner),
+            GoalEdit::Achieve => authz.may_write(&owner, AccessKind::Goal),
+        };
+        if owner_route {
+            let permit = match edit {
+                GoalEdit::Work => self.authorize_goal_work(authz, &owner).await,
+                GoalEdit::Achieve => self.authorize_write(authz, &owner, AccessKind::Goal).await,
+            };
+            return permit.map(GoalEditAuthority::Owner);
         }
         let entry = self
             .authorize_entry_read(authz, EntityId::Goal(prior))
@@ -152,7 +167,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write on the owner;
+    /// cannot work the owner's Goals ([`crate::Role::works_goals`]);
     /// `UnknownSchema` when the typed [`GoalPayload`] schema is not registered
     /// as a Goal; `InvalidArgument` for malformed title/text/evidence/parent
     /// references; or `Internal` for storage failures.
@@ -164,9 +179,7 @@ impl Engine {
     where
         P: GoalPayload,
     {
-        let permit = self
-            .authorize_write(authz, &request.owner, AccessKind::Goal)
-            .await?;
+        let permit = self.authorize_goal_work(authz, &request.owner).await?;
         let request = self.normalize_goal_request(request)?;
         self.create_goal_payload_authorized(authz, &permit, &request)
             .await
@@ -177,7 +190,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write on the owner;
+    /// cannot work the owner's Goals ([`crate::Role::works_goals`]);
     /// `UnknownSchema` when the payload schema is not registered as a Goal;
     /// `InvalidArgument` for malformed target/evidence/parent references; or
     /// `Internal` for storage failures.
@@ -186,9 +199,7 @@ impl Engine {
         authz: &AuthzContext,
         req: &GoalCreatePayloadWriteRequest,
     ) -> Result<GoalWriteOutcome, ProtocolError> {
-        let permit = self
-            .authorize_write(authz, &req.owner, AccessKind::Goal)
-            .await?;
+        let permit = self.authorize_goal_work(authz, &req.owner).await?;
         let req = GoalCreatePayloadWriteRequest {
             payload: self.normalize_payload_write(req.payload.clone())?,
             ..req.clone()
@@ -247,7 +258,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write; `InvalidArgument` (field `goal`) when abandon meets an
+    /// cannot work its Goals; `InvalidArgument` (field `goal`) when abandon meets an
     /// open child (`goal has open children: <handle>, ...`, naming each open
     /// child's current head); `InvalidArgument`
     /// or `NotFound` for rejected goal references; or `Internal` for storage
@@ -258,7 +269,7 @@ impl Engine {
         req: &GoalTransitionRequest,
     ) -> Result<GoalWriteOutcome, ProtocolError> {
         let permit = self
-            .authorize_goal_edit(authz, req.owner, req.prior_goal_id)
+            .authorize_goal_edit(authz, req.owner, req.prior_goal_id, GoalEdit::Work)
             .await?;
         let context = self.goal_atomic_context(authz, req.author_self_perspective_id)?;
         // `Achieved` is not a `GoalTransitionKind`: achievement has
@@ -306,7 +317,7 @@ impl Engine {
         req: &GoalMarkAchievedRequest,
     ) -> Result<GoalWriteOutcome, ProtocolError> {
         let permit = self
-            .authorize_goal_edit(authz, req.owner, req.prior_goal_id)
+            .authorize_goal_edit(authz, req.owner, req.prior_goal_id, GoalEdit::Achieve)
             .await?;
         let context = self.goal_atomic_context(authz, req.author_self_perspective_id)?;
         let atomic = AchieveGoalAtomicRequest {
@@ -343,7 +354,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write; `UnknownSchema`
+    /// cannot work its Goals; `UnknownSchema`
     /// when the replacement payload schema is not registered as a Goal;
     /// `InvalidArgument` or `NotFound` for rejected references; or `Internal`
     /// for storage failures.
@@ -353,7 +364,7 @@ impl Engine {
         req: &GoalModifyRequest,
     ) -> Result<GoalWriteOutcome, ProtocolError> {
         let permit = self
-            .authorize_goal_edit(authz, req.owner, req.prior_goal_id)
+            .authorize_goal_edit(authz, req.owner, req.prior_goal_id, GoalEdit::Work)
             .await?;
         if matches!(permit, GoalEditAuthority::Goal(_)) && req.motivated_by.is_some() {
             return Err(ProtocolError::forbidden(

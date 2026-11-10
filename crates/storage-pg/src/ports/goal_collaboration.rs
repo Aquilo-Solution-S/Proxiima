@@ -20,7 +20,22 @@ pub(crate) async fn fenced_roles(
     owners: &[OwnerId],
     extra_people: &[UserId],
 ) -> Result<proxiima_core::OwnerRoles, StorageError> {
-    if scope.is_expired() || scope.goal_principal().is_none() {
+    if scope.goal_principal().is_none() {
+        return Err(StorageError::NotFound);
+    }
+    membership_roles(storage, tx, scope, owners, extra_people).await
+}
+
+/// The subject's current membership roles, with the owner fences of
+/// `owners` and the membership fences held on `tx` through commit.
+pub(crate) async fn membership_roles(
+    storage: &PgStorage,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    scope: &proxiima_core::OwnerScope,
+    owners: &[OwnerId],
+    extra_people: &[UserId],
+) -> Result<proxiima_core::OwnerRoles, StorageError> {
+    if scope.is_expired() {
         return Err(StorageError::NotFound);
     }
     crate::access::owner_columns::lock_owner_fences_shared_tx(tx, owners).await?;

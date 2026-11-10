@@ -380,6 +380,40 @@ impl OwnerScopeState {
     }
 }
 
+/// What a tool call asks of the owner it selects
+/// ([`AuthzContext::may_run_tool`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerAccess {
+    Read,
+    Write,
+    /// Core's `core_goal` set, modify and transition.
+    GoalWork,
+}
+
+impl OwnerAccess {
+    /// The access one key asks for: Goal work for core's three Goal work
+    /// actions, otherwise read or write by the key's declaration.
+    #[must_use]
+    pub fn of_key(tool: &str, action: Option<&str>, read_only: bool) -> Self {
+        use crate::protocol::action::{CORE_GOAL_MODIFY, CORE_GOAL_SET, CORE_GOAL_TRANSITION};
+        let key = action.map(|action| (tool, action));
+        if [CORE_GOAL_SET, CORE_GOAL_MODIFY, CORE_GOAL_TRANSITION]
+            .iter()
+            .any(|work| work.split_once(':') == key)
+        {
+            Self::GoalWork
+        } else {
+            Self::declared(read_only)
+        }
+    }
+
+    /// Read or write by a declaration alone: a resource, a host tool.
+    #[must_use]
+    pub const fn declared(read_only: bool) -> Self {
+        if read_only { Self::Read } else { Self::Write }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthzContext {
     identity: Identity,
@@ -838,16 +872,33 @@ impl AuthzContext {
     }
 
     /// The owner-role rule for a tool call: a declared read needs read
-    /// access to the selected owner, anything else write access. The
-    /// call-time gate and every advertisement of a tool ask this, so they
-    /// cannot answer differently.
+    /// access to the selected owner, Goal work [`Role::works_goals`], anything
+    /// else write access. The call-time gate and every advertisement of a
+    /// tool ask this, so they cannot answer differently.
+    ///
+    /// [`Role::works_goals`]: crate::Role::works_goals
     #[must_use]
-    pub fn may_run_tool(&self, owner: &OwnerId, read_only: bool) -> bool {
-        if read_only {
-            self.may_read(owner, AccessKind::Fact)
-        } else {
-            self.may_write(owner, AccessKind::Fact)
+    pub fn may_run_tool(&self, owner: &OwnerId, access: OwnerAccess) -> bool {
+        match access {
+            OwnerAccess::Read => self.may_read(owner, AccessKind::Fact),
+            OwnerAccess::Write => self.may_write(owner, AccessKind::Fact),
+            OwnerAccess::GoalWork => self.may_work_goals(owner),
         }
+    }
+
+    /// Whether the subject sets, modifies and transitions `owner`'s Goals:
+    /// Goal write, or ordinary membership whose role
+    /// [works Goals](crate::Role::works_goals) (`request_may_work_goals` in
+    /// `docs/lean/Causa/Authorization.lean`). A forwarded or delegated
+    /// request keeps the Goal write rule.
+    #[must_use]
+    pub fn may_work_goals(&self, owner: &OwnerId) -> bool {
+        let membership = self.auth_path == AuthPath::HostBearer && self.forwarded_owner.is_none();
+        self.may_write(owner, AccessKind::Goal)
+            || (membership
+                && self
+                    .role_for_owner(owner)
+                    .is_some_and(crate::access::Role::works_goals))
     }
 
     #[must_use]
@@ -1777,7 +1828,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn group_goal_work_follows_membership_not_the_memory_write_ceiling() {
+        use crate::protocol::{action, tool};
+        let key = |key: &'static str, read_only| {
+            let (tool, action) = key.split_once(':').expect("an action key");
+            OwnerAccess::of_key(tool, Some(action), read_only)
+        };
+        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let member = |role| {
+            AuthzContext::for_subject_with_role(
+                UserId::new(uuid::Uuid::now_v7()),
+                [(group, role)],
+                AuthPath::HostBearer,
+            )
+        };
+        let viewer = member(Role::viewer());
+        for work in [
+            action::CORE_GOAL_SET,
+            action::CORE_GOAL_MODIFY,
+            action::CORE_GOAL_TRANSITION,
+        ] {
+            assert_eq!(key(work, false), OwnerAccess::GoalWork);
+            assert!(viewer.may_run_tool(&group, key(work, false)), "{work}");
+        }
+        assert!(!viewer.may_run_tool(&group, key(action::CORE_GOAL_MARK_ACHIEVED, false)));
+        assert!(!viewer.may_run_tool(
+            &group,
+            OwnerAccess::of_key(tool::CORE_REMEMBER, None, false)
+        ));
+        assert!(!viewer.may_write(&group, AccessKind::Fact));
+        assert!(!viewer.may_write(&group, AccessKind::Perspective));
+        assert!(member(Role::admin()).may_work_goals(&group));
+        assert!(!member(Role::ingest()).may_work_goals(&group));
+        let delegated = AuthzContext::for_subject_with_role(
+            UserId::new(uuid::Uuid::now_v7()),
+            [(group, Role::viewer())],
+            AuthPath::Delegated,
+        );
+        assert!(
+            !delegated.may_work_goals(&group),
+            "delegation keeps Goal write"
+        );
+        let outsider = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        assert!(!viewer.may_work_goals(&outsider));
+        assert!(!member(Role::admin()).may_work_goals(&outsider));
+    }
+
     #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one forwarded scope checks every right it carries and refuses"
+    )]
     async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let stranger = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
@@ -1850,6 +1952,7 @@ mod tests {
                 assert_eq!(bound.principal(), OwnerId::from(subject));
                 assert_eq!(bound.verified_forwarded_owner(), Some(owner));
                 assert_eq!(bound.role_for_owner(&owner), Some(role));
+                assert!(!bound.may_work_goals(&owner), "forwarding works no Goals");
                 assert_eq!(bound.expires_at(), Some(expires));
                 assert_eq!(bound.auth_epoch(), 7);
                 assert_eq!(bound.trusted_model_id(), Some("trusted-forwarder-model"));

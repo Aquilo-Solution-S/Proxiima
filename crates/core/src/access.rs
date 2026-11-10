@@ -206,6 +206,16 @@ impl Role {
         self.manage
     }
 
+    /// Goal work on the owner: setting, modifying and transitioning its
+    /// Goals. Every holder who reads the owner's Goals works them; the write
+    /// ceiling bounds the owner's memory, not its work, so a viewer member
+    /// works a group's Goals and still writes none of its Facts or
+    /// Perspectives.
+    #[must_use]
+    pub const fn works_goals(self) -> bool {
+        self.may_read(AccessKind::Goal)
+    }
+
     /// Owner-level administration — membership admin, transfer, erase, the
     /// graph overview: the full write limit. Membership changes and group
     /// transfers also need [`Self::manages`].

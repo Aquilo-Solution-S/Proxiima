@@ -7,7 +7,7 @@ use super::core_tools::memory_spaces::{ResolvedMemorySpace, SpaceDefault, resolv
 use super::{
     KeyDeclaration, McpToolCtx, McpToolDescriptor, McpToolError, Replay, ToolEffect, ToolReply,
 };
-use crate::{ActionName, ScopeKey};
+use crate::{ActionName, OwnerAccess, ScopeKey};
 
 #[derive(Debug)]
 pub struct ToolCall {
@@ -266,7 +266,7 @@ impl ScopeGateBehavior {
         // resource's — and the owner-role gate reads that same value. Each
         // records that key on the context before it decides on it, so a
         // refusal carries the key too.
-        let declared = match descriptor {
+        let access = match descriptor {
             Some(descriptor) if !descriptor.action_arg_specs.is_empty() => {
                 // A registered tool's name is a `ToolName`: `try_freeze` checked.
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
@@ -296,7 +296,7 @@ impl ScopeGateBehavior {
                 if !capabilities.admits_action(tool_name, &action, declared) {
                     return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
-                declared
+                OwnerAccess::of_key(tool, Some(action.as_str()), declared.is_read())
             }
             Some(descriptor) if !descriptor.argv_action_specs.is_empty() => {
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
@@ -316,7 +316,7 @@ impl ScopeGateBehavior {
                 if !capabilities.admits_action(tool_name, &action_name, declared) {
                     return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
-                declared
+                OwnerAccess::of_key(tool, Some(action), declared.is_read())
             }
             _ => {
                 let declared = Self::flat_declaration(tool, key.as_ref().ok(), descriptor, ctx);
@@ -333,11 +333,11 @@ impl ScopeGateBehavior {
                 if !allowed {
                     return Err(McpToolError::NotAuthorized(tool.to_string()));
                 }
-                declared
+                OwnerAccess::of_key(tool, None, declared.is_read())
             }
         };
         let owner = Self::resolve_scope_owner(tool, args, ctx)?;
-        Self::enforce_owner_role(tool, declared, owner.owner, ctx)?;
+        Self::enforce_owner_role(tool, access, owner.owner, ctx)?;
         Ok(())
     }
 
@@ -436,16 +436,16 @@ impl ScopeGateBehavior {
     }
 
     /// The owner-role gate: a declared read needs read access to the selected
-    /// owner, anything else write access. Silence is a write: a tool that has
-    /// not said what it does may well write, and guessing "read" would hand a
-    /// viewer a mutation.
+    /// owner, Goal work [`crate::Role::works_goals`], anything else write
+    /// access. Silence is a write: a tool that has not said what it does may
+    /// well write, and guessing "read" would hand a viewer a mutation.
     fn enforce_owner_role(
         tool: &str,
-        declared: KeyDeclaration,
+        access: OwnerAccess,
         owner: crate::OwnerId,
         ctx: &McpToolCtx,
     ) -> Result<(), McpToolError> {
-        if ctx.authz.may_run_tool(&owner, declared.is_read()) {
+        if ctx.authz.may_run_tool(&owner, access) {
             Ok(())
         } else {
             Err(McpToolError::NotAuthorized(tool.to_string()))
@@ -999,9 +999,12 @@ mod tests {
             AuthPath::HostBearer,
         )
         .with_tool_scope(ToolScope::All);
-        assert!(authz.may_run_tool(&owner, true), "viewer runs a read");
         assert!(
-            !authz.may_run_tool(&owner, false),
+            authz.may_run_tool(&owner, OwnerAccess::Read),
+            "viewer runs a read"
+        );
+        assert!(
+            !authz.may_run_tool(&owner, OwnerAccess::Write),
             "viewer does not run a write"
         );
         test_ctx_with_authz(owner, authz)

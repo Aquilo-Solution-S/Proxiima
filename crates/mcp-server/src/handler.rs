@@ -57,7 +57,7 @@ const LIST_CACHE_SCOPE: CacheScope = CacheScope::Private;
 use crate::auth::McpAuthContext;
 use crate::host_tools::McpHostTool;
 use crate::server::{McpToolHost, ToolInvocationError};
-use proxiima_core::{CapabilitySet, KeyDeclaration, ResourceKey, ScopeKey, ToolName};
+use proxiima_core::{CapabilitySet, KeyDeclaration, OwnerAccess, ResourceKey, ScopeKey, ToolName};
 
 #[derive(Clone, Debug)]
 pub struct DynamicHandler {
@@ -928,7 +928,7 @@ fn resource_declaration_allowed_for_auth(
             .capabilities()
             .admits(&ScopeKey::Resource(key), declared)
     });
-    in_scope && owner_role_allows(auth, declared.is_read())
+    in_scope && owner_role_allows(auth, OwnerAccess::declared(declared.is_read()))
 }
 
 pub(crate) fn how_to_allowed_for_auth(auth: Option<&McpAuthContext>) -> bool {
@@ -1156,9 +1156,13 @@ fn tool_owner_role_allows(
     descriptor: &McpToolDescriptor,
     action: Option<&str>,
 ) -> bool {
-    let read_only = action.map_or_else(
-        || descriptor.is_read_only(),
-        |action| descriptor.action_is_read_only(action),
+    let access = OwnerAccess::of_key(
+        descriptor.name,
+        action,
+        action.map_or_else(
+            || descriptor.is_read_only(),
+            |action| descriptor.action_is_read_only(action),
+        ),
     );
     let schema = action.map_or(Some(&descriptor.args_schema), |action| {
         descriptor.action_argument_schema(action)
@@ -1171,17 +1175,17 @@ fn tool_owner_role_allows(
         ctx.authz
             .readable_owners(proxiima_core::AccessKind::Fact)
             .iter()
-            .any(|owner| ctx.authz.may_run_tool(owner, read_only))
+            .any(|owner| ctx.authz.may_run_tool(owner, access))
     } else {
-        owner_role_allows(auth, read_only)
+        owner_role_allows(auth, access)
     }
 }
 
-fn owner_role_allows(auth: Option<&McpAuthContext>, read_only: bool) -> bool {
+fn owner_role_allows(auth: Option<&McpAuthContext>, access: OwnerAccess) -> bool {
     let Some(ctx) = auth else {
         return UNAUTHENTICATED_SCOPE_ALLOWS;
     };
-    ctx.authz.may_run_tool(&ctx.owner, read_only)
+    ctx.authz.may_run_tool(&ctx.owner, access)
 }
 
 /// MCP/REST tool-level projection for the actions visible to one caller:
@@ -1323,7 +1327,10 @@ fn host_tool_allowed_for_auth(caller: Caller<'_>, tool: &McpHostTool) -> bool {
         host_tool_in_scope(ctx.authz.capabilities(), &tool.name, tool.effect)
     });
     in_scope
-        && owner_role_allows(caller.auth, tool.effect.is_read_only())
+        && owner_role_allows(
+            caller.auth,
+            OwnerAccess::declared(tool.effect.is_read_only()),
+        )
         && caller.behaviors_show(&ToolDescriptorView::host(
             &tool.name,
             &tool.description,
@@ -2206,7 +2213,7 @@ mod tests {
         assert!(action_allowed_for_auth(
             Caller::new(Some(&auth)),
             goal,
-            "set"
+            "mark_achieved"
         ));
 
         let default_only = McpAuthContext {
@@ -2216,7 +2223,7 @@ mod tests {
         assert!(!action_allowed_for_auth(
             Caller::new(Some(&default_only)),
             goal,
-            "set"
+            "mark_achieved"
         ));
     }
 

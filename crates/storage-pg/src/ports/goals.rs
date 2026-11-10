@@ -47,7 +47,7 @@ async fn resolve_edit_replay(
     prior: proxiima_core::GoalId,
 ) -> Result<Option<GoalReplayOutcome>, StorageError> {
     use crate::verbs::goal_write::authority::{begin_goal_edit, revalidate_goal_edit};
-    let (mut tx, fence) = begin_goal_edit(storage, permit, prior, &[], None).await?;
+    let (mut tx, fence) = begin_goal_edit(storage, permit, prior, &[], &[], None, None).await?;
     let result = verbs::goal_write::resolve_goal_command_replay_on(&mut tx, request).await?;
     revalidate_goal_edit(storage, &mut tx, fence.as_ref()).await?;
     crate::owner_scope::finish_transaction(tx, Ok(result)).await
@@ -118,14 +118,7 @@ impl GoalWritePort for PgStorage {
         permit: &OwnerWritePermit,
     ) -> Result<GoalWriteOutcome, StorageError> {
         validate_permit_owner(permit, &req.draft.owner())?;
-        verbs::goal_write::create_goal_atomic(
-            &self.pool,
-            &self.sidecars,
-            req,
-            permit,
-            self.store_number,
-        )
-        .await
+        verbs::goal_write::create_goal_atomic(self, req, permit, self.store_number).await
     }
 
     async fn transition_goal_atomic(

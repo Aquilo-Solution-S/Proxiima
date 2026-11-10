@@ -5,7 +5,8 @@ mod example_engine;
 use example_engine::ExampleEngine;
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::verbs::goal_write::{
-    GoalAuthorship, GoalCreateRequest, GoalTopologyWrite, GoalTransitionKind, IdempotencyKey,
+    GoalAuthorship, GoalCreateRequest, GoalDependencyRef, GoalTopologyWrite, GoalTransitionKind,
+    IdempotencyKey,
 };
 use proxiima_core::verbs::idempotency::{ContentFingerprint, KeyScope, RequestKey};
 use proxiima_core::{
@@ -537,5 +538,131 @@ async fn owning_group_editor_can_work_without_goal_guest_grant() {
     .await
     .expect("binding");
     assert!(bound);
+    h.pool.close().await;
+}
+
+/// A viewer member works its group's Goals, but a Goal it sets names no
+/// source it cannot read: the membership route reads every named source
+/// under the caller's scope before it writes.
+#[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario keeps both groups' memberships and the three sets together"
+)]
+async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
+    let h = ExampleEngine::new("proxiima_goal_member_sources", |_| {}).await;
+    let admin_user = UserId::new(Uuid::now_v7());
+    let viewer_user = UserId::new(Uuid::now_v7());
+    let group = GroupId::new(Uuid::now_v7());
+    let secret = GroupId::new(Uuid::now_v7());
+    let platform_pool = example_engine::fixture_pool(h.db.platform_url(), 1)
+        .await
+        .expect("platform pool");
+    let platform = PgPlatformScope::new(platform_pool, &["proxiima_core", "proxiima_example"])
+        .await
+        .expect("platform scope");
+    let mut tx = platform.begin().await.expect("platform tx");
+    for (owned, members) in [
+        (
+            group,
+            &[
+                (admin_user, Relation::Admin),
+                (viewer_user, Relation::Viewer),
+            ][..],
+        ),
+        (secret, &[(admin_user, Relation::Admin)][..]),
+    ] {
+        proxiima::register_group(&mut tx, owned)
+            .await
+            .expect("register group");
+        for (member, relation) in members {
+            proxiima::add_group_member(&mut tx, owned, (*member).into(), *relation)
+                .await
+                .expect("group member");
+        }
+    }
+    tx.commit().await.expect("membership commit");
+    let (group, secret) = (OwnerId::from(group), OwnerId::from(secret));
+    let admin_auth = authenticated_context(AuthzContext::server_resolved(
+        OwnerRoles::for_subject(
+            admin_user,
+            [(group, Role::admin()), (secret, Role::admin())],
+        )
+        .expect("admin roles"),
+        AuthPath::HostBearer,
+    ));
+    let viewer_auth = authenticated_context(AuthzContext::server_resolved(
+        OwnerRoles::for_subject(viewer_user, [(group, Role::viewer())]).expect("viewer role"),
+        AuthPath::HostBearer,
+    ));
+    let request = |owner, dependencies, key: &str| GoalCreateRequest {
+        owner,
+        topology: GoalTopologyWrite::new(Vec::new(), dependencies, Vec::new()).expect("topology"),
+        title: "Group goal".into(),
+        text: "group work".into(),
+        payload: SimpleTextGoalV1 {},
+        request_id: IdempotencyKey::new(key).expect("key"),
+        authorship: GoalAuthorship::User,
+        author_self_perspective_id: None,
+    };
+    let hidden = h
+        .engine
+        .create_goal(&admin_auth, request(secret, Vec::new(), "secret-goal"))
+        .await
+        .expect("secret goal")
+        .goal_id;
+    let refused = h
+        .engine
+        .create_goal(
+            &viewer_auth,
+            request(
+                group,
+                vec![GoalDependencyRef::new(hidden)],
+                "leaks-dependency",
+            ),
+        )
+        .await;
+    assert!(refused.is_err(), "an unreadable dependency is refused");
+    let set = h
+        .engine
+        .create_goal(&viewer_auth, request(group, Vec::new(), "viewer-goal"))
+        .await
+        .expect("a viewer member sets a group goal");
+    let owners: Vec<Uuid> =
+        sqlx::query_scalar("SELECT owner_id FROM proxiima_core.goal WHERE owner_id = $1")
+            .bind(group.into_inner())
+            .fetch_all(&h.pool)
+            .await
+            .expect("group goals");
+    assert_eq!(
+        owners,
+        vec![group.into_inner()],
+        "only the readable goal is stored"
+    );
+    // A context narrowed to the group carries no Goal principal; it reads
+    // the goal it names by its membership role.
+    let narrowed = authenticated_context(
+        AuthzContext::server_resolved(
+            OwnerRoles::for_subject(viewer_user, [(group, Role::viewer())]).expect("viewer role"),
+            AuthPath::HostBearer,
+        )
+        .narrowed_to_owner(group)
+        .expect("narrowed to the group"),
+    );
+    let depends: Vec<_> = h
+        .engine
+        .create_goal(
+            &narrowed,
+            request(
+                group,
+                vec![GoalDependencyRef::new(set.goal_id)],
+                "readable-dependency",
+            ),
+        )
+        .await
+        .map(|outcome| outcome.edge_count)
+        .into_iter()
+        .collect();
+    assert_eq!(depends, vec![1], "a readable dependency is kept");
     h.pool.close().await;
 }

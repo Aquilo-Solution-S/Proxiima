@@ -131,7 +131,12 @@ impl SourceReads {
         for source in &self.sources {
             let owner_read = super::current_role(scope, roles, source.owner)
                 .is_some_and(|role| role.may_read(source.kind));
-            let goal_read = if let Some((goal, controller)) = source.route {
+            // A Goal route is read only for a source the owner role does
+            // not admit, so a context without a Goal principal reads its
+            // owners' sources by role alone.
+            let goal_read = if owner_read {
+                false
+            } else if let Some((goal, controller)) = source.route {
                 let generation: i64 = sqlx::query_scalar("SELECT authority_generation FROM proxiima_core.goal_head WHERE handle=$1 AND owner_id=$2")
                     .bind(goal.into_inner()).bind(controller.into_inner()).fetch_one(&mut **tx).await.map_err(map_err)?;
                 super::role_for_goal(tx, scope, roles, goal, controller, generation)

@@ -1003,15 +1003,15 @@ async fn multi_space_goal_and_memory_lifecycle_uses_one_http_session()
         &catalog_session,
         bearer,
         93,
-        "core_goal",
-        json!({"action": "set", "schema_id": "core/simple-text-v1", "title": "catalog default goal", "text": "catalog default goal body", "body": {}, "idempotency_key": "issue-668-catalog-default"}),
+        "core_remember",
+        json!({"title": "catalog default fact", "body": "catalog default fact body", "tags": []}),
     )
     .await?;
     assert!(
         tool_error(default_refused)
             .to_ascii_lowercase()
             .contains("not authorized"),
-        "viewer default owner cannot write a Goal there"
+        "viewer default owner cannot write a Fact there"
     );
     common::stop_server(catalog_handle, &db_name).await?;
     Ok(())

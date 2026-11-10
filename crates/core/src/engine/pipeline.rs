@@ -125,6 +125,35 @@ impl Engine {
         self.write_permit(authority, owner, AuthzOperation::Write { kind })
     }
 
+    /// Goal work gate ([`Role::works_goals`]): set, modify and transition a
+    /// Goal of `owner`. Hooks judge it as a Goal write; only the rule that
+    /// admits it differs. The permit's scope names `owner` as its Goal work
+    /// and widens none of its memory writes.
+    #[allow(
+        clippy::unused_async,
+        reason = "keeps the Goal work gate on the async Engine authorization seam"
+    )]
+    pub(in crate::engine) async fn authorize_goal_work<A>(
+        &self,
+        authority: &A,
+        owner: &OwnerId,
+    ) -> Result<WritePermit, ProtocolError>
+    where
+        A: EngineAuthority + ?Sized,
+    {
+        self.permit_admitted_by(
+            authority,
+            owner,
+            AuthzOperation::Write {
+                kind: AccessKind::Goal,
+            },
+            |authz, owner, _| authz.may_work_goals(owner),
+        )
+        .map(|permit| WritePermit {
+            owner_write: permit.owner_write.for_goal_work(),
+        })
+    }
+
     /// Write gate for rows whose kind only storage reads (forget,
     /// hydration, embedding backfill): the permit carries the caller's write limit on `owner`,
     /// and storage answers `NotFound` for a row above it.
@@ -175,13 +204,26 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
+        self.permit_admitted_by(authority, owner, operation, allows)
+    }
+
+    fn permit_admitted_by<A>(
+        &self,
+        authority: &A,
+        owner: &OwnerId,
+        operation: AuthzOperation,
+        admits: Admits,
+    ) -> Result<WritePermit, ProtocolError>
+    where
+        A: EngineAuthority + ?Sized,
+    {
         let authority = self.operation_authority(authority)?;
         let authz = authority.authz();
         let kind = match operation {
             AuthzOperation::Write { kind } => kind,
             _ => AccessKind::Goal,
         };
-        let resolved = self.gate(authz, owner, operation, authority.redeemed_phase())?;
+        let resolved = self.gate(authz, owner, operation, authority.redeemed_phase(), admits)?;
         let owner_write = if authority.redeemed_phase() {
             let expires_at = authz.expires_at().ok_or_else(|| {
                 ProtocolError::forbidden("delegated worker phase has no finite expiry")
@@ -220,6 +262,7 @@ impl Engine {
             owner,
             AuthzOperation::Read { kind },
             authority.redeemed_phase(),
+            allows,
         )
     }
 
@@ -231,6 +274,7 @@ impl Engine {
         owner: &OwnerId,
         operation: AuthzOperation,
         redeemed_phase: bool,
+        admits: Admits,
     ) -> Result<OwnerId, ProtocolError> {
         if authz.auth_path() == AuthPath::Delegated && !redeemed_phase {
             return Err(ProtocolError::forbidden(
@@ -271,7 +315,7 @@ impl Engine {
             Ok(resolved) => resolved,
             Err(err) => return refuse(owner, AuthzOutcome::DeniedResolution, err),
         };
-        if !allows(authz, &resolved, &operation) {
+        if !admits(authz, &resolved, &operation) {
             return refuse(&resolved, AuthzOutcome::DeniedGrant, denied(&operation));
         }
         let input = AuthzInput {
@@ -492,6 +536,9 @@ impl Engine {
             .collect()
     }
 }
+
+/// The rule that admits an operation on a resolved owner.
+type Admits = fn(&AuthzContext, &OwnerId, &AuthzOperation) -> bool;
 
 fn allows(authz: &AuthzContext, owner: &OwnerId, operation: &AuthzOperation) -> bool {
     match *operation {

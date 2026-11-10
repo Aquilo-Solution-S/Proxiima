@@ -22,6 +22,8 @@ pub struct OwnerScope {
     expires_at: Option<SystemTime>,
     selected: Option<OwnerId>,
     goal_principal: Option<crate::goal_collaboration::GoalPrincipalScope>,
+    /// The owner a Goal work permit works ([`Self::goal_work`]).
+    goal_work: Option<OwnerId>,
 }
 
 impl OwnerScope {
@@ -36,6 +38,7 @@ impl OwnerScope {
             expires_at,
             selected: None,
             goal_principal: None,
+            goal_work: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl OwnerScope {
             expires_at: self.expires_at,
             selected: None,
             goal_principal: self.goal_principal,
+            goal_work: None,
         })
     }
 
@@ -63,7 +67,22 @@ impl OwnerScope {
             expires_at: self.expires_at,
             selected: Some(owner),
             goal_principal: None,
+            goal_work: None,
         })
+    }
+
+    /// The same scope, working `owner`'s Goals when its role
+    /// [works Goals](Role::works_goals). Only the Goal work gate mints it,
+    /// into the permit of one set, modify or transition.
+    pub(crate) fn for_goal_work(&self, owner: OwnerId) -> Self {
+        Self {
+            goal_work: self
+                .roles
+                .role_for(&owner)
+                .is_some_and(Role::works_goals)
+                .then_some(owner),
+            ..self.clone()
+        }
     }
 
     /// Add a verified Goal principal. Only the authentication engine may mint
@@ -166,6 +185,14 @@ impl OwnerScope {
         } else {
             self.roles.writable_owners(kind)
         }
+    }
+
+    /// The owner whose Goals a Goal work permit's scope works
+    /// ([`Role::works_goals`]); storage writes them fenced on that role,
+    /// never through the roles' memory write.
+    #[must_use]
+    pub fn goal_work(&self) -> Option<OwnerId> {
+        self.goal_work.filter(|_| !self.is_expired())
     }
 }
 

@@ -23,14 +23,13 @@ use proxiima_core::goal_collaboration::GoalEditPermit;
 // transaction instead of surfacing to the host as a bare `Internal`.
 
 pub(crate) async fn create_goal_atomic(
-    pool: &PgPool,
-    sidecars: &PgSidecarRegistryFrozen,
+    storage: &PgStorage,
     req: &CreateGoalAtomicRequest<'_>,
     permit: &OwnerWritePermit,
     store_number: u16,
 ) -> Result<GoalWriteOutcome, StorageError> {
     with_bounded_retry(move || async move {
-        create_goal_atomic_in_pool(pool, sidecars, req, permit, store_number).await
+        create_goal_atomic_in_pool(storage, req, permit, store_number).await
     })
     .await
 }
@@ -85,18 +84,28 @@ pub(crate) async fn decompose_goal_atomic(
 }
 
 pub(crate) async fn create_goal_atomic_in_pool(
-    pool: &PgPool,
-    sidecars: &PgSidecarRegistryFrozen,
+    storage: &PgStorage,
     req: &CreateGoalAtomicRequest<'_>,
     permit: &OwnerWritePermit,
     store_number: u16,
 ) -> Result<GoalWriteOutcome, StorageError> {
-    let mut tx = crate::owner_scope::begin_owner_transaction(
-        pool,
+    let named = super::authority::GoalWorkSources {
+        goals: draft_dependency_ids(&req.draft),
+        evidence: req.draft.topology.evidence(),
+        memories: draft_motivation_ids(&req.draft)
+            .into_iter()
+            .chain(req.context.author_self_perspective_id)
+            .collect(),
+        carried_from: None,
+    };
+    let mut tx = super::authority::begin_goal_work(
+        storage,
         crate::owner_scope::require_owner_scope(permit.owner_scope())?,
+        *permit.owner(),
+        &named,
     )
     .await?;
-    let outcome = create_goal_in_tx(&mut tx, sidecars, req, permit, store_number).await?;
+    let outcome = create_goal_in_tx(&mut tx, &storage.sidecars, req, permit, store_number).await?;
     crate::write_wake::commit(tx).await?;
     Ok(outcome)
 }
@@ -180,6 +189,8 @@ pub(crate) async fn transition_goal_atomic_in_pool(
         *permit,
         req.prior_goal_id,
         &[],
+        &[],
+        None,
         req.context.author_self_perspective_id,
     )
     .await?;
@@ -280,6 +291,8 @@ pub(crate) async fn achieve_goal_atomic_in_pool(
         *permit,
         req.prior_goal_id,
         &req.evidence,
+        &[],
+        None,
         req.context.author_self_perspective_id,
     )
     .await?;
@@ -432,11 +445,19 @@ pub(crate) async fn modify_goal_atomic_in_pool(
     let scope = crate::owner_scope::require_owner_scope(permit.scope())?;
     let writer = scope.writer();
     let sidecars = &storage.sidecars;
+    let motivated_by: Vec<_> = req
+        .motivated_by
+        .iter()
+        .flatten()
+        .map(|motivation| motivation.perspective_id())
+        .collect();
     let (mut tx, fence) = begin_goal_edit(
         storage,
         *permit,
         req.prior_goal_id,
         req.evidence.as_deref().unwrap_or_default(),
+        &motivated_by,
+        req.evidence.is_none().then_some(req.prior_goal_id),
         req.context.author_self_perspective_id,
     )
     .await?;
