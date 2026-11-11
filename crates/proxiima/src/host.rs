@@ -90,6 +90,8 @@ pub use proxiima_core::goal_collaboration::{
 /// Explicitly select the deployment's lexical configuration for a memory write.
 pub use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
 pub use proxiima_core::llm;
+/// The node states a [`RemoteLineageNode`] carries, as a lineage walk reports them.
+pub use proxiima_core::mcp::core_tools::{NodeStatus, UnavailableReason};
 /// [`EmbedCaps`] is the second parameter of
 /// [`OpenAiCompatEmbeddingClient::new`], so without it on the facade that
 /// constructor is unspellable for a host depending on `proxiima` alone. That
@@ -132,9 +134,10 @@ pub use proxiima_core::storage_ports::HostStatePayloadOwners;
 /// [`Proxiima::other_stores`], with every request, answer and bounded-service
 /// result nameable by hosts implementing or wiring the port.
 pub use proxiima_core::storage_ports::other_stores::{
-    OtherStores, OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteHit, RemoteMemory,
-    RemoteOriginRead, RemoteRead, RemoteSearch, RemoteSearchResult, StoreCaller, StoreInfo,
-    StoreInventory,
+    OtherStores, OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors,
+    RemoteAncestorsPage, RemoteEdge, RemoteEdgeTarget, RemoteGraphRead, RemoteHit,
+    RemoteLineageEdge, RemoteLineageNode, RemoteMemory, RemoteOriginRead, RemoteRead, RemoteSearch,
+    RemoteSearchResult, StoreCaller, StoreInfo, StoreInventory,
 };
 /// Cited-blob delivery admission, verified reads and reconciliation.
 ///

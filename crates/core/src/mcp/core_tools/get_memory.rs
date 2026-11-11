@@ -95,7 +95,13 @@ pub async fn get_memory(
     let memory_id = ctx.resolve_memory(&args.memory)?;
     let engine = ctx.require_engine()?;
     if crate::memory_store_number(memory_id.into_inner()) != engine.store_number() {
-        return remote_memory_output(&ctx, memory_id.into_inner(), args.version).await;
+        return remote_memory_output(
+            &ctx,
+            memory_id.into_inner(),
+            args.version,
+            args.expand_neighbors,
+        )
+        .await;
     }
     // Validated for compatibility; the label comes from the memory's owner.
     super::memory_spaces::resolve_space_owner(
@@ -135,18 +141,37 @@ pub async fn get_memory(
 }
 
 /// A remote UUID read through the other-stores port, as the caller.
-/// The port supplies the memory's owner, payload and occurrence time.
-/// Neighbor edges are not included in the remote read.
+/// The port supplies the memory's owner, payload and occurrence time, and
+/// with `expand_neighbors` the returned version's one-hop edges.
 pub(super) async fn remote_memory_output(
     ctx: &McpToolCtx,
     origin: uuid::Uuid,
     version: VersionSelector,
+    expand_neighbors: bool,
 ) -> Result<GetMemoryOutput, McpToolError> {
     let memory = match version {
         VersionSelector::Exact => super::other_stores::read_origin(ctx, origin).await?.1,
         VersionSelector::Head => super::other_stores::read_head(ctx, origin).await?,
     };
-    Ok(project_remote_memory(memory))
+    let neighbor_edges = if expand_neighbors {
+        let edges = super::other_stores::read_neighbor_edges(ctx, memory.handle).await?;
+        Some(
+            edges
+                .into_iter()
+                .map(|edge| NeighborEdge {
+                    source: edge.source.to_string(),
+                    target: super::wire_ref::format_remote_target(edge.target),
+                    kind: edge.kind,
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+    Ok(GetMemoryOutput {
+        neighbor_edges,
+        ..project_remote_memory(memory)
+    })
 }
 
 /// Project a UUID-checked remote row for either a single or a batch read.

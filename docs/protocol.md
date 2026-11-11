@@ -91,7 +91,8 @@ collaborators select authorized work with `working_goal`. A remote read,
 another store's search hit and another store's lineage node or `core_think`
 visit report the owner's UUID that store reported as `space`; a remote read
 retains the stored payload and a Fact's occurrence time, just as local reads
-do.
+do. Its `expand_neighbors` edges and an ancestors walk from it come from that
+store, which admits them to the caller as it admits the read.
 
 A lineage node, a `core_think` visit and a `core_recall` sketch carry the same
 `space` label, always present, and every memory answer type parses back from

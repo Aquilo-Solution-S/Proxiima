@@ -167,12 +167,17 @@ pub async fn walk_memory_lineage(
     let direction = MemoryLineageDirection::from(args.direction);
     let depth = u8::try_from(args.depth.clamp(1, MAX_LINEAGE_DEPTH)).unwrap_or(8);
     let fingerprint = lineage_fingerprint(&args.memory, direction, depth);
+    let engine = ctx.require_engine()?;
+    if matches!(direction, MemoryLineageDirection::Ancestors)
+        && crate::memory_store_number(start.into_inner()) != engine.store_number()
+    {
+        return remote_ancestors(&ctx, engine, start, args, depth, limit, &fingerprint).await;
+    }
     let after: Option<MemoryLineageCursor> = args
         .cursor
         .as_deref()
         .map(|raw| LINEAGE_CURSOR.decode(&fingerprint, raw))
         .transpose()?;
-    let engine = ctx.require_engine()?;
     if matches!(direction, MemoryLineageDirection::Ancestors) {
         let page = walk_ancestors(&ctx, engine, start, depth, limit, after).await?;
         let Some(page) = page else {
@@ -271,6 +276,70 @@ struct AncestorPage {
     nodes: Vec<LineageNodeOutput>,
     edges: Vec<LineageEdgeOutput>,
     next_cursor: Option<MemoryLineageCursor>,
+}
+
+/// The ancestors page of a start in another store, walked by that store as
+/// the caller under the same depth and limit. Its cursor travels inside this
+/// walk's own envelope, bound to the same memory, direction and depth.
+async fn remote_ancestors(
+    ctx: &McpToolCtx,
+    engine: &crate::Engine,
+    start: MemoryId,
+    args: WalkMemoryLineageArgs,
+    depth: u8,
+    limit: u32,
+    fingerprint: &str,
+) -> Result<WalkMemoryLineageOutput, McpToolError> {
+    let page = crate::storage_ports::other_stores::RemoteAncestorsPage {
+        depth,
+        limit,
+        cursor: args
+            .cursor
+            .as_deref()
+            .map(|raw| LINEAGE_CURSOR.decode::<String>(fingerprint, raw))
+            .transpose()?,
+    };
+    let ancestors = super::other_stores::read_ancestors(ctx, start.into_inner(), &page).await?;
+    let local = engine.store_number();
+    let nodes = ancestors
+        .nodes
+        .into_iter()
+        .map(|node| {
+            let store = crate::memory_store_number(node.handle);
+            LineageNodeOutput {
+                memory: node.handle.to_string(),
+                space: node.owner.map(|owner| owner.to_string()),
+                kind: node.kind,
+                schema_id: node.schema_id,
+                snippet: node.snippet,
+                distance: node.distance,
+                store: (store != local).then_some(store),
+                status: node.status,
+                unavailable_reason: node.unavailable_reason,
+            }
+        })
+        .collect();
+    let edges = ancestors
+        .edges
+        .into_iter()
+        .map(|edge| LineageEdgeOutput {
+            source: edge.source.to_string(),
+            target: super::wire_ref::format_remote_target(edge.target),
+            kind: edge.kind,
+            distance: edge.distance,
+        })
+        .collect();
+    let next_cursor = ancestors
+        .next_cursor
+        .map(|next| LINEAGE_CURSOR.encode(fingerprint, &next));
+    Ok(WalkMemoryLineageOutput {
+        start: args.memory,
+        direction: WalkMemoryLineageDirectionArg::Ancestors,
+        nodes,
+        edges,
+        has_more: next_cursor.is_some(),
+        next_cursor,
+    })
 }
 
 /// One edge on an ancestors page, `distance` hops from the start.

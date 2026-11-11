@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use crate::mcp::{McpToolCtx, McpToolError, MemoryHandleClass};
 use crate::storage_ports::other_stores::{
-    OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteMemory, RemoteOriginRead,
-    RemoteRead, RemoteSearch, RemoteSearchResult, StoreCaller, StoreInventory, StoreRoute,
-    route_stores,
+    OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors, RemoteAncestorsPage,
+    RemoteEdge, RemoteGraphRead, RemoteMemory, RemoteOriginRead, RemoteRead, RemoteSearch,
+    RemoteSearchResult, StoreCaller, StoreInventory, StoreRoute, route_stores,
 };
 
 pub(crate) fn service(ctx: &McpToolCtx) -> Option<Arc<OtherStoresService>> {
@@ -72,6 +72,35 @@ pub(crate) async fn read_head(
     {
         Ok(RemoteRead::Found(memory)) => Ok(*memory),
         Ok(RemoteRead::NotFound | RemoteRead::Erased) => Err(not_found(id)),
+        Err(error) => Err(remote_read_error(id, &error)),
+    }
+}
+
+/// The one-hop edges of a remote memory, read through its store as the
+/// caller. Unreadable or erased is not found, as for the memory itself.
+pub(crate) async fn read_neighbor_edges(
+    ctx: &McpToolCtx,
+    id: uuid::Uuid,
+) -> Result<Vec<RemoteEdge>, McpToolError> {
+    let service = service(ctx).ok_or_else(|| not_found(id))?;
+    match service.neighbor_edges_bounded(caller(ctx), id).await {
+        Ok(RemoteGraphRead::Found(edges)) => Ok(edges),
+        Ok(RemoteGraphRead::NotFound | RemoteGraphRead::Erased) => Err(not_found(id)),
+        Err(error) => Err(remote_read_error(id, &error)),
+    }
+}
+
+/// One ancestors page from a remote start, read through its store as the
+/// caller. Unreadable or erased is not found, as for the memory itself.
+pub(crate) async fn read_ancestors(
+    ctx: &McpToolCtx,
+    id: uuid::Uuid,
+    page: &RemoteAncestorsPage,
+) -> Result<RemoteAncestors, McpToolError> {
+    let service = service(ctx).ok_or_else(|| not_found(id))?;
+    match service.ancestors_bounded(caller(ctx), id, page).await {
+        Ok(RemoteGraphRead::Found(ancestors)) => Ok(ancestors),
+        Ok(RemoteGraphRead::NotFound | RemoteGraphRead::Erased) => Err(not_found(id)),
         Err(error) => Err(remote_read_error(id, &error)),
     }
 }
@@ -304,7 +333,10 @@ mod tests {
     use crate::UserId;
     use crate::mcp::core_tools::memory::derive::MAX_SOURCE_HANDLES;
     use crate::mcp::core_tools::memory_spaces::test_ctx::ctx_for;
-    use crate::storage_ports::other_stores::{OtherStores, RemoteHit, RemoteRead, StoreInfo};
+    use crate::storage_ports::other_stores::{
+        OtherStores, RemoteEdgeTarget, RemoteHit, RemoteLineageEdge, RemoteLineageNode, RemoteRead,
+        StoreInfo,
+    };
     use futures::future::BoxFuture;
 
     #[test]
@@ -750,6 +782,252 @@ mod tests {
                     assert!(matches!(error, McpToolError::NotFound(_)), "{error:?}");
                 }
             }
+        }
+    }
+
+    /// How the owning store answers the graph reads of [`GraphStore`].
+    #[derive(Clone, Copy)]
+    enum GraphAnswer {
+        Serves,
+        RefusesViewer,
+        Down,
+    }
+
+    /// Store 1 holds `memory`, a Fact `citing` that refers to it, and the
+    /// `ancestor` it was made from.
+    struct GraphStore {
+        answer: GraphAnswer,
+        memory: uuid::Uuid,
+        citing: uuid::Uuid,
+        ancestor: uuid::Uuid,
+        cursors: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl GraphStore {
+        fn new(answer: GraphAnswer) -> Self {
+            Self {
+                answer,
+                memory: crate::new_memory_uuid(1),
+                citing: crate::new_memory_uuid(1),
+                ancestor: crate::new_memory_uuid(1),
+                cursors: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn admit<T>(
+            &self,
+            id: uuid::Uuid,
+            found: T,
+        ) -> Result<RemoteGraphRead<T>, OtherStoresError> {
+            match self.answer {
+                GraphAnswer::Serves if id == self.memory => Ok(RemoteGraphRead::Found(found)),
+                GraphAnswer::Serves | GraphAnswer::RefusesViewer => Ok(RemoteGraphRead::NotFound),
+                GraphAnswer::Down => Err(OtherStoresError::Unavailable("remote internals".into())),
+            }
+        }
+
+        fn node(handle: uuid::Uuid, distance: u8) -> RemoteLineageNode {
+            RemoteLineageNode {
+                handle,
+                owner: Some(crate::OwnerId::new(uuid::Uuid::from_u128(2))),
+                kind: "fact".into(),
+                schema_id: "test/fact-v1".into(),
+                snippet: String::new(),
+                distance,
+                status: None,
+                unavailable_reason: None,
+            }
+        }
+    }
+
+    impl OtherStores for GraphStore {
+        fn stores<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+        ) -> BoxFuture<'a, Result<Vec<StoreInfo>, OtherStoresError>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+
+        fn search<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            _store: u16,
+            _args: &'a RemoteSearch,
+        ) -> BoxFuture<'a, Result<RemoteSearchResult, OtherStoresError>> {
+            Box::pin(async { Err(OtherStoresError::UnsupportedSearch("not searched".into())) })
+        }
+
+        fn read<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            id: uuid::Uuid,
+            _at: ReadAt,
+        ) -> BoxFuture<'a, Result<RemoteRead, OtherStoresError>> {
+            let read = if id == self.memory {
+                RemoteRead::Found(Box::new(RemoteMemory::fixture(id)))
+            } else {
+                RemoteRead::NotFound
+            };
+            Box::pin(async move { Ok(read) })
+        }
+
+        fn neighbor_edges<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            id: uuid::Uuid,
+        ) -> BoxFuture<'a, Result<RemoteGraphRead<Vec<RemoteEdge>>, OtherStoresError>> {
+            let edges = vec![RemoteEdge {
+                source: self.citing,
+                target: RemoteEdgeTarget::Visible(self.memory),
+                kind: crate::EdgeKind::Reference,
+            }];
+            Box::pin(async move { self.admit(id, edges) })
+        }
+
+        fn ancestors<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            id: uuid::Uuid,
+            page: &'a RemoteAncestorsPage,
+        ) -> BoxFuture<'a, Result<RemoteGraphRead<RemoteAncestors>, OtherStoresError>> {
+            self.cursors
+                .lock()
+                .expect("cursor log")
+                .push(page.cursor.clone());
+            let ancestors = RemoteAncestors {
+                nodes: vec![Self::node(self.memory, 0), Self::node(self.ancestor, 1)],
+                edges: vec![RemoteLineageEdge {
+                    source: self.memory,
+                    target: RemoteEdgeTarget::Visible(self.ancestor),
+                    kind: crate::EdgeKind::Origin,
+                    distance: 1,
+                }],
+                next_cursor: Some("owning store cursor".into()),
+            };
+            Box::pin(async move { self.admit(id, ancestors) })
+        }
+    }
+
+    fn graph_ctx(store: &Arc<GraphStore>) -> McpToolCtx {
+        let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
+        ctx.services = crate::SpiiceServices::with(OtherStoresService::new(store.clone()));
+        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx
+    }
+
+    async fn read_graph(
+        ctx: &McpToolCtx,
+        memory: uuid::Uuid,
+        cursor: Option<String>,
+    ) -> Result<
+        (
+            super::super::get_memory::GetMemoryOutput,
+            super::super::walk_memory_lineage::WalkMemoryLineageOutput,
+        ),
+        McpToolError,
+    > {
+        use super::super::{get_memory, walk_memory_lineage};
+        let read = get_memory::get_memory(
+            ctx.clone(),
+            get_memory::GetMemoryArgs {
+                memory: memory.to_string(),
+                expand_neighbors: true,
+                space: None,
+                version: get_memory::VersionSelector::Exact,
+            },
+        )
+        .await?;
+        let walk = walk_memory_lineage::walk_memory_lineage(
+            ctx.clone(),
+            walk_memory_lineage::WalkMemoryLineageArgs {
+                memory: memory.to_string(),
+                direction: walk_memory_lineage::WalkMemoryLineageDirectionArg::Ancestors,
+                depth: 3,
+                limit: 50,
+                cursor,
+            },
+        )
+        .await?;
+        Ok((read, walk))
+    }
+
+    /// A memory of another store answers `expand_neighbors` and the
+    /// ancestors walk through its store, as that store admits the caller:
+    /// a refused viewer is not found, and a store that is down is refused
+    /// as unavailable, never an empty list or page.
+    #[tokio::test]
+    async fn a_remote_memory_serves_its_neighbor_edges_and_ancestors_through_its_store() {
+        let store = Arc::new(GraphStore::new(GraphAnswer::Serves));
+        let ctx = graph_ctx(&store);
+        let (read, walk) = read_graph(&ctx, store.memory, None)
+            .await
+            .expect("graph reads");
+        let edges = read.neighbor_edges.expect("neighbor edges");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].source, store.citing.to_string());
+        assert_eq!(edges[0].target, store.memory.to_string());
+        assert_eq!(edges[0].kind, crate::EdgeKind::Reference);
+
+        let ancestor = walk
+            .nodes
+            .iter()
+            .find(|node| node.memory == store.ancestor.to_string())
+            .expect("ancestor node");
+        assert_eq!(ancestor.distance, 1);
+        assert_eq!(ancestor.store, Some(1));
+        assert_eq!(ancestor.space, Some(uuid::Uuid::from_u128(2).to_string()));
+        assert_eq!(walk.edges.len(), 1);
+        assert_eq!(walk.edges[0].source, store.memory.to_string());
+        assert_eq!(walk.edges[0].target, store.ancestor.to_string());
+        assert_eq!(walk.edges[0].kind, crate::EdgeKind::Origin);
+        assert!(walk.has_more);
+        let next = walk.next_cursor.expect("next page");
+        read_graph(&ctx, store.memory, Some(next))
+            .await
+            .expect("next page");
+        assert_eq!(
+            *store.cursors.lock().expect("cursor log"),
+            [None, Some("owning store cursor".to_string())]
+        );
+
+        for (answer, unavailable) in [
+            (GraphAnswer::RefusesViewer, false),
+            (GraphAnswer::Down, true),
+        ] {
+            let store = Arc::new(GraphStore::new(answer));
+            let ctx = graph_ctx(&store);
+            let error = read_graph(&ctx, store.memory, None)
+                .await
+                .expect_err("no graph crosses");
+            if unavailable {
+                assert!(
+                    matches!(error, McpToolError::StoreUnavailable { store: 1 }),
+                    "{error:?}"
+                );
+            } else {
+                assert!(matches!(error, McpToolError::NotFound(_)), "{error:?}");
+            }
+            let walk = super::super::walk_memory_lineage::walk_memory_lineage(
+                ctx.clone(),
+                super::super::walk_memory_lineage::WalkMemoryLineageArgs {
+                    memory: store.memory.to_string(),
+                    direction:
+                        super::super::walk_memory_lineage::WalkMemoryLineageDirectionArg::Ancestors,
+                    depth: 3,
+                    limit: 50,
+                    cursor: None,
+                },
+            )
+            .await
+            .expect_err("no ancestors cross");
+            assert_eq!(
+                walk.kind(),
+                if unavailable {
+                    crate::mcp::McpToolErrorKind::StoreUnavailable
+                } else {
+                    crate::mcp::McpToolErrorKind::NotFound
+                }
+            );
         }
     }
 }

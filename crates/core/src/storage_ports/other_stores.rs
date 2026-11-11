@@ -12,8 +12,9 @@ use futures::future::BoxFuture;
 use futures::stream::{self, StreamExt};
 use uuid::Uuid;
 
+use crate::mcp::core_tools::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{EntityKind, SearchMode, SearchOrder, SupersessionStatus, TagMatch};
-use crate::{AuthzContext, OwnerId, SchemaVersion, WriterAttribution};
+use crate::{AuthzContext, EdgeKind, OwnerId, SchemaVersion, WriterAttribution};
 
 /// How long a search waits for one other store before reporting it as
 /// unanswered.
@@ -262,6 +263,86 @@ pub enum RemoteOriginRead {
     Erased,
 }
 
+/// The owning store's answer to a graph read about one of its memories,
+/// admitted as the caller exactly as [`OtherStores::read`] admits the memory.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoteGraphRead<T> {
+    Found(T),
+    /// Unknown to the store, or not readable by this caller; as
+    /// [`RemoteRead::NotFound`].
+    NotFound,
+    /// The memory existed and was erased.
+    Erased,
+}
+
+/// The target of an edge as the owning store projects it to the caller:
+/// a target the caller may not read crosses only as its sentinel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteEdgeTarget {
+    Visible(Uuid),
+    Redacted,
+    Forgotten,
+    Erased,
+}
+
+/// One edge touching a remote memory, as `core_get_memory`'s
+/// `expand_neighbors` lists it in the owning store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteEdge {
+    pub source: Uuid,
+    pub target: RemoteEdgeTarget,
+    pub kind: EdgeKind,
+}
+
+impl RemoteEdge {
+    /// One hop from `memory`: either end is the memory itself.
+    fn touches(&self, memory: Uuid) -> bool {
+        self.source == memory || self.target == RemoteEdgeTarget::Visible(memory)
+    }
+}
+
+/// One ancestors page the owning store is asked for, with the limits the
+/// local walk applies. `cursor` is the owning store's own `next_cursor`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteAncestorsPage {
+    pub depth: u8,
+    pub limit: u32,
+    pub cursor: Option<String>,
+}
+
+/// One ancestors page from a start in the owning store, as its
+/// `core_walk_memory_lineage` answers the caller.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteAncestors {
+    pub nodes: Vec<RemoteLineageNode>,
+    pub edges: Vec<RemoteLineageEdge>,
+    /// The owning store's cursor for the next page; `None` on the last page.
+    pub next_cursor: Option<String>,
+}
+
+/// One node of a remote ancestors page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteLineageNode {
+    pub handle: Uuid,
+    /// The memory's owner; `None` on a node the store could not read.
+    pub owner: Option<OwnerId>,
+    pub kind: String,
+    pub schema_id: String,
+    pub snippet: String,
+    pub distance: u8,
+    pub status: Option<NodeStatus>,
+    pub unavailable_reason: Option<UnavailableReason>,
+}
+
+/// One edge of a remote ancestors page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteLineageEdge {
+    pub source: Uuid,
+    pub target: RemoteEdgeTarget,
+    pub kind: EdgeKind,
+    pub distance: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OtherStoresError {
     #[error("unknown store '{0}'")]
@@ -317,6 +398,35 @@ pub trait OtherStores: Send + Sync {
         id: Uuid,
         at: ReadAt,
     ) -> BoxFuture<'a, Result<RemoteRead, OtherStoresError>>;
+
+    /// The one-hop edges of the memory `id` names, in both directions, as
+    /// its store admits them to `caller`: an edge the caller may not read
+    /// never crosses. A port that cannot serve the read refuses it as
+    /// [`OtherStoresError::Unavailable`], never with an empty list.
+    fn neighbor_edges<'a>(
+        &'a self,
+        _caller: StoreCaller<'a>,
+        _id: Uuid,
+    ) -> BoxFuture<'a, Result<RemoteGraphRead<Vec<RemoteEdge>>, OtherStoresError>> {
+        Box::pin(async {
+            Err(OtherStoresError::Unavailable(
+                "neighbor edges not served".into(),
+            ))
+        })
+    }
+
+    /// One ancestors page of the lineage walk from the memory `id` names, as
+    /// its store admits it to `caller`. A port that cannot serve the read
+    /// refuses it as [`OtherStoresError::Unavailable`], never with an empty
+    /// page.
+    fn ancestors<'a>(
+        &'a self,
+        _caller: StoreCaller<'a>,
+        _id: Uuid,
+        _page: &'a RemoteAncestorsPage,
+    ) -> BoxFuture<'a, Result<RemoteGraphRead<RemoteAncestors>, OtherStoresError>> {
+        Box::pin(async { Err(OtherStoresError::Unavailable("ancestors not served".into())) })
+    }
 }
 
 /// The wired port plus its per-store time bound, as tools find it in the
@@ -407,6 +517,60 @@ impl OtherStoresService {
                 return Err(OtherStoresError::MismatchedMemory {
                     requested: id,
                     returned: memory.handle,
+                });
+            }
+        }
+        Ok(read)
+    }
+
+    /// The one-hop edges of a remote memory under the time bound. An edge
+    /// that does not touch `id` is refused as an answer for another memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns the port's error, `Unavailable` past the bound, or
+    /// `MismatchedMemory` for an edge of another memory.
+    pub async fn neighbor_edges_bounded(
+        &self,
+        caller: StoreCaller<'_>,
+        id: Uuid,
+    ) -> Result<RemoteGraphRead<Vec<RemoteEdge>>, OtherStoresError> {
+        let read = tokio::time::timeout(self.timeout, self.port.neighbor_edges(caller, id))
+            .await
+            .unwrap_or_else(|_| Err(OtherStoresError::Unavailable("timed out".into())))?;
+        if let RemoteGraphRead::Found(edges) = &read
+            && let Some(stray) = edges.iter().find(|edge| !edge.touches(id))
+        {
+            return Err(OtherStoresError::MismatchedMemory {
+                requested: id,
+                returned: stray.source,
+            });
+        }
+        Ok(read)
+    }
+
+    /// One remote ancestors page under the time bound. The page must hold
+    /// its start as the node at distance 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns the port's error, `Unavailable` past the bound, or
+    /// `MismatchedMemory` for a page of another start.
+    pub async fn ancestors_bounded(
+        &self,
+        caller: StoreCaller<'_>,
+        id: Uuid,
+        page: &RemoteAncestorsPage,
+    ) -> Result<RemoteGraphRead<RemoteAncestors>, OtherStoresError> {
+        let read = tokio::time::timeout(self.timeout, self.port.ancestors(caller, id, page))
+            .await
+            .unwrap_or_else(|_| Err(OtherStoresError::Unavailable("timed out".into())))?;
+        if let RemoteGraphRead::Found(ancestors) = &read {
+            let start = ancestors.nodes.iter().find(|node| node.distance == 0);
+            if start.is_none_or(|start| start.handle != id) {
+                return Err(OtherStoresError::MismatchedMemory {
+                    requested: id,
+                    returned: start.map_or(Uuid::nil(), |start| start.handle),
                 });
             }
         }
@@ -756,6 +920,69 @@ mod tests {
                 })))
             })
         }
+
+        fn neighbor_edges<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            _id: Uuid,
+        ) -> BoxFuture<'a, Result<RemoteGraphRead<Vec<RemoteEdge>>, OtherStoresError>> {
+            Box::pin(async {
+                Ok(RemoteGraphRead::Found(vec![RemoteEdge {
+                    source: Uuid::from_u128(2),
+                    target: RemoteEdgeTarget::Visible(Uuid::from_u128(3)),
+                    kind: EdgeKind::Reference,
+                }]))
+            })
+        }
+
+        fn ancestors<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            _id: Uuid,
+            _page: &'a RemoteAncestorsPage,
+        ) -> BoxFuture<'a, Result<RemoteGraphRead<RemoteAncestors>, OtherStoresError>> {
+            Box::pin(async {
+                Ok(RemoteGraphRead::Found(RemoteAncestors {
+                    nodes: vec![RemoteLineageNode {
+                        handle: Uuid::from_u128(2),
+                        owner: None,
+                        kind: "fact".into(),
+                        schema_id: "test/fact-v1".into(),
+                        snippet: String::new(),
+                        distance: 0,
+                        status: None,
+                        unavailable_reason: None,
+                    }],
+                    edges: Vec::new(),
+                    next_cursor: None,
+                }))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_port_cannot_answer_a_graph_read_with_another_memorys_graph() {
+        let owner = crate::UserId::new(Uuid::nil());
+        let authz = AuthzContext::for_subject(owner, crate::AuthPath::System);
+        let caller = || StoreCaller {
+            owner: owner.into(),
+            authz: &authz,
+        };
+        let service = OtherStoresService::new(Arc::new(WrongMemoryStore));
+        let requested = Uuid::from_u128(1);
+        assert!(matches!(
+            service.neighbor_edges_bounded(caller(), requested).await,
+            Err(OtherStoresError::MismatchedMemory { .. })
+        ));
+        let page = RemoteAncestorsPage {
+            depth: 3,
+            limit: 50,
+            cursor: None,
+        };
+        assert!(matches!(
+            service.ancestors_bounded(caller(), requested, &page).await,
+            Err(OtherStoresError::MismatchedMemory { .. })
+        ));
     }
 
     #[tokio::test]

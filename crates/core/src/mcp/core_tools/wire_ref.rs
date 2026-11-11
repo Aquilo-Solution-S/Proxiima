@@ -22,3 +22,16 @@ pub(crate) fn format_target_projection(ctx: &McpToolCtx, target: EdgeTargetProje
         EdgeTargetProjection::Erased => ERASED_TARGET.into(),
     }
 }
+
+/// Another store's edge target, in the words a local target is given.
+pub(crate) fn format_remote_target(
+    target: crate::storage_ports::other_stores::RemoteEdgeTarget,
+) -> String {
+    use crate::storage_ports::other_stores::RemoteEdgeTarget;
+    match target {
+        RemoteEdgeTarget::Visible(id) => id.to_string(),
+        RemoteEdgeTarget::Redacted => REDACTED_TARGET.into(),
+        RemoteEdgeTarget::Forgotten => FORGOTTEN_TARGET.into(),
+        RemoteEdgeTarget::Erased => ERASED_TARGET.into(),
+    }
+}
