@@ -1,7 +1,7 @@
 //! The runtime's object-purge feature against Postgres and a real object
 //! store: a server with an object store and no host code drains what an
 //! erase owes, sweeps an expired upload, and its readiness answer counts a
-//! debt that keeps failing. Skips without `PROXIIMA_S3_*`.
+//! debt that keeps failing. Ignored without the S3 lane (`PROXIIMA_S3_*`).
 
 #[path = "fixtures/setup_error.rs"]
 #[allow(dead_code, reason = "each suite uses part of the shared fixture")]
@@ -65,15 +65,12 @@ impl proxiima_core::Authenticator for NoBearer {
     }
 }
 
-fn s3_config() -> Option<S3RuntimeConfig> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return None;
-    }
-    Some(S3RuntimeConfig {
+fn s3_config() -> S3RuntimeConfig {
+    S3RuntimeConfig {
         force_path_style: true,
-        ..S3RuntimeConfig::from_env().expect("PROXIIMA_S3_* parses")
-    })
+        ..S3RuntimeConfig::from_env()
+            .expect("the S3 lane needs PROXIIMA_S3_* (see docs/contributing.md)")
+    }
 }
 
 /// Same endpoint and bucket, so the same store; every request is refused.
@@ -234,10 +231,9 @@ where
 /// objects are gone after the next drain pass, and the health answer counts
 /// a debt that keeps failing.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_server_drains_an_erase_and_counts_a_debt_that_keeps_failing() -> TestResult<()> {
-    let Some(config) = s3_config() else {
-        return Ok(());
-    };
+    let config = s3_config();
     with_database("proxiima_object_purge_accept", |database| {
         Box::pin(async move {
             let group = GroupId::new(Uuid::now_v7());
@@ -398,10 +394,9 @@ async fn counted_while_failing(
 /// The same server sweeps an upload whose TTL passed before its bytes were
 /// staged, then drains both keys the sweep owes.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_server_sweeps_an_expired_upload() -> TestResult<()> {
-    let Some(config) = s3_config() else {
-        return Ok(());
-    };
+    let config = s3_config();
     with_database("proxiima_object_purge_sweep", |database| async move {
         let group = GroupId::new(Uuid::now_v7());
         let owner = OwnerId::from(group);
@@ -451,10 +446,9 @@ async fn a_server_sweeps_an_expired_upload() -> TestResult<()> {
 /// Zero turns the feature off: the boot report says why, and owed debt
 /// stays for whichever pass the operator runs instead.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_zero_interval_turns_the_drain_off() -> TestResult<()> {
-    let Some(config) = s3_config() else {
-        return Ok(());
-    };
+    let config = s3_config();
     with_database("proxiima_object_purge_off", |database| async move {
         let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let admin = admin_pool(&database).await?;
@@ -504,10 +498,9 @@ async fn a_zero_interval_turns_the_drain_off() -> TestResult<()> {
 /// Stores do not move: a server wired to an object store refuses to start
 /// while the purge queue holds debt for another store, and says which.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_server_refuses_to_start_over_another_stores_debt() -> TestResult<()> {
-    let Some(config) = s3_config() else {
-        return Ok(());
-    };
+    let config = s3_config();
     with_database("proxiima_object_purge_foreign", |database| async move {
         let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let admin = admin_pool(&database).await?;

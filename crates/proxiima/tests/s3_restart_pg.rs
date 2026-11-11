@@ -35,11 +35,8 @@ struct EraseObservation {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn reboot_without_s3_preserves_cited_object_purge_debt() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let observed = Box::pin(reboot_fixture(false)).await?;
     eprintln!("no-S3 reboot erase observation: {observed:?}");
     let OwnerEraseOutcome::Completed {
@@ -59,11 +56,8 @@ async fn reboot_without_s3_preserves_cited_object_purge_debt() -> TestResult<()>
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn reboot_with_s3_physically_erases_cited_object_versions() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let observed = Box::pin(reboot_fixture(true)).await?;
     assert!(
         matches!(
@@ -305,11 +299,8 @@ async fn observe_failed_upload_finish(
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn upload_completion_commits_upload_row_with_corpus() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let observed = Box::pin(failed_upload_finish_fixture(false)).await?;
     eprintln!("post-commit failure observation: {observed:?}");
     assert_eq!(
@@ -327,11 +318,8 @@ async fn upload_completion_commits_upload_row_with_corpus() -> TestResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn expired_completed_upload_replays_same_fact_and_object() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let observed = Box::pin(failed_upload_finish_fixture(true)).await?;
     eprintln!("restart after expired upload observation: {observed:?}");
     assert_eq!(observed.finish_calls, 1, "failure injected before restart");
@@ -348,11 +336,8 @@ async fn expired_completed_upload_replays_same_fact_and_object() -> TestResult<(
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn upload_without_arrived_bytes_expires() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let database = unique_db_name("proxiima_upload_missing_bytes");
     create_db(&database).await?;
     let result = async {

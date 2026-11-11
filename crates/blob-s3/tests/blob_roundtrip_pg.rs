@@ -266,19 +266,9 @@ async fn transfer_via_engine(
 
 fn s3_config_for_dev() -> S3RuntimeConfig {
     S3RuntimeConfig {
-        bucket: std::env::var("PROXIIMA_S3_BUCKET")
-            .expect("S3 target required: start docker-compose.dev.yml and set PROXIIMA_S3_*"),
-        region: std::env::var("PROXIIMA_S3_REGION").expect("PROXIIMA_S3_REGION"),
-        endpoint_url: std::env::var("PROXIIMA_S3_ENDPOINT_URL").ok(),
-        plaintext_hosts: proxiima_core::PlaintextHosts::none(),
-        key_pair: proxiima_blob_s3::S3KeyPair::new(
-            std::env::var("PROXIIMA_S3_ACCESS_KEY_ID").expect("PROXIIMA_S3_ACCESS_KEY_ID"),
-            std::env::var("PROXIIMA_S3_SECRET_ACCESS_KEY").expect("PROXIIMA_S3_SECRET_ACCESS_KEY"),
-        ),
         force_path_style: true,
-        upload_ttl_seconds: 900,
-        max_blob_bytes: None,
-        store_id: None,
+        ..S3RuntimeConfig::from_env()
+            .expect("the S3 lane needs PROXIIMA_S3_* (see docs/contributing.md)")
     }
 }
 
@@ -437,17 +427,9 @@ async fn cold_purge_debt_count(pool: &sqlx::PgPool) -> i64 {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn prepare_then_complete_then_read_roundtrip() {
-    // Opt-in integration test: needs a reachable S3 target. Skip
-    // (rather than panic) when PROXIIMA_S3_* is unset so the default
-    // `cargo test --workspace` is green without standing up an object store.
-    // CI sets these (see .github/workflows/ci.yml), so the lane is not dark there.
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!(
-            "skipped: PROXIIMA_S3_* unset (set PROXIIMA_S3_BUCKET/REGION + run the s3 service to enable)"
-        );
-        return;
-    }
+    // Needs a reachable S3 target: ignored by default, run by the CI S3 lane.
 
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
@@ -520,13 +502,9 @@ async fn prepare_then_complete_then_read_roundtrip() {
 /// exclusive owner fence must queue on that exact key; this pins finish,
 /// abort, and expiry without relying on task scheduling.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)]
 async fn upload_transitions_join_the_owner_fence() -> Result<(), Box<dyn std::error::Error>> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -687,15 +665,11 @@ async fn upload_transitions_join_the_owner_fence() -> Result<(), Box<dyn std::er
 /// or staged content identity for this first-stage failure. The abort-first barrier also proves
 /// that provider I/O remains outside the database publication locks.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)]
 async fn stage_rechecks_terminal_upload_before_publishing_locator()
 -> Result<(), Box<dyn std::error::Error>> {
     use sqlx::Row as _;
-
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
 
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
@@ -849,12 +823,8 @@ async fn stage_rechecks_terminal_upload_before_publishing_locator()
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn verified_read_is_owner_exact_bounded_and_integrity_checked() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -953,12 +923,8 @@ async fn verified_read_is_owner_exact_bounded_and_integrity_checked() {
 /// conditional write with `412 PreconditionFailed`; stage adopts only a
 /// byte-identical object and otherwise fails closed, preserving the object.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn conflicting_canonical_object_is_not_overwritten() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1086,12 +1052,8 @@ async fn staged_upload(
 /// abort won and nothing was recorded, or the completion won and it is
 /// consistent.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_completion_racing_an_abort_never_reports_a_committed_write_as_failed() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1178,12 +1140,8 @@ async fn a_completion_racing_an_abort_never_reports_a_committed_write_as_failed(
 /// the upload, and compare the bytes returned by the verified-read service.
 /// External download delivery belongs to the consuming host.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn presigned_put_and_verified_read_carry_the_bytes() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1395,12 +1353,8 @@ async fn assert_delivery_needs_no_object_io(
 /// Delivery authorization admits only locators the store itself wrote. A
 /// locator row the store did not mint must answer exactly like a missing row.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn delivery_authorization_refuses_locators_the_store_did_not_write() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let mut config = s3_config_for_dev();
@@ -1528,12 +1482,8 @@ async fn delivery_authorization_refuses_locators_the_store_did_not_write() {
 /// object had to be rewritten under the destination or the citation went
 /// dark at the destination.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_transfer_moves_the_citation_without_copying_the_object() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1631,12 +1581,8 @@ async fn a_transfer_moves_the_citation_without_copying_the_object() {
 /// that worked from the key itself would have to treat the transferred
 /// object as still the source's and delete bytes the destination owns.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn erase_follows_the_transfer_rather_than_the_key() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1829,12 +1775,8 @@ fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
 /// its own authority, must be refused on A's upload and cited-object ids
 /// — and must not disturb A's rows in the attempt.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn cross_owner_ids_are_refused_under_the_other_owners_authz() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -1943,14 +1885,11 @@ async fn cross_owner_ids_are_refused_under_the_other_owners_authz() {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn owner_erase_removes_the_completed_blobs_object() {
     // Owner erasure must physically remove the owner's S3 objects: the erase
     // enqueues the key and the post-commit drain destroys it. Opt-in, needs an
     // S3 target like the roundtrip above.
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
 
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
@@ -2037,13 +1976,9 @@ async fn owner_erase_removes_the_completed_blobs_object() {
 /// recoverable noncurrent version. The purge must delete by `(key, version_id)`
 /// so no version survives an Art. 17 owner erasure.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // replay cleanup and owner-purge assertions share one fixture
 async fn versioned_bucket_purge_removes_all_object_versions() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let base = s3_config_for_dev();
@@ -2206,11 +2141,8 @@ async fn versioned_bucket_purge_removes_all_object_versions() {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn versioned_cold_delete_removes_exact_key_versions_and_preserves_prefix_collision() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
     let base = s3_config_for_dev();
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
@@ -2310,12 +2242,8 @@ fn hex32(hex: &str) -> [u8; 32] {
 /// other read in this lane collapses them; this asserts that the batch one
 /// does too, against a digest that genuinely exists under another owner.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn find_held_blobs_reports_only_this_owners_artefacts() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -2525,15 +2453,12 @@ async fn reconcile_with_bound_authority(store: &CitedBlobStore) -> CitedBlobReco
 /// deltas. A test that asserted `missing_objects == 1` would pass alone and
 /// fail under `--test-threads`.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[expect(
     clippy::too_many_lines,
     reason = "one bucket scenario distinguishes missing, orphaned, and forged locators"
 )]
 async fn reconcile_tells_a_lost_object_from_an_orphan_and_from_a_forged_locator() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -2798,12 +2723,8 @@ async fn exact_key_version_ids(config: &S3RuntimeConfig, key: &str) -> Vec<(Stri
 /// A changed expectation on a completed upload is rejected before finish and
 /// leaves the already committed corpus untouched.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn changed_expectation_on_completed_upload_does_not_mutate_corpus() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -2880,13 +2801,9 @@ async fn changed_expectation_on_completed_upload_does_not_mutate_corpus() {
 /// pending-key versions are already retired. Aborting owes both keys, so the
 /// canonical bytes the stage published are purged with it.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // four independent metadata mismatches share one abort proof
 async fn fresh_pending_expectation_mismatches_are_abortable_and_owe_canonical() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -3044,12 +2961,8 @@ async fn fresh_pending_expectation_mismatches_are_abortable_and_owe_canonical() 
 /// retry. The retry reads the row-selected canonical object and completes the
 /// same upload id exactly once.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn corrected_expectation_retry_uses_recorded_canonical_bytes() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -3133,13 +3046,9 @@ async fn corrected_expectation_retry_uses_recorded_canonical_bytes() {
 /// transfer key, and owes the canonical bytes the stage published too. The extra PUT and delete marker make a key-only delete observably
 /// insufficient on a versioned bucket.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // the versioned cleanup and entry-stage proof share one fixture
 async fn versioned_abort_purges_pending_versions_and_the_canonical_object() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let base = s3_config_for_dev();
@@ -3441,20 +3350,14 @@ async fn post_put_terminal_race(terminal_sql: &'static str, expected_error: &'st
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn post_put_abort_race_repairs_locator_and_purges_pending_versions() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     post_put_terminal_race("aborted", "upload is aborted").await;
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn post_put_expiry_race_repairs_locator_and_purges_pending_versions() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     post_put_terminal_race("expired", "upload is expired").await;
 }
 
@@ -3473,13 +3376,9 @@ async fn post_put_expiry_race_repairs_locator_and_purges_pending_versions() {
 /// its provider read and its PUT all happen strictly after the erase took
 /// its locks and strictly before the erase commits.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // two barriers and two tasks to pin one window
 async fn erase_snapshotted_before_the_canonical_put_still_owes_the_object() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let base = s3_config_for_dev();
@@ -3821,12 +3720,8 @@ async fn drop_locator_barrier_and_db(pool: sqlx::PgPool, db_name: &str) {
 /// and the provider call cannot lose it. The drain is the second half, and
 /// this test runs it — a debt nothing ever discharges is not a fix.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn erase_after_the_canonical_put_owes_the_object_to_the_purge_queue() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let body: &'static [u8] = b"missing-owner-row-canonical-bytes";
     let StageHeldAfterCanonicalPut {
         pg,
@@ -3929,12 +3824,8 @@ async fn erase_after_the_canonical_put_owes_the_object_to_the_purge_queue() {
 /// the staging owner's scope, so the refcount must be a platform question or
 /// the drain would delete bytes the other owner still names.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_transferred_row_keeps_the_canonical_object_out_of_the_purge_queue() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let body: &'static [u8] = b"transferred-row-canonical-bytes";
     let StageHeldAfterCanonicalPut {
         pool,
@@ -3997,12 +3888,8 @@ async fn a_transferred_row_keeps_the_canonical_object_out_of_the_purge_queue() {
 /// performs synchronous provider cleanup. The exact version/marker set is
 /// therefore unchanged for the lifecycle worker to reclaim.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn expired_at_entry_completion_and_abort_preserve_pending_versions() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let base = s3_config_for_dev();

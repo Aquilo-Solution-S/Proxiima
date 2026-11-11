@@ -68,11 +68,8 @@ struct Observation {
 /// terminal locator repair is paused. The canonical bytes must become durable
 /// erase debt, whether the erase precedes repair or waits for its transaction.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn terminal_locator_repair_preserves_owner_erase_debt() -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let database = unique_db_name("proxiima_terminal_repair");
     create_core_db(&database).await?;
     let result = tokio::time::timeout(Duration::from_secs(40), run_race(&database)).await;

@@ -21,12 +21,8 @@ use uuid::Uuid;
 /// contract the fork path reuses: a destination-owned blob/upload row points
 /// at the immutable source object instead of copying bytes.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn mounted_citation_survives_source_owner_erase() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();

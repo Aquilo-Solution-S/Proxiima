@@ -327,20 +327,14 @@ async fn crash_window_row_is_fully_erased(versioned: bool) {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn owner_erase_owes_the_canonical_object_of_a_crash_window_row_versioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     crash_window_row_is_fully_erased(true).await;
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn owner_erase_owes_the_canonical_object_of_a_crash_window_row_unversioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     crash_window_row_is_fully_erased(false).await;
 }
 
@@ -420,22 +414,16 @@ async fn leftover_transfer_key_is_erased(versioned: bool, scope: Scope) {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn every_erase_scope_owes_a_leftover_transfer_key_versioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     for scope in [Scope::Owner, Scope::Source, Scope::Series] {
         leftover_transfer_key_is_erased(true, scope).await;
     }
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn every_erase_scope_owes_a_leftover_transfer_key_unversioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     for scope in [Scope::Owner, Scope::Source, Scope::Series] {
         leftover_transfer_key_is_erased(false, scope).await;
     }
@@ -444,11 +432,8 @@ async fn every_erase_scope_owes_a_leftover_transfer_key_unversioned() {
 /// An erase of a completed upload whose transfer key is really gone owes it
 /// anyway, and the drain counts it as absent.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_key_that_never_existed_clears_as_absent() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     upload_one_object(
         &f.pg,
@@ -555,20 +540,14 @@ async fn abort_owes_the_canonical_object(versioned: bool) {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn an_abort_owes_the_canonical_object_versioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     abort_owes_the_canonical_object(true).await;
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn an_abort_owes_the_canonical_object_unversioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     abort_owes_the_canonical_object(false).await;
 }
 
@@ -638,20 +617,14 @@ async fn source_erase_over_an_aborted_staged_upload(versioned: bool) {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_source_erase_over_an_aborted_staged_upload_leaves_nothing_versioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     source_erase_over_an_aborted_staged_upload(true).await;
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_source_erase_over_an_aborted_staged_upload_leaves_nothing_unversioned() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     source_erase_over_an_aborted_staged_upload(false).await;
 }
 
@@ -659,11 +632,8 @@ async fn a_source_erase_over_an_aborted_staged_upload_leaves_nothing_unversioned
 /// key the row only implies: while that key's fence is held, the erase
 /// waits.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn an_erase_waits_on_the_canonical_key_a_crash_window_row_implies() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     let (upload_id, _pending_key) = prepare_and_put_upload(
         &f.pool,
@@ -730,11 +700,8 @@ async fn an_erase_waits_on_the_canonical_key_a_crash_window_row_implies() {
 /// Expiry observed at stage owes both keys too: a crash-window row that
 /// expires leaves neither its transfer bytes nor its canonical bytes.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn expiry_owes_both_keys_of_a_crash_window_row() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     for versioned in [true, false] {
         let f = fixture(versioned).await;
         let body: &'static [u8] = b"expiring-bytes";

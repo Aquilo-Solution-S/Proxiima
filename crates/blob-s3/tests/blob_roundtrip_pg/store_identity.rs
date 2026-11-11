@@ -64,11 +64,8 @@ async fn drain(
 /// the debt row both survive and the outcome names A as owed; wiring A back
 /// purges them.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_drain_wired_to_another_store_leaves_the_debt_and_the_bytes() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -126,11 +123,8 @@ async fn a_drain_wired_to_another_store_leaves_the_debt_and_the_bytes() {
 /// One key owed in two stores is two obligations: both rows coexist, and
 /// discharging one leaves the other.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_same_key_owed_in_two_stores_is_two_debts() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();

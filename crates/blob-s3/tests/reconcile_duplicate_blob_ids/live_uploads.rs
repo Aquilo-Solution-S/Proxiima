@@ -36,15 +36,13 @@ fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn reupload_clears_stale_losses_and_mounted_live_upload_checks_the_minting_key()
 -> TestResult<()> {
-    let Some(observed) = with_fixture("recovery", |database, config, client| {
+    let observed = with_fixture("recovery", |database, config, client| {
         Box::pin(observe_recovery(database, config, client))
     })
-    .await?
-    else {
-        return Ok(());
-    };
+    .await?;
     assert_clean(&observed.repaired);
     assert_clean(&observed.mounted);
     assert_eq!(observed.mounted_bytes, SHARED_BODY);
@@ -211,15 +209,13 @@ struct PageObserved {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn distinct_live_uploads_cross_pages_and_missing_samples_follow_completion_order()
 -> TestResult<()> {
-    let Some(observed) = with_fixture("live_pages", |database, config, _client| {
+    let observed = with_fixture("live_pages", |database, config, _client| {
         Box::pin(observe_live_pages(database, config))
     })
-    .await?
-    else {
-        return Ok(());
-    };
+    .await?;
     let losses = u64::try_from(DISTINCT_LOSSES)?;
     let Reports { global, owner } = &observed.reports;
     assert_eq!(
@@ -367,15 +363,13 @@ struct OrderingObserved {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn reads_and_reconcile_share_null_last_timestamp_and_upload_id_tie_resolution()
 -> TestResult<()> {
-    let Some(observed) = with_fixture("live_order", |database, config, client| {
+    let observed = with_fixture("live_order", |database, config, client| {
         Box::pin(observe_resolution_order(database, config, client))
     })
-    .await?
-    else {
-        return Ok(());
-    };
+    .await?;
     assert_clean(&observed.tied);
     assert_clean(&observed.newer_time);
     for (read, filename) in [

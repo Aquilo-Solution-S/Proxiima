@@ -49,11 +49,8 @@ async fn abandoned_prepare(f: &Fixture, name: &str) -> (String, String) {
 /// owes both keys, and leaves no version of its transfer bytes or of a
 /// canonical object planted under its id.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_sweep_expires_an_untouched_prepare_and_owes_both_keys() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     for versioned in [true, false] {
         let f = fixture(versioned).await;
         let authority = bound_authority(&f.store);
@@ -90,11 +87,8 @@ async fn the_sweep_expires_an_untouched_prepare_and_owes_both_keys() {
 /// A staged upload past its TTL is not expirable: only a finish or an abort
 /// decides it.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_sweep_leaves_a_staged_upload_alone() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     let authority = bound_authority(&f.store);
     let (upload_id, _) = abandoned_prepare(&f, "staged.pdf").await;
@@ -132,11 +126,8 @@ async fn the_sweep_leaves_a_staged_upload_alone() {
 
 /// The batch limit bounds one call, and `remaining` says what is left.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_sweep_is_bounded_and_reports_what_remains() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     let authority = bound_authority(&f.store);
     for name in ["one.pdf", "two.pdf", "three.pdf"] {
@@ -167,11 +158,8 @@ async fn the_sweep_is_bounded_and_reports_what_remains() {
 /// A row a concurrent stage or abort holds is skipped, not waited on, and
 /// stays counted until a later sweep decides it.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_sweep_skips_a_row_someone_holds() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     let authority = bound_authority(&f.store);
     let (upload_id, pending_key) = abandoned_prepare(&f, "held.pdf").await;
@@ -204,11 +192,8 @@ async fn the_sweep_skips_a_row_someone_holds() {
 /// The sweep reaches every owner, so it needs the authority that booted the
 /// store.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn the_sweep_requires_the_boot_authority() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture(false).await;
     let (_, unbound) =
         Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();

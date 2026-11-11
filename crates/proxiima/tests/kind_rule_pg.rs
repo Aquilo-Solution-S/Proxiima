@@ -4,8 +4,8 @@
 //! Every preset plus `new(G,A)` and `new(A,A)`, both directions, all four
 //! kinds, on every read surface and write verb, served by the runtime role
 //! under owner RLS, and embedding backfill. Then direct SQL under a
-//! Fact-only scope on every owner-keyed table. Upload and forget need S3 and
-//! run when `PROXIIMA_S3_*` is set.
+//! Fact-only scope on every owner-keyed table. Upload and forget need S3: the
+//! same run on a host with an object store, ignored without the S3 lane.
 
 #[path = "fixtures/split_core_db.rs"]
 mod split_core_db;
@@ -888,20 +888,31 @@ async fn boot(
 
 #[tokio::test]
 async fn every_role_reads_and_writes_exactly_up_to_its_limit() -> TestResult {
-    let split_db = clone_split_core_db("proxiima_kind_rule").await?;
+    every_role_acts_exactly_up_to_its_limit("proxiima_kind_rule", None).await
+}
+
+/// The same run on a host with an object store, which adds upload and forget.
+#[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
+async fn every_role_uploads_and_forgets_exactly_up_to_its_limit() -> TestResult {
+    let s3 = S3RuntimeConfig {
+        force_path_style: true,
+        ..S3RuntimeConfig::from_env()?
+    };
+    every_role_acts_exactly_up_to_its_limit("proxiima_kind_rule_s3", Some(s3)).await
+}
+
+async fn every_role_acts_exactly_up_to_its_limit(
+    database_prefix: &str,
+    s3: Option<S3RuntimeConfig>,
+) -> TestResult {
+    let split_db = clone_split_core_db(database_prefix).await?;
     let database = split_db.name().to_owned();
     let result: TestResult = async {
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let router = Arc::new(TestEmbeddingRouter::default());
-        let s3 = S3RuntimeConfig::present_in_env()
-            .then(|| {
-                S3RuntimeConfig::from_env().map(|config| S3RuntimeConfig {
-                    force_path_style: true,
-                    ..config
-                })
-            })
-            .transpose()?;
-        let built = boot(&database, group, router.clone(), s3.clone()).await?;
+        let with_s3 = s3.is_some();
+        let built = boot(&database, group, router.clone(), s3).await?;
         let tools = built.host().core_mcp_tools();
         let seeded = seed(&tools, group).await?;
         let admin = PgPool::connect(&db_url(&database)).await?;
@@ -914,10 +925,8 @@ async fn every_role_reads_and_writes_exactly_up_to_its_limit() -> TestResult {
             assert_reads(&built, &tools, group, name, role, &seeded).await?;
             assert_writes(&tools, group, name, role, &seeded).await?;
             assert_upload(&built, &admin, group, name, role).await;
-            if s3.is_some() {
+            if with_s3 {
                 assert_s3_writes(&built, &tools, group, name, role).await?;
-            } else {
-                eprintln!("{name}: upload and forget skipped, PROXIIMA_S3_* unset");
             }
         }
 

@@ -37,28 +37,22 @@ struct Observed {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn reconciliation_retains_every_completed_claim_across_a_page() -> TestResult<()> {
-    let Some(observed) = with_fixture("duplicates", |database, config, client| {
+    let observed = with_fixture("duplicates", |database, config, client| {
         Box::pin(observe_reports(database, config, client))
     })
-    .await?
-    else {
-        return Ok(());
-    };
+    .await?;
     assert_complete_reports(&observed)
 }
 
 type ObservationFuture<'a, T> = Pin<Box<dyn Future<Output = TestResult<T>> + 'a>>;
 
-async fn with_fixture<T, F>(label: &str, observe: F) -> TestResult<Option<T>>
+async fn with_fixture<T, F>(label: &str, observe: F) -> TestResult<T>
 where
     T: std::fmt::Debug,
     F: for<'a> FnOnce(&'a str, &'a S3RuntimeConfig, &'a Client) -> ObservationFuture<'a, T>,
 {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(None);
-    }
     let config = S3RuntimeConfig {
         bucket: format!("pg-reconcile-{}", Uuid::now_v7().simple()),
         force_path_style: true,
@@ -108,7 +102,7 @@ where
     eprintln!("{label} cleanup: bucket={bucket_cleanup:?} database={database_cleanup:?}");
     bucket_cleanup?;
     database_cleanup?;
-    result.map(Some)
+    result
 }
 
 fn assert_complete_reports(observed: &Observed) -> TestResult<()> {

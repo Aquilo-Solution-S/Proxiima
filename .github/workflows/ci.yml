@@ -282,9 +282,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-      # S3-compatible object store for the cited-blob lane. Without it every
-      # test in crates/blob-s3 returns early on `PROXIIMA_S3_*` being unset and
-      # nextest reports the lane PASSED having executed nothing — including the
+      # S3-compatible object store for the cited-blob lane. Every test that
+      # needs it is `#[ignore]`d and panics when `PROXIIMA_S3_*` is unset, so
+      # the test steps below run ignored tests too — including the
       # versioned-bucket `purge_owner_objects` erase, which is a compliance
       # guarantee. RustFS rather than MinIO: Apache-2.0, so it carries none of
       # MinIO's AGPL licensing constraints. Pinned by digest like every other
@@ -302,8 +302,8 @@ jobs:
       # The catalog, OIDC and multi-owner e2e suites create their own
       # pg-testkit databases, so all-feature and shipped-default hosts can run
       # in the same job.
-      # Cited-blob lane. `S3RuntimeConfig::present_in_env()` gates those tests
-      # on these being set, so they run here rather than silently skipping.
+      # Cited-blob lane. The `#[ignore]`d S3 tests read these through
+      # `S3RuntimeConfig::from_env()` and fail without them.
       PROXIIMA_S3_BUCKET: proxiima-cited-blobs
       PROXIIMA_S3_REGION: us-east-1
       PROXIIMA_S3_ENDPOINT_URL: http://localhost:9000
@@ -372,9 +372,9 @@ jobs:
       - name: build
         run: cargo build --workspace --all-targets --all-features --locked
       - name: test
-        run: cargo nextest run --workspace --all-targets --all-features --locked
+        run: cargo nextest run --workspace --all-targets --all-features --locked --run-ignored all
       - name: test shipped host defaults
-        run: cargo nextest run -p proxiima-mcp --all-targets --locked
+        run: cargo nextest run -p proxiima-mcp --all-targets --locked --run-ignored all
 
   # The storage suites whose correctness depends on what a connection carries
   # between transactions (the export/erase fence, the maintenance lease, the

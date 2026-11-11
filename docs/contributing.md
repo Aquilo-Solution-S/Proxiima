@@ -96,7 +96,8 @@ proceed directly.
 ## Local verification
 
 Use the smallest relevant check during iteration, then the complete gates
-before pushing. This is the one list; CI runs the same commands.
+before pushing. This is the one list; CI runs the same commands, and its test
+job adds `--run-ignored all` for the S3 lane described below.
 
 ```sh
 cargo fmt --all -- --check
@@ -154,15 +155,17 @@ job in `.github/workflows/ci.yml`) and run the job's nextest filter. Without
 the variable, `pgbouncer_pg` returns early and the other suites connect
 direct.
 
-The cited-blob tests return early and pass when the `PROXIIMA_S3_*` variables
-are unset. A complete run needs an S3-compatible store with a versioned
-bucket and the five variables CI sets in `.github/workflows/ci.yml`. CI
+The cited-blob tests are `#[ignore]`d, so a run without the `PROXIIMA_S3_*`
+variables reports them as ignored, not passed. A complete run needs an
+S3-compatible store with a versioned bucket, the five variables CI sets in
+`.github/workflows/ci.yml`, and `--run-ignored all` on the nextest command;
+a missing variable then fails the test naming it. CI
 serves bucket `proxiima-cited-blobs` at `http://localhost:9000`. Locally, the
 dev compose file serves `http://127.0.0.1:9100` (`PROXIIMA_DEV_S3_PORT`
 overrides the port) with keys `proxiima` / `proxiima-dev`, and
 `docker compose -f docker-compose.dev.yml --profile init up s3-init` creates
 its versioned bucket `proxiima-dev`; region `us-east-1` works for both. Report
-a run without the variables as skipping that lane. Do not hide a failing
+a run without `--run-ignored all` as not running that lane. Do not hide a failing
 required check. Fix it, record a precise `.local` ledger entry with command
 and output, or escalate the blocker.
 

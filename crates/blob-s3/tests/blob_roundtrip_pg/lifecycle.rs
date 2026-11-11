@@ -82,11 +82,8 @@ pub(super) fn host_ctx(owner: OwnerId) -> AuthzContext {
 /// #483 item 1: a Fact that cites an upload aborted after staging is refused
 /// in its own transaction; nothing is written and the row stays aborted.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_fact_citing_an_aborted_upload_is_a_conflict() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -126,11 +123,8 @@ async fn a_fact_citing_an_aborted_upload_is_a_conflict() {
 
 /// An abort after the Fact committed is a no-op that reports `aborted: false`.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn abort_after_completion_reports_not_aborted() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -160,11 +154,8 @@ async fn abort_after_completion_reports_not_aborted() {
 
 /// An expired, never-staged upload cannot be finished either.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn finish_after_expiry_is_a_conflict() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -201,11 +192,8 @@ async fn finish_after_expiry_is_a_conflict() {
 
 /// A staged upload is not expirable: past its TTL it still finishes.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_staged_upload_past_its_ttl_still_finishes() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -245,11 +233,8 @@ async fn a_staged_upload_past_its_ttl_still_finishes() {
 /// upload holds. A cited-object row with no upload behind it is not held, and
 /// the answer appears when the upload completes.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn find_held_blobs_answers_only_completed_uploads() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();
@@ -306,11 +291,8 @@ async fn find_held_blobs_answers_only_completed_uploads() {
 /// #483 item 3: the declared length is signed into the presigned PUT, so a
 /// body of any other length is refused by the store and never lands.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn a_put_of_more_bytes_than_declared_does_not_land() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();

@@ -9,16 +9,12 @@ use proxiima_core::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[expect(
     clippy::too_many_lines,
     reason = "one publication lifecycle verifies exact capture across a later upload and revocation"
 )]
 async fn goal_publication_reads_only_the_exact_cited_upload_route() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset (run the s3 service to enable)");
-        return;
-    }
-
     let (pg, db_name) = fresh_storage().await;
     let pool = pg.pool_for_tests().clone();
     let config = s3_config_for_dev();

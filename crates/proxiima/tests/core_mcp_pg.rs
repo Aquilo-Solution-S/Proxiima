@@ -2886,11 +2886,8 @@ async fn facade_authorized_read_surfaces_group_transferred_fact_to_group_member(
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn core_forget_marks_a_remembered_fact() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let split_db = clone_split_core_db("proxiima_core_forget")
         .await
         .expect("PG required for tests");

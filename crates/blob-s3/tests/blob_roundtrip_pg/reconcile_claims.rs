@@ -27,12 +27,9 @@ async fn reconcile(store: &CitedBlobStore) -> CitedBlobReconcileOutcome {
 /// row's leftover transfer key is stale, a key with purge debt is owed, and
 /// a key with neither row nor debt is the one orphan.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // one bucket holds every class so the counts are exact
 async fn reconcile_claims_every_key_a_row_implies() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture_in_own_bucket().await;
 
     // A staged pending row: the canonical object is its only copy.
@@ -149,12 +146,9 @@ async fn reconcile_claims_every_key_a_row_implies() {
 /// nothing, so reconcile owes the object, and the drain removes it. A
 /// completed upload's object keeps its claim.
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // both ended states share one bucket so the counts are exact
 async fn an_ended_uploads_late_canonical_object_is_owed_and_drained() {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return;
-    }
     let f = fixture_in_own_bucket().await;
     let authority = bound_authority(&f.store);
 

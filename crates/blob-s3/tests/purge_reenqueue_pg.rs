@@ -59,20 +59,18 @@ struct Observation {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn old_purge_completion_preserves_a_reenqueued_object() -> TestResult<()> {
     assert_reenqueue_survives(false).await
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 async fn old_purge_completion_preserves_reenqueue_with_unchanged_timestamp() -> TestResult<()> {
     assert_reenqueue_survives(true).await
 }
 
 async fn assert_reenqueue_survives(preserve_timestamp: bool) -> TestResult<()> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let database = unique_db_name("proxiima_reenqueue_purge");
     create_core_db(&database).await?;
     let pg = PgStorage::connect_for_tests(db_url(&database)).await?;

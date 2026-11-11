@@ -72,13 +72,10 @@ fn mint(signing: &RsaKeyPair, sub: &str) -> String {
 }
 
 #[tokio::test]
+#[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
 #[allow(clippy::too_many_lines)] // linear e2e: boot + 4 assertion phases read best in one flow
 async fn oidc_e2e_discovery_public_and_core_tools_behind_bearer()
 -> Result<(), Box<dyn std::error::Error>> {
-    if !S3RuntimeConfig::present_in_env() {
-        eprintln!("skipped: PROXIIMA_S3_* unset");
-        return Ok(());
-    }
     let s3 = S3RuntimeConfig {
         force_path_style: true,
         ..S3RuntimeConfig::from_env()?
