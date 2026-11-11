@@ -44,9 +44,7 @@ async fn fresh_database_migrates_directly_to_v2_before_serving() {
     assert_eq!(completion_count, 1);
 
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-        .bind(owner.into_inner())
-        .execute(&admin)
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner.into_inner()))
         .await
         .expect("test owner");
     let pg_storage = super::storage(

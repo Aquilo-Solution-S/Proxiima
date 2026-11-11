@@ -9,6 +9,7 @@ use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{AuthPath, AuthzContext, Engine, MemoryId, OwnerId, SpiiceRegistry, UserId};
 use proxiima_mcp_server::{McpAuthContext, McpToolHost};
 use proxiima_storage_pg::PgStorage;
+use proxiima_storage_pg::test_fixtures::{TestGoal, TestMemory};
 
 fn owner_authz(owner: OwnerId) -> AuthzContext {
     authenticated_context(
@@ -48,7 +49,7 @@ async fn graph_and_tool_catalog_share_behavior_visibility() -> Result<(), Box<dy
     let db_name = create_core_db().await?;
     let pg = storage(&db_url(&db_name)).await?;
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    insert_memory(&pg, &owner, "catalog owner", &[]).await?;
+    TestMemory::fact().create(&pg, owner).await?;
     for hidden in [false, true] {
         let mut registry = SpiiceRegistry::new();
         if hidden {
@@ -92,9 +93,6 @@ async fn core_read_resources_return_bare_uuids_and_author() -> Result<(), Box<dy
     let pg = storage(&database_url).await?;
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    let source = insert_memory(&pg, &owner, "source lineage memory", &[]).await?;
-    let derived = insert_memory(&pg, &owner, "derived lineage memory", &[source]).await?;
-
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
     let engine = Arc::new(
         Engine::new(registry.clone()).with_storage_ports(Arc::new(pg.clone()).storage_ports()),
@@ -107,6 +105,8 @@ async fn core_read_resources_return_bare_uuids_and_author() -> Result<(), Box<dy
         owner,
         authz: owner_authz(owner),
     };
+    let source = insert_memory(&server, &pg, &auth, "source lineage memory", &[]).await?;
+    let derived = insert_memory(&server, &pg, &auth, "derived lineage memory", &[source]).await?;
 
     let fetched = server
         .read_resource(
@@ -189,7 +189,6 @@ async fn search_results_expose_structured_memory_id() -> Result<(), Box<dyn std:
     let pg = storage(&database_url).await?;
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    let memory_id = insert_memory(&pg, &owner, "structured search identity", &[]).await?;
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
     let engine = Arc::new(
         Engine::new(registry.clone()).with_storage_ports(Arc::new(pg.clone()).storage_ports()),
@@ -199,6 +198,7 @@ async fn search_results_expose_structured_memory_id() -> Result<(), Box<dyn std:
         owner,
         authz: owner_authz(owner),
     };
+    let memory_id = insert_memory(&server, &pg, &auth, "structured search identity", &[]).await?;
 
     let output = server
         .call_tool(
@@ -492,9 +492,6 @@ async fn edge_resources_read_back_interpretation_references()
     let pg = storage(&database_url).await?;
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    let hub = insert_memory(&pg, &owner, "hub abstraction", &[]).await?;
-    let spoke = insert_memory(&pg, &owner, "spoke abstraction", &[]).await?;
-
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
     let engine = Arc::new(
         Engine::new(registry.clone()).with_storage_ports(Arc::new(pg.clone()).storage_ports()),
@@ -504,6 +501,8 @@ async fn edge_resources_read_back_interpretation_references()
         owner,
         authz: owner_authz(owner),
     };
+    let hub = insert_memory(&server, &pg, &auth, "hub abstraction", &[]).await?;
+    let spoke = insert_memory(&server, &pg, &auth, "spoke abstraction", &[]).await?;
 
     let interpreted = server
         .call_tool(
@@ -689,36 +688,9 @@ async fn insert_active_goal(
     pg: &PgStorage,
     owner: &OwnerId,
 ) -> Result<(uuid::Uuid, uuid::Uuid), Box<dyn std::error::Error>> {
-    let handle = proxiima_core::new_memory_uuid(0);
-    let t = proxiima_core::new_memory_uuid(0);
-    let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pg.pool_for_tests())
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-         VALUES ($1, 'core/simple-text-v1', $2, $3)",
-    )
-    .bind(handle)
-    .bind(owner_id)
-    .bind(t)
-    .execute(pg.pool_for_tests())
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal (handle, t, owner_id, title, state, request_id, \"by\", via)
-         VALUES ($1, $2, $3, 'goal', 'Active', $4, $3, NULL)",
-    )
-    .bind(handle)
-    .bind(t)
-    .bind(owner_id)
-    .bind(format!("read-e2e:{t}"))
-    .execute(pg.pool_for_tests())
-    .await?;
-    Ok((handle, t))
+    let request_id = format!("read-e2e:{}", uuid::Uuid::now_v7());
+    let written = TestGoal::new(&request_id).create(pg, *owner).await?;
+    Ok((written.handle, written.t))
 }
 
 /// A `UUIDv7` minted at an exact millisecond.
@@ -741,6 +713,8 @@ async fn insert_goal_version(
     text: Option<&str>,
 ) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
     let owner_id = owner.into_inner();
+    // Raw INSERT: needs a builder for a Goal version with a named state, text
+    // and `t` (`TestGoal` writes an Active goal, and `write_goal` mints `t`).
     let handle = if let Some(handle) = handle {
         sqlx::query("UPDATE proxiima_core.goal_head SET t = $2 WHERE handle = $1")
             .bind(handle)
@@ -776,134 +750,45 @@ async fn insert_goal_version(
     Ok(handle)
 }
 
-/// `sidecars` is the tables this admission's caller then writes a row into.
-/// It is the stamp forget, owner erase and owner export reach a sidecar row
-/// through, and since the declaration trigger the database refuses an
-/// unstamped one outright.
-async fn insert_memory_row(
-    conn: &mut sqlx::PgConnection,
-    owner: &OwnerId,
-    kind: &str,
-    schema_id: &str,
-    origins: &[uuid::Uuid],
-    sidecars: &[&str],
-) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
-    let handle = proxiima_core::new_memory_uuid(0);
-    let t = proxiima_core::new_memory_uuid(0);
-    let mut origins = origins.to_vec();
-    if kind != "fact" && origins.is_empty() {
-        let fact_t = Box::pin(insert_memory_row(
-            &mut *conn,
-            owner,
-            "fact",
-            "core/test-fact-v1",
-            &[],
-            &[],
-        ))
-        .await?;
-        if kind == "perspective" {
-            let abs_t = Box::pin(insert_memory_row(
-                &mut *conn,
-                owner,
-                "abstraction",
-                "core/test-abs-v1",
-                &[fact_t],
-                &[],
-            ))
-            .await?;
-            origins.push(abs_t);
-        } else {
-            origins.push(fact_t);
-        }
-    }
-    let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-         VALUES ($1, $2::proxiima_core.memory_kind, $3, $4, $5)",
-    )
-    .bind(handle)
-    .bind(kind)
-    .bind(schema_id)
-    .bind(owner_id)
-    .bind(t)
-    .execute(&mut *conn)
-    .await?;
-    let content_id: Option<uuid::Uuid> = if kind == "fact" {
-        None
-    } else {
-        let mut hash = [0_u8; 32];
-        hash[..16].copy_from_slice(t.as_bytes());
-        hash[16..].copy_from_slice(t.as_bytes());
-        Some(
-            sqlx::query_scalar(
-                "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-                 VALUES ($1, $2, $3)
-                 RETURNING content_id",
-            )
-            .bind(owner_id)
-            .bind(schema_id)
-            .bind(hash.as_slice())
-            .fetch_one(&mut *conn)
-            .await?,
-        )
-    };
-    let sidecars: Vec<String> = sidecars.iter().map(|table| (*table).to_owned()).collect();
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory
-             (handle, t, kind, owner_id, schema_id, origins, content_id, sidecar_tables, occurred_at, \"by\", via)
-         VALUES ($1, $2, $3::proxiima_core.memory_kind, $4, $5, $6, $7, $8, CASE WHEN $3::proxiima_core.memory_kind = 'fact' THEN proxiima_core.memory_created_at($2) END, $4, NULL)",
-    )
-    .bind(handle)
-    .bind(t)
-    .bind(kind)
-    .bind(owner_id)
-    .bind(schema_id)
-    .bind(origins)
-    .bind(content_id)
-    .bind(&sidecars)
-    .execute(&mut *conn)
-    .await?;
-    Ok(t)
-}
-
+/// An Abstraction written through `core_derive`: an Abstraction with no
+/// origins is derived from a fresh Fact. Returns its memory id.
 async fn insert_memory(
+    server: &McpToolHost,
     pg: &PgStorage,
-    owner: &OwnerId,
+    auth: &McpAuthContext,
     text: &str,
     origins: &[uuid::Uuid],
 ) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
-    // The stamp and the row it promises land in one transaction: see above.
-    let mut stamped: sqlx::Transaction<'static, sqlx::Postgres> =
-        sqlx::Acquire::begin(pg.pool_for_tests()).await?;
-    let t = insert_memory_row(
-        &mut stamped,
-        owner,
-        "abstraction",
-        "core/agent-derivation-v1",
-        origins,
-        &["proxiima_core.agent_derivation_v1"],
-    )
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.agent_derivation_v1
-            (t, title, body, tags, source_memory_ids,
-             model_id, client_name, client_version)
-         VALUES ($1, $2, $2, ARRAY[]::text[], ARRAY[]::uuid[],
-                 'test-model', 'test', 'test-v1')",
-    )
-    .bind(t)
-    .bind(text)
-    .execute(&mut *stamped)
-    .await?;
-    stamped.commit().await?;
-    Ok(t)
+    let sources = if origins.is_empty() {
+        vec![
+            TestMemory::fact()
+                .create(pg, auth.owner)
+                .await?
+                .memory_id
+                .into_inner(),
+        ]
+    } else {
+        origins.to_vec()
+    };
+    let derived = server
+        .call_tool(
+            "core_derive",
+            serde_json::json!({
+                "kind": "Abstraction",
+                "title": text,
+                "body": text,
+                "tags": [],
+                "source_handles": sources.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "model_id": "test-model",
+            }),
+            author_ctx(),
+            Some(auth.clone()),
+        )
+        .await?;
+    Ok(derived["handle"]
+        .as_str()
+        .ok_or("derived handle")?
+        .parse()?)
 }
 
 fn author_ctx() -> McpAuthorContext {

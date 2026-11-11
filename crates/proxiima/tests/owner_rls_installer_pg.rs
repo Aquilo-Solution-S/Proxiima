@@ -504,6 +504,7 @@ async fn sync_gives_a_follows_table_the_combined_rule_and_an_owner_index() {
     )
     .await
     .expect("install the spiice's pre-sync memory-owner policy");
+    // Raw INSERT on purpose: another binary's mark, which this host's sync must leave alone.
     sqlx::query(
         "INSERT INTO proxiima_core.owner_follows (table_name) VALUES ('proxiima_other.thing_v1')",
     )
@@ -865,6 +866,7 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
         sqlx::query(
             "DELETE FROM proxiima_core.owner_follows WHERE table_name = 'proxiima_example.stamp_v1'",
         ),
+        // Raw INSERT on purpose: drifts the deployed Follows state, which the boot must refuse.
         sqlx::query("INSERT INTO proxiima_core.owner_follows VALUES ('proxiima_example.extra_v1')"),
         sqlx::query("DROP INDEX proxiima_example.stamp_v1_owner_follows_idx"),
     ] {

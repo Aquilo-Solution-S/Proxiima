@@ -8,7 +8,8 @@ mod example_engine;
 
 use example_engine::ExampleEngine;
 use proxiima_core::{
-    AuthPath, AuthzContext, ErrorCode, KeepDays, OwnerId, Retention, Role, SchemaId, UserId,
+    AuthPath, AuthzContext, ErrorCode, GroupId, KeepDays, OwnerId, Retention, Role, SchemaId,
+    UserId,
 };
 use uuid::Uuid;
 
@@ -36,18 +37,6 @@ fn context(user: UserId, roles: &[(OwnerId, Role)]) -> AuthzContext {
         roles.iter().copied(),
         AuthPath::HostBearer,
     ))
-}
-
-async fn register(h: &ExampleEngine, owner: OwnerId, kind: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, $2::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-    )
-    .bind(owner.into_inner())
-    .bind(kind)
-    .execute(&h.pool)
-    .await?;
-    Ok(())
 }
 
 fn row(owner: OwnerId, schema_id: &str, keep: i64) -> Retention {
@@ -141,7 +130,8 @@ async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
     let h = ExampleEngine::new("proxiima_retention", |_| {}).await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let group = OwnerId::new(Uuid::now_v7());
-        register(&h, group, "group").await?;
+        proxiima_storage_pg::test_fixtures::create_group(&h.pool, GroupId::new(group.into_inner()))
+            .await?;
         let (admin, admin_authz) = person(&[(group, Role::admin())]);
         let (editor, editor_authz) = person(&[(group, Role::editor())]);
         let (viewer, viewer_authz) = person(&[(group, Role::viewer())]);

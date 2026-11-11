@@ -110,6 +110,7 @@ async fn reconcile_claims_every_key_a_row_implies() {
     let orphan_key = format!("objects/{}", Uuid::now_v7());
     put_object_via_sdk(&f.config, &owed_key, b"owed").await;
     put_object_via_sdk(&f.config, &orphan_key, b"orphan").await;
+    // Raw INSERT: needs a builder for cold_purge_pending (the stage enqueues a debt with no owner).
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
          VALUES ($1, NULL, $2)",

@@ -435,6 +435,7 @@ async fn fixture(
     example_engine::initialize_store_number(&db).await?;
     let (registry, sidecars) = registries()?;
     let admin = example_engine::fixture_pool(&db.admin_url(), 2).await?;
+    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     sqlx::raw_sql(
         "CREATE SCHEMA automatic_key;
          CREATE TABLE automatic_key.text_v1 (
@@ -522,10 +523,7 @@ async fn transfer_and_reuse<P: FactPayload + Clone>(
     let source = OwnerId::from(author);
     let destination_group = GroupId::new(Uuid::now_v7());
     let destination = OwnerId::from(destination_group);
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
-        .bind(destination.into_inner())
-        .execute(&fixture.pool)
-        .await?;
+    proxiima_storage_pg::test_fixtures::create_group(&fixture.pool, destination_group).await?;
     let both = authz(author, &[destination_group]);
     let source_only = authz(author, &[]);
     let engine = &fixture.engine;

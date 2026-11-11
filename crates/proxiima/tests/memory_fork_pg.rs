@@ -54,6 +54,8 @@ async fn seed_fork_blob(
     owner: OwnerId,
     hash: &[u8],
 ) -> Result<(Uuid, Uuid), sqlx::Error> {
+    // Raw INSERT: no write path for blob_uploads reachable here (no object store); the
+    // blob row it holds goes with it.
     let blob_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/uploaded-blob-v1', $2) RETURNING blob_id",
@@ -62,6 +64,7 @@ async fn seed_fork_blob(
     .bind(hash)
     .fetch_one(pool)
     .await?;
+    // Raw INSERT: no write path for blob_uploads reachable here (no object store).
     let upload_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime,

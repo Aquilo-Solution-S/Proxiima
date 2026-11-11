@@ -96,9 +96,7 @@ async fn setup() -> (String, PgPool, String, String, OwnerId, String, String) {
     migration.clone_pool_for_backend().close().await;
     migrated_app::migrate_app::<ExampleApp>(&platform_url).await;
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-        .bind(owner.into_inner())
-        .execute(&admin)
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner.into_inner()))
         .await
         .expect("fixture owner");
     (
@@ -327,14 +325,9 @@ async fn fresh_split_role_boot_serves_after_explicit_core_and_example_migration(
         spiice_tables, 5,
         "notebooks, settings, stamp, and the two memory sidecars"
     );
-    exec(
-        &admin,
-        format!(
-            "INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ('{}', 'personal')",
-            owner.into_inner()
-        ),
-    )
-    .await;
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner.into_inner()))
+        .await
+        .expect("fixture owner");
     let second = expect_described(
         "fresh second boot",
         boot(runtime_url, Some(platform_url), owner).await,

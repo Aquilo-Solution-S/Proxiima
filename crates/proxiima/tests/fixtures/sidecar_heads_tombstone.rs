@@ -193,6 +193,7 @@ pub async fn assert_tombstone_head() -> TestResult {
         example_engine::fixture_pool(&db.admin_url(), 2).await,
     )
     .await?;
+    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     sqlx::raw_sql(
         "CREATE SCHEMA heads_fixture;
          CREATE TABLE heads_fixture.observation_v1 (

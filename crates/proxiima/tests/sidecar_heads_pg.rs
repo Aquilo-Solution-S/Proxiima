@@ -163,10 +163,11 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
     let personal = owner();
     let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
     let hidden = owner();
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
-        .bind(group.into_inner())
-        .execute(&fixture.pool)
-        .await?;
+    proxiima_storage_pg::test_fixtures::create_group(
+        &fixture.pool,
+        GroupId::new(group.into_inner()),
+    )
+    .await?;
     let personal_book = fixture.notebook(&personal).await;
     let group_book = fixture.notebook(&group).await;
     let hidden_book = fixture.notebook(&hidden).await;

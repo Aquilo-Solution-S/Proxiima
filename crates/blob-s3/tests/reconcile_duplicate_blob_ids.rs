@@ -303,6 +303,7 @@ async fn amplify_rows(pool: &sqlx::PgPool, source: Uuid, ids: &[Uuid]) -> TestRe
     // Cardinality fixture only: preserve owner/blob FKs, completed status,
     // staged hashes/length and canonical upload-derived identity. The same
     // bytes are written to every additional object's key in the real bucket.
+    // Raw INSERT on purpose: bulk volume, one cloned upload per extra id.
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
             (upload_id, owner_id, bucket, object_store, object_key, filename, mime,

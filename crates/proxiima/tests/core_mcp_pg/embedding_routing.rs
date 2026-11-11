@@ -37,12 +37,10 @@ impl HeldWorker {
         Fut: std::future::Future<Output = Result<proxiima::BuiltProxiima, proxiima::ProxiimaError>>,
     {
         let admin = sqlx::PgPool::connect(&db_url(db_name)).await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal'::proxiima_core.owner_kind)",
+        proxiima_storage_pg::test_fixtures::create_user(
+            &admin,
+            proxiima_core::UserId::new(owner.into_inner()),
         )
-        .bind(owner.into_inner())
-        .execute(&admin)
         .await?;
         admin.close().await;
         let held = Arc::new(Self {

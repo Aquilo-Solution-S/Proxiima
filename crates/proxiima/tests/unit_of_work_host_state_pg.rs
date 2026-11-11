@@ -1137,7 +1137,11 @@ async fn host_state_and_whole_owner_erase_wait_on_the_same_owner_fence_both_ways
     );
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        register_group(&admin_pool(&db_name).await?, owner.as_group()).await?;
+        proxiima_storage_pg::test_fixtures::create_group(
+            &admin_pool(&db_name).await?,
+            owner.as_group(),
+        )
+        .await?;
         let participant = Arc::new(HostFixtureParticipant::default());
         let built = boot_fixture(&url, &platform_url, owner, Some(participant.clone())).await?;
         let engine = built.host().engine();
@@ -1648,17 +1652,4 @@ mod dispatcher {
         .await;
         result.expect("unregistered command refusal");
     }
-}
-
-/// Register `group` as a Group, the way a host creates one before writing
-/// under it: the group erase path admits only a registered Group.
-async fn register_group(pool: &sqlx::PgPool, group: GroupId) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(group.into_inner())
-    .execute(pool)
-    .await
-    .map(drop)
 }

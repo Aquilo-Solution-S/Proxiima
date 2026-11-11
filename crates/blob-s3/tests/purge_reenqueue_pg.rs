@@ -248,6 +248,7 @@ async fn enqueue_modelled_producer(
     // Match the production missing-owner stage enqueue under its key fence.
     // Explicit SQL is the producer model, not a call to the stage API. The
     // optional preserved timestamp is an adversarial test-only control.
+    // Raw INSERT on purpose: the debt carries a timestamp the stage never writes.
     let enqueued_at = sqlx::query_scalar(
         "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
          VALUES ($1, NULL, $2)

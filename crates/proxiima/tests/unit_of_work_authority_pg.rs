@@ -173,6 +173,7 @@ impl HostStateHandler<AuthorityCommand> for AuthorityHandler {
                     "42501",
                 )
                 .await?;
+                // Raw INSERT on purpose: the runtime role must be refused a membership write.
                 refused_sql(tx,
                     sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation)
                      VALUES ($1, current_setting('app.subject')::uuid, 'admin')"),

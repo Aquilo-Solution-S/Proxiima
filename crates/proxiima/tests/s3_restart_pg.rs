@@ -82,7 +82,8 @@ async fn fresh_database_without_s3_still_erases_database_only_facts() -> TestRes
         let group = GroupId::new(Uuid::now_v7());
         let owner = OwnerId::from(group);
         let boot = boot(&database, owner, None).await?;
-        register_group(&admin_pool(&database).await?, group).await?;
+        proxiima_storage_pg::test_fixtures::create_group(&admin_pool(&database).await?, group)
+            .await?;
         assert!(boot.blobs().is_none());
         assert!(
             boot.blob_delivery(ScopeKey::parse("core_search_memories")?)?
@@ -226,7 +227,7 @@ async fn observe_failed_upload_finish(
     let owner = OwnerId::from(group);
     let built = boot(database, owner, Some(config.clone())).await?;
     let pool = admin_pool(database).await?;
-    register_group(&pool, group).await?;
+    proxiima_storage_pg::test_fixtures::create_group(&pool, group).await?;
     let authz = host_context(owner, AuthPath::HostBearer);
     let store = built.blobs().ok_or("S3 store")?.clone();
     let prepared = store
@@ -344,7 +345,7 @@ async fn upload_without_arrived_bytes_expires() -> TestResult<()> {
         let group = GroupId::new(Uuid::now_v7());
         let owner = OwnerId::from(group);
         let built = boot(&database, owner, Some(S3RuntimeConfig::from_env()?)).await?;
-        register_group(&admin_pool(&database).await?, group).await?;
+        proxiima_storage_pg::test_fixtures::create_group(&admin_pool(&database).await?, group).await?;
         let authz = host_context(owner, AuthPath::HostBearer);
         let store = built.blobs().expect("S3 store");
         let prepared = store.prepare_upload(&authz, CitedBlobUploadPrepareTs {
@@ -382,7 +383,7 @@ async fn run_reboot(database: &str, keep_s3: bool) -> TestResult<EraseObservatio
     let group = GroupId::new(Uuid::now_v7());
     let owner = OwnerId::from(group);
     let initial = boot(database, owner, Some(config.clone())).await?;
-    register_group(&admin_pool(database).await?, group).await?;
+    proxiima_storage_pg::test_fixtures::create_group(&admin_pool(database).await?, group).await?;
     let store = initial
         .blobs()
         .expect("configured facade exposes blob store");
@@ -744,17 +745,4 @@ async fn object_versions(config: &S3RuntimeConfig, key: &str) -> TestResult<usiz
         "each object or marker must have an exact version identity"
     );
     Ok(exact.len())
-}
-
-/// Register `group` as a Group, the way a host creates one before writing
-/// under it: the group erase path admits only a registered Group.
-async fn register_group(pool: &sqlx::PgPool, group: GroupId) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(group.into_inner())
-    .execute(pool)
-    .await
-    .map(drop)
 }

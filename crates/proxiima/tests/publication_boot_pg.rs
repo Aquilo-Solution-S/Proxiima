@@ -157,6 +157,7 @@ fn probe_migrator() -> Migrator {
             note text NOT NULL
         )"
         .to_owned(),
+        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
         "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
              ('pubtest.probe_v1', 'pubtest')"
             .to_owned(),

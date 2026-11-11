@@ -23,6 +23,7 @@ use proxiima_core::{
     SchemaId, SpiiceRegistry, UserId,
 };
 use proxiima_example::ExampleSpiice;
+use proxiima_storage_pg::test_fixtures;
 use proxiima_storage_pg::{PgPlatformScope, PgStorage, PgTuning};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -82,6 +83,7 @@ async fn harness() -> Harness {
         .unwrap();
     // These rows represent a schema admitted before its payload was removed.
     // The non-default key proves retirement uses the frozen inverse metadata.
+    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     sqlx::raw_sql(
         "CREATE SCHEMA test_retired AUTHORIZATION proxiima_test_platform;
          CREATE TABLE test_retired.removed_v1 (
@@ -158,21 +160,25 @@ async fn seed(
     forgotten: bool,
     target: Option<MemoryId>,
 ) -> Vec<MemoryId> {
+    test_fixtures::create_user(pool, UserId::new(owner.into_inner()))
+        .await
+        .unwrap();
     let mut tx = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE proxiima_core.memory, proxiima_core.goal IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'personal') ON CONFLICT DO NOTHING")
-        .bind(owner.into_inner()).execute(&mut *tx).await.unwrap();
     let mut ids = Vec::new();
     for _ in 0..series {
         let handle = Uuid::now_v7();
         let ts: Vec<Uuid> = (0..versions).map(|_| Uuid::now_v7()).collect();
+        // Raw INSERT on purpose: rows of a retired schema no spiice writes any more,
+        // some of them forgotten.
         sqlx::query("INSERT INTO proxiima_core.memory_head(handle, kind, schema_id, owner_id, t) VALUES ($1, 'fact', $2, $3, $4)")
             .bind(handle).bind(SCHEMA).bind(owner.into_inner()).bind(ts.last().unwrap())
             .execute(&mut *tx).await.unwrap();
         for t in ts {
+            // Raw INSERT on purpose: a row of a retired schema, possibly forgotten.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via, forgotten_at)
                  VALUES ($1, $2, 'fact', $3, $4, ARRAY['test_retired.removed_v1'], uuid_extract_timestamp($2), $3, NULL,
@@ -352,8 +358,10 @@ async fn owner_inventory_is_bounded_and_cursor_reaches_the_next_page() {
         .execute(&mut *tx)
         .await
         .unwrap();
+    // Raw INSERT on purpose: bulk volume, one owner per page entry.
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) SELECT owner, 'personal' FROM unnest($1::uuid[]) AS owner")
         .bind(&raw_owners).execute(&mut *tx).await.unwrap();
+    // Raw INSERT on purpose: bulk volume of retired-schema rows, one forgotten Fact per owner.
     let ts: Vec<Uuid> = sqlx::query_scalar(
         "INSERT INTO proxiima_core.memory_head(handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'fact', $2, owner, uuidv7() FROM unnest($1::uuid[]) AS owner
@@ -364,6 +372,7 @@ async fn owner_inventory_is_bounded_and_cursor_reaches_the_next_page() {
     .fetch_all(&mut *tx)
     .await
     .unwrap();
+    // Raw INSERT on purpose: bulk volume of retired-schema rows.
     sqlx::query(
         "INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via, forgotten_at)
          SELECT h.handle, h.t, 'fact', h.owner_id, $2, ARRAY['test_retired.removed_v1'], uuid_extract_timestamp(h.t), h.owner_id, NULL, now()

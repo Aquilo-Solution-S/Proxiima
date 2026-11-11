@@ -9,6 +9,7 @@ use super::*;
 use lifecycle::lifecycle_store;
 
 async fn owe(pool: &sqlx::PgPool, store: &str, key: &str) {
+    // Raw INSERT: needs a builder for cold_purge_pending (the stage enqueues a debt with no owner).
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
          VALUES ($1, NULL, $2)",
@@ -152,6 +153,7 @@ async fn the_same_key_owed_in_two_stores_is_two_debts() {
     assert_eq!(stores, expected);
 
     // Re-enqueueing under one store renews that store's debt only.
+    // Raw INSERT: needs a builder for cold_purge_pending (the stage enqueues a debt with no owner).
     let renewed = sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
          VALUES ($1, NULL, $2)

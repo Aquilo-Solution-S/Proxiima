@@ -567,16 +567,19 @@ async fn upload_transitions_join_the_owner_fence() -> Result<(), Box<dyn std::er
         .payload
         .content_hash
         .to_vec();
-    let finish_blob: Uuid = sqlx::query_scalar(
-        "INSERT INTO proxiima_core.blob (schema_id, owner_id, content_hash)
-         VALUES ('core/uploaded-blob-v1', $1, $2)
-         RETURNING blob_id",
-    )
-    .bind(owner.into_inner())
-    .bind(finish_content_hash)
-    .fetch_one(&pool)
-    .await
-    .expect("finish blob");
+    let finish_blob = proxiima_storage_pg::test_fixtures::TestMemory::fact()
+        .cites(
+            "core/uploaded-blob-v1",
+            finish_content_hash
+                .as_slice()
+                .try_into()
+                .expect("a 32-byte hash"),
+        )
+        .create(&pg, owner)
+        .await
+        .expect("finish blob")
+        .cited_object_id
+        .expect("the admission names the cited object");
     let finish_store = store.clone();
     let finish_ctx = ctx.clone();
     let finish_id = finish_upload.clone();
@@ -1221,15 +1224,10 @@ async fn forge_uploaded_blob_row(
     content_hash_seed: u8,
     object_store: &proxiima_core::ObjectStoreId,
 ) -> Uuid {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await
-    .expect("forged owner");
+    proxiima_storage_pg::test_fixtures::create_user(pool, proxiima_core::UserId::new(owner_id))
+        .await
+        .expect("forged owner");
+    // Raw INSERT on purpose: a forged blob and upload locator pair, which no upload writes.
     let blob_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob
             (schema_id, owner_id, content_hash)
@@ -3839,9 +3837,7 @@ async fn a_transferred_row_keeps_the_canonical_object_out_of_the_purge_queue() {
         ..
     } = hold_stage_after_canonical_put(body).await;
     let other_owner = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-        .bind(other_owner)
-        .execute(&pool)
+    proxiima_storage_pg::test_fixtures::create_user(&pool, proxiima_core::UserId::new(other_owner))
         .await
         .expect("other owner");
     sqlx::query("UPDATE proxiima_core.blob_uploads SET owner_id = $1 WHERE upload_id = $2")

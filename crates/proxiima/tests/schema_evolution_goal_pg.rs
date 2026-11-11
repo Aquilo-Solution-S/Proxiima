@@ -325,6 +325,7 @@ fn migrator() -> Migrator {
     m.add_goal_source::<GoalV1>();
     m.add_goal::<GoalV2>();
     s.add_evolution(PgSchemaEvolution::new(&EV, m, evolve));
+    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     let sql = sqlx::AssertSqlSafe(
         "CREATE SCHEMA IF NOT EXISTS evolution_goal_test;
          CREATE TABLE IF NOT EXISTS evolution_goal_test.goal_v1 (
@@ -550,11 +551,12 @@ struct GoalEvolutionFinish {
 }
 
 async fn insert_owner(admin: &sqlx::PgPool, owner: OwnerId) {
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES($1,'personal'::proxiima_core.owner_kind)")
-        .bind(owner.into_inner())
-        .execute(admin)
-        .await
-        .unwrap();
+    proxiima_storage_pg::test_fixtures::create_user(
+        admin,
+        proxiima_core::UserId::new(owner.into_inner()),
+    )
+    .await
+    .unwrap();
 }
 
 async fn finish_goal_evolution(finish: GoalEvolutionFinish) {

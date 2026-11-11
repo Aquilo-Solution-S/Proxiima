@@ -109,9 +109,7 @@ async fn dependent_owner_rewrites_cross_owner_reference_from_prior_mapping() {
     let source_a = proxiima_core::MemoryId::new(seeded.ids[0]);
     let owner_b = OwnerId::new(Uuid::now_v7());
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id,kind) VALUES ($1,'personal')")
-        .bind(owner_b.into_inner())
-        .execute(&admin)
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner_b.into_inner()))
         .await
         .unwrap();
     let source_b = Uuid::now_v7();
@@ -122,9 +120,12 @@ async fn dependent_owner_rewrites_cross_owner_reference_from_prior_mapping() {
         .execute(&mut *admin_tx)
         .await
         .unwrap();
+    // Raw INSERT on purpose: a Fact of owner B referencing owner A's memory, which the
+    // write path refuses; the evolution has to carry it.
     sqlx::query("INSERT INTO proxiima_core.memory_head(handle,kind,schema_id,owner_id,t) VALUES($1,'fact',$2,$3,$4)")
         .bind(handle_b).bind("evolution-test/fact-v1").bind(owner_b.into_inner()).bind(source_b)
         .execute(&mut *admin_tx).await.unwrap();
+    // Raw INSERT on purpose: see the head above.
     sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,refs,sidecar_tables,occurred_at,\"by\") VALUES($1,$2,'fact',$3,$4,ARRAY[$5]::uuid[],ARRAY[$6]::text[],now(),$3)")
         .bind(handle_b).bind(source_b).bind(owner_b.into_inner()).bind("evolution-test/fact-v1").bind(source_a.into_inner()).bind(TABLE_V1)
         .execute(&mut *admin_tx)

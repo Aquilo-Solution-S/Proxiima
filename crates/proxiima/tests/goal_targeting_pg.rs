@@ -173,17 +173,17 @@ async fn goal_perspective_feedback_keeps_declared_exact_version_context() {
     assert_eq!(successor_motivations, motivating);
 
     let destination = GroupId::new(Uuid::now_v7());
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
-        .bind(destination.into_inner())
-        .execute(&h.pool)
+    proxiima_storage_pg::test_fixtures::create_group(&h.pool, destination)
         .await
         .expect("destination exists");
-    sqlx::query("INSERT INTO proxiima_core.group_memberships(group_id, member_user_id, relation) VALUES ($1, $2, 'admin')")
-        .bind(destination.into_inner())
-        .bind(user.into_inner())
-        .execute(&h.pool)
-        .await
-        .expect("the caller manages the destination");
+    proxiima_storage_pg::test_fixtures::add_member(
+        &h.pool,
+        destination,
+        user,
+        proxiima_core::Relation::Admin,
+    )
+    .await
+    .expect("the caller manages the destination");
     for memory in [bob_self, guided.memory_id] {
         let error = h
             .engine

@@ -482,12 +482,10 @@ async fn two_same_notebook_writers_hold_the_fence_at_once_and_the_erase_sweeps_b
     // arbitration is an upsert on `proxiima_core.owners`, and a parked writer
     // that created it would hold a row lock the second writer waits on,
     // which has nothing to do with the fence.
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
+    proxiima_storage_pg::test_fixtures::create_user(
+        &fx.admin,
+        proxiima_core::UserId::new(owner.into_inner()),
     )
-    .bind(owner.into_inner())
-    .execute(&fx.admin)
     .await
     .expect("the owner row");
 
@@ -718,14 +716,12 @@ async fn insert_note_row(
     t: Uuid,
 ) -> Result<(), sqlx::Error> {
     let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(&mut **tx)
-    .await?;
+    proxiima_storage_pg::access::owner_columns::ensure_owner_row(tx, &owner)
+        .await
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     let handle = Uuid::now_v7();
+    // Raw INSERT on purpose: the write is held open in the caller's transaction while an
+    // erase arrives, which no write verb allows.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'fact', $2, $3, $4)",
@@ -736,6 +732,7 @@ async fn insert_note_row(
     .bind(t)
     .execute(&mut **tx)
     .await?;
+    // Raw INSERT on purpose: see the head above.
     sqlx::query(
         "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
          VALUES ($1, $2, 'fact', $3, $4, $5, uuid_extract_timestamp($2), $3, NULL)",

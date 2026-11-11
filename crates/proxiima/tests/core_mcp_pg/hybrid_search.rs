@@ -71,17 +71,21 @@ async fn served_hybrid_rescues_bilingual_queries_and_pages_with_raw_leg_floors()
         let lexical = remember(&tools, &authz, owner, "Partial result", "checkpoint").await?;
         let semantic = remember(&tools, &authz, owner, "Concept result", "Unrelated vocabulary").await?;
         let admin = sqlx::PgPool::connect(&db_url(&name)).await?;
+        // Raw INSERT: needs a builder for lexical_languages.
         sqlx::query("INSERT INTO proxiima_core.lexical_languages(config) VALUES ('german') ON CONFLICT DO NOTHING")
             .execute(&admin).await?;
         let mut vector = vec![0.0_f32; 1024];
         vector[0] = 0.8;
         vector[1] = 0.6;
+        // Raw INSERT: needs a builder for embeddings written through a pool (the Fact
+        // builder takes a `PgStorage`).
         sqlx::query(
             "INSERT INTO proxiima_core.embeddings
                 (entity_id, model_id, dim, embedding_version, vec, owner_id)
              VALUES ($1, 'test-embed', 1024, 1, $2::real[]::vector, $3)",
         )
         .bind(semantic).bind(&vector).bind(owner.into_inner()).execute(&admin).await?;
+        // Raw INSERT: needs a builder for embeddings written through a pool.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_heads
                 (entity_id, model_id, dim, embedding_version, owner_id)

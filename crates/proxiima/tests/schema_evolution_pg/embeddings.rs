@@ -151,6 +151,8 @@ async fn seed_derived_rows(
     memory_id: Uuid,
     status: &str,
 ) -> Result<(), sqlx::Error> {
+    // Raw INSERT: needs a builder for embeddings written through a pool (the Fact
+    // builder takes a `PgStorage`).
     sqlx::query(
         "INSERT INTO proxiima_core.embeddings
          (entity_id, model_id, dim, embedding_version, vec, owner_id)
@@ -160,6 +162,7 @@ async fn seed_derived_rows(
     .bind(owner.into_inner())
     .execute(pool)
     .await?;
+    // Raw INSERT: needs a builder for embeddings written through a pool.
     sqlx::query(
         "INSERT INTO proxiima_core.embedding_heads
          (entity_id, model_id, dim, embedding_version, owner_id)
@@ -170,6 +173,7 @@ async fn seed_derived_rows(
     .execute(pool)
     .await?;
     let claim = Uuid::now_v7();
+    // Raw INSERT on purpose: a job in a named status, including one claimed mid-flight.
     sqlx::query(
         "INSERT INTO proxiima_core.embedding_jobs
          (entity_id, model_id, dim, owner_id, status, claimed_at, claim_token)

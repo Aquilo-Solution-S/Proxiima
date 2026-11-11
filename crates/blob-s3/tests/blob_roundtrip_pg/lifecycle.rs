@@ -243,14 +243,13 @@ async fn find_held_blobs_answers_only_completed_uploads() {
     let ctx = host_ctx(owner);
 
     let unbacked = [9_u8; 32];
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')
-         ON CONFLICT (owner_id) DO NOTHING",
+    proxiima_storage_pg::test_fixtures::create_user(
+        &pool,
+        proxiima_core::UserId::new(owner.into_inner()),
     )
-    .bind(owner.into_inner())
-    .execute(&pool)
     .await
     .expect("owner row");
+    // Raw INSERT on purpose: a cited object with no upload, which the admission refuses.
     sqlx::query(
         "INSERT INTO proxiima_core.blob (schema_id, owner_id, content_hash)
          VALUES ('core/uploaded-blob-v1', $1, $2)",

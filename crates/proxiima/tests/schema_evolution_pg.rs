@@ -22,7 +22,10 @@ use proxiima_core::spiice::{
 };
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::verbs::schema::PayloadKind;
-use proxiima_core::{AuthPath, AuthzContext, GoalHandle, OwnerId, Role, SimpleTextGoalV1, UserId};
+use proxiima_core::{
+    AuthPath, AuthzContext, GoalHandle, GoalPublicationInput, GoalWorkBindingInput, OwnerId,
+    PublicationUse, Role, SeriesHandle, SimpleTextGoalV1, UserId,
+};
 use proxiima_storage_pg::{
     PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgSidecarRegistry, PgStorage, PgTuning,
     register_core_pg_sidecars,
@@ -433,6 +436,7 @@ fn migrator(transform: proxiima::spiice::SchemaMigrationFn) -> Migrator {
         transform,
     ));
     let sidecars = sidecars.freeze_against(&registry).unwrap();
+    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     let mut sql = String::from(
         "CREATE SCHEMA IF NOT EXISTS evolution_test;
          CREATE TABLE IF NOT EXISTS evolution_test.fact_v1 (
@@ -479,6 +483,7 @@ fn chain_migrator() -> Migrator {
         ANCHOR_V3,
         Cow::Borrowed("evolution v3 sidecars"),
         MigrationType::Simple,
+        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
         sqlx::AssertSqlSafe("CREATE TABLE IF NOT EXISTS evolution_test.fact_v3 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE, task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL); INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES ('evolution_test.fact_v3', 'evolution-test') ON CONFLICT DO NOTHING; SELECT proxiima_core.install_owner_rls('evolution_test', ARRAY[]::text[], ARRAY['fact_v1', 'fact_v2', 'fact_v3']::text[], ARRAY[]::text[]);")
             .into_sql_str(),
         false,
@@ -733,9 +738,7 @@ async fn seed_v1_facts(payloads: Vec<FactV1>) -> SeededFacts {
         AuthPath::HostBearer,
     ));
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT (owner_id) DO NOTHING")
-        .bind(owner.into_inner())
-        .execute(&admin)
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner.into_inner()))
         .await
         .unwrap();
     let mut ids = Vec::new();
@@ -825,7 +828,7 @@ async fn visible_rows(pool: &sqlx::PgPool, owner: Uuid) -> i64 {
 
 async fn seed_goal_routes(
     seeded: &SeededFacts,
-    permitted_use: &str,
+    permitted_use: PublicationUse,
     publish_both: bool,
 ) -> GoalHandle {
     let runtime_url = seeded.db.runtime_url().to_owned();
@@ -856,6 +859,11 @@ async fn seed_goal_routes(
         .await
         .unwrap();
     unit.commit().await.unwrap();
+    // A personal owner is administered by its own user.
+    let owner_authz = authenticated_context(AuthzContext::for_subject(
+        UserId::new(seeded.owner.into_inner()),
+        AuthPath::HostBearer,
+    ));
     let admin = sqlx::PgPool::connect(&seeded.db.admin_url()).await.unwrap();
     for (index, memory_t) in seeded.ids.iter().enumerate() {
         if !publish_both && index == 1 {
@@ -867,25 +875,27 @@ async fn seed_goal_routes(
                 .fetch_one(&admin)
                 .await
                 .unwrap();
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_memory_publication (goal_handle, memory_t, source_owner, source_generation, controller_generation, permitted_use, published_by) VALUES ($1,$2,$3,0,0,$4::proxiima_core.goal_publication_use,$3)",
-        )
-        .bind(goal.goal_handle.into_inner())
-        .bind(memory_t)
-        .bind(seeded.owner.into_inner())
-        .bind(permitted_use)
-        .execute(&admin)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_work_binding (goal_handle, memory_handle, source_owner, source_generation, controller_generation, bound_by) VALUES ($1,$2,$3,0,0,$3)",
-        )
-        .bind(goal.goal_handle.into_inner())
-        .bind(memory_handle)
-        .bind(seeded.owner.into_inner())
-        .execute(&admin)
-        .await
-        .unwrap();
+        engine
+            .publish_to_goal(
+                &owner_authz,
+                &GoalPublicationInput {
+                    goal: goal.goal_handle,
+                    memory: proxiima_core::MemoryId::new(*memory_t),
+                    permitted_use,
+                },
+            )
+            .await
+            .unwrap();
+        engine
+            .bind_goal_work(
+                &owner_authz,
+                &GoalWorkBindingInput {
+                    goal: goal.goal_handle,
+                    series: SeriesHandle::new(memory_handle),
+                },
+            )
+            .await
+            .unwrap();
     }
     goal.goal_handle
 }
@@ -987,8 +997,9 @@ async fn fact_schema_evolution_preserves_receipt_and_replays_on_target() {
         AuthPath::HostBearer,
     ));
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT (owner_id) DO NOTHING")
-        .bind(owner.into_inner()).execute(&admin).await.unwrap();
+    proxiima_storage_pg::test_fixtures::create_user(&admin, UserId::new(owner.into_inner()))
+        .await
+        .unwrap();
     let payload = FactV1 {
         task_id: Uuid::now_v7(),
         ended_at: 7,
@@ -1035,7 +1046,7 @@ async fn fact_schema_evolution_preserves_receipt_and_replays_on_target() {
 #[tokio::test]
 async fn fact_schema_evolution_merges_two_sources_into_one_new_target() {
     let seeded = seed_two_v1_facts().await;
-    let goal = seed_goal_routes(&seeded, "read", true).await;
+    let goal = seed_goal_routes(&seeded, PublicationUse::Read, true).await;
     let platform_url = seeded.db.platform_url().to_owned();
     let pg = PgMigrationStorage::connect_with_config(
         &platform_url,
@@ -1177,7 +1188,7 @@ async fn assert_merge_receipts(seeded: &SeededFacts, admin: sqlx::PgPool) {
 #[tokio::test]
 async fn incomplete_goal_collaboration_blocks_fact_merge_without_changes() {
     let seeded = seed_two_v1_facts().await;
-    let goal = seed_goal_routes(&seeded, "read", false).await;
+    let goal = seed_goal_routes(&seeded, PublicationUse::Read, false).await;
     let admin = sqlx::PgPool::connect(&seeded.db.admin_url()).await.unwrap();
     let before_publications: Vec<(Uuid, Uuid, i64, i64, String)> = sqlx::query_as(
         "SELECT goal_handle, memory_t, source_generation, controller_generation, permitted_use::text FROM proxiima_core.goal_memory_publication WHERE goal_handle=$1 ORDER BY memory_t",

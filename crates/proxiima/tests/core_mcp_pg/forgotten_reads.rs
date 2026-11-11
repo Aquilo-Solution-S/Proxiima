@@ -296,6 +296,8 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         let mut vector = vec![0.0_f32; 1024];
         vector[0] = 0.8;
         vector[1] = 0.6;
+        // Raw INSERT: needs a builder for embeddings written through a pool (the Fact
+        // builder takes a `PgStorage`).
         sqlx::query(
             "INSERT INTO proxiima_core.embeddings
                 (entity_id, model_id, dim, embedding_version, vec, owner_id)
@@ -306,6 +308,7 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         .bind(owner.into_inner())
         .execute(&admin)
         .await?;
+        // Raw INSERT: needs a builder for embeddings written through a pool.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_heads
                 (entity_id, model_id, dim, embedding_version, owner_id)

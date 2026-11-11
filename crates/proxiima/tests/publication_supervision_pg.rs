@@ -148,6 +148,7 @@ fn probe_migrator() -> Migrator {
         "CREATE POLICY proxiima_owner_read ON publisher_health.probe_v1 FOR SELECT TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))))".to_owned(),
         "CREATE POLICY proxiima_owner_write ON publisher_health.probe_v1 FOR ALL TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[])))) WITH CHECK (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))))".to_owned(),
         "CREATE POLICY proxiima_platform ON publisher_health.probe_v1 FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')".to_owned(),
+        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
         "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
              ('publisher_health.probe_v1', 'publisher-health')"
             .to_owned(),

@@ -444,12 +444,10 @@ impl Stack {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'group'::proxiima_core.owner_kind)",
+        proxiima_storage_pg::access::owner_columns::register_group(
+            &mut tx,
+            proxiima_core::GroupId::new(group),
         )
-        .bind(group)
-        .execute(&mut *tx)
         .await?;
         tx.commit().await?;
         pool.close().await;
@@ -463,10 +461,11 @@ impl Stack {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(person)
-            .execute(&mut *tx)
-            .await?;
+        proxiima_storage_pg::access::owner_columns::ensure_owner_row(
+            &mut tx,
+            &proxiima_core::OwnerId::new(person),
+        )
+        .await?;
         tx.commit().await?;
         pool.close().await;
         Ok(person)

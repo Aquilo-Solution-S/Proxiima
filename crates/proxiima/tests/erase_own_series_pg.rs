@@ -20,6 +20,7 @@ use proxiima_core::{
     OperatorId, OwnerId, Role, SchemaId, SeriesHandle, UserId,
 };
 use proxiima_example::{DigestV1, NoteV1, SPIICE_ID, StampV1};
+use proxiima_storage_pg::test_fixtures;
 use uuid::Uuid;
 
 const EXAMPLE: &str = SPIICE_ID;
@@ -90,19 +91,15 @@ async fn seed_notes(
     let owner_id = owner.into_inner();
     let count =
         i32::try_from(MAX_ERASE_SERIES_PER_CALL + 1).expect("the erase cap plus one fits i32");
+    test_fixtures::create_user(pool, UserId::new(owner_id))
+        .await
+        .expect("owner row");
     let mut tx = pool.begin().await.expect("seed transaction");
     sqlx::query("LOCK TABLE proxiima_core.memory, proxiima_core.goal IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await
         .expect("coarse pin lock");
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(&mut *tx)
-    .await
-    .expect("owner row");
+    // Raw INSERT on purpose: bulk volume, one cap-sized page per statement.
     let mut ts: Vec<Uuid> = sqlx::query_scalar(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'fact', $2, $1, uuidv7()
@@ -116,6 +113,7 @@ async fn seed_notes(
     .await
     .expect("heads");
     ts.sort_unstable();
+    // Raw INSERT on purpose: bulk volume, one cap-sized page per statement.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -175,6 +173,7 @@ async fn seed_admissions(
     count: usize,
 ) -> Vec<Uuid> {
     let count = i32::try_from(count).expect("the seed count fits i32");
+    // Raw INSERT on purpose: bulk volume, one statement for the whole page.
     let mut ts: Vec<Uuid> = sqlx::query_scalar(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'fact', $2, $1, uuidv7()
@@ -188,6 +187,7 @@ async fn seed_admissions(
     .await
     .expect("heads");
     ts.sort_unstable();
+    // Raw INSERT on purpose: bulk volume, one statement for the whole page.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -260,6 +260,7 @@ async fn seed_long_series(
         .await
         .expect("versions");
     ts.sort_unstable();
+    // Raw INSERT on purpose: bulk volume, one series of many versions.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'fact', $2, $3, $4)",
@@ -271,6 +272,7 @@ async fn seed_long_series(
     .execute(&mut *tx)
     .await
     .expect("head");
+    // Raw INSERT on purpose: bulk volume, one series of many versions.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -315,19 +317,14 @@ async fn seed_mail(
     .execute(pool)
     .await
     .expect("the stamp references another memory");
+    test_fixtures::create_user(pool, UserId::new(owner_id))
+        .await
+        .expect("owner row");
     let mut tx = pool.begin().await.expect("seed transaction");
     sqlx::query("LOCK TABLE proxiima_core.memory, proxiima_core.goal IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await
         .expect("coarse pin lock");
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(&mut *tx)
-    .await
-    .expect("owner row");
     let mail = seed_admissions(
         &mut tx,
         owner_id,

@@ -296,9 +296,7 @@ async fn owner_rls_refuses_the_runtime_role_in_a_clone() {
     let db = clone().await;
     let admin = PgPool::connect(&db.admin_url()).await.expect("admin");
     let owner = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')")
-        .bind(owner)
-        .execute(&admin)
+    proxiima_storage_pg::test_fixtures::create_group(&admin, proxiima_core::GroupId::new(owner))
         .await
         .expect("the superuser seeds an owner");
 
@@ -321,6 +319,7 @@ async fn owner_rls_refuses_the_runtime_role_in_a_clone() {
         .expect("delete")
         .rows_affected();
     assert_eq!(deleted, 0);
+    // Raw INSERT on purpose: the runtime role without a scope must be refused.
     let error =
         sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')")
             .bind(Uuid::now_v7())

@@ -309,6 +309,7 @@ async fn insert_distinct_lost_uploads(
     // This is a cardinality/loss fixture, not a second upload path: each
     // absent artefact has a distinct valid blob hash and canonical key.
     // Its source's real Engine completion exercises admission separately.
+    // Raw INSERT on purpose: bulk volume, one cloned blob per absent artefact.
     sqlx::query(
         "INSERT INTO proxiima_core.blob (blob_id, owner_id, schema_id, content_hash)
          SELECT extra.id, b.owner_id, b.schema_id,
@@ -322,6 +323,7 @@ async fn insert_distinct_lost_uploads(
     .bind(source)
     .execute(pool)
     .await?;
+    // Raw INSERT on purpose: bulk volume, one cloned upload per absent artefact.
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
             (upload_id, owner_id, bucket, object_store, object_key, filename, mime,

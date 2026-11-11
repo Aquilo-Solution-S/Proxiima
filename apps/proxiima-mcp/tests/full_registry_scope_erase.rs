@@ -25,7 +25,7 @@ use proxiima_core::storage_ports::{
     HostStateRequest, HostStateWritePermit, OwnerInversePort, StateSurfaceName,
 };
 use proxiima_core::{
-    AuthError, AuthPath, Authenticator, AuthzContext, Credentials, FactPayload, MemoryId, OwnerId,
+    AuthError, AuthPath, Authenticator, AuthzContext, Credentials, FactWrite, MemoryId, OwnerId,
     OwnerRoles, SourceId, SpiiceServiceError, SpiiceServices, StorageError, UserId,
 };
 use proxiima_example::testkit::{erase_notebook_with_scope, register_notebook};
@@ -329,8 +329,26 @@ async fn exercise_full_registry_erase(
     )
     .await
     .map_err(|err| err.to_string())?;
-    let fact_id = Uuid::now_v7();
-    insert_note_fact(&pool, &owner, fact_id, notebook_id).await?;
+    let source = SourceId::new("full-registry-scope-source");
+    let engine = Arc::clone(built.host().engine());
+    let fact_id = engine
+        .ingest_fact(
+            &authz,
+            FactWrite::new(
+                owner,
+                source.as_str(),
+                &NoteV1 {
+                    notebook_id,
+                    key: "fixture".into(),
+                    body: "fixture".into(),
+                    written_at: time::OffsetDateTime::now_utc(),
+                },
+            ),
+        )
+        .await?
+        .memory_id
+        .into_inner();
+    // Raw INSERT: no write path for test_scope_host_copy reachable here (the test creates the table).
     sqlx::query(
         "INSERT INTO proxiima_core.test_scope_host_copy (fact_id, owner_id, payload)
          VALUES ($1, $2, decode('cafe', 'hex'))",
@@ -339,7 +357,7 @@ async fn exercise_full_registry_erase(
     .bind(owner.into_inner())
     .execute(&pool)
     .await?;
-    let source = SourceId::new("full-registry-scope-source");
+    // Raw INSERT: needs a builder for publication_origin.
     sqlx::query(
         "INSERT INTO proxiima_core.publication_origin
              (t, original_owner_id, source_id)
@@ -354,7 +372,6 @@ async fn exercise_full_registry_erase(
     // The host callback deletes its row and then fails. The production scope
     // erase must roll back that callback SQL together with its Fact inverse.
     FAIL_AFTER_DELETE_ONCE.store(true, Ordering::SeqCst);
-    let engine = Arc::clone(built.host().engine());
     let failed =
         erase_notebook_with_scope(&engine, &authz, &runtime_pool, owner, notebook_id).await;
     assert!(
@@ -423,55 +440,6 @@ async fn exercise_full_registry_erase(
     runtime_pool.close().await;
     drop(engine);
     built.shutdown().await;
-    Ok(())
-}
-
-async fn insert_note_fact(
-    pool: &sqlx::PgPool,
-    owner: &OwnerId,
-    fact_id: Uuid,
-    notebook_id: Uuid,
-) -> Result<(), sqlx::Error> {
-    let owner_id = owner.into_inner();
-    let handle = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-         VALUES ($1, 'fact', $2, $3, $4)",
-    )
-    .bind(handle)
-    .bind(NoteV1::SCHEMA_ID)
-    .bind(owner_id)
-    .bind(fact_id)
-    .execute(pool)
-    .await?;
-    let mut tx = pool.begin().await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
-         VALUES ($1, $2, 'fact', $3, $4, $5, uuid_extract_timestamp($2), $3, NULL)",
-    )
-    .bind(handle)
-    .bind(fact_id)
-    .bind(owner_id)
-    .bind(NoteV1::SCHEMA_ID)
-    .bind(vec!["proxiima_example.note_v1"])
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_example.note_v1 (t, notebook_id, key, body, written_at)
-         VALUES ($1, $2, 'fixture', 'fixture', now())",
-    )
-    .bind(fact_id)
-    .bind(notebook_id)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
     Ok(())
 }
 

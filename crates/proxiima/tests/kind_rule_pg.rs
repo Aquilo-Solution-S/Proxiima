@@ -34,6 +34,7 @@ use proxiima_core::{
     UploadedBlobPayload, UserId,
 };
 use proxiima_pg_testkit::{db_url, split_role_urls};
+use proxiima_storage_pg::test_fixtures;
 use serde_json::{Value, json};
 use split_core_db::clone_split_core_db;
 use sqlx::{Acquire, AssertSqlSafe, PgPool};
@@ -299,6 +300,8 @@ async fn embed(admin: &PgPool, seeded: &Seeded, owner: Uuid) -> TestResult {
     let mut vector = vec![0.0_f32; 1024];
     vector[0] = 1.0;
     for (_, t) in seeded.ids()? {
+        // Raw INSERT: needs a builder for embeddings of Abstractions and Perspectives
+        // (the Fact builder cannot write them).
         sqlx::query(
             "INSERT INTO proxiima_core.embeddings
                 (entity_id, model_id, dim, embedding_version, vec, owner_id)
@@ -309,6 +312,7 @@ async fn embed(admin: &PgPool, seeded: &Seeded, owner: Uuid) -> TestResult {
         .bind(owner)
         .execute(admin)
         .await?;
+        // Raw INSERT: needs a builder for embeddings of Abstractions and Perspectives.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_heads
                 (entity_id, model_id, dim, embedding_version, owner_id)
@@ -632,6 +636,7 @@ impl CitedBlobPort for StagedBlobs {
         let mut content_hash = [0_u8; 32];
         content_hash[..16].copy_from_slice(id.as_bytes());
         content_hash[16..].copy_from_slice(id.as_bytes());
+        // Raw INSERT: no write path for blob_uploads reachable here (no object store).
         // Match real staging's transfer row; Engine completion now settles it
         // atomically with the cited Fact. The role assertions below stay intact.
         sqlx::query(
@@ -1168,6 +1173,9 @@ async fn assert_fact_scope_sql(
             .bind(perspective_t)
             .fetch_one(admin)
             .await?;
+    // Raw INSERT on purpose: a census row in each goal collaboration table
+    // naming the group as subject and actor, which the person-driven
+    // collaboration commands do not write.
     sqlx::query(
         "INSERT INTO proxiima_core.goal_access_grant
             (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -1217,6 +1225,7 @@ async fn assert_fact_scope_sql(
 
     // Rows the seeding cannot reach through a verb without S3.
     let abstraction = handle_id(&seeded.abstraction)?;
+    // Raw INSERT: needs a builder for closed_handle.
     sqlx::query(
         "INSERT INTO proxiima_core.closed_handle (handle)
          SELECT handle FROM proxiima_core.memory WHERE t = $1",
@@ -1232,6 +1241,7 @@ async fn assert_fact_scope_sql(
         .await?;
     // An other-store origin of the Abstraction: the row reads and
     // writes at its memory's kind.
+    // Raw INSERT: needs a builder for memory_external_origin.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
          VALUES ($1, $2, 'origin')",
@@ -1240,6 +1250,7 @@ async fn assert_fact_scope_sql(
     .bind(proxiima_core::new_memory_uuid(5))
     .execute(admin)
     .await?;
+    // Raw INSERT on purpose: a permanently failed job, a state a fresh enqueue never writes.
     sqlx::query(
         "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, owner_id, status, dim)
          VALUES ($1, 'test-embed', $2, 'failed_permanent', 1024)",
@@ -1260,11 +1271,9 @@ async fn assert_fact_scope_sql(
     // They must be visible to the managed group endpoint where policy allows,
     // while a Fact-only scope cannot forge either endpoint or projection row.
     let extra_group = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')")
-        .bind(extra_group)
-        .execute(admin)
-        .await?;
+    test_fixtures::create_group(admin, GroupId::new(extra_group)).await?;
     let mut topology = proxiima_storage_pg::begin_owner_transaction(&runtime, scope).await?;
+    // Raw INSERT on purpose: the runtime role under a Fact-only scope must be refused.
     let edge = sqlx::query(
         "INSERT INTO proxiima_core.group_edges
             (child_group_id, parent_group_id, relation)
@@ -1280,6 +1289,7 @@ async fn assert_fact_scope_sql(
     );
     topology.rollback().await?;
     let mut topology = proxiima_storage_pg::begin_owner_transaction(&runtime, scope).await?;
+    // Raw INSERT on purpose: the runtime role under a Fact-only scope must be refused.
     let projection = sqlx::query(
         "INSERT INTO proxiima_core.group_role_projection
             (member_user_id, group_id, read_ceiling, write_ceiling, manage)
@@ -1295,6 +1305,7 @@ async fn assert_fact_scope_sql(
     );
     topology.rollback().await?;
     let mut topology = proxiima_storage_pg::begin_owner_transaction(&runtime, scope).await?;
+    // Raw INSERT on purpose: the runtime role under a Fact-only scope must be refused.
     let gateway = sqlx::query(
         "INSERT INTO proxiima_core.group_lock_request (request_id, left_group_id)
          VALUES ($1, $2)",
@@ -1315,6 +1326,7 @@ async fn assert_fact_scope_sql(
     // `FOR UPDATE SKIP LOCKED` the rows before the census reads them.
     let mut debt = admin.begin().await?;
     for (_, t) in seeded.ids()? {
+        // Raw INSERT: needs a builder for vector_index_debt.
         sqlx::query(
             "INSERT INTO proxiima_core.vector_index_debt (entity_id, model_id, dim, owner_id, op)
              VALUES ($1, 'stale-embed', 1024, $2, 'delete')",
@@ -1424,6 +1436,8 @@ async fn assert_fact_scope_sql(
             // duplicate; the Fact scope is refused before that, by the write
             // policy or by a BEFORE trigger that cannot see the parent row
             // either.
+            // Raw INSERT on purpose: replays each table's stored row as the runtime role
+            // to see whether owner RLS admits it.
             let insert = format!(
                 "INSERT INTO proxiima_core.{table} ({columns})
                  SELECT {columns} FROM jsonb_populate_record(NULL::proxiima_core.{table}, $1::jsonb)"
@@ -1507,6 +1521,7 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
                 .await?;
         let fact = handle_id(&seeded.fact)?;
         for entity in [fact, goal] {
+            // Raw INSERT: needs a builder for embeddings of Goals.
             sqlx::query(
                 "INSERT INTO proxiima_core.embeddings
                     (entity_id, model_id, dim, embedding_version, vec, owner_id)
@@ -1517,6 +1532,7 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
             .bind(vec![0.5_f32; 1024])
             .execute(&admin)
             .await?;
+            // Raw INSERT: needs a builder for embeddings of Goals.
             sqlx::query(
                 "INSERT INTO proxiima_core.embedding_heads
                     (entity_id, model_id, dim, embedding_version, owner_id)
@@ -1526,6 +1542,7 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
             .bind(owner_id)
             .execute(&admin)
             .await?;
+            // Raw INSERT on purpose: a permanently failed job, a state a fresh enqueue never writes.
             sqlx::query(
                 "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, owner_id, status, dim)
                  VALUES ($1, 'goal-probe', $2, 'failed_permanent', 1024)",

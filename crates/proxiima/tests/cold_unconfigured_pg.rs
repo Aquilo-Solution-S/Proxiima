@@ -180,7 +180,11 @@ async fn database_only_control(database: &str) -> TestResult<()> {
     let owner = OwnerId::from(group);
     let authz = host_context(owner, AuthPath::HostBearer);
     let initial = boot(database, owner).await?;
-    register_group(&sqlx::PgPool::connect(&db_url(database)).await?, group).await?;
+    proxiima_storage_pg::test_fixtures::create_group(
+        &sqlx::PgPool::connect(&db_url(database)).await?,
+        group,
+    )
+    .await?;
     let expected = note("database-only control");
     let written = initial
         .host()
@@ -328,17 +332,4 @@ async fn lifecycle(pool: &sqlx::PgPool, handle: Uuid) -> TestResult<LifecycleSta
     .fetch_optional(pool)
     .await?;
     Ok(LifecycleState { head })
-}
-
-/// Register `group` as a Group, the way a host creates one before writing
-/// under it: the group erase path admits only a registered Group.
-async fn register_group(pool: &sqlx::PgPool, group: GroupId) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(group.into_inner())
-    .execute(pool)
-    .await
-    .map(drop)
 }

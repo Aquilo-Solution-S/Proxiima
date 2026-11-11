@@ -165,17 +165,6 @@ async fn admin_pool(database: &str) -> TestResult<sqlx::PgPool> {
     .await?)
 }
 
-async fn register_group(pool: &sqlx::PgPool, group: GroupId) -> TestResult<()> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(group.into_inner())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 async fn debts(pool: &sqlx::PgPool) -> TestResult<i64> {
     Ok(
         sqlx::query_scalar("SELECT count(*) FROM proxiima_core.cold_purge_pending")
@@ -272,7 +261,7 @@ async fn owe_an_erase(
             .await,
     )
     .await?;
-    register_group(admin, group).await?;
+    proxiima_storage_pg::test_fixtures::create_group(admin, group).await?;
     let store = first.blobs().expect("configured store").clone();
     let authz = host_context(owner, AuthPath::HostBearer);
     let prepared = store
@@ -354,6 +343,7 @@ async fn counted_while_failing(
         format!("objects/{}", Uuid::now_v7()),
         format!("objects/{}", Uuid::now_v7()),
     );
+    // Raw INSERT on purpose: debts at a chosen attempt count, past the stuck threshold.
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending
                  (object_key, owner_id, object_store, attempts)
@@ -402,7 +392,7 @@ async fn a_server_sweeps_an_expired_upload() -> TestResult<()> {
         let owner = OwnerId::from(group);
         let admin = admin_pool(&database).await?;
         let (running, _base) = serve(&database, owner, config.clone()).await?;
-        register_group(&admin, group).await?;
+        proxiima_storage_pg::test_fixtures::create_group(&admin, group).await?;
         let store = running.blobs().expect("configured store").clone();
         let prepared = store
             .prepare_upload(
@@ -462,6 +452,7 @@ async fn a_zero_interval_turns_the_drain_off() -> TestResult<()> {
                 .await,
         )
         .await?;
+        // Raw INSERT: needs a builder for cold_purge_pending (the stage enqueues a debt with no owner).
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, NULL, $2)",
@@ -509,6 +500,7 @@ async fn a_server_refuses_to_start_over_another_stores_debt() -> TestResult<()> 
             .await?
             .shutdown()
             .await;
+        // Raw INSERT: needs a builder for cold_purge_pending (a debt owed to another store).
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, NULL, 's3:id/elsewhere'), ($2, NULL, 's3:id/elsewhere')",

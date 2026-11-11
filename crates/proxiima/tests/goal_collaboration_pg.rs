@@ -636,6 +636,7 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
     let runtime = example_engine::fixture_pool(h.db.runtime_url(), 1)
         .await
         .expect("runtime pool");
+    // Raw INSERT on purpose: the runtime role must be refused every goal collaboration write.
     for statement in [
         "INSERT INTO proxiima_core.goal_access_grant (goal_handle, subject_id, read_ceiling, write_ceiling, manage, controller_generation) VALUES (gen_random_uuid(), gen_random_uuid(), 1, 0, false, 0)",
         "INSERT INTO proxiima_core.goal_memory_publication (goal_handle, memory_t, source_owner, source_generation, controller_generation, permitted_use, published_by) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 0, 0, 'read', gen_random_uuid())",

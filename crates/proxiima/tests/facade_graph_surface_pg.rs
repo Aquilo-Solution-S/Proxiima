@@ -1341,14 +1341,11 @@ async fn insert_raw_fact_admission(
     let handle = Uuid::now_v7();
     let t = Uuid::now_v7();
     let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal'::proxiima_core.owner_kind)
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await?;
+    proxiima_storage_pg::test_fixtures::create_user(pool, proxiima_core::UserId::new(owner_id))
+        .await
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    // Raw INSERT on purpose: Facts with a missing, wrong or primary-row-less stamp, the
+    // corrupt states the integrity reader must fail closed on.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'fact', $2, $3, $4)",
@@ -1366,6 +1363,7 @@ async fn insert_raw_fact_admission(
     // The stamp and the rows it promises land in one transaction: a memory
     // row that names a sidecar table it has no row in is refused at COMMIT.
     let mut stamped = pool.begin().await?;
+    // Raw INSERT on purpose: see the head above.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
             (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -1457,6 +1455,7 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
         // A test spiice is a spiice: `memory.sidecar_tables` is constrained
         // to be a subset of `proxiima_core.spiice_surface`, so a fixture that
         // stamps a sidecar has to declare it like any other.
+        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
         "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
              ('facade_surface.fact_v1', 'facade-test'),
              ('facade_surface.abstraction_v1', 'facade-test')"
