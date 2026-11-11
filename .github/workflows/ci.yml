@@ -168,7 +168,7 @@ jobs:
           shellcheck scripts/changelog.sh
           python3 scripts/check-upgrade-notes.py --self-test
           git cliff --offline --unreleased --output "${RUNNER_TEMP}/release-notes.md"
-      # A bump to `proxiima_core::RELEASE_VERSION` cuts that tag and publishes
+      # A bump to the workspace version in `Cargo.toml` cuts that tag and publishes
       # its notes once `verified` reaches it (.github/workflows/release.yml).
       # This check is the last moment the number is still free to change.
       - name: release version
@@ -251,7 +251,7 @@ jobs:
       - name: build image
         run: |
           docker build \
-            --build-arg VERSION="$(sed -n 's/^pub const RELEASE_VERSION: &str = "\(.*\)";$/\1/p' crates/core/src/lib.rs)" \
+            --build-arg VERSION="$(python3 scripts/check-release-version.py --current)" \
             --build-arg REVISION="$(git rev-parse HEAD)" \
             -t proxiima-mcp:ci .
       - name: image reports its release

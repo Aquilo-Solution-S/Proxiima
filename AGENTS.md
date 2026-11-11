@@ -51,10 +51,11 @@ concepts and integration; avoid a second invariant or configuration ledger.
    in the batch, reverts the first red one on `main`, or opens an issue naming the
    range. Only verify runs save Rust caches. PRs remain for outside
    contributors.
-4. Routine changes leave `proxiima_core::RELEASE_VERSION` unchanged and ship
-   through `nightly`, without creating a GitHub Release. A deliberate bump cuts
-   `v${VERSION}` through `release.yml` once `verified` reaches it. No release is
-   cut from an unverified commit. The version checker validates the next
+4. Routine changes leave the workspace version in `Cargo.toml` (exposed as
+   `proxiima_core::RELEASE_VERSION`) unchanged and ship through `nightly`,
+   without creating a GitHub Release. A deliberate bump cuts `v${VERSION}`
+   through `release.yml` once `verified` reaches it. No release is cut from an
+   unverified commit. The version checker validates the next
    published number.
 5. Released migrations are immutable; `scripts/check-migrations.py` pins every
    released file from `RELEASE_EPOCH`. New migration versions must be above all

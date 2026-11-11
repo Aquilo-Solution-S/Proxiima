@@ -189,13 +189,16 @@ Changes are pushed to `main` directly; `verified` names the last `main`
 commit that passed CI, and new work starts from it. After CI passes, `verify.yml`
 atomically advances `verified` and the lightweight `nightly` tag to that tested
 commit. `nightly` follows every successful verification; it has no daily schedule
-or GitHub Release entry. Routine changes leave `proxiima_core::RELEASE_VERSION`
+or GitHub Release entry. Routine changes leave the workspace version in the root `Cargo.toml`
+(`[workspace.package] version`, exposed as `proxiima_core::RELEASE_VERSION`)
 unchanged.
 
-A numbered release is cut by a deliberate bump of that constant: once
+A numbered release is cut by a deliberate bump of that version: once
 `verify.yml` advances `verified` onto the commit, the value becomes the
 `v${VERSION}` tag and git-cliff generates notes. A commit that leaves the
-constant unchanged cuts no release.
+version unchanged cuts no release. Members inherit it with
+`version.workspace = true`; `scripts/check-release-version.py` refuses a member
+that does not.
 Run full local gates before pushing, and `scripts/check-release-version.py`
 for a version bump. Do not tag by hand.
 

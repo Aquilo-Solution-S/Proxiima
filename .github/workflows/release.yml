@@ -1,9 +1,9 @@
 name: Release
 
 # A release is cut by VERIFYING, not by tagging. A commit that bumps
-# `proxiima_core::RELEASE_VERSION` to a version no tag holds yet becomes
-# `v${RELEASE_VERSION}` the moment verify.yml advances `verified` onto it; a
-# commit that leaves the constant alone cuts nothing, so ordinary changes
+# the workspace version in Cargo.toml to a version no tag holds yet becomes
+# `v${version}` the moment verify.yml advances `verified` onto it; a
+# commit that leaves the version alone cuts nothing, so ordinary changes
 # accumulate until someone decides the next release is worth naming.
 # `scripts/check-release-version.py` validates the bump in CI.
 #
@@ -47,9 +47,9 @@ jobs:
         id: target
         shell: bash
         run: |
-          version="$(sed -n 's/^pub const RELEASE_VERSION: &str = "\([^"]*\)";$/\1/p' crates/core/src/lib.rs)"
+          version="$(python3 scripts/check-release-version.py --current)"
           if [[ -z "$version" ]]; then
-            echo "::error::crates/core/src/lib.rs declares no RELEASE_VERSION"
+            echo "::error::Cargo.toml declares no workspace version"
             exit 1
           fi
           tag="v${version}"
@@ -57,11 +57,11 @@ jobs:
             echo "::error::$(git rev-parse HEAD) is not verified; release only what verify.yml has passed"
             exit 1
           fi
-          # The server reports RELEASE_VERSION over MCP initialize and REST
+          # The server reports the workspace version over MCP initialize and REST
           # OpenAPI, so a Release naming a version the tagged tree does not
           # declare is a version no client can trust. Refuse the mismatch.
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
-            printf '::error::Tag %s does not match RELEASE_VERSION (%s)\n' "${GITHUB_REF_NAME}" "${tag}"
+            printf '::error::Tag %s does not match the workspace version in Cargo.toml (%s)\n' "${GITHUB_REF_NAME}" "${tag}"
             exit 1
           fi
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]] \

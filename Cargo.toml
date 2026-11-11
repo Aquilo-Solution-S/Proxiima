@@ -3,6 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/mcp-server", "apps/proxiima-mcp", "spiices/example", "crates/llm-openai-compat", "crates/storage-pg", "crates/blob-s3", "crates/proxiima", "crates/pg-testkit", "tools/dev-migrate", "tools/dev-idp", "crates/auth-oidc"]
 
 [workspace.package]
+version = "0.0.72"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"

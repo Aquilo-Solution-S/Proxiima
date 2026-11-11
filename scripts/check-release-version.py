@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""Validate `proxiima_core::RELEASE_VERSION` against the tags already published.
+"""Validate the workspace version against the tags already published.
 
-The tag IS the release. `release.yml` cuts `v${RELEASE_VERSION}` when a merge
-to `main` carries a value no tag holds yet, and cuts nothing when the value is
-unchanged — so this one constant is the release trigger. That makes it worth
-checking on every PR rather than remembering at tag time, because the mistakes
-it catches are only visible once the tag exists and the notes are written.
+The version is `[workspace.package].version` in the root `Cargo.toml`, shared by
+every member and exposed as `proxiima_core::RELEASE_VERSION`. The tag IS the
+release. `release.yml` cuts `v${version}` when a merge to `main` carries a value
+no tag holds yet, and cuts nothing when the value is unchanged, so this one
+number is the release trigger. That makes it worth checking on every PR rather
+than remembering at tag time, because the mistakes it catches are only visible
+once the tag exists and the notes are written.
 
 Two shapes pass:
 
-  unchanged   `RELEASE_VERSION` already has a tag; merging cuts no release.
-  bumped      `RELEASE_VERSION` is the next patch, minor or major of the
+  unchanged   the workspace version already has a tag; merging cuts no release.
+  bumped      the workspace version is the next patch, minor or major of the
               highest tag; merging cuts exactly that tag.
 
-Everything else fails — a version that skips a number, goes backwards, or
+Everything else fails: a version that skips a number, goes backwards, or
 reuses a tag whose notes are already published and whose commit is already
 named by a consumer's `Cargo.toml`.
+
+Every workspace member must inherit the version (`version.workspace = true`),
+so a build cannot report two. `--current` prints the workspace version alone,
+for the workflows.
 """
 
 from __future__ import annotations
@@ -24,21 +30,38 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
-SOURCE = Path("crates/core/src/lib.rs")
-CONST = re.compile(r'^pub const RELEASE_VERSION: &str = "([^"]*)";$', re.MULTILINE)
+MANIFEST = Path("Cargo.toml")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
-def read_release_version(text: str) -> str:
-    found = CONST.search(text)
-    if not found:
+def read_workspace_version(manifest: dict) -> str:
+    try:
+        version = manifest["workspace"]["package"]["version"]
+    except KeyError:
+        version = None
+    if not isinstance(version, str):
         raise ValueError(
-            f"{SOURCE} declares no `pub const RELEASE_VERSION`; "
+            f"{MANIFEST} declares no `[workspace.package] version`; "
             "release.yml derives the tag from it and cannot run without it"
         )
-    return found.group(1)
+    return version
+
+
+def uninherited_members(manifest: dict, read_member: Callable[[str], dict]) -> list[str]:
+    """Workspace members whose `[package].version` is not `version.workspace = true`."""
+    return [
+        member
+        for member in manifest["workspace"]["members"]
+        if read_member(member).get("package", {}).get("version") != {"workspace": True}
+    ]
+
+
+def load(path: Path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def parse(version: str) -> tuple[int, int, int] | None:
@@ -66,7 +89,7 @@ def show(version: tuple[int, int, int]) -> str:
 def validate(current: str, tags: list[str]) -> tuple[bool, str]:
     parsed = parse(current)
     if parsed is None:
-        return False, f"RELEASE_VERSION {current!r} is not a MAJOR.MINOR.PATCH version"
+        return False, f"workspace version {current!r} is not a MAJOR.MINOR.PATCH version"
 
     released = sorted(filter(None, (parse(tag.removeprefix("v")) for tag in tags)))
     if not released:
@@ -74,7 +97,7 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
 
     latest = released[-1]
     if parsed == latest:
-        return True, f"RELEASE_VERSION is v{current}, already released; merging cuts no tag"
+        return True, f"workspace version is v{current}, already released; merging cuts no tag"
 
     if parsed in released:
         return False, (
@@ -89,7 +112,7 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
             f"Expected one of: {', '.join('v' + show(nxt) for nxt in allowed)}"
         )
 
-    return True, f"RELEASE_VERSION bumped v{show(latest)} -> v{current}; merging cuts that tag"
+    return True, f"workspace version bumped v{show(latest)} -> v{current}; merging cuts that tag"
 
 
 def git_tags() -> list[str]:
@@ -116,6 +139,15 @@ def self_test() -> int:
         ("0.0.1", [], True, "first release, no tags yet"),
     ]
     failures = 0
+    members = {
+        "a": {"package": {"version": {"workspace": True}}},
+        "b": {"package": {"version": "0.1.0"}},
+        "c": {"package": {}},
+    }
+    refused = uninherited_members({"workspace": {"members": list(members)}}, members.__getitem__)
+    if refused != ["b", "c"]:
+        failures += 1
+        print(f"self-test FAILED (member version inheritance): refused {refused}", file=sys.stderr)
     for current, available, expected, why in cases:
         ok, message = validate(current, available)
         if ok != expected:
@@ -124,24 +156,37 @@ def self_test() -> int:
     if failures:
         print(f"{failures} self-test case(s) failed", file=sys.stderr)
         return 1
-    print(f"release-version self-test: {len(cases)} cases passed")
+    print(f"release-version self-test: {len(cases) + 1} cases passed")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true", help="check this script's own rules")
+    parser.add_argument("--current", action="store_true", help="print the workspace version only")
     args = parser.parse_args()
 
     if args.self_test:
         return self_test()
 
     try:
-        current = read_release_version(SOURCE.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        manifest = load(MANIFEST)
+        current = read_workspace_version(manifest)
+        if args.current:
+            print(current)
+            return 0
+        refused = uninherited_members(manifest, lambda member: load(Path(member) / "Cargo.toml"))
+    except (OSError, ValueError, KeyError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    if refused:
+        print(
+            f"error: members without `version.workspace = true`: {', '.join(refused)}; "
+            f"a build must report the one version in {MANIFEST}",
+            file=sys.stderr,
+        )
+        return 1
     ok, message = validate(current, git_tags())
     if not ok:
         print(f"error: {message}", file=sys.stderr)

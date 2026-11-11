@@ -6,7 +6,7 @@ name: Verify
 #
 #   green  CI passes on the newest `main` commit -> `verified` fast-forwards and
 #          `nightly` moves to that same commit atomically. release.yml cuts a
-#          numbered tag only if RELEASE_VERSION was deliberately bumped.
+#          numbered tag only if the workspace version was deliberately bumped.
 #   red    CI is re-run on up to eight commits between `verified` and that tip
 #          (scripts/verify-culprit.py). If the first red one sits directly on
 #          a green one, it is reverted on `main` and verify runs again;

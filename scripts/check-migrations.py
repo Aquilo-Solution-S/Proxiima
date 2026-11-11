@@ -16,15 +16,11 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EPOCH = "v0.0.48"
-RELEASE_VERSION_SOURCE = "crates/core/src/lib.rs"
-RELEASE_VERSION_CONST = re.compile(
-    r'^pub const RELEASE_VERSION: &str = "(?P<version>\d+\.\d+\.\d+)";$',
-    re.MULTILINE,
-)
 RELEASE_TAG = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 MIGRATION_FILE = re.compile(r"^(?P<version>\d+)_[A-Za-z0-9][A-Za-z0-9_-]*\.sql$")
 MIGRATION_ROOT = re.compile(r"^(?:crates/storage-pg/migrations|spiices/[^/]+/migrations)/")
@@ -88,12 +84,12 @@ def head_blobs(root: Path, paths: set[str], env: dict[str, str] | None = None) -
 
 
 def pending_release(root: Path) -> str | None:
+    """The workspace version in the root manifest, as the tag it would cut."""
     try:
-        source = (root / RELEASE_VERSION_SOURCE).read_text(encoding="utf-8")
-    except OSError:
+        manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+        return f"v{manifest['workspace']['package']['version']}"
+    except (OSError, tomllib.TOMLDecodeError, KeyError):
         return None
-    match = RELEASE_VERSION_CONST.search(source)
-    return f"v{match['version']}" if match else None
 
 
 def check_released_migrations(
