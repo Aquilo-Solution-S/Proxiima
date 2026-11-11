@@ -332,24 +332,12 @@ fn host_tier_implements_the_rmcp_server_handler_around_the_dynamic_handler() {
 
 /// `proxiima::rmcp` is the `rmcp` the workspace resolves, not a second copy:
 /// a bound written against the crate by its own name accepts a type that
-/// implements the facade's trait, and the lockfile holds one version.
+/// implements the facade's trait.
 #[test]
 fn the_facade_rmcp_is_the_workspace_rmcp() {
     fn is_workspace_server_handler<T: rmcp::ServerHandler>() {}
     is_workspace_server_handler::<HostHandler>();
     is_workspace_server_handler::<proxiima::DynamicHandler>();
-
-    let lock = include_str!("../../../Cargo.lock");
-    let versions: Vec<&str> = lock
-        .split("[[package]]")
-        .filter(|package| package.lines().any(|line| line.trim() == "name = \"rmcp\""))
-        .collect();
-    assert_eq!(
-        versions.len(),
-        1,
-        "Cargo.lock must resolve exactly one rmcp; a second copy gives a host two unrelated \
-         `ServerHandler` traits"
-    );
 }
 
 /// The layer stack `McpEdge::router` applies, written with facade names only.

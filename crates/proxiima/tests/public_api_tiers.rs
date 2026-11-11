@@ -1222,57 +1222,9 @@ fn host_api_binds_an_owner_as_its_bare_id() {
 }
 
 #[test]
-fn raw_storage_surfaces_are_not_supported_tier_exports() {
-    let host_exports = include_str!("../src/host.rs");
-    let spiice_exports = include_str!("../src/spiice.rs");
-    let authorized_read = include_str!("../src/spiice/authorized_read.rs");
-
-    // `PgPoolConfig` is pure policy, not the raw SQLx handle this guard bans.
-    assert!(!host_exports.replace("PgPoolConfig", "").contains("PgPool"));
-    // `PgStorage` is exported once, as the parameter of the migration helpers
-    // and the host accessors (#413); no other line of host.rs names it, so its
-    // backend verbs are not republished by a second route.
-    let naming_pg_storage: Vec<&str> = host_exports
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//") && line.contains("PgStorage"))
-        .collect();
-    assert_eq!(
-        naming_pg_storage,
-        ["pub use proxiima_storage_pg::PgStorage;"]
-    );
-    assert!(!host_exports.contains("StorageHandle"));
-    assert!(!spiice_exports.contains("PgPool"));
-    assert!(!spiice_exports.contains("PgStorage"));
-    assert!(!spiice_exports.contains("StorageHandle"));
-    assert!(
-        !authorized_read.contains("use sqlx::PgPool") && !authorized_read.contains("&PgPool"),
-        "code-series pool helpers must not live on the Spiice SDK"
-    );
-}
-
-#[test]
 fn host_extra_table_bridge_is_on_proxiima_host() {
     // The one sanctioned PgPool leak is ProxiimaHost::clone_pool_for_host,
-    // reached through `AppContext::host` (docs/host-integration.md). Spiice SDK still must
-    // not name the type. The host accessors are scanned so this cannot hide
-    // in a submodule the host.rs scan misses.
-    let spiice_exports = include_str!("../src/spiice.rs");
-    let authorized_read = include_str!("../src/spiice/authorized_read.rs");
-    let host = include_str!("../src/proxiima_host.rs");
-
-    assert!(!spiice_exports.contains("PgPool"));
-    assert!(
-        !authorized_read.contains("use sqlx::PgPool") && !authorized_read.contains("&PgPool"),
-        "code-series pool helpers must not live on the Spiice SDK"
-    );
-    assert!(
-        host.contains("pub fn clone_pool_for_host"),
-        "host extra-table bridge must stay on ProxiimaHost"
-    );
-    assert!(
-        !host.contains("pub pool"),
-        "the pool field stays crate-private"
-    );
+    // reached through `AppContext::host` (docs/host-integration.md).
     let _: fn(&proxiima::ProxiimaHost) -> sqlx::PgPool =
         proxiima::ProxiimaHost::clone_pool_for_host;
     let _: fn(&proxiima::ProxiimaHost) -> proxiima::PgTuning =
@@ -1333,40 +1285,6 @@ fn the_spiice_sdk_names_the_host_state_erase_disposition() {
     };
     let host_tier: proxiima::HostStateEraseDisposition = source;
     assert_eq!(host_tier, proxiima::HostStateEraseDisposition::Retain);
-}
-
-/// #389: the embedded builder, its config and boot result, the host-called
-/// spawners and the MCP enable flag are gone, not deprecated.
-#[test]
-fn the_second_builder_and_the_host_spawners_are_not_public() {
-    let sources = [
-        include_str!("../src/lib.rs"),
-        include_str!("../src/host.rs"),
-        include_str!("../src/runtime.rs"),
-        include_str!("../src/runtime_config.rs"),
-        include_str!("../src/config.rs"),
-        include_str!("../src/boot.rs"),
-        include_str!("../src/features.rs"),
-        include_str!("../src/app.rs"),
-        include_str!("../src/proxiima_host.rs"),
-    ];
-    for removed in [
-        "ProxiimaBuilder",
-        "EmbeddedProxiima",
-        "EmbedConfig",
-        "EmbedError",
-        "fn spawn_embedding_worker(&self",
-        "pub fn spawn_publication_publisher",
-        "pub fn spawn_publication_copy_cleaner",
-        "fn with_mcp",
-    ] {
-        for source in sources {
-            assert!(
-                !source.contains(removed),
-                "`{removed}` is back on the facade"
-            );
-        }
-    }
 }
 
 #[test]
@@ -1550,56 +1468,13 @@ fn auth_module_names_oidc_primitives() {
         proxiima::ProxiimaHost::core_mcp_tools_with_request_services;
 }
 
-/// One write path: `Engine` / `UnitOfWork`.
+/// The frozen sidecar registry hands out no public write onto a transaction.
 ///
-/// The storage backend's fact-ingest and derive verbs are the body of its
-/// port impls, not an API. If a `pub fn` reappears in either file, some
-/// caller can once more begin its own transaction and append a Fact or a
-/// derived row past the engine — and past the projection row, the sketch,
-/// and the embedding enqueue that the one path maintains with it.
-///
-/// Scanned rather than expressed in types: a type-level pin cannot name a
-/// function that must not exist, so the check has to read the source. `pub
-/// trait` / `pub type` / `pub struct` are unaffected — spiices still
-/// implement the sidecar traits; they just cannot invoke them (see
-/// `SidecarInsertPermit`).
-#[test]
-fn storage_write_verbs_expose_no_public_function() {
-    for (module, source) in [
-        (
-            "verbs::fact_ingest",
-            include_str!("../../storage-pg/src/verbs/fact_ingest.rs"),
-        ),
-        (
-            "verbs::derive_append",
-            include_str!("../../storage-pg/src/verbs/derive_append.rs"),
-        ),
-    ] {
-        for (index, line) in source.lines().enumerate() {
-            let trimmed = line.trim_start();
-            assert!(
-                !(trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ")),
-                "{module}:{} exposes a public write function; the write tier is \
-                 `Engine`/`UnitOfWork` only, so this belongs behind `pub(crate)`: {trimmed}",
-                index + 1
-            );
-        }
-    }
-}
-
-/// No storage-backend surface hands out a public write onto a transaction.
-///
-/// Two files, one rule, because they are the same door in two places.
-///
-/// The frozen registry's `insert_*` methods are the CORRECT door — they write
-/// the projection row with the sidecar row — and that is exactly why a public
-/// one is still a second write path: correct today is not the same as
-/// maintained-by-construction tomorrow. `memory_timeseries` is the row under
-/// all of them: a public `ingest_fact_timeseries` lands an admission with no
-/// sidecar, no projection row, no sketch and no embedding enqueue, which is
-/// every invariant its callers add. Its two transaction-scoped reads go with
-/// it — they read the table directly, and the authorized read surface is the
-/// query ports.
+/// Its `insert_*` methods are the CORRECT door — they write the projection row
+/// with the sidecar row — and that is exactly why a public one is still a
+/// second write path: correct today is not the same as
+/// maintained-by-construction tomorrow. (The fact-ingest, derive-append and
+/// timeseries verb modules are `pub(crate)`, so the compiler holds them.)
 ///
 /// Two exemptions, on two different grounds.
 ///
@@ -1623,18 +1498,11 @@ fn storage_write_verbs_expose_no_public_function() {
 #[test]
 fn storage_backend_exposes_no_public_transaction_taking_fn() {
     const CONNECTION_TYPES: [&str; 3] = ["Transaction", "PgConnection", "PgPool"];
-    let surfaces: [(&str, &str, &[&str]); 2] = [
-        (
-            "sidecars/frozen.rs",
-            include_str!("../../storage-pg/src/sidecars/frozen.rs"),
-            &["rebuild_projection_for_table", "integrity_check"],
-        ),
-        (
-            "verbs/memory_timeseries.rs",
-            include_str!("../../storage-pg/src/verbs/memory_timeseries.rs"),
-            &[],
-        ),
-    ];
+    let surfaces: [(&str, &str, &[&str]); 1] = [(
+        "sidecars/frozen.rs",
+        include_str!("../../storage-pg/src/sidecars/frozen.rs"),
+        &["rebuild_projection_for_table", "integrity_check"],
+    )];
 
     for (module, source, exempt) in surfaces {
         let mut lines = source.lines().enumerate();

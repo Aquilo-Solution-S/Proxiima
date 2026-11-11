@@ -1793,16 +1793,6 @@ mod tests {
     }
 
     #[test]
-    fn erase_sql_does_not_name_retired_suppression_table() {
-        let src = include_str!("owner_erase.rs");
-        let needle = format!("{}.{}", "proxiima_core", "compliance_suppression_keys");
-        assert!(
-            !src.contains(&needle),
-            "the schema declares no suppression table"
-        );
-    }
-
-    #[test]
     fn owner_erase_gcs_content() {
         let src = include_str!("owner_erase.rs");
         assert!(

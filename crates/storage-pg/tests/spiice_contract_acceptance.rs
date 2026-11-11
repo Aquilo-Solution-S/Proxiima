@@ -73,60 +73,6 @@ fn goals_are_not_transferable_and_the_declaration_names_its_enforcement() {
     }
 }
 
-/// Whether `source` declares `symbol`, a Rust path like
-/// `Engine::transfer_to_owner` or a bare `transfer_to_owner`.
-///
-/// Two bounds carry the weight. The `(` in the needle is what stops a
-/// SUFFIXED rename from answering for the old name: without it,
-/// `fn transfer_to_owner_v2` contains `fn transfer_to_owner`, so a
-/// tree-wide rename passes the very test that exists to catch it. And a
-/// qualified citation has to land under a matching `impl`, so a free
-/// function of the same name elsewhere in the file does not answer for an
-/// `Engine::` citation.
-///
-/// LIMITS, both deliberate. The impl tracker does not count braces: it
-/// means "the nearest preceding `impl` header", not "inside that block", so
-/// an item after a block closes is still attributed to it. And the generic
-/// list is skipped to the first `>`, which a nested generic would defeat.
-/// Both are enough to separate a free function from an inherent method,
-/// which is the confusion worth guarding against here.
-fn declares(source: &str, symbol: &str) -> bool {
-    let mut segments = symbol.rsplit("::");
-    let Some(item) = segments.next() else {
-        return false;
-    };
-    let qualifier = segments.next();
-    let needle = format!("fn {item}(");
-    let mut nearest_impl: Option<&str> = None;
-    for line in source.lines() {
-        if let Some(target) = impl_target(line) {
-            nearest_impl = Some(target);
-        }
-        if line.contains(&needle) && (qualifier.is_none() || nearest_impl == qualifier) {
-            return true;
-        }
-    }
-    false
-}
-
-/// The type an `impl` header hangs its items on: `Engine` for
-/// `impl Engine {`, `PgStore` for `impl<S> Store for PgStore<S> {`.
-fn impl_target(line: &str) -> Option<&str> {
-    let rest = line.trim_start().strip_prefix("impl")?;
-    if !rest.starts_with([' ', '<']) {
-        return None;
-    }
-    let rest = rest.trim_start();
-    let rest = rest.strip_prefix('<').map_or(rest, |generics| {
-        generics.split_once('>').map_or(generics, |(_, tail)| tail)
-    });
-    let target = rest.rsplit(" for ").next().unwrap_or(rest).trim_start();
-    let ident = target
-        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .next()?;
-    (!ident.is_empty()).then_some(ident)
-}
-
 /// Whether the migrated catalog carries a non-internal trigger `name` on
 /// `relation`.
 ///
@@ -179,35 +125,19 @@ async fn constraint_exists(
     .await
 }
 
-/// Every cited enforcement site resolves to something that exists.
+/// Every cited DDL enforcement site exists in the catalog of a migrated
+/// database.
 ///
-/// `Enforcement::EngineRefusal`/`StorageBackstop` carry a free-form
-/// `&'static str`, which the compiler cannot check: rename the function and
-/// the contract goes on claiming a refusal at an address nothing answers.
-/// The citation format is `<crate-dir>/<path>::<symbol path>`, so both
-/// halves are resolvable — the file relative to the workspace root, and the
-/// symbol as an item declared in it under the right `impl`.
-///
-/// The two DDL arms are resolved against the CATALOG of a migrated
-/// database, not against the migration's source text. What a `CREATE
-/// TRIGGER` line says and what the server ended up with are different
-/// claims: a later `DROP TRIGGER`, a rename, a relation that the statement
-/// names through a search path, or a trigger created inside a `DO` block
-/// all separate them, and only one of the two is what a transfer attempt
+/// What a `CREATE TRIGGER` line says and what the server ended up with are
+/// different claims: a later `DROP TRIGGER`, a rename, a relation that the
+/// statement names through a search path, or a trigger created inside a `DO`
+/// block all separate them, and only one of the two is what a transfer attempt
 /// actually meets. `pg_trigger`/`pg_constraint` answer the question the
-/// declaration is making — *this relation is guarded by this thing* —
-/// including the relation, which the source-text version could only check
-/// for `Trigger` and not for `Constraint`.
+/// declaration is making: *this relation is guarded by this thing*. The engine
+/// and storage refusals are behavior, exercised by `not_transferable_pg`.
 #[tokio::test]
-async fn every_cited_enforcement_site_resolves() {
-    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crates/storage-pg sits two levels under the workspace root")
-        .to_owned();
-
+async fn every_cited_ddl_enforcement_site_exists() {
     let mut ddl: Vec<Enforcement> = Vec::new();
-    let mut checked = 0_usize;
     let rules = SPIICE_0
         .schemas
         .iter()
@@ -218,30 +148,12 @@ async fn every_cited_enforcement_site_resolves() {
             continue;
         };
         for site in enforced_by {
-            checked += 1;
             match site {
-                Enforcement::EngineRefusal { at } | Enforcement::StorageBackstop { at } => {
-                    let (path, symbol) = at
-                        .split_once("::")
-                        .unwrap_or_else(|| panic!("{at} must cite <path>::<symbol>"));
-                    let file = workspace.join("crates").join(path);
-                    let source = std::fs::read_to_string(&file).unwrap_or_else(|err| {
-                        panic!("{at} cites {} which does not read: {err}", file.display())
-                    });
-                    assert!(
-                        declares(&source, symbol),
-                        "{at} cites `{symbol}`, which {} does not declare",
-                        file.display()
-                    );
-                }
+                Enforcement::EngineRefusal { .. } | Enforcement::StorageBackstop { .. } => {}
                 Enforcement::Trigger(_) | Enforcement::Constraint(_) => ddl.push(*site),
             }
         }
     }
-    assert!(
-        checked >= 3,
-        "goals alone cite three sites; found {checked}"
-    );
     assert!(
         !ddl.is_empty(),
         "goals cite a DDL backstop; the catalog half of this test must have something to ask about"
@@ -270,7 +182,7 @@ async fn every_cited_enforcement_site_resolves() {
                     constraint_exists(pool, c.relation, c.name).await?,
                 ),
                 Enforcement::EngineRefusal { .. } | Enforcement::StorageBackstop { .. } => {
-                    unreachable!("the source-text arms were resolved above")
+                    unreachable!("only the DDL sites were collected above")
                 }
             };
             assert!(
@@ -283,7 +195,7 @@ async fn every_cited_enforcement_site_resolves() {
     }
     .await;
     let _ = drop_db(&db_name).await;
-    result.expect("every_cited_enforcement_site_resolves failed");
+    result.expect("every_cited_ddl_enforcement_site_exists failed");
 }
 
 // ── Declared absence ────────────────────────────────────────────────────

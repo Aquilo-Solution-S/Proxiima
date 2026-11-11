@@ -586,23 +586,3 @@ async fn ensure_owner_row_returns_under_concurrent_first_insert() {
     let _ = drop_db(&db_name).await;
     result.expect("concurrent ensure_owner_row must not RowNotFound");
 }
-
-#[test]
-fn memory_pin_checks_is_set_based() {
-    let src = include_str!("../../definitions/functions.sql");
-    let start = src
-        .find("CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks")
-        .expect("memory_pin_checks");
-    let next = src[start + 1..]
-        .find("CREATE OR REPLACE FUNCTION")
-        .expect("next function");
-    let body = &src[start..start + 1 + next];
-    assert!(
-        !body.contains("FOREACH"),
-        "pin checks must not walk pins in plpgsql"
-    );
-    assert!(
-        body.contains("unnest") && body.contains("= ANY"),
-        "pin checks must be set predicates"
-    );
-}

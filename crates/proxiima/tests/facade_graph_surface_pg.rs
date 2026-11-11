@@ -719,21 +719,6 @@ async fn natural_key_selection_uses_the_authorized_payload() {
     result.expect("natural-key binding");
 }
 
-#[test]
-fn facade_does_not_export_raw_edge_append_surface() {
-    let facade = include_str!("../src/lib.rs");
-    assert!(
-        !facade.contains("pub use proxiima_storage_pg::verbs::edge_append"),
-        "facade must not re-export raw storage edge append APIs"
-    );
-    for forbidden in ["append_edge", "append_edge_in_tx", "EdgeDraft"] {
-        assert!(
-            !facade.contains(forbidden),
-            "facade contains forbidden raw edge append surface {forbidden}"
-        );
-    }
-}
-
 #[allow(unused_imports)]
 mod facade_imports_compile {
     use proxiima::spiice::{

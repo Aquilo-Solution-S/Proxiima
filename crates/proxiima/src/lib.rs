@@ -44,17 +44,18 @@
 //! workspace pins, because a host implements its `ServerHandler` around
 //! [`DynamicHandler`].
 //!
-//! The enforcer is `tests/facade_signature_names.rs`: it imports every name the
-//! rule has put on the facade, through `proxiima::` or `proxiima::spiice::`, so a
-//! dropped re-export fails to compile, and it fails when a host-only name shows
-//! up in the SDK. It is a list: add the type to `host.rs` and to a group there
-//! whenever a public signature names a new type. Nothing finds a signature
-//! whose type is missing from the list.
+//! Nothing finds a signature whose type is missing from the facade: a host or
+//! spiice that cannot write the name down is the report.
 //!
-//! The SDK names no storage handle and no owner-scoped transaction:
+//! The SDK names no storage handle, no raw pool and no owner-scoped
+//! transaction:
 //!
 //! ```compile_fail,E0432
 //! use proxiima::spiice::PgStorage;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use proxiima::spiice::PgPool;
 //! ```
 //!
 //! ```compile_fail,E0432
