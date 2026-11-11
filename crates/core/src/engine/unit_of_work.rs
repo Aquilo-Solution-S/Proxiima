@@ -1125,7 +1125,17 @@ impl<'a> UnitOfWork<'a> {
             .author_derived(&storage_req, item.write_permit.owner_write_permit())
             .await
             .map_err(|err| {
-                if replay_only && matches!(err, crate::StorageError::ConstraintViolation(_)) {
+                if replay_only
+                    && matches!(
+                        err,
+                        crate::StorageError::ConstraintViolation(_)
+                            | crate::StorageError::Refused {
+                                rule: crate::StorageRule::DerivedMemoryPinsNothing
+                                    | crate::StorageRule::ClosedHandle,
+                                ..
+                            }
+                    )
+                {
                     // Not a replay of its own write: a new write naming a
                     // forgotten slot reads it as absent, as any id does.
                     return ProtocolError::forbidden(super::pipeline::ENTRY_NOT_FOUND_MESSAGE);

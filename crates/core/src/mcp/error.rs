@@ -93,9 +93,15 @@ impl McpToolError {
             },
             Self::Storage(storage) => match storage {
                 crate::StorageError::ConstraintViolation(_)
-                | crate::StorageError::MembershipIsolation
                 | crate::StorageError::GoalChildrenOpen { .. }
                 | crate::StorageError::GoalChildrenAllAbandoned => McpToolErrorKind::InvalidInput,
+                crate::StorageError::Refused { rule, .. } => match rule.class() {
+                    crate::RuleClass::Invalid => McpToolErrorKind::InvalidInput,
+                    crate::RuleClass::Conflict | crate::RuleClass::Forbidden => {
+                        McpToolErrorKind::InvalidRequest
+                    }
+                    crate::RuleClass::Deployment => McpToolErrorKind::Internal,
+                },
                 crate::StorageError::NotFound | crate::StorageError::ScopeMissing { .. } => {
                     McpToolErrorKind::NotFound
                 }

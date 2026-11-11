@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::test_fixtures::owner_scope_for_tests;
-use proxiima_core::{OwnerId, SpiiceRegistry, UserId};
+use proxiima_core::{OwnerId, SpiiceRegistry, StorageError, StorageRule, UserId};
 use proxiima_pg_testkit::SplitRoleDb;
 use proxiima_storage_pg::test_fixtures::create_user;
 use proxiima_storage_pg::verbs::forget::erase_memory_series;
 use proxiima_storage_pg::{
     PgHostStateEraseContext, PgMigrationStorage, PgPoolConfig, PgTuning,
-    begin_migration_transaction, begin_owner_transaction, core_pg_sidecars,
+    begin_migration_transaction, begin_owner_transaction, core_pg_sidecars, map_err,
 };
 use sqlx::migrate::{Migration, MigrationType, Migrator};
 use sqlx::postgres::PgPoolOptions;
@@ -210,7 +210,7 @@ async fn every_stored_reference_refuses_drop_until_the_core_inverse_erases_it() 
         let sqlx::migrate::MigrateError::ExecuteMigration(ref cause, _) = error else {
             panic!("expected a refused migration, got {error}");
         };
-        assert_sqlstate(cause, "23503");
+        assert_sqlstate(cause, "PX002");
         let hint = cause
             .as_database_error()
             .unwrap()
@@ -298,7 +298,7 @@ async fn filtered_and_unbound_connections_cannot_certify_an_empty_store() -> Tes
         .execute(&mut *tx)
         .await
         .expect_err("foreign owner's Fact prevents DROP");
-    assert_sqlstate(&refused, "23503");
+    assert_sqlstate(&refused, "PX002");
     tx.rollback().await?;
     drop(connection);
     let mut unbound = PgConnection::connect(h.db.platform_url()).await?;
@@ -308,7 +308,7 @@ async fn filtered_and_unbound_connections_cannot_certify_an_empty_store() -> Tes
         .execute(&mut unbound)
         .await
         .expect_err("unbound platform role is no proof");
-    assert_sqlstate(&refused, "42501");
+    assert_sqlstate(&refused, "PX002");
     let mut spoofed = h.runtime.begin().await?;
     sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)")
         .execute(&mut *spoofed)
@@ -321,6 +321,19 @@ async fn filtered_and_unbound_connections_cannot_certify_an_empty_store() -> Tes
         .expect_err("scope alone is no authority");
     assert_sqlstate(&refused, "42501");
     Ok(())
+}
+
+fn assert_sidecar_not_declared(error: sqlx::Error) {
+    assert!(
+        matches!(
+            map_err(error),
+            StorageError::Refused {
+                rule: StorageRule::SidecarNotDeclared,
+                ..
+            }
+        ),
+        "the queued stamp must be refused as an undeclared sidecar"
+    );
 }
 
 fn assert_sqlstate(error: &sqlx::Error, expected: &str) {
@@ -358,7 +371,7 @@ async fn arguments_and_snapshot_isolation_are_refused_at_the_guard() -> TestResu
             .execute(&mut *tx)
             .await
             .expect_err("invalid external arguments must refuse");
-        assert_sqlstate(&refused, "22023");
+        assert_sqlstate(&refused, "PX002");
         tx.rollback().await?;
     }
     for serializable in [false, true] {
@@ -382,7 +395,7 @@ async fn arguments_and_snapshot_isolation_are_refused_at_the_guard() -> TestResu
             .execute(&mut *tx)
             .await
             .expect_err("an older transaction snapshot cannot prove emptiness");
-        assert_sqlstate(&refused, "25001");
+        assert_sqlstate(&refused, "PX002");
     }
     Ok(())
 }
@@ -437,7 +450,7 @@ async fn a_committed_admission_is_seen_after_the_guard_waits_for_its_writer() ->
     let sqlx::migrate::MigrateError::ExecuteMigration(cause, _) = error else {
         panic!("expected a refused migration, got {error}");
     };
-    assert_sqlstate(&cause, "23503");
+    assert_sqlstate(&cause, "PX002");
     let (memory, sidecar, ledger): (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM proxiima_core.memory WHERE t=$1),
                 (SELECT count(*) FROM proxiima_core.agent_note_v1 WHERE t=$1),
@@ -497,7 +510,7 @@ async fn writers_queued_after_the_guard_cannot_commit_a_dangling_stamp() -> Test
         let (admitted, migration_result) = tokio::join!(admission, dropper);
         migration_result?;
         let refused = admitted.expect_err("queued writer must not leave a dangling stamp");
-        assert_sqlstate(&refused, "23503");
+        assert_sidecar_not_declared(refused);
         let leftovers: i64 = sqlx::query_scalar("SELECT count(*) FROM proxiima_core.memory WHERE schema_id=$1 OR sidecar_tables && ARRAY[$2]::text[]")
             .bind(SCHEMA).bind(TABLE).fetch_one(&h.admin).await?;
         assert_eq!(leftovers, 0);

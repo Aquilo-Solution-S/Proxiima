@@ -7,6 +7,7 @@ use proxiima_core::spiice::{
     TransferRule,
 };
 use proxiima_core::verbs::schema::PayloadKind;
+use proxiima_core::{StorageError, StorageRule};
 use proxiima_pg_testkit::{drop_db, split_role_urls};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -236,6 +237,48 @@ async fn cited_object_replacement_preserves_bytes_and_moves_only_primary_upload(
     .await;
     drop_db(&database).await.expect("drop test database");
     result.expect("cited-object replacement acceptance");
+}
+
+#[tokio::test]
+async fn an_evolution_outside_the_migration_lane_is_refused() {
+    let database = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_core_db(&database)
+        .await
+        .expect("PG required for test");
+    let result = async {
+        let (_, platform_url) = split_role_urls(&database).await?;
+        let platform = PgPool::connect(&platform_url).await?;
+        let owner = owner(&platform).await?;
+        let mut tx = platform.begin().await?;
+        sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)")
+            .execute(&mut *tx)
+            .await?;
+        // Raw INSERT on purpose: a blob under the old source schema, so the evolution has a pending step to lock.
+        sqlx::query("INSERT INTO proxiima_core.blob(owner_id,schema_id,content_hash) VALUES($1,$2,decode(repeat('01',32),'hex'))")
+            .bind(owner).bind(SOURCE_SCHEMA).execute(&mut *tx).await?;
+        tx.commit().await?;
+
+        // The same runner on a transaction that never entered the platform scope.
+        let mut outside = platform.begin().await?;
+        let refused = frozen_registry()
+            .run_schema_evolution(&mut outside, &EVOLUTION)
+            .await
+            .expect_err("only the migration lane runs an evolution");
+        assert!(
+            matches!(
+                refused,
+                StorageError::Refused {
+                    rule: StorageRule::MigrationLaneRequired,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+    drop_db(&database).await.expect("drop test database");
+    result.expect("migration lane refusal");
 }
 
 #[tokio::test]

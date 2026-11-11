@@ -38,10 +38,10 @@ pub enum StorageError {
     /// of times before surfacing this.
     #[error("retryable storage error: {0}")]
     Retryable(String),
-    /// Membership writes cannot run from a fixed-snapshot transaction: the
-    /// tree lock must be acquired before the snapshot that validates it.
-    #[error("membership write requires READ COMMITTED isolation")]
-    MembershipIsolation,
+    /// A core storage rule refused the write or read. `detail` is the
+    /// database's own sentence; `rule` says which rule and who has to act.
+    #[error("{detail}")]
+    Refused { rule: StorageRule, detail: String },
     #[error("authorization refused: {0}")]
     Forbidden(String),
     /// A same `(owner, request_id)` idempotency key already exists with a
@@ -101,6 +101,153 @@ pub enum StorageError {
     UnreadableRead { memory: MemoryId },
     #[error("internal storage error: {0}")]
     Internal(String),
+}
+
+/// The core storage rules a caller can run into at runtime. SQL raises each
+/// with SQLSTATE `PX001` and the rule's name as the CONSTRAINT; the storage
+/// backend parses that name here once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageRule {
+    /// The schema's evolution already completed, so it takes no more writes.
+    SchemaEvolutionCompleted,
+    /// A sidecar table is stamped that no spiice declares.
+    SidecarNotDeclared,
+    /// The statement is reserved for the validated migration lane.
+    MigrationLaneRequired,
+    /// Schema evolution authority permits were not cleared first.
+    EvolutionPermitsNotCleared,
+    /// An authority read named a subject that is not a person.
+    AuthoritySubjectNotPerson,
+    /// The write or authority read needs a READ COMMITTED transaction.
+    ReadCommittedRequired,
+    /// A group edge named the same group as parent and member.
+    GroupContainsItself,
+    /// The group edge would create a cycle in the tree.
+    GroupCycle,
+    /// A person-membership write named an owner that is a group.
+    MemberIsGroup,
+    /// An owner with person memberships cannot become a group.
+    OwnerHasPersonMemberships,
+    /// A Goal's motivation names a Perspective of another owner.
+    GoalMotivationOwnerDiffers,
+    /// A derived memory pinned no memory.
+    DerivedMemoryPinsNothing,
+    /// An origin pin names a Memory that does not exist.
+    OriginPinMissing,
+    /// A reference pin names a Memory that does not exist.
+    ReferencePinMissing,
+    /// A goal reference pin names a Goal that does not exist.
+    GoalReferencePinMissing,
+    /// A `guided_by` pin names a Goal that does not exist.
+    GuidedByPinMissing,
+    /// A new pin targets a handle that is closed.
+    ClosedHandle,
+    /// Search ran without an authenticated owner scope.
+    SearchScopeNotAuthorized,
+    /// The operation runs in platform scope only.
+    PlatformScopeRequired,
+    /// A rule name this release does not know, kept as raised.
+    Unknown(String),
+}
+
+/// Who has to act on a [`StorageRule`] refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleClass {
+    /// The request is wrong as written.
+    Invalid,
+    /// The request met state that changed or forbids it.
+    Conflict,
+    /// The caller's transaction or subject lacks the standing.
+    Forbidden,
+    /// The server cannot serve this until an operator acts.
+    Deployment,
+}
+
+impl StorageRule {
+    /// Every known rule; [`StorageRule::Unknown`] is not among them.
+    pub const ALL: [Self; 19] = [
+        Self::SchemaEvolutionCompleted,
+        Self::SidecarNotDeclared,
+        Self::MigrationLaneRequired,
+        Self::EvolutionPermitsNotCleared,
+        Self::AuthoritySubjectNotPerson,
+        Self::ReadCommittedRequired,
+        Self::GroupContainsItself,
+        Self::GroupCycle,
+        Self::MemberIsGroup,
+        Self::OwnerHasPersonMemberships,
+        Self::GoalMotivationOwnerDiffers,
+        Self::DerivedMemoryPinsNothing,
+        Self::OriginPinMissing,
+        Self::ReferencePinMissing,
+        Self::GoalReferencePinMissing,
+        Self::GuidedByPinMissing,
+        Self::ClosedHandle,
+        Self::SearchScopeNotAuthorized,
+        Self::PlatformScopeRequired,
+    ];
+
+    /// The CONSTRAINT name SQL raises; for `Unknown`, the name as raised.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::SchemaEvolutionCompleted => "schema_evolution_completed",
+            Self::SidecarNotDeclared => "sidecar_not_declared",
+            Self::MigrationLaneRequired => "migration_lane_required",
+            Self::EvolutionPermitsNotCleared => "evolution_permits_not_cleared",
+            Self::AuthoritySubjectNotPerson => "authority_subject_not_person",
+            Self::ReadCommittedRequired => "read_committed_required",
+            Self::GroupContainsItself => "group_contains_itself",
+            Self::GroupCycle => "group_cycle",
+            Self::MemberIsGroup => "member_is_group",
+            Self::OwnerHasPersonMemberships => "owner_has_person_memberships",
+            Self::GoalMotivationOwnerDiffers => "goal_motivation_owner_differs",
+            Self::DerivedMemoryPinsNothing => "derived_memory_pins_nothing",
+            Self::OriginPinMissing => "origin_pin_missing",
+            Self::ReferencePinMissing => "reference_pin_missing",
+            Self::GoalReferencePinMissing => "goal_reference_pin_missing",
+            Self::GuidedByPinMissing => "guided_by_pin_missing",
+            Self::ClosedHandle => "closed_handle",
+            Self::SearchScopeNotAuthorized => "search_scope_not_authorized",
+            Self::PlatformScopeRequired => "platform_scope_required",
+            Self::Unknown(name) => name,
+        }
+    }
+
+    /// The rule SQL named, or `Unknown` carrying the name.
+    #[must_use]
+    pub fn parse(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|rule| rule.name() == name)
+            .unwrap_or_else(|| Self::Unknown(name.to_owned()))
+    }
+
+    #[must_use]
+    pub fn class(&self) -> RuleClass {
+        match self {
+            Self::EvolutionPermitsNotCleared
+            | Self::ReadCommittedRequired
+            | Self::GroupContainsItself
+            | Self::MemberIsGroup
+            | Self::DerivedMemoryPinsNothing => RuleClass::Invalid,
+            Self::GroupCycle
+            | Self::OwnerHasPersonMemberships
+            | Self::GoalMotivationOwnerDiffers
+            | Self::OriginPinMissing
+            | Self::ReferencePinMissing
+            | Self::GoalReferencePinMissing
+            | Self::GuidedByPinMissing
+            | Self::ClosedHandle => RuleClass::Conflict,
+            Self::MigrationLaneRequired
+            | Self::AuthoritySubjectNotPerson
+            | Self::SearchScopeNotAuthorized
+            | Self::PlatformScopeRequired => RuleClass::Forbidden,
+            Self::SchemaEvolutionCompleted | Self::SidecarNotDeclared | Self::Unknown(_) => {
+                RuleClass::Deployment
+            }
+        }
+    }
 }
 
 /// What a replay declared differently from the admission it replays. The

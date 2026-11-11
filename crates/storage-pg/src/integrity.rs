@@ -132,9 +132,8 @@ const DECLARATION_TRIGGER_SUFFIX: &str = "declared_by_memory";
 /// baseline that states the rule once and a baseline that restates it
 /// twenty-six times.
 ///
-/// `ERRCODE 23503` is `foreign_key_violation`, the same code
-/// `assert_sidecar_stamp_declared` raises. They are two directions of one
-/// array foreign key, so they report as one kind of thing.
+/// `ERRCODE PX002` marks the refusal internal: `Engine::unit_of_work` stamps
+/// before it writes, so only a core bug or direct SQL reaches it.
 pub const DECLARATION_TRIGGER_FUNCTION: &str = r"CREATE OR REPLACE FUNCTION proxiima_core.assert_memory_declares_sidecar() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -151,7 +150,7 @@ BEGIN
         RAISE EXCEPTION
             'sidecar row in % for memory %, which does not declare % in memory.sidecar_tables',
             surface, memory_t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'forget, owner erase and owner export all reach a sidecar row '
                          || 'through memory.sidecar_tables and nowhere else, so an undeclared '
                          || 'row is reachable by none of them; write through '
@@ -344,7 +343,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % still declares % in memory.sidecar_tables, so the row it declares there may not be deleted',
             memory_t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'a stamp whose row was deleted leaves the Memory declaring '
                          || 'sidecar data that is gone, so its reads, export and transfer '
                          || 'come up short and nothing can repair it; delete the memory row '
@@ -418,9 +417,7 @@ CREATE CONSTRAINT TRIGGER {trigger}
 ///
 /// `RETURN NULL` because an `AFTER` trigger's return value is discarded.
 ///
-/// `ERRCODE 23503` is `foreign_key_violation`, the code the other two
-/// directions raise. Three directions of one array foreign key report as one
-/// kind of thing.
+/// `ERRCODE PX002` marks the refusal internal, like the other two directions.
 ///
 /// The body re-tests membership that the `WHEN` clause has already tested.
 /// That is deliberate and it is not redundant: `WHEN` is an optimisation —
@@ -456,7 +453,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % declares % in memory.sidecar_tables with no row in that table',
             NEW.t, surface
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
     EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s WHERE %I = $1)', surface, TG_ARGV[1])
        INTO present
@@ -465,7 +462,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % declares % in memory.sidecar_tables with no row in that table',
             NEW.t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'a stamp with no row leaves the Memory declaring sidecar data '
                          || 'it does not have, so its reads, export and transfer come up '
                          || 'short; write through Engine::unit_of_work, which stamps '

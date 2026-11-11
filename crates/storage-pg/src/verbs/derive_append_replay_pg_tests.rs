@@ -9,7 +9,8 @@ use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWri
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
     AccessKind, ContentFingerprint, EdgeEndpoint, EntityKind, GoalId, IdempotencyKey, KeyScope,
-    MemoryOperatorKind, OwnerId, RequestKey, SchemaId, SchemaVersion, StorageError, UserId,
+    MemoryOperatorKind, OwnerId, RequestKey, SchemaId, SchemaVersion, StorageError, StorageRule,
+    UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -199,6 +200,45 @@ async fn changed_perspective_guidance_appends_with_same_origins() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("changed guidance must append a new Perspective version");
+}
+
+#[tokio::test]
+async fn perspective_guidance_naming_no_goal_is_refused() {
+    let (db_name, pg) = fresh_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let pool = pg.pool_for_tests();
+        let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
+        let mut abstraction = fact_draft();
+        abstraction.kind = proxiima_core::MemoryKind::Abstraction;
+        abstraction.additional_references =
+            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
+        let origins = [EdgeEndpoint::memory(
+            EntityKind::Abstraction,
+            abstraction.memory_id,
+        )];
+        let guidance = [GoalId::new(Uuid::now_v7())];
+        let draft = perspective_draft(owner, Uuid::now_v7(), &guidance);
+        let refused = append_with_edges(pool, &permit, &draft, &origins, &[])
+            .await
+            .expect_err("guidance must name a Goal");
+        assert!(
+            matches!(
+                refused,
+                StorageError::Refused {
+                    rule: StorageRule::GuidedByPinMissing,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("guidance naming no Goal must be refused");
 }
 
 async fn head_snapshot(

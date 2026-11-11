@@ -2,9 +2,10 @@
 
 use super::*;
 use proxiima_core::OwnerScope;
+use proxiima_core::{StorageError, StorageRule};
 use proxiima_pg_testkit::DbGuard;
-use proxiima_storage_pg::begin_owner_transaction;
 use proxiima_storage_pg::test_fixtures::fresh_pg;
+use proxiima_storage_pg::{begin_owner_transaction, map_err};
 use sqlx::PgConnection;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -77,6 +78,15 @@ fn assert_code(error: &sqlx::Error, expected: &str) {
     );
 }
 
+fn assert_search_scope_refused(error: sqlx::Error) {
+    match map_err(error) {
+        StorageError::Refused { rule, .. } => {
+            assert_eq!(rule, StorageRule::SearchScopeNotAuthorized);
+        }
+        other => panic!("expected a search scope refusal, got {other:?}"),
+    }
+}
+
 struct Fixture {
     pg: PgStorage,
     owner: OwnerId,
@@ -140,13 +150,13 @@ async fn direct_candidates_refuse_missing_forged_and_invalid_inputs() -> TestRes
         let error = text_candidates(missing.as_mut(), leg, &owners, Some(8))
             .await
             .unwrap_err();
-        assert_code(&error, "42501");
+        assert_search_scope_refused(error);
         missing.rollback().await?;
         let mut scoped = begin_owner_transaction(&runtime, &scope).await?;
         let error = text_candidates(scoped.as_mut(), leg, &forged, Some(8))
             .await
             .unwrap_err();
-        assert_code(&error, "42501");
+        assert_search_scope_refused(error);
         scoped.rollback().await?;
     }
     for window in [
@@ -159,7 +169,7 @@ async fn direct_candidates_refuse_missing_forged_and_invalid_inputs() -> TestRes
         let error = text_candidates(tx.as_mut(), TextLeg::Lexical, &owners, window)
             .await
             .unwrap_err();
-        assert_code(&error, "22023");
+        assert_code(&error, "PX002");
         tx.rollback().await?;
     }
     let mut valid = begin_owner_transaction(&runtime, &scope).await?;
@@ -172,13 +182,13 @@ async fn direct_candidates_refuse_missing_forged_and_invalid_inputs() -> TestRes
     let error = vector_candidates(missing.as_mut(), &owners, &embed_vector())
         .await
         .unwrap_err();
-    assert_code(&error, "42501");
+    assert_search_scope_refused(error);
     missing.rollback().await?;
     let mut scoped = begin_owner_transaction(&runtime, &scope).await?;
     let error = vector_candidates(scoped.as_mut(), &forged, &embed_vector())
         .await
         .unwrap_err();
-    assert_code(&error, "42501");
+    assert_search_scope_refused(error);
     scoped.rollback().await?;
     let mut wrong_width = begin_owner_transaction(&runtime, &scope).await?;
     let error = vector_candidates(
@@ -188,7 +198,7 @@ async fn direct_candidates_refuse_missing_forged_and_invalid_inputs() -> TestRes
     )
     .await
     .unwrap_err();
-    assert_code(&error, "22023");
+    assert_code(&error, "PX002");
     wrong_width.rollback().await?;
     Ok(())
 }

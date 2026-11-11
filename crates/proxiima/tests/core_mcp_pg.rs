@@ -75,6 +75,9 @@ mod read_veto;
 #[path = "core_mcp_pg/idempotency_rule.rs"]
 mod idempotency_rule;
 
+#[path = "core_mcp_pg/membership_refusal.rs"]
+mod membership_refusal;
+
 mod embedding_failure_regressions {
     use super::*;
     use proxiima::host::{EmbedCaps, OpenAiCompatConfig, OpenAiCompatEmbeddingClient};

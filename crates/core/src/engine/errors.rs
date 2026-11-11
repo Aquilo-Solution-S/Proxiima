@@ -3,9 +3,9 @@
 //! Write verbs funnel storage failures through [`map_write_storage_error`]
 //! so one taxonomy decides which failures are caller-fixable.
 
-use crate::StorageError;
 use crate::error::ProtocolError;
 use crate::publication::PublicationError;
+use crate::{RuleClass, StorageError, StorageRule};
 
 /// Map a refused publication capture onto the public protocol surface.
 ///
@@ -60,10 +60,18 @@ pub(crate) fn map_write_storage_error(
         StorageError::GoalChildrenOpen { .. } | StorageError::GoalChildrenAllAbandoned => {
             ProtocolError::invalid_argument(field, err.to_string())
         }
-        StorageError::MembershipIsolation => ProtocolError::invalid_argument(
-            "transaction_isolation",
-            "membership writes require READ COMMITTED isolation",
-        ),
+        StorageError::Refused { rule, detail } => match rule.class() {
+            RuleClass::Invalid | RuleClass::Conflict => {
+                let field = if rule == StorageRule::ReadCommittedRequired {
+                    "transaction_isolation"
+                } else {
+                    field
+                };
+                ProtocolError::invalid_argument(field, detail)
+            }
+            RuleClass::Forbidden => ProtocolError::forbidden(detail),
+            RuleClass::Deployment => ProtocolError::internal(detail),
+        },
         StorageError::Forbidden(message) => ProtocolError::forbidden(message),
         StorageError::UnreadableRead { .. } => ProtocolError::forbidden(err.to_string()),
         StorageError::Suppressed(message) => ProtocolError::suppressed(message),

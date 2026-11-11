@@ -429,6 +429,169 @@ async fn every_core_relation_named_in_storage_sql_exists() {
     result.expect("core relation inventory test failed");
 }
 
+/// `body` with each `--` and `/* */` comment outside a single-quoted string
+/// replaced by a space, so a comment neither hides a raise nor supplies an
+/// option.
+fn without_comments(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    let mut quoted = false;
+    while let Some(character) = rest.chars().next() {
+        if !quoted && rest.starts_with("--") {
+            rest = rest.find('\n').map_or("", |end| &rest[end..]);
+            out.push(' ');
+        } else if !quoted && rest.starts_with("/*") {
+            rest = rest.find("*/").map_or("", |end| &rest[end + 2..]);
+            out.push(' ');
+        } else {
+            quoted ^= character == '\'';
+            out.push(character);
+            rest = &rest[character.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Every statement in `body` that raises an error: each `RAISE` up to the
+/// first `;` outside a single-quoted string, whitespace collapsed. A message
+/// level below an error and the bare re-raise of a handler raise nothing new.
+fn raise_statements(body: &str) -> Vec<String> {
+    const NOT_AN_ERROR: [&str; 5] = ["DEBUG", "LOG", "INFO", "NOTICE", "WARNING"];
+    let body = without_comments(body);
+    let body = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let upper = body.to_ascii_uppercase();
+    let mut statements = Vec::new();
+    for (start, _) in upper.match_indices("RAISE") {
+        let word_starts = start == 0 || !upper.as_bytes()[start - 1].is_ascii_alphanumeric();
+        let rest = &upper[start + "RAISE".len()..];
+        let word_ends = rest.starts_with([' ', ';']);
+        if !(word_starts && word_ends) {
+            continue;
+        }
+        let level = rest.trim_start().split([' ', ';']).next().unwrap_or("");
+        if level.is_empty() || NOT_AN_ERROR.contains(&level) {
+            continue;
+        }
+        let mut quoted = false;
+        let mut end = body.len();
+        for (offset, character) in body[start..].char_indices() {
+            match character {
+                '\'' => quoted = !quoted,
+                ';' if !quoted => {
+                    end = start + offset;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        statements.push(body[start..end].trim_end().to_owned());
+    }
+    statements
+}
+
+#[test]
+fn the_raise_scanner_finds_every_error_form() {
+    let body = "BEGIN\n  RAISE\n   EXCEPTION 'a; b' USING ERRCODE = 'PX002';\n  \
+                raise  'bare';\n  RAISE unique_violation;\n  RAISE NOTICE 'n';\n  \
+                RAISE/* c */EXCEPTION 'x -- y' /* ERRCODE = 'PX002' */;\n  \
+                -- RAISE EXCEPTION 'in a comment';\n  \
+                PERFORM praise();\n  EXCEPTION WHEN OTHERS THEN RAISE;\nEND";
+    let found = raise_statements(body);
+    assert_eq!(
+        found,
+        [
+            "RAISE EXCEPTION 'a; b' USING ERRCODE = 'PX002'",
+            "raise 'bare'",
+            "RAISE unique_violation",
+            "RAISE EXCEPTION 'x -- y'",
+        ]
+    );
+    assert_eq!(using_value(&found[3], "ERRCODE"), None);
+}
+
+/// The quoted value after `key = '` in a `RAISE ... USING` statement.
+fn using_value<'a>(statement: &'a str, key: &str) -> Option<&'a str> {
+    let marker = format!("{key} = '");
+    let from = statement.find(&marker)? + marker.len();
+    let length = statement[from..].find('\'')?;
+    Some(&statement[from..from + length])
+}
+
+/// Core SQL refuses with two SQLSTATEs and nothing else: `PX001` names a
+/// storage rule through its CONSTRAINT, `PX002` is a backstop. Two raises are
+/// control flow of their own function and keep their code.
+#[tokio::test]
+async fn every_core_raise_carries_a_refusal_code() {
+    use proxiima_core::StorageRule;
+
+    const CONTROL_FLOW: [(&str, &str); 2] = [
+        ("cooled_forget_grounding", "40001"),
+        ("live_memory_owners_as", "P7677"),
+    ];
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        apply_current_migrations(&pg).await?;
+        let functions: Vec<(String, String)> = sqlx::query_as(
+            "SELECT p.proname::text, p.prosrc
+               FROM pg_proc p
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'proxiima_core' AND p.prolang = (
+                    SELECT oid FROM pg_language WHERE lanname = 'plpgsql')
+              ORDER BY p.proname, p.oid",
+        )
+        .fetch_all(pg.pool_for_tests())
+        .await?;
+
+        let mut raised = BTreeSet::new();
+        let mut unclassified = Vec::new();
+        for (function, body) in &functions {
+            for statement in raise_statements(body) {
+                let errcode = using_value(&statement, "ERRCODE");
+                let constraint = using_value(&statement, "CONSTRAINT");
+                let classified = match (errcode, constraint) {
+                    (Some("PX002"), None) => true,
+                    (Some("PX001"), Some(name)) => {
+                        let known = !matches!(StorageRule::parse(name), StorageRule::Unknown(_));
+                        if known {
+                            raised.insert(name.to_owned());
+                        }
+                        known
+                    }
+                    (Some(code), None) => CONTROL_FLOW.contains(&(function.as_str(), code)),
+                    _ => false,
+                };
+                if !classified {
+                    unclassified.push(format!("{function}: {statement}"));
+                }
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "RAISE EXCEPTION without PX002, or PX001 with a known rule:\n{}",
+            unclassified.join("\n")
+        );
+        let unraised: Vec<&str> = StorageRule::ALL
+            .iter()
+            .map(StorageRule::name)
+            .filter(|name| !raised.contains(*name))
+            .collect();
+        assert!(
+            unraised.is_empty(),
+            "storage rules no core function raises: {unraised:?}"
+        );
+        Ok(())
+    }
+    .await;
+
+    let _ = drop_db(&db_name).await;
+    result.expect("core raise catalog test failed");
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn migrations_apply_to_fresh_db() {
@@ -1390,10 +1553,9 @@ async fn memory_is_append_only_and_head_t_only() {
         .execute(pool)
         .await
         .expect_err("kind must match head");
-        assert!(
-            err.to_string().contains("kind/owner") || err.to_string().contains("23514"),
-            "got: {err}"
-        );
+        let database = err.as_database_error().expect("database refusal");
+        assert_eq!(database.code().as_deref(), Some("PX002"), "got: {err}");
+        assert!(database.message().contains("kind/owner"), "got: {err}");
         Ok(())
     }
     .await;

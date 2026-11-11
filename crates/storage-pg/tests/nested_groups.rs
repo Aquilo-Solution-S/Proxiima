@@ -7,14 +7,14 @@ use std::time::Duration;
 use proxiima_core::owner_inverse::{EraseAuthorization, OwnerEraseTarget, OwnerSurfaces};
 use proxiima_core::storage_ports::OwnerInversePort;
 use proxiima_core::{
-    AccessCeiling, GoalAccess, GroupId, OwnerId, Relation, Role, StorageError, UserId,
+    AccessCeiling, GoalAccess, GroupId, OwnerId, Relation, Role, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{DbGuard, create_db, db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{create_group, create_user};
 use proxiima_storage_pg::{
     AuthorityTargets, PgPlatformScope, PgStorage, add_group_member, begin_migration_transaction,
-    group_role, register_group, remove_group_member, remove_group_member_relation,
-    replace_group_member_relation,
+    bootstrap_group_admin, group_role, map_err, register_group, remove_group_member,
+    remove_group_member_relation, replace_group_member_relation,
 };
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -429,19 +429,55 @@ async fn database_and_host_refuse_second_parent_cycles_self_edges_and_person_kin
     let h = Harness::new().await?;
     let g = h.groups(3).await?;
     h.add(g[0], OwnerId::from(g[1]), Relation::Editor).await?;
-    for (parent, child) in [(g[2], g[1]), (g[1], g[0]), (g[2], g[2])] {
-        assert!(
-            h.add(parent, OwnerId::from(child), Relation::Viewer)
-                .await
-                .is_err()
-        );
+    // Each refused edge: the host write's error, and what the raw INSERT meets.
+    for (parent, child, host, raw) in [
+        (g[2], g[1], None, None),
+        (
+            g[1],
+            g[0],
+            Some(StorageRule::GroupCycle),
+            Some(StorageRule::GroupCycle),
+        ),
+        (
+            g[2],
+            g[2],
+            Some(StorageRule::GroupContainsItself),
+            Some(StorageRule::GroupContainsItself),
+        ),
+    ] {
+        let mut tx = h.pool.begin().await?;
+        let refused = add_group_member(&mut tx, parent, OwnerId::from(child), Relation::Viewer)
+            .await
+            .expect_err("host refuses the edge");
+        match host {
+            Some(rule) => assert!(
+                matches!(&refused, StorageError::Refused { rule: got, .. } if *got == rule),
+                "host {parent:?} <- {child:?}: {refused:?}"
+            ),
+            None => assert!(
+                matches!(refused, StorageError::Conflict(_)),
+                "host {parent:?} <- {child:?}: {refused:?}"
+            ),
+        }
+        tx.rollback().await?;
         // Raw INSERT on purpose: a group edge the write path refuses.
         let error = sqlx::query("INSERT INTO proxiima_core.group_edges (parent_group_id, child_group_id, relation) VALUES ($1,$2,'viewer')")
-            .bind(parent.into_inner()).bind(child.into_inner()).execute(&h.pool).await;
-        assert!(
-            error.is_err(),
-            "raw SQL must refuse {parent:?} <- {child:?}"
-        );
+            .bind(parent.into_inner()).bind(child.into_inner()).execute(&h.pool).await
+            .expect_err("raw SQL must refuse the edge");
+        match raw {
+            Some(rule) => assert!(
+                matches!(map_err(error), StorageError::Refused { rule: got, .. } if got == rule),
+                "raw {parent:?} <- {child:?}"
+            ),
+            None => assert_eq!(
+                error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .as_deref(),
+                Some("23505"),
+                "raw {parent:?} <- {child:?}: {error}"
+            ),
+        }
     }
     let personal_rows: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM proxiima_core.group_memberships WHERE member_user_id = $1",
@@ -454,25 +490,72 @@ async fn database_and_host_refuse_second_parent_cycles_self_edges_and_person_kin
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES($1,'personal') ON CONFLICT (owner_id) DO NOTHING")
         .bind(g[1].into_inner()).execute(&h.pool).await?;
     // Raw INSERT on purpose: a person row naming a group, which the write path refuses.
-    assert!(sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation) VALUES ($1,$2,'viewer')")
-        .bind(g[0].into_inner()).bind(g[2].into_inner()).execute(&h.pool).await.is_err(), "raw person row cannot name group");
+    let error = sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation) VALUES ($1,$2,'viewer')")
+        .bind(g[0].into_inner()).bind(g[2].into_inner()).execute(&h.pool).await
+        .expect_err("raw person row cannot name group");
+    assert!(
+        matches!(
+            map_err(error),
+            StorageError::Refused {
+                rule: StorageRule::MemberIsGroup,
+                ..
+            }
+        ),
+        "raw person row cannot name group"
+    );
     let person = OwnerId::new(Uuid::now_v7());
     h.add(g[0], person, Relation::Viewer).await?;
     let mut tx = h.pool.begin().await?;
+    let refused = register_group(&mut tx, person.as_group())
+        .await
+        .expect_err("person membership blocks group registration");
     assert!(
-        register_group(&mut tx, person.as_group()).await.is_err(),
-        "person membership blocks group registration"
+        matches!(
+            refused,
+            StorageError::Refused {
+                rule: StorageRule::OwnerHasPersonMemberships,
+                ..
+            }
+        ),
+        "{refused:?}"
     );
     tx.rollback().await?;
-    assert!(
-        // Raw INSERT on purpose: registers a user's id as a group, which the write path refuses.
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id,kind) VALUES ($1,'group')")
-            .bind(person.into_inner())
-            .execute(&h.pool)
-            .await
-            .is_err()
-    );
+    // Raw INSERT on purpose: registers a user's id as a group, which the write path refuses.
+    let error = sqlx::query("INSERT INTO proxiima_core.owners (owner_id,kind) VALUES ($1,'group')")
+        .bind(person.into_inner())
+        .execute(&h.pool)
+        .await
+        .expect_err("raw registration of a user as a group");
+    assert!(matches!(
+        map_err(error),
+        StorageError::Refused {
+            rule: StorageRule::OwnerHasPersonMemberships,
+            ..
+        }
+    ));
     h.assert_projection().await
+}
+
+#[tokio::test]
+async fn bootstrap_refuses_a_registered_group_as_the_first_admin() -> TestResult {
+    let h = Harness::new().await?;
+    let g = h.groups(2).await?;
+    let mut tx = h.pool.begin().await?;
+    let refused = bootstrap_group_admin(&mut tx, g[0], UserId::new(g[1].into_inner()))
+        .await
+        .expect_err("a group is no person member");
+    assert!(
+        matches!(
+            refused,
+            StorageError::Refused {
+                rule: StorageRule::MemberIsGroup,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    tx.rollback().await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -496,7 +579,13 @@ async fn fixed_snapshot_isolation_refuses_membership_writes() -> TestResult {
         .await
         .expect_err("fixed snapshot refused");
         assert!(
-            matches!(error, proxiima_core::StorageError::MembershipIsolation),
+            matches!(
+                error,
+                StorageError::Refused {
+                    rule: StorageRule::ReadCommittedRequired,
+                    ..
+                }
+            ),
             "typed refusal: {error:?}"
         );
         tx.rollback().await?;

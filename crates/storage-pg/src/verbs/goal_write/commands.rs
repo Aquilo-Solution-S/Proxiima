@@ -649,7 +649,7 @@ mod lifecycle_lock_tests {
     };
     use proxiima_core::{
         AccessKind, EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, SimpleTextGoalV1,
-        SpiiceRegistry, StorageError, UserId,
+        SpiiceRegistry, StorageError, StorageRule, UserId,
     };
     use proxiima_pg_testkit::{db_url, drop_db};
     use uuid::Uuid;
@@ -772,7 +772,13 @@ mod lifecycle_lock_tests {
                 1,
             )
             .await;
-            assert!(matches!(refused, Err(StorageError::ConstraintViolation(_))));
+            assert!(matches!(
+                refused,
+                Err(StorageError::Refused {
+                    rule: StorageRule::GoalMotivationOwnerDiffers,
+                    ..
+                })
+            ));
             tx.rollback().await?;
             Ok(())
         }

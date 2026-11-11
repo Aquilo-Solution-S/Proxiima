@@ -4,9 +4,31 @@
 //! serialization failure inside a read transaction is just as
 //! `Retryable` as one inside a write, whether or not the path in hand
 //! runs a retry loop. [`internal`] is for non-sqlx failures (row
-//! conversion, arithmetic) where no sqlx taxonomy applies.
+//! conversion, arithmetic) where no sqlx taxonomy applies. A core SQL
+//! refusal a caller can reach arrives as SQLSTATE `PX001` and becomes
+//! [`StorageError::Refused`].
 
-use proxiima_core::StorageError;
+use proxiima_core::{StorageError, StorageRule};
+
+/// SQLSTATE of a storage rule a caller can run into; its CONSTRAINT field
+/// names the rule ([`StorageRule::parse`]). Core SQL raises nothing else a
+/// caller sees as a refusal.
+const RULE_SQLSTATE: &str = "PX001";
+
+/// SQLSTATE of a backstop only a core bug, direct SQL or an install-time
+/// diagnostic reaches. It carries no rule and maps to
+/// [`StorageError::Internal`] like any unrecognised code.
+#[cfg(test)]
+const INTERNAL_SQLSTATE: &str = "PX002";
+
+/// `Some(Refused)` exactly when `code` is [`RULE_SQLSTATE`]; a missing
+/// CONSTRAINT becomes `Unknown("")`.
+fn refusal(code: Option<&str>, constraint: Option<&str>, message: &str) -> Option<StorageError> {
+    (code == Some(RULE_SQLSTATE)).then(|| StorageError::Refused {
+        rule: StorageRule::parse(constraint.unwrap_or_default()),
+        detail: message.to_owned(),
+    })
+}
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
     StorageError::Internal(e.to_string())
@@ -19,6 +41,9 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
 /// as every other verb, so a deadlock inside a sidecar INSERT is retryable
 /// rather than a swallowed `Internal`.
 ///
+/// A `PX001` refusal becomes [`StorageError::Refused`] before any other
+/// classification.
+///
 /// Postgres's own sentence is forwarded for the constraints this does not
 /// recognise, which means an index name can still reach a caller. That is a
 /// wider leak than one function can fix — each constraint needs its rule
@@ -27,10 +52,12 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
 #[allow(clippy::needless_pass_by_value)]
 pub fn map_err(e: sqlx::Error) -> StorageError {
     use sqlx::Error;
+    if let Error::Database(db) = &e
+        && let Some(refused) = refusal(db.code().as_deref(), db.constraint(), db.message())
+    {
+        return refused;
+    }
     match &e {
-        Error::Database(db) if db.code().as_deref() == Some("25001") => {
-            StorageError::MembershipIsolation
-        }
         Error::Database(db)
             if db.is_unique_violation()
                 && db
@@ -157,6 +184,58 @@ where
                 attempt += 1;
             }
             outcome => return outcome,
+        }
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::{INTERNAL_SQLSTATE, RULE_SQLSTATE, refusal};
+    use proxiima_core::{StorageError, StorageRule};
+
+    fn rule_of(error: Option<StorageError>) -> StorageRule {
+        match error {
+            Some(StorageError::Refused { rule, .. }) => rule,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_rule_name_round_trips() {
+        for rule in StorageRule::ALL {
+            let refused = refusal(Some(RULE_SQLSTATE), Some(rule.name()), "sentence");
+            assert_eq!(rule_of(refused), rule);
+        }
+    }
+
+    #[test]
+    fn the_detail_is_the_databases_sentence() {
+        let refused = refusal(Some(RULE_SQLSTATE), Some("group_cycle"), "a sentence");
+        assert_eq!(refused.unwrap().to_string(), "a sentence");
+    }
+
+    #[test]
+    fn an_unknown_name_is_kept() {
+        let refused = refusal(Some(RULE_SQLSTATE), Some("from_the_future"), "x");
+        assert_eq!(
+            rule_of(refused),
+            StorageRule::Unknown("from_the_future".into())
+        );
+    }
+
+    #[test]
+    fn a_missing_constraint_is_unknown_and_empty() {
+        let refused = refusal(Some(RULE_SQLSTATE), None, "x");
+        assert_eq!(rule_of(refused), StorageRule::Unknown(String::new()));
+    }
+
+    #[test]
+    fn other_codes_are_not_refusals() {
+        for code in [Some(INTERNAL_SQLSTATE), Some("23505"), Some("25001"), None] {
+            assert!(
+                refusal(code, Some("group_cycle"), "x").is_none(),
+                "{code:?}"
+            );
         }
     }
 }

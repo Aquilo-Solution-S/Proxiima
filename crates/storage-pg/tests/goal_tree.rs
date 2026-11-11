@@ -505,7 +505,7 @@ async fn the_parent_edge_is_fixed_and_never_self() {
             .await
             .expect_err(label);
             let db = err.as_database_error().ok_or("database error")?;
-            assert_eq!(db.code().as_deref(), Some("23514"), "{label}: {db}");
+            assert_eq!(db.code().as_deref(), Some("PX002"), "{label}: {db}");
             assert!(
                 db.message().contains("goal series parent is fixed"),
                 "{label}: {db}"

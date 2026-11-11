@@ -9,7 +9,7 @@ mod example_engine;
 use example_engine::ExampleEngine;
 use proxiima::{FactPayload, FactWrite};
 use proxiima_core::{
-    AuthPath, AuthzContext, OwnerId, UserId,
+    AuthPath, AuthzContext, OwnerId, StorageError, StorageRule, UserId,
     test_fixtures::{authenticated_context, owner_scope_for_tests},
 };
 use proxiima_example::StampV1;
@@ -765,11 +765,21 @@ async fn refuses_sync_outside_composed_schemas() {
         tx.rollback().await.expect("rollback");
         assert!(message.contains(refusal), "{refusal}: {message}");
     }
-    let message = sync(&mut conn, &["proxiima_example"], &[FOLLOWS_TABLE])
-        .await
-        .expect_err("outside platform scope")
-        .to_string();
-    assert!(message.contains("runs in platform scope only"), "{message}");
+    let mut tx = conn.begin().await.expect("unscoped transaction");
+    let refused = example_engine::frozen_sidecars()
+        .sync_owner_follows(&mut tx)
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(StorageError::Refused {
+                rule: StorageRule::PlatformScopeRequired,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    tx.rollback().await.expect("rollback");
     conn.close().await.expect("close");
 }
 

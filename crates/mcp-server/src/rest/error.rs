@@ -18,9 +18,9 @@
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use proxiima_core::StorageError;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::mcp::McpToolError;
+use proxiima_core::{RuleClass, StorageError};
 
 use crate::server::ToolInvocationError;
 
@@ -286,14 +286,27 @@ const fn protocol_status(code: ErrorCode) -> (StatusCode, &'static str, &'static
     }
 }
 
-const fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str) {
+fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str) {
     match err {
         StorageError::ConstraintViolation(_)
-        | StorageError::MembershipIsolation
         | StorageError::GoalChildrenOpen { .. }
         | StorageError::GoalChildrenAllAbandoned => {
             (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input")
         }
+        StorageError::Refused { rule, .. } => match rule.class() {
+            RuleClass::Invalid => (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input"),
+            RuleClass::Conflict => (StatusCode::CONFLICT, "conflict", "Conflict"),
+            RuleClass::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "Refused by a storage rule",
+            ),
+            RuleClass::Deployment => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "Internal error",
+            ),
+        },
         StorageError::Forbidden(_) => (
             StatusCode::FORBIDDEN,
             "forbidden",
@@ -357,10 +370,18 @@ const fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'stat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proxiima_core::StorageRule;
     use proxiima_core::error::ProtocolError;
 
     fn status_of(err: &ToolInvocationError) -> StatusCode {
         problem_for(err, "/v1/tools/x").status
+    }
+
+    fn refused(rule: StorageRule) -> StorageError {
+        StorageError::Refused {
+            rule,
+            detail: "x".into(),
+        }
     }
 
     fn protocol(code: ErrorCode) -> ToolInvocationError {
@@ -393,6 +414,30 @@ mod tests {
             (ErrorCode::Internal, StatusCode::INTERNAL_SERVER_ERROR),
         ] {
             assert_eq!(status_of(&protocol(code)), expected, "protocol {code:?}");
+        }
+    }
+
+    #[test]
+    fn a_refused_rule_maps_by_its_class() {
+        for (err, expected) in [
+            (
+                refused(StorageRule::DerivedMemoryPinsNothing),
+                StatusCode::BAD_REQUEST,
+            ),
+            (refused(StorageRule::GroupCycle), StatusCode::CONFLICT),
+            (
+                refused(StorageRule::MigrationLaneRequired),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                refused(StorageRule::SidecarNotDeclared),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            assert_eq!(
+                status_of(&ToolInvocationError::Tool(McpToolError::Storage(err))),
+                expected
+            );
         }
     }
 

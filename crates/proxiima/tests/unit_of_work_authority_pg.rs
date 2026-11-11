@@ -31,7 +31,8 @@ use proxiima_core::verbs::goal_write::{
 };
 use proxiima_core::{
     AgentNoteV1, DerivedMemory, GroupId, InterpretationSubjectKind, InterpretationV1, MemoryId,
-    MemoryTarget, OwnerId, Relation, Role, SeriesHandle, SimpleTextGoalV1, StorageError, UserId,
+    MemoryTarget, OwnerId, Relation, Role, SeriesHandle, SimpleTextGoalV1, StorageError,
+    StorageRule, UserId,
 };
 use proxiima_pg_testkit::db_url;
 use proxiima_storage_pg::{PgPlatformScope, begin_owner_transaction};
@@ -170,14 +171,14 @@ impl HostStateHandler<AuthorityCommand> for AuthorityHandler {
                     tx,
                     sqlx::query("SELECT * FROM proxiima_core.read_subject_authority($1)"),
                     foreign_subject.into_inner(),
-                    "42501",
+                    Refusal::Backstop,
                 )
                 .await?;
                 // Raw INSERT on purpose: the runtime role must be refused a membership write.
                 refused_sql(tx,
                     sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation)
                      VALUES ($1, current_setting('app.subject')::uuid, 'admin')"),
-                    group.into_inner(), "42501").await?;
+                    group.into_inner(), Refusal::Privilege).await?;
 
                 sqlx::query("SAVEPOINT unrelated_scope")
                     .execute(&mut **tx)
@@ -191,7 +192,7 @@ impl HostStateHandler<AuthorityCommand> for AuthorityHandler {
                     tx,
                     sqlx::query("SELECT * FROM proxiima_core.read_subject_authority($1)"),
                     snapshot.subject.into_inner(),
-                    "42501",
+                    Refusal::Backstop,
                 )
                 .await?;
                 sqlx::query("ROLLBACK TO SAVEPOINT unrelated_scope")
@@ -220,11 +221,28 @@ impl HostStateHandler<AuthorityCommand> for AuthorityHandler {
     }
 }
 
+/// What the database boundary raises for a statement the test types itself.
+enum Refusal {
+    /// A caller-reachable core rule, read through the public error mapping.
+    Rule(StorageRule),
+    /// A core backstop (`PX002`) that only direct SQL reaches.
+    Backstop,
+    /// Postgres's own privilege denial.
+    Privilege,
+}
+
+fn error_code(error: &sqlx::Error) -> Option<String> {
+    error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .map(std::borrow::Cow::into_owned)
+}
+
 async fn refused_sql(
     tx: &mut Transaction<'_, Postgres>,
     statement: sqlx::query::Query<'static, Postgres, sqlx::postgres::PgArguments>,
     argument: Uuid,
-    expected_code: &str,
+    expected: Refusal,
 ) -> Result<(), StorageError> {
     sqlx::query("SAVEPOINT authority_refusal")
         .execute(&mut **tx)
@@ -235,14 +253,17 @@ async fn refused_sql(
         .execute(&mut **tx)
         .await
         .expect_err("the database boundary refuses this operation");
-    assert_eq!(
-        error
-            .as_database_error()
-            .and_then(sqlx::error::DatabaseError::code)
-            .as_deref(),
-        Some(expected_code),
-        "{error}"
-    );
+    match expected {
+        Refusal::Rule(rule) => assert!(
+            matches!(
+                proxiima_storage_pg::map_err(error),
+                StorageError::Refused { rule: raised, .. } if raised == rule
+            ),
+            "expected a {rule:?} refusal"
+        ),
+        Refusal::Backstop => assert_eq!(error_code(&error), Some("PX002".to_owned()), "{error}"),
+        Refusal::Privilege => assert_eq!(error_code(&error), Some("42501".to_owned()), "{error}"),
+    }
     sqlx::query("ROLLBACK TO SAVEPOINT authority_refusal")
         .execute(&mut **tx)
         .await
@@ -736,26 +757,34 @@ async fn maintenance_and_fixed_snapshot_transactions_do_not_gain_subject_authori
             &mut tx,
             sqlx::query("SELECT * FROM proxiima_core.read_subject_authority($1)"),
             h.subject.into_inner(),
-            "25001",
+            Refusal::Rule(StorageRule::ReadCommittedRequired),
         )
         .await?;
         tx.rollback().await?;
     }
+    // A group is never an authority subject: the host-state read refuses it.
     let group_subject = h.group().await?;
-    let group_authz = personal_authz(UserId::new(group_subject.into_inner()));
-    let mut tx = begin_owner_transaction(
-        &runtime,
-        group_authz.owner_scope().expect("sealed fixture context"),
-    )
-    .await?;
+    let mut tx = runtime.begin().await?;
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'owner', true), set_config('app.subject', $1::uuid::text, true)")
+        .bind(group_subject.into_inner()).execute(&mut *tx).await?;
     refused_sql(
         &mut tx,
         sqlx::query("SELECT * FROM proxiima_core.read_subject_authority($1)"),
         group_subject.into_inner(),
-        "42501",
+        Refusal::Rule(StorageRule::AuthoritySubjectNotPerson),
     )
     .await?;
     tx.rollback().await?;
+    // The client's view of the same refusal, through the host-state read.
+    let group_user = UserId::new(group_subject.into_inner());
+    let group_authz = personal_authz(group_user);
+    let mut unit = h.built.host().engine().unit_of_work(&group_authz).await?;
+    let error = unit
+        .apply_host_state(AuthorityCommand::read(group_user))
+        .await
+        .expect_err("a group is not an authority subject");
+    assert_eq!(error.code, ErrorCode::Forbidden, "{error}");
+    drop(unit);
     runtime.close().await;
     h.close().await;
     Ok(())

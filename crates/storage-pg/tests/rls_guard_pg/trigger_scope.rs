@@ -2,11 +2,20 @@
 //! integrity routine hands the runtime caller its own `app.proxiima_scope` back,
 //! both on normal return and after a refusal caught by a savepoint.
 
-use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId};
-use proxiima_storage_pg::begin_owner_transaction;
+use proxiima_core::{
+    Credentials, GroupId, OwnerId, OwnerRoles, Role, StorageError, StorageRule, UserId,
+};
+use proxiima_storage_pg::{begin_owner_transaction, map_err};
 use sqlx::postgres::PgQueryResult;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
+
+/// What a refusal under test must be: a core storage rule, or a SQLSTATE
+/// (`PX002` for a core backstop, Postgres's own code otherwise).
+enum Raised {
+    Rule(StorageRule),
+    Sqlstate(&'static str),
+}
 
 const BRIDGED_ROUTINES: [&str; 7] = [
     "assert_erased_pin_target_insert",
@@ -45,14 +54,27 @@ async fn savepoint(connection: &mut PgConnection) {
 async fn assert_refusal_restores_scope(
     connection: &mut PgConnection,
     routine: &str,
-    code: &str,
+    raised: Raised,
     message: &str,
     outcome: Result<PgQueryResult, sqlx::Error>,
 ) {
     let error = outcome.expect_err(routine);
-    let database = error.as_database_error().expect("database refusal");
-    assert_eq!(database.code().as_deref(), Some(code), "{routine}: {error}");
-    assert!(database.message().contains(message), "{routine}: {error}");
+    let text = error.to_string();
+    match raised {
+        Raised::Sqlstate(code) => assert_eq!(
+            error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref(),
+            Some(code),
+            "{routine}: {text}"
+        ),
+        Raised::Rule(expected) => match map_err(error) {
+            StorageError::Refused { rule, .. } => assert_eq!(rule, expected, "{routine}: {text}"),
+            other => panic!("{routine}: expected {expected:?}, got {other:?}"),
+        },
+    }
+    assert!(text.contains(message), "{routine}: {text}");
     sqlx::query("ROLLBACK TO SAVEPOINT trigger_scope")
         .execute(&mut *connection)
         .await
@@ -277,7 +299,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     assert_refusal_restores_scope(
         &mut tx,
         "memory_pin_checks",
-        "23514",
+        Raised::Rule(StorageRule::DerivedMemoryPinsNothing),
         "non-fact must pin",
         outcome,
     )
@@ -292,7 +314,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     assert_refusal_restores_scope(
         &mut tx,
         "goal_pin_target_checks",
-        "23505",
+        Raised::Sqlstate("PX002"),
         "collides with an existing entity",
         outcome,
     )
@@ -330,7 +352,14 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
         // SQL-POLICY: fixed-fragment — one of the two literal DELETEs above.
         let outcome = sqlx::query(statement).bind(target).execute(&mut *tx).await;
         release(&mut holder).await;
-        assert_refusal_restores_scope(&mut tx, routine, "55P03", "lock timeout", outcome).await;
+        assert_refusal_restores_scope(
+            &mut tx,
+            routine,
+            Raised::Sqlstate("55P03"),
+            "lock timeout",
+            outcome,
+        )
+        .await;
         // SQL-POLICY: fixed-fragment — one of the two literal DELETEs above.
         let deleted = sqlx::query(statement)
             .bind(target)
@@ -354,7 +383,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     assert_refusal_restores_scope(
         &mut tx,
         "assert_erased_pin_target_insert",
-        "42501",
+        Raised::Sqlstate("PX002"),
         "written only by a target deletion trigger",
         outcome,
     )

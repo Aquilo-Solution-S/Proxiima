@@ -14,7 +14,9 @@ use crate::verbs::memory_timeseries::{read_memory_by_t, read_memory_head};
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, GroupId, OwnerId, SchemaId, SchemaVersion, StorageError, UserId};
+use proxiima_core::{
+    AccessKind, GroupId, OwnerId, SchemaId, SchemaVersion, StorageError, StorageRule, UserId,
+};
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
 
@@ -346,7 +348,13 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             .await
             .expect_err("missing pin");
         assert!(
-            err.to_string().contains("does not exist") || err.to_string().contains("23503"),
+            matches!(
+                err,
+                StorageError::Refused {
+                    rule: StorageRule::ReferencePinMissing,
+                    ..
+                }
+            ),
             "got: {err}"
         );
 
@@ -362,7 +370,13 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             .await
             .expect_err("closed_handle");
         assert!(
-            err.to_string().contains("closed_handle") || err.to_string().contains("23514"),
+            matches!(
+                err,
+                StorageError::Refused {
+                    rule: StorageRule::ClosedHandle,
+                    ..
+                }
+            ),
             "got: {err}"
         );
 
@@ -436,8 +450,10 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             .ingest_fact_atomic(&permit, &persp_from_fact, None)
             .await
             .expect_err("P origins Fact");
+        // A fact ingest carrying a derived kind is a shape only this test
+        // builds, so the layering refusals below are the database's backstop.
         assert!(
-            err.to_string().contains("perspective origins") || err.to_string().contains("23514"),
+            matches!(&err, StorageError::Internal(m) if m.contains("perspective origins must be abstraction t")),
             "got: {err}"
         );
 
@@ -463,7 +479,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             .await
             .expect_err("A origins P");
         assert!(
-            err.to_string().contains("abstraction origins") || err.to_string().contains("23514"),
+            matches!(&err, StorageError::Internal(m) if m.contains("abstraction origins must be fact or abstraction t")),
             "got: {err}"
         );
 
@@ -494,7 +510,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             .await
             .expect_err("P cannot cite");
         assert!(
-            err.to_string().contains("blob") || err.to_string().contains("23514"),
+            matches!(&err, StorageError::ConstraintViolation(m) if m.contains("blob")),
             "got: {err}"
         );
 

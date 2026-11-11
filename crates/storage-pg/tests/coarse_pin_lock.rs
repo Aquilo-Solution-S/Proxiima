@@ -9,13 +9,14 @@ use std::time::Duration;
 
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, UserId,
+    AccessKind, EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, StorageRule,
+    UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
 use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db};
 use proxiima_storage_pg::verbs::forget::erase_memory;
-use proxiima_storage_pg::{PgPoolConfig, PgStorage, PgTuning, core_pg_sidecars};
+use proxiima_storage_pg::{PgPoolConfig, PgStorage, PgTuning, core_pg_sidecars, map_err};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -143,6 +144,17 @@ async fn insert_derived_pairs(
 // Raw INSERT on purpose: the test needs bulk row volume inside one locked
 // transaction, which the one-memory-per-call write path cannot produce.
 /// One non-Fact row pinning `origins`, with its own handle and content.
+/// The bulk write was refused for pinning `target`, which is missing or erased.
+fn assert_origin_pin_missing(error: sqlx::Error, target: Uuid, reason: &str) {
+    match map_err(error) {
+        StorageError::Refused { rule, detail } => {
+            assert_eq!(rule, StorageRule::OriginPinMissing, "{reason}: {detail}");
+            assert!(detail.contains(&target.to_string()), "{reason}: {detail}");
+        }
+        other => panic!("{reason}: expected a refusal, got {other:?}"),
+    }
+}
+
 async fn insert_derived(
     conn: &mut PgConnection,
     owner_id: Uuid,
@@ -389,16 +401,7 @@ async fn coarse_mode_still_refuses_missing_and_erased_targets() {
             )
             .await
             .expect_err(reason);
-            let database = error.as_database_error().expect("database refusal");
-            assert_eq!(
-                database.code().as_deref(),
-                Some("23503"),
-                "{reason}: {error}"
-            );
-            assert!(
-                database.message().contains(&target.to_string()),
-                "{reason}: {error}"
-            );
+            assert_origin_pin_missing(error, target, reason);
             tx.rollback().await?;
         }
         let after: i64 = sqlx::query_scalar("SELECT count(*) FROM proxiima_core.memory")
@@ -569,14 +572,7 @@ async fn concurrent_erase_waits_for_the_bulk_transaction() {
         let (bulk_result, driver_result) = tokio::join!(bulk, driver);
         driver_result?;
         let error = bulk_result?.expect_err("the bulk sees the erased target");
-        let database = error.as_database_error().expect("database refusal");
-        assert_eq!(database.code().as_deref(), Some("23503"), "{error}");
-        assert!(
-            database
-                .message()
-                .contains(&second.into_inner().to_string()),
-            "{error}"
-        );
+        assert_origin_pin_missing(error, second.into_inner(), "erased");
         Ok(())
     }
     .await;

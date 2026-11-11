@@ -10,6 +10,7 @@ use proxiima::{
     AuthorityTargets, GroupContainment, GroupId, MembershipAddOutcome, OwnerId, RegisteredOwner,
     Relation, Role, StorageError, UserId,
 };
+use proxiima_core::StorageRule;
 use proxiima_core::storage_ports::OwnerMembershipAdminPort;
 use proxiima_storage_pg::{PgPlatformScope, PgStorage};
 use sqlx::migrate::{Migration, MigrationType, Migrator};
@@ -876,7 +877,10 @@ async fn authority_refuses_foreign_transactions_fixed_snapshots_and_undeclared_t
             scope
                 .authority_on(&mut tx, AuthorityTargets::default())
                 .await,
-            Err(StorageError::MembershipIsolation)
+            Err(StorageError::Refused {
+                rule: StorageRule::ReadCommittedRequired,
+                ..
+            })
         ));
         tx.rollback().await?;
     }

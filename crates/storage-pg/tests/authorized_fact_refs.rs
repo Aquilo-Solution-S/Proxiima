@@ -27,14 +27,22 @@ use proxiima_core::{
     EdgeEndpoint, EdgeKind, EdgeTargetProjection, EntityKind, EntityRef, FactPayload, FactWrite,
     GoalId, InputContractId, MemoryId, MemoryTarget, OperatorId, OwnerId, PayloadKeyBuilder,
     PayloadReference, SchemaId, SchemaVersion, SeriesHandle, SidecarPayload, SpiiceRegistry,
-    StorageError, UploadedBlobPayload, UserId,
+    StorageError, StorageRule, UploadedBlobPayload, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db, create_user};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
-use proxiima_storage_pg::{PgSidecarRegistry, PgStorage, register_core_pg_sidecars};
+use proxiima_storage_pg::{PgSidecarRegistry, PgStorage, map_err, register_core_pg_sidecars};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// A raw-SQL error must be the storage rule `expected`, as the public mapping reports it.
+fn assert_refused(error: sqlx::Error, expected: &StorageRule) {
+    match map_err(error) {
+        StorageError::Refused { rule, .. } => assert_eq!(&rule, expected),
+        other => panic!("expected {expected:?}, got {other:?}"),
+    }
+}
 
 const TEST_SPIICE: &str = "test-refs";
 const FACT_TABLE: &str = "test_refs.referenced_fact_v1";
@@ -1115,13 +1123,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         .execute(pool)
         .await
         .expect_err("Goal t must not be accepted in refs");
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .map(|code| code.to_string()),
-            Some("23503".to_owned())
-        );
+        assert_refused(error, &StorageRule::ReferencePinMissing);
 
         // And the mirror image: `goal_refs` is the Goal spine, so a Memory
         // t is not a Goal reference either. Neither column is a place to
@@ -1148,13 +1150,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         .execute(pool)
         .await
         .expect_err("a Memory t must not be accepted in goal_refs");
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .map(|code| code.to_string()),
-            Some("23503".to_owned())
-        );
+        assert_refused(error, &StorageRule::GoalReferencePinMissing);
 
         let origin_handle = Uuid::now_v7();
         // Raw INSERT on purpose: a Goal t in origins, which the write path would not write.
@@ -1177,13 +1173,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         .execute(pool)
         .await
         .expect_err("Goal t must not be accepted in origins");
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .map(|code| code.to_string()),
-            Some("23503".to_owned())
-        );
+        assert_refused(error, &StorageRule::OriginPinMissing);
         Ok(())
     }
     .await;
@@ -1274,13 +1264,7 @@ async fn goal_erase_serializes_against_reference_admission() {
             .await
             .expect("reference admission task panicked")
             .expect_err("a Goal erased before admission must not be referenced");
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .map(|code| code.to_string()),
-            Some("23503".to_owned())
-        );
+        assert_refused(error, &StorageRule::GoalReferencePinMissing);
         Ok(())
     }
     .await;
@@ -1381,6 +1365,43 @@ async fn crossed_memory_pins_lock_in_global_t_order() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("Memory pin locks did not follow global t order");
+}
+
+#[tokio::test]
+async fn storage_refuses_authorized_links_to_a_goal_that_does_not_exist() {
+    let (db_name, pg, _registry) = bootstrap().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let owner = owner();
+        let links = AuthorizedNodeLinks::new_for_tests(
+            Vec::new(),
+            vec![EdgeEndpoint::goal(GoalId::new(Uuid::now_v7()))],
+        );
+        let authorized = AuthorizedFactWrite::new_with_links_for_tests(
+            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            direct_draft("direct-links-missing-goal", Vec::new()),
+            None,
+            Vec::new(),
+            links,
+        );
+        let refused = pg
+            .ingest_authorized_fact_atomic(&authorized, &[])
+            .await
+            .expect_err("a missing Goal cannot be linked");
+        assert!(
+            matches!(
+                refused,
+                StorageError::Refused {
+                    rule: StorageRule::GoalReferencePinMissing,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a missing Goal link must be refused");
 }
 
 #[tokio::test]

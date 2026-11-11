@@ -29,7 +29,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 384 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;
@@ -164,7 +164,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 768 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;
@@ -299,7 +299,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 1024 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;
@@ -434,7 +434,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 1536 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;
@@ -569,7 +569,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 2048 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;
@@ -704,7 +704,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM 3072 THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;

@@ -1,11 +1,21 @@
 //! `PostgreSQL` receipts for the schema-evolution completion fence.
 
+use crate::map_err;
 use crate::sidecars::PgSidecarRegistryFrozen;
 use crate::test_fixtures::create_core_db;
+use proxiima_core::{StorageError, StorageRule};
 use proxiima_pg_testkit::{drop_db, split_role_urls};
 use sqlx::{Acquire, PgPool};
 use std::time::Duration;
 use uuid::Uuid;
+
+/// A raw-SQL error must be the storage rule `expected`, as the public mapping reports it.
+fn assert_refused(error: sqlx::Error, expected: &StorageRule) {
+    match map_err(error) {
+        StorageError::Refused { rule, .. } => assert_eq!(&rule, expected),
+        other => panic!("expected {expected:?}, got {other:?}"),
+    }
+}
 
 const SOURCE: &str = "example/source-v1";
 const TARGET: &str = "example/target-v2";
@@ -109,7 +119,7 @@ async fn completed_source_is_fenced_and_target_remains_writable() {
         let error = sqlx::query("INSERT INTO proxiima_core.blob (owner_id,schema_id,content_hash) VALUES ($1,$2,decode(repeat('01',32),'hex'))")
             .bind(owner).bind(SOURCE).execute(&mut *source).await
             .expect_err("completed source must refuse runtime writes");
-        assert!(error.to_string().contains("completed evolution"), "{error}");
+        assert_refused(error, &StorageRule::SchemaEvolutionCompleted);
         source.rollback().await?;
 
         let mut target = runtime.begin().await?;
@@ -173,7 +183,7 @@ async fn an_old_writer_waiting_on_retirement_is_refused_after_commit() {
         let error = tokio::time::timeout(Duration::from_secs(2), old_writer).await
             .expect("writer resumes after commit").expect("writer task does not panic")
             .expect_err("retired source cannot commit after the fence opens");
-        assert!(error.to_string().contains("completed evolution"), "{error}");
+        assert_refused(error, &StorageRule::SchemaEvolutionCompleted);
         Ok::<(), sqlx::Error>(())
     }.await;
     drop_db(&database).await.expect("drop test database");
@@ -209,7 +219,8 @@ async fn authority_permit_must_be_deleted_before_commit() {
         // Raw INSERT on purpose: an authority permit left in place, which the commit must refuse.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution_authority (record_kind,source_id,target_id,source_schema,target_schema,record_owner,primary_target) VALUES ('blob',$1,$2,'s1','s2',$3,true)")
             .bind(source).bind(target).bind(owner).execute(&mut *residual).await?;
-        assert!(residual.commit().await.is_err());
+        let error = residual.commit().await.expect_err("residual permit must refuse the commit");
+        assert_refused(error, &StorageRule::EvolutionPermitsNotCleared);
         Ok::<(), sqlx::Error>(())
     }.await;
     drop_db(&database).await.expect("drop test database");

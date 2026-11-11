@@ -151,7 +151,7 @@ BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM {width} THEN
         RAISE EXCEPTION 'query vector does not match index width'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF target = 0 THEN
         RETURN;

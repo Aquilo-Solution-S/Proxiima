@@ -1,6 +1,12 @@
 -- Functions and aggregate definitions owned by the proxiima_core catalog.
 -- This file is the source for current core function definitions.
 -- Definitions are replaceable; runtime and platform grants come from defaults.
+--
+-- Refusal contract: PX001 with a rule name in CONSTRAINT is a rule a caller can
+-- run into; Rust types it. PX002 is everything else and stays internal.
+-- Two exceptions keep their own code: 40001 (cooled_forget_grounding) tells the
+-- caller to retry, and P7677 (live_memory_owners_as) is control flow caught in
+-- the same function.
 
 -- Retire the six fixed-width vector candidates from the released pre-heads-only
 -- contract in the common definitions pass, for both vector backends. Historical
@@ -49,7 +55,7 @@ AS $function$
 BEGIN
     IF schema_id IS NULL OR btrim(schema_id) = '' THEN
         RAISE EXCEPTION 'schema evolution lock requires a nonblank schema id'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM pg_advisory_xact_lock_shared(
         proxiima_core.schema_evolution_lock_key(schema_id)
@@ -67,7 +73,7 @@ DECLARE
 BEGIN
     IF schema_id IS NULL OR btrim(schema_id) = '' THEN
         RAISE EXCEPTION 'schema evolution lock requires a nonblank schema id'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
     IF current_setting('app.proxiima_scope', true) IS DISTINCT FROM 'platform'
        OR EXISTS (
@@ -78,7 +84,7 @@ BEGIN
        )
     THEN
         RAISE EXCEPTION 'schema evolution exclusive lock requires the validated platform migration lane'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'migration_lane_required';
     END IF;
     SELECT pg_get_userbyid(relowner)
       INTO relation_owner
@@ -86,7 +92,7 @@ BEGIN
      WHERE oid = 'proxiima_core.schema_evolution'::regclass;
     IF relation_owner IS NULL OR NOT pg_has_role(current_user, relation_owner, 'USAGE') THEN
         RAISE EXCEPTION 'schema evolution exclusive lock requires schema metadata ownership'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'migration_lane_required';
     END IF;
     PERFORM pg_advisory_xact_lock(
         proxiima_core.schema_evolution_lock_key(schema_id)
@@ -113,7 +119,7 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'blob' THEN
         incoming_kind := 'cited_object';
     ELSE
-        RAISE EXCEPTION 'unsupported schema evolution fence relation' USING ERRCODE = '55000';
+        RAISE EXCEPTION 'unsupported schema evolution fence relation' USING ERRCODE = 'PX002';
     END IF;
     PERFORM set_config('app.proxiima_scope', 'platform', true);
     PERFORM proxiima_core.lock_schema_evolution_shared(incoming_schema_id);
@@ -126,7 +132,7 @@ BEGIN
         RAISE EXCEPTION
             'schema % (%) has completed evolution; run the declared migration before writing it',
             incoming_schema_id, incoming_kind
-            USING ERRCODE = '55000',
+            USING ERRCODE = 'PX001', CONSTRAINT = 'schema_evolution_completed',
                   HINT = 'write one of the declared target schemas with the migration-aware binary';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
@@ -341,7 +347,7 @@ BEGIN
            (SELECT relowner FROM pg_class WHERE oid = 'proxiima_core.schema_evolution_authority'::regclass), 'USAGE')
     THEN
         RAISE EXCEPTION 'schema evolution authority is writable only by the validated migration lane'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'migration_lane_required';
     END IF;
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
@@ -357,7 +363,7 @@ BEGIN
            OR NEW.record_owner IS DISTINCT FROM OLD.record_owner
            OR NEW.primary_target IS DISTINCT FROM OLD.primary_target
            OR NEW.source_pins IS DISTINCT FROM OLD.source_pins THEN
-            RAISE EXCEPTION 'schema evolution authority is immutable' USING ERRCODE = '25006';
+            RAISE EXCEPTION 'schema evolution authority is immutable' USING ERRCODE = 'PX002';
         END IF;
         RETURN NEW;
     END IF;
@@ -383,7 +389,7 @@ BEGIN
     END IF;
     IF NEW.record_kind IN ('memory', 'goal') AND NEW.source_pins IS NULL THEN
         RAISE EXCEPTION 'schema evolution authority source does not match its declared schema and owner'
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -397,7 +403,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority
                 WHERE xact = pg_current_xact_id()) THEN
         RAISE EXCEPTION 'schema evolution authority permits must be cleared before commit'
-            USING ERRCODE = '55000';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'evolution_permits_not_cleared';
     END IF;
     RETURN NULL;
 END
@@ -411,12 +417,12 @@ BEGIN
         IF NEW.blob_id IS DISTINCT FROM OLD.blob_id
            OR NEW.schema_id IS DISTINCT FROM OLD.schema_id OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
         THEN
-            RAISE EXCEPTION 'append-only: blob identity cannot be updated' USING ERRCODE = '25006';
+            RAISE EXCEPTION 'append-only: blob identity cannot be updated' USING ERRCODE = 'PX002';
         END IF;
     ELSIF NEW.blob_id IS DISTINCT FROM OLD.blob_id OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
        OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
     THEN
-        RAISE EXCEPTION 'schema evolution may only change blob schema identity' USING ERRCODE = '25006';
+        RAISE EXCEPTION 'schema evolution may only change blob schema identity' USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -431,13 +437,13 @@ BEGIN
         OLD.schema_id, NEW.schema_id,
         OLD.owner_id
     ) THEN
-        RAISE EXCEPTION 'append-only: goal does not accept UPDATE' USING ERRCODE = '25006';
+        RAISE EXCEPTION 'append-only: goal does not accept UPDATE' USING ERRCODE = 'PX002';
     END IF;
     IF NEW.owner_id IS DISTINCT FROM OLD.owner_id OR NEW."by" IS DISTINCT FROM OLD."by"
        OR NEW.via IS DISTINCT FROM OLD.via OR NEW.state IS DISTINCT FROM OLD.state
     THEN
         RAISE EXCEPTION 'schema evolution may not alter Goal owner, writer, or state'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -461,7 +467,7 @@ BEGIN
         NEW.schema_id := head_schema;
     ELSIF NEW.schema_id IS DISTINCT FROM head_schema THEN
         RAISE EXCEPTION 'goal schema must equal goal_head.schema_id'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -477,7 +483,7 @@ BEGIN
            AND head.owner_id = NEW.owner_id AND head.schema_id = NEW.schema_id
     ) THEN
         RAISE EXCEPTION 'goal schema, handle, and owner must equal goal_head'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -496,7 +502,7 @@ BEGIN
        OR NEW.request_id IS DISTINCT FROM OLD.request_id
     THEN
         RAISE EXCEPTION 'append-only: goal replay identity does not accept UPDATE'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -516,7 +522,7 @@ BEGIN
        OR NEW.ingest_key IS DISTINCT FROM OLD.ingest_key
     THEN
         RAISE EXCEPTION 'append-only: ingest identity does not accept UPDATE'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END
@@ -541,17 +547,17 @@ BEGIN
                       WHERE oid = 'proxiima_core.memory'::regclass), 'USAGE')
        ) THEN
         RAISE EXCEPTION 'schema DROP requires the migration role in platform scope'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX002';
     END IF;
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'schema DROP requires READ COMMITTED for a fresh writer-fenced proof'
-            USING ERRCODE = '25001';
+            USING ERRCODE = 'PX002';
     END IF;
     IF retired_schema_id IS NULL OR btrim(retired_schema_id) = ''
        OR retiring_tables IS NULL OR cardinality(retiring_tables) = 0
        OR array_ndims(retiring_tables) <> 1 THEN
         RAISE EXCEPTION 'schema DROP requires a schema identity and declared sidecar tables'
-            USING ERRCODE = '22023';
+            USING ERRCODE = 'PX002';
     END IF;
 
     -- Conflicts with admission's ROW EXCLUSIVE lock and lasts through the
@@ -568,7 +574,7 @@ BEGIN
                             WHERE s.table_name = surface)
         ) THEN
             RAISE EXCEPTION 'schema DROP sidecar % is not an existing declared table', surface
-                USING ERRCODE = '22023';
+                USING ERRCODE = 'PX002';
         END IF;
     END LOOP;
     IF EXISTS (
@@ -577,7 +583,7 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'cannot drop schema %: stored admissions still name the schema or its sidecars',
             retired_schema_id
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'Run the erase-capable release first, with its registered host inverses and sidecars present, then retry this schema-only migration.';
     END IF;
 END;
@@ -609,7 +615,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % declares % in memory.sidecar_tables with no row in that table',
             NEW.t, surface
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
     EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s WHERE %I = $1)', surface, TG_ARGV[1])
        INTO present
@@ -618,7 +624,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % declares % in memory.sidecar_tables with no row in that table',
             NEW.t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'a stamp with no row leaves the Memory declaring sidecar data '
                          || 'it does not have, so its reads, export and transfer come up '
                          || 'short; write through Engine::unit_of_work, which stamps '
@@ -681,7 +687,7 @@ BEGIN
     THEN
         RAISE EXCEPTION
             'erased_pin_target is written only by a target deletion trigger'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX002';
     END IF;
 
     IF NOT EXISTS (
@@ -693,7 +699,7 @@ BEGIN
     ) THEN
         RAISE EXCEPTION
             'erased_pin_target % must match the live row being deleted', NEW.t
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;
@@ -718,7 +724,7 @@ BEGIN
         RAISE EXCEPTION
             'sidecar row in % for memory %, which does not declare % in memory.sidecar_tables',
             surface, memory_t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'forget, owner erase and owner export all reach a sidecar row '
                          || 'through memory.sidecar_tables and nowhere else, so an undeclared '
                          || 'row is reachable by none of them; write through '
@@ -740,7 +746,8 @@ DECLARE
     counted integer := 0;
 BEGIN
     IF target_schema IS NULL OR to_regnamespace(quote_ident(target_schema)) IS NULL THEN
-        RAISE EXCEPTION 'assert_owner_rls_census: schema % does not exist', COALESCE(target_schema, 'NULL');
+        RAISE EXCEPTION 'assert_owner_rls_census: schema % does not exist', COALESCE(target_schema, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     FOR base_table IN
         SELECT c.relname
@@ -752,7 +759,8 @@ BEGIN
         counted := counted + 1;
     END LOOP;
     IF counted = 0 THEN
-        RAISE EXCEPTION 'assert_owner_rls_census: schema % has no tables', target_schema;
+        RAISE EXCEPTION 'assert_owner_rls_census: schema % has no tables', target_schema
+            USING ERRCODE = 'PX002';
     END IF;
 END
 $function$;
@@ -790,7 +798,7 @@ BEGIN
         RAISE EXCEPTION
             'memory % still declares % in memory.sidecar_tables, so the row it declares there may not be deleted',
             memory_t, surface
-            USING ERRCODE = '23503',
+            USING ERRCODE = 'PX002',
                   HINT = 'a stamp whose row was deleted leaves the Memory declaring '
                          || 'sidecar data that is gone, so its reads, export and transfer '
                          || 'come up short and nothing can repair it; delete the memory row '
@@ -824,7 +832,7 @@ BEGIN
         RAISE EXCEPTION
             'memory.sidecar_tables names %, which no spiice declares in proxiima_core.spiice_surface',
             undeclared
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'sidecar_not_declared';
     END IF;
     RETURN NEW;
 END;
@@ -895,7 +903,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.enforce_installation_immutable()
 AS $function$
 BEGIN
     RAISE EXCEPTION 'write-once: the installation identity cannot be changed or removed'
-        USING ERRCODE = '25006';
+        USING ERRCODE = 'PX002';
 END;
 $function$;
 
@@ -916,7 +924,7 @@ BEGIN
     THEN
         RAISE EXCEPTION
             'append-only: publication_outbox does not accept UPDATE of the captured event'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -928,7 +936,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.enforce_publication_origin_immutable()
 AS $function$
 BEGIN
     RAISE EXCEPTION 'append-only: publication_origin identity cannot be updated'
-        USING ERRCODE = '25006';
+        USING ERRCODE = 'PX002';
 END;
 $function$;
 
@@ -938,7 +946,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.enforce_row_append_only()
 AS $function$
 BEGIN
     RAISE EXCEPTION 'append-only: % does not accept UPDATE', TG_TABLE_NAME
-        USING ERRCODE = '25006';
+        USING ERRCODE = 'PX002';
 END;
 $function$;
 
@@ -983,7 +991,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.erased_pin_target_append_only()
 AS $function$
 BEGIN
     RAISE EXCEPTION 'erased_pin_target is append-only'
-        USING ERRCODE = '25006';
+        USING ERRCODE = 'PX002';
 END;
 $function$;
 
@@ -1007,7 +1015,7 @@ BEGIN
             RAISE EXCEPTION
                 'erased pin target % already records kind %, not %',
                 target, existing_kind, target_kind
-                USING ERRCODE = '23505';
+                USING ERRCODE = 'PX002';
         END IF;
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN;
@@ -1064,7 +1072,7 @@ BEGIN
            OR NEW.authority_generation < OLD.authority_generation
         THEN
             RAISE EXCEPTION 'schema evolution may not alter Goal handle, owner, or authority generation'
-                USING ERRCODE = '25006';
+                USING ERRCODE = 'PX002';
         END IF;
         RETURN NEW;
     END IF;
@@ -1073,7 +1081,7 @@ BEGIN
        OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
        OR NEW.authority_generation IS DISTINCT FROM OLD.authority_generation THEN
         RAISE EXCEPTION 'goal_head is frozen except t'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -1099,7 +1107,7 @@ BEGIN
            AND g.state IN ('Achieved', 'Abandoned')
            AND g.t <> NEW.t
     ) THEN
-        RAISE EXCEPTION 'terminal goal admits no later t' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'terminal goal admits no later t' USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -1126,7 +1134,7 @@ BEGIN
          WHERE g.handle = NEW.handle
            AND g.parent_handle IS DISTINCT FROM NEW.parent_handle
     ) THEN
-        RAISE EXCEPTION 'goal series parent is fixed' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'goal series parent is fixed' USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -1161,13 +1169,13 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'goal declaration names erased target %', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
     IF EXISTS (SELECT 1 FROM proxiima_core.erased_pin_target WHERE t = NEW.t)
        OR EXISTS (SELECT 1 FROM proxiima_core.memory WHERE t = NEW.t)
     THEN
         RAISE EXCEPTION 'goal t % collides with an existing entity', NEW.t
-            USING ERRCODE = '23505';
+            USING ERRCODE = 'PX002';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -1181,7 +1189,7 @@ BEGIN
            ))
     ) THEN
         RAISE EXCEPTION 'goal motivation targets must be Perspective versions'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -1190,7 +1198,7 @@ BEGIN
          WHERE m.owner_id <> NEW.owner_id
     ) THEN
         RAISE EXCEPTION 'goal motivation target owner differs from Goal owner'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'goal_motivation_owner_differs';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;
@@ -1239,11 +1247,11 @@ BEGIN
        OR p_subject IS NULL
        OR NULLIF(current_setting('app.subject', true), '')::uuid IS DISTINCT FROM p_subject
     THEN
-        RAISE EXCEPTION USING ERRCODE = '42501',
+        RAISE EXCEPTION USING ERRCODE = 'PX002',
             MESSAGE = 'authority reads require the authenticated subject';
     END IF;
     IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION USING ERRCODE = '25001',
+        RAISE EXCEPTION USING ERRCODE = 'PX001', CONSTRAINT = 'read_committed_required',
             MESSAGE = 'authority reads require READ COMMITTED';
     END IF;
     -- Membership writers take owner-kind before rebuilding the projection.
@@ -1255,7 +1263,7 @@ BEGIN
     PERFORM set_config('app.authority_subject', p_subject::text, true);
     IF EXISTS (SELECT 1 FROM proxiima_core.owners o
                 WHERE o.owner_id = p_subject AND o.kind = 'group') THEN
-        RAISE EXCEPTION USING ERRCODE = '42501',
+        RAISE EXCEPTION USING ERRCODE = 'PX001', CONSTRAINT = 'authority_subject_not_person',
             MESSAGE = 'authority subject must be a person';
     END IF;
     RETURN QUERY
@@ -1288,7 +1296,8 @@ BEGIN
         RETURN OLD;
     END IF;
     IF TG_OP = 'UPDATE' AND (NEW.child_group_id, NEW.parent_group_id) <> (OLD.child_group_id, OLD.parent_group_id) THEN
-        RAISE EXCEPTION 'group edge identity is immutable';
+        RAISE EXCEPTION 'group edge identity is immutable'
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM proxiima_core.lock_group_trees(NEW.child_group_id, NEW.parent_group_id);
     IF NEW.child_group_id <= NEW.parent_group_id THEN
@@ -1299,7 +1308,8 @@ BEGIN
         PERFORM pg_advisory_xact_lock(hashtextextended('proxiima-owner-kind:' || NEW.child_group_id::text, 0));
     END IF;
     IF NEW.child_group_id = NEW.parent_group_id THEN
-        RAISE EXCEPTION 'a group cannot contain itself';
+        RAISE EXCEPTION 'a group cannot contain itself'
+            USING ERRCODE = 'PX001', CONSTRAINT = 'group_contains_itself';
     END IF;
     IF EXISTS (
         WITH RECURSIVE descendants(group_id) AS (
@@ -1308,7 +1318,8 @@ BEGIN
             JOIN proxiima_core.group_edges e ON e.child_group_id = d.group_id
         ) SELECT 1 FROM descendants WHERE group_id = NEW.child_group_id
     ) THEN
-        RAISE EXCEPTION 'group edge would create a cycle';
+        RAISE EXCEPTION 'group edge would create a cycle'
+            USING ERRCODE = 'PX001', CONSTRAINT = 'group_cycle';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;
@@ -1391,13 +1402,15 @@ BEGIN
         RETURN OLD;
     END IF;
     IF TG_OP = 'UPDATE' AND (NEW.group_id, NEW.member_user_id) <> (OLD.group_id, OLD.member_user_id) THEN
-        RAISE EXCEPTION 'membership identity is immutable';
+        RAISE EXCEPTION 'membership identity is immutable'
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM pg_advisory_xact_lock(
         hashtextextended('proxiima-owner-kind:' || NEW.member_user_id::text, 0));
     SELECT kind INTO member_kind FROM proxiima_core.owners WHERE owner_id = NEW.member_user_id;
     IF member_kind = 'group' THEN
-        RAISE EXCEPTION 'owner % is a group; use the group edge write', NEW.member_user_id;
+        RAISE EXCEPTION 'owner % is a group; use the group edge write', NEW.member_user_id
+            USING ERRCODE = 'PX001', CONSTRAINT = 'member_is_group';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;
@@ -1443,7 +1456,8 @@ AS $function$
 BEGIN
     IF current_setting('proxiima.projection_maintenance', true) IS DISTINCT FROM 'on'
        OR pg_trigger_depth() < 2 THEN
-        RAISE EXCEPTION 'group_role_projection is maintained by membership triggers';
+        RAISE EXCEPTION 'group_role_projection is maintained by membership triggers'
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN COALESCE(NEW, OLD);
 END
@@ -1474,7 +1488,8 @@ CREATE OR REPLACE FUNCTION proxiima_core.group_truncate_guard()
  SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
 AS $function$
 BEGIN
-    RAISE EXCEPTION '% cannot be truncated; membership projection requires row triggers', TG_TABLE_NAME;
+    RAISE EXCEPTION '% cannot be truncated; membership projection requires row triggers', TG_TABLE_NAME
+        USING ERRCODE = 'PX002';
 END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.group_truncate_guard() FROM PUBLIC;
@@ -1562,10 +1577,12 @@ DECLARE
 BEGIN
     IF target_schema IS NULL OR target_schema IN ('proxiima_core', 'public', 'information_schema')
        OR target_schema LIKE 'pg\_%' THEN
-        RAISE EXCEPTION 'install_owner_rls: % is not a spiice schema', COALESCE(target_schema, 'NULL');
+        RAISE EXCEPTION 'install_owner_rls: % is not a spiice schema', COALESCE(target_schema, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     IF to_regnamespace(quote_ident(target_schema)) IS NULL THEN
-        RAISE EXCEPTION 'install_owner_rls: schema % does not exist', target_schema;
+        RAISE EXCEPTION 'install_owner_rls: schema % does not exist', target_schema
+            USING ERRCODE = 'PX002';
     END IF;
     -- The host's Follows tables of this schema (sync_owner_follows): each
     -- gets the follows rule whatever class it is listed in, and needs no
@@ -1582,13 +1599,15 @@ BEGIN
             + (listed = ANY(COALESCE(ownerless_tables, '{}')))::integer
             + (listed = ANY(COALESCE(memory_owner_tables, '{}')))::integer;
         IF classes > 1 THEN
-            RAISE EXCEPTION 'install_owner_rls: %.% is classified % times', target_schema, listed, classes;
+            RAISE EXCEPTION 'install_owner_rls: %.% is classified % times', target_schema, listed, classes
+                USING ERRCODE = 'PX002';
         END IF;
         IF NOT EXISTS (
             SELECT 1 FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
              WHERE n.nspname = target_schema AND c.relname = listed AND c.relkind IN ('r', 'p')
         ) THEN
-            RAISE EXCEPTION 'install_owner_rls: classified table %.% does not exist', target_schema, listed;
+            RAISE EXCEPTION 'install_owner_rls: classified table %.% does not exist', target_schema, listed
+                USING ERRCODE = 'PX002';
         END IF;
     END LOOP;
 
@@ -1607,7 +1626,8 @@ BEGIN
     LOOP
         IF relation.has_owner_id THEN
             RAISE EXCEPTION 'install_owner_rls: %.% has an owner_id column but is not in owner_id_tables',
-                target_schema, relation.relname;
+                target_schema, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
         parents := parents || jsonb_build_object(relation.relname,
             proxiima_core.owner_rls_parent_fk('install_owner_rls', target_schema, relation.relname));
@@ -1621,7 +1641,8 @@ BEGIN
             hops := hops + 1;
             IF listed = chain OR hops > 1000 THEN
                 RAISE EXCEPTION 'install_owner_rls: %.% reaches itself through its parent FKs; its policies would recurse',
-                    target_schema, chain;
+                    target_schema, chain
+                    USING ERRCODE = 'PX002';
             END IF;
         END LOOP;
     END LOOP;
@@ -1638,13 +1659,15 @@ BEGIN
          ORDER BY c.relname
     LOOP
         IF relation.relname <> ALL(classified) AND relation.relname <> ALL(follows) THEN
-            RAISE EXCEPTION 'owner RLS classification missing for %.%', relation.schema_name, relation.relname;
+            RAISE EXCEPTION 'owner RLS classification missing for %.%', relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
         IF relation.has_owner_id AND relation.relname <> ALL(COALESCE(owner_id_tables, '{}')
                 || COALESCE(memory_owner_tables, '{}'))
            AND NOT (relation.relname = ANY(follows) AND relation.relname <> ALL(classified)) THEN
             RAISE EXCEPTION 'install_owner_rls: %.% has an owner_id column but is not in owner_id_tables',
-                relation.schema_name, relation.relname;
+                relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
 
         class := CASE
@@ -1655,7 +1678,8 @@ BEGIN
         END;
         IF class = 'owner_id' AND NOT relation.has_owner_id THEN
             RAISE EXCEPTION 'install_owner_rls: %.% is in owner_id_tables but has no owner_id column',
-                relation.schema_name, relation.relname;
+                relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
 
         IF relation.relname = ANY(follows) THEN
@@ -1675,7 +1699,8 @@ BEGIN
     END LOOP;
 
     IF installed = 0 THEN
-        RAISE EXCEPTION 'install_owner_rls: schema % has no tables', target_schema;
+        RAISE EXCEPTION 'install_owner_rls: schema % has no tables', target_schema
+            USING ERRCODE = 'PX002';
     END IF;
 
     PERFORM proxiima_core.assert_owner_rls_census(target_schema);
@@ -1701,27 +1726,33 @@ DECLARE
 BEGIN
     IF target_schema IS NULL OR target_schema IN ('proxiima_core', 'public', 'information_schema')
        OR target_schema LIKE 'pg\_%' THEN
-        RAISE EXCEPTION 'install_owner_rls_table: % is not a spiice schema', COALESCE(target_schema, 'NULL');
+        RAISE EXCEPTION 'install_owner_rls_table: % is not a spiice schema', COALESCE(target_schema, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     IF to_regnamespace(quote_ident(target_schema)) IS NULL THEN
-        RAISE EXCEPTION 'install_owner_rls_table: schema % does not exist', target_schema;
+        RAISE EXCEPTION 'install_owner_rls_table: schema % does not exist', target_schema
+            USING ERRCODE = 'PX002';
     END IF;
     SELECT c.oid INTO rel_oid
       FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
      WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
     IF rel_oid IS NULL THEN
         RAISE EXCEPTION 'install_owner_rls_table: %.% is not an existing base table',
-            target_schema, COALESCE(target_table, 'NULL');
+            target_schema, COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     IF class IS NULL THEN
-        RAISE EXCEPTION 'install_owner_rls_table: %.% has no class', target_schema, target_table;
+        RAISE EXCEPTION 'install_owner_rls_table: %.% has no class', target_schema, target_table
+            USING ERRCODE = 'PX002';
     END IF;
     IF owner_column IS NULL THEN
-        RAISE EXCEPTION 'install_owner_rls_table: %.% has a NULL owner_column', target_schema, target_table;
+        RAISE EXCEPTION 'install_owner_rls_table: %.% has a NULL owner_column', target_schema, target_table
+            USING ERRCODE = 'PX002';
     END IF;
     IF class <> 'owner_id' AND owner_column <> 'owner_id' THEN
         RAISE EXCEPTION 'install_owner_rls_table: %.% is class %, whose policies read no owner column; owner_column belongs to class owner_id',
-            target_schema, target_table, class;
+            target_schema, target_table, class
+            USING ERRCODE = 'PX002';
     END IF;
     has_owner_id := EXISTS (
         SELECT 1 FROM pg_attribute AS a
@@ -1730,7 +1761,8 @@ BEGIN
     );
     IF has_owner_id AND class IN ('fk_parent', 'ownerless') THEN
         RAISE EXCEPTION 'install_owner_rls_table: %.% has an owner_id column but is class %; a table with owner_id is class owner_id or memory_owner',
-            target_schema, target_table, class;
+            target_schema, target_table, class
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM set_config('app.proxiima_scope', 'platform', true);
     SELECT EXISTS (
@@ -1754,11 +1786,13 @@ BEGIN
                AND NOT a.attisdropped AND a.attnum > 0;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'install_owner_rls_table: %.% is class owner_id but has no % column',
-                    target_schema, target_table, owner_column;
+                    target_schema, target_table, owner_column
+                    USING ERRCODE = 'PX002';
             END IF;
             IF column_type <> 'uuid'::regtype THEN
                 RAISE EXCEPTION 'install_owner_rls_table: %.%.% is %, not uuid; an owner column holds a proxiima_core.owners id, so store OwnerRef::stable_key_uuid() in a uuid column and keep the personal:<uuid> / group:<uuid> string at the edge',
-                    target_schema, target_table, owner_column, format_type(column_type, NULL);
+                    target_schema, target_table, owner_column, format_type(column_type, NULL)
+                    USING ERRCODE = 'PX002';
             END IF;
         WHEN 'fk_parent' THEN
             -- The chain of parents must not return to this table: the
@@ -1772,7 +1806,8 @@ BEGIN
                 next_table := hop ->> 'parent_table';
                 IF next_table = ANY(visited) THEN
                     RAISE EXCEPTION 'install_owner_rls_table: %.% reaches itself through its parent FKs; its policies would recurse',
-                        target_schema, target_table;
+                        target_schema, target_table
+                        USING ERRCODE = 'PX002';
                 END IF;
                 visited := visited || next_table;
                 EXIT WHEN EXISTS (
@@ -1820,23 +1855,28 @@ DECLARE
     surface text;
 BEGIN
     IF current_setting('app.proxiima_scope', true) IS DISTINCT FROM 'platform' THEN
-        RAISE EXCEPTION 'install_sidecar: runs in platform scope only';
+        RAISE EXCEPTION 'install_sidecar: runs in platform scope only'
+            USING ERRCODE = 'PX002';
     END IF;
     IF registrant IS NULL OR registrant = '' THEN
         RAISE EXCEPTION 'install_sidecar: %.% needs the id of the spiice that registers it',
-            COALESCE(target_schema, 'NULL'), COALESCE(target_table, 'NULL');
+            COALESCE(target_schema, 'NULL'), COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     -- quote_ident leaves only a plain lower-case name that is no reserved
     -- word unchanged: the trigger generators spell these names unquoted.
     IF target_schema IS NULL OR quote_ident(target_schema) <> target_schema OR octet_length(target_schema) > 63 THEN
-        RAISE EXCEPTION 'install_sidecar: schema % is not a plain lower-case identifier of at most 63 bytes', COALESCE(target_schema, 'NULL');
+        RAISE EXCEPTION 'install_sidecar: schema % is not a plain lower-case identifier of at most 63 bytes', COALESCE(target_schema, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     IF target_table IS NULL OR quote_ident(target_table) <> target_table OR octet_length(target_table) > 63 THEN
-        RAISE EXCEPTION 'install_sidecar: table %.% is not a plain lower-case identifier of at most 63 bytes', target_schema, COALESCE(target_table, 'NULL');
+        RAISE EXCEPTION 'install_sidecar: table %.% is not a plain lower-case identifier of at most 63 bytes', target_schema, COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     IF memory_key IS NULL OR quote_ident(memory_key) <> memory_key OR octet_length(memory_key) > 63 THEN
         RAISE EXCEPTION 'install_sidecar: %.% memory key % is not a plain lower-case identifier of at most 63 bytes',
-            target_schema, target_table, COALESCE(memory_key, 'NULL');
+            target_schema, target_table, COALESCE(memory_key, 'NULL')
+            USING ERRCODE = 'PX002';
     END IF;
     FOREACH derived IN ARRAY ARRAY[
         target_table || '_' || memory_key || '_fkey',
@@ -1847,7 +1887,8 @@ BEGIN
     ] LOOP
         IF octet_length(derived) > 63 THEN
             RAISE EXCEPTION 'install_sidecar: %.% would need the name %, longer than 63 bytes; shorten the table, schema or key name',
-                target_schema, target_table, derived;
+                target_schema, target_table, derived
+                USING ERRCODE = 'PX002';
         END IF;
     END LOOP;
 
@@ -1857,13 +1898,15 @@ BEGIN
       FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
      WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
     IF rel_oid IS NULL THEN
-        RAISE EXCEPTION 'install_sidecar: %.% is not an existing base table', target_schema, target_table;
+        RAISE EXCEPTION 'install_sidecar: %.% is not an existing base table', target_schema, target_table
+            USING ERRCODE = 'PX002';
     END IF;
     SELECT a.attnum INTO key_attnum
       FROM pg_attribute AS a
      WHERE a.attrelid = rel_oid AND a.attname = memory_key AND NOT a.attisdropped AND a.attnum > 0;
     IF key_attnum IS NULL THEN
-        RAISE EXCEPTION 'install_sidecar: %.% has no column %', target_schema, target_table, memory_key;
+        RAISE EXCEPTION 'install_sidecar: %.% has no column %', target_schema, target_table, memory_key
+            USING ERRCODE = 'PX002';
     END IF;
 
     IF NOT EXISTS (
@@ -1885,7 +1928,8 @@ BEGIN
     SELECT s.spiice_id INTO stored_spiice FROM proxiima_core.spiice_surface AS s WHERE s.table_name = surface;
     IF stored_spiice <> registrant THEN
         RAISE EXCEPTION 'install_sidecar: %.% is already registered to spiice %, not %',
-            target_schema, target_table, stored_spiice, registrant;
+            target_schema, target_table, stored_spiice, registrant
+            USING ERRCODE = 'PX002';
     END IF;
 
     has_owner_id := EXISTS (
@@ -1986,23 +2030,28 @@ DECLARE
     index_name text;
 BEGIN
     IF current_setting('app.proxiima_scope', true) IS DISTINCT FROM 'platform' THEN
-        RAISE EXCEPTION 'sync_owner_follows: runs in platform scope only';
+        RAISE EXCEPTION 'sync_owner_follows: runs in platform scope only'
+            USING ERRCODE = 'PX001', CONSTRAINT = 'platform_scope_required';
     END IF;
     IF schemas IS NULL OR tables IS NULL THEN
-        RAISE EXCEPTION 'sync_owner_follows: schemas and tables must not be NULL';
+        RAISE EXCEPTION 'sync_owner_follows: schemas and tables must not be NULL'
+            USING ERRCODE = 'PX002';
     END IF;
     FOREACH rel_schema IN ARRAY schemas LOOP
         IF rel_schema IS NULL OR rel_schema IN ('proxiima_core', 'public', 'information_schema')
            OR rel_schema LIKE 'pg\_%' THEN
-            RAISE EXCEPTION 'sync_owner_follows: % is not a spiice schema', COALESCE(rel_schema, 'NULL');
+            RAISE EXCEPTION 'sync_owner_follows: % is not a spiice schema', COALESCE(rel_schema, 'NULL')
+                USING ERRCODE = 'PX002';
         END IF;
     END LOOP;
     FOREACH listed IN ARRAY tables LOOP
         IF listed IS NULL OR listed <> lower(listed) OR listed !~ '^[^.]+\.[^.]+$' THEN
-            RAISE EXCEPTION 'sync_owner_follows: % is not a lowercase schema.table name', COALESCE(listed, 'NULL');
+            RAISE EXCEPTION 'sync_owner_follows: % is not a lowercase schema.table name', COALESCE(listed, 'NULL')
+                USING ERRCODE = 'PX002';
         END IF;
         IF split_part(listed, '.', 1) <> ALL(schemas) THEN
-            RAISE EXCEPTION 'sync_owner_follows: % is outside the composed schemas %', listed, schemas;
+            RAISE EXCEPTION 'sync_owner_follows: % is outside the composed schemas %', listed, schemas
+                USING ERRCODE = 'PX002';
         END IF;
     END LOOP;
 
@@ -2041,7 +2090,8 @@ BEGIN
                  WHERE n.nspname = rel_schema AND c.relname = index_name
             ) THEN
                 RAISE EXCEPTION 'sync_owner_follows: %.% exists but is no valid btree index leading with %.owner_id',
-                    rel_schema, index_name, listed;
+                    rel_schema, index_name, listed
+                    USING ERRCODE = 'PX002';
             END IF;
             EXECUTE format('CREATE INDEX %I ON %I.%I (owner_id)', index_name, rel_schema, rel_name);
         END IF;
@@ -2064,11 +2114,13 @@ DECLARE
     fk_detail text;
 BEGIN
     IF config_to_forget IS NULL THEN
-        RAISE EXCEPTION 'lexical configuration must not be null';
+        RAISE EXCEPTION 'lexical configuration must not be null'
+            USING ERRCODE = 'PX002';
     END IF;
     IF config_to_forget = proxiima_core.lexical_config() THEN
         RAISE EXCEPTION 'cannot forget %: it is the default lexical configuration',
-            config_to_forget;
+            config_to_forget
+            USING ERRCODE = 'PX002';
     END IF;
 
     BEGIN
@@ -2082,7 +2134,7 @@ BEGIN
                 fk_detail = PG_EXCEPTION_DETAIL;
             RAISE EXCEPTION 'cannot forget %: rows in % still reference it (%)',
                 config_to_forget, holder_table, fk_detail
-                USING ERRCODE = '23503';
+                USING ERRCODE = 'PX002';
     END;
 END
 $function$;
@@ -2264,7 +2316,7 @@ BEGIN
     PERFORM set_config('app.proxiima_scope', 'platform', true);
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION USING
-            ERRCODE = '25001',
+            ERRCODE = 'PX001', CONSTRAINT = 'read_committed_required',
             MESSAGE = 'nested group membership writes require READ COMMITTED';
     END IF;
     LOOP
@@ -2296,7 +2348,7 @@ DECLARE
 BEGIN
     PERFORM set_config('app.proxiima_scope', 'platform', true);
     IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION USING ERRCODE = '25001',
+        RAISE EXCEPTION USING ERRCODE = 'PX001', CONSTRAINT = 'read_committed_required',
             MESSAGE = 'nested group membership writes require READ COMMITTED';
     END IF;
     LOOP
@@ -2365,7 +2417,7 @@ BEGIN
             RETURN NEW;
         END IF;
         RAISE EXCEPTION 'memory kind/owner/schema must equal memory_head'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -2424,7 +2476,7 @@ BEGIN
            OR NEW.publication_sequence < OLD.publication_sequence
         THEN
             RAISE EXCEPTION 'schema evolution may not alter memory head identity or reduce generations'
-                USING ERRCODE = '25006';
+                USING ERRCODE = 'PX002';
         END IF;
         RETURN NEW;
     END IF;
@@ -2437,11 +2489,11 @@ BEGIN
        OR (NEW.owner_id IS NOT DISTINCT FROM OLD.owner_id
            AND NEW.authority_generation IS DISTINCT FROM OLD.authority_generation) THEN
         RAISE EXCEPTION 'memory_head is frozen except t, owner_id and authority_generation'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     IF NEW.publication_sequence < OLD.publication_sequence THEN
         RAISE EXCEPTION 'memory_head.publication_sequence never decreases'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -2459,7 +2511,7 @@ BEGIN
            OR NEW.via IS DISTINCT FROM OLD.via OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
         THEN
             RAISE EXCEPTION 'schema evolution may not alter memory identity, ownership, writer, or occurrence'
-                USING ERRCODE = '25006';
+                USING ERRCODE = 'PX002';
         END IF;
         RETURN NEW;
     END IF;
@@ -2479,7 +2531,7 @@ BEGIN
        OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
        OR NEW.sidecar_tables IS DISTINCT FROM OLD.sidecar_tables THEN
         RAISE EXCEPTION 'append-only: % does not accept UPDATE', TG_TABLE_NAME
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     IF NEW.blob_id IS DISTINCT FROM OLD.blob_id
        AND NOT EXISTS (
@@ -2494,7 +2546,7 @@ BEGIN
         RAISE EXCEPTION
             'append-only: %.blob_id may only be repointed at a blob row naming the same '
             'schema_id and content_hash', TG_TABLE_NAME
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -2580,7 +2632,7 @@ BEGIN
        OR EXISTS (SELECT 1 FROM proxiima_core.erased_pin_target WHERE t = NEW.t)
     THEN
         RAISE EXCEPTION 'memory t % is already a Goal or erased target', NEW.t
-            USING ERRCODE = '23505';
+            USING ERRCODE = 'PX002';
     END IF;
 
     IF NEW.kind = 'fact'
@@ -2606,7 +2658,7 @@ BEGIN
        )
     THEN
         RAISE EXCEPTION 'non-fact must pin a memory'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'derived_memory_pins_nothing';
     END IF;
 
     IF NEW.origins = '{}' AND NEW.refs = '{}' AND NEW.goal_refs = '{}'
@@ -2625,7 +2677,7 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'origin pin % does not exist as a Memory', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'origin_pin_missing';
     END IF;
 
     -- `refs` carries only Memory targets after the 0004 split.
@@ -2637,7 +2689,7 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'reference pin % does not exist as a Memory', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'reference_pin_missing';
     END IF;
 
     -- `reads` (#677) carries only Memory targets: the memories the host
@@ -2650,7 +2702,7 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'read pin % does not exist as a Memory', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX002';
     END IF;
 
     -- `goal_refs` carries only Goal targets.
@@ -2662,7 +2714,7 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'goal reference pin % does not exist as a Goal', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'goal_reference_pin_missing';
     END IF;
 
     SELECT p.id INTO pin
@@ -2673,11 +2725,11 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'guided_by pin % does not exist as a Goal', pin
-            USING ERRCODE = '23503';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'guided_by_pin_missing';
     END IF;
     IF NEW.guided_by <> '{}' AND NEW.kind <> 'perspective'::proxiima_core.memory_kind THEN
         RAISE EXCEPTION 'only Perspectives may declare guided_by'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -2686,7 +2738,7 @@ BEGIN
          WHERE g.owner_id <> NEW.owner_id
     ) THEN
         RAISE EXCEPTION 'guided_by target owner differs from Perspective owner'
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX002';
     END IF;
 
     SELECT m.handle INTO pin_handle
@@ -2697,7 +2749,7 @@ BEGIN
      LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'closed_handle: no new pin to %', pin_handle
-            USING ERRCODE = '23514';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'closed_handle';
     END IF;
 
     IF NEW.kind = 'abstraction' AND NEW.origins <> '{}' THEN
@@ -2714,7 +2766,7 @@ BEGIN
                    )
         ) THEN
             RAISE EXCEPTION 'abstraction origins must be fact or abstraction t'
-                USING ERRCODE = '23514';
+                USING ERRCODE = 'PX002';
         END IF;
     ELSIF NEW.kind = 'perspective' AND NEW.origins <> '{}' THEN
         IF EXISTS (
@@ -2730,7 +2782,7 @@ BEGIN
                    )
         ) THEN
             RAISE EXCEPTION 'perspective origins must be abstraction t'
-                USING ERRCODE = '23514';
+                USING ERRCODE = 'PX002';
         END IF;
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
@@ -2777,12 +2829,14 @@ BEGIN
     IF NEW.kind = 'group' AND EXISTS (
         SELECT 1 FROM proxiima_core.group_memberships WHERE member_user_id = NEW.owner_id
     ) THEN
-        RAISE EXCEPTION 'owner % cannot become a group while it has person memberships', NEW.owner_id;
+        RAISE EXCEPTION 'owner % cannot become a group while it has person memberships', NEW.owner_id
+            USING ERRCODE = 'PX001', CONSTRAINT = 'owner_has_person_memberships';
     END IF;
     IF NEW.kind = 'personal' AND EXISTS (
         SELECT 1 FROM proxiima_core.group_edges WHERE child_group_id = NEW.owner_id
     ) THEN
-        RAISE EXCEPTION 'owner % cannot become a person while it is a group member', NEW.owner_id;
+        RAISE EXCEPTION 'owner % cannot become a person while it is a group member', NEW.owner_id
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;
@@ -2818,7 +2872,8 @@ BEGIN
                      WHERE attrelid = rel_oid AND attname = 't' AND attnum > 0 AND NOT attisdropped)))
             THEN
                 RAISE EXCEPTION '%: %.% has % foreign key(s) to proxiima_core.memory, none on its leading primary-key column, beside a t column or each other; its memory is ambiguous',
-                    caller, target_schema, target_table, memory_keys;
+                    caller, target_schema, target_table, memory_keys
+                    USING ERRCODE = 'PX002';
             END IF;
     RETURN COALESCE(memory_key,'t');
 END
@@ -2869,7 +2924,8 @@ BEGIN
             IF memory_key IS NOT NULL THEN
                 IF owner_column IS DISTINCT FROM 'owner_id' THEN
                     RAISE EXCEPTION '%: %.% requires owner column owner_id',
-                        caller, target_schema, target_table;
+                        caller, target_schema, target_table
+                        USING ERRCODE = 'PX002';
                 END IF;
                 FOREACH direction IN ARRAY ARRAY['read', 'write'] LOOP
                     fact_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
@@ -2922,7 +2978,8 @@ BEGIN
                    AND attnum > 0 AND NOT attisdropped
             ) THEN
                 RAISE EXCEPTION '%: %.% is % but has no uuid t column',
-                    caller, target_schema, target_table, class_label;
+                    caller, target_schema, target_table, class_label
+                    USING ERRCODE = 'PX002';
             END IF;
             -- Reading this sidecar follows the parent memory's complete RLS
             -- admission, including exact Goal routes. Do not mirror its read
@@ -2954,7 +3011,8 @@ BEGIN
             ELSIF parent_has_t THEN
                 write_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent JOIN proxiima_core.memory AS owner_memory ON owner_memory.t = parent.t WHERE parent.%I = %I.%I.%I AND ((owner_memory.kind = ''fact'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''abstraction'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''perspective'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
             ELSE
-                RAISE EXCEPTION 'owner RLS writable classification missing for %.%', target_schema, target_table;
+                RAISE EXCEPTION 'owner RLS writable classification missing for %.%', target_schema, target_table
+                    USING ERRCODE = 'PX002';
             END IF;
     END CASE;
 
@@ -3233,7 +3291,8 @@ BEGIN
            AND a.attname = 'owner_id' AND a.atttypid = 'uuid'::regtype
            AND NOT a.attisdropped AND a.attnum > 0
     ) THEN
-        RAISE EXCEPTION '%: Follows table %.% has no uuid owner_id column', caller, target_schema, target_table;
+        RAISE EXCEPTION '%: Follows table %.% has no uuid owner_id column', caller, target_schema, target_table
+            USING ERRCODE = 'PX002';
     END IF;
     SELECT predicates.read_expr, predicates.write_expr
       INTO read_expr, write_expr
@@ -3288,7 +3347,8 @@ BEGIN
       FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
      WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
     IF NOT relation.relrowsecurity OR NOT relation.relforcerowsecurity THEN
-        RAISE EXCEPTION 'table %.% lacks ENABLE/FORCE RLS', relation.schema_name, relation.relname;
+        RAISE EXCEPTION 'table %.% lacks ENABLE/FORCE RLS', relation.schema_name, relation.relname
+            USING ERRCODE = 'PX002';
     END IF;
     SELECT * INTO candidate_policy FROM pg_policy
      WHERE polrelid = relation.oid AND polname = 'proxiima_search_candidates';
@@ -3299,7 +3359,8 @@ BEGIN
            OR pg_get_expr(candidate_policy.polqual, relation.oid) IS DISTINCT FROM 'true'
            OR candidate_policy.polwithcheck IS NOT NULL
         THEN
-            RAISE EXCEPTION 'table %.% has an invalid search candidate policy', relation.schema_name, relation.relname;
+            RAISE EXCEPTION 'table %.% has an invalid search candidate policy', relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
         expected_policies := expected_policies + 1;
     END IF;
@@ -3314,19 +3375,23 @@ BEGIN
            OR pg_get_expr(candidate_policy.polqual, relation.oid) IS DISTINCT FROM 'true'
            OR candidate_policy.polwithcheck IS NOT NULL
         THEN
-            RAISE EXCEPTION 'table %.% has an invalid Goal reader policy', relation.schema_name, relation.relname;
+            RAISE EXCEPTION 'table %.% has an invalid Goal reader policy', relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
         expected_policies := expected_policies + 1;
     END IF;
     IF (SELECT count(*) FROM pg_policy WHERE polrelid = relation.oid) <> expected_policies THEN
         IF expected_policies = 3 THEN
-            RAISE EXCEPTION 'table %.% does not have exactly three RLS policies', relation.schema_name, relation.relname;
+            RAISE EXCEPTION 'table %.% does not have exactly three RLS policies', relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         ELSE
-            RAISE EXCEPTION 'table %.% has unexpected RLS policies', relation.schema_name, relation.relname;
+            RAISE EXCEPTION 'table %.% has unexpected RLS policies', relation.schema_name, relation.relname
+                USING ERRCODE = 'PX002';
         END IF;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = relation.oid AND polname = 'proxiima_platform' AND polroles = ARRAY[relation.relowner] AND polcmd = '*') THEN
-        RAISE EXCEPTION 'table %.% platform policy is not owner-role limited', relation.schema_name, relation.relname;
+        RAISE EXCEPTION 'table %.% platform policy is not owner-role limited', relation.schema_name, relation.relname
+            USING ERRCODE = 'PX002';
     END IF;
 END
 $function$;
@@ -3387,11 +3452,13 @@ DECLARE
 BEGIN
     IF fk IS NULL THEN
         RAISE EXCEPTION 'owner RLS classification missing for %.%: no single-column FK to proxiima_core or %',
-            target_schema, target_table, target_schema;
+            target_schema, target_table, target_schema
+            USING ERRCODE = 'PX002';
     END IF;
     IF NOT (fk ->> 'on_key')::boolean AND (fk ->> 'candidates')::integer > 1 THEN
         RAISE EXCEPTION '%: %.% has % candidate parent FKs and none on its leading primary-key column; its owner is ambiguous',
-            caller, target_schema, target_table, fk ->> 'candidates';
+            caller, target_schema, target_table, fk ->> 'candidates'
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN fk;
 END
@@ -3439,7 +3506,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.enforce_store_identity_immutable()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'write-once: the store number cannot be changed or removed'
-        USING ERRCODE = '25006';
+        USING ERRCODE = 'PX002';
 END;
 $$;
 
@@ -3465,11 +3532,11 @@ CREATE OR REPLACE FUNCTION proxiima_core.publication_counter_forward_only() RETU
 BEGIN
     IF NEW.handle IS DISTINCT FROM OLD.handle THEN
         RAISE EXCEPTION 'publication_counter.handle is frozen'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     IF NEW.sequence < OLD.sequence THEN
         RAISE EXCEPTION 'publication_counter.sequence never decreases'
-            USING ERRCODE = '25006';
+            USING ERRCODE = 'PX002';
     END IF;
     RETURN NEW;
 END;
@@ -3514,7 +3581,7 @@ BEGIN
            || ARRAY(SELECT DISTINCT visible.owner_id FROM proxiima_core.goal_visible_memory_ids() visible))
     THEN
         RAISE EXCEPTION 'search requires an authenticated owner scope'
-            USING ERRCODE = '42501';
+            USING ERRCODE = 'PX001', CONSTRAINT = 'search_scope_not_authorized';
     END IF;
 END
 $function$;
@@ -3536,7 +3603,7 @@ AS $candidate_function$
 BEGIN
 PERFORM proxiima_core.assert_search_scope(requested_owners);
 IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > 1000 THEN
-RAISE EXCEPTION 'candidate limit must be between 1 and 1000' USING ERRCODE = '22023';
+RAISE EXCEPTION 'candidate limit must be between 1 and 1000' USING ERRCODE = 'PX002';
 END IF;
 RETURN QUERY EXECUTE 'WITH analyzed_query AS MATERIALIZED (
              SELECT proxiima_core.lexical_scrub($1) AS scrubbed,
@@ -3621,7 +3688,7 @@ AS $candidate_function$
 BEGIN
 PERFORM proxiima_core.assert_search_scope(requested_owners);
 IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > 1000 THEN
-RAISE EXCEPTION 'candidate limit must be between 1 and 1000' USING ERRCODE = '22023';
+RAISE EXCEPTION 'candidate limit must be between 1 and 1000' USING ERRCODE = 'PX002';
 END IF;
 DECLARE legs text[] := ARRAY[]::text[];
 BEGIN

@@ -1216,11 +1216,9 @@ async fn a_goal_without_a_replay_declaration_fails_closed() {
         .execute(pg.pool_for_tests())
         .await
         .expect_err("a replay declaration must be immutable");
-        assert!(
-            update_err.to_string().contains("append-only")
-                || update_err.to_string().contains("25006"),
-            "unexpected declaration update error: {update_err}"
-        );
+        let database = update_err.as_database_error().expect("database refusal");
+        assert_eq!(database.code().as_deref(), Some("PX002"), "{update_err}");
+        assert!(database.message().contains("append-only"), "{update_err}");
         sqlx::query("DELETE FROM proxiima_core.goal_replay_declaration WHERE goal_t = $1")
             .bind(first.goal_id.into_inner())
             .execute(pg.pool_for_tests())

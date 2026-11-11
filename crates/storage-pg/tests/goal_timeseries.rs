@@ -218,8 +218,10 @@ async fn goal_write_replay_terminal_and_write_act() {
         )
         .await
         .expect_err("terminal admits no later t");
+        // `write_goal` is the fixture verb and skips the transition check the
+        // Goal write verbs make, so this reaches the database's backstop.
         assert!(
-            err.to_string().contains("terminal") || err.to_string().contains("23514"),
+            matches!(&err, proxiima_core::StorageError::Internal(m) if m.contains("terminal goal admits no later t")),
             "got: {err}"
         );
 

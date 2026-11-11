@@ -182,7 +182,7 @@ fn candidate_definitions_for_projection(
             "\nBEGIN\n\
                  PERFORM proxiima_core.assert_search_scope(requested_owners);\n\
                  IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > {cap} THEN\n\
-                     RAISE EXCEPTION 'candidate limit must be between 1 and {cap}' USING ERRCODE = '22023';\n\
+                     RAISE EXCEPTION 'candidate limit must be between 1 and {cap}' USING ERRCODE = 'PX002';\n\
                  END IF;\n\
                  {template}\n\
              END\n",

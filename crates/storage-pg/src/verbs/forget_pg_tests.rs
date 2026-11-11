@@ -22,7 +22,7 @@ use proxiima_core::verbs::fact_ingest::{CitationSpec, FactWriteCommand};
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
     AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, OwnerId, SchemaId,
-    SchemaVersion, StorageError, UserId,
+    SchemaVersion, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -1116,9 +1116,13 @@ async fn witnessed_targets_cannot_be_reused_or_newly_pinned() {
             .await
             .expect_err("a new source cannot pin a witnessed target");
         assert!(
-            err.to_string().contains("does not exist")
-                || err.to_string().contains("erased")
-                || err.to_string().contains("23503"),
+            matches!(
+                err,
+                StorageError::Refused {
+                    rule: StorageRule::ReferencePinMissing,
+                    ..
+                }
+            ),
             "got: {err}"
         );
         let after_memory: i64 =
@@ -1156,10 +1160,9 @@ async fn witnessed_targets_cannot_be_reused_or_newly_pinned() {
         .execute(pool)
         .await
         .expect_err("a witnessed t cannot be recycled as a new row");
-        assert!(
-            err.to_string().contains("erased") || err.to_string().contains("23505"),
-            "got: {err}"
-        );
+        let database = err.as_database_error().expect("database refusal");
+        assert_eq!(database.code().as_deref(), Some("PX002"), "got: {err}");
+        assert!(database.message().contains("erased"), "got: {err}");
         let reused: i64 =
             sqlx::query_scalar("SELECT count(*)::bigint FROM proxiima_core.memory WHERE t = $1")
                 .bind(target_t)
@@ -1392,8 +1395,14 @@ async fn forget_pinless_abstraction_is_refused() {
         .await
         .expect_err("pinless A");
         assert!(
-            err.to_string().contains("non-fact must pin a memory") || err.to_string().contains("23514"),
-            "got: {err}"
+            matches!(
+                crate::map_err(err),
+                StorageError::Refused {
+                    rule: StorageRule::DerivedMemoryPinsNothing,
+                    ..
+                }
+            ),
+            "a derived memory with no pin is refused"
         );
         Ok(())
     }

@@ -108,7 +108,10 @@ impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
             .await
             .map_err(map_err)?;
         if isolation != "read committed" {
-            return Err(StorageError::MembershipIsolation);
+            return Err(StorageError::Refused {
+                rule: proxiima_core::StorageRule::ReadCommittedRequired,
+                detail: "authority reads require READ COMMITTED".into(),
+            });
         }
         let groups: BTreeSet<_> = targets.groups.into_iter().collect();
         let people: BTreeSet<_> = targets.people.into_iter().collect();
