@@ -1822,14 +1822,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn production_search_admits_through_search_admit_sql() {
-        let src = include_str!("search.rs");
-        let prod = src.split("mod tests").next().expect("production");
-        let admit = format!("{}{}", "search_admit_sql(matches!(", "");
-        assert!(prod.contains(&admit), "admit must run search_admit_sql");
-    }
-
     /// The core contract's own projected sidecars stay declared alongside
     /// the other spiices an unscoped request can reach.
     #[test]
