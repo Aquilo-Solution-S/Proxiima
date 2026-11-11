@@ -1121,10 +1121,16 @@ async fn reference_integrity_migration_enforces_goal_refs() {
         .execute(pool)
         .await
         .expect_err("a Goal cannot be an origin target");
+        let err = proxiima_storage_pg::map_err(err);
         assert!(
-            err.to_string().contains("origin pin")
-                || err.to_string().contains("abstraction origins"),
-            "Goal origin rejection must come from the origin-only checks: {err}"
+            matches!(
+                err,
+                proxiima_core::StorageError::Refused {
+                    rule: proxiima_core::StorageRule::OriginPinMissing,
+                    ..
+                }
+            ),
+            "a Goal is not a Memory an origin can pin: {err:?}"
         );
 
         Ok(())

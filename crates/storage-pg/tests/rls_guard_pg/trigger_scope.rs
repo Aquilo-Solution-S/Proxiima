@@ -11,10 +11,11 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 /// What a refusal under test must be: a core storage rule, or a SQLSTATE
-/// (`PX002` for a core backstop, Postgres's own code otherwise).
+/// (`PX002` for a core backstop, Postgres's own code otherwise) with the
+/// sentence that tells one refusal under that code from another.
 enum Raised {
     Rule(StorageRule),
-    Sqlstate(&'static str),
+    Sqlstate(&'static str, &'static str),
 }
 
 const BRIDGED_ROUTINES: [&str; 7] = [
@@ -55,26 +56,27 @@ async fn assert_refusal_restores_scope(
     connection: &mut PgConnection,
     routine: &str,
     raised: Raised,
-    message: &str,
     outcome: Result<PgQueryResult, sqlx::Error>,
 ) {
     let error = outcome.expect_err(routine);
     let text = error.to_string();
     match raised {
-        Raised::Sqlstate(code) => assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .as_deref(),
-            Some(code),
-            "{routine}: {text}"
-        ),
+        Raised::Sqlstate(code, sentence) => {
+            assert_eq!(
+                error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .as_deref(),
+                Some(code),
+                "{routine}: {text}"
+            );
+            assert!(text.contains(sentence), "{routine}: {text}");
+        }
         Raised::Rule(expected) => match map_err(error) {
             StorageError::Refused { rule, .. } => assert_eq!(rule, expected, "{routine}: {text}"),
             other => panic!("{routine}: expected {expected:?}, got {other:?}"),
         },
     }
-    assert!(text.contains(message), "{routine}: {text}");
     sqlx::query("ROLLBACK TO SAVEPOINT trigger_scope")
         .execute(&mut *connection)
         .await
@@ -300,7 +302,6 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
         &mut tx,
         "memory_pin_checks",
         Raised::Rule(StorageRule::DerivedMemoryPinsNothing),
-        "non-fact must pin",
         outcome,
     )
     .await;
@@ -314,8 +315,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     assert_refusal_restores_scope(
         &mut tx,
         "goal_pin_target_checks",
-        Raised::Sqlstate("PX002"),
-        "collides with an existing entity",
+        Raised::Sqlstate("PX002", "collides with an existing entity"),
         outcome,
     )
     .await;
@@ -355,8 +355,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
         assert_refusal_restores_scope(
             &mut tx,
             routine,
-            Raised::Sqlstate("55P03"),
-            "lock timeout",
+            Raised::Sqlstate("55P03", "lock timeout"),
             outcome,
         )
         .await;
@@ -383,8 +382,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     assert_refusal_restores_scope(
         &mut tx,
         "assert_erased_pin_target_insert",
-        Raised::Sqlstate("PX002"),
-        "written only by a target deletion trigger",
+        Raised::Sqlstate("PX002", "written only by a target deletion trigger"),
         outcome,
     )
     .await;

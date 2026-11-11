@@ -1,5 +1,6 @@
 use crate::sidecars::evolution::graph;
 use crate::test_fixtures::create_core_db;
+use proxiima_core::{StorageError, StorageRule};
 use proxiima_pg_testkit::{drop_db, split_role_urls};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -257,7 +258,17 @@ async fn assert_ordinary_origin_refused(
     .execute(&mut **tx)
     .await
     .expect_err("an ordinary abstraction cannot invent an erased origin");
-    assert!(error.to_string().contains("origin pin"), "{error}");
+    let error = crate::map_err(error);
+    assert!(
+        matches!(
+            error,
+            StorageError::Refused {
+                rule: StorageRule::OriginPinMissing,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
     Ok(())
 }
 
