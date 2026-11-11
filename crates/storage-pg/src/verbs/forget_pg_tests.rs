@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use crate::PgStorage;
 use crate::core_pg_sidecars;
-use crate::test_fixtures::{TestNote, create_core_db, enqueue_embedding_job};
+use crate::test_fixtures::{
+    TestNote, create_core_db, create_external_origin, enqueue_embedding_job,
+};
 use crate::verbs::forget::{
     ColdPurgeEntry, ColdPurgePlan, MemoryColdStore, erase_memory, erase_memory_series,
     erase_memory_series_after_snapshot, forget_memory, lock_admissions_for_erase,
@@ -556,15 +558,13 @@ async fn a_hard_erase_deletes_the_memorys_other_store_origins() {
             .await?
             .memory_id
             .into_inner();
-        // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
-             VALUES ($1, '00000000-0000-8000-8000-000500000001', 'origin'), ($1, '00000000-0000-8000-8000-000600000001', 'origin'), ($2, '00000000-0000-8000-8000-000500000002', 'origin')",
-        )
-        .bind(erased_t)
-        .bind(kept_t)
-        .execute(pool)
-        .await?;
+        for (t, remote) in [
+            (erased_t, "00000000-0000-8000-8000-000500000001"),
+            (erased_t, "00000000-0000-8000-8000-000600000001"),
+            (kept_t, "00000000-0000-8000-8000-000500000002"),
+        ] {
+            create_external_origin(pool, proxiima_core::MemoryId::new(t), remote.parse()?).await?;
+        }
 
         let mut tx = pool.begin().await?;
         let (erased, _) = erase_memory_series(
@@ -583,7 +583,13 @@ async fn a_hard_erase_deletes_the_memorys_other_store_origins() {
         )
         .fetch_all(pool)
         .await?;
-        assert_eq!(remaining, vec![(kept_t, Uuid::parse_str("00000000-0000-8000-8000-000500000002")?)]);
+        assert_eq!(
+            remaining,
+            vec![(
+                kept_t,
+                Uuid::parse_str("00000000-0000-8000-8000-000500000002")?
+            )]
+        );
         Ok(())
     }
     .await;

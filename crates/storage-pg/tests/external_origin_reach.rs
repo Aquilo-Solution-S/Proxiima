@@ -18,8 +18,10 @@ use proxiima_core::storage_ports::{
 };
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, EntityId, GroupId, OwnerId, SchemaId, SchemaVersion, UserId};
-use proxiima_storage_pg::test_fixtures::{create_group, fresh_pg};
+use proxiima_core::{
+    AccessKind, EntityId, GroupId, MemoryId, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
+};
+use proxiima_storage_pg::test_fixtures::{create_external_origin, create_group, fresh_pg};
 use proxiima_storage_pg::verbs::forget::erase_memory_series;
 use proxiima_storage_pg::{PgStorage, begin_owner_transaction, core_pg_sidecars};
 use uuid::Uuid;
@@ -55,14 +57,9 @@ fn draft() -> FactWriteCommand {
 
 /// `n` other-store origins on `t`, written with the admin pool the way the
 /// derive path's privileged insert lands them.
-async fn add_origins(pg: &PgStorage, t: Uuid, n: usize) -> Result<(), sqlx::Error> {
+async fn add_origins(pg: &PgStorage, t: Uuid, n: usize) -> Result<(), StorageError> {
     for _ in 0..n {
-        // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
-        sqlx::query("INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind) VALUES ($1, $2, 'origin')")
-            .bind(t)
-            .bind(Uuid::now_v7())
-            .execute(pg.pool_for_tests())
-            .await?;
+        create_external_origin(pg.pool_for_tests(), MemoryId::new(t), Uuid::now_v7()).await?;
     }
     Ok(())
 }
@@ -345,14 +342,7 @@ async fn several_origins_export_byte_identically_across_insert_orders() -> TestR
             .execute(pg.pool_for_tests())
             .await?;
         for memory in order {
-            // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
-            sqlx::query(
-                "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind) VALUES ($1, $2, 'origin')",
-            )
-            .bind(t)
-            .bind(memory)
-            .execute(pg.pool_for_tests())
-            .await?;
+            create_external_origin(pg.pool_for_tests(), MemoryId::new(t), memory).await?;
         }
         let bundle = pg.export_owner_bundle(&auth, &surfaces()).await?;
         let rows = bundle.tables.get(TABLE).cloned().unwrap_or_default();

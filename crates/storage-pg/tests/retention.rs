@@ -5,35 +5,31 @@ use proxiima_core::owner_inverse::{
     EraseAuthorization, ExportAuthorization, OwnerEraseOutcome, OwnerEraseTarget,
     OwnerExportTarget, OwnerSurfaces,
 };
-use proxiima_core::storage_ports::OwnerInversePort;
-use proxiima_core::{SpiiceRegistry, UserId};
+use proxiima_core::storage_ports::{OwnerInversePort, OwnerWritePermit, RetentionPort};
+use proxiima_core::{AccessKind, KeepDays, OwnerId, SchemaId, SpiiceRegistry, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::{create_core_db, create_user};
+use proxiima_storage_pg::test_fixtures::create_core_db;
 use uuid::Uuid;
 
 fn surfaces() -> OwnerSurfaces {
     OwnerSurfaces::for_registry(&SpiiceRegistry::new().freeze_or_panic_for_tests())
 }
 
-async fn person_with_rows(pool: &sqlx::PgPool) -> Result<UserId, sqlx::Error> {
-    let person = Uuid::now_v7();
-    create_user(pool, UserId::new(person))
-        .await
-        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+/// A person with two retention rows, written through the retention port (which
+/// registers the owner with its first row).
+async fn person_with_rows(pg: &PgStorage) -> Result<UserId, Box<dyn std::error::Error>> {
+    let person = UserId::new(Uuid::now_v7());
+    let permit = OwnerWritePermit::new_for_tests(OwnerId::from(person), AccessKind::Fact);
     for (schema, days) in [("s.mail-v1", 30), ("s.page-v1", 365)] {
-        // Raw INSERT: needs a builder for retention (`set_retention` writes it).
-        sqlx::query(
-            "INSERT INTO proxiima_core.retention (owner_id, schema_id, keep_days)
-             VALUES ($1, $2, $3)",
+        pg.set_retention(
+            &permit,
+            &SchemaId::new(schema.into()),
+            Some(KeepDays::new(days)?),
         )
-        .bind(person)
-        .bind(schema)
-        .bind(days)
-        .execute(pool)
         .await?;
     }
-    Ok(UserId::new(person))
+    Ok(person)
 }
 
 async fn rows_of(pool: &sqlx::PgPool, owner: UserId) -> Result<i64, sqlx::Error> {
@@ -51,8 +47,8 @@ async fn owner_export_carries_the_rows_and_owner_erase_takes_them()
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(db_url(&name)).await?;
         let pool = pg.pool_for_tests();
-        let person = person_with_rows(pool).await?;
-        let neighbour = person_with_rows(pool).await?;
+        let person = person_with_rows(&pg).await?;
+        let neighbour = person_with_rows(&pg).await?;
 
         let export = ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner {
             user_id: person,
