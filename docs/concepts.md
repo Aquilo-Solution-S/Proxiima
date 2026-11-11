@@ -11,7 +11,7 @@
 | Goal | A desired end-state and its dependencies | Lifecycle transitions append `t`; terminal states have no later transition |
 
 Citation is provenance attached to a Fact or Abstraction. Self is a query over
-cue-relevant Perspectives, never a stored entity. Actions and wake behaviour
+cue-relevant Perspectives, never a stored entity. Actions and wake behavior
 belong to the host integration; they are not a fifth memory kind.
 
 ## Identity and ownership
@@ -24,7 +24,7 @@ which operations it may invoke.
 
 Start here for the model, follow the
 [request flow](host-integration.md#authentication-and-owner-scope) for integration,
-and use [Protocol](protocol.md#owner-scope) for transport behaviour. The
+and use [Protocol](protocol.md#owner-scope) for transport behavior. The
 [decisions](decisions.md#identity-and-ownership-have-separate-jobs) explain why
 these boundaries exist.
 
@@ -140,7 +140,7 @@ The runtime forms a forest: several independent trees are allowed. There is
 no fixed nesting-depth maximum in the current group model. Its limit is the
 **shape of the hierarchy**:
 
-| Structure | Supported behaviour |
+| Structure | Supported behavior |
 |---|---|
 | Several levels, such as Team inside Department inside Company | Allowed; each step caps the authority inherited upward |
 | Several children under one parent | Allowed |
@@ -178,7 +178,7 @@ the group tree, recheck the caller's management authority, and preserve a
 group's last manager once one exists. PostgreSQL maintains the effective-role
 projection from the membership tree. See the
 [projection](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/functions.sql)
-and [nested-group behaviour tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs).
+and [nested-group behavior tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs).
 
 Moving a subgroup changes inherited access for the people throughout its
 subtree. A team already inside a department cannot also be attached to a
@@ -503,16 +503,16 @@ Scheduling and execution are host decisions. See
 
 ## Goal collaboration
 
-A Goal organises work and can carry explicitly delegated authority over that
+A Goal organizes work and can carry explicitly delegated authority over that
 work. Each Goal and memory series retains one durable owner, either personal
 or a Group. Participation never makes the Goal an owner, changes a memory's owner, or adds its owner to a
 participant's general owner scope.
 
 | Relationship | Target | Effect |
 |---|---|---|
-| Context | A memory related to a Goal | Organises work without granting access |
+| Context | A memory related to a Goal | Organizes work without granting access |
 | Publication | An exact admission and a Goal audience | Grants access under the source owner's consent |
-| Work binding | A series and a working Goal | Authorised collaborators share one revision history |
+| Work binding | A series and a working Goal | Authorized collaborators share one revision history |
 
 These relationships are N:M. One memory can be relevant to several Goals,
 published to several audiences, and intentionally edited through several
@@ -552,7 +552,7 @@ series; Goals are versioned separately as intent and progress change.
 Publication means **publish a Fact, or a specific Abstraction or Perspective
 version, to a Goal audience**. Publishing `P1@3` does not publish `P1@4`.
 A private later version neither leaks to that audience nor hides its earlier
-publication. Reads choose the latest authorised version after applying
+publication. Reads choose the latest authorized version after applying
 visibility, rather than filtering only the series' global head.
 
 ### Revision, shared editing, and fork
@@ -569,12 +569,12 @@ flowchart LR
 ```
 
 Both series may retain the same Group owner. A different destination requires
-authorised source use and destination writing; a Goal relationship alone
+authorized source use and destination writing; a Goal relationship alone
 grants neither. The exact source stays identifiable in provenance, and attribution records the
 writer of each new admission. A revision may retain its existing grounding
 without granting access to hidden source payloads; newly declared sources
 still require read permission. Withdrawing a publication removes that access
-route. An independently authorised fork remains the destination owner's
+route. An independently authorized fork remains the destination owner's
 knowledge, subject to its own erase and retention rules.
 
 An Abstraction fork preserves its citation. Within one owner it reuses the
@@ -614,7 +614,7 @@ remove sensitive claims or source identifiers from a published payload. Reading
 a named target still requires its own permission.
 
 Revoking one Goal route leaves other valid routes intact. Transfer or controller
-changes invalidate stale authorisations permanently: changing A to B and back
+changes invalidate stale authorizations permanently: changing A to B and back
 to A cannot revive them. Permission changes and writes have a defined atomic
 ordering. Completing a Goal preserves explicitly granted publications.
 Revocation and disabling/deleting an access route are separate actions; none
@@ -657,7 +657,7 @@ chain.
 ## Kernel boundary
 
 The Lean kernel states these principles. Code and tests establish runtime
-behaviour; they are not inferred from prose. Start with
+behavior; they are not inferred from prose. Start with
 [Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean),
 [Memory.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Memory.lean),
 [Edges.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Edges.lean),

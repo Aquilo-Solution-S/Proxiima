@@ -5,10 +5,10 @@ This page records durable architectural choices. Release history belongs in
 release notes. Implementation details belong in rustdoc, migrations, or the
 live catalog.
 
-## Principles and behaviour have separate owners
+## Principles and behavior have separate owners
 
 The Lean kernel states domainless principles. Rust code and tests are the
-behaviour. A principle change starts in the kernel, then code and tests follow.
+behavior. A principle change starts in the kernel, then code and tests follow.
 This keeps the kernel meaningful without treating it as an executable claim
 about every implementation detail.
 
@@ -234,7 +234,7 @@ an exact Abstraction/Perspective version. Private revisions cannot replace a
 previously published admission in the audience's view. Goal access is additive
 and cannot restrict existing owner membership. Completion is separate from
 revocation and erasure. Source-owner/controller changes must invalidate prior
-authorisations without A-to-B-to-A resurrection.
+authorizations without A-to-B-to-A resurrection.
 
 The [collaboration model](concepts.md#goal-collaboration) owns the explanation
 and examples. Its permission contract is stated in the kernel and enforced
