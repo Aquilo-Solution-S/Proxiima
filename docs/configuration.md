@@ -31,7 +31,6 @@ plus a migration pool of the same size during boot; size the server's
 | PROXIIMA_OIDC_ALLOWED_SUBJECTS | subject allowlist | restrict principals | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
 | PROXIIMA_OIDC_SUBJECT_MAP_JSON | issuer-aware subject map | OIDC identity binding | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
 | PROXIIMA_STREAM_MAX_LIFETIME | authenticated stream lifetime | long-lived MCP streams | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_STREAM_EPOCH_INTERVAL | stream auth recheck interval | long-lived MCP streams | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_REST_ENABLED | REST projection switch | serving `/v1` | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_REQUEST_HEADERS | forwarded request-header names | tools need selected headers | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_FORWARDER_SUBJECTS | subjects requiring a verified owner claim | forwarded owner access | `ForwarderPolicy` |

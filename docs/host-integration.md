@@ -310,8 +310,8 @@ confined them. It is routing state with an idle lifetime, not a new role
 grant. `WriterAttribution.via` is separate write provenance: `null` means a
 direct principal call; a UUID names the caller/session attested by the
 credential. Subsequent MCP requests reauthenticate and recheck the binding.
-Long-lived streams are revalidated for expiry, maximum stream
-lifetime, and the host's revocation epoch.
+Long-lived streams end at token expiry or the maximum stream lifetime;
+nothing revokes a token before it expires.
 
 ### Credential verification and identity mapping
 
@@ -472,16 +472,15 @@ with `OwnerRegistry::is_registered_owner` when upgrading.
 Delegated work is a durable, exact command grant for a worker. The issuing
 host stores a `DelegationId` with one owner, one registered tool/action, a
 recorded non-managing role ceiling, the issuer's writer attribution, a finite
-expiry no later than the source bearer, and the source authentication epoch.
+expiry no later than the source bearer.
 Issue checks current membership, role ceiling, command registration, caller
 scope, and deployment scope before inserting the grant
 ([`DelegatedAuthorityService::issue`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/storage_ports/delegated_authority.rs)).
 
 At redemption, the worker supplies the `DelegationId`, expected owner, and
 exact command. The service rechecks revocation, expiry, current membership and
-role ceiling, current authentication epoch, command registration, and current
-deployment profile. It returns a non-cloneable, opaque `DelegatedPhase` whose
-effective role is the meet of the current role and the recorded ceiling. The
+role ceiling, command registration, and current deployment profile. It
+returns a non-cloneable, opaque `DelegatedPhase` whose effective role is the meet of the current role and the recorded ceiling. The
 Engine checks phase expiry again at the start of every delegated-capable
 operation; an expired phase cannot run
 ([`redeem_phase`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/storage_ports/delegated_authority.rs),

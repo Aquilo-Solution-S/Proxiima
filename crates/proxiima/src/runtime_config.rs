@@ -65,7 +65,6 @@ pub struct RuntimeBuilder {
     allowed_hosts: Option<Vec<String>>,
     served_surface: Option<ServedSurface>,
     stream_max_lifetime: Option<Duration>,
-    epoch_check_interval: Option<Duration>,
     insecure_single_owner: bool,
     rest_enabled: Option<bool>,
     missing_migration_policy: Option<MissingMigrationPolicy>,
@@ -132,7 +131,6 @@ impl std::fmt::Debug for RuntimeBuilder {
             .field("allowed_hosts", &self.allowed_hosts)
             .field("served_surface", &self.served_surface)
             .field("stream_max_lifetime", &self.stream_max_lifetime)
-            .field("epoch_check_interval", &self.epoch_check_interval)
             .field("insecure_single_owner", &self.insecure_single_owner)
             .field("rest_enabled", &self.rest_enabled)
             .field("missing_migration_policy", &self.missing_migration_policy)
@@ -199,7 +197,6 @@ impl RuntimeBuilder {
             allowed_hosts: self.allowed_hosts.or(base.allowed_hosts),
             served_surface: self.served_surface.or(base.served_surface),
             stream_max_lifetime: self.stream_max_lifetime.or(base.stream_max_lifetime),
-            epoch_check_interval: self.epoch_check_interval.or(base.epoch_check_interval),
             insecure_single_owner: self.insecure_single_owner || base.insecure_single_owner,
             rest_enabled: self.rest_enabled.or(base.rest_enabled),
             missing_migration_policy: self
@@ -463,16 +460,6 @@ impl RuntimeBuilder {
     #[must_use]
     pub fn stream_max_lifetime(mut self, duration: Duration) -> Self {
         self.stream_max_lifetime = Some(duration);
-        self
-    }
-
-    /// Set the host-auth epoch polling interval for authenticated streams.
-    ///
-    /// The environment equivalent is `PROXIIMA_STREAM_EPOCH_INTERVAL`,
-    /// parsed as integer seconds.
-    #[must_use]
-    pub fn epoch_check_interval(mut self, duration: Duration) -> Self {
-        self.epoch_check_interval = Some(duration);
         self
     }
 
@@ -811,11 +798,6 @@ impl RuntimeBuilder {
                 .map(|raw| parse_duration_seconds("PROXIIMA_STREAM_MAX_LIFETIME", &raw))
                 .transpose()?;
         }
-        if self.epoch_check_interval.is_none() {
-            self.epoch_check_interval = lookup("PROXIIMA_STREAM_EPOCH_INTERVAL")
-                .map(|raw| parse_duration_seconds("PROXIIMA_STREAM_EPOCH_INTERVAL", &raw))
-                .transpose()?;
-        }
         if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(&lookup) {
             self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(&lookup)?);
         }
@@ -1063,9 +1045,6 @@ impl RuntimeBuilder {
             max_stream_lifetime: self
                 .stream_max_lifetime
                 .unwrap_or(default_revalidation.max_stream_lifetime),
-            epoch_check_interval: self
-                .epoch_check_interval
-                .unwrap_or(default_revalidation.epoch_check_interval),
         };
         validate_revalidation_config(stream_revalidation)?;
         self.check_published_retention()?;
@@ -1786,11 +1765,6 @@ fn validate_revalidation_config(config: RevalidationConfig) -> Result<(), Proxii
             "stream max lifetime must be greater than 0 seconds".into(),
         ));
     }
-    if config.epoch_check_interval.is_zero() {
-        return Err(ProxiimaError::Config(
-            "stream epoch check interval must be greater than 0 seconds".into(),
-        ));
-    }
     Ok(())
 }
 
@@ -2427,10 +2401,7 @@ mod tests {
             .platform_database_url("postgres://localhost/platform")
             .owner(owner(uuid::Uuid::now_v7()))
             .served_surface(ServedSurface::All)
-            .apply_lookup(lookup(&[
-                ("PROXIIMA_STREAM_MAX_LIFETIME", "7"),
-                ("PROXIIMA_STREAM_EPOCH_INTERVAL", "2"),
-            ]))
+            .apply_lookup(lookup(&[("PROXIIMA_STREAM_MAX_LIFETIME", "7")]))
             .unwrap()
             .resolve()
             .unwrap();
@@ -2438,10 +2409,6 @@ mod tests {
         assert_eq!(
             config.stream_revalidation.max_stream_lifetime,
             Duration::from_secs(7)
-        );
-        assert_eq!(
-            config.stream_revalidation.epoch_check_interval,
-            Duration::from_secs(2)
         );
     }
 

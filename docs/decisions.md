@@ -86,6 +86,14 @@ revoking the grant prevents future redemption rather than cancelling work
 already admitted. See [delegated work](host-integration.md#delegated-work)
 for its enforcing types and service.
 
+### Access ends at token expiry
+
+There is no revocation before expiry. A token's access ends when the token
+expires; a long-lived stream ends at token expiry or after the maximum stream
+lifetime (`PROXIIMA_STREAM_MAX_LIFETIME`), whichever comes first. A delegated
+grant ends when it is revoked. The host shortens exposure with short-lived
+tokens, not with a revocation signal.
+
 ### Blob downloads separate authorization from delivery
 
 Authority mode: `existing-kernel-no-change`. The existing kernel owns read

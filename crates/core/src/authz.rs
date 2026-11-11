@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use futures_util::Stream;
-use tokio::time::{Instant, Interval, Sleep};
+use tokio::time::{Instant, Sleep};
 
 use crate::OwnerScope;
 use crate::access::{AccessKind, OwnerAccessPort, OwnerRoles, Role};
@@ -60,8 +60,6 @@ pub struct Identity {
     accessible_principals: HashSet<OwnerId>,
     /// Streams terminate past this; `None` = no expiry.
     expires_at: Option<SystemTime>,
-    /// Revocation generation; hosts bump it to force re-auth.
-    auth_epoch: u64,
     /// Model/runner identity the authenticator bound to this principal.
     ///
     /// Authenticated provenance, on the same footing as `subject`: it
@@ -800,11 +798,6 @@ impl AuthzContext {
         self.identity.expires_at
     }
 
-    #[must_use]
-    pub const fn auth_epoch(&self) -> u64 {
-        self.identity.auth_epoch
-    }
-
     /// Model/runner identity certified by the authenticating token, if the
     /// deployment binds one to this principal.
     ///
@@ -1049,7 +1042,6 @@ impl AuthzContext {
                 principal: OwnerId::from(subject),
                 accessible_principals,
                 expires_at: None,
-                auth_epoch: 0,
                 trusted_model_id: None,
             },
             capabilities: CapabilitySet::all(),
@@ -1396,12 +1388,6 @@ impl AuthzContext {
         self
     }
 
-    #[must_use]
-    pub fn with_auth_epoch(mut self, auth_epoch: u64) -> Self {
-        self.identity.auth_epoch = auth_epoch;
-        self
-    }
-
     /// # Panics
     ///
     /// Panics only if constructing the empty subject role set fails.
@@ -1447,7 +1433,6 @@ impl AuthzContext {
                 principal: *owner,
                 accessible_principals: HashSet::new(),
                 expires_at: None,
-                auth_epoch: 0,
                 trusted_model_id: None,
             },
             capabilities: CapabilitySet {
@@ -1478,13 +1463,6 @@ pub trait Authenticator: Send + Sync {
     /// `AuthError::InvalidCredentials` when they are malformed,
     /// expired, or revoked.
     async fn authenticate(&self, creds: &Credentials) -> Result<AuthzContext, AuthError>;
-
-    /// Current revocation epoch for a principal. A host bumps the returned
-    /// value to force active streams authenticated at a lower epoch to
-    /// terminate. The default never revokes.
-    async fn current_auth_epoch(&self, _principal: &OwnerId) -> u64 {
-        0
-    }
 }
 
 /// Authenticate through the host-owned verifier and mint the sole production
@@ -1503,36 +1481,26 @@ pub async fn authenticate(
 
 /// Revalidation cadence for long-lived authenticated streams.
 ///
-/// Streams terminate silently at `Identity::expires_at` when present, after
-/// `max_stream_lifetime` regardless of identity state, or when the host
-/// authenticator reports `current_auth_epoch(principal) > identity.auth_epoch`.
-/// Epoch checks run every `epoch_check_interval`; an absent authenticator means
-/// only expiry and max-lifetime deadlines apply.
+/// Streams terminate silently at `Identity::expires_at` when present, and
+/// after `max_stream_lifetime` regardless of identity state. Nothing ends a
+/// stream earlier: there is no revocation before expiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevalidationConfig {
     pub max_stream_lifetime: Duration,
-    pub epoch_check_interval: Duration,
 }
 
 impl Default for RevalidationConfig {
     fn default() -> Self {
         Self {
             max_stream_lifetime: Duration::from_hours(1),
-            epoch_check_interval: Duration::from_secs(30),
         }
     }
 }
 
-type EpochCheck = Pin<Box<dyn Future<Output = u64> + Send>>;
-
 struct RevalidatedStream<I> {
     inner: Pin<Box<dyn Stream<Item = I> + Send>>,
-    identity: Identity,
-    authenticator: Option<Arc<dyn Authenticator>>,
     expires_at: Option<Pin<Box<Sleep>>>,
     max_lifetime: Pin<Box<Sleep>>,
-    epoch_interval: Option<Interval>,
-    epoch_check: Option<EpochCheck>,
     closing: bool,
     closed: bool,
 }
@@ -1543,33 +1511,9 @@ impl<I> RevalidatedStream<I> {
             return true;
         }
 
-        if self
-            .expires_at
+        self.expires_at
             .as_mut()
             .is_some_and(|expires_at| expires_at.as_mut().poll(cx).is_ready())
-        {
-            return true;
-        }
-
-        if let Some(interval) = self.epoch_interval.as_mut()
-            && interval.poll_tick(cx).is_ready()
-            && self.epoch_check.is_none()
-            && let Some(authenticator) = self.authenticator.clone()
-        {
-            let principal = self.identity.principal;
-            self.epoch_check = Some(Box::pin(async move {
-                authenticator.current_auth_epoch(&principal).await
-            }));
-        }
-
-        if let Some(check) = self.epoch_check.as_mut()
-            && let Poll::Ready(epoch) = check.as_mut().poll(cx)
-        {
-            self.epoch_check = None;
-            return epoch > self.identity.auth_epoch;
-        }
-
-        false
     }
 
     fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<I>> {
@@ -1616,13 +1560,12 @@ impl<I> Stream for RevalidatedStream<I> {
     }
 }
 
-/// Wrap a long-lived stream with expiry, revocation-epoch, and max-lifetime
-/// termination. Termination is a silent stream end.
+/// Wrap a long-lived stream with expiry and max-lifetime termination.
+/// Termination is a silent stream end.
 #[must_use]
 pub fn revalidate_stream<S>(
     stream: S,
-    identity: Identity,
-    authenticator: Option<Arc<dyn Authenticator>>,
+    identity: &Identity,
     config: RevalidationConfig,
 ) -> Pin<Box<dyn Stream<Item = S::Item> + Send>>
 where
@@ -1631,19 +1574,11 @@ where
 {
     let expires_at = identity.expires_at.map(system_time_sleep);
     let max_lifetime = Box::pin(tokio::time::sleep(config.max_stream_lifetime));
-    let epoch_interval = authenticator.as_ref().map(|_| {
-        let interval = non_zero_duration(config.epoch_check_interval);
-        tokio::time::interval_at(Instant::now() + interval, interval)
-    });
 
     Box::pin(RevalidatedStream {
         inner: Box::pin(stream),
-        identity,
-        authenticator,
         expires_at,
         max_lifetime,
-        epoch_interval,
-        epoch_check: None,
         closing: false,
         closed: false,
     })
@@ -1656,14 +1591,6 @@ fn system_time_sleep(deadline: SystemTime) -> Pin<Box<Sleep>> {
     Box::pin(tokio::time::sleep_until(Instant::now() + until_deadline))
 }
 
-const fn non_zero_duration(duration: Duration) -> Duration {
-    if duration.is_zero() {
-        Duration::from_nanos(1)
-    } else {
-        duration
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1673,7 +1600,7 @@ mod tests {
     use crate::protocol::{action as protocol_action, resource as protocol_resource};
     use crate::{GroupId, UserId};
     use futures_util::StreamExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::Ordering;
     use tokio::sync::mpsc;
     use tokio::time;
 
@@ -1850,7 +1777,7 @@ mod tests {
         assert!(context.narrowed_to_owner(group).is_some());
     }
 
-    fn identity(expires_at: Option<SystemTime>, auth_epoch: u64) -> Identity {
+    fn identity(expires_at: Option<SystemTime>) -> Identity {
         let principal = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
         let mut accessible_principals = HashSet::with_capacity(1);
         accessible_principals.insert(principal);
@@ -1863,7 +1790,6 @@ mod tests {
             principal,
             accessible_principals,
             expires_at,
-            auth_epoch,
             trusted_model_id: None,
         }
     }
@@ -1874,32 +1800,6 @@ mod tests {
         futures_util::stream::unfold(receiver, |mut receiver| async {
             receiver.recv().await.map(|item| (item, receiver))
         })
-    }
-
-    #[derive(Debug, Default)]
-    struct EpochAuthenticator {
-        epoch: AtomicU64,
-    }
-
-    #[async_trait]
-    impl Authenticator for EpochAuthenticator {
-        async fn authenticate(&self, _creds: &Credentials) -> Result<AuthzContext, AuthError> {
-            Err(AuthError::AuthRequired)
-        }
-
-        async fn current_auth_epoch(&self, _principal: &OwnerId) -> u64 {
-            self.epoch.load(Ordering::SeqCst)
-        }
-    }
-
-    #[derive(Debug)]
-    struct DefaultEpochAuthenticator;
-
-    #[async_trait]
-    impl Authenticator for DefaultEpochAuthenticator {
-        async fn authenticate(&self, _creds: &Credentials) -> Result<AuthzContext, AuthError> {
-            Err(AuthError::AuthRequired)
-        }
     }
 
     #[test]
@@ -2008,10 +1908,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one forwarded scope checks every right it carries and refuses"
-    )]
     async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let stranger = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
@@ -2034,7 +1930,6 @@ mod tests {
                 let pending =
                     AuthzContext::from_verified_forwarded_owner(subject, owner, forwarded_writer())
                         .with_expires_at(Some(expires))
-                        .with_auth_epoch(7)
                         .with_tool_scope(ToolScope::Palette(Vec::new()))
                         .with_trusted_model_id("trusted-forwarder-model")
                         .unwrap();
@@ -2086,7 +1981,6 @@ mod tests {
                 assert_eq!(bound.role_for_owner(&owner), Some(role));
                 assert!(!bound.may_work_goals(&owner), "forwarding works no Goals");
                 assert_eq!(bound.expires_at(), Some(expires));
-                assert_eq!(bound.auth_epoch(), 7);
                 assert_eq!(bound.trusted_model_id(), Some("trusted-forwarder-model"));
                 assert_eq!(bound.tool_scope(), &ToolScope::Palette(Vec::new()));
                 assert_eq!(bound.readable_owners(AccessKind::Fact), [owner]);
@@ -2626,8 +2520,7 @@ mod tests {
             .with_trusted_model_id("runner/pinned")
             .expect("binds")
             .with_tool_scope(ToolScope::Palette(Vec::new()))
-            .with_expires_at(Some(SystemTime::UNIX_EPOCH))
-            .with_auth_epoch(7);
+            .with_expires_at(Some(SystemTime::UNIX_EPOCH));
 
         assert_eq!(ctx.trusted_model_id(), Some("runner/pinned"));
     }
@@ -3076,21 +2969,18 @@ mod tests {
     async fn expired_identity_terminates_at_deadline_but_non_expired_keeps_flowing() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_mins(1),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let now = SystemTime::now();
         let (expired_sender, expired_receiver) = mpsc::unbounded_channel();
         let (live_sender, live_receiver) = mpsc::unbounded_channel();
         let mut expired_stream = revalidate_stream(
             receiver_stream(expired_receiver),
-            identity(Some(now + Duration::from_secs(10)), 0),
-            None,
+            &identity(Some(now + Duration::from_secs(10))),
             config,
         );
         let mut live_stream = revalidate_stream(
             receiver_stream(live_receiver),
-            identity(Some(now + Duration::from_mins(1)), 0),
-            None,
+            &identity(Some(now + Duration::from_mins(1))),
             config,
         );
 
@@ -3107,39 +2997,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn epoch_bump_terminates_within_one_check_interval() {
-        let config = RevalidationConfig {
-            max_stream_lifetime: Duration::from_mins(1),
-            epoch_check_interval: Duration::from_secs(5),
-        };
-        let authenticator = Arc::new(EpochAuthenticator::default());
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let mut stream = revalidate_stream(
-            receiver_stream(receiver),
-            identity(None, 0),
-            Some(authenticator.clone()),
-            config,
-        );
-
-        time::advance(Duration::from_secs(5)).await;
-        sender.send(1).expect("receiver is alive");
-        assert_eq!(stream.next().await, Some(1));
-
-        authenticator.epoch.store(1, Ordering::SeqCst);
-        time::advance(Duration::from_secs(5)).await;
-
-        assert_eq!(stream.next().await, None);
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn max_lifetime_terminates_otherwise_valid_stream() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_secs(10),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let (_sender, receiver) = mpsc::unbounded_channel::<u8>();
-        let mut stream =
-            revalidate_stream(receiver_stream(receiver), identity(None, 0), None, config);
+        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
 
         time::advance(Duration::from_secs(10)).await;
 
@@ -3147,18 +3010,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn none_expiry_with_default_authenticator_runs_until_max_lifetime() {
+    async fn none_expiry_runs_until_max_lifetime() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_secs(30),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
-        let mut stream = revalidate_stream(
-            receiver_stream(receiver),
-            identity(None, 0),
-            Some(Arc::new(DefaultEpochAuthenticator)),
-            config,
-        );
+        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
 
         time::advance(Duration::from_secs(20)).await;
         sender.send(1).expect("receiver is alive");
@@ -3172,11 +3029,9 @@ mod tests {
     async fn queued_items_before_termination_are_delivered() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_secs(10),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
-        let mut stream =
-            revalidate_stream(receiver_stream(receiver), identity(None, 0), None, config);
+        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
 
         sender.send(1).expect("receiver is alive");
         sender.send(2).expect("receiver is alive");

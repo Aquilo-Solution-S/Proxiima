@@ -16,9 +16,7 @@ use http::header::{
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyStream, StreamBody};
-use proxiima_core::{
-    AuthPath, Authenticator, Identity, OwnerId, RevalidationConfig, revalidate_stream,
-};
+use proxiima_core::{Identity, OwnerId, RevalidationConfig, revalidate_stream};
 
 use crate::McpServerError;
 use crate::auth::McpEdgeAuth;
@@ -658,11 +656,6 @@ async fn mcp_auth(
     };
     let principal = ctx.authz.principal();
     let identity = ctx.authz.identity_for_revalidation();
-    let epoch_source = if ctx.authz.auth_path() == AuthPath::HostBearer {
-        state.auth.host_authenticator()
-    } else {
-        None
-    };
     request.extensions_mut().insert(ctx);
     let mut response = next.run(request).await;
     if bind_new_session
@@ -677,7 +670,7 @@ async fn mcp_auth(
             *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
         }
     }
-    revalidate_response(response, identity, epoch_source, state.revalidation)
+    revalidate_response(response, &identity, state.revalidation)
 }
 
 /// Outcome of resolving the caller's owner selection from the
@@ -772,11 +765,10 @@ fn unauthorized(state: &McpAuthLayerState, path: &str) -> Response {
 
 fn revalidate_response(
     response: Response,
-    identity: Identity,
-    authenticator: Option<Arc<dyn Authenticator>>,
+    identity: &Identity,
     config: RevalidationConfig,
 ) -> Response {
-    response.map(|body| Body::new(RevalidatedBody::new(body, identity, authenticator, config)))
+    response.map(|body| Body::new(RevalidatedBody::new(body, identity, config)))
 }
 
 fn response_header_str(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -804,17 +796,11 @@ where
     B::Data: Send + 'static,
     B::Error: Send + 'static,
 {
-    fn new(
-        body: B,
-        identity: Identity,
-        authenticator: Option<Arc<dyn Authenticator>>,
-        config: RevalidationConfig,
-    ) -> Self {
+    fn new(body: B, identity: &Identity, config: RevalidationConfig) -> Self {
         Self {
             inner: Box::pin(StreamBody::new(revalidate_stream(
                 BodyStream::new(body),
                 identity,
-                authenticator,
                 config,
             ))),
         }
@@ -2612,12 +2598,11 @@ mod tests {
         assert!(message.contains(pattern));
     }
 
-    fn identity(expires_at: Option<SystemTime>, auth_epoch: u64) -> Identity {
+    fn identity(expires_at: Option<SystemTime>) -> Identity {
         let principal = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
         let subject = principal.as_user();
         proxiima_core::AuthzContext::for_subject(subject, proxiima_core::AuthPath::HostBearer)
             .with_expires_at(expires_at)
-            .with_auth_epoch(auth_epoch)
             .identity_for_revalidation()
     }
 
@@ -2629,41 +2614,21 @@ mod tests {
 
     fn collect_revalidated(
         body: Body,
-        identity: Identity,
-        authenticator: Option<Arc<dyn Authenticator>>,
+        identity: &Identity,
         config: RevalidationConfig,
     ) -> tokio::task::JoinHandle<Bytes> {
+        let body = Body::new(RevalidatedBody::new(body, identity, config));
         tokio::spawn(async move {
-            to_bytes(
-                Body::new(RevalidatedBody::new(body, identity, authenticator, config)),
-                usize::MAX,
-            )
-            .await
-            .expect("body collection succeeds")
+            to_bytes(body, usize::MAX)
+                .await
+                .expect("body collection succeeds")
         })
-    }
-
-    #[derive(Debug, Default)]
-    struct EpochAuthenticator {
-        epoch: AtomicU64,
-    }
-
-    #[async_trait]
-    impl Authenticator for EpochAuthenticator {
-        async fn authenticate(&self, _creds: &Credentials) -> Result<AuthzContext, AuthError> {
-            Err(AuthError::AuthRequired)
-        }
-
-        async fn current_auth_epoch(&self, _principal: &OwnerId) -> u64 {
-            self.epoch.load(Ordering::SeqCst)
-        }
     }
 
     #[tokio::test(start_paused = true)]
     async fn revalidated_body_expiry_ends_active_body() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_mins(1),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
         sender
@@ -2671,8 +2636,7 @@ mod tests {
             .expect("receiver is alive");
         let task = collect_revalidated(
             receiver_body(receiver),
-            identity(Some(SystemTime::now() + Duration::from_secs(2)), 0),
-            None,
+            &identity(Some(SystemTime::now() + Duration::from_secs(2))),
             config,
         );
 
@@ -2683,35 +2647,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn revalidated_body_epoch_bump_ends_within_interval() {
-        let config = RevalidationConfig {
-            max_stream_lifetime: Duration::from_mins(1),
-            epoch_check_interval: Duration::from_secs(5),
-        };
-        let authenticator = Arc::new(EpochAuthenticator::default());
-        let (_sender, receiver) = mpsc::unbounded_channel();
-        let task = collect_revalidated(
-            receiver_body(receiver),
-            identity(None, 0),
-            Some(authenticator.clone()),
-            config,
-        );
-
-        tokio::task::yield_now().await;
-        authenticator.epoch.store(1, Ordering::SeqCst);
-        time::advance(Duration::from_secs(5)).await;
-
-        assert!(task.await.unwrap().is_empty());
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn revalidated_body_max_lifetime_ends_active_body() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_secs(3),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let (_sender, receiver) = mpsc::unbounded_channel();
-        let task = collect_revalidated(receiver_body(receiver), identity(None, 0), None, config);
+        let task = collect_revalidated(receiver_body(receiver), &identity(None), config);
 
         tokio::task::yield_now().await;
         time::advance(Duration::from_secs(3)).await;
@@ -2723,13 +2664,11 @@ mod tests {
     async fn revalidated_body_leaves_short_response_unchanged() {
         let config = RevalidationConfig {
             max_stream_lifetime: Duration::from_mins(1),
-            epoch_check_interval: Duration::from_secs(5),
         };
         let bytes = to_bytes(
             Body::new(RevalidatedBody::new(
                 Body::from("short"),
-                identity(None, 0),
-                None,
+                &identity(None),
                 config,
             )),
             usize::MAX,

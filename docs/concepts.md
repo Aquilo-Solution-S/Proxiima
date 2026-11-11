@@ -293,8 +293,8 @@ Three things called a session or grant have different jobs:
 | Writer `via` | Retain caller/session provenance on a written version | Attested by authentication; not an access grant or an automatic copy of the MCP session ID |
 | Delegation grant and redeemed phase | Let queued work execute a bounded command | Exact owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
 
-Membership changes affect subsequent role resolution. For open streams, the
-host supplies authentication-epoch revocation; changing a membership does not
+Membership changes affect subsequent role resolution. Open streams end at
+token expiry or the maximum stream lifetime; changing a membership does not
 by itself cancel an already admitted operation.
 
 A delegated worker retains a `DelegationId` and redeems it when work starts;

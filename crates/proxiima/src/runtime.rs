@@ -238,12 +238,6 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     }
 
     #[must_use]
-    pub fn epoch_check_interval(mut self, duration: std::time::Duration) -> Self {
-        self.overlay = self.overlay.epoch_check_interval(duration);
-        self
-    }
-
-    #[must_use]
     pub fn allow_insecure_single_owner(mut self) -> Self {
         self.overlay = self.overlay.allow_insecure_single_owner();
         self
@@ -1278,12 +1272,11 @@ fn assemble_services<A: SpiiceApp>(
                 .into(),
         ));
     }
-    if let Some(authenticator) = authenticator {
+    if authenticator.is_some() {
         let store = Arc::new(PgDelegationStore::new(host.platform_scope.clone()));
         services.try_insert(DelegatedAuthorityService::new(
             store,
             owner_access.clone(),
-            authenticator.clone(),
             registry.clone(),
             deployment_served_surface.clone(),
             runtime_authority,

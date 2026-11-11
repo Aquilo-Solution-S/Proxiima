@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 mod common;
@@ -198,30 +197,6 @@ async fn host_bearer_sse_get_closes_at_identity_expiry() -> Result<(), Box<dyn s
     Ok(())
 }
 
-#[tokio::test]
-async fn host_bearer_sse_get_closes_after_epoch_bump() -> Result<(), Box<dyn std::error::Error>> {
-    let auth = Arc::new(TestHostAuth::new(nil_owner(), None));
-    let config = RevalidationConfig {
-        max_stream_lifetime: Duration::from_secs(30),
-        epoch_check_interval: Duration::from_millis(200),
-    };
-    let (handle, addr, db_name) = start_host_auth_server(auth.clone(), config).await?;
-    let client = reqwest::Client::new();
-    let url = format!("http://{addr}/mcp");
-    let bearer = "Bearer host-token";
-    let session_id = initialize(&client, &url, bearer).await?;
-    initialized(&client, &url, &session_id, bearer).await?;
-
-    let response = open_standalone_sse(&client, &url, &session_id, bearer).await?;
-    auth.bump_epoch();
-    tokio::time::timeout(Duration::from_secs(10), response.bytes())
-        .await
-        .expect("SSE stream closes after auth epoch bump")?;
-
-    common::stop_server(handle, &db_name).await?;
-    Ok(())
-}
-
 use common::nil_owner;
 
 #[derive(Debug)]
@@ -230,7 +205,6 @@ struct TestHostAuth {
     subject: Option<UserId>,
     roles: Option<Vec<(OwnerId, Role)>>,
     ttl: Option<Duration>,
-    epoch: AtomicU64,
 }
 
 impl TestHostAuth {
@@ -240,7 +214,6 @@ impl TestHostAuth {
             subject: None,
             roles: None,
             ttl,
-            epoch: AtomicU64::new(0),
         }
     }
 
@@ -250,7 +223,6 @@ impl TestHostAuth {
             subject: None,
             roles: Some(roles),
             ttl: None,
-            epoch: AtomicU64::new(0),
         }
     }
 
@@ -260,12 +232,7 @@ impl TestHostAuth {
             subject: Some(subject),
             roles: Some(roles),
             ttl: None,
-            epoch: AtomicU64::new(0),
         }
-    }
-
-    fn bump_epoch(&self) {
-        self.epoch.fetch_add(1, Ordering::SeqCst);
     }
 
     fn authz(&self) -> AuthzContext {
@@ -280,7 +247,6 @@ impl TestHostAuth {
             .with_default_owner(self.owner)
             .expect("test default owner has a role")
             .with_expires_at(self.ttl.map(|ttl| std::time::SystemTime::now() + ttl))
-            .with_auth_epoch(self.epoch.load(Ordering::SeqCst))
     }
 }
 
@@ -291,10 +257,6 @@ impl Authenticator for TestHostAuth {
             Credentials::Bearer(token) if token == "host-token" => Ok(self.authz()),
             Credentials::Bearer(_) => Err(AuthError::InvalidCredentials),
         }
-    }
-
-    async fn current_auth_epoch(&self, _principal: &proxiima_core::OwnerId) -> u64 {
-        self.epoch.load(Ordering::SeqCst)
     }
 }
 

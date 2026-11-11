@@ -45,16 +45,15 @@ impl DelegationStorePort for PgDelegationStore {
         grant: &DelegationGrant,
     ) -> Result<(), StorageError> {
         let owner_id = grant.owner().into_inner();
-        let auth_epoch = i64::try_from(grant.auth_epoch()).map_err(|_| {
-            StorageError::ConstraintViolation("delegation auth epoch exceeds i64".into())
-        })?;
         let mut tx = self.platform.begin().await?;
+        // `auth_epoch` is NOT NULL and read by no one; the column goes at the
+        // next schema reset.
         sqlx::query(
             "INSERT INTO proxiima_core.delegated_authority_grants
                 (delegation_id, subject_user_id, owner_id,
                  tool_name, action_name, read_ceiling, write_ceiling,
                  expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11)",
         )
         .bind(grant.delegation_id().into_uuid())
         .bind(grant.subject().into_inner())
@@ -64,7 +63,6 @@ impl DelegationStorePort for PgDelegationStore {
         .bind(PgAccessCeiling::from(grant.role_ceiling().read_ceiling()))
         .bind(PgAccessCeiling::from(grant.role_ceiling().write_ceiling()))
         .bind(OffsetDateTime::from(grant.expires_at()))
-        .bind(auth_epoch)
         .bind(OffsetDateTime::from(grant.issued_at()))
         .bind(grant.writer().by)
         .bind(grant.writer().via)
@@ -86,7 +84,7 @@ impl DelegationStorePort for PgDelegationStore {
         let row = sqlx::query(
             "SELECT delegation_id, subject_user_id, owner_id,
                     tool_name, action_name, read_ceiling, write_ceiling,
-                    expires_at, auth_epoch, issued_at, revoked_at,
+                    expires_at, issued_at, revoked_at,
                     revoked_by_user_id, \"by\", via
                FROM proxiima_core.delegated_authority_grants
               WHERE delegation_id = $1
@@ -145,7 +143,6 @@ fn decode_grant(
     let write: PgAccessCeiling = row.try_get("write_ceiling").map_err(internal)?;
     let role_ceiling = Role::new(read.into(), write.into(), false)
         .map_err(|error| StorageError::Internal(error.to_string()))?;
-    let auth_epoch: i64 = row.try_get("auth_epoch").map_err(internal)?;
 
     DelegationGrant::from_storage(
         permit,
@@ -166,8 +163,6 @@ fn decode_grant(
                 row.try_get::<OffsetDateTime, _>("expires_at")
                     .map_err(internal)?,
             ),
-            auth_epoch: u64::try_from(auth_epoch)
-                .map_err(|_| StorageError::Internal("negative delegation auth epoch".into()))?,
             issued_at: SystemTime::from(
                 row.try_get::<OffsetDateTime, _>("issued_at")
                     .map_err(internal)?,

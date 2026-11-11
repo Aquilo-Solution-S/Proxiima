@@ -1,15 +1,14 @@
 //! Durable, bearer-bounded authority for registered background commands.
 //!
 //! Queue rows persist only [`DelegationId`]. Redemption checks the exact queued
-//! command, current deployment profile, grant revocation, current membership,
-//! and the authenticator epoch when the host implements epoch revocation. It
-//! returns a non-cloneable [`DelegatedPhase`](crate::DelegatedPhase), never a
+//! command, current deployment profile, grant revocation, and current
+//! membership. It returns a non-cloneable [`DelegatedPhase`](crate::DelegatedPhase), never a
 //! reusable serialized [`AuthzContext`]. Engine/blob calls then enforce the
 //! same-runtime binding, exact owner, recorded role ceiling, and finite expiry.
 //!
 //! Registered linked workers remain trusted in-process to choose among those
 //! allowed operations: command scope binds queue routing/redemption, not an
-//! in-process operation sandbox. Revocation, epoch bumps, or membership changes
+//! in-process operation sandbox. Revocation or membership changes
 //! deny the next redemption; they do not cancel an already-redeemed phase.
 
 use std::sync::Arc;
@@ -24,7 +23,7 @@ use crate::text_bounds::check_trimmed_len;
 
 const MAX_TOOL_ID_CHARS: usize = 200;
 use crate::{
-    AccessError, ActionName, AuthPath, Authenticator, AuthzContext, CapabilitySet, DelegatedPhase,
+    AccessError, ActionName, AuthPath, AuthzContext, CapabilitySet, DelegatedPhase,
     DelegationRuntimeAuthority, OwnerAccessPort, OwnerId, OwnerRoles, ProtocolError, Role,
     ScopeKey, ScopeKeyError, ServedSurface, SpiiceRegistryFrozen, StorageError, ToolName,
     ToolScope, UserId, WriterAttribution,
@@ -264,8 +263,6 @@ pub enum DelegatedAuthorityError {
     MembershipRevoked,
     #[error("the subject's current owner role no longer holds the delegated role ceiling")]
     RoleCeilingNoLongerHeld,
-    #[error("the source identity was revoked after this grant was issued")]
-    AuthEpochRevoked,
     #[error("only the issuer or a current owner manager may revoke this grant")]
     RevocationDenied,
     #[error(transparent)]
@@ -300,7 +297,6 @@ pub struct DelegationGrantStorage {
     pub action: Option<String>,
     pub role_ceiling: Role,
     pub expires_at: SystemTime,
-    pub auth_epoch: u64,
     pub issued_at: SystemTime,
     pub revoked_at: Option<SystemTime>,
     pub revoked_by: Option<UserId>,
@@ -318,7 +314,6 @@ pub struct DelegationGrant {
     command: DelegatedCommand,
     role_ceiling: Role,
     expires_at: SystemTime,
-    auth_epoch: u64,
     issued_at: SystemTime,
     revoked_at: Option<SystemTime>,
     revoked_by: Option<UserId>,
@@ -331,7 +326,6 @@ impl DelegationGrant {
         command: DelegatedCommand,
         role_ceiling: Role,
         expires_at: SystemTime,
-        auth_epoch: u64,
         issued_at: SystemTime,
     ) -> Self {
         Self {
@@ -342,7 +336,6 @@ impl DelegationGrant {
             command,
             role_ceiling,
             expires_at,
-            auth_epoch,
             issued_at,
             revoked_at: None,
             revoked_by: None,
@@ -379,7 +372,6 @@ impl DelegationGrant {
             command,
             role_ceiling: stored.role_ceiling,
             expires_at: stored.expires_at,
-            auth_epoch: stored.auth_epoch,
             issued_at: stored.issued_at,
             revoked_at: stored.revoked_at,
             revoked_by: stored.revoked_by,
@@ -426,12 +418,6 @@ impl DelegationGrant {
     #[must_use]
     pub const fn expires_at(&self) -> SystemTime {
         self.expires_at
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn auth_epoch(&self) -> u64 {
-        self.auth_epoch
     }
 
     #[doc(hidden)]
@@ -490,7 +476,6 @@ pub struct DelegatedAuthorityService {
     store: Arc<dyn DelegationStorePort>,
     mutation_permit: Arc<DelegationMutationPermit>,
     owner_access: Arc<dyn OwnerAccessPort>,
-    authenticator: Arc<dyn Authenticator>,
     registry: Arc<SpiiceRegistryFrozen>,
     served_surface: ServedSurface,
     runtime_binding: DelegationRuntimeBinding,
@@ -512,7 +497,6 @@ impl DelegatedAuthorityService {
     pub fn new(
         store: Arc<dyn DelegationStorePort>,
         owner_access: Arc<dyn OwnerAccessPort>,
-        authenticator: Arc<dyn Authenticator>,
         registry: Arc<SpiiceRegistryFrozen>,
         served_surface: ServedSurface,
         runtime_authority: &DelegationRuntimeAuthority,
@@ -521,14 +505,13 @@ impl DelegatedAuthorityService {
             store,
             mutation_permit: Arc::new(DelegationMutationPermit::new()),
             owner_access,
-            authenticator,
             registry,
             served_surface,
             runtime_binding: runtime_authority.binding(),
         }
     }
 
-    /// Issue one finite bearer-bounded grant after current epoch, membership,
+    /// Issue one finite bearer-bounded grant after current membership,
     /// registry, caller-scope, and deployment-profile checks.
     ///
     /// # Errors
@@ -558,7 +541,6 @@ impl DelegatedAuthorityService {
         if role_ceiling.manages() {
             return Err(DelegatedAuthorityError::ManagementNotDelegable);
         }
-        self.revalidate_epoch(subject, source.auth_epoch()).await?;
         let current_roles = self.current_roles(subject).await?;
         let current_role = current_roles
             .role_for(&owner)
@@ -569,15 +551,8 @@ impl DelegatedAuthorityService {
         self.validate_current_command(&command)?;
         self.validate_scopes(source.capabilities(), &command)?;
 
-        let grant = DelegationGrant::issued(
-            scope,
-            owner,
-            command,
-            role_ceiling,
-            expires_at,
-            source.auth_epoch(),
-            issued_at,
-        );
+        let grant =
+            DelegationGrant::issued(scope, owner, command, role_ceiling, expires_at, issued_at);
         let issued = DelegationIssued {
             id: grant.delegation_id(),
             expires_at,
@@ -587,7 +562,7 @@ impl DelegatedAuthorityService {
     }
 
     /// Redeem one queued phase against current owner, command, registry,
-    /// deployment profile, membership, authentication epoch, and expiry.
+    /// deployment profile, membership, and expiry.
     ///
     /// # Errors
     ///
@@ -618,8 +593,6 @@ impl DelegatedAuthorityService {
         }
         self.validate_current_command(grant.command())?;
         self.validate_scopes(&CapabilitySet::all(), grant.command())?;
-        self.revalidate_epoch(grant.subject(), grant.auth_epoch())
-            .await?;
         let current_roles = self.current_roles(grant.subject()).await?;
         let current_role = current_roles
             .role_for(&expected_owner)
@@ -638,11 +611,10 @@ impl DelegatedAuthorityService {
             grant.writer(),
         )
         .with_expires_at(Some(grant.expires_at()))
-        .with_auth_epoch(grant.auth_epoch())
         .with_tool_scope(tool_scope)
         .with_served_surface(self.served_surface.clone())
         // The durable grant was issued from a verified bearer. Redemption
-        // rechecks identity epoch, expiry, current membership and ceiling above.
+        // rechecks expiry, current membership and ceiling above.
         // Seal only after those checks; never reconstruct from a queued owner.
         .seal_verified_scope()
         .map_err(|_| DelegatedAuthorityError::MembershipRevoked)?;
@@ -654,7 +626,7 @@ impl DelegatedAuthorityService {
     }
 
     /// Revoke as the issuer or a current owner manager. Both paths require a
-    /// current host-bearer epoch and current membership on `expected_owner`.
+    /// host bearer and current membership on `expected_owner`.
     ///
     /// # Errors
     ///
@@ -667,8 +639,6 @@ impl DelegatedAuthorityService {
         expected_owner: OwnerId,
     ) -> Result<DelegationRevocation, DelegatedAuthorityError> {
         let (caller_subject, _) = Self::validate_host_bearer(caller)?;
-        self.revalidate_epoch(caller_subject, caller.auth_epoch())
-            .await?;
         let grant = self
             .store
             .load(&self.mutation_permit, delegation_id, expected_owner)
@@ -731,18 +701,6 @@ impl DelegatedAuthorityService {
         Ok((subject, expires_at))
     }
 
-    async fn revalidate_epoch(
-        &self,
-        subject: UserId,
-        auth_epoch: u64,
-    ) -> Result<(), DelegatedAuthorityError> {
-        let principal = OwnerId::from(subject);
-        if self.authenticator.current_auth_epoch(&principal).await > auth_epoch {
-            return Err(DelegatedAuthorityError::AuthEpochRevoked);
-        }
-        Ok(())
-    }
-
     async fn current_roles(&self, subject: UserId) -> Result<OwnerRoles, DelegatedAuthorityError> {
         let roles = self.owner_access.resolve_roles_for_subject(subject).await?;
         if roles.subject() != subject {
@@ -793,7 +751,7 @@ impl DelegatedAuthorityService {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use futures::future::BoxFuture;
@@ -801,7 +759,6 @@ mod tests {
 
     use super::*;
     use crate::access::AccessKind;
-    use crate::auth::{AuthError, Credentials};
     use crate::error::ErrorCode;
     use crate::mcp::{
         McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, Replay, ToolEffect,
@@ -980,20 +937,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Default)]
-    struct EpochAuthenticator(AtomicU64);
-
-    #[async_trait]
-    impl Authenticator for EpochAuthenticator {
-        async fn authenticate(&self, _creds: &Credentials) -> Result<AuthzContext, AuthError> {
-            Err(AuthError::AuthRequired)
-        }
-
-        async fn current_auth_epoch(&self, _principal: &OwnerId) -> u64 {
-            self.0.load(Ordering::SeqCst)
-        }
-    }
-
     fn registry(with_tool: bool) -> SpiiceRegistryFrozen {
         let mut registry = SpiiceRegistry::new();
         registry.add_fact_schema_or_panic_for_tests::<TestFact>();
@@ -1039,7 +982,6 @@ mod tests {
         frozen: SpiiceRegistryFrozen,
         store: Arc<MemoryStore>,
         owner_access: Arc<TestOwnerAccess>,
-        authenticator: Arc<EpochAuthenticator>,
         deployment_scope: ServedSurface,
     ) -> (crate::Engine, DelegatedAuthorityService, DelegatedCommand) {
         let (engine, _system, delegation_runtime) =
@@ -1049,7 +991,6 @@ mod tests {
         let service = DelegatedAuthorityService::new(
             store,
             owner_access,
-            authenticator,
             registry,
             deployment_scope,
             &delegation_runtime,
@@ -1057,13 +998,7 @@ mod tests {
         (engine, service, command)
     }
 
-    fn fixtures() -> (
-        UserId,
-        OwnerId,
-        Arc<MemoryStore>,
-        Arc<TestOwnerAccess>,
-        Arc<EpochAuthenticator>,
-    ) {
+    fn fixtures() -> (UserId, OwnerId, Arc<MemoryStore>, Arc<TestOwnerAccess>) {
         let subject = UserId::new(Uuid::now_v7());
         let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
         (
@@ -1076,7 +1011,6 @@ mod tests {
                 owner,
                 role: Mutex::new(Some(Role::editor())),
             }),
-            Arc::new(EpochAuthenticator::default()),
         )
     }
 
@@ -1090,14 +1024,8 @@ mod tests {
 
     #[tokio::test]
     async fn phase_allows_bounded_fact_authorization_and_raw_delegated_is_denied() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (engine, service, command) = runtime(
-            registry(true),
-            store,
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (engine, service, command) = runtime(registry(true), store, access, ServedSurface::All);
         let caller = source(
             subject,
             owner,
@@ -1150,14 +1078,9 @@ mod tests {
 
     #[tokio::test]
     async fn writer_survives_durable_delegation_and_redemption() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (engine, service, command) = runtime(
-            registry(true),
-            store.clone(),
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (engine, service, command) =
+            runtime(registry(true), store.clone(), access, ServedSurface::All);
         for via in [None, Some(Uuid::now_v7())] {
             let writer = WriterAttribution {
                 by: Uuid::now_v7(),
@@ -1194,7 +1117,6 @@ mod tests {
                         .map(|action| action.as_str().to_owned()),
                     role_ceiling: stored.role_ceiling(),
                     expires_at: stored.expires_at(),
-                    auth_epoch: stored.auth_epoch(),
                     issued_at: stored.issued_at(),
                     revoked_at: stored.revoked_at(),
                     revoked_by: stored.revoked_by(),
@@ -1228,14 +1150,8 @@ mod tests {
 
     #[tokio::test]
     async fn split_fact_witness_rechecks_expiry_before_commit() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (engine, service, command) = runtime(
-            registry(true),
-            store,
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (engine, service, command) = runtime(registry(true), store, access, ServedSurface::All);
         let caller = source(
             subject,
             owner,
@@ -1270,14 +1186,9 @@ mod tests {
 
     #[tokio::test]
     async fn foreign_runtime_phase_is_denied_before_engine_work() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (foreign_engine, service, command) = runtime(
-            registry(true),
-            store,
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (foreign_engine, service, command) =
+            runtime(registry(true), store, access, ServedSurface::All);
         let target_engine = crate::Engine::new(foreign_engine.registry().clone());
         let caller = source(
             subject,
@@ -1302,12 +1213,11 @@ mod tests {
 
     #[tokio::test]
     async fn denials_precede_store_mutation_and_adapter_subject_is_rechecked() {
-        let (subject, owner, store, access, authenticator) = fixtures();
+        let (subject, owner, store, access) = fixtures();
         let (_engine, service, command) = runtime(
             registry(true),
             store.clone(),
             access.clone(),
-            authenticator.clone(),
             ServedSurface::All,
         );
         let caller = source(
@@ -1315,18 +1225,7 @@ mod tests {
             owner,
             SystemTime::now() + Duration::from_secs(30),
             ToolScope::All,
-        )
-        .with_auth_epoch(0);
-        authenticator.0.store(1, Ordering::SeqCst);
-        assert!(matches!(
-            service
-                .issue(&caller, owner, command.clone(), Role::editor())
-                .await,
-            Err(DelegatedAuthorityError::AuthEpochRevoked)
-        ));
-        assert_eq!(store.inserts.load(Ordering::SeqCst), 0);
-
-        authenticator.0.store(0, Ordering::SeqCst);
+        );
         let restricted = caller
             .clone()
             .with_served_surface(ServedSurface::Palette(Vec::new()));
@@ -1347,12 +1246,11 @@ mod tests {
 
     #[tokio::test]
     async fn redemption_rechecks_owner_id_profile_registry_and_role() {
-        let (subject, owner, store, access, authenticator) = fixtures();
+        let (subject, owner, store, access) = fixtures();
         let (_engine, service, command) = runtime(
             registry(true),
             store.clone(),
             access.clone(),
-            authenticator.clone(),
             ServedSurface::All,
         );
         let caller = source(
@@ -1383,7 +1281,6 @@ mod tests {
             registry(true),
             store.clone(),
             access.clone(),
-            authenticator.clone(),
             ServedSurface::Palette(Vec::new()),
         );
         assert!(matches!(
@@ -1396,7 +1293,6 @@ mod tests {
         let no_tool_service = DelegatedAuthorityService::new(
             store,
             access.clone(),
-            authenticator,
             Arc::new(no_tool_engine.registry().clone()),
             ServedSurface::All,
             &no_tool_runtime,
@@ -1422,14 +1318,9 @@ mod tests {
 
     #[tokio::test]
     async fn expired_bearer_cannot_revoke_or_touch_store() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (_engine, service, _command) = runtime(
-            registry(true),
-            store.clone(),
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (_engine, service, _command) =
+            runtime(registry(true), store.clone(), access, ServedSurface::All);
         let expired = source(
             subject,
             owner,
@@ -1448,14 +1339,9 @@ mod tests {
 
     #[tokio::test]
     async fn issue_rejects_non_host_authority_before_store_access() {
-        let (subject, owner, store, access, authenticator) = fixtures();
-        let (_engine, service, command) = runtime(
-            registry(true),
-            store.clone(),
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (subject, owner, store, access) = fixtures();
+        let (_engine, service, command) =
+            runtime(registry(true), store.clone(), access, ServedSurface::All);
         let system = AuthzContext::for_subject_with_role(
             subject,
             [(owner, Role::editor())],
@@ -1501,7 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn forwarded_owner_cannot_delegate_even_with_ordinary_membership() {
-        let (subject, owner, store, access, authenticator) = fixtures();
+        let (subject, owner, store, access) = fixtures();
         let policy = ForwardedAccess(access.clone());
         let pending = AuthzContext::from_verified_forwarded_owner(
             subject,
@@ -1519,13 +1405,8 @@ mod tests {
             .await
             .unwrap();
         assert!(forwarded.may_write(&owner, AccessKind::Fact));
-        let (_engine, service, command) = runtime(
-            registry(true),
-            store.clone(),
-            access,
-            authenticator,
-            ServedSurface::All,
-        );
+        let (_engine, service, command) =
+            runtime(registry(true), store.clone(), access, ServedSurface::All);
         assert!(matches!(
             service
                 .issue(&forwarded, owner, command, Role::editor())
@@ -1615,7 +1496,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatcher_command_requires_an_exact_leaf_for_caller_and_deployment() {
-        let (subject, owner, store, access, authenticator) = fixtures();
+        let (subject, owner, store, access) = fixtures();
         let frozen = dispatcher_registry();
         let (engine, _system, runtime_authority) =
             crate::Engine::new(frozen).into_runtime_authorities();
@@ -1633,7 +1514,6 @@ mod tests {
             let service = DelegatedAuthorityService::new(
                 store.clone(),
                 access.clone(),
-                authenticator.clone(),
                 registry.clone(),
                 ServedSurface::Palette(vec![ScopeKey::parse(served_key).expect("a scope key")]),
                 &runtime_authority,
@@ -1668,7 +1548,6 @@ mod tests {
         let service = DelegatedAuthorityService::new(
             store,
             access,
-            authenticator,
             registry,
             ServedSurface::All,
             &runtime_authority,
@@ -1688,21 +1567,15 @@ mod tests {
     }
     #[tokio::test]
     async fn a_delegated_read_needs_its_exact_caller_key_and_keeps_only_that_key() {
-        let (subject, owner, store, access, authenticator) = fixtures();
+        let (subject, owner, store, access) = fixtures();
         let (engine, _system, authority) =
             crate::Engine::new(registry(true)).into_runtime_authorities();
         let registry = Arc::new(engine.registry().clone());
         let read = crate::protocol::tool::CORE_SEARCH_MEMORIES;
         let command = DelegatedCommand::parse(read, &registry).expect("registered read");
         let surface = ServedSurface::Palette(Vec::new());
-        let service = DelegatedAuthorityService::new(
-            store,
-            access,
-            authenticator,
-            registry,
-            surface.clone(),
-            &authority,
-        );
+        let service =
+            DelegatedAuthorityService::new(store, access, registry, surface.clone(), &authority);
         let caller = source(
             subject,
             owner,

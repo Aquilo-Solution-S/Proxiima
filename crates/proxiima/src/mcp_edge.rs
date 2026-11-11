@@ -80,7 +80,7 @@ impl McpEdge {
         &self.host_allowlist
     }
 
-    /// Stream lifetime and auth-epoch revalidation.
+    /// Maximum lifetime of an authenticated stream.
     #[must_use]
     pub const fn revalidation(&self) -> RevalidationConfig {
         self.revalidation

@@ -183,10 +183,6 @@ impl McpEdgeAuth {
         self.resolve_host(raw_bearer.to_owned()).await
     }
 
-    pub(crate) fn host_authenticator(&self) -> Option<Arc<dyn Authenticator>> {
-        self.host.clone()
-    }
-
     async fn resolve_host(&self, material: String) -> Option<ResolvedAuth> {
         let authenticator = self.host.as_ref()?;
         let mut authz = authenticate(authenticator.as_ref(), &Credentials::Bearer(material))
@@ -369,7 +365,6 @@ mod tests {
                 },
             )
             .with_expires_at(Some(expires_at))
-            .with_auth_epoch(7)
             .with_tool_scope(scope.clone())
             .with_trusted_model_id("acme/runner-v3")
             .unwrap();
@@ -386,7 +381,6 @@ mod tests {
             assert_eq!(ctx.authz.readable_owners(AccessKind::Goal), vec![owner]);
             assert!(!ctx.authz.can_access_owner(&OwnerId::from(subject)));
             assert_eq!(ctx.authz.expires_at(), Some(expires_at));
-            assert_eq!(ctx.authz.auth_epoch(), 7);
             assert_eq!(ctx.authz.tool_scope(), &scope);
             assert_eq!(ctx.authz.trusted_model_id(), Some("acme/runner-v3"));
             assert_eq!(access.target_probes.load(Ordering::SeqCst), 1);
