@@ -377,7 +377,7 @@ pub(super) async fn load_goal_blob_read_record_on_connection(
 mod tests {
     use proxiima_pg_testkit::{db_url, drop_db, unique_db_name};
     use proxiima_storage_pg::PgStorage;
-    use proxiima_storage_pg::test_fixtures::create_core_db;
+    use proxiima_storage_pg::test_fixtures::{create_core_db, create_user};
 
     use super::*;
 
@@ -400,11 +400,12 @@ mod tests {
         let pool = pg.pool_for_tests().clone();
         let owner_id = Uuid::now_v7();
         let upload_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(&pool)
+        create_user(&pool, proxiima_core::UserId::new(owner_id))
             .await
             .expect("owner");
+        // Raw INSERT: production completes an upload and writes its blob inside the admission of
+        // the Fact that cites it, after the store has prepared and staged the object. This test
+        // has no object store, so it cannot get there. The two rows below.
         let blob_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (schema_id, owner_id, content_hash)
              VALUES ($1, $2, $3) RETURNING blob_id",

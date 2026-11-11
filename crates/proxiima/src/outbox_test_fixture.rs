@@ -132,39 +132,15 @@ pub(crate) fn probe_sidecars() -> crate::PgSidecarRegistryFrozen {
 }
 
 fn probe_migrator() -> Migrator {
-    let sidecars = probe_sidecars();
-
-    let mut statements = vec![
-        "CREATE SCHEMA publisher_supervision".to_owned(),
+    let statements = [
+        "CREATE SCHEMA publisher_supervision",
         "CREATE TABLE publisher_supervision.probe_v1 (
             t uuid PRIMARY KEY,
             probe_id uuid NOT NULL,
             note text NOT NULL
-        )"
-        .to_owned(),
-        "ALTER TABLE publisher_supervision.probe_v1 ENABLE ROW LEVEL SECURITY".to_owned(),
-        "ALTER TABLE publisher_supervision.probe_v1 FORCE ROW LEVEL SECURITY".to_owned(),
-        "CREATE POLICY proxiima_owner_read ON publisher_supervision.probe_v1 FOR SELECT TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))))".to_owned(),
-        "CREATE POLICY proxiima_owner_write ON publisher_supervision.probe_v1 FOR ALL TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[])))) WITH CHECK (EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = probe_v1.t AND parent.owner_id = ANY(COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))))".to_owned(),
-        "CREATE POLICY proxiima_platform ON publisher_supervision.probe_v1 FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')".to_owned(),
-        "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
-             ('publisher_supervision.probe_v1', 'publisher-supervision')"
-            .to_owned(),
+        )",
+        "SELECT proxiima_core.install_sidecar('publisher_supervision', 'probe_v1', 'publisher-supervision')",
     ];
-    statements.extend(
-        sidecars
-            .declaration_trigger_artifacts("publisher-supervision")
-            .expect("publisher fixture declaration triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
-    );
-    statements.extend(
-        sidecars
-            .presence_trigger_artifacts("publisher-supervision")
-            .expect("publisher fixture presence triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
-    );
 
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(

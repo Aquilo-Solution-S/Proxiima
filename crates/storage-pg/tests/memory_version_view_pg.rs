@@ -140,6 +140,8 @@ async fn no_write_goes_through_the_view() {
     let w = world("memory_version_view_writes").await;
     let (memory_id, _) = w.write(w.owner, TestMemory::fact()).await;
     let t = memory_id.into_inner();
+    // Raw INSERT on purpose: these are the statements under test; no write may go through the
+    // view.
     let statements = [
         (
             "INSERT",
