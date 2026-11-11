@@ -10,25 +10,36 @@ use crate::{EntityKind, GoalId, InputContractId, MemoryId, OperatorId, SchemaId,
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OperatorPhase {
-    FtoA,
-    AtoA,
+    ToA,
     AtoP,
     AtoGoal,
 }
 
 impl OperatorPhase {
+    /// Whether an input of `kind` belongs to this phase.
     #[must_use]
-    pub const fn input_kind(self) -> EntityKind {
+    pub const fn admits_input(self, kind: EntityKind) -> bool {
         match self {
-            Self::FtoA => EntityKind::Fact,
-            Self::AtoA | Self::AtoP | Self::AtoGoal => EntityKind::Abstraction,
+            Self::ToA => matches!(kind, EntityKind::Fact | EntityKind::Abstraction),
+            Self::AtoP | Self::AtoGoal => matches!(kind, EntityKind::Abstraction),
+        }
+    }
+
+    /// The phase that derives a memory of `kind`; a Fact and a Goal are not
+    /// derived memories.
+    #[must_use]
+    pub const fn of_memory_output(kind: EntityKind) -> Option<Self> {
+        match kind {
+            EntityKind::Abstraction => Some(Self::ToA),
+            EntityKind::Perspective => Some(Self::AtoP),
+            EntityKind::Fact | EntityKind::Goal => None,
         }
     }
 
     #[must_use]
     pub const fn output_memory_kind(self) -> Option<EntityKind> {
         match self {
-            Self::FtoA | Self::AtoA => Some(EntityKind::Abstraction),
+            Self::ToA => Some(EntityKind::Abstraction),
             Self::AtoP => Some(EntityKind::Perspective),
             Self::AtoGoal => None,
         }
@@ -188,11 +199,10 @@ impl OperatorInvocationManifest {
                     memory_id: input.memory_id,
                 });
             }
-            let expected = self.phase.input_kind();
-            if input.kind != expected {
+            if !self.phase.admits_input(input.kind) {
                 return Err(OperatorProofError::InvalidInputKind {
                     memory_id: input.memory_id,
-                    expected,
+                    phase: self.phase,
                     actual: input.kind,
                 });
             }
@@ -260,10 +270,10 @@ pub enum OperatorProofError {
     EmptyOutputs,
     #[error("duplicate operator input {memory_id:?}")]
     DuplicateInput { memory_id: MemoryId },
-    #[error("invalid input kind for {memory_id:?}: expected {expected:?}, got {actual:?}")]
+    #[error("invalid input kind for {memory_id:?}: {phase:?} does not admit {actual:?}")]
     InvalidInputKind {
         memory_id: MemoryId,
-        expected: EntityKind,
+        phase: OperatorPhase,
         actual: EntityKind,
     },
     #[error("invalid output kind for {memory_id:?}: expected {expected:?}, got {actual:?}")]

@@ -14,13 +14,13 @@ fn contract_id(seed: &str) -> InputContractId {
 }
 
 #[test]
-fn ftoa_manifest_rejects_missing_declared_input_edge() {
+fn toa_manifest_rejects_missing_declared_input_edge() {
     let input = memory_id();
     let output = memory_id();
     let manifest = OperatorInvocationManifest::memory_output(MemoryOutputInvocation {
-        phase: OperatorPhase::FtoA,
+        phase: OperatorPhase::ToA,
         operator_id: OperatorId::new(Uuid::now_v7()),
-        input_contract_id: contract_id("test/ftoa"),
+        input_contract_id: contract_id("test/toa"),
         inputs: vec![(input, EntityKind::Fact)],
         output_memory_id: output,
         output_kind: EntityKind::Abstraction,
@@ -64,5 +64,62 @@ fn atog_manifest_rejects_goal_output_for_memory_phase() {
             phase: OperatorPhase::AtoP
         },
         "{err:?}"
+    );
+}
+
+fn manifest_over(
+    phase: OperatorPhase,
+    output_kind: EntityKind,
+    inputs: Vec<(MemoryId, EntityKind)>,
+) -> OperatorInvocationManifest {
+    let output = memory_id();
+    let output_edges = inputs
+        .iter()
+        .map(|(input, _)| OutputEdgeManifest::memory_to_memory(output, *input))
+        .collect();
+    OperatorInvocationManifest::memory_output(MemoryOutputInvocation {
+        phase,
+        operator_id: OperatorId::new(Uuid::now_v7()),
+        input_contract_id: contract_id("test/inputs"),
+        inputs,
+        output_memory_id: output,
+        output_kind,
+        schema_id: SchemaId::new("proxiima-core/agent-derivation".to_string()),
+        schema_version: SchemaVersion::new(1),
+        output_edges,
+    })
+}
+
+#[test]
+fn toa_manifest_admits_fact_and_abstraction_inputs_together() {
+    manifest_over(
+        OperatorPhase::ToA,
+        EntityKind::Abstraction,
+        vec![
+            (memory_id(), EntityKind::Fact),
+            (memory_id(), EntityKind::Abstraction),
+        ],
+    )
+    .validate()
+    .expect("a mixed Fact and Abstraction input set is one to-Abstraction derivation");
+}
+
+#[test]
+fn atop_manifest_refuses_a_fact_input() {
+    let fact = memory_id();
+    let err = manifest_over(
+        OperatorPhase::AtoP,
+        EntityKind::Perspective,
+        vec![(fact, EntityKind::Fact)],
+    )
+    .validate()
+    .expect_err("a Perspective derives from Abstractions only");
+    assert_eq!(
+        err,
+        OperatorProofError::InvalidInputKind {
+            memory_id: fact,
+            phase: OperatorPhase::AtoP,
+            actual: EntityKind::Fact,
+        }
     );
 }

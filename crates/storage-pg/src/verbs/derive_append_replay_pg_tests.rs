@@ -9,8 +9,7 @@ use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWri
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
     AccessKind, ContentFingerprint, EdgeEndpoint, EntityKind, GoalId, IdempotencyKey, KeyScope,
-    MemoryOperatorKind, OwnerId, RequestKey, SchemaId, SchemaVersion, StorageError, StorageRule,
-    UserId,
+    OwnerId, RequestKey, SchemaId, SchemaVersion, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -45,7 +44,6 @@ fn derived_draft(owner: OwnerId, handle: Uuid) -> DerivedDraft<'static> {
         schema_id: SchemaId::new("p6/derived".into()),
         schema_version: SchemaVersion::new(1),
         text: "derived".into(),
-        operator_kind: MemoryOperatorKind::FtoA,
         supersedes: None,
         lexical_language: None,
         queued_spaces: &[],
@@ -57,7 +55,6 @@ fn derived_draft(owner: OwnerId, handle: Uuid) -> DerivedDraft<'static> {
 fn perspective_draft(owner: OwnerId, handle: Uuid, guided_by: &[GoalId]) -> DerivedDraft<'_> {
     let mut draft = derived_draft(owner, handle);
     draft.kind = EntityKind::Perspective;
-    draft.operator_kind = MemoryOperatorKind::AtoP;
     draft.guided_by = guided_by;
     draft
 }
@@ -286,13 +283,11 @@ async fn replay_metadata_mismatch_never_replays_or_mutates() {
         let premise = first.memory_id;
         let premise_origin = [EdgeEndpoint::memory(EntityKind::Abstraction, premise)];
         let second_handle = Uuid::now_v7();
-        let mut second_draft = derived_draft(owner, second_handle);
-        second_draft.operator_kind = MemoryOperatorKind::AtoA;
+        let second_draft = derived_draft(owner, second_handle);
         let second = append_with_edges(pool, &permit, &second_draft, &premise_origin, &[]).await?;
         let before_kind = head_snapshot(pool, second_handle).await?;
         let mut wrong_kind = derived_draft(owner, second_handle);
         wrong_kind.kind = EntityKind::Perspective;
-        wrong_kind.operator_kind = MemoryOperatorKind::AtoP;
         let kind_err = append_with_edges(pool, &permit, &wrong_kind, &premise_origin, &[])
             .await
             .expect_err("wrong output kind must not replay");

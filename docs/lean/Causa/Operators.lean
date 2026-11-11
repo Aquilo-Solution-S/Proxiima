@@ -16,21 +16,18 @@ import Causa.Edges
 namespace Causa
 
 inductive OperatorPhase where
-  | ftoa
-  | atoa
+  | toa
   | atop
   | atogoal
   deriving DecidableEq, Repr
 
 def OperatorPhase.inputKind : OperatorPhase → MemoryKind → Prop
-  | .ftoa, k => k = .Fact
-  | .atoa, k => k = .Abstraction
+  | .toa, k => k = .Fact ∨ k = .Abstraction
   | .atop, k => k = .Abstraction
   | .atogoal, k => k = .Abstraction
 
 def OperatorPhase.outputMemoryKind : OperatorPhase → MemoryKind → Prop
-  | .ftoa, k => k = .Abstraction
-  | .atoa, k => k = .Abstraction
+  | .toa, k => k = .Abstraction
   | .atop, k => k = .Perspective
   | .atogoal, _ => False
 
@@ -39,7 +36,7 @@ def OperatorPhase.outputGoalAllowed : OperatorPhase → Prop
   | _ => False
 
 def OperatorPhase.inputEdgeKind : OperatorPhase → EdgeKind
-  | .ftoa | .atoa | .atop => .origin
+  | .toa | .atop => .origin
   | .atogoal => .reference
 
 structure OperatorInvocation where
@@ -121,16 +118,15 @@ theorem operator_memory_output_not_fact :
   intro inv m hshape hm
   have h := hshape.outputMemoriesShape m hm
   cases hphase : inv.phase with
-  | ftoa => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
-  | atoa => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
+  | toa => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
   | atop => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
   | atogoal => rw [hphase] at h; exact absurd h (by simp [OperatorPhase.outputMemoryKind])
 
 theorem operator_inputs_match_phase :
     ∀ (inv : OperatorInvocation) (m : Memory),
       InvocationShapeValid inv → m ∈ inv.inputs →
-        (inv.phase = .ftoa → memory_kind m = .Fact) ∧
-        (inv.phase ≠ .ftoa → memory_kind m = .Abstraction) := by
+        (inv.phase = .toa → memory_kind m = .Fact ∨ memory_kind m = .Abstraction) ∧
+        (inv.phase ≠ .toa → memory_kind m = .Abstraction) := by
   intro inv m hshape hm
   have h := hshape.inputsShape m hm
   constructor
@@ -139,12 +135,11 @@ theorem operator_inputs_match_phase :
     exact h
   · intro hphase
     cases hp : inv.phase with
-    | ftoa => exact absurd hp hphase
-    | atoa => rw [hp] at h; exact h
+    | toa => exact absurd hp hphase
     | atop => rw [hp] at h; exact h
     | atogoal => rw [hp] at h; exact h
 
-/-- Origins of a derived Abstraction sit at or below its layer (F→A / A→A). -/
+/-- Origins of a derived Abstraction sit at or below its layer (to-Abstraction). -/
 theorem operator_origin_row_not_upward :
     ∀ (memories : Set Memory) (out : Memory) (id : MemoryId),
       OriginKindValid memories out →

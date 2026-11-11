@@ -116,26 +116,6 @@ impl EmbeddableEntityRef {
     }
 }
 
-/// Tags the operator that produced a derived memory (Abstraction /
-/// Perspective). Stored as text; there is no SQL enum behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum MemoryOperatorKind {
-    FtoA,
-    AtoA,
-    AtoP,
-}
-
-impl MemoryOperatorKind {
-    #[must_use]
-    pub const fn phase(self) -> crate::OperatorPhase {
-        match self {
-            Self::FtoA => crate::OperatorPhase::FtoA,
-            Self::AtoA => crate::OperatorPhase::AtoA,
-            Self::AtoP => crate::OperatorPhase::AtoP,
-        }
-    }
-}
-
 /// Endpoint of a pin: a memory `t` or a Goal `t`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EntityRef {

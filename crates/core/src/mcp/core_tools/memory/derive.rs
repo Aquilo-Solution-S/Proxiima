@@ -51,39 +51,31 @@ pub(crate) async fn resolve_source_memory(
     ctx.resolve_memory_with_kind(handle).await
 }
 
-pub(crate) fn operator_shape(
+/// The sources are nonempty and each one's class is admitted by the phase
+/// that derives `kind`.
+fn check_sources_admitted(
     kind: DerivedKind,
     sources: &[(MemoryId, MemoryHandleClass)],
-) -> Result<(crate::MemoryOperatorKind, crate::EntityKind), McpToolError> {
-    let first = sources
-        .first()
-        .map(|(_memory_id, class)| *class)
-        .ok_or_else(|| McpToolError::InvalidInput("source_handles must be nonempty".into()))?;
-    if sources.iter().any(|(_memory_id, class)| *class != first) {
+) -> Result<(), McpToolError> {
+    if sources.is_empty() {
         return Err(McpToolError::InvalidInput(
-            "source_handles must have one memory layer per operator invocation".into(),
+            "source_handles must be nonempty".into(),
         ));
     }
-    match (kind, first) {
-        (DerivedKind::Abstraction, MemoryHandleClass::Fact) => {
-            Ok((crate::MemoryOperatorKind::FtoA, crate::EntityKind::Fact))
-        }
-        (DerivedKind::Abstraction, MemoryHandleClass::Abstraction) => Ok((
-            crate::MemoryOperatorKind::AtoA,
-            crate::EntityKind::Abstraction,
-        )),
-        (DerivedKind::Perspective, MemoryHandleClass::Abstraction) => Ok((
-            crate::MemoryOperatorKind::AtoP,
-            crate::EntityKind::Abstraction,
-        )),
-        (DerivedKind::Abstraction | DerivedKind::Perspective, MemoryHandleClass::Perspective)
-        | (DerivedKind::Perspective, MemoryHandleClass::Fact) => {
-            Err(McpToolError::LayeringViolation(format!(
-                "{} cannot be derived from {first} sources",
-                kind.as_str()
-            )))
-        }
+    let phase = match kind {
+        DerivedKind::Abstraction => crate::OperatorPhase::ToA,
+        DerivedKind::Perspective => crate::OperatorPhase::AtoP,
+    };
+    if let Some((_memory_id, class)) = sources
+        .iter()
+        .find(|(_memory_id, class)| !phase.admits_input(class.entity_kind()))
+    {
+        return Err(McpToolError::LayeringViolation(format!(
+            "{} cannot be derived from {class} sources",
+            kind.as_str()
+        )));
     }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -108,7 +100,7 @@ pub struct DeriveArgs {
     )]
     pub tags: Vec<String>,
     #[schemars(
-        description = "At least one handle the new memory is made from, all of one layer: Facts (`<uuid>`) or Abstractions (`<uuid>`) for an Abstraction, Abstractions for a Perspective."
+        description = "At least one handle the new memory is made from: Facts or Abstractions, in any mix, for an Abstraction; Abstractions for a Perspective."
     )]
     pub source_handles: Vec<String>,
     #[serde(default)]
@@ -496,16 +488,16 @@ pub(crate) struct DerivationPlan {
     pub(crate) authored: AuthoredDerivation,
 }
 
-/// Fold the authored content and the resolved sources into the identity,
-/// operator shape and sidecar of one derived write. The series is named by
+/// Fold the authored content and the resolved sources into the identity
+/// and sidecar of one derived write. The series is named by
 /// the request key ([`derive_request_key`]): the caller's key, or for a
 /// keyless write the content fingerprint the ledger judges it by, so the
 /// series and the ledger cannot disagree about which write this is.
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError`] when `sources` are empty, mix memory layers, or
-/// name a layer this `kind` cannot be derived from — see [`operator_shape`].
+/// Returns [`McpToolError`] when `sources` are empty or name a class this
+/// `kind` cannot be derived from — see [`check_sources_admitted`].
 pub(crate) fn plan_derivation(
     ctx: &McpToolCtx,
     planning_namespace: uuid::Uuid,
@@ -514,7 +506,7 @@ pub(crate) fn plan_derivation(
     sources: &[(MemoryId, MemoryHandleClass)],
     request: &crate::RequestKey,
 ) -> Result<DerivationPlan, McpToolError> {
-    operator_shape(kind, sources)?;
+    check_sources_admitted(kind, sources)?;
     let memory_id = MemoryId::new(derived_memory_id(
         planning_namespace,
         kind.as_str(),

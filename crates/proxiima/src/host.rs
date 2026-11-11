@@ -451,7 +451,7 @@ pub use proxiima_core::{
 pub use proxiima_core::{
     ActiveGoalSummary, AuthorDerivedOutcome, AuthorDerivedRequest, EmbeddableEntityRef,
     EmbeddingJobClaim, EmbeddingJobStatusCounts, EmbeddingWriteOutcome, MembershipRow,
-    MemoryGraphIdentity, MemoryKindRow, MemoryOperatorKind, MemorySchemaSpec, OperatorPhase,
+    MemoryGraphIdentity, MemoryKindRow, MemorySchemaSpec, OperatorPhase,
     goal_write::AchieveGoalAtomicRequest, goal_write::CreateGoalAtomicRequest,
     goal_write::DecomposeGoalAtomicRequest, goal_write::GoalAtomicContext, goal_write::GoalDraft,
     goal_write::GoalReplayOutcome, goal_write::GoalReplayRequest,

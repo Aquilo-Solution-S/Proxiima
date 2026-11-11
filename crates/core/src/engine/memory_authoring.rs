@@ -6,8 +6,8 @@ use crate::storage::{AuthorDerivedOutcome, AuthorDerivedRequest, StorageError};
 #[cfg(test)]
 use crate::storage_ports::OwnerWritePermit;
 use crate::{
-    AbstractionPayload, EntityId, EntityKind, InputContractId, MemoryId, MemoryOperatorKind,
-    OperatorId, OwnerId, PerspectivePayload, SchemaId, SchemaVersion, SidecarPayload,
+    AbstractionPayload, EntityId, EntityKind, InputContractId, MemoryId, OperatorId, OperatorPhase,
+    OwnerId, PerspectivePayload, SchemaId, SchemaVersion, SidecarPayload,
 };
 use crate::{MemoryOutputInvocation, OperatorInvocationManifest, OutputEdgeManifest};
 
@@ -19,7 +19,6 @@ pub(super) struct PreparedDerived<P = super::pipeline::WritePermit> {
     pub(super) text: String,
     pub(super) schema_id: SchemaId,
     pub(super) schema_version: SchemaVersion,
-    pub(super) operator_kind: MemoryOperatorKind,
     pub(super) sidecar_payload: SidecarPayload,
     pub(super) supersedes: Option<MemoryId>,
     pub(super) lexical_language: Option<String>,
@@ -42,7 +41,6 @@ struct RawDerivedTestRequest<'a> {
     pub text: String,
     pub schema_id: SchemaId,
     pub schema_version: SchemaVersion,
-    pub operator_kind: MemoryOperatorKind,
     /// Named in the [`OperatorInvocationManifest`] this write's declared
     /// origins prove. Not persisted — no operator table exists.
     pub operator_id: OperatorId,
@@ -115,7 +113,6 @@ impl<P> PreparedDerived<P> {
             text: self.text.clone(),
             schema_id: self.schema_id.clone(),
             schema_version: self.schema_version,
-            operator_kind: self.operator_kind,
             sidecar_payload: self.sidecar_payload.clone(),
             supersedes: self.supersedes,
             lexical_language: self.lexical_language.as_deref(),
@@ -149,48 +146,44 @@ fn access_kind(kind: EntityKind) -> Result<crate::AccessKind, ProtocolError> {
         .ok_or_else(|| ProtocolError::invalid_argument("kind", "a derived memory is no Goal"))
 }
 
-fn infer_derivation_phase(
+const ORIGIN_KINDS: &str = "an Abstraction needs Fact or Abstraction origins; a derived Perspective needs Abstraction origins";
+
+/// The phase that derives a `kind` memory from `origins`: the output kind
+/// alone names it, and every origin must be a kind that phase admits. Only a
+/// Perspective may have no origin (an interpretation).
+fn derivation_phase(
     kind: EntityKind,
     origins: &[EdgeEndpoint],
-) -> Result<MemoryOperatorKind, ProtocolError> {
-    let first = origins.first().map(|origin| origin.kind);
-    if origins.iter().any(|origin| Some(origin.kind) != first) {
-        return Err(ProtocolError::invalid_argument(
-            "origins",
-            "origins must be all Facts or all Abstractions; mixed derivations are not supported",
-        ));
+) -> Result<OperatorPhase, ProtocolError> {
+    let refusal = || ProtocolError::invalid_argument("origins", ORIGIN_KINDS);
+    let phase = OperatorPhase::of_memory_output(kind).ok_or_else(refusal)?;
+    let empty_allowed = kind == EntityKind::Perspective;
+    if (origins.is_empty() && !empty_allowed)
+        || origins
+            .iter()
+            .any(|origin| !phase.admits_input(origin.kind))
+    {
+        return Err(refusal());
     }
-    match (kind, first) {
-        (EntityKind::Abstraction, Some(EntityKind::Fact)) => Ok(MemoryOperatorKind::FtoA),
-        (EntityKind::Abstraction, Some(EntityKind::Abstraction)) => Ok(MemoryOperatorKind::AtoA),
-        (EntityKind::Perspective, Some(EntityKind::Abstraction) | None) => {
-            Ok(MemoryOperatorKind::AtoP)
-        }
-        _ => Err(ProtocolError::invalid_argument(
-            "origins",
-            "an Abstraction needs Fact or Abstraction origins; a derived Perspective needs Abstraction origins",
-        )),
-    }
+    Ok(phase)
 }
 
-/// The handles of `external` once each sits on the layer of the local
-/// `origins`, as [`infer_derivation_phase`] requires of the local ones. With
-/// no local origin (an interpretation) they are subjects, which have no
-/// layer rule.
-fn external_on_layer(
+/// The handles of `external`, each of a kind `phase` admits as an origin
+/// beside the local `origins`. With no local origin (an interpretation) they
+/// are subjects, which have no kind rule.
+fn admitted_external_origins(
+    phase: OperatorPhase,
     origins: &[EdgeEndpoint],
     external: &[crate::storage_ports::other_stores::ReadOrigin],
 ) -> Result<Vec<uuid::Uuid>, ProtocolError> {
-    if let Some(layer) = origins.first().map(|origin| origin.kind)
-        && let Some(off) = external.iter().find(|origin| origin.kind() != layer)
+    if !origins.is_empty()
+        && let Some(off) = external
+            .iter()
+            .find(|origin| !phase.admits_input(origin.kind()))
     {
         return Err(ProtocolError::invalid_argument(
             "origins",
-            format!(
-                "{} is a {:?} and the local origins are {layer:?}s; origins must be all Facts or all Abstractions",
-                off.handle(),
-                off.kind()
-            ),
+            format!("{} is a {:?}; {ORIGIN_KINDS}", off.handle(), off.kind()),
         ));
     }
     Ok(external
@@ -222,7 +215,7 @@ fn validate_typed_invocation(
     memory: &DerivedMemory,
     output: MemoryId,
     kind: EntityKind,
-    operator_kind: MemoryOperatorKind,
+    phase: OperatorPhase,
     origins: &[EdgeEndpoint],
 ) -> Result<(), StorageError> {
     if origins.is_empty() {
@@ -234,7 +227,7 @@ fn validate_typed_invocation(
         )
     })?;
     let manifest = OperatorInvocationManifest::memory_output(MemoryOutputInvocation {
-        phase: operator_kind.phase(),
+        phase,
         operator_id: identity.operator_id,
         input_contract_id: identity.input_contract_id,
         inputs: origins
@@ -521,8 +514,8 @@ impl DerivedMemory {
 
     /// Add memories of other stores, each read through the other-stores
     /// port as the caller ([`OtherStoresService::read_origin`]); duplicates
-    /// are removed. Beside local origins they are origins on the same layer
-    /// and are recorded as `origin` edges. An interpretation's remote
+    /// are removed. Beside local origins they are origins of any kind the
+    /// derived kind admits and are recorded as `origin` edges. An interpretation's remote
     /// subjects are references instead: see [`Self::external_references`].
     ///
     /// [`OtherStoresService::read_origin`]: crate::storage_ports::other_stores::OtherStoresService::read_origin
@@ -992,17 +985,14 @@ impl Engine {
         let origins = self
             .resolve_memory_targets(authority, &memory.origins, &resolution_kinds)
             .await?;
-        let operator_kind = infer_derivation_phase(kind, &origins)?;
-        let external_origins = external_on_layer(&origins, &memory.external_origins)?;
+        let phase = derivation_phase(kind, &origins)?;
+        let external_origins =
+            admitted_external_origins(phase, &origins, &memory.external_origins)?;
         let external_references =
             external_references(&external_origins, &memory.external_references)?;
         // A new version's t is allocated by storage. The layer check needs only
         // the output kind; neither a handle nor the prior t is its source row.
         let source = EdgeEndpoint::memory(kind, memory_id);
-        for origin in &origins {
-            validate_edge_layering(source, *origin)
-                .map_err(|err| ProtocolError::invalid_argument("origins", err))?;
-        }
         let references = self
             .prepare_derived_references(
                 authority,
@@ -1023,7 +1013,7 @@ impl Engine {
                 "only a Perspective can record Goal guidance",
             ));
         };
-        validate_typed_invocation(&memory, memory_id, kind, operator_kind, &origins)
+        validate_typed_invocation(&memory, memory_id, kind, phase, &origins)
             .map_err(map_derived_storage_error)?;
         let queued_spaces = self
             .embedding_spaces_for_write(&owner, memory.sidecar_payload.schema_id.as_str())
@@ -1036,7 +1026,6 @@ impl Engine {
             text: memory.text,
             schema_id: memory.sidecar_payload.schema_id.clone(),
             schema_version: memory.sidecar_payload.schema_version,
-            operator_kind,
             sidecar_payload: memory.sidecar_payload,
             supersedes,
             lexical_language: memory.lexical_language,
@@ -1195,7 +1184,6 @@ impl Engine {
             text: req.text,
             schema_id: req.schema_id,
             schema_version: req.schema_version,
-            operator_kind: req.operator_kind,
             sidecar_payload: req.sidecar_payload,
             // Supersession is a later `t` on the same series, not an
             // edge and not a column: storage resolves the prior row's
@@ -1328,7 +1316,9 @@ fn validate_operator_memory_invocation_request(
         ));
     }
     let manifest = OperatorInvocationManifest::memory_output(MemoryOutputInvocation {
-        phase: req.operator_kind.phase(),
+        phase: OperatorPhase::of_memory_output(req.kind).ok_or_else(|| {
+            StorageError::ConstraintViolation("a derived memory kind has no operator phase".into())
+        })?,
         operator_id: req.operator_id,
         input_contract_id: req.input_contract_id,
         inputs,
@@ -1402,7 +1392,6 @@ mod tests {
             schema_version: SchemaVersion::new(
                 <AgentDerivationV1 as AbstractionPayload>::SCHEMA_VERSION,
             ),
-            operator_kind: MemoryOperatorKind::FtoA,
             operator_id: OperatorId::new(uuid::Uuid::now_v7()),
             input_contract_id: InputContractId::new(uuid::Uuid::now_v7()),
             sidecar_payload: derivation_sidecar(),
@@ -1413,11 +1402,11 @@ mod tests {
         }
     }
 
-    /// A memory of another store joins local origins only on their layer,
-    /// whoever builds the request; an interpretation's other-store subjects
-    /// have no layer rule.
+    /// A memory of another store joins local origins when the phase admits
+    /// its kind, whoever builds the request; an interpretation's other-store
+    /// subjects have no kind rule.
     #[test]
-    fn other_store_origins_share_the_local_layer() {
+    fn other_store_origins_are_of_an_admitted_kind() {
         use crate::storage_ports::other_stores::ReadOrigin;
         let fact_id = crate::new_memory_uuid(5);
         let abstraction_id = crate::new_memory_uuid(5);
@@ -1426,20 +1415,39 @@ mod tests {
             EntityKind::Fact,
             MemoryId::new(crate::new_memory_uuid(3)),
         )];
-        let same = external_on_layer(&facts, &[ReadOrigin::for_tests(fact_id, EntityKind::Fact)])
-            .expect("a Fact beside Facts");
-        assert_eq!(same, vec![fact_id]);
-        let err = external_on_layer(
+        let mixed = admitted_external_origins(
+            OperatorPhase::ToA,
+            &facts,
+            &[
+                ReadOrigin::for_tests(fact_id, EntityKind::Fact),
+                ReadOrigin::for_tests(abstraction_id, EntityKind::Abstraction),
+            ],
+        )
+        .expect("Facts and Abstractions beside Facts");
+        assert_eq!(mixed, vec![fact_id, abstraction_id]);
+        let err = admitted_external_origins(
+            OperatorPhase::ToA,
             &facts,
             &[ReadOrigin::for_tests(
-                abstraction_id,
-                EntityKind::Abstraction,
+                perspective_id,
+                EntityKind::Perspective,
             )],
         )
-        .expect_err("an Abstraction beside Facts");
+        .expect_err("a Perspective is no origin");
         assert_eq!(err.code, ErrorCode::InvalidArgument);
-        assert!(err.message.contains(&abstraction_id.to_string()), "{err:?}");
-        let subjects = external_on_layer(
+        assert!(err.message.contains(&perspective_id.to_string()), "{err:?}");
+        let abstractions = [EdgeEndpoint::memory(
+            EntityKind::Abstraction,
+            MemoryId::new(crate::new_memory_uuid(3)),
+        )];
+        admitted_external_origins(
+            OperatorPhase::AtoP,
+            &abstractions,
+            &[ReadOrigin::for_tests(fact_id, EntityKind::Fact)],
+        )
+        .expect_err("a Perspective derives from Abstractions only");
+        let subjects = admitted_external_origins(
+            OperatorPhase::AtoP,
             &[],
             &[ReadOrigin::for_tests(
                 perspective_id,
@@ -1450,12 +1458,44 @@ mod tests {
         assert_eq!(subjects, [perspective_id]);
     }
 
-    /// An F→A derive that names its inputs carries a well-formed
+    /// The output kind alone names the phase; mixed Fact and Abstraction
+    /// origins are one to-Abstraction derivation.
+    #[test]
+    fn the_output_kind_names_the_derivation_phase() {
+        let fact = EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(crate::new_memory_uuid(3)));
+        let abstraction = EdgeEndpoint::memory(
+            EntityKind::Abstraction,
+            MemoryId::new(crate::new_memory_uuid(3)),
+        );
+        assert_eq!(
+            derivation_phase(EntityKind::Abstraction, &[fact, abstraction]).expect("mixed"),
+            OperatorPhase::ToA
+        );
+        assert_eq!(
+            derivation_phase(EntityKind::Perspective, &[abstraction]).expect("A to P"),
+            OperatorPhase::AtoP
+        );
+        assert_eq!(
+            derivation_phase(EntityKind::Perspective, &[]).expect("interpretation"),
+            OperatorPhase::AtoP
+        );
+        for (kind, origins) in [
+            (EntityKind::Perspective, vec![fact]),
+            (EntityKind::Perspective, vec![abstraction, fact]),
+            (EntityKind::Abstraction, vec![]),
+            (EntityKind::Fact, vec![fact]),
+        ] {
+            let err = derivation_phase(kind, &origins).expect_err("refused");
+            assert_eq!(err.code, ErrorCode::InvalidArgument);
+        }
+    }
+
+    /// A to-Abstraction derive that names its inputs carries a well-formed
     /// manifest and reaches storage. There is no batch input left on the
     /// request for a validator to demand: the derived-write API declares
     /// origins and nothing else about the operator run.
     #[tokio::test]
-    async fn author_derived_ftoa_with_origins_passes_manifest_validation() {
+    async fn author_derived_toa_with_origins_passes_manifest_validation() {
         let engine = engine();
         let owner = owner();
         let permit = OwnerWritePermit::new(
@@ -1474,7 +1514,7 @@ mod tests {
             .expect_err("the fake storage port refuses every write");
         assert!(
             !matches!(&err, StorageError::ConstraintViolation(_)),
-            "a well-formed F→A manifest must reach storage: {err}"
+            "a well-formed to-Abstraction manifest must reach storage: {err}"
         );
     }
 
@@ -1494,7 +1534,6 @@ mod tests {
             crate::BoundReadSet::default(),
         );
         let mut req = request(owner, &[]);
-        req.operator_kind = MemoryOperatorKind::AtoP;
         req.kind = EntityKind::Perspective;
         let err = engine
             .author_derived(&permit, req, &[])

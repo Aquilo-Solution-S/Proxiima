@@ -17,8 +17,7 @@ use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, MemoryOperatorKind, OwnerId, SchemaId, SchemaVersion,
-    StorageError, UserId,
+    AccessKind, EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -44,12 +43,7 @@ fn draft(kind: MemoryKind) -> FactWriteCommand {
     }
 }
 
-fn derived_draft(
-    owner: OwnerId,
-    memory_id: Uuid,
-    operator_kind: MemoryOperatorKind,
-    kind: EntityKind,
-) -> DerivedDraft<'static> {
+fn derived_draft(owner: OwnerId, memory_id: Uuid, kind: EntityKind) -> DerivedDraft<'static> {
     DerivedDraft {
         store_number: 1,
         memory_id,
@@ -58,7 +52,6 @@ fn derived_draft(
         schema_id: SchemaId::new("d2/derived".into()),
         schema_version: SchemaVersion::new(1),
         text: "derived".into(),
-        operator_kind,
         supersedes: None,
         lexical_language: None,
         queued_spaces: &[],
@@ -148,12 +141,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
         let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
 
-        let spoof = derived_draft(
-            owner,
-            Uuid::now_v7(),
-            MemoryOperatorKind::FtoA,
-            EntityKind::Abstraction,
-        );
+        let spoof = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
         let err = append_with_edges(
             pool,
             &permit,
@@ -168,12 +156,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
         .expect_err("declared Fact on a Perspective origin must fail");
         assert_kind_mismatch(err);
 
-        let spoofed_ref = derived_draft(
-            owner,
-            Uuid::now_v7(),
-            MemoryOperatorKind::FtoA,
-            EntityKind::Abstraction,
-        );
+        let spoofed_ref = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
         let err = append_with_edges(
             pool,
             &permit,
@@ -188,12 +171,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
         .expect_err("declared Fact on a Perspective reference must fail");
         assert_kind_mismatch(err);
 
-        let honest_wrong_phase = derived_draft(
-            owner,
-            Uuid::now_v7(),
-            MemoryOperatorKind::FtoA,
-            EntityKind::Abstraction,
-        );
+        let honest_wrong_phase = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
         let err = append_with_edges(
             pool,
             &permit,
@@ -205,7 +183,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             &[],
         )
         .await
-        .expect_err("honest Perspective origin must fail F→A phase");
+        .expect_err("honest Perspective origin must fail the to-Abstraction phase");
         match err {
             StorageError::ConstraintViolation(msg) => {
                 assert!(
@@ -216,12 +194,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             other => panic!("expected ConstraintViolation, got {other:?}"),
         }
 
-        let honest = derived_draft(
-            owner,
-            Uuid::now_v7(),
-            MemoryOperatorKind::FtoA,
-            EntityKind::Abstraction,
-        );
+        let honest = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
         let ok = append_with_edges(
             pool,
             &permit,
@@ -233,6 +206,41 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
         .expect("declared Fact on a Fact row must pass");
         assert!(!ok.idempotent_replay);
         assert_ne!(ok.memory_id, fact.memory_id);
+
+        let mixed = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
+        let mixed_out = append_with_edges(
+            pool,
+            &permit,
+            &mixed,
+            &[
+                EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id),
+                EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id),
+            ],
+            &[],
+        )
+        .await
+        .expect("a Fact and an Abstraction origin are one Abstraction derivation");
+        assert!(!mixed_out.idempotent_replay);
+
+        let fact_perspective = derived_draft(owner, Uuid::now_v7(), EntityKind::Perspective);
+        let err = append_with_edges(
+            pool,
+            &permit,
+            &fact_perspective,
+            &[EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)],
+            &[],
+        )
+        .await
+        .expect_err("a Perspective derives from Abstractions only");
+        match err {
+            StorageError::ConstraintViolation(msg) => {
+                assert!(
+                    msg.contains("does not match operator phase"),
+                    "phase is on stored kind, got {msg}"
+                );
+            }
+            other => panic!("expected ConstraintViolation, got {other:?}"),
+        }
         Ok(())
     }
     .await;
@@ -271,12 +279,7 @@ async fn a_reference_to_no_readable_live_row_is_refused() {
         let origins = [EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
         let validate = |references: Vec<EdgeEndpoint>, memory_id: Uuid| async move {
             let mut tx = crate::owner_scope::begin_owner_transaction(pool, scope).await?;
-            let draft = derived_draft(
-                owner,
-                memory_id,
-                MemoryOperatorKind::FtoA,
-                EntityKind::Abstraction,
-            );
+            let draft = derived_draft(owner, memory_id, EntityKind::Abstraction);
             super::validate_derived_reference_kinds_in_tx(&mut tx, &draft, &origins, &references)
                 .await
         };

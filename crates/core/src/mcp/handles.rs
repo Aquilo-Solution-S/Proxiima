@@ -18,6 +18,15 @@ impl MemoryHandleClass {
         }
     }
 
+    #[must_use]
+    pub const fn entity_kind(self) -> crate::EntityKind {
+        match self {
+            Self::Fact => crate::EntityKind::Fact,
+            Self::Abstraction => crate::EntityKind::Abstraction,
+            Self::Perspective => crate::EntityKind::Perspective,
+        }
+    }
+
     /// Map a stored memory kind. `Goal` is not a memory row.
     #[must_use]
     pub const fn from_entity_kind(kind: crate::EntityKind) -> Option<Self> {

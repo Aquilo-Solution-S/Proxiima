@@ -61,6 +61,33 @@ fn sdk_abstraction(
     )
 }
 
+fn sdk_perspective(
+    owner: proxiima::OwnerId,
+    origins: impl IntoIterator<Item = MemoryId>,
+) -> Result<proxiima::DerivedMemory, proxiima::ProtocolError> {
+    let origins: Vec<MemoryId> = origins.into_iter().collect();
+    proxiima::DerivedMemory::perspective(
+        sdk_new_series(),
+        owner,
+        "Synthetic policy",
+        proxiima_core::AgentDerivationV1 {
+            title: "Policy".into(),
+            body: "Synthetic policy".into(),
+            tags: Vec::new(),
+            idempotency_key: None,
+            source_memory_ids: origins.iter().map(|id| id.into_inner()).collect(),
+            model_id: "fixture".into(),
+            client_name: "fixture".into(),
+            client_version: "1".into(),
+        },
+        origins,
+        proxiima::DerivationIdentity::new(
+            OperatorId::new(Uuid::now_v7()),
+            InputContractId::new(Uuid::now_v7()),
+        ),
+    )
+}
+
 fn sdk_new_series() -> proxiima::MemoryTarget {
     proxiima::MemoryTarget::Series(proxiima::SeriesHandle::new(Uuid::now_v7()))
 }
@@ -317,16 +344,11 @@ async fn typed_derivation_uow_resolves_uncommitted_kinds_and_keeps_refs() {
                 )?)
                 .await?;
             let invalid = pending
-                .derive_memory(sdk_abstraction(
-                    sdk_new_series(),
-                    owner,
-                    fact.memory_id,
-                    [fact.memory_id, first.memory_id],
-                )?)
+                .derive_memory(sdk_perspective(owner, [fact.memory_id])?)
                 .await;
             assert!(
                 invalid.is_err(),
-                "mixed origins must fail inside an open transaction"
+                "a Perspective over a Fact must fail inside an open transaction"
             );
             row.memory_id
         };
@@ -431,7 +453,18 @@ async fn typed_derivation_authorizes_foreign_origins_and_rejects_invalid_inputs(
             fact.memory_id,
             [fact.memory_id, foreign_a.memory_id],
         )?;
-        assert!(engine.derive_memory(&both, mixed).await.is_err());
+        let mixed = engine.derive_memory(&both, mixed).await?;
+        let page = engine.query(&both, &QueryRequest::readable()).await?;
+        let mixed_row = page
+            .memories
+            .iter()
+            .find(|row| row.id == mixed.memory_id)
+            .expect("mixed-origin output");
+        assert_eq!(
+            mixed_row.origins.iter().copied().collect::<BTreeSet<_>>(),
+            BTreeSet::from([fact.memory_id, foreign_a.memory_id]),
+            "Fact and Abstraction origins are one derivation"
+        );
 
         let pending_id = {
             let mut uow = engine.unit_of_work(&both).await?;

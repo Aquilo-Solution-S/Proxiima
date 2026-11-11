@@ -19,7 +19,7 @@ core_derive(kind="Abstraction", title=..., body=...,
             source_handles=["00000000-0000-8000-8000-000000000001", "00000000-0000-8000-8000-000000000002", "00000000-0000-8000-8000-000000000003"])
 ```
 
-`source_handles` lands `origin` entries from the new Abstraction/Perspective down to each source. **That is the graph.** Wanting to connect two Fact UUIDs is the signal to *abstract*. An Abstraction can also derive from a nonempty set of Abstractions; keep one input layer per call. A derived Perspective requires Abstraction origins.
+`source_handles` lands `origin` entries from the new Abstraction/Perspective down to each source. **That is the graph.** Wanting to connect two Fact UUIDs is the signal to *abstract*. An Abstraction can also derive from Abstractions, alone or together with Facts. A derived Perspective requires Abstraction origins.
 
 **A claim about memories that already exist is a Perspective, not an edge:**
 
@@ -39,7 +39,7 @@ In multi-space hosts, call `core_memory_spaces` before durable memory writes. Us
 | You want to… | Use |
 |---|---|
 | Record an observation / something that happened / a fact you learned | `core_remember` → Fact |
-| Derive a conclusion from Facts or prior Abstractions | `core_derive` kind=**Abstraction**, `source_handles`=a nonempty set from one input layer |
+| Derive a conclusion from Facts or prior Abstractions | `core_derive` kind=**Abstraction**, `source_handles`=a nonempty set of Facts and/or Abstractions |
 | Record or update a stance / self-model ("how I see X", "who I am") | `core_derive` kind=**Perspective**, `source_handles`=Abstractions |
 | **Relate / connect memories** | derive an Abstraction/Perspective over them — there is no connect verb |
 | Claim what existing memories mean, with a confidence | `core_interpret` → interpretation Perspective |

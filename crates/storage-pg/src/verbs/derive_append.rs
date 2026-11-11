@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactIngestOutcome;
 use proxiima_core::{
-    EdgeEndpoint, EdgeKind, EntityKind, MemoryId, MemoryOperatorKind, OwnerId, ReplayDrift,
-    SchemaId, SchemaVersion, SidecarPayload, StorageError,
+    EdgeEndpoint, EdgeKind, EntityKind, MemoryId, OperatorPhase, OwnerId, ReplayDrift, SchemaId,
+    SchemaVersion, SidecarPayload, StorageError,
 };
 use sqlx::{Acquire, Postgres, Row, Transaction};
 
@@ -32,7 +32,6 @@ pub(crate) struct DerivedDraft<'a> {
     pub schema_id: SchemaId,
     pub schema_version: SchemaVersion,
     pub text: String,
-    pub operator_kind: MemoryOperatorKind,
     /// Prior `t` this write revises. Resolved to its `handle` in this
     /// transaction so the write lands as a later `t` on the same series —
     /// that later `t` *is* the supersession. No column records it and no
@@ -64,7 +63,6 @@ impl<'a> DerivedDraft<'a> {
             schema_id: req.schema_id.clone(),
             schema_version: req.schema_version,
             text: req.text.clone(),
-            operator_kind: req.operator_kind,
             supersedes: req.supersedes,
             lexical_language: req.lexical_language,
             queued_spaces: req.queued_spaces,
@@ -819,11 +817,13 @@ pub(crate) async fn validate_derived_origins_in_tx(
     origins: &[EdgeEndpoint],
     references: &[EdgeEndpoint],
 ) -> Result<(), StorageError> {
-    let expected_input_kind = draft.operator_kind.phase().input_kind();
     let input_ids = collect_operator_inputs(origins)?;
     if input_ids.is_empty() {
         return Ok(());
     }
+    let phase = OperatorPhase::of_memory_output(draft.kind).ok_or_else(|| {
+        StorageError::ConstraintViolation("a derived memory kind has no operator phase".into())
+    })?;
     let mut rows = load_live_input_proof_rows_in_tx(tx, &input_ids).await?;
     // A replay answers even when an input was forgotten after the first
     // write (#488 review r3): the write is not repeated, so nothing new is
@@ -852,7 +852,7 @@ pub(crate) async fn validate_derived_origins_in_tx(
         let Some(kind) = stored_kind.get(&memory_id.into_inner()).copied() else {
             continue;
         };
-        if kind != expected_input_kind {
+        if !phase.admits_input(kind) {
             return Err(StorageError::ConstraintViolation(
                 "operator origin kind does not match operator phase".into(),
             ));

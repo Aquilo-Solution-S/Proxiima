@@ -151,8 +151,8 @@ pub fn build_instructions(
              entry from a schema-declared payload field. ",
         );
         out.push_str(
-            "Use `core_derive` with kind=Abstraction over Facts or Abstractions: pass a nonempty \
-             set from one input layer as `source_handles`. The new conclusion has its own \
+            "Use `core_derive` with kind=Abstraction over Facts or Abstractions, in any mix, as \
+             `source_handles`. The new conclusion has its own \
              `origin` entries; deriving from an Abstraction does not retire that premise. ",
         );
         if s.interpret {
@@ -358,8 +358,8 @@ fn push_law(out: &mut String, s: Surface) {
     out.push_str(
         "`source_handles` lands `origin` entries from the new Abstraction/Perspective down to \
          each source. **That is the graph.** Wanting to connect two Fact UUIDs is the signal \
-         to *abstract*. An Abstraction can also derive from a nonempty set of Abstractions; \
-         keep one input layer per call. A derived Perspective requires Abstraction origins.",
+         to *abstract*. An Abstraction can also derive from Abstractions, alone or together \
+         with Facts. A derived Perspective requires Abstraction origins.",
     );
     if s.interpret {
         out.push_str(
@@ -392,7 +392,7 @@ fn push_capture_table(out: &mut String, s: Surface) {
     if s.derive {
         out.push_str(
             "| Derive a conclusion from Facts or prior Abstractions | \
-             `core_derive` kind=**Abstraction**, `source_handles`=a nonempty set from one input layer |\n\
+             `core_derive` kind=**Abstraction**, `source_handles`=a nonempty set of Facts and/or Abstractions |\n\
              | Record or update a stance / self-model (\"how I see X\", \"who I am\") | \
              `core_derive` kind=**Perspective**, `source_handles`=Abstractions |\n\
              | **Relate / connect memories** | derive an Abstraction/Perspective over them — \

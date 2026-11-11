@@ -14,7 +14,7 @@ use crate::{
     AbstractionPayload, CitedObjectPayload, FactPayload, GoalPayload, PayloadReference,
     PerspectivePayload,
 };
-use crate::{EntityKind, MemoryId, MemoryOperatorKind, OwnerId, SchemaId, SchemaVersion};
+use crate::{EntityKind, MemoryId, OwnerId, SchemaId, SchemaVersion};
 
 /// Deliberately NOT `#[non_exhaustive]`, like [`crate::ErrorCode`]: the
 /// three maps onto a caller's vocabulary (the engine's protocol error, the
@@ -531,7 +531,6 @@ pub struct AuthorDerivedRequest<'a> {
     pub text: String,
     pub schema_id: SchemaId,
     pub schema_version: SchemaVersion,
-    pub operator_kind: MemoryOperatorKind,
     pub sidecar_payload: SidecarPayload,
     /// Prior `t` of the series this write revises. Supersession is a
     /// later `t` on the same `handle`, not a column: storage resolves the

@@ -48,6 +48,9 @@ mod forgotten_reads;
 #[path = "core_mcp_pg/goal_evidence_kinds.rs"]
 mod goal_evidence_kinds;
 
+#[path = "core_mcp_pg/mixed_origins.rs"]
+mod mixed_origins;
+
 #[path = "core_mcp_pg/goal_tree.rs"]
 mod goal_tree;
 
@@ -890,7 +893,7 @@ async fn cross_space_derive_succeeds_when_sources_readable() {
         assert!(Uuid::parse_str(perspective["handle"].as_str().expect("bare perspective UUID")).is_ok());
         for (kind, sources, reason) in [
             ("Perspective", vec![personal_fact["handle"].clone()], "Fact"),
-            ("Abstraction", vec![personal_fact["handle"].clone(), personal_abstraction["handle"].clone()], "layer"),
+            ("Abstraction", vec![personal_fact["handle"].clone(), perspective["handle"].clone()], "Perspective"),
         ] {
             let error = call_test_model_tool(
                 &tools, authz.clone(), personal, "core_derive",
