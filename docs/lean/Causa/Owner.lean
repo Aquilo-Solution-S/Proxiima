@@ -183,6 +183,45 @@ theorem Role.meet_capped (x cap : Role) :
   · simp only [Role.manages, Role.meet, Bool.and_eq_true]
     exact fun h => h.2
 
+/-- The three-element Goal chain: meet is commutative and associative, and
+    distributes over join. -/
+theorem GoalAccess.meet_comm (x y : GoalAccess) : x.meet y = y.meet x := by
+  cases x <;> cases y <;> rfl
+theorem GoalAccess.meet_assoc (x y z : GoalAccess) :
+    (x.meet y).meet z = x.meet (y.meet z) := by
+  cases x <;> cases y <;> cases z <;> rfl
+theorem GoalAccess.meet_join_distrib (x y z : GoalAccess) :
+    x.meet (y.join z) = (x.meet y).join (x.meet z) := by
+  cases x <;> cases y <;> cases z <;> rfl
+
+/-- Two roles with equal data fields are equal: `write_le_read` is a proof. -/
+theorem Role.ext {x y : Role} (hr : x.read = y.read) (hw : x.write = y.write)
+    (hg : x.goals = y.goals) (ha : x.administer = y.administer)
+    (hm : x.manage = y.manage) : x = y := by
+  cases x; cases y
+  simp only at hr hw hg ha hm
+  subst hr hw hg ha hm
+  rfl
+
+theorem Role.meet_comm (x y : Role) : x.meet y = y.meet x :=
+  Role.ext (Nat.min_comm _ _) (Nat.min_comm _ _) (GoalAccess.meet_comm _ _)
+    (Bool.and_comm _ _) (Bool.and_comm _ _)
+
+theorem Role.meet_assoc (x y z : Role) : (x.meet y).meet z = x.meet (y.meet z) :=
+  Role.ext (Nat.min_assoc _ _ _) (Nat.min_assoc _ _ _) (GoalAccess.meet_assoc _ _ _)
+    (Bool.and_assoc _ _ _) (Bool.and_assoc _ _ _)
+
+/-- Meet distributes over join. -/
+theorem Role.meet_join_distrib (x y z : Role) :
+    x.meet (y.join z) = (x.meet y).join (x.meet z) :=
+  Role.ext (by simp only [Role.join, Role.meet]; omega)
+    (by simp only [Role.join, Role.meet]; omega)
+    (GoalAccess.meet_join_distrib _ _ _)
+    (by simp only [Role.join, Role.meet]
+        cases x.administer <;> cases y.administer <;> cases z.administer <;> rfl)
+    (by simp only [Role.join, Role.meet]
+        cases x.manage <;> cases y.manage <;> cases z.manage <;> rfl)
+
 -- ============================================================
 -- Group and Owner
 -- ============================================================

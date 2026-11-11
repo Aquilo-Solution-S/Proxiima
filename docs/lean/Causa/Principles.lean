@@ -9,6 +9,7 @@ import Causa.Provenance
 import Causa.Knowledge
 import Causa.Goals
 import Causa.SchemaEvolution
+import Causa.Audience
 
 namespace Causa
 
@@ -165,5 +166,13 @@ theorem principle_schema_migration_validates_retained_store
     RetainedCommittedStoreValid migration.newMemories migration.newGoals
       migration.newHeads migration.retainedTargets :=
   schema_migration_validates_retained_store migration
+
+/-- Access is a role resolved for the caller: what the owner's group gives, or
+    what a grant on a smaller object gives through its subject, which may be a
+    group. -/
+theorem principle_access_is_one_resolved_role
+    (s : OwnerState) (o : Owner) (gs : List Grant) (u : User) (c : Capability) :
+    (flattened s o gs).gives u c ↔ o.gives u c ∨ ∃ g, g ∈ gs ∧ g.gives s u c :=
+  flattened_gives s o gs u c
 
 end Causa

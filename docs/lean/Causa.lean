@@ -5,6 +5,7 @@ A change to a principle is made here before changing its implementations.
 -/
 import Causa.Principles
 import Causa.Authorization
+import Causa.Audience
 import Causa.EdgeAuthorization
 import Causa.Citations
 import Causa.Compliance
