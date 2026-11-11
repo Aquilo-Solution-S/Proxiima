@@ -152,8 +152,6 @@ jobs:
         run: python3 -m mkdocs build --strict
       - name: markdown local links
         run: python3 scripts/check-doc-links.py
-      - name: docs status labels
-        run: python3 scripts/check-doc-status.py
       - name: settings inventory
         run: |
           python3 scripts/check-settings.py --self-test

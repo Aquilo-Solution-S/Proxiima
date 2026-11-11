@@ -1,5 +1,4 @@
 # Concepts
-> Status: current
 
 ## The four kinds
 

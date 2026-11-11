@@ -1,5 +1,4 @@
 # Contributing
-> Status: current.
 
 Proxiima has two authorities: the Lean kernel under
 [`docs/lean/Causa`](https://github.com/Aquilo-Solution-S/proxiima/tree/main/docs/lean/Causa)
@@ -112,7 +111,6 @@ cd ../..
 python3 scripts/check-migrations.py --self-test
 python3 scripts/check-migrations.py
 python3 scripts/check-doc-links.py
-python3 scripts/check-doc-status.py
 python3 scripts/check-settings.py --self-test
 python3 scripts/check-settings.py
 python3 scripts/check-upgrade-notes.py --self-test

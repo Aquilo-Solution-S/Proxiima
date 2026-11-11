@@ -362,7 +362,7 @@ fn read(lookup: impl Fn(&str) -> Option<String>) {
             '  echo "${PROXIIMA_SHELL:-x}" # ${PROXIIMA_SHELL_COMMENT}\n', encoding="utf-8"
         )
         names = ["PROXIIMA_ARRAY", "PROXIIMA_COMPOSE_PORT", "PROXIIMA_CONST", "PROXIIMA_HELPER", "PROXIIMA_LITERAL", "PROXIIMA_SHELL"]
-        table = "# Configuration\n> Status: current\n\n| Setting | Purpose | When needed | Reader |\n|---|---|---|---|\n"
+        table = "# Configuration\n\n| Setting | Purpose | When needed | Reader |\n|---|---|---|---|\n"
         doc = table + "".join(f"| {name} | test | test | source |\n" for name in names)
         (root / "docs" / "configuration.md").write_text(
             doc,

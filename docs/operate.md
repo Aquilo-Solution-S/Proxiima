@@ -1,5 +1,4 @@
 # Operate
-> Status: current.
 
 One deployment links core, storage, transports, and its spiice crates into one
 host binary. [Get started](get-started.md) supplies the local bootstrap;

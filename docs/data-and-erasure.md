@@ -1,5 +1,4 @@
 # Data and erasure
-> Status: current.
 
 Proxiima supplies inverse operations for its declared storage and holds each
 owner's retention per schema. The host supplies authorization policy, the

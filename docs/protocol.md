@@ -1,5 +1,4 @@
 # Protocol
-> Status: current.
 
 The contract is a registered action or resource. MCP and REST project the same
 build-time manifest, authorization, typed inputs, and engine operations.

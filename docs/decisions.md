@@ -1,5 +1,4 @@
 # Decisions
-> Status: current
 
 This page records durable architectural choices. Release history belongs in
 release notes. Implementation details belong in rustdoc, migrations, or the

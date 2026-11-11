@@ -1,5 +1,4 @@
 # Agents
-> Status: current
 
 This page is the compact operating ritual for an agent using Proxiima. The
 running host is authoritative for available actions and resources: read

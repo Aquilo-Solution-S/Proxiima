@@ -1,5 +1,4 @@
 # Get started
-> Status: current.
 
 This is the shortest complete local path: pgvector Postgres, the loopback
 issuer, the MCP host, and one lexical memory round trip. It needs no embedding

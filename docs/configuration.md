@@ -1,5 +1,4 @@
 # Configuration
-> Status: current
 
 This page is the canonical inventory of settings read by the shipped source.
 Defaults and validation limits live in the linked Rust reader. `DATABASE_URL`

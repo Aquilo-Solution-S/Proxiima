@@ -1,5 +1,4 @@
 # Proxiima
-> Status: current
 
 Proxiima is an owner-scoped memory substrate for agents. It admits observations
 as Facts, derives typed Abstractions and Perspectives, and records Goals as

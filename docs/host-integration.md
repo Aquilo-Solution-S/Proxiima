@@ -1,5 +1,4 @@
 # Host integration
-> Status: current.
 
 An embedded host composes Proxiima with its own authentication, HTTP router,
 extra stores, publication intake, and lifecycle policy. The `proxiima` facade

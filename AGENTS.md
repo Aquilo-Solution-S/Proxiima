@@ -115,8 +115,8 @@ Never weaken, delete, or ignore a surviving behavioral assertion to pass.
 
 - English repository artifacts. Documentation review favors technical facts,
   signatures, tables, and links over repeated explanations: a second defaults
-  table would drift from rustdoc. `check-doc-status.py` enforces twelve pages;
-  link and settings gates enforce their own boundaries.
+  table would drift from rustdoc. Link and settings gates enforce their own
+  boundaries.
 - Mermaid diagrams are inline and rendered by `pymdownx.superfences` in the
   strict MkDocs build. Keep diagrams conceptual; schemas remain generated.
 - Subjects use Conventional Commits: `docs(<scope>): …`,

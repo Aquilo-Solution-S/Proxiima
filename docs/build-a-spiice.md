@@ -1,5 +1,4 @@
 # Build a spiice
-> Status: current.
 
 A spiice is a vocabulary crate linked into a host. It contributes typed
 payloads, references, sidecars, tools, and migrations. It uses the `proxiima`
