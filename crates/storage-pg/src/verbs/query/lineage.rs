@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
 
 use proxiima_core::verbs::query::{
     EntityKind, MemoryLineageCursor, MemoryLineageDirection, MemoryLineageEdge, MemoryLineageNode,
@@ -14,60 +15,103 @@ use uuid::Uuid;
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
 use crate::pg_ident::PgIdent;
+use crate::pin_fields;
 use crate::projection::{projection_key_ident, snippet_sql};
 
 /// Outbound origin and read pins of the frontier, newest `(src, tgt)` first.
 /// A target that is both an origin and a read of one source is its origin.
-const ANCESTOR_HOP_SQL: &str = "SELECT DISTINCT ON (m.t, pin)
+/// The columns walked are the Memory-target Origin and Read ones of the pin
+/// table.
+///
+/// SQL-POLICY: fixed-fragment
+static ANCESTOR_HOP_SQL: LazyLock<String> = LazyLock::new(|| {
+    [
+        "SELECT DISTINCT ON (m.t, pin)
        m.t AS src, m.kind AS src_kind, pin AS tgt,
-       NOT (pin = ANY (m.origins)) AS is_read,
+       NOT (pin = ANY (",
+        &pin_fields::lineage_origin_pins("m."),
+        ")) AS is_read,
        proxiima_core.memory_created_at(m.t) AS created_at
   FROM proxiima_core.live_memory m
-  JOIN unnest(m.origins || m.reads) AS pin ON true
+  JOIN unnest(",
+        &pin_fields::lineage_pins("m."),
+        ") AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])
    AND ($3::uuid IS NULL OR (m.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY m.t DESC, pin DESC
- LIMIT $5";
+ LIMIT $5",
+    ]
+    .concat()
+});
 
-/// Children whose `origins` or `reads` overlap the frontier; `tgt` is only a
+/// Children whose lineage pin columns overlap the frontier; `tgt` is only a
 /// parent in that frontier (not the child's other pins).
-const DESCENDANT_HOP_SQL: &str = "SELECT DISTINCT ON (child.t, pin)
+///
+/// SQL-POLICY: fixed-fragment
+static DESCENDANT_HOP_SQL: LazyLock<String> = LazyLock::new(|| {
+    [
+        "SELECT DISTINCT ON (child.t, pin)
        child.t AS src, child.kind AS src_kind, pin AS tgt,
-       NOT (pin = ANY (child.origins)) AS is_read,
+       NOT (pin = ANY (",
+        &pin_fields::lineage_origin_pins("child."),
+        ")) AS is_read,
        proxiima_core.memory_created_at(child.t) AS created_at
   FROM proxiima_core.live_memory child
-  JOIN unnest(child.origins || child.reads) AS pin ON true
+  JOIN unnest(",
+        &pin_fields::lineage_pins("child."),
+        ") AS pin ON true
  WHERE child.owner_id = ANY($2::uuid[])
-   AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])
+   AND (",
+        &pin_fields::lineage_overlap("child."),
+        ")
    AND pin = ANY($1::uuid[])
    AND ($3::uuid IS NULL OR (child.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY child.t DESC, pin DESC
- LIMIT $5";
+ LIMIT $5",
+    ]
+    .concat()
+});
 
-const ANCESTOR_FRONTIER_SQL: &str = "SELECT DISTINCT pin
+/// SQL-POLICY: fixed-fragment
+static ANCESTOR_FRONTIER_SQL: LazyLock<String> = LazyLock::new(|| {
+    [
+        "SELECT DISTINCT pin
   FROM proxiima_core.live_memory m
-  JOIN unnest(m.origins || m.reads) AS pin ON true
+  JOIN unnest(",
+        &pin_fields::lineage_pins("m."),
+        ") AS pin ON true
  WHERE m.t = ANY($1::uuid[])
-   AND m.owner_id = ANY($2::uuid[])";
+   AND m.owner_id = ANY($2::uuid[])",
+    ]
+    .concat()
+});
 
-const DESCENDANT_FRONTIER_SQL: &str = "SELECT DISTINCT child.t
+/// SQL-POLICY: fixed-fragment
+static DESCENDANT_FRONTIER_SQL: LazyLock<String> = LazyLock::new(|| {
+    [
+        "SELECT DISTINCT child.t
   FROM proxiima_core.live_memory child
  WHERE child.owner_id = ANY($2::uuid[])
-   AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])";
+   AND (",
+        &pin_fields::lineage_overlap("child."),
+        ")",
+    ]
+    .concat()
+});
 
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn ancestor_hop_sql_for_tests() -> &'static str {
-    ANCESTOR_HOP_SQL
+    ANCESTOR_HOP_SQL.as_str()
 }
 
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn descendant_hop_sql_for_tests() -> &'static str {
-    DESCENDANT_HOP_SQL
+    DESCENDANT_HOP_SQL.as_str()
 }
 
 pub(crate) async fn walk_memory_lineage_on_connection(
@@ -272,23 +316,27 @@ pub(crate) async fn unread_targets_on_connection(
     .await
     .map_err(map_err);
     let rows = lifecycle.finish(&mut *connection, rows).await?;
-    let erased: Vec<Uuid> = sqlx::query_scalar(
+    let erased_sql = [
         "SELECT erased.t
            FROM proxiima_core.erased_pin_target erased
           WHERE erased.t = ANY($1::uuid[])
             AND EXISTS (
                 SELECT 1
                   FROM proxiima_core.live_memory pinning
-                 WHERE (pinning.origins @> ARRAY[erased.t] OR pinning.refs @> ARRAY[erased.t]
-                        OR pinning.reads @> ARRAY[erased.t] OR pinning.forked_from = erased.t)
+                 WHERE (",
+        &pin_fields::memory_pin_predicate("pinning.", "erased.t"),
+        ")
                    AND pinning.owner_id = ANY($2::uuid[])
             )",
-    )
-    .bind(memory_ids)
-    .bind(owner_ids)
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(map_err)?;
+    ]
+    .concat();
+    // SQL-POLICY: fixed-fragment
+    let erased: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(erased_sql))
+        .bind(memory_ids)
+        .bind(owner_ids)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(map_err)?;
     Ok(UnreadTargets {
         forgotten: rows
             .into_iter()
@@ -328,16 +376,11 @@ pub(crate) async fn external_edges_on_connection(
     .map_err(map_err)?;
     rows.into_iter()
         .map(|(t, memory, kind)| {
-            let kind = match kind.as_str() {
-                "origin" => EdgeKind::Origin,
-                "reference" => EdgeKind::Reference,
-                "read" => EdgeKind::Read,
-                other => {
-                    return Err(StorageError::Internal(format!(
-                        "memory_external_origin.edge_kind {other:?} is not origin, reference or read"
-                    )));
-                }
-            };
+            let kind = EdgeKind::parse(&kind).ok_or_else(|| {
+                StorageError::Internal(format!(
+                    "memory_external_origin.edge_kind {kind:?} is not origin, reference or read"
+                ))
+            })?;
             Ok((MemoryId::new(t), memory, kind))
         })
         .collect()
@@ -497,8 +540,8 @@ async fn hop_edges_on_connection(
     }
     let (a, b) = after.map_or((None, None), |(a, b)| (Some(a), Some(b)));
     let query = match direction {
-        MemoryLineageDirection::Ancestors => sqlx::query_as(ANCESTOR_HOP_SQL),
-        MemoryLineageDirection::Descendants => sqlx::query_as(DESCENDANT_HOP_SQL),
+        MemoryLineageDirection::Ancestors => sqlx::query_as(ANCESTOR_HOP_SQL.as_str()),
+        MemoryLineageDirection::Descendants => sqlx::query_as(DESCENDANT_HOP_SQL.as_str()),
     };
     query
         .bind(frontier)
@@ -521,8 +564,8 @@ async fn next_frontier_on_connection(
         return Ok(Vec::new());
     }
     let query = match direction {
-        MemoryLineageDirection::Ancestors => sqlx::query_scalar(ANCESTOR_FRONTIER_SQL),
-        MemoryLineageDirection::Descendants => sqlx::query_scalar(DESCENDANT_FRONTIER_SQL),
+        MemoryLineageDirection::Ancestors => sqlx::query_scalar(ANCESTOR_FRONTIER_SQL.as_str()),
+        MemoryLineageDirection::Descendants => sqlx::query_scalar(DESCENDANT_FRONTIER_SQL.as_str()),
     };
     query
         .bind(frontier)

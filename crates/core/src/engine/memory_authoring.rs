@@ -1,6 +1,6 @@
 use super::Engine;
 use crate::authz::EngineAuthority;
-use crate::edge::{EdgeEndpoint, validate_edge_layering};
+use crate::edge::{EdgeEndpoint, MemoryPinField, validate_edge_layering};
 use crate::error::ProtocolError;
 use crate::storage::{AuthorDerivedOutcome, AuthorDerivedRequest, StorageError};
 #[cfg(test)]
@@ -1002,7 +1002,7 @@ impl Engine {
                 retained_pins.as_ref(),
             )
             .await?;
-        let guided_by = if kind == EntityKind::Perspective {
+        let guided_by = if !MemoryPinField::GuidedBy.admitted(kind).is_empty() {
             self.authorize_guidance(authority, &owner, &memory.guided_by, session_goals)
                 .await?
         } else if memory.guided_by.is_empty() {

@@ -1791,6 +1791,33 @@ fn generated_declaration_triggers_are_the_migration_text() {
     }
 }
 
+/// The pin-column SQL in the definitions IS the table's rendering.
+///
+/// Every text `pin_fields::definition_artifacts` renders from
+/// `MemoryPinField` appears in `definitions/*.sql`, whitespace runs
+/// collapsed: a pin column added to the table and left out of a list, a
+/// trigger or a policy fails here rather than at the next boot.
+#[test]
+fn pin_column_definitions_are_the_tables_rendering() {
+    fn collapsed(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+    let definitions = collapsed(
+        &[
+            include_str!("../definitions/functions.sql"),
+            include_str!("../definitions/triggers.sql"),
+            include_str!("../definitions/policies.sql"),
+        ]
+        .join("\n"),
+    );
+    for artifact in proxiima_storage_pg::pin_fields::definition_artifacts() {
+        assert!(
+            definitions.contains(&collapsed(&artifact)),
+            "the definitions do not carry the pin-column table's rendering:\n{artifact}"
+        );
+    }
+}
+
 /// The presence-lane migration text IS the generator's output.
 ///
 /// The sibling of `generated_declaration_triggers_are_the_migration_text`,

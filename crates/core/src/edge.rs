@@ -58,6 +58,15 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
+    /// Every kind, in the order pins are listed: origins, references, reads.
+    pub const ALL: [Self; 3] = [Self::Origin, Self::Reference, Self::Read];
+
+    /// The kind a wire label names; the inverse of [`Self::as_str`].
+    #[must_use]
+    pub fn parse(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == label)
+    }
+
     /// Wire label. Stable contract — also the label
     /// `proxiima_core.memory_external_origin.edge_kind` stores for an
     /// other-store pin.
@@ -330,6 +339,148 @@ pub struct Edge {
     pub created_at: time::OffsetDateTime,
 }
 
+/// What the targets of an inbound pin page are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinTargetKind {
+    Memory,
+    Goal,
+}
+
+/// A pin column of a memory row. The field fixes the pin's kind and the kinds
+/// it may target; [`Self::spec`] is the one place that says so, and the
+/// storage SQL is rendered from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryPinField {
+    Origins,
+    Refs,
+    GoalRefs,
+    GuidedBy,
+    Reads,
+    ForkedFrom,
+}
+
+/// How a pin column stores its targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinShape {
+    Array,
+    Scalar,
+}
+
+/// One row of the pin-column table.
+#[derive(Debug, Clone, Copy)]
+pub struct PinFieldSpec {
+    pub column: &'static str,
+    pub kind: EdgeKind,
+    pub shape: PinShape,
+    /// Target kinds admitted from a Fact, an Abstraction and a Perspective, in
+    /// that order.
+    pub admits: [&'static [EntityKind]; 3],
+}
+
+impl MemoryPinField {
+    /// Every field, in column order.
+    pub const ALL: [Self; 6] = [
+        Self::Origins,
+        Self::Refs,
+        Self::GoalRefs,
+        Self::GuidedBy,
+        Self::Reads,
+        Self::ForkedFrom,
+    ];
+
+    /// The table: what each pin column is, stored as, and may target.
+    #[must_use]
+    pub const fn spec(self) -> PinFieldSpec {
+        const NONE: &[EntityKind] = &[];
+        const MEMORIES: &[EntityKind] = &[
+            EntityKind::Fact,
+            EntityKind::Abstraction,
+            EntityKind::Perspective,
+        ];
+        const GOALS: &[EntityKind] = &[EntityKind::Goal];
+        match self {
+            Self::Origins => PinFieldSpec {
+                column: "origins",
+                kind: EdgeKind::Origin,
+                shape: PinShape::Array,
+                admits: [
+                    NONE,
+                    &[EntityKind::Fact, EntityKind::Abstraction],
+                    &[EntityKind::Abstraction],
+                ],
+            },
+            Self::Refs => PinFieldSpec {
+                column: "refs",
+                kind: EdgeKind::Reference,
+                shape: PinShape::Array,
+                admits: [MEMORIES; 3],
+            },
+            Self::GoalRefs => PinFieldSpec {
+                column: "goal_refs",
+                kind: EdgeKind::Reference,
+                shape: PinShape::Array,
+                admits: [GOALS; 3],
+            },
+            Self::GuidedBy => PinFieldSpec {
+                column: "guided_by",
+                kind: EdgeKind::Reference,
+                shape: PinShape::Array,
+                admits: [NONE, NONE, GOALS],
+            },
+            Self::Reads => PinFieldSpec {
+                column: "reads",
+                kind: EdgeKind::Read,
+                shape: PinShape::Array,
+                admits: [MEMORIES; 3],
+            },
+            Self::ForkedFrom => PinFieldSpec {
+                column: "forked_from",
+                kind: EdgeKind::Reference,
+                shape: PinShape::Scalar,
+                admits: [MEMORIES; 3],
+            },
+        }
+    }
+
+    /// The kinds a `source` row may pin through this field. A Goal is no
+    /// memory row and admits nothing.
+    #[must_use]
+    pub const fn admitted(self, source: EntityKind) -> &'static [EntityKind] {
+        let admits = self.spec().admits;
+        match source {
+            EntityKind::Fact => admits[0],
+            EntityKind::Abstraction => admits[1],
+            EntityKind::Perspective => admits[2],
+            EntityKind::Goal => &[],
+        }
+    }
+
+    /// Whether the field points at Goals or at Memories: a field admits one
+    /// or the other, never both.
+    #[must_use]
+    pub const fn target(self) -> PinTargetKind {
+        let admits = self.spec().admits;
+        let mut source = 0;
+        while source < admits.len() {
+            let mut at = 0;
+            while at < admits[source].len() {
+                if matches!(admits[source][at], EntityKind::Goal) {
+                    return PinTargetKind::Goal;
+                }
+                at += 1;
+            }
+            source += 1;
+        }
+        PinTargetKind::Memory
+    }
+}
+
+/// The ids one field holds on a [`PinNode`], typed by what they target.
+enum PinSlot<'a> {
+    Memories(&'a [MemoryId]),
+    Goals(&'a [GoalId]),
+}
+
 /// A memory row as a pin carrier. Storage returns these; [`Edge`] is a
 /// view of `origins` / `refs` / `reads` built in the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,8 +495,7 @@ pub struct PinNode {
     /// that crossed the authorization boundary.
     pub schema_id: SchemaId,
     pub origins: Vec<MemoryId>,
-    /// Memory reference ids and the exact fork source, plus any Goal reference
-    /// the reader may not see.
+    /// Memory reference ids, plus any Goal reference the reader may not see.
     /// An unreadable target stays here so edge projection can redact it
     /// without disclosing whether it was a Memory or Goal.
     pub refs: Vec<MemoryId>,
@@ -358,36 +508,61 @@ pub struct PinNode {
     pub guided_by: Vec<GoalId>,
     /// The memories the host certified the writing session read (#677).
     pub reads: Vec<MemoryId>,
+    /// The exact version this memory was forked from.
+    pub forked_from: Option<MemoryId>,
 }
 
 impl PinNode {
-    /// Origin pins first, then reference pins, then read pins.
+    /// What this node holds in `field`. A fork source already listed in
+    /// `refs` is not listed twice.
+    fn slot(&self, field: MemoryPinField) -> PinSlot<'_> {
+        match field {
+            MemoryPinField::Origins => PinSlot::Memories(&self.origins),
+            MemoryPinField::Refs => PinSlot::Memories(&self.refs),
+            MemoryPinField::GoalRefs => PinSlot::Goals(&self.goal_refs),
+            MemoryPinField::GuidedBy => PinSlot::Goals(&self.guided_by),
+            MemoryPinField::Reads => PinSlot::Memories(&self.reads),
+            MemoryPinField::ForkedFrom => match &self.forked_from {
+                Some(source) if !self.refs.contains(source) => {
+                    PinSlot::Memories(std::slice::from_ref(source))
+                }
+                _ => PinSlot::Memories(&[]),
+            },
+        }
+    }
+
+    /// The fields that target `target`, grouped by kind in [`EdgeKind::ALL`]
+    /// order and by column order within a kind.
+    fn fields_targeting(target: PinTargetKind) -> impl Iterator<Item = (MemoryPinField, EdgeKind)> {
+        EdgeKind::ALL.into_iter().flat_map(move |kind| {
+            MemoryPinField::ALL
+                .into_iter()
+                .filter(move |field| field.spec().kind == kind && field.target() == target)
+                .map(move |field| (field, kind))
+        })
+    }
+
+    /// Memory pins: origins first, then references (the fork source after
+    /// `refs`), then reads.
     pub fn pins(&self) -> impl Iterator<Item = (MemoryId, EdgeKind)> + '_ {
-        self.origins
-            .iter()
-            .copied()
-            .map(|id| (id, EdgeKind::Origin))
-            .chain(
-                self.refs
-                    .iter()
-                    .copied()
-                    .map(|id| (id, EdgeKind::Reference)),
-            )
-            .chain(self.reads.iter().copied().map(|id| (id, EdgeKind::Read)))
+        Self::fields_targeting(PinTargetKind::Memory).flat_map(move |(field, kind)| {
+            let ids = match self.slot(field) {
+                PinSlot::Memories(ids) => ids,
+                PinSlot::Goals(_) => &[],
+            };
+            ids.iter().map(move |id| (*id, kind))
+        })
     }
 
     /// Goal reference pins resolved by an owner-scoped batch read.
     pub fn goal_pins(&self) -> impl Iterator<Item = (GoalId, EdgeKind)> + '_ {
-        self.goal_refs
-            .iter()
-            .copied()
-            .map(|id| (id, EdgeKind::Reference))
-            .chain(
-                self.guided_by
-                    .iter()
-                    .copied()
-                    .map(|id| (id, EdgeKind::Reference)),
-            )
+        Self::fields_targeting(PinTargetKind::Goal).flat_map(move |(field, kind)| {
+            let ids = match self.slot(field) {
+                PinSlot::Goals(ids) => ids,
+                PinSlot::Memories(_) => &[],
+            };
+            ids.iter().map(move |id| (*id, kind))
+        })
     }
 
     /// Drop the Goal references this reader may not see into the raw
@@ -551,8 +726,8 @@ pub fn validate_not_self_loop(source: EdgeEndpoint, target: EdgeEndpoint) -> Res
 #[cfg(test)]
 mod tests {
     use super::{
-        EdgeEndpoint, EdgeKind, EdgeTargetProjection, PinNode, project_listed_edge,
-        project_memory_target, project_window_edges, validate_edge_layering,
+        EdgeEndpoint, EdgeKind, EdgeTargetProjection, MemoryPinField, PinNode, PinTargetKind,
+        project_listed_edge, project_memory_target, project_window_edges, validate_edge_layering,
         validate_not_self_loop,
     };
     use crate::{EntityKind, GoalId, MemoryId};
@@ -730,6 +905,7 @@ mod tests {
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
                 reads: Vec::new(),
+                forked_from: None,
             },
             PinNode {
                 id: hub,
@@ -740,6 +916,7 @@ mod tests {
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
                 reads: Vec::new(),
+                forked_from: None,
             },
         ];
         let edges = project_window_edges(&nodes, 50);
@@ -765,6 +942,7 @@ mod tests {
             goal_refs: vec![goal],
             guided_by: Vec::new(),
             reads: Vec::new(),
+            forked_from: None,
         };
         // Storage typed it as a Goal, but this reader cannot see it, so it
         // falls back into the raw carrier and redacts exactly as an
@@ -783,6 +961,97 @@ mod tests {
         assert!(matches!(edges.target, EdgeTargetProjection::Redacted));
     }
 
+    fn pin_node(kind: EntityKind) -> PinNode {
+        PinNode {
+            id: MemoryId::new(uuid::Uuid::now_v7()),
+            kind,
+            schema_id: crate::SchemaId::new("test/pin-v1".into()),
+            origins: Vec::new(),
+            refs: Vec::new(),
+            goal_refs: Vec::new(),
+            guided_by: Vec::new(),
+            reads: Vec::new(),
+            forked_from: None,
+        }
+    }
+
+    #[test]
+    fn pins_list_origins_then_references_with_the_fork_source_then_reads() {
+        let [origin, reference, read, source] =
+            std::array::from_fn(|_| MemoryId::new(uuid::Uuid::now_v7()));
+        let mut node = pin_node(EntityKind::Abstraction);
+        node.origins = vec![origin];
+        node.refs = vec![reference];
+        node.reads = vec![read];
+        node.forked_from = Some(source);
+        assert_eq!(
+            node.pins().collect::<Vec<_>>(),
+            vec![
+                (origin, EdgeKind::Origin),
+                (reference, EdgeKind::Reference),
+                (source, EdgeKind::Reference),
+                (read, EdgeKind::Read),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fork_source_already_in_refs_is_listed_once() {
+        let source = MemoryId::new(uuid::Uuid::now_v7());
+        let mut node = pin_node(EntityKind::Fact);
+        node.refs = vec![source];
+        node.forked_from = Some(source);
+        assert_eq!(
+            node.pins().collect::<Vec<_>>(),
+            vec![(source, EdgeKind::Reference)]
+        );
+    }
+
+    #[test]
+    fn goal_pins_list_goal_references_then_guidance() {
+        let [referenced, guide] = std::array::from_fn(|_| GoalId::new(uuid::Uuid::now_v7()));
+        let mut node = pin_node(EntityKind::Perspective);
+        node.goal_refs = vec![referenced];
+        node.guided_by = vec![guide];
+        assert_eq!(
+            node.goal_pins().collect::<Vec<_>>(),
+            vec![
+                (referenced, EdgeKind::Reference),
+                (guide, EdgeKind::Reference)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pin_field_targets_goals_or_memories_never_both() {
+        for field in MemoryPinField::ALL {
+            let admitted: Vec<EntityKind> = [
+                EntityKind::Fact,
+                EntityKind::Abstraction,
+                EntityKind::Perspective,
+            ]
+            .into_iter()
+            .flat_map(|source| field.admitted(source).iter().copied())
+            .collect();
+            let goals = admitted.iter().filter(|k| **k == EntityKind::Goal).count();
+            assert!(goals == 0 || goals == admitted.len(), "{field:?}");
+            assert_eq!(
+                field.target() == PinTargetKind::Goal,
+                goals > 0,
+                "{field:?}"
+            );
+        }
+        assert!(MemoryPinField::Refs.admitted(EntityKind::Goal).is_empty());
+    }
+
+    #[test]
+    fn edge_labels_parse_back_to_their_kind() {
+        for kind in EdgeKind::ALL {
+            assert_eq!(EdgeKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(EdgeKind::parse("fork"), None);
+    }
+
     #[test]
     fn unresolved_guidance_stays_a_redactable_raw_id() {
         let source = MemoryId::new(uuid::Uuid::now_v7());
@@ -796,6 +1065,7 @@ mod tests {
             goal_refs: Vec::new(),
             guided_by: vec![goal],
             reads: Vec::new(),
+            forked_from: None,
         };
         node.resolve_visible_goal_refs(&[]);
         assert!(node.guided_by.is_empty());

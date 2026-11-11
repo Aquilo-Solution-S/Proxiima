@@ -6,7 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::{EntityKind, GoalId, InputContractId, MemoryId, OperatorId, SchemaId, SchemaVersion};
+use crate::{
+    EntityKind, GoalId, InputContractId, MemoryId, MemoryPinField, OperatorId, SchemaId,
+    SchemaVersion,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OperatorPhase {
@@ -18,11 +21,13 @@ pub enum OperatorPhase {
 impl OperatorPhase {
     /// Whether an input of `kind` belongs to this phase.
     #[must_use]
-    pub const fn admits_input(self, kind: EntityKind) -> bool {
+    pub fn admits_input(self, kind: EntityKind) -> bool {
         match self {
-            Self::ToA => matches!(kind, EntityKind::Fact | EntityKind::Abstraction),
-            Self::AtoP | Self::AtoGoal => matches!(kind, EntityKind::Abstraction),
+            Self::ToA => MemoryPinField::Origins.admitted(EntityKind::Abstraction),
+            Self::AtoP => MemoryPinField::Origins.admitted(EntityKind::Perspective),
+            Self::AtoGoal => &[EntityKind::Abstraction],
         }
+        .contains(&kind)
     }
 
     /// The phase that derives a memory of `kind`; a Fact and a Goal are not

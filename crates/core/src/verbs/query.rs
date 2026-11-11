@@ -566,6 +566,7 @@ impl From<&MemoryRow> for crate::PinNode {
             goal_refs: row.goal_refs.clone(),
             guided_by: row.guided_by.clone(),
             reads: row.reads.clone(),
+            forked_from: None,
         }
     }
 }

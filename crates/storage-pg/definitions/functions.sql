@@ -367,8 +367,7 @@ BEGIN
         RETURN NEW;
     END IF;
     IF NEW.record_kind = 'memory' THEN
-        SELECT source.origins || source.refs || source.goal_refs || source.guided_by
-               || source.reads
+        SELECT source.origins || source.refs || source.goal_refs || source.guided_by || source.reads
                || CASE WHEN source.forked_from IS NULL THEN '{}'::uuid[] ELSE ARRAY[source.forked_from] END
           INTO NEW.source_pins
           FROM proxiima_core.memory_including_forgotten source
@@ -2514,10 +2513,8 @@ BEGIN
        OR NEW.schema_id IS DISTINCT FROM OLD.schema_id
        OR NEW.source_id IS DISTINCT FROM OLD.source_id
        OR NEW.ingest_key IS DISTINCT FROM OLD.ingest_key
-       OR NEW.origins IS DISTINCT FROM OLD.origins
-       OR NEW.refs IS DISTINCT FROM OLD.refs
-       OR NEW.goal_refs IS DISTINCT FROM OLD.goal_refs
-       OR NEW.guided_by IS DISTINCT FROM OLD.guided_by
+       OR NEW.origins IS DISTINCT FROM OLD.origins OR NEW.refs IS DISTINCT FROM OLD.refs
+       OR NEW.goal_refs IS DISTINCT FROM OLD.goal_refs OR NEW.guided_by IS DISTINCT FROM OLD.guided_by
        OR NEW.reads IS DISTINCT FROM OLD.reads
        OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
        OR NEW.sidecar_tables IS DISTINCT FROM OLD.sidecar_tables THEN
@@ -2543,6 +2540,49 @@ BEGIN
 END;
 $function$;
 
+-- The kinds a memory of kind `source` may pin through the pin column `field`:
+-- the Rust pin-column table, rendered. `memory_pin_checks` asks it for every
+-- kind rule.
+CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_kinds(field text, source proxiima_core.memory_kind)
+ RETURNS text[]
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'pg_catalog'
+AS $function$
+    SELECT CASE field
+        WHEN 'origins' THEN CASE source
+            WHEN 'fact' THEN ARRAY[]::text[]
+            WHEN 'abstraction' THEN ARRAY['fact', 'abstraction']
+            WHEN 'perspective' THEN ARRAY['abstraction']
+        END
+        WHEN 'refs' THEN CASE source
+            WHEN 'fact' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'abstraction' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'perspective' THEN ARRAY['fact', 'abstraction', 'perspective']
+        END
+        WHEN 'goal_refs' THEN CASE source
+            WHEN 'fact' THEN ARRAY['goal']
+            WHEN 'abstraction' THEN ARRAY['goal']
+            WHEN 'perspective' THEN ARRAY['goal']
+        END
+        WHEN 'guided_by' THEN CASE source
+            WHEN 'fact' THEN ARRAY[]::text[]
+            WHEN 'abstraction' THEN ARRAY[]::text[]
+            WHEN 'perspective' THEN ARRAY['goal']
+        END
+        WHEN 'reads' THEN CASE source
+            WHEN 'fact' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'abstraction' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'perspective' THEN ARRAY['fact', 'abstraction', 'perspective']
+        END
+        WHEN 'forked_from' THEN CASE source
+            WHEN 'fact' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'abstraction' THEN ARRAY['fact', 'abstraction', 'perspective']
+            WHEN 'perspective' THEN ARRAY['fact', 'abstraction', 'perspective']
+        END
+    END
+$function$;
+
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -2555,6 +2595,10 @@ DECLARE
     pin_handle uuid;
     pin_targets uuid[] := ARRAY[NEW.t] || NEW.origins || NEW.refs || NEW.goal_refs || NEW.guided_by
                           || NEW.reads;
+    memory_pins uuid[] := NEW.origins || NEW.refs || NEW.reads;
+    goal_pins uuid[] := NEW.goal_refs || NEW.guided_by;
+    grounding_pins uuid[] := NEW.origins || NEW.refs;
+    origin_kinds text[] := proxiima_core.memory_pin_kinds('origins', NEW.kind);
     pin_lock_mode text := current_setting('proxiima_core.pin_lock_mode', true);
     pin_lock_count integer;
 BEGIN
@@ -2596,24 +2640,17 @@ BEGIN
         PERFORM proxiima_core.lock_pin_targets(pin_targets);
     END IF;
 
-    IF NEW.origins <> '{}' OR NEW.refs <> '{}' OR NEW.reads <> '{}' THEN
+    IF memory_pins <> '{}' THEN
         PERFORM 1
           FROM proxiima_core.memory
-         WHERE t = ANY (NEW.origins || NEW.refs || NEW.reads)
+         WHERE t = ANY (memory_pins)
          ORDER BY t
          FOR SHARE;
     END IF;
-    IF NEW.goal_refs <> '{}' THEN
+    IF goal_pins <> '{}' THEN
         PERFORM 1
           FROM proxiima_core.goal
-         WHERE t = ANY (NEW.goal_refs)
-         ORDER BY t
-         FOR SHARE;
-    END IF;
-    IF NEW.guided_by <> '{}' THEN
-        PERFORM 1
-          FROM proxiima_core.goal
-         WHERE t = ANY (NEW.guided_by)
+         WHERE t = ANY (goal_pins)
          ORDER BY t
          FOR SHARE;
     END IF;
@@ -2625,13 +2662,7 @@ BEGIN
             USING ERRCODE = 'PX002';
     END IF;
 
-    IF NEW.kind = 'fact'
-       AND NEW.origins = '{}'
-       AND NEW.refs = '{}'
-       AND NEW.goal_refs = '{}'
-       AND NEW.guided_by = '{}'
-       AND NEW.reads = '{}'
-    THEN
+    IF NEW.kind = 'fact' AND pin_targets = ARRAY[NEW.t] THEN
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN NEW;
     END IF;
@@ -2639,10 +2670,10 @@ BEGIN
     -- Goal references never provide F/A/P grounding.
     IF NEW.kind <> 'fact'
        AND NOT proxiima_core.pins_have_grounding_support(
-             NEW.origins || NEW.refs, NULL, NULL
+             grounding_pins, NULL, NULL
            )
        AND NOT EXISTS (
-           SELECT 1 FROM unnest(NEW.origins || NEW.refs) p(id)
+           SELECT 1 FROM unnest(grounding_pins) p(id)
            JOIN proxiima_core.erased_pin_target e ON e.t=p.id AND e.kind<>'goal'
            WHERE proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, p.id)
        )
@@ -2651,8 +2682,7 @@ BEGIN
             USING ERRCODE = 'PX001', CONSTRAINT = 'derived_memory_pins_nothing';
     END IF;
 
-    IF NEW.origins = '{}' AND NEW.refs = '{}' AND NEW.goal_refs = '{}'
-       AND NEW.guided_by = '{}' AND NEW.reads = '{}' THEN
+    IF pin_targets = ARRAY[NEW.t] THEN
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN NEW;
     END IF;
@@ -2717,7 +2747,9 @@ BEGIN
         RAISE EXCEPTION 'guided_by pin % does not exist as a Goal', pin
             USING ERRCODE = 'PX001', CONSTRAINT = 'guided_by_pin_missing';
     END IF;
-    IF NEW.guided_by <> '{}' AND NEW.kind <> 'perspective'::proxiima_core.memory_kind THEN
+    IF NEW.guided_by <> '{}'
+       AND cardinality(proxiima_core.memory_pin_kinds('guided_by', NEW.kind)) = 0
+    THEN
         RAISE EXCEPTION 'only Perspectives may declare guided_by'
             USING ERRCODE = 'PX002';
     END IF;
@@ -2734,7 +2766,7 @@ BEGIN
     SELECT m.handle INTO pin_handle
       FROM proxiima_core.memory_including_forgotten m
       JOIN proxiima_core.closed_handle c ON c.handle = m.handle
-     WHERE m.t = ANY (NEW.origins || NEW.refs || NEW.reads)
+     WHERE m.t = ANY (memory_pins)
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, m.t)
      LIMIT 1;
     IF FOUND THEN
@@ -2742,38 +2774,24 @@ BEGIN
             USING ERRCODE = 'PX001', CONSTRAINT = 'closed_handle';
     END IF;
 
-    IF NEW.kind = 'abstraction' AND NEW.origins <> '{}' THEN
-        IF EXISTS (
-            SELECT 1
-              FROM unnest(NEW.origins) AS o(id)
-             WHERE NOT EXISTS (
-                       SELECT 1 FROM proxiima_core.memory_including_forgotten m
-                        WHERE m.t = o.id AND m.kind IN ('fact', 'abstraction')
-                       UNION ALL
-                       SELECT 1 FROM proxiima_core.erased_pin_target e
-                        WHERE e.t=o.id AND e.kind IN ('fact','abstraction')
-                          AND proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, o.id)
-                   )
-        ) THEN
-            RAISE EXCEPTION 'abstraction origins must be fact or abstraction t'
-                USING ERRCODE = 'PX002';
-        END IF;
-    ELSIF NEW.kind = 'perspective' AND NEW.origins <> '{}' THEN
-        IF EXISTS (
-            SELECT 1
-              FROM unnest(NEW.origins) AS o(id)
-             WHERE NOT EXISTS (
-                       SELECT 1 FROM proxiima_core.memory_including_forgotten m
-                        WHERE m.t = o.id AND m.kind = 'abstraction'
-                       UNION ALL
-                       SELECT 1 FROM proxiima_core.erased_pin_target e
-                        WHERE e.t=o.id AND e.kind='abstraction'
-                          AND proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, o.id)
-                   )
-        ) THEN
-            RAISE EXCEPTION 'perspective origins must be abstraction t'
-                USING ERRCODE = 'PX002';
-        END IF;
+    -- Origins carry only the kinds `memory_pin_kinds` admits for this row's
+    -- kind, live or, under schema evolution, as the erased witness of one.
+    IF EXISTS (
+        SELECT 1
+          FROM unnest(NEW.origins) AS o(id)
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM proxiima_core.memory_including_forgotten m
+                    WHERE m.t = o.id AND m.kind::text = ANY (origin_kinds)
+                   UNION ALL
+                   SELECT 1 FROM proxiima_core.erased_pin_target e
+                    WHERE e.t=o.id AND e.kind::text = ANY (origin_kinds)
+                      AND proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, o.id)
+               )
+    ) THEN
+        RAISE EXCEPTION '% origins must be %', NEW.kind,
+            CASE WHEN origin_kinds = '{}' THEN 'absent'
+                 ELSE array_to_string(origin_kinds, ' or ') || ' t' END
+            USING ERRCODE = 'PX002';
     END IF;
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN NEW;

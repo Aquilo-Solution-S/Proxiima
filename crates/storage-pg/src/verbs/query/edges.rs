@@ -1,49 +1,66 @@
 use proxiima_core::storage_ports::{InboundPinQuery, PinTargetKind};
 use proxiima_core::verbs::query::{QueryRequest, SupersessionStatus};
 use proxiima_core::{
-    Edge, EdgeKind, GoalId, MemoryId, OwnerId, PinNode, StorageError, project_window_edges,
+    Edge, EdgeKind, GoalId, MemoryId, MemoryPinField, OwnerId, PinNode, StorageError,
+    project_window_edges,
 };
-use sqlx::PgConnection;
+use sqlx::postgres::PgRow;
+use sqlx::{PgConnection, Row};
 
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
+use crate::pin_fields;
 
 /// Hard upper bound on edges returned by snapshot-edge mode.
 /// Decoupled from `QueryRequest::limit`, which sizes the node window.
 const MAX_SNAPSHOT_EDGES: usize = 50_000;
 
-#[derive(Debug, sqlx::FromRow)]
-struct PinNodeRow {
-    t: uuid::Uuid,
-    kind: PgMemoryKind,
-    schema_id: String,
-    origins: Vec<uuid::Uuid>,
-    refs: Vec<uuid::Uuid>,
-    goal_refs: Vec<uuid::Uuid>,
-    guided_by: Vec<uuid::Uuid>,
-    reads: Vec<uuid::Uuid>,
-    forked_from: Option<uuid::Uuid>,
+/// A pin carrier as the statements of this module select it
+/// ([`pin_fields::pin_carrier_columns`]): each pin column decodes into the
+/// slot its field names.
+struct PinNodeRow(PinNode);
+
+impl<'r> sqlx::FromRow<'r, PgRow> for PinNodeRow {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let kind: PgMemoryKind = row.try_get("kind")?;
+        let mut node = PinNode {
+            id: MemoryId::new(row.try_get("t")?),
+            kind: kind.into(),
+            schema_id: proxiima_core::SchemaId::new(row.try_get::<String, _>("schema_id")?),
+            origins: Vec::new(),
+            refs: Vec::new(),
+            goal_refs: Vec::new(),
+            guided_by: Vec::new(),
+            reads: Vec::new(),
+            forked_from: None,
+        };
+        for field in MemoryPinField::ALL {
+            let column = field.spec().column;
+            match field {
+                MemoryPinField::Origins => node.origins = memory_ids(row, column)?,
+                MemoryPinField::Refs => node.refs = memory_ids(row, column)?,
+                MemoryPinField::GoalRefs => node.goal_refs = goal_ids(row, column)?,
+                MemoryPinField::GuidedBy => node.guided_by = goal_ids(row, column)?,
+                MemoryPinField::Reads => node.reads = memory_ids(row, column)?,
+                MemoryPinField::ForkedFrom => {
+                    node.forked_from = row
+                        .try_get::<Option<uuid::Uuid>, _>(column)?
+                        .map(MemoryId::new);
+                }
+            }
+        }
+        Ok(Self(node))
+    }
 }
 
-impl PinNodeRow {
-    fn into_pin_node(self) -> PinNode {
-        let mut refs = self.refs;
-        if let Some(source) = self.forked_from
-            && !refs.contains(&source)
-        {
-            refs.push(source);
-        }
-        PinNode {
-            id: MemoryId::new(self.t),
-            kind: self.kind.into(),
-            schema_id: proxiima_core::SchemaId::new(self.schema_id),
-            origins: self.origins.into_iter().map(MemoryId::new).collect(),
-            refs: refs.into_iter().map(MemoryId::new).collect(),
-            goal_refs: self.goal_refs.into_iter().map(GoalId::new).collect(),
-            guided_by: self.guided_by.into_iter().map(GoalId::new).collect(),
-            reads: self.reads.into_iter().map(MemoryId::new).collect(),
-        }
-    }
+fn memory_ids(row: &PgRow, column: &str) -> Result<Vec<MemoryId>, sqlx::Error> {
+    let ids: Vec<uuid::Uuid> = row.try_get(column)?;
+    Ok(ids.into_iter().map(MemoryId::new).collect())
+}
+
+fn goal_ids(row: &PgRow, column: &str) -> Result<Vec<GoalId>, sqlx::Error> {
+    let ids: Vec<uuid::Uuid> = row.try_get(column)?;
+    Ok(ids.into_iter().map(GoalId::new).collect())
 }
 
 /// Resolve readable Goal ids in a batch. Unreadable or unknown ids are left
@@ -80,11 +97,20 @@ pub(crate) async fn load_pin_nodes_on_connection(
     }
     let ids: Vec<uuid::Uuid> = memory_ids.iter().map(|id| id.into_inner()).collect();
     let owner_ids = owner_ids(read_owners);
-    let rows: Vec<PinNodeRow> = sqlx::query_as(
-        "SELECT t, kind, schema_id, origins, refs, goal_refs, guided_by, reads, forked_from FROM proxiima_core.live_memory WHERE t = ANY($1::uuid[]) AND owner_id = ANY($2::uuid[])",
-    )
-    .bind(&ids).bind(&owner_ids).fetch_all(&mut *connection).await.map_err(map_err)?;
-    Ok(rows.into_iter().map(PinNodeRow::into_pin_node).collect())
+    let sql = [
+        "SELECT ",
+        &pin_fields::pin_carrier_columns(""),
+        " FROM proxiima_core.live_memory WHERE t = ANY($1::uuid[]) AND owner_id = ANY($2::uuid[])",
+    ]
+    .concat();
+    // SQL-POLICY: fixed-fragment
+    let rows: Vec<PinNodeRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&ids)
+        .bind(&owner_ids)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(map_err)?;
+    Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
 /// Owner-scoped GIN page of rows that list any of `query.targets`.
@@ -113,7 +139,7 @@ pub(crate) async fn load_inbound_pin_nodes_on_connection(
         .fetch_all(&mut *connection)
         .await
         .map_err(map_err)?;
-    Ok(rows.into_iter().map(PinNodeRow::into_pin_node).collect())
+    Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
 #[cfg(any(test, feature = "testkit"))]
@@ -123,216 +149,45 @@ pub fn inbound_pin_sql_for_tests(
     supersession: SupersessionStatus,
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
-) -> &'static str {
+) -> String {
     inbound_pin_sql(supersession, kind, target_kind)
 }
 
-/// Reference pins live in `refs` for Memory targets and in `goal_refs` for
-/// Goal targets, so the target kind decides which column the overlap scan
-/// reads — one GIN index rather than a mixed array.
+/// The page of pin carriers that pin any of `$1` through a column holding
+/// `target_kind` targets of `kind`: the columns come from the pin-column
+/// table, so a Goal target scans only the Goal columns.
+///
+/// SQL-POLICY: fixed-fragment
 fn inbound_pin_sql(
     supersession: SupersessionStatus,
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
-) -> &'static str {
-    match target_kind {
-        PinTargetKind::Goal => inbound_pin_sql_goal_targets(supersession, kind),
-        PinTargetKind::Memory => inbound_pin_sql_memory_targets(supersession, kind),
-    }
-}
-
-/// Inbound pins onto a Memory target: reference hops come from `refs`, read
-/// hops from `reads`.
-///
-/// SQL-POLICY: fixed-fragment
-fn inbound_pin_sql_memory_targets(
-    supersession: SupersessionStatus,
-    kind: Option<EdgeKind>,
-) -> &'static str {
-    match (supersession, kind) {
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Origin)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
+) -> String {
+    let heads_only = match supersession {
+        SupersessionStatus::HeadsOnly => {
+            "
                     AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
                       OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND m.origins && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
+                                 WHERE h.handle=m.handle AND h.t=m.t))"
         }
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Reference)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
+        SupersessionStatus::IncludeSuperseded => "",
+    };
+    [
+        "SELECT ",
+        &pin_fields::pin_carrier_columns("m."),
+        "
                    FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND (m.refs && $1::uuid[] OR m.forked_from=ANY($1::uuid[]))
+                  WHERE m.owner_id = ANY($2::uuid[])",
+        heads_only,
+        "
+                    AND ",
+        &pin_fields::inbound_overlap("m.", target_kind, kind),
+        "
                     AND ($3::uuid IS NULL OR m.t < $3)
                   ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Read)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND m.reads && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::HeadsOnly, None) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND (m.origins && $1::uuid[] OR m.refs && $1::uuid[] OR m.reads && $1::uuid[]
-                         OR m.forked_from=ANY($1::uuid[]))
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Origin)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND m.origins && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Reference)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.refs && $1::uuid[] OR m.forked_from=ANY($1::uuid[]))
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Read)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND m.reads && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, None) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.origins && $1::uuid[] OR m.refs && $1::uuid[] OR m.reads && $1::uuid[]
-                         OR m.forked_from=ANY($1::uuid[]))
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-    }
-}
-
-/// Inbound pins onto a Goal target: reference hops come from `goal_refs`, and
-/// origin and read pins are Memory-only so they can never name a Goal.
-///
-/// SQL-POLICY: fixed-fragment
-fn inbound_pin_sql_goal_targets(
-    supersession: SupersessionStatus,
-    kind: Option<EdgeKind>,
-) -> &'static str {
-    match (supersession, kind) {
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Origin)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND m.origins && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Reference)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND (m.goal_refs && $1::uuid[] OR m.guided_by && $1::uuid[])
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::HeadsOnly, Some(EdgeKind::Read)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND m.reads && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::HeadsOnly, None) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                      OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                                 WHERE h.handle=m.handle AND h.t=m.t))
-                    AND (m.origins && $1::uuid[] OR m.goal_refs && $1::uuid[] OR m.guided_by && $1::uuid[])
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Origin)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND m.origins && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Reference)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.goal_refs && $1::uuid[] OR m.guided_by && $1::uuid[])
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, Some(EdgeKind::Read)) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND m.reads && $1::uuid[]
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-        (SupersessionStatus::IncludeSuperseded, None) => {
-            "SELECT m.t, m.kind, m.schema_id, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.forked_from
-                   FROM proxiima_core.live_memory m
-                  WHERE m.owner_id = ANY($2::uuid[])
-                    AND (m.origins && $1::uuid[] OR m.goal_refs && $1::uuid[] OR m.guided_by && $1::uuid[])
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4"
-        }
-    }
+                  LIMIT $4",
+    ]
+    .concat()
 }
 
 /// Snapshot-mode edges: pins whose two endpoints are both in the Query window.

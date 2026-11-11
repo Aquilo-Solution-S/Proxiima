@@ -62,6 +62,8 @@ mod pg_enums;
 pub use pg_enums::{PublicationDeliveryState, PublicationRecordState, PublicationStateParseError};
 mod pg_ident;
 mod pgvector;
+#[doc(hidden)]
+pub mod pin_fields;
 mod platform_scope;
 mod pool_config;
 mod ports;

@@ -584,7 +584,7 @@ mod tests {
                                 .chain(node.guided_by.iter())
                                 .any(|goal| goal.into_inner() == t.into_inner())
                         } else {
-                            node.refs.contains(t)
+                            node.refs.contains(t) || node.forked_from == Some(*t)
                         }
                     };
                     query.targets.iter().any(|t| match query.kind {
@@ -784,6 +784,7 @@ mod tests {
             goal_refs: Vec::new(),
             guided_by: Vec::new(),
             reads: Vec::new(),
+            forked_from: None,
         }];
         for _ in 0..n {
             nodes.push(PinNode {
@@ -795,6 +796,7 @@ mod tests {
                 goal_refs: Vec::new(),
                 guided_by: Vec::new(),
                 reads: Vec::new(),
+                forked_from: None,
             });
         }
         (owner, hub, Arc::new(FakePins::new(nodes, Vec::new())))

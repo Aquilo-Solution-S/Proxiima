@@ -931,3 +931,144 @@ async fn the_forgotten_probe_keeps_to_the_readers_kind_permits() {
     let _ = drop_db(&db_name).await;
     result.expect("forgotten probe permits");
 }
+
+/// The pin trigger admits a target exactly when the pin-column table does:
+/// every Array pin column, from every source kind, to a Fact, an Abstraction,
+/// a Perspective, a Goal and an id that exists nowhere.
+///
+/// An Abstraction or Perspective source needs grounding to be admitted at all,
+/// so each carries one valid reference (a Fact, an Abstraction) besides the
+/// pin under test: a refusal is then the kind rule of the column, not the
+/// grounding rule. Where the target does not exist, or is a Goal under a
+/// Memory column (or the reverse), the existence rule refuses first, which is
+/// also a refusal.
+#[tokio::test]
+async fn the_trigger_admits_exactly_the_kinds_the_pin_table_admits() {
+    use proxiima_core::{MemoryPinField, PinShape};
+    use proxiima_storage_pg::test_fixtures::{
+        TestDerived, TestGoal, TestMemory, create_content, create_user,
+    };
+
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+        let pg = PgStorage::connect_for_tests(url.clone())
+            .await?
+            .with_spiices(&registry);
+        let pool = pg.pool_for_tests();
+        let user = UserId::new(Uuid::now_v7());
+        let owner = OwnerId::from(user);
+        create_user(pool, user).await?;
+
+        let fact = TestMemory::fact().create(&pg, owner).await?.memory_id;
+        let abstraction = TestDerived::abstraction(fact)
+            .create(&pg, owner)
+            .await?
+            .memory_id;
+        let perspective = TestDerived::perspective(abstraction)
+            .create(&pg, owner)
+            .await?
+            .memory_id;
+        let goal = TestGoal::new("pin-matrix").create(&pg, owner).await?.t;
+        // An Abstraction or Perspective row carries content.
+        let content = create_content(pool, owner, "core/upload-v1", [7; 32]).await?;
+        let targets: [(Option<EntityKind>, Uuid); 5] = [
+            (Some(EntityKind::Fact), fact.into_inner()),
+            (Some(EntityKind::Abstraction), abstraction.into_inner()),
+            (Some(EntityKind::Perspective), perspective.into_inner()),
+            (Some(EntityKind::Goal), goal),
+            (None, Uuid::now_v7()),
+        ];
+
+        // The INSERT writes every Array pin column of the table, from $4 on.
+        let fields: Vec<MemoryPinField> = MemoryPinField::ALL
+            .into_iter()
+            .filter(|field| field.spec().shape == PinShape::Array)
+            .collect();
+        let columns: Vec<&str> = fields.iter().map(|field| field.spec().column).collect();
+        let placeholders: Vec<String> = (0..columns.len())
+            .map(|at| format!("${}", at + 4))
+            .collect();
+        let content_bind = columns.len() + 4;
+        let insert = format!(
+            "INSERT INTO proxiima_core.memory
+                (handle, t, kind, owner_id, schema_id, {}, sidecar_tables, content_id,
+                 occurred_at, \"by\", via)
+             VALUES ($1, $1, $2::text::proxiima_core.memory_kind, $3, 'core/upload-v1', {}, '{{}}',
+                     CASE WHEN $2 = 'fact' THEN NULL ELSE ${content_bind} END,
+                     CASE WHEN $2 = 'fact' THEN uuid_extract_timestamp($1) END,
+                     '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+            columns.join(", "),
+            placeholders.join(", "),
+        );
+
+        for field in fields {
+            let column = field.spec().column;
+            for (source, label, grounding) in [
+                (EntityKind::Fact, "fact", None),
+                (
+                    EntityKind::Abstraction,
+                    "abstraction",
+                    Some(fact.into_inner()),
+                ),
+                (
+                    EntityKind::Perspective,
+                    "perspective",
+                    Some(abstraction.into_inner()),
+                ),
+            ] {
+                for (target_kind, target) in targets {
+                    let refs = MemoryPinField::Refs.spec().column;
+                    let pins_of = |written: &str| {
+                        let mut pins = Vec::new();
+                        if written == refs {
+                            pins.extend(grounding);
+                        }
+                        if written == column {
+                            pins.push(target);
+                        }
+                        pins
+                    };
+
+                    let handle = Uuid::now_v7();
+                    let mut tx = pool.begin().await?;
+                    // Raw INSERT on purpose: the pin trigger under test judges the columns as
+                    // written, and no write path writes a pin of a kind it refuses.
+                    sqlx::query(
+                        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
+                         VALUES ($1, $2::text::proxiima_core.memory_kind, 'core/upload-v1', $3, $1)",
+                    )
+                    .bind(handle)
+                    .bind(label)
+                    .bind(owner.into_inner())
+                    .execute(&mut *tx)
+                    .await?;
+                    // SQL-POLICY: fixed-fragment (the pin columns of the table and their binds)
+                    let mut write = sqlx::query(sqlx::AssertSqlSafe(insert.clone()))
+                        .bind(handle)
+                        .bind(label)
+                        .bind(owner.into_inner());
+                    for written in &columns {
+                        write = write.bind(pins_of(written));
+                    }
+                    let inserted = write.bind(content).execute(&mut *tx).await;
+                    let admitted =
+                        target_kind.is_some_and(|kind| field.admitted(source).contains(&kind));
+                    assert_eq!(
+                        inserted.is_ok(),
+                        admitted,
+                        "{source:?} pinning {target_kind:?} through {column}: {inserted:?}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("pin trigger and pin table disagree");
+}

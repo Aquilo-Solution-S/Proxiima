@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactIngestOutcome;
 use proxiima_core::{
-    EdgeEndpoint, EdgeKind, EntityKind, MemoryId, OperatorPhase, OwnerId, ReplayDrift, SchemaId,
-    SchemaVersion, SidecarPayload, StorageError,
+    EdgeEndpoint, EdgeKind, EntityKind, MemoryId, MemoryPinField, OperatorPhase, OwnerId,
+    ReplayDrift, SchemaId, SchemaVersion, SidecarPayload, StorageError,
 };
 use sqlx::{Acquire, Postgres, Row, Transaction};
 
@@ -385,13 +385,13 @@ async fn derived_replay_in_lifecycle(
     {
         let existing = load_derived_replay_head(tx, handle, draft, kind).await?;
         if let Some((t, forgotten)) = existing {
-            let stored_origins = load_pin_ids(tx, t, PinColumn::Origins).await?;
+            let stored_origins = load_pin_ids(tx, t, MemoryPinField::Origins).await?;
             let incoming_origins = pin_memory_ids(origins);
             if stored_origins == incoming_origins {
-                let stored_refs = load_pin_ids(tx, t, PinColumn::Refs).await?;
-                let stored_goal_refs = load_pin_ids(tx, t, PinColumn::GoalRefs).await?;
+                let stored_refs = load_pin_ids(tx, t, MemoryPinField::Refs).await?;
+                let stored_goal_refs = load_pin_ids(tx, t, MemoryPinField::GoalRefs).await?;
                 let (refs, goal_refs) = super::memory_timeseries::pin_reference_ids(references);
-                let stored_guided_by = load_pin_ids(tx, t, PinColumn::GuidedBy).await?;
+                let stored_guided_by = load_pin_ids(tx, t, MemoryPinField::GuidedBy).await?;
                 let guided_by: Vec<uuid::Uuid> =
                     draft.guided_by.iter().map(|id| id.into_inner()).collect();
                 if stored_refs != refs || stored_goal_refs != goal_refs {
@@ -432,10 +432,10 @@ async fn derived_replay_in_lifecycle(
     .await
     .map_err(map_err)?;
     if let Some(t) = forgotten_version {
-        let stored_refs = load_pin_ids(tx, t, PinColumn::Refs).await?;
-        let stored_goal_refs = load_pin_ids(tx, t, PinColumn::GoalRefs).await?;
+        let stored_refs = load_pin_ids(tx, t, MemoryPinField::Refs).await?;
+        let stored_goal_refs = load_pin_ids(tx, t, MemoryPinField::GoalRefs).await?;
         let (refs, goal_refs) = super::memory_timeseries::pin_reference_ids(references);
-        let stored_guided_by = load_pin_ids(tx, t, PinColumn::GuidedBy).await?;
+        let stored_guided_by = load_pin_ids(tx, t, MemoryPinField::GuidedBy).await?;
         let guided_by: Vec<uuid::Uuid> = draft.guided_by.iter().map(|id| id.into_inner()).collect();
         if stored_refs != refs || stored_goal_refs != goal_refs {
             return Err(StorageError::ReplayChanged(ReplayDrift::DerivedRefs));
@@ -657,10 +657,10 @@ async fn load_stored_pins(
     t: uuid::Uuid,
 ) -> Result<StoredPins, StorageError> {
     Ok((
-        load_pin_ids(tx, t, PinColumn::Origins).await?,
-        load_pin_ids(tx, t, PinColumn::Refs).await?,
-        load_pin_ids(tx, t, PinColumn::GoalRefs).await?,
-        load_pin_ids(tx, t, PinColumn::GuidedBy).await?,
+        load_pin_ids(tx, t, MemoryPinField::Origins).await?,
+        load_pin_ids(tx, t, MemoryPinField::Refs).await?,
+        load_pin_ids(tx, t, MemoryPinField::GoalRefs).await?,
+        load_pin_ids(tx, t, MemoryPinField::GuidedBy).await?,
     ))
 }
 
@@ -743,13 +743,6 @@ pub(crate) async fn record_external_edges(
     Ok(declared.len())
 }
 
-enum PinColumn {
-    Origins,
-    Refs,
-    GoalRefs,
-    GuidedBy,
-}
-
 /// Origins as the write path persists them: declaration order, duplicates
 /// dropped. Comparing a replay against a non-deduplicating projection would
 /// miss the replay and append a second version of the same declaration.
@@ -769,24 +762,16 @@ fn pin_memory_ids(pins: &[EdgeEndpoint]) -> Vec<uuid::Uuid> {
 async fn load_pin_ids(
     tx: &mut Transaction<'_, Postgres>,
     t: uuid::Uuid,
-    column: PinColumn,
+    field: MemoryPinField,
 ) -> Result<Vec<uuid::Uuid>, StorageError> {
-    let sql = match column {
-        PinColumn::Origins => {
-            "SELECT unnest(origins) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
-        }
-        PinColumn::Refs => {
-            "SELECT unnest(refs) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
-        }
-        PinColumn::GoalRefs => {
-            "SELECT unnest(goal_refs) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
-        }
-        PinColumn::GuidedBy => {
-            "SELECT unnest(guided_by) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
-        }
-    };
+    let sql = [
+        "SELECT unnest(",
+        &crate::pin_fields::pin_ids("", field),
+        ") FROM proxiima_core.memory_including_forgotten WHERE t = $1",
+    ]
+    .concat();
     // SQL-POLICY: fixed-fragment
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(t)
         .fetch_all(&mut **tx)
         .await

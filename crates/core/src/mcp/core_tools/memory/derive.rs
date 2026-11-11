@@ -62,13 +62,10 @@ fn check_sources_admitted(
             "source_handles must be nonempty".into(),
         ));
     }
-    let phase = match kind {
-        DerivedKind::Abstraction => crate::OperatorPhase::ToA,
-        DerivedKind::Perspective => crate::OperatorPhase::AtoP,
-    };
+    let admitted = crate::MemoryPinField::Origins.admitted(kind.entity_kind());
     if let Some((_memory_id, class)) = sources
         .iter()
-        .find(|(_memory_id, class)| !phase.admits_input(class.entity_kind()))
+        .find(|(_memory_id, class)| !admitted.contains(&class.entity_kind()))
     {
         return Err(McpToolError::LayeringViolation(format!(
             "{} cannot be derived from {class} sources",
@@ -150,6 +147,13 @@ pub enum DerivedKind {
 }
 
 impl DerivedKind {
+    const fn entity_kind(self) -> crate::EntityKind {
+        match self {
+            Self::Abstraction => crate::EntityKind::Abstraction,
+            Self::Perspective => crate::EntityKind::Perspective,
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Abstraction => "Abstraction",

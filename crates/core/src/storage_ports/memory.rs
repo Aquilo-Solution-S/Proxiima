@@ -1,11 +1,6 @@
 pub use super::proof::{OperatorWriteProof, OwnerWritePermit};
 
-/// What the targets of an inbound pin page are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PinTargetKind {
-    Memory,
-    Goal,
-}
+pub use crate::edge::PinTargetKind;
 
 /// Newest-first inbound pin page. Kind selects which array; `None` is both.
 #[derive(Debug, Clone, Copy)]
