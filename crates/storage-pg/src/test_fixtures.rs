@@ -510,3 +510,280 @@ pub const fn writer() -> proxiima_core::WriterAttribution {
         via: None,
     }
 }
+
+/// A Content row for `(owner, schema_id, content_hash)`, written the way an
+/// admission writes it (`crate::verbs::content::ensure_content`); an
+/// existing row for the same triple is reused. Returns its `content_id`.
+///
+/// # Errors
+///
+/// Storage errors from the write.
+pub async fn create_content(
+    pool: &sqlx::PgPool,
+    owner: OwnerId,
+    schema_id: &str,
+    content_hash: [u8; 32],
+) -> Result<Uuid, StorageError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    let content_id = crate::verbs::content::ensure_content(
+        &mut tx,
+        owner.into_inner(),
+        schema_id,
+        &content_hash,
+    )
+    .await?;
+    tx.commit()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    Ok(content_id)
+}
+
+fn unit_vector(width: usize) -> Vec<f32> {
+    let mut values = vec![0.0; width];
+    values[0] = 1.0;
+    values
+}
+
+/// Write one new embedding version of `memory` (a Fact) in the 1024-wide
+/// space of `model_id`, `chunks` unit vectors long, through the writer the
+/// product uses (`crate::verbs::fact_embeddings::insert_embedding`): the
+/// head advances to the new version, and an ineligible memory (forgotten, or
+/// not `owner`'s) writes nothing. Returns the version written, `0` when
+/// nothing was.
+///
+/// # Errors
+///
+/// Storage errors from the write.
+pub async fn create_embedding(
+    pg: &PgStorage,
+    owner: OwnerId,
+    memory: MemoryId,
+    model_id: &str,
+    chunks: usize,
+) -> Result<i32, StorageError> {
+    let width = proxiima_core::EmbeddingDim::D1024.width();
+    create_embedding_of(
+        pg,
+        owner,
+        memory,
+        model_id,
+        vec![unit_vector(width); chunks],
+    )
+    .await
+}
+
+/// [`create_embedding`] with the chunk vectors named by the test, each
+/// 1024 values wide.
+///
+/// # Errors
+///
+/// `Internal` when a vector is not 1024 wide; otherwise the storage errors
+/// from the write.
+pub async fn create_embedding_of(
+    pg: &PgStorage,
+    owner: OwnerId,
+    memory: MemoryId,
+    model_id: &str,
+    chunks: Vec<Vec<f32>>,
+) -> Result<i32, StorageError> {
+    let space = proxiima_core::EmbeddingSpace::new(model_id, proxiima_core::EmbeddingDim::D1024);
+    let vectors = chunks
+        .into_iter()
+        .map(|values| {
+            proxiima_core::SpaceVector::new(space.clone(), values)
+                .map_err(|err| StorageError::Internal(err.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut tx = pg.platform_transaction().await?;
+    let outcome = crate::verbs::fact_embeddings::insert_embedding(
+        &mut tx,
+        &owner,
+        proxiima_core::EmbeddableEntityRef::Memory {
+            kind: proxiima_core::EntityKind::Fact,
+            memory_id: memory,
+        },
+        &vectors,
+    )
+    .await?;
+    tx.commit()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    Ok(outcome.embedding_version)
+}
+
+/// Queue `entity_id` for embedding in the 1024-wide space of `model_id`, the
+/// way a write that makes it embeddable does
+/// (`crate::verbs::fact_embeddings::enqueue_embedding_jobs_in_tx`).
+///
+/// # Errors
+///
+/// Storage errors from the write.
+pub async fn enqueue_embedding_job(
+    pg: &PgStorage,
+    owner: OwnerId,
+    entity_id: Uuid,
+    model_id: &str,
+) -> Result<(), StorageError> {
+    let space = proxiima_core::EmbeddingSpace::new(model_id, proxiima_core::EmbeddingDim::D1024);
+    let mut tx = pg.platform_transaction().await?;
+    crate::verbs::fact_embeddings::enqueue_embedding_jobs_in_tx(
+        &mut tx,
+        owner.into_inner(),
+        entity_id,
+        [&space],
+    )
+    .await?;
+    tx.commit()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))
+}
+
+/// A `core/agent-note-v1` Fact with defaults, written the way production
+/// writes a typed Fact: the payload through the ordinary ingest, so the
+/// admission stamps `sidecar_tables` and fills the sidecar and projection
+/// rows. Name only what a test asserts on.
+#[derive(Debug, Clone)]
+pub struct TestNote {
+    note: proxiima_core::AgentNoteV1,
+    language: String,
+    handle: Option<Uuid>,
+}
+
+impl TestNote {
+    /// A note with no tags.
+    #[must_use]
+    pub fn new(title: &str, body: &str) -> Self {
+        Self {
+            note: proxiima_core::AgentNoteV1 {
+                note_id: Uuid::now_v7(),
+                title: title.to_owned(),
+                body: body.to_owned(),
+                tags: Vec::new(),
+                idempotency_key: None,
+            },
+            language: proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT
+                .to_owned(),
+            handle: None,
+        }
+    }
+
+    /// Append a version to this series instead of starting a new one.
+    #[must_use]
+    pub fn handle(mut self, handle: Uuid) -> Self {
+        self.handle = Some(handle);
+        self
+    }
+
+    /// The note's tags.
+    #[must_use]
+    pub fn tags(mut self, tags: &[&str]) -> Self {
+        self.note.tags = tags.iter().map(|tag| (*tag).to_owned()).collect();
+        self
+    }
+
+    /// The lexical language the write names for its search row.
+    #[must_use]
+    pub fn language(mut self, language: &str) -> Self {
+        language.clone_into(&mut self.language);
+        self
+    }
+
+    /// Write the note under `owner`.
+    ///
+    /// # Errors
+    ///
+    /// The storage error the write refuses with.
+    pub async fn create(
+        self,
+        pg: &PgStorage,
+        owner: OwnerId,
+    ) -> Result<FactIngestOutcome, StorageError> {
+        use proxiima_core::FactPayload as _;
+        let mut command = FactWriteCommand::from_payload("test-note", &self.note);
+        // `agent-note-v1` is a per-row language policy: the write names one.
+        command.lexical_language = Some(self.language);
+        command.handle = self.handle;
+        let authorized = proxiima_core::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests(
+            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            command,
+            proxiima_core::AgentNoteV1::sidecar_table().map(str::to_owned),
+            Vec::new(),
+        )
+        .with_sidecar_payloads_for_tests(vec![proxiima_core::SidecarPayload::fact(self.note)]);
+        pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+    }
+}
+
+impl TestMemory {
+    /// Cite an object of `schema_id` with `content_hash`: the admission
+    /// creates the blob, and [`FactIngestOutcome::cited_object_id`] names it.
+    #[must_use]
+    pub fn cites(mut self, schema_id: &str, content_hash: [u8; 32]) -> Self {
+        self.command.citation = Some(
+            proxiima_core::verbs::fact_ingest::CitationSpec::v1(schema_id, content_hash).into(),
+        );
+        self
+    }
+}
+
+/// An Active `core/task-goal-v1` Goal with defaults, written through the
+/// Goal writer ([`crate::verbs::goal_timeseries::write_goal`]): the head and
+/// the first version land together.
+#[derive(Debug, Clone)]
+pub struct TestGoal {
+    command: crate::verbs::goal_timeseries::GoalWriteCommand,
+}
+
+impl TestGoal {
+    /// A goal named by its idempotency `request_id`, with no write-act.
+    #[must_use]
+    pub fn new(request_id: &str) -> Self {
+        Self {
+            command: crate::verbs::goal_timeseries::GoalWriteCommand {
+                handle: None,
+                schema_id: "core/task-goal-v1".to_owned(),
+                title: "test goal".to_owned(),
+                text: None,
+                state: proxiima_core::verbs::goal_write::GoalState::Active,
+                request_id: request_id.to_owned(),
+                close_fact_t: None,
+                motivated_by: Vec::new(),
+                dependency_t: Vec::new(),
+                evidence_t: Vec::new(),
+                mint_write_act: false,
+                write_act_t: None,
+                parent_handle: None,
+            },
+        }
+    }
+
+    /// The goal's title.
+    #[must_use]
+    pub fn title(mut self, title: &str) -> Self {
+        title.clone_into(&mut self.command.title);
+        self
+    }
+
+    /// Write the goal under `owner`.
+    ///
+    /// # Errors
+    ///
+    /// The storage error the write refuses with.
+    pub async fn create(
+        self,
+        pg: &PgStorage,
+        owner: OwnerId,
+    ) -> Result<crate::verbs::goal_timeseries::GoalWriteOutcome, StorageError> {
+        let mut tx = pg.platform_transaction().await?;
+        let outcome =
+            crate::verbs::goal_timeseries::write_goal(&mut tx, &owner, writer(), &self.command, 1)
+                .await?;
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(outcome)
+    }
+}

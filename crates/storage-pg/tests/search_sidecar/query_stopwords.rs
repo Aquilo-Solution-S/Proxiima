@@ -14,6 +14,7 @@ async fn query_stopwords_choose_dominant_language_and_preserve_source_syntax()
 -> Result<(), Box<dyn std::error::Error>> {
     let (pg, _guard) = fresh_pg("dominant_stopwords").await;
     let pool = pg.pool_for_tests();
+    // Raw INSERT on purpose: registers a language ahead of any row that names it.
     sqlx::query("INSERT INTO proxiima_core.lexical_languages VALUES ('german')")
         .execute(pool)
         .await?;
@@ -73,6 +74,7 @@ async fn query_stopwords_choose_dominant_language_and_preserve_source_syntax()
         negation, "'cat'",
         "a removed stopword's minus must not negate the next term"
     );
+    // Raw INSERT on purpose: registers a language ahead of any row that names it.
     sqlx::query("INSERT INTO proxiima_core.lexical_languages VALUES ('french')")
         .execute(pool)
         .await?;
@@ -94,6 +96,7 @@ async fn query_stopwords_use_configured_dictionaries_and_ignore_unknown_words()
 -> Result<(), Box<dyn std::error::Error>> {
     let (pg, _guard) = fresh_pg("dictionary_stopwords").await;
     let pool = pg.pool_for_tests();
+    // Raw INSERT on purpose: registers a language ahead of any row that names it.
     sqlx::raw_sql(
         "CREATE TEXT SEARCH DICTIONARY proxiima_core.query_stop_only (
              TEMPLATE = pg_catalog.simple, STOPWORDS = english, ACCEPT = false
@@ -143,18 +146,19 @@ async fn lexical_search_uses_dominant_german_stopwords_for_english_rows()
 
     let (pg, _guard) = fresh_pg("german_english_query").await;
     let pool = pg.pool_for_tests();
+    // Raw INSERT on purpose: registers a language ahead of any row that names it.
     sqlx::query("INSERT INTO proxiima_core.lexical_languages VALUES ('german')")
         .execute(pool)
         .await?;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let wanted = super::seed_note(
-        pool,
+        &pg,
         owner,
         "checkpoint recovery",
         "checkpoint recovery commit protocol funktioniert",
     )
     .await?;
-    let distractor = super::seed_note(pool, owner, "function words", "der die das und").await?;
+    let distractor = super::seed_note(&pg, owner, "function words", "der die das und").await?;
     let page = pg
         .search_memories(
             Some(&owner_scope_for_tests(&[owner])),

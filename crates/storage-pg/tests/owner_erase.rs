@@ -15,11 +15,13 @@ use proxiima_core::storage_ports::{
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessKind, ColdObjectStore, EntityId, GroupId, OwnerId, SchemaId, SchemaVersion, SourceId,
-    StorageError, UserId,
+    AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, MemoryId, MemoryKind,
+    OwnerId, Relation, SchemaId, SchemaVersion, SourceId, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::{create_core_db, create_group};
+use proxiima_storage_pg::test_fixtures::{
+    TestGoal, TestMemory, add_member, create_core_db, create_embedding, create_group,
+};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use proxiima_storage_pg::{ColdPurgeRetryOptions, PgStorage};
@@ -178,23 +180,13 @@ async fn cite_blob(
     seed: u8,
 ) -> Result<Uuid, Box<dyn std::error::Error>> {
     let pool = pg.pool_for_tests();
-    // `blob.owner_id` references `owners`, which ordinary writes materialize.
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
-    let blob_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
-         VALUES ($1, 'core/bytes-v1', $2)
-         RETURNING blob_id",
-    )
-    .bind(owner.into_inner())
-    .bind(vec![seed; 32])
-    .fetch_one(pool)
-    .await?;
+    // The citing Fact's admission writes the blob and its owner row.
+    let cited = TestMemory::from_command(draft(source))
+        .cites("core/bytes-v1", [seed; 32])
+        .create(pg, owner)
+        .await?;
+    let blob_id = cited.cited_object_id.ok_or("cited blob missing")?;
+    // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
@@ -208,6 +200,7 @@ async fn cite_blob(
     .bind(vec![seed; 32])
     .execute(pool)
     .await?;
+    // Raw INSERT: a synthetic citation sidecar table this test creates; no write path exists for it.
     sqlx::query(
         "INSERT INTO proxiima_core.test_cited_object_v1 (cited_object_id, body)
          VALUES ($1, 'cited body')",
@@ -215,6 +208,7 @@ async fn cite_blob(
     .bind(blob_id)
     .execute(pool)
     .await?;
+    // Raw INSERT: a synthetic citation sidecar table this test creates; no write path exists for it.
     sqlx::query(
         "INSERT INTO proxiima_core.test_cited_span_v1 (span_blob_id, page_from)
          VALUES ($1, 4)",
@@ -222,10 +216,6 @@ async fn cite_blob(
     .bind(blob_id)
     .execute(pool)
     .await?;
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let mut cited = draft(source);
-    cited.blob_id = Some(blob_id);
-    pg.ingest_fact_atomic(&permit, &cited, None).await?;
     Ok(blob_id)
 }
 
@@ -236,6 +226,7 @@ async fn completed_blob_upload(
     owner: OwnerId,
     seed: u8,
 ) -> Result<(Uuid, String), Box<dyn std::error::Error>> {
+    // Raw INSERT: no write path for blob reachable from test fixtures: a blob no Fact cites.
     let blob_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/bytes-v1', $2)
@@ -246,6 +237,7 @@ async fn completed_blob_upload(
     .fetch_one(pool)
     .await?;
     let object_key = format!("objects/{seed}");
+    // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
@@ -303,12 +295,6 @@ fn draft(source: Option<(&str, &str)>) -> FactWriteCommand {
         kind: proxiima_core::MemoryKind::Fact,
         request: None,
     }
-}
-
-fn embed_vector() -> pgvector::Vector {
-    let mut values = vec![0.0; 1024];
-    values[0] = 1.0;
-    pgvector::Vector::from(values)
 }
 
 fn owner_fence_key(owner: OwnerId) -> String {
@@ -530,28 +516,10 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         pg.bootstrap_group_admin(company, UserId::new(colleague.into_inner()), colleague.into_inner())
             .await?;
         let pool = pg.pool_for_tests();
-        let goal = Uuid::now_v7();
-        let other_goal = Uuid::now_v7();
-        for (goal, owner, request_id) in [(goal, controller, "erase-grant"), (other_goal, other, "keep-grant")] {
-            sqlx::query(
-                "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-                 VALUES ($1, 'core/task-goal-v1', $2, $1)",
-            )
-            .bind(goal)
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
-            sqlx::query(
-                "INSERT INTO proxiima_core.goal (handle, t, owner_id, title, state, request_id, \"by\", via)
-                 VALUES ($1, $1, $2, 'grant goal', 'Active', $3, $2, NULL)",
-            )
-            .bind(goal)
-            .bind(owner.into_inner())
-            .bind(request_id)
-            .execute(pool)
-            .await?;
-        }
+        let goal = TestGoal::new("erase-grant").create(&pg, controller).await?.handle;
+        let other_goal = TestGoal::new("keep-grant").create(&pg, other).await?.handle;
         for goal in [goal, other_goal] {
+            // Raw INSERT: no write path for goal_access_grant reachable from test fixtures (its port takes a permit only the Engine mints).
             sqlx::query(
                 "INSERT INTO proxiima_core.goal_access_grant
                     (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -583,6 +551,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .fetch_one(pool)
         .await?;
         assert_eq!(erased, 0, "Goal controller erase cascades its grants");
+        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures (its port takes a permit only the Engine mints).
         sqlx::query(
             "INSERT INTO proxiima_core.goal_access_grant
                 (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -600,6 +569,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .bind(other.into_inner())
         .fetch_one(pool)
         .await?;
+        // Raw INSERT: no write path for goal_memory_publication reachable from test fixtures (its port takes a permit only the Engine mints).
         sqlx::query(
             "INSERT INTO proxiima_core.goal_memory_publication
                 (goal_handle, memory_t, source_owner, source_generation,
@@ -614,34 +584,25 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .await?;
         // A valid grounded Perspective header is enough to exercise the
         // authority inverse; this fixture never serves its payload.
-        let perspective = Uuid::now_v7();
-        let content: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/test-perspective', decode(repeat('00', 32), 'hex'))
-             RETURNING content_id",
-        )
-        .bind(other.into_inner())
-        .fetch_one(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'perspective', 'core/test-perspective', $2, $1)",
-        )
-        .bind(perspective)
-        .bind(other.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory
-                (handle, t, owner_id, kind, schema_id, content_id, refs, \"by\", via)
-             VALUES ($1, $1, $2, 'perspective', 'core/test-perspective', $3, ARRAY[$4::uuid], $2, NULL)",
-        )
-        .bind(perspective)
-        .bind(other.into_inner())
-        .bind(content)
-        .bind(fact)
-        .execute(pool)
-        .await?;
+        // The write path grounds a Perspective in an Abstraction, not a Fact.
+        let abstraction = TestMemory::fact()
+            .kind(MemoryKind::Abstraction)
+            .references(vec![EdgeEndpoint::memory(
+                EntityKind::Fact,
+                MemoryId::new(fact),
+            )])
+            .create(&pg, other)
+            .await?;
+        let perspective_written = TestMemory::fact()
+            .kind(MemoryKind::Perspective)
+            .references(vec![EdgeEndpoint::memory(
+                EntityKind::Abstraction,
+                abstraction.memory_id,
+            )])
+            .create(&pg, other)
+            .await?;
+        let perspective = perspective_written.handle;
+        // Raw INSERT: no write path for goal_work_binding reachable from test fixtures (its port takes a permit only the Engine mints).
         sqlx::query(
             "INSERT INTO proxiima_core.goal_work_binding
                 (goal_handle, memory_handle, source_owner, source_generation,
@@ -728,7 +689,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         let retained_memory: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM proxiima_core.memory WHERE t = $1)",
         )
-        .bind(perspective)
+        .bind(perspective_written.memory_id.into_inner())
         .fetch_one(pool)
         .await?;
         assert!(retained_memory, "participant erasure preserves company-owned work");
@@ -764,27 +725,9 @@ async fn erase_personal_owner_drops_memory_keys_and_embeddings() {
             .ingest_fact_atomic(&permit, &draft(Some(("src", "k1"))), None)
             .await?;
         let t = written.memory_id.into_inner();
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, chunk_ordinal, vec, owner_id)
-             SELECT $1, 'test-embed', 1024, version, chunk_ordinal, $2, $3
-               FROM generate_series(1, 2) AS version
-               CROSS JOIN generate_series(0, 2) AS chunk_ordinal",
-        )
-        .bind(t)
-        .bind(embed_vector())
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'test-embed', 1024, 2, $2)",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        for _version in 1..=2 {
+            create_embedding(&pg, owner, written.memory_id, "test-embed", 3).await?;
+        }
 
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other_permit = OwnerWritePermit::new_for_tests(other, AccessKind::Fact);
@@ -1022,6 +965,7 @@ async fn erase_personal_owner_destroys_blobs_uploads_and_citation_sidecars() {
         let owner = OwnerId::from(user);
         let blob = cite_blob(&pg, owner, Some(("src", "k-blob")), 3).await?;
         // A pending upload names no blob: owner data attributable to no source.
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                  (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len, expires_at)
@@ -1250,6 +1194,7 @@ async fn failed_cold_purge_is_attributed_and_bounded_retry_clears_audit() {
         // journal row can. The fixture records a key that is neither of the
         // keys its upload implies, so the erase owes all three.
         assert_eq!(pending_debts(pool).await?, 3);
+        // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ('objects/test-second-debt', $1, 's3:test/bucket')",
@@ -1460,6 +1405,7 @@ async fn a_drain_skips_and_names_debts_owed_by_another_store() {
         pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
 
         cold.put("cold/mine", b"wired bytes");
+        // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ('cold/mine', $1, 's3:test/wired-bucket'),
@@ -1551,6 +1497,7 @@ async fn erase_source_scope_deletes_only_unshared_selected_blobs_and_objects() {
         cold.put("objects/8", b"shared cited object");
         cold.put("objects/9", b"target cited object");
         cold.put(&unrelated_key, b"unrelated object");
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                  (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len, expires_at)
@@ -2021,26 +1968,12 @@ async fn erasing_a_member_removes_its_relations_and_preserves_other_members() {
         pg.ingest_fact_atomic(&permit, &draft(Some(("src", "k1"))), None)
             .await?;
 
-        let group_id = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'group'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-        )
-        .bind(group_id)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation)
-             VALUES ($1, $2, 'editor'::proxiima_core.membership_relation)",
-        )
-        .bind(group_id)
-        .bind(user.into_inner())
-        .execute(pool)
-        .await?;
+        let group = GroupId::new(Uuid::now_v7());
+        let group_id = group.into_inner();
+        add_member(pool, group, user, Relation::Editor).await?;
 
         let bystander = UserId::new(Uuid::now_v7());
-        sqlx::query("INSERT INTO proxiima_core.group_memberships(group_id,member_user_id,relation) VALUES($1,$2,'viewer')")
-            .bind(group_id).bind(bystander.into_inner()).execute(pool).await?;
+        add_member(pool, group, bystander, Relation::Viewer).await?;
 
         let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
             user_id: user,

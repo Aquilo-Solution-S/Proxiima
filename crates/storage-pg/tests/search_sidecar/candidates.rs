@@ -92,21 +92,21 @@ impl Fixture {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
         let ours = seed_note(
-            pg.pool_for_tests(),
+            &pg,
             owner,
             "An observation",
             "A needle surrounded by other words",
         )
         .await?;
         let theirs = seed_note(
-            pg.pool_for_tests(),
+            &pg,
             other,
             "needle needle needle needle",
             "needle needle needle needle needle needle needle needle",
         )
         .await?;
-        seed_embedding(pg.pool_for_tests(), owner, ours, &embed_vector_xy(0.6, 0.8)).await?;
-        seed_embedding(pg.pool_for_tests(), other, theirs, &embed_vector()).await?;
+        seed_embedding(&pg, owner, ours, &embed_vector_xy(0.6, 0.8)).await?;
+        seed_embedding(&pg, other, theirs, &embed_vector()).await?;
         Ok(Self {
             pg,
             owner,

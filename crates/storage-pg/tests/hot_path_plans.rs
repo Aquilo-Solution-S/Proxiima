@@ -12,11 +12,13 @@ use proxiima_core::verbs::query::{
     TagMatch,
 };
 use proxiima_core::verbs::schema::MemorySearchProjection;
-use proxiima_core::{EdgeKind, OwnerId, SchemaId, UserId};
+use proxiima_core::{EdgeEndpoint, EdgeKind, MemoryKind, OwnerId, SchemaId, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::export_statement_sql_for_tests;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{
+    TestMemory, TestNote, create_core_db, create_embedding, create_user, enqueue_embedding_job,
+};
 use proxiima_storage_pg::verbs::fact_embeddings::{
     claim_embedding_jobs_sql_for_tests, reclaim_stale_embedding_jobs_sql_for_tests,
 };
@@ -71,119 +73,6 @@ fn unit_values(dim: EmbeddingDim) -> Vec<f32> {
     values
 }
 
-async fn seed_note(
-    pool: &sqlx::PgPool,
-    owner: OwnerId,
-    title: &str,
-    body: &str,
-) -> Result<Uuid, sqlx::Error> {
-    let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal')
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await?;
-    let handle = Uuid::now_v7();
-    let t = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-         VALUES ($1, 'fact', 'core/agent-note-v1', $2, $3)",
-    )
-    .bind(handle)
-    .bind(owner_id)
-    .bind(t)
-    .execute(pool)
-    .await?;
-    // The stamp and the row it promises land in one transaction: a memory row
-    // that names a sidecar table it has no row in is refused at COMMIT.
-    let mut stamped = pool.begin().await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory
-             (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
-         VALUES ($1, $2, 'fact', $3, 'core/agent-note-v1',
-                 ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-    )
-    .bind(handle)
-    .bind(t)
-    .bind(owner_id)
-    .execute(&mut *stamped)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-         VALUES ($1, $2, $3, $4, '{}')",
-    )
-    .bind(t)
-    .bind(Uuid::now_v7())
-    .bind(title)
-    .bind(body)
-    .execute(&mut *stamped)
-    .await?;
-    stamped.commit().await?;
-    let schema = proxiima_core::SPIICE_0
-        .schemas
-        .iter()
-        .find(|schema| schema.schema_id().as_str() == "core/agent-note-v1")
-        .expect("core note schema");
-    let projection =
-        proxiima_storage_pg::projection::projection_insert_sql(&proxiima_core::SPIICE_0, schema)
-            .expect("core note projection");
-    // SQL-POLICY: generated — the production projection renderer over the core contract.
-    sqlx::query(sqlx::AssertSqlSafe(projection))
-        .bind(t)
-        .bind(None::<&str>)
-        .bind(schema.schema_id().as_str())
-        .execute(pool)
-        .await?;
-    Ok(t)
-}
-
-async fn seed_derived(
-    pool: &sqlx::PgPool,
-    owner: OwnerId,
-    origin: Uuid,
-) -> Result<Uuid, sqlx::Error> {
-    let owner_id = owner.into_inner();
-    let handle = Uuid::now_v7();
-    let t = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-         VALUES ($1, 'abstraction', 'core/agent-note-v1', $2, $3)",
-    )
-    .bind(handle)
-    .bind(owner_id)
-    .bind(t)
-    .execute(pool)
-    .await?;
-    let mut hash = [0_u8; 32];
-    hash[..16].copy_from_slice(t.as_bytes());
-    hash[16..].copy_from_slice(t.as_bytes());
-    let content_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-         VALUES ($1, 'core/agent-note-v1', $2)
-         RETURNING content_id",
-    )
-    .bind(owner_id)
-    .bind(hash.as_slice())
-    .fetch_one(pool)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory
-            (handle, t, kind, owner_id, schema_id, origins, content_id, \"by\", via)
-         VALUES ($1, $2, 'abstraction', $3, 'core/agent-note-v1', ARRAY[$4]::uuid[], $5, '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-    )
-    .bind(handle)
-    .bind(t)
-    .bind(owner_id)
-    .bind(origin)
-    .bind(content_id)
-    .execute(pool)
-    .await?;
-    Ok(t)
-}
-
 /// How many decoy notes the plan pin needs: enough that walking them all
 /// is visibly the worse plan.
 const CORPUS_ROWS: i32 = 4_000;
@@ -202,15 +91,10 @@ async fn seed_projection_corpus(
     pool: &sqlx::PgPool,
     owner: OwnerId,
     term: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await?;
+    create_user(pool, owner.as_user()).await?;
+    // Raw INSERT on purpose: bulk volume, thousands of notes in a few statements.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'fact', 'core/agent-note-v1', $1, uuidv7()
@@ -222,6 +106,7 @@ async fn seed_projection_corpus(
     .await?;
     // The stamp and the rows it promises land in one transaction.
     let mut stamped = pool.begin().await?;
+    // Raw INSERT on purpose: bulk volume.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -234,6 +119,7 @@ async fn seed_projection_corpus(
     .bind(owner_id)
     .execute(&mut *stamped)
     .await?;
+    // Raw INSERT on purpose: bulk volume.
     sqlx::query(
         "WITH ids AS MATERIALIZED (
              SELECT m.t, row_number() OVER (ORDER BY m.t) AS n
@@ -256,7 +142,8 @@ async fn seed_projection_corpus(
     .bind(term)
     .execute(&mut *stamped)
     .await?;
-    stamped.commit().await
+    stamped.commit().await?;
+    Ok(())
 }
 
 /// The first plan node scanning `relation`, or `None`.
@@ -355,35 +242,20 @@ async fn hot_path_plans_use_expected_indexes() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let leaf = seed_note(pool, owner, "Needle title", "needle body").await?;
-        let child = seed_derived(pool, owner, leaf).await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, vec, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2, $3)",
-        )
-        .bind(leaf)
-        .bind(pgvector::Vector::from(unit_values(EmbeddingDim::D1024)))
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2)",
-        )
-        .bind(leaf)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, dim, owner_id, status)
-             VALUES ($1, 'test-embed', 1024, $2, 'pending')",
-        )
-        .bind(leaf)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        let leaf_id = TestNote::new("Needle title", "needle body")
+            .create(&pg, owner)
+            .await?
+            .memory_id;
+        let leaf = leaf_id.into_inner();
+        let child = TestMemory::fact()
+            .kind(MemoryKind::Abstraction)
+            .references(vec![EdgeEndpoint::memory(EntityKind::Fact, leaf_id)])
+            .create(&pg, owner)
+            .await?
+            .memory_id
+            .into_inner();
+        create_embedding(&pg, owner, leaf_id, "test-embed", 1).await?;
+        enqueue_embedding_job(&pg, owner, leaf, "test-embed").await?;
         // Both predicates must be selective: our large corpus does not
         // match the word, while the neighbour's large corpus does. An
         // owner-only scan through the tag GIN would visit our whole corpus.
@@ -811,7 +683,9 @@ async fn owner_export_reaches_its_owner_through_an_index() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        seed_note(pool, owner, "small owner", "one note").await?;
+        TestNote::new("small owner", "one note")
+            .create(&pg, owner)
+            .await?;
         let neighbour = OwnerId::from(UserId::new(Uuid::now_v7()));
         seed_projection_corpus(pool, neighbour, "neighbour").await?;
         // SQL-POLICY: fixed-fragment
@@ -907,12 +781,8 @@ async fn retention_prune_reads_the_published_index() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, owner.as_user()).await?;
+        // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_outbox
                  (t, owner_id, schema_id, schema_version, event_type, event_id,
@@ -975,10 +845,8 @@ async fn the_stale_claim_reclaim_reads_the_processing_index() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
+        create_user(pool, owner.as_user()).await?;
+        // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_jobs
                  (entity_id, model_id, owner_id, status, claimed_at, claim_token, dim)
@@ -1042,10 +910,8 @@ async fn a_capacity_check_reads_one_row_whatever_the_backlog() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
+        create_user(pool, owner.as_user()).await?;
+        // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_outbox
                  (t, owner_id, schema_id, schema_version, event_type, event_id,
@@ -1114,10 +980,8 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
+        create_user(pool, owner.as_user()).await?;
+        // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
         sqlx::query(
             "WITH b AS (
                  INSERT INTO proxiima_core.blob (blob_id, owner_id, schema_id, content_hash)
@@ -1241,6 +1105,7 @@ async fn an_owner_erase_does_not_scan_other_owners_tables() {
         create_group(pool, target).await?;
         create_group(pool, bystander).await?;
         for (owner, count) in [(target, 40_i32), (bystander, 5_000_i32)] {
+            // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
             sqlx::query(
                 "WITH s AS (SELECT uuidv7() AS handle, uuidv7() AS t FROM generate_series(1, $2::int)),
                  memory AS (

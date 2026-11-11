@@ -19,11 +19,14 @@ use proxiima_core::verbs::fact_ingest::{
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
     AccessKind, AgentNoteV1, AuthPath, AuthzContext, ColdObjectStore, Engine, EntityId, GoalId,
-    GroupId, OwnerId, SchemaId, SchemaVersion, SidecarPayload, SpiiceRegistry, StorageError,
-    UserId,
+    GroupId, OwnerId, Relation, SchemaId, SchemaVersion, SidecarPayload, SpiiceRegistry,
+    StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::test_fixtures::{create_core_db, create_group};
+use proxiima_storage_pg::test_fixtures::{
+    add_member, create_content, create_core_db, create_embedding, create_group, create_user,
+    enqueue_embedding_job,
+};
 use proxiima_storage_pg::verbs::forget::{MemoryColdStore, erase_memory_series};
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use proxiima_storage_pg::{
@@ -365,15 +368,7 @@ async fn transfer_moves_same_memory_t_and_sidecar() {
             witness_before, None,
             "a transfer must not create a hard-erase witness"
         );
-        let content_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/test-fact-v1', $2)
-             RETURNING content_id",
-        )
-        .bind(owner.into_inner())
-        .bind(vec![7_u8; 32])
-        .fetch_one(pool)
-        .await?;
+        let content_id = create_content(pool, owner, "core/test-fact-v1", [7_u8; 32]).await?;
         sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
             .bind(t)
             .bind(content_id)
@@ -498,39 +493,12 @@ async fn transfer_moves_all_routed_chunks_and_purges_unrouted_spaces() {
         let pool = pg.pool_for_tests();
         let written = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
         let t = written.memory_id.into_inner();
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, chunk_ordinal, vec, owner_id)
-             SELECT $1, model_id, 1024, version, chunk_ordinal,
-                    ('[' || array_to_string(array_fill(0::real, ARRAY[1024]), ',') || ']')::vector,
-                    $2
-               FROM unnest(ARRAY['kept-model', 'removed-model']) AS model_id
-               CROSS JOIN generate_series(1, 2) AS version
-               CROSS JOIN generate_series(0, 1) AS chunk_ordinal",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             SELECT $1, model_id, 1024, 2, $2
-               FROM unnest(ARRAY['kept-model', 'removed-model']) AS model_id",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, dim, owner_id)
-             SELECT $1, model_id, 1024, $2
-               FROM unnest(ARRAY['kept-model', 'removed-model']) AS model_id",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        for model in ["kept-model", "removed-model"] {
+            for _version in 1..=2 {
+                create_embedding(&pg, owner, written.memory_id, model, 2).await?;
+            }
+            enqueue_embedding_job(&pg, owner, t, model).await?;
+        }
 
         let export =
             ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner { user_id: user });
@@ -623,33 +591,15 @@ async fn transfer_rehomes_forgotten_versions() {
         let cited_object_id = first
             .cited_object_id
             .expect("citation-bearing write returns its object");
-        let personal_content_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/test-fact-v1', $2)
-             RETURNING content_id",
-        )
-        .bind(owner.into_inner())
-        .bind(vec![11_u8; 32])
-        .fetch_one(pool)
-        .await?;
+        let personal_content_id =
+            create_content(pool, owner, "core/test-fact-v1", [11_u8; 32]).await?;
         sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
             .bind(first.memory_id.into_inner())
             .bind(personal_content_id)
             .execute(pool)
             .await?;
         // Vectors the forget deletes with the rest of the derived state.
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, chunk_ordinal, vec, owner_id)
-             SELECT $1, 'transfer-hydrate-model', 1024, chunk_ordinal,
-                    ('[' || array_to_string(array_fill(0::real, ARRAY[1024]), ',') || ']')::vector,
-                    $2
-               FROM generate_series(0, 2) AS chunk_ordinal",
-        )
-        .bind(first.memory_id.into_inner())
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        create_embedding(&pg, owner, first.memory_id, "transfer-hydrate-model", 3).await?;
         MemoryAuthoringPort::forget_memory(&pg, &permit, first.memory_id).await?;
         let mut later = draft();
         later.handle = Some(first.handle);
@@ -966,21 +916,12 @@ async fn engine_transfer_accepts_a_forgotten_memory() {
         let written = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
         MemoryAuthoringPort::forget_memory(&pg, &permit, written.memory_id).await?;
 
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'group'::proxiima_core.owner_kind)",
+        add_member(
+            pool,
+            destination.as_group(),
+            owner.as_user(),
+            Relation::Admin,
         )
-        .bind(destination.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.group_memberships
-                (group_id, member_user_id, relation)
-             VALUES ($1, $2, 'admin'::proxiima_core.membership_relation)",
-        )
-        .bind(destination.into_inner())
-        .bind(owner.into_inner())
-        .execute(pool)
         .await?;
 
         let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
@@ -1580,14 +1521,9 @@ async fn transfer_refuses_unpublished_upload_until_finish_publishes() {
         let permit = OwnerWritePermit::new_for_tests(source, AccessKind::Fact);
         let destination = destination();
         let pool = pg.pool_for_tests();
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-        )
-        .bind(source.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, source.as_user()).await?;
         let content_hash = vec![37_u8; 32];
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let blob_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/uploaded-blob-v1', $2)
@@ -1598,6 +1534,7 @@ async fn transfer_refuses_unpublished_upload_until_finish_publishes() {
         .fetch_one(pool)
         .await?;
         let upload_id = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (owner_id, upload_id, bucket, object_store, object_key, filename, mime,
@@ -1691,14 +1628,9 @@ async fn legacy_staged_upload_without_blake3_fences_transfer_until_retry() {
         let destination = destination();
         let permit = OwnerWritePermit::new_for_tests(source, AccessKind::Fact);
         let pool = pg.pool_for_tests();
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal'::proxiima_core.owner_kind)",
-        )
-        .bind(source.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, source.as_user()).await?;
         let content_hash = vec![38_u8; 32];
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let blob_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/uploaded-blob-v1', $2)
@@ -1709,6 +1641,7 @@ async fn legacy_staged_upload_without_blake3_fences_transfer_until_retry() {
         .fetch_one(pool)
         .await?;
         let upload_id = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
@@ -1804,6 +1737,7 @@ async fn transfer_ignores_unstaged_and_unrelated_pending_uploads() {
         let moving = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
 
         let unrelated_hash = vec![91_u8; 32];
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let unrelated_blob: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/uploaded-blob-v1', $2)
@@ -1815,6 +1749,7 @@ async fn transfer_ignores_unstaged_and_unrelated_pending_uploads() {
         .await?;
         let unrelated = cite(&pg, &permit, "unrelated-upload", unrelated_blob).await?;
 
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (owner_id, bucket, object_store, object_key, filename, mime,
@@ -1889,6 +1824,7 @@ async fn transfer_allows_aborted_and_expired_upload_cleanup() {
             let written = pg.ingest_fact_atomic(&permit, &cited, None).await?;
             let blob_id = written.cited_object_id.ok_or("cited blob missing")?;
             let upload_id = Uuid::now_v7();
+            // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
             sqlx::query(
                 "INSERT INTO proxiima_core.blob_uploads
                     (owner_id, upload_id, bucket, object_store, object_key, filename, mime,
@@ -2019,6 +1955,7 @@ async fn terminal_same_hash_retry_does_not_pin_an_exactly_published_blob() {
         let hash = vec![82_u8; 32];
         let (blob_id, completed_upload) = seed_cited_blob(pool, source, &hash).await?;
         let terminal_upload = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
@@ -2136,6 +2073,7 @@ async fn transfer_retries_when_series_membership_drifts_before_mutation() {
         // appenders take the handle lock; bypassing the advisory lock here
         // lets the test prove that the exact reread is still a safety net if
         // a writer crosses the boundary.
+        // Raw INSERT on purpose: a series append that bypasses the handle lock, the seam probe.
         sqlx::query(
             "INSERT INTO proxiima_core.memory
                 (handle, t, kind, owner_id, schema_id, origins, refs,
@@ -2384,13 +2322,7 @@ async fn transfer_is_unchanged_when_the_head_owner_is_already_lost() {
         assert_eq!(second.handle, first.handle);
 
         let usurper = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-        )
-        .bind(usurper.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, usurper.as_user()).await?;
         sqlx::query("UPDATE proxiima_core.memory_head SET owner_id = $2 WHERE handle = $1")
             .bind(first.handle)
             .bind(usurper.into_inner())
@@ -2611,13 +2543,7 @@ async fn transfer_refuses_goal_entities() {
             .execute(pool)
             .await;
         assert!(frozen.is_err(), "goal must refuse UPDATE entirely");
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'group') ON CONFLICT DO NOTHING",
-        )
-        .bind(dest.into_inner())
-        .execute(pool)
-        .await?;
+        create_group(pool, dest.as_group()).await?;
         let head_frozen =
             sqlx::query("UPDATE proxiima_core.goal_head SET owner_id = $2 WHERE handle = $1")
                 .bind(out.handle)
@@ -2646,6 +2572,7 @@ async fn transfer_moves_exclusive_blob_with_the_fact() {
         let seed = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
         let _ = seed;
         let hash = vec![7u8; 32];
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let blob_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/bytes-v1', $2)
@@ -3059,14 +2986,9 @@ async fn seed_cited_blob(
     pool: &sqlx::PgPool,
     owner: OwnerId,
     hash: &[u8],
-) -> Result<(Uuid, Uuid), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-    )
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
+) -> Result<(Uuid, Uuid), Box<dyn std::error::Error>> {
+    create_user(pool, owner.as_user()).await?;
+    // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
     let blob_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/uploaded-blob-v1', $2)
@@ -3076,6 +2998,7 @@ async fn seed_cited_blob(
     .bind(hash)
     .fetch_one(pool)
     .await?;
+    // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
     let upload_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
@@ -3110,6 +3033,7 @@ async fn seed_malformed_completed_upload(
     hash: &[u8],
 ) -> Result<Uuid, sqlx::Error> {
     let upload_id = Uuid::now_v7();
+    // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
              (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
@@ -3166,15 +3090,10 @@ async fn transfer_refuses_a_series_citing_another_owners_blob() {
         let destination = destination();
         let pool = pg.pool_for_tests();
         for owner in [source, foreign] {
-            sqlx::query(
-                "INSERT INTO proxiima_core.owners (owner_id, kind)
-                 VALUES ($1, 'personal'::proxiima_core.owner_kind)",
-            )
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
+            create_user(pool, owner.as_user()).await?;
         }
         let content_hash = vec![43_u8; 32];
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let source_blob: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/bytes-v1', $2) RETURNING blob_id",
@@ -3183,6 +3102,7 @@ async fn transfer_refuses_a_series_citing_another_owners_blob() {
         .bind(&content_hash)
         .fetch_one(pool)
         .await?;
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let foreign_blob: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/bytes-v1', $2) RETURNING blob_id",
@@ -3343,13 +3263,8 @@ async fn transfer_refuses_an_unpublished_destination_dedupe_blob() {
         let (source_blob, _) = seed_cited_blob(pool, source, &hash).await?;
         let moving = cite(&pg, &permit, "unpublished-destination-dedupe", source_blob).await?;
 
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'group'::proxiima_core.owner_kind)",
-        )
-        .bind(destination.into_inner())
-        .execute(pool)
-        .await?;
+        create_group(pool, destination.as_group()).await?;
+        // Raw INSERT: no write path for blob reachable from test fixtures (production writes it inside a citing Fact's admission).
         let destination_blob: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/uploaded-blob-v1', $2)
@@ -3457,14 +3372,9 @@ async fn a_blob_mount_copies_only_source_owned_upload_rows() {
         let pool = pg.pool_for_tests();
         let hash = vec![47_u8; 32];
         let (blob_id, _) = seed_cited_blob(pool, source, &hash).await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal'::proxiima_core.owner_kind)",
-        )
-        .bind(foreign.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, foreign.as_user()).await?;
         let foreign_upload = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
@@ -3536,14 +3446,9 @@ async fn an_in_place_blob_move_refuses_a_foreign_upload_pointer() {
         let pool = pg.pool_for_tests();
         let hash = vec![53_u8; 32];
         let (blob_id, _) = seed_cited_blob(pool, source, &hash).await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal'::proxiima_core.owner_kind)",
-        )
-        .bind(foreign.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, foreign.as_user()).await?;
         let foreign_upload = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,

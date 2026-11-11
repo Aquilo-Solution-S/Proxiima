@@ -27,9 +27,13 @@ use proxiima_core::verbs::query::{
 use proxiima_core::verbs::schema::{
     MemorySearchProjection, MemorySearchProjectionField, PayloadKind, RenderBands,
 };
-use proxiima_core::{OwnerId, SchemaId, SchemaVersion, SearchProjectionColumnKind, UserId};
+use proxiima_core::{
+    MemoryId, OwnerId, SchemaId, SchemaVersion, SearchProjectionColumnKind, UserId,
+};
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls_for};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{
+    TestNote, create_core_db, create_embedding_of, create_user,
+};
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
 use uuid::Uuid;
 
@@ -119,33 +123,43 @@ async fn project(
 }
 
 async fn seed_note(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     title: &str,
     body: &str,
-) -> Result<Uuid, sqlx::Error> {
-    seed_note_lang(pool, owner, title, body, None, &[]).await
+) -> Result<Uuid, Box<dyn std::error::Error>> {
+    seed_note_lang(pg, owner, title, body, None, &[]).await
 }
 
 async fn seed_note_lang(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     title: &str,
     body: &str,
     language: Option<&str>,
     tags: &[&str],
-) -> Result<Uuid, sqlx::Error> {
+) -> Result<Uuid, Box<dyn std::error::Error>> {
+    let mut note = TestNote::new(title, body).tags(tags);
+    if let Some(language) = language {
+        note = note.language(language);
+    }
+    Ok(note.create(pg, owner).await?.memory_id.into_inner())
+}
+
+/// A note whose `t` is a plain UUIDv7, so `uuid_extract_timestamp(t)` reads a
+/// time: the write path mints store-stamped ids that carry none, and the
+/// time-window test reads exactly that instant.
+async fn seed_v7_note(
+    pool: &sqlx::PgPool,
+    owner: OwnerId,
+    title: &str,
+    body: &str,
+) -> Result<Uuid, Box<dyn std::error::Error>> {
     let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal')
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pool)
-    .await?;
+    create_user(pool, owner.as_user()).await?;
     let handle = Uuid::now_v7();
     let t = Uuid::now_v7();
+    // Raw INSERT on purpose: an id the write path never mints (see above).
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'fact', 'core/agent-note-v1', $2, $3)",
@@ -158,6 +172,7 @@ async fn seed_note_lang(
     // The stamp and the row it promises land in one transaction: a memory row
     // that names a sidecar table it has no row in is refused at COMMIT.
     let mut stamped = pool.begin().await?;
+    // Raw INSERT on purpose: an id the write path never mints (see above).
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -169,19 +184,19 @@ async fn seed_note_lang(
     .bind(owner_id)
     .execute(&mut *stamped)
     .await?;
+    // Raw INSERT on purpose: an id the write path never mints (see above).
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-         VALUES ($1, $2, $3, $4, $5)",
+         VALUES ($1, $2, $3, $4, '{}')",
     )
     .bind(t)
     .bind(Uuid::now_v7())
     .bind(title)
     .bind(body)
-    .bind(tags)
     .execute(&mut *stamped)
     .await?;
     stamped.commit().await?;
-    project(pool, t, "core/agent-note-v1", language).await?;
+    project(pool, t, "core/agent-note-v1", None).await?;
     Ok(t)
 }
 
@@ -279,6 +294,7 @@ async fn seed_docs_note(
     let owner_id = owner.into_inner();
     let handle = Uuid::now_v7();
     let t = Uuid::now_v7();
+    // Raw INSERT: no write path for a row of the synthetic proxiima_docs surface this test creates.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'abstraction', 'proxiima-docs/section-text-v1', $2, $3)",
@@ -291,6 +307,7 @@ async fn seed_docs_note(
     let mut hash = [0_u8; 32];
     hash[..16].copy_from_slice(t.as_bytes());
     hash[16..].copy_from_slice(t.as_bytes());
+    // Raw INSERT: no write path for a row of the synthetic proxiima_docs surface this test creates.
     let content_id: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
          VALUES ($1, 'proxiima-docs/section-text-v1', $2)
@@ -300,6 +317,7 @@ async fn seed_docs_note(
     .bind(hash.as_slice())
     .fetch_one(pool)
     .await?;
+    // Raw INSERT: no write path for a row of the synthetic proxiima_docs surface this test creates.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
             (handle, t, kind, owner_id, schema_id, origins, content_id, \"by\", via)
@@ -312,6 +330,7 @@ async fn seed_docs_note(
     .bind(content_id)
     .execute(pool)
     .await?;
+    // Raw INSERT: no write path for a row of the synthetic proxiima_docs surface this test creates.
     sqlx::query(
         "INSERT INTO proxiima_docs.section_text_v1 (t, text, tags)
          VALUES ($1, $2, $3)",
@@ -321,6 +340,7 @@ async fn seed_docs_note(
     .bind(tags)
     .execute(pool)
     .await?;
+    // Raw INSERT: no write path for a row of the synthetic proxiima_docs surface this test creates.
     sqlx::query(
         "INSERT INTO proxiima_docs.projection
             (memory_id, schema_id, owner_id, search_tsv, tag)
@@ -346,29 +366,18 @@ async fn seed_docs_note(
 }
 
 async fn seed_embedding(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     t: Uuid,
     vector: &pgvector::Vector,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.embeddings
-            (entity_id, model_id, dim, embedding_version, vec, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, $2, $3)",
+) -> Result<(), Box<dyn std::error::Error>> {
+    create_embedding_of(
+        pg,
+        owner,
+        MemoryId::new(t),
+        "test-embed",
+        vec![vector.to_vec()],
     )
-    .bind(t)
-    .bind(vector)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.embedding_heads
-            (entity_id, model_id, dim, embedding_version, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, $2)",
-    )
-    .bind(t)
-    .bind(owner.into_inner())
-    .execute(pool)
     .await?;
     Ok(())
 }
@@ -382,19 +391,18 @@ async fn lexical_search_is_sidecar_first_then_owner_admit() {
     let url = db_url(&db_name);
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
-        let pool = pg.pool_for_tests();
 
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
         let ours = seed_note(
-            pool,
+            &pg,
             owner,
             "Retrieval surface",
             "hybrid substrate keyword needle",
         )
         .await?;
         let _theirs = seed_note(
-            pool,
+            &pg,
             other,
             "Retrieval surface",
             "hybrid substrate keyword needle",
@@ -521,18 +529,11 @@ async fn lexical_search_does_not_let_other_owner_fill_overfetch() {
     let url = db_url(&db_name);
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
-        let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let ours = seed_note(pool, owner, "zebra", "owner-local zebra needle").await?;
+        let ours = seed_note(&pg, owner, "zebra", "owner-local zebra needle").await?;
         for i in 0..25 {
-            seed_note(
-                pool,
-                other,
-                &format!("zebra {i}"),
-                "other-owner zebra flood",
-            )
-            .await?;
+            seed_note(&pg, other, &format!("zebra {i}"), "other-owner zebra flood").await?;
         }
         let mut req = search_req(owner, "zebra");
         req.limit = 1;
@@ -571,15 +572,10 @@ async fn tagged_search_scans_spiice_sidecars() {
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             SELECT unnest($1::uuid[]), 'personal' ON CONFLICT DO NOTHING",
-        )
-        .bind(vec![owner.into_inner(), other_owner.into_inner()])
-        .execute(pool)
-        .await?;
+        create_user(pool, owner.as_user()).await?;
+        create_user(pool, other_owner.as_user()).await?;
         create_docs_search_surface(pool).await?;
-        let origin = seed_note_lang(pool, owner, "Origin", "origin body", None, &[]).await?;
+        let origin = seed_note_lang(&pg, owner, "Origin", "origin body", None, &[]).await?;
         let t = seed_docs_note(
             pool,
             owner,
@@ -597,7 +593,7 @@ async fn tagged_search_scans_spiice_sidecars() {
         )
         .await?;
         let other_origin =
-            seed_note_lang(pool, other_owner, "Origin", "origin body", None, &[]).await?;
+            seed_note_lang(&pg, other_owner, "Origin", "origin body", None, &[]).await?;
         let hidden_t = seed_docs_note(
             pool,
             other_owner,
@@ -739,7 +735,7 @@ async fn lexical_search_matches_german_via_lexical_languages() {
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let t = seed_note_lang(
-            pool,
+            &pg,
             owner,
             "Tiere",
             "die Katzen schlafen auf dem Sofa",
@@ -792,7 +788,7 @@ async fn simple_rows_retain_vectors_after_default_switch_and_query_analysis() {
         sqlx::query("SELECT proxiima_core.set_lexical_config('simple')")
             .execute(pool)
             .await?;
-        let simple = seed_note(pool, owner, "Stopword", "the checkpoint").await?;
+        let simple = seed_note(&pg, owner, "Stopword", "the checkpoint").await?;
         sqlx::query("SELECT proxiima_core.set_lexical_config('english')")
             .execute(pool)
             .await?;
@@ -888,11 +884,11 @@ async fn lexical_default_switch_stamps_only_subsequent_core_rows() {
             "initial default must be english"
         );
 
-        let english = seed_note(pool, owner, "Cats", "the cats sleep on the sofa").await?;
+        let english = seed_note(&pg, owner, "Cats", "the cats sleep on the sofa").await?;
         sqlx::query("SELECT proxiima_core.set_lexical_config('german')")
             .execute(pool)
             .await?;
-        let german = seed_note(pool, owner, "Tiere", "die Katzen schlafen auf dem Sofa").await?;
+        let german = seed_note(&pg, owner, "Tiere", "die Katzen schlafen auf dem Sofa").await?;
 
         let stamped: Vec<(Uuid, String)> = sqlx::query_as(
             "SELECT memory_id, lexical_language::text
@@ -972,28 +968,9 @@ async fn semantic_search_respects_until() {
     let url = db_url(&db_name);
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
-        let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let t = seed_note(pool, owner, "Embedded", "semantic neighbour body").await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, vec, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2, $3)",
-        )
-        .bind(t)
-        .bind(embed_vector())
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2)",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        let t = seed_note(&pg, owner, "Embedded", "semantic neighbour body").await?;
+        seed_embedding(&pg, owner, t, &embed_vector()).await?;
 
         let mut inside = search_req(owner, "unused");
         inside.mode = SearchMode::Semantic;
@@ -1081,12 +1058,11 @@ async fn semantic_scan_binds_a_typed_query_vector_under_a_generic_plan() {
         )
         .await?
         .with_admin_pool_for_tests(sqlx::PgPool::connect(&db_url(&db_name)).await?);
-        let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let near = seed_note(pool, owner, "Near", "semantic neighbour body").await?;
-        seed_embedding(pool, owner, near, &embed_vector()).await?;
-        let far = seed_note(pool, owner, "Far", "another neighbour body").await?;
-        seed_embedding(pool, owner, far, &embed_vector_xy(0.6, 0.8)).await?;
+        let near = seed_note(&pg, owner, "Near", "semantic neighbour body").await?;
+        seed_embedding(&pg, owner, near, &embed_vector()).await?;
+        let far = seed_note(&pg, owner, "Far", "another neighbour body").await?;
+        seed_embedding(&pg, owner, far, &embed_vector_xy(0.6, 0.8)).await?;
 
         let mut req = search_req(owner, "unused");
         req.mode = SearchMode::Semantic;
@@ -1163,10 +1139,9 @@ async fn tagged_semantic_search_returns_only_tagged_rows() {
     let url = db_url(&db_name);
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
-        let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let tagged_t = seed_note_lang(
-            pool,
+            &pg,
             owner,
             "Tagged",
             "semantic neighbour body",
@@ -1174,27 +1149,9 @@ async fn tagged_semantic_search_returns_only_tagged_rows() {
             &["bucket-0"],
         )
         .await?;
-        let plain_t = seed_note(pool, owner, "Plain", "semantic neighbour body").await?;
+        let plain_t = seed_note(&pg, owner, "Plain", "semantic neighbour body").await?;
         for t in [tagged_t, plain_t] {
-            sqlx::query(
-                "INSERT INTO proxiima_core.embeddings
-                    (entity_id, model_id, dim, embedding_version, vec, owner_id)
-                 VALUES ($1, 'test-embed', 1024, 1, $2, $3)",
-            )
-            .bind(t)
-            .bind(embed_vector())
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
-            sqlx::query(
-                "INSERT INTO proxiima_core.embedding_heads
-                    (entity_id, model_id, dim, embedding_version, owner_id)
-                 VALUES ($1, 'test-embed', 1024, 1, $2)",
-            )
-            .bind(t)
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
+            seed_embedding(&pg, owner, t, &embed_vector()).await?;
         }
         let ids = |page: &proxiima_core::verbs::query::MemorySearchPage| {
             let mut ids: Vec<Uuid> = page
@@ -1294,20 +1251,14 @@ async fn semantic_and_hybrid_respect_untagged_spiice_scope() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, owner.as_user()).await?;
         create_docs_search_surface(pool).await?;
 
         // The core row is deliberately farther from the query vector. The
         // 22 foreign rows therefore fill the old global semantic LIMIT 20;
         // a post-admit schema check cannot recover this core candidate.
         let core_t = seed_note_lang(
-            pool,
+            &pg,
             owner,
             "Core needle",
             "core needle body",
@@ -1315,7 +1266,7 @@ async fn semantic_and_hybrid_respect_untagged_spiice_scope() {
             &["core"],
         )
         .await?;
-        seed_embedding(pool, owner, core_t, &embed_vector_xy(0.8, 0.6)).await?;
+        seed_embedding(&pg, owner, core_t, &embed_vector_xy(0.8, 0.6)).await?;
 
         let mut foreign = Vec::new();
         for index in 0..22 {
@@ -1325,7 +1276,7 @@ async fn semantic_and_hybrid_respect_untagged_spiice_scope() {
                 vec!["foreign"]
             };
             let t = seed_docs_note(pool, owner, core_t, "foreign needle body", &tags).await?;
-            seed_embedding(pool, owner, t, &embed_vector()).await?;
+            seed_embedding(&pg, owner, t, &embed_vector()).await?;
             foreign.push(t);
         }
         let docs = docs_projection();
@@ -1553,7 +1504,7 @@ async fn lexical_search_reads_since_as_a_floor_and_until_as_a_ceiling() {
         // precision, so the sleeps are what make "strictly".
         let mut ts = Vec::new();
         for title in ["Atlas alpha", "Atlas beta", "Atlas gamma"] {
-            let t = seed_note(pool, owner, title, "cartography of the archive").await?;
+            let t = seed_v7_note(pool, owner, title, "cartography of the archive").await?;
             ts.push(t);
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
@@ -1643,7 +1594,7 @@ async fn lexical_language_forget_refuses_while_rows_reference_it() {
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let t = seed_note_lang(
-            pool,
+            &pg,
             owner,
             "Tiere",
             "die Katzen schlafen",
@@ -1743,15 +1694,9 @@ async fn lexical_remember_trigger_registers_before_the_fk_check() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, owner.as_user()).await?;
         seed_note_lang(
-            pool,
+            &pg,
             owner,
             "Salutation",
             "bonjour le monde",
@@ -1790,25 +1735,21 @@ async fn lexical_language_forget_blocks_on_an_in_flight_writer() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
+        create_user(pool, owner.as_user()).await?;
+        // Raw INSERT on purpose: registers a language ahead of any row that names it.
         sqlx::query("INSERT INTO proxiima_core.lexical_languages (config) VALUES ('german')")
             .execute(pool)
             .await?;
 
         // Writer: uncommitted projection row stamped german — its RI check
         // holds KEY SHARE on the registration row until the transaction ends.
-        let memory_id = seed_note(pool, owner, "Tiere", "die Katzen schlafen").await?;
+        let memory_id = seed_note(&pg, owner, "Tiere", "die Katzen schlafen").await?;
         sqlx::query("DELETE FROM proxiima_core.projection WHERE memory_id = $1")
             .bind(memory_id)
             .execute(pool)
             .await?;
         let mut writer = pool.begin().await?;
+        // Raw INSERT on purpose: a projection row held uncommitted to lock the language registration.
         sqlx::query(
             "INSERT INTO proxiima_core.projection
                 (memory_id, schema_id, owner_id, search_tsv, lexical_language)
@@ -1878,67 +1819,18 @@ async fn a_superseded_backlog_does_not_starve_the_substring_leg() {
     let url = db_url(&db_name);
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
-        let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let owner_id = owner.into_inner();
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
-        )
-        .bind(owner_id)
-        .execute(pool)
-        .await?;
-
         // The live row, seeded FIRST so every decoy is newer than it.
-        let live = seed_note(pool, owner, "Atlas", "the cartography of the archive").await?;
+        let live = seed_note(&pg, owner, "Atlas", "the cartography of the archive").await?;
 
         for index in 0..SUBSTRING_BACKLOG {
-            let handle = Uuid::now_v7();
-            let superseded = Uuid::now_v7();
-            sqlx::query(
-                "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-                 VALUES ($1, 'fact', 'core/agent-note-v1', $2, $3)",
-            )
-            .bind(handle)
-            .bind(owner_id)
-            .bind(superseded)
-            .execute(pool)
-            .await?;
-            let head = Uuid::now_v7();
-            for (t, body) in [
-                (superseded, "the cartography of the archive"),
-                (head, "this revision says nothing"),
-            ] {
-                // The stamp and the row it promises land in one transaction.
-                let mut stamped = pool.begin().await?;
-                sqlx::query(
-                    "INSERT INTO proxiima_core.memory
-                         (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
-                     VALUES ($1, $2, 'fact', $3, 'core/agent-note-v1',
-                             ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-                )
-                .bind(handle)
-                .bind(t)
-                .bind(owner_id)
-                .execute(&mut *stamped)
+            let title = format!("Backlog {index}");
+            let superseded = TestNote::new(&title, "the cartography of the archive")
+                .create(&pg, owner)
                 .await?;
-                sqlx::query(
-                    "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-                     VALUES ($1, $2, $3, $4, '{}')",
-                )
-                .bind(t)
-                .bind(t)
-                .bind(format!("Backlog {index}"))
-                .bind(body)
-                .execute(&mut *stamped)
-                .await?;
-                stamped.commit().await?;
-                project(pool, t, "core/agent-note-v1", None).await?;
-            }
-            sqlx::query("UPDATE proxiima_core.memory_head SET t = $2 WHERE handle = $1")
-                .bind(handle)
-                .bind(head)
-                .execute(pool)
+            TestNote::new(&title, "this revision says nothing")
+                .handle(superseded.handle)
+                .create(&pg, owner)
                 .await?;
         }
 
