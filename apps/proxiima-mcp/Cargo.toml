@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [features]
 default = []
 # Compile the `/v1` REST surface into the binary. Serving it still needs
-# `PROXIIMA_REST_ENABLED=true` at runtime — see docs/17-rest-surface.md.
+# `PROXIIMA_REST_ENABLED=true` at runtime — see the REST projection section of docs/protocol.md.
 rest = ["proxiima/rest"]
 
 [dev-dependencies]

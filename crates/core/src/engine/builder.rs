@@ -1,17 +1,14 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use super::{Engine, EngineMcpListener};
+use super::Engine;
 use crate::SpiiceRegistryError;
 use crate::authz::{
     DelegationRuntimeAuthority, DelegationRuntimeBinding, SystemAuthority, SystemAuthorityBinding,
 };
 use crate::storage_ports::{EngineStoragePorts, StoragePorts};
 use crate::verbs::schema::SpiiceRegistryFrozen;
-
-const DEFAULT_MCP_LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
 impl Engine {
     #[must_use]
@@ -25,8 +22,6 @@ impl Engine {
             embedding_runtime_policy: crate::llm::EmbeddingRuntimePolicy::default(),
             embedding_control: super::embeddings::EmbeddingControl::default(),
             publication: crate::publication::PublicationConfig::default(),
-            mcp_listen_addr: DEFAULT_MCP_LISTEN_ADDR,
-            mcp_listener: None,
             mcp_url: Arc::new(RwLock::new(None)),
         }
     }
@@ -155,23 +150,6 @@ impl Engine {
     #[must_use]
     pub const fn publication_config(&self) -> &crate::publication::PublicationConfig {
         &self.publication
-    }
-
-    #[must_use]
-    pub fn with_mcp_listen_addr(mut self, addr: SocketAddr) -> Self {
-        self.mcp_listen_addr = addr;
-        self
-    }
-
-    /// Attach an MCP listener implementation. Without this, the
-    /// engine starts without an MCP server (`mcp_url()` stays `None`)
-    /// — fine for tests and headless callers that don't need MCP.
-    /// Host binaries wire a concrete listener
-    /// serving `proxiima_mcp_server::streamable_http_service`.
-    #[must_use]
-    pub fn with_mcp_listener(mut self, listener: Arc<dyn EngineMcpListener>) -> Self {
-        self.mcp_listener = Some(listener);
-        self
     }
 }
 

@@ -177,7 +177,7 @@ facade_names! {
     // Needed by the arguments and results of the Engine verbs a host calls (`get_graph`,
     // `list_members`, ...).
     engine_verbs {
-        host_only: [EmbeddingDrainOutcome, EmbeddingPurgeOutcome, EmbeddingReconcileOptions, EmbeddingReconcileOutcome, EmbeddingReconcileScope, EmbeddingSpaceCounts, EmbeddingSpaceCoverage, EmbeddingSpaceRole, EngineMcpListener, FactCitationPage, FactCitationReadRequest, FactsCitingObjectReadRequest, GetGraphReadRequest, GetGraphReadResponse, GroupMemberPage, InboundPinQuery, MemoryCounts, MemoryGraphPayloadRow, MemorySketch, PinNode, RunningMcpListener, StoragePorts, StoragePortsBuilder],
+        host_only: [EmbeddingDrainOutcome, EmbeddingPurgeOutcome, EmbeddingReconcileOptions, EmbeddingReconcileOutcome, EmbeddingReconcileScope, EmbeddingSpaceCounts, EmbeddingSpaceCoverage, EmbeddingSpaceRole, FactCitationPage, FactCitationReadRequest, FactsCitingObjectReadRequest, GetGraphReadRequest, GetGraphReadResponse, GroupMemberPage, InboundPinQuery, MemoryCounts, MemoryGraphPayloadRow, MemorySketch, PinNode, StoragePorts, StoragePortsBuilder],
         both_tiers: [UploadCompleted, UploadCompletionExpectation],
     }
 

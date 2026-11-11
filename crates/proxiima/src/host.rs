@@ -296,10 +296,10 @@ pub use proxiima_core::{
     DelegatedPhase, DelegationId, DelegationIssued, DelegationRevocation,
     EmbeddingAnnObservability, EmbeddingJobBacklog, EmbeddingOrphanCounts,
     EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRuntimePolicy, Engine,
-    EngineAuthority, EngineHandle, ForwarderRole, GroupId, MemoryId, OwnerAccessPort, OwnerId,
-    OwnerIdParseError, OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError,
-    ServedSurface, SourceId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices,
-    StorageError, ToolName, ToolScope, UserId, env_value, provider_safe_tool_name,
+    EngineAuthority, ForwarderRole, GroupId, MemoryId, OwnerAccessPort, OwnerId, OwnerIdParseError,
+    OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError, ServedSurface,
+    SourceId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices, StorageError, ToolName,
+    ToolScope, UserId, env_value, provider_safe_tool_name,
 };
 #[cfg(feature = "openai-compat-embed")]
 pub use proxiima_llm_openai_compat::{OpenAiCompatConfig, OpenAiCompatEmbeddingClient};
@@ -517,17 +517,16 @@ pub use proxiima_core::{
 /// `list_members`, `drain_embedding_jobs`, `reconcile_embeddings`,
 /// `embedding_coverage`, `purge_embedding_spaces`, `complete_upload_as_fact`,
 /// `inbound_pin_nodes`, `load_sketches`, `memory_counts`,
-/// `try_compose` and `with_mcp_listener`. Without them a host can call each verb and cannot
+/// `try_compose`. Without them a host can call each verb and cannot
 /// write its argument or result in a signature.
 pub use proxiima_core::{
     EmbeddingDrainOutcome, EmbeddingJobDiagnostic, EmbeddingJobState, EmbeddingPurgeOutcome,
     EmbeddingReconcileOptions, EmbeddingReconcileOutcome, EmbeddingReconcileScope,
-    EmbeddingSpaceCounts, EmbeddingSpaceCoverage, EmbeddingSpaceRole, EngineMcpListener,
-    FactCitationReadRequest, FactsCitingObjectReadRequest, GetGraphReadRequest,
-    GetGraphReadResponse, GroupMemberPage, InboundPinQuery, MAX_EMBEDDING_DIAGNOSTIC_UNITS,
-    MemoryCounts, MemoryGraphPayloadRow, MemorySketch, PinNode, RunningMcpListener, StoragePorts,
-    UploadCompleted, UploadCompletionExpectation, query::FactCitationPage,
-    storage_ports::StoragePortsBuilder,
+    EmbeddingSpaceCounts, EmbeddingSpaceCoverage, EmbeddingSpaceRole, FactCitationReadRequest,
+    FactsCitingObjectReadRequest, GetGraphReadRequest, GetGraphReadResponse, GroupMemberPage,
+    InboundPinQuery, MAX_EMBEDDING_DIAGNOSTIC_UNITS, MemoryCounts, MemoryGraphPayloadRow,
+    MemorySketch, PinNode, StoragePorts, UploadCompleted, UploadCompletionExpectation,
+    query::FactCitationPage, storage_ports::StoragePortsBuilder,
 };
 /// What [`AuthzContext`] reports about its caller: the identity and invoking
 /// tool [`AuthzContext::identity_for_revalidation`] and

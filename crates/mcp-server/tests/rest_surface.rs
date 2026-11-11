@@ -1,4 +1,4 @@
-//! The `/v1` surface's obligations from docs/17 §Contract Tests.
+//! The `/v1` surface's obligations from the REST projection section of docs/protocol.md.
 //!
 //! These are what make "REST is a rendering of the manifest, not a second
 //! API" checkable rather than aspirational. Everything here runs against a

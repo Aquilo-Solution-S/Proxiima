@@ -8,7 +8,6 @@ mod errors;
 mod goal_collaboration;
 mod goal_write;
 mod ingest;
-pub mod mcp_listener;
 mod memory_authoring;
 mod owner_inverse;
 mod pin_read;
@@ -24,11 +23,9 @@ mod storage_port_tests;
 mod unit_of_work;
 mod upload;
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
 use crate::authz::{EngineAuthority, EngineOperationAuthority, context_for_engine_operation};
 use crate::error::ProtocolError;
@@ -43,7 +40,6 @@ pub use goal_write::{
     GoalCreatePayloadWriteRequest, GoalDecomposeRequest, GoalMarkAchievedRequest,
     GoalModifyRequest, GoalTransitionRequest,
 };
-pub use mcp_listener::{EngineMcpListener, RunningMcpListener};
 pub use memory_authoring::{
     DerivationIdentity, DerivedMemory, DerivedMemoryOutcome, MemoryTarget, SeriesHandle,
 };
@@ -79,17 +75,7 @@ pub struct Engine {
     /// correct for the overwhelming majority of deployments: nothing is
     /// listenable, so nothing needs one.
     publication: crate::publication::PublicationConfig,
-    pub(crate) mcp_listen_addr: SocketAddr,
-    pub(crate) mcp_listener: Option<Arc<dyn EngineMcpListener>>,
     pub(crate) mcp_url: Arc<RwLock<Option<String>>>,
-}
-
-/// Owns the background tasks spawned by [`Engine::start`]. The engine
-/// keeps no copy — `start` returns the only handle so the caller is
-/// the single owner that can `stop()` it.
-#[derive(Debug)]
-pub struct EngineHandle {
-    pub mcp_join: Option<JoinHandle<()>>,
 }
 
 impl Engine {
@@ -137,49 +123,16 @@ impl Engine {
         self.embedding_runtime_policy
     }
 
-    /// Bound MCP URL after [`Engine::start`] succeeds. `None` before
-    /// start, or after start if no [`EngineMcpListener`] was attached.
+    /// Bound MCP URL once the host has recorded it with [`Engine::set_mcp_url`].
+    /// `None` before that.
     #[must_use]
     pub fn mcp_url(&self) -> Option<String> {
         self.mcp_url.try_read().ok().and_then(|g| g.clone())
     }
 
-    /// Override the bound MCP URL. Test + headless-wiring seam for
-    /// callers that need to advertise a URL without spawning the
-    /// listener task. Production callers go through `start` instead.
+    /// Record the bound MCP URL the host serves.
     pub async fn set_mcp_url(&self, url: String) {
         *self.mcp_url.write().await = Some(url);
-    }
-
-    /// Spawn the MCP listener if attached.
-    ///
-    /// Returns an [`EngineHandle`] the caller passes to
-    /// [`Engine::stop`] to shut the task down cleanly. The engine
-    /// itself does not keep a copy of the handle — single-owner
-    /// shutdown is intentional so two callers can't race a stop.
-    ///
-    /// # Errors
-    ///
-    /// - the attached [`EngineMcpListener`] failed to bind/serve
-    pub async fn start(self: Arc<Self>) -> Result<EngineHandle, ProtocolError> {
-        let mcp_join = if let Some(listener) = self.mcp_listener.clone() {
-            let running = listener.start(self.mcp_listen_addr, self.clone()).await?;
-            let url = format!("http://{}/mcp", running.bound_addr);
-            *self.mcp_url.write().await = Some(url);
-            Some(running.join)
-        } else {
-            None
-        };
-
-        Ok(EngineHandle { mcp_join })
-    }
-
-    /// Abort the MCP listener if present. Safe to call once per
-    /// [`EngineHandle`].
-    pub fn stop(&self, handle: EngineHandle) {
-        if let Some(mcp_join) = handle.mcp_join {
-            mcp_join.abort();
-        }
     }
 }
 

@@ -1,9 +1,10 @@
 //! `OpenAPI` 3.2 document generated from the frozen tool manifest.
 //!
-//! REST is a rendering of the tool manifest, not a second API (17 §Claim),
-//! so nothing here is authored per tool: every path, operation, and request
-//! schema is derived from `McpToolDescriptor` and `ResourceContract`. A tool
-//! added to a spiice crate appears in this document with no edit here.
+//! REST is a rendering of the tool manifest, not a second API (docs/protocol.md,
+//! REST projection), so nothing here is authored per tool: every path,
+//! operation, and request schema is derived from `McpToolDescriptor` and
+//! `ResourceContract`. A tool added to a spiice crate appears in this document
+//! with no edit here.
 //!
 //! Both version floors are forced rather than preferred. Below 3.1 the
 //! schemars-generated draft 2020-12 `args_schema` would need a
@@ -43,7 +44,7 @@ const BEARER_SCHEME: &str = "bearerAuth";
 
 /// Call context is header-borne on REST: there is no JSON-RPC peer identity
 /// to author it from, and the reserved body names MCP silently strips are a
-/// `400` here instead (17 §Call Context). Tuples are
+/// `400` here instead. Tuples are
 /// `(header, required, description)`.
 const CONTEXT_HEADERS: &[(&str, bool, &str)] = &[
     (
@@ -66,7 +67,7 @@ const CONTEXT_HEADERS: &[(&str, bool, &str)] = &[
     ),
 ];
 
-/// The statuses of 17 §Status mapping, each rendered as RFC 9457
+/// The REST statuses, each rendered as RFC 9457
 /// `application/problem+json`. The mapping itself belongs to the routing
 /// module; this list only has to advertise the same set.
 const PROBLEM_STATUSES: &[(u16, &str)] = &[
@@ -373,8 +374,7 @@ fn collect_tool_paths(
 ///
 /// `POST` is kept alongside `QUERY` rather than replaced because middleboxes
 /// routinely reject unrecognized methods, and a read unreachable through a
-/// customer proxy is worse than a read with imprecise semantics
-/// (17 §Methods).
+/// customer proxy is worse than a read with imprecise semantics.
 fn tool_path_item(operation: &Operation<'_>) -> Value {
     let mut item = Map::new();
     item.insert("post".to_string(), operation.render("post"));
@@ -387,7 +387,7 @@ fn tool_path_item(operation: &Operation<'_>) -> Value {
 
 /// `GET /v1/resources/{path}`, reconstructed from the resource's own
 /// `proxiima://` template. The mapping is total and mechanical, and REST adds
-/// no URI parser of its own (17 §Resource path mapping).
+/// no URI parser of its own.
 fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<String, Value>) {
     let Some((path, query_variables)) = resource_route(resource.uri_template) else {
         return;

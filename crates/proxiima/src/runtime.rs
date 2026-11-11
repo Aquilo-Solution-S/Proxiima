@@ -10,6 +10,7 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::response::IntoResponse;
 use proxiima_blob_s3::{CitedBlobStore, S3RuntimeConfig};
+use proxiima_core::OwnerId;
 use proxiima_core::authz::SystemAuthority;
 use proxiima_core::storage_ports::{
     CitedBlobDeliveryBindingError, CitedBlobDeliveryService, CitedBlobOwnerReconcileService,
@@ -19,7 +20,6 @@ use proxiima_core::{
     Authenticator, AuthzContext, DelegationRuntimeAuthority, EmbeddingClient, EmbeddingRouter,
     OwnerAccessPort, RevalidationConfig, ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
 };
-use proxiima_core::{EngineHandle, OwnerId};
 use proxiima_mcp_server::{
     HostAllowlist, McpEdgeAuth, McpToolHost, McpTransportConfig, OriginAllowlist, assert_loopback,
     default_allowlist, guard_listener,
@@ -427,7 +427,6 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
             parts,
             allowlist,
             booted,
-            handle,
             cancel,
             app_ctx,
             owner_access,
@@ -452,7 +451,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
             }
             _ => (None, None, FeatureDecision::mcp_off()),
         };
-        let runtime = Runtime::start::<A>(booted, handle, app_ctx.host, cancel, &config, mcp);
+        let runtime = Runtime::start::<A>(booted, app_ctx.host, cancel, &config, mcp);
         Ok(BuiltProxiima {
             runtime,
             service,
@@ -472,7 +471,6 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
             parts,
             allowlist,
             booted,
-            handle,
             cancel,
             app_ctx,
             owner_access,
@@ -523,7 +521,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
             (None, None, FeatureDecision::mcp_off())
         };
 
-        let runtime = Runtime::start::<A>(booted, handle, app_ctx.host, cancel, &config, mcp);
+        let runtime = Runtime::start::<A>(booted, app_ctx.host, cancel, &config, mcp);
         Ok(RunningProxiima {
             runtime,
             mcp_addr,
@@ -594,18 +592,11 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         app_ctx.host.services = services;
         // Keep the one-time erase transaction state out of the serving future.
         Box::pin(drain_retired_facts(&booted)).await?;
-        let handle = booted
-            .engine
-            .clone()
-            .start()
-            .await
-            .map_err(|error| ProxiimaError::Engine(error.into()))?;
         Ok(BootedRuntime {
             config,
             parts,
             allowlist,
             booted,
-            handle,
             cancel,
             app_ctx,
             owner_access,
@@ -636,7 +627,6 @@ struct Runtime {
     /// Kept on host runtime handles, never on `AppContext` or shared services.
     delegation_runtime_authority: DelegationRuntimeAuthority,
     host_state_maintenance_authority: Option<proxiima_core::engine::HostStateMaintenanceAuthority>,
-    handle: EngineHandle,
     /// The runtime's own token. Every task it started observes a child of
     /// it; [`Self::shutdown`] cancels it, and so does dropping the runtime
     /// (`_cancel_on_drop`), so no feature outlives its last handle.
@@ -663,7 +653,6 @@ impl Runtime {
     /// runs after the last fallible boot step.
     fn start<A: SpiiceApp>(
         booted: Booted,
-        handle: EngineHandle,
         host: ProxiimaHost,
         cancel: CancellationToken,
         config: &crate::RuntimeConfig,
@@ -711,7 +700,6 @@ impl Runtime {
             system_authority,
             delegation_runtime_authority: booted.delegation_runtime_authority,
             host_state_maintenance_authority: booted.host_state_maintenance_authority,
-            handle,
             _cancel_on_drop: cancel.clone().drop_guard(),
             cancel,
             insecure_single_owner: config.insecure_single_owner,
@@ -731,11 +719,10 @@ impl Runtime {
             .map(|owner| AuthzContext::for_insecure_single_owner(&self.system_authority, *owner))
     }
 
-    /// Cancel every started feature, join it, stop the engine.
+    /// Cancel every started feature and join it.
     async fn shutdown(self) {
         self.cancel.cancel();
         self.features.join().await;
-        self.host.engine.stop(self.handle);
     }
 }
 
@@ -891,7 +878,7 @@ macro_rules! runtime_handle_methods {
 /// A booted app whose features run, without a bound listener.
 ///
 /// Dropping it cancels every started feature; [`Self::shutdown`] also joins
-/// them and stops the engine.
+/// them.
 pub struct BuiltProxiima {
     runtime: Runtime,
     service: Option<Router>,
@@ -919,7 +906,7 @@ impl BuiltProxiima {
         self.mcp_edge.as_ref()
     }
 
-    /// Stop and join every started feature, then stop the engine.
+    /// Stop and join every started feature.
     pub async fn shutdown(self) {
         self.runtime.shutdown().await;
     }
@@ -952,7 +939,7 @@ impl std::fmt::Debug for BuiltProxiima {
 /// A booted app whose features run, listening when a bind is configured.
 ///
 /// Dropping it cancels the listener and every started feature;
-/// [`Self::shutdown`] also joins them and stops the engine.
+/// [`Self::shutdown`] also joins them.
 pub struct RunningProxiima {
     runtime: Runtime,
     mcp_addr: Option<SocketAddr>,
@@ -1020,8 +1007,7 @@ impl RunningProxiima {
         outcome
     }
 
-    /// Stop the listener, stop and join every started feature, then stop
-    /// the engine.
+    /// Stop the listener, then stop and join every started feature.
     pub async fn shutdown(self) {
         self.runtime.cancel.cancel();
         if let Some(server) = self.server
@@ -1189,7 +1175,6 @@ struct BootedRuntime {
     /// together so a tail can never serve MCP without its allowlists.
     allowlist: Option<ListenerAllowlists>,
     booted: Booted,
-    handle: EngineHandle,
     cancel: CancellationToken,
     /// Its host carries the composed service set.
     app_ctx: AppContext,

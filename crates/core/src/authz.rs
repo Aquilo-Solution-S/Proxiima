@@ -936,11 +936,6 @@ impl AuthzContext {
     }
 
     #[must_use]
-    pub fn scoped_owner(&self, owner: OwnerId) -> OwnerId {
-        owner
-    }
-
-    #[must_use]
     pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
         self.owner_roles
             .as_ref()

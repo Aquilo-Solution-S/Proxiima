@@ -3,13 +3,8 @@
 //!
 //! `OidcAuthConfig` carries no identity mapping (see `config.rs`): the
 //! default [`crate::OidcAuthenticator::new`] path resolves the validated
-//! `(iss, sub)` pair through this map instead. The map has two textual
-//! encodings: an issuer-aware JSON array (the primary, unambiguous format)
-//! and a `sub:uuid` shorthand that is valid only
-//! when exactly one issuer can ever be accepted — with more than one issuer
-//! accepted, a bare `sub` cannot disambiguate which issuer's token it
-//! belongs to, so the shorthand is rejected at parse time rather than
-//! silently binding to the wrong issuer.
+//! `(iss, sub)` pair through this map instead. The map's textual encoding is
+//! an issuer-aware JSON array.
 
 use std::collections::HashMap;
 
@@ -29,12 +24,6 @@ pub enum OidcSubjectMapError {
     },
     #[error("invalid subject map JSON: {0}")]
     InvalidJson(String),
-    #[error(
-        "legacy sub-only subject map shorthand requires exactly one accepted issuer, got {count}"
-    )]
-    AmbiguousIssuerForShorthand { count: usize },
-    #[error("shorthand subject map entry {index} is not \"sub:uuid\": {raw:?}")]
-    MalformedShorthandEntry { index: usize, raw: String },
     #[error("subject map entry {index} has an invalid trusted_model_id {value:?}: {reason}")]
     InvalidTrustedModelId {
         index: usize,
@@ -219,54 +208,9 @@ impl OidcSubjectMap {
         }
         Ok(map)
     }
-
-    /// Parse the `sub:uuid,sub2:uuid2` shorthand. Every entry binds
-    /// to `accepted_issuers[0]`.
-    ///
-    /// The shorthand has no field for a trusted model id and never yields
-    /// one: a deployment that wants trusted model provenance uses the JSON
-    /// form.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OidcSubjectMapError::AmbiguousIssuerForShorthand`] unless
-    /// `accepted_issuers` has exactly one element, or a per-entry parse
-    /// error otherwise.
-    pub fn from_legacy_shorthand(
-        raw: &str,
-        accepted_issuers: &[String],
-    ) -> Result<Self, OidcSubjectMapError> {
-        if accepted_issuers.len() != 1 {
-            return Err(OidcSubjectMapError::AmbiguousIssuerForShorthand {
-                count: accepted_issuers.len(),
-            });
-        }
-        let issuer = accepted_issuers[0].clone();
-        let mut map = Self::new();
-        for (index, raw_entry) in raw
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .enumerate()
-        {
-            let (subject, user_id_raw) = raw_entry.split_once(':').ok_or_else(|| {
-                OidcSubjectMapError::MalformedShorthandEntry {
-                    index,
-                    raw: raw_entry.to_string(),
-                }
-            })?;
-            map.insert_at(
-                index,
-                issuer.clone(),
-                subject.trim().to_string(),
-                SubjectBinding::new(parse_user_id(index, user_id_raw)?),
-            )?;
-        }
-        Ok(map)
-    }
 }
 
-/// The user id of entry `index`, as the text of either format holds it: trimmed, not blank, a UUID.
+/// The user id of entry `index`, as the text holds it: trimmed, not blank, a UUID.
 fn parse_user_id(index: usize, raw: &str) -> Result<UserId, OidcSubjectMapError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -565,21 +509,6 @@ mod tests {
         ));
     }
 
-    /// The shorthand has no field for it, so it can never certify a runner.
-    #[test]
-    fn legacy_shorthand_never_yields_a_trusted_model_id() {
-        let raw = format!("subject-1:{}", uuid_str());
-        let map = OidcSubjectMap::from_legacy_shorthand(&raw, &[ISSUER_A.to_string()])
-            .expect("single-issuer shorthand accepted");
-
-        assert_eq!(
-            map.resolve_binding(ISSUER_A, "subject-1")
-                .expect("mapped")
-                .trusted_model_id,
-            None
-        );
-    }
-
     /// `insert` is the identity-only door; it binds no runner.
     #[test]
     fn plain_insert_binds_no_trusted_model_id() {
@@ -600,97 +529,5 @@ mod tests {
             OidcSubjectMap::from_json("not json"),
             Err(OidcSubjectMapError::InvalidJson(_))
         ));
-    }
-
-    #[test]
-    fn legacy_shorthand_binds_every_entry_to_the_sole_accepted_issuer() {
-        let user_a = uuid_str();
-        let user_b = uuid_str();
-        let raw = format!("subject-1:{user_a},subject-2:{user_b}");
-
-        let map = OidcSubjectMap::from_legacy_shorthand(&raw, &[ISSUER_A.to_string()])
-            .expect("single-issuer shorthand accepted");
-
-        assert_eq!(
-            map.resolve(ISSUER_A, "subject-1"),
-            Some(UserId::new(uuid::Uuid::parse_str(&user_a).unwrap()))
-        );
-        assert_eq!(
-            map.resolve(ISSUER_A, "subject-2"),
-            Some(UserId::new(uuid::Uuid::parse_str(&user_b).unwrap()))
-        );
-    }
-
-    #[test]
-    fn sub_only_subject_map_is_rejected_when_multiple_issuers_are_configured() {
-        let raw = format!("subject-1:{}", uuid_str());
-
-        let err = OidcSubjectMap::from_legacy_shorthand(
-            &raw,
-            &[ISSUER_A.to_string(), ISSUER_B.to_string()],
-        )
-        .expect_err("ambiguous issuer must be rejected");
-
-        assert_eq!(
-            err,
-            OidcSubjectMapError::AmbiguousIssuerForShorthand { count: 2 }
-        );
-    }
-
-    #[test]
-    fn legacy_shorthand_trims_the_subject_as_it_trims_the_user_id() {
-        let user = uuid_str();
-        let issuers = [ISSUER_A.to_string()];
-        let map = OidcSubjectMap::from_legacy_shorthand(&format!(" alice : {user} "), &issuers)
-            .expect("padded entry");
-        assert!(map.resolve(ISSUER_A, "alice").is_some());
-        assert!(map.resolve(ISSUER_A, "alice ").is_none());
-        assert!(matches!(
-            OidcSubjectMap::from_legacy_shorthand(&format!(" : {user}"), &issuers),
-            Err(OidcSubjectMapError::EmptyField { field: "sub", .. })
-        ));
-    }
-
-    #[test]
-    fn legacy_shorthand_rejects_zero_accepted_issuers() {
-        let raw = format!("subject-1:{}", uuid_str());
-
-        let err = OidcSubjectMap::from_legacy_shorthand(&raw, &[])
-            .expect_err("zero issuers is also ambiguous");
-
-        assert_eq!(
-            err,
-            OidcSubjectMapError::AmbiguousIssuerForShorthand { count: 0 }
-        );
-    }
-
-    #[test]
-    fn legacy_shorthand_rejects_malformed_entry() {
-        let err = OidcSubjectMap::from_legacy_shorthand("subject-1", &[ISSUER_A.to_string()])
-            .expect_err("missing colon is malformed");
-        assert!(matches!(
-            err,
-            OidcSubjectMapError::MalformedShorthandEntry { index: 0, .. }
-        ));
-    }
-
-    #[test]
-    fn legacy_shorthand_rejects_invalid_uuid() {
-        let err =
-            OidcSubjectMap::from_legacy_shorthand("subject-1:not-a-uuid", &[ISSUER_A.to_string()])
-                .expect_err("invalid uuid rejected");
-        assert!(matches!(
-            err,
-            OidcSubjectMapError::InvalidUserId { index: 0, .. }
-        ));
-    }
-
-    #[test]
-    fn legacy_shorthand_rejects_duplicate_subjects() {
-        let user_id = uuid_str();
-        let raw = format!("subject-1:{user_id},subject-1:{user_id}");
-        let err = OidcSubjectMap::from_legacy_shorthand(&raw, &[ISSUER_A.to_string()])
-            .expect_err("duplicate subject rejected");
-        assert!(matches!(err, OidcSubjectMapError::DuplicateEntry { .. }));
     }
 }

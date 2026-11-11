@@ -214,7 +214,6 @@ pub struct UnitOfWork<'a> {
     engine: &'a Engine,
     authorization: UnitAuthorization<'a>,
     session: Option<Box<dyn WriteSession>>,
-    committed: bool,
     /// Set when a host-state participant returns a storage error after the
     /// session opened. Commit is then refused and drop rolls the unit back.
     poisoned: bool,
@@ -409,7 +408,6 @@ impl std::fmt::Debug for HostStateUnitOfWork<'_> {
 impl std::fmt::Debug for UnitOfWork<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnitOfWork")
-            .field("committed", &self.committed)
             .field("poisoned", &self.poisoned)
             .field("open", &self.session.is_some())
             .finish_non_exhaustive()
@@ -433,7 +431,6 @@ impl Engine {
             engine: self,
             authorization: UnitAuthorization::Ordinary(authz),
             session: None,
-            committed: false,
             poisoned: false,
             written: Vec::new(),
             written_kinds: Vec::new(),
@@ -468,7 +465,6 @@ impl Engine {
             engine: self,
             authorization: UnitAuthorization::System(authority),
             session: None,
-            committed: false,
             poisoned: false,
             written: Vec::new(),
             written_kinds: Vec::new(),
@@ -541,7 +537,6 @@ impl Engine {
                     descriptor: authority.descriptor,
                 },
                 session: None,
-                committed: false,
                 poisoned: false,
                 written: Vec::new(),
                 written_kinds: Vec::new(),
@@ -568,7 +563,6 @@ impl Engine {
                 engine: self,
                 authorization: UnitAuthorization::GoalWork { authz, owner, goal },
                 session: None,
-                committed: false,
                 poisoned: false,
                 written: Vec::new(),
                 written_kinds: Vec::new(),
@@ -679,9 +673,6 @@ impl<'a> UnitOfWork<'a> {
     }
 
     async fn ensure_session(&mut self) -> Result<&mut Box<dyn WriteSession>, ProtocolError> {
-        if self.committed {
-            return Err(ProtocolError::internal("unit of work already committed"));
-        }
         if self.erased {
             return Err(ProtocolError::internal(
                 "unit of work ran erase_own_series; commit it and open another unit",
@@ -1396,7 +1387,7 @@ impl<'a> UnitOfWork<'a> {
         selection: SeriesSelection,
         mode: EraseMode,
     ) -> Result<SeriesEraseReceipt, SeriesEraseError> {
-        if self.committed || self.poisoned || self.erased || self.session.is_some() {
+        if self.poisoned || self.erased || self.session.is_some() {
             return Err(ProtocolError::invalid_argument(
                 "unit_of_work",
                 "erase_own_series must be the first and only operation of its unit",
@@ -1486,16 +1477,12 @@ impl<'a> UnitOfWork<'a> {
     ///
     /// Storage commit faults.
     pub async fn commit(mut self) -> Result<(), ProtocolError> {
-        if self.committed {
-            return Err(ProtocolError::internal("unit of work already committed"));
-        }
         if self.poisoned {
             self.session.take();
             return Err(ProtocolError::internal(
                 "unit of work failed after a host-state error; the transaction was not committed",
             ));
         }
-        self.committed = true;
         let Some(session) = self.session.take() else {
             return Ok(());
         };

@@ -12,9 +12,9 @@ name = "proxiima_mcp_server"
 
 [features]
 default = []
-# The `/v1` REST rendering of the frozen tool manifest (docs/17). Off by
-# default: it is a second transport projection, and a deployment that does
-# not want one should not compile it.
+# The `/v1` REST rendering of the frozen tool manifest (docs/protocol.md,
+# REST projection). Off by default: it is a second transport projection, and
+# a deployment that does not want one should not compile it.
 rest = []
 
 [dependencies]

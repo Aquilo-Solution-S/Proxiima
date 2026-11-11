@@ -50,8 +50,9 @@ uuid = { workspace = true }
 default = ["openai-compat-embed", "auth-oidc"]
 auth-oidc = ["dep:proxiima-auth-oidc"]
 openai-compat-embed = ["dep:proxiima-llm-openai-compat"]
-# Compile the `/v1` REST rendering of the tool manifest (docs/17). Compiling
-# it is not enabling it: the surface still needs `PROXIIMA_REST_ENABLED`.
+# Compile the `/v1` REST rendering of the tool manifest (docs/protocol.md,
+# REST projection). Compiling it is not enabling it: the surface still needs
+# `PROXIIMA_REST_ENABLED`.
 rest = ["proxiima-mcp-server/rest"]
 # Test support for spiice crates (`proxiima::testkit`): PG fixtures, a verified
 # owner-scoped AuthzContext (core `test-fixtures`), split-role databases and

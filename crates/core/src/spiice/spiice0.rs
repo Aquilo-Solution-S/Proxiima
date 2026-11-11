@@ -1,6 +1,6 @@
 //! Spiice #0 — core, as a declaration.
 //!
-//! Core registers 13 schemas, 15 MCP tools and 12 `proxiima://` resources
+//! Core registers its schemas, MCP tools and `proxiima://` resources
 //! across five sites, and this module is the `SpiiceDescriptor` that makes
 //! them visible to the registry that is meant to be the single source of
 //! truth.
