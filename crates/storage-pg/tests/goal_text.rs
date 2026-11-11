@@ -336,6 +336,7 @@ impl Harness {
         let pool = self.pg.pool_for_tests();
         let handle = Uuid::now_v7();
         let t = Uuid::now_v7();
+        // Raw INSERT on purpose: a Goal row written before v0.0.13, with no declaration and no text, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
              VALUES ($1, $2, $3, $4)",
@@ -346,6 +347,7 @@ impl Harness {
         .bind(t)
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: a Goal row written before v0.0.13, with no declaration and no text, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal
                  (handle, t, owner_id, title, state, request_id, assignment_t, \"by\", via)
@@ -376,6 +378,7 @@ impl Harness {
         let t = Uuid::from_bytes(bytes);
         assert!(MemoryId::new(t).created_at() > time::OffsetDateTime::now_utc());
         let mut tx = self.pg.pool_for_tests().begin().await?;
+        // Raw INSERT on purpose: a first version stamped in the future, as another process would write it, which the writer cannot mint here
         sqlx::query(
             "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
              VALUES ($1, $2, $3, $4)",
@@ -386,6 +389,7 @@ impl Harness {
         .bind(t)
         .execute(tx.as_mut())
         .await?;
+        // Raw INSERT on purpose: a first version stamped in the future, as another process would write it, which the writer cannot mint here
         sqlx::query(
             "INSERT INTO proxiima_core.goal
                  (handle, t, owner_id, title, text, state, request_id, assignment_t, \"by\", via)
@@ -822,6 +826,7 @@ goal_test!(
             .create("replay-source-two", "replayable two", "also me")
             .await?;
         let recorded = Uuid::now_v7();
+        // Raw INSERT on purpose: a transition row and declaration as an older binary recorded them, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal
              (handle, t, owner_id, title, state, request_id, assignment_t, \"by\", via)
@@ -840,6 +845,7 @@ goal_test!(
         .bind(source_two.goal_id.into_inner())
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: a transition row and declaration as an older binary recorded them, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
          VALUES ($1, $2, 'recorded-before', $3, 1)",
@@ -913,6 +919,7 @@ goal_test!(
         // its retry now conflicts instead of replaying (the migration guide says
         // so).
         let legacy = Uuid::now_v7();
+        // Raw INSERT on purpose: a transition row and declaration as an older binary recorded them, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal
              (handle, t, owner_id, title, state, request_id, assignment_t, \"by\", via)
@@ -923,6 +930,7 @@ goal_test!(
         .bind(source_two.goal_id.into_inner())
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: a transition row and declaration as an older binary recorded them, which the writer no longer produces
         sqlx::query(
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
          VALUES ($1, $2, 'recorded-pause', $3, 1)",

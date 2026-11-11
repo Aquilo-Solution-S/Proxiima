@@ -13,7 +13,10 @@ use proxiima_core::{
     EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, MemoryId, OwnerId, Role, SchemaId,
     SpaceVector, StorageError, UserId,
 };
-use proxiima_storage_pg::test_fixtures::fresh_pg_host_index;
+use proxiima_storage_pg::PgStorage;
+use proxiima_storage_pg::test_fixtures::{
+    TestDerived, TestGoal, TestNote, create_embedding_of, create_user, fresh_pg_host_index,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -147,92 +150,75 @@ fn readable_perspective_request(source_owner: OwnerId) -> MemorySearchRequest {
     }
 }
 
-async fn seed(pool: &PgPool, owner: OwnerId, schema: &str, tag: &str) -> Result<Uuid, sqlx::Error> {
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'personal') ON CONFLICT DO NOTHING")
-        .bind(owner.into_inner()).execute(pool).await?;
+/// A note tagged `tag`, whose projection the search hydrates.
+async fn seed_note(pg: &PgStorage, owner: OwnerId, tag: &str) -> Result<Uuid, StorageError> {
+    let note = TestNote::new("Index result", "Hydrated from memory").tags(&[tag]);
+    Ok(note.create(pg, owner).await?.memory_id.into_inner())
+}
+
+/// A Fact tagged `tag` under a schema no spiice registers. `owner` already
+/// has its owner row.
+// Raw INSERT on purpose: the write path writes a projection row only for a
+// registered schema. This candidate matches the tag, so its schema is the one
+// reason the search does not admit it.
+async fn seed_unregistered_schema_fact(
+    pool: &sqlx::PgPool,
+    owner: OwnerId,
+    tag: &str,
+) -> Result<Uuid, sqlx::Error> {
+    let schema = "semantic/other-v1";
     let t = Uuid::now_v7();
     let handle = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id) VALUES ($1, $2, 'fact', $3, $4)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema).execute(pool).await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id)
+         VALUES ($1, $2, 'fact', $3, $4)",
+    )
+    .bind(handle)
+    .bind(t)
+    .bind(owner.into_inner())
+    .bind(schema)
+    .execute(pool)
+    .await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via) VALUES ($1, $2, 'fact', $3, $4, $5, uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema)
-        .bind(if schema == "core/agent-note-v1" { vec!["proxiima_core.agent_note_v1"] } else { Vec::new() })
-        .execute(&mut *tx).await?;
-    if schema == "core/agent-note-v1" {
-        sqlx::query("INSERT INTO proxiima_core.agent_note_v1(t, note_id, title, body, tags) VALUES ($1, $2, 'Index result', 'Hydrated from memory', ARRAY[$3])")
-            .bind(t).bind(Uuid::now_v7()).bind(tag).execute(&mut *tx).await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory
+             (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
+         VALUES ($1, $2, 'fact', $3, $4, '{}', uuid_extract_timestamp($2),
+                 '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+    )
+    .bind(handle)
+    .bind(t)
+    .bind(owner.into_inner())
+    .bind(schema)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.projection(memory_id, schema_id, owner_id, search_tsv, tag)
+         VALUES ($1, $2, $3, ''::tsvector, ARRAY[$4])",
+    )
+    .bind(t)
+    .bind(schema)
+    .bind(owner.into_inner())
+    .bind(tag)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(t)
+}
+
+/// Write `entity` `versions` times into the `memory-index` space: its head
+/// and the host index hold the last version.
+async fn embed(
+    pg: &PgStorage,
+    owner: OwnerId,
+    entity: Uuid,
+    versions: usize,
+) -> Result<(), StorageError> {
+    for _ in 0..versions {
+        let chunks = vec![vector(1.0).values().to_vec()];
+        create_embedding_of(pg, owner, MemoryId::new(entity), "memory-index", chunks).await?;
     }
-    sqlx::query("INSERT INTO proxiima_core.projection(memory_id, schema_id, owner_id, search_tsv, tag) VALUES ($1, $2, $3, ''::tsvector, ARRAY[$4])")
-        .bind(t).bind(schema).bind(owner.into_inner()).bind(tag).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(t)
-}
-
-async fn seed_perspective(
-    pool: &PgPool,
-    owner: OwnerId,
-    tag: &str,
-    origin: Uuid,
-) -> Result<Uuid, sqlx::Error> {
-    let schema = "core/agent-derivation-v1";
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'personal') ON CONFLICT DO NOTHING")
-        .bind(owner.into_inner()).execute(pool).await?;
-    let t = Uuid::now_v7();
-    let handle = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id) VALUES ($1, $2, 'perspective', $3, $4)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema).execute(pool).await?;
-    let mut tx = pool.begin().await?;
-    let content_id = Uuid::now_v7();
-    let mut content_hash = Vec::with_capacity(32);
-    content_hash.extend_from_slice(content_id.as_bytes());
-    content_hash.extend_from_slice(content_id.as_bytes());
-    sqlx::query("INSERT INTO proxiima_core.content(content_id, owner_id, schema_id, content_hash) VALUES ($1, $2, $3, $4)")
-        .bind(content_id).bind(owner.into_inner()).bind(schema).bind(content_hash)
-        .execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, content_id, origins, sidecar_tables, occurred_at, \"by\", via) VALUES ($1, $2, 'perspective', $3, $4, $5, ARRAY[$6]::uuid[], $7, NULL, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema)
-        .bind(content_id).bind(origin)
-        .bind(vec!["proxiima_core.agent_derivation_v1"])
-        .execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.agent_derivation_v1(t, title, body, tags, source_memory_ids, model_id, client_name, client_version) VALUES ($1, 'Published perspective', 'Hydrated perspective', ARRAY[$2], '{}', 'test', 'test', '1')")
-        .bind(t).bind(tag).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.projection(memory_id, schema_id, owner_id, search_tsv, tag) VALUES ($1, $2, $3, ''::tsvector, ARRAY[$4])")
-        .bind(t).bind(schema).bind(owner.into_inner()).bind(tag).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(t)
-}
-
-async fn seed_abstraction(
-    pool: &PgPool,
-    owner: OwnerId,
-    tag: &str,
-    origin: Uuid,
-) -> Result<Uuid, sqlx::Error> {
-    let schema = "core/agent-derivation-v1";
-    let t = Uuid::now_v7();
-    let handle = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id) VALUES ($1, $2, 'abstraction', $3, $4)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema).execute(pool).await?;
-    let mut tx = pool.begin().await?;
-    let content_id = Uuid::now_v7();
-    let mut content_hash = Vec::with_capacity(32);
-    content_hash.extend_from_slice(content_id.as_bytes());
-    content_hash.extend_from_slice(content_id.as_bytes());
-    sqlx::query("INSERT INTO proxiima_core.content(content_id, owner_id, schema_id, content_hash) VALUES ($1, $2, $3, $4)")
-        .bind(content_id).bind(owner.into_inner()).bind(schema).bind(content_hash)
-        .execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, content_id, origins, sidecar_tables, occurred_at, \"by\", via) VALUES ($1, $2, 'abstraction', $3, $4, $5, ARRAY[$6]::uuid[], $7, NULL, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
-        .bind(handle).bind(t).bind(owner.into_inner()).bind(schema)
-        .bind(content_id).bind(origin)
-        .bind(vec!["proxiima_core.agent_derivation_v1"])
-        .execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.agent_derivation_v1(t, title, body, tags, source_memory_ids, model_id, client_name, client_version) VALUES ($1, 'Grounding abstraction', 'Grounding abstraction', ARRAY[$2], '{}', 'test', 'test', '1')")
-        .bind(t).bind(tag).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.projection(memory_id, schema_id, owner_id, search_tsv, tag) VALUES ($1, $2, $3, ''::tsvector, ARRAY[$4])")
-        .bind(t).bind(schema).bind(owner.into_inner()).bind(tag).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(t)
+    Ok(())
 }
 
 #[tokio::test]
@@ -241,10 +227,10 @@ async fn semantic_port_expands_past_stale_foreign_and_filtered_candidates() -> T
     let (pg, _database) = fresh_pg_host_index("semantic_memory_index", index.clone()).await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let visible = seed(pg.pool_for_tests(), owner, "core/agent-note-v1", "wanted").await?;
-    let wrong_tag = seed(pg.pool_for_tests(), owner, "core/agent-note-v1", "other").await?;
-    let wrong_schema = seed(pg.pool_for_tests(), owner, "semantic/other-v1", "wanted").await?;
-    let foreign = seed(pg.pool_for_tests(), other, "core/agent-note-v1", "wanted").await?;
+    let visible = seed_note(&pg, owner, "wanted").await?;
+    let wrong_tag = seed_note(&pg, owner, "other").await?;
+    let wrong_schema = seed_unregistered_schema_fact(pg.pool_for_tests(), owner, "wanted").await?;
+    let foreign = seed_note(&pg, other, "wanted").await?;
     let entity = |id| EmbeddableEntityRef::Memory {
         kind: EntityKind::Fact,
         memory_id: MemoryId::new(id),
@@ -281,40 +267,14 @@ async fn publish_semantic_fixture(
     published: Uuid,
     read_ceiling: i16,
 ) -> TestResult {
-    let guest_owner = OwnerId::from(guest);
-    let goal_handle = Uuid::now_v7();
-    let goal_t = Uuid::now_v7();
+    create_user(pg.pool_for_tests(), guest).await?;
+    let goal_handle = TestGoal::new(&Uuid::now_v7().to_string())
+        .title("semantic publication")
+        .create(pg, source_owner)
+        .await?
+        .handle;
     let mut platform = pg.platform_scope_for_host().begin().await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners(owner_id, kind)
-         VALUES ($1, 'personal'), ($2, 'personal')
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(source_owner.into_inner())
-    .bind(guest_owner.into_inner())
-    .execute(&mut *platform)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal_head
-             (handle, schema_id, owner_id, t, authority_generation)
-         VALUES ($1, 'core/simple-text-v1', $2, $3, 0)",
-    )
-    .bind(goal_handle)
-    .bind(source_owner.into_inner())
-    .bind(goal_t)
-    .execute(&mut *platform)
-    .await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal
-             (handle, t, owner_id, title, state, request_id, \"by\", via)
-         VALUES ($1, $2, $3, 'semantic publication', 'Active', $4, $3, NULL)",
-    )
-    .bind(goal_handle)
-    .bind(goal_t)
-    .bind(source_owner.into_inner())
-    .bind(goal_t.to_string())
-    .execute(&mut *platform)
-    .await?;
+    // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
     sqlx::query(
         "INSERT INTO proxiima_core.goal_access_grant
              (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -329,6 +289,7 @@ async fn publish_semantic_fixture(
     .bind(read_ceiling)
     .execute(&mut *platform)
     .await?;
+    // Raw INSERT: no write path for goal_memory_publication reachable from test fixtures
     sqlx::query(
         "INSERT INTO proxiima_core.goal_memory_publication
              (goal_handle, memory_t, source_owner, source_generation,
@@ -359,24 +320,10 @@ async fn readable_goal_semantic_search_reaches_a_far_published_fact() -> TestRes
     let (pg, _database) = fresh_pg_host_index("semantic_goal_publication", index.clone()).await;
     let source_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let guest = UserId::new(Uuid::now_v7());
-    let published = seed(
-        pg.pool_for_tests(),
-        source_owner,
-        "core/agent-note-v1",
-        "wanted",
-    )
-    .await?;
+    let published = seed_note(&pg, source_owner, "wanted").await?;
     let mut private = Vec::with_capacity(1_200);
     for _ in 0..1_200 {
-        private.push(
-            seed(
-                pg.pool_for_tests(),
-                source_owner,
-                "core/agent-note-v1",
-                "wanted",
-            )
-            .await?,
-        );
+        private.push(seed_note(&pg, source_owner, "wanted").await?);
     }
 
     publish_semantic_fixture(&pg, source_owner, guest, published, 1).await?;
@@ -426,21 +373,26 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
         fresh_pg_host_index("semantic_goal_perspective_role", index.clone()).await;
     let source_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let guest = UserId::new(Uuid::now_v7());
-    let origin = seed(
-        pg.pool_for_tests(),
-        source_owner,
-        "core/agent-note-v1",
-        "grounding",
-    )
-    .await?;
-    let abstraction =
-        seed_abstraction(pg.pool_for_tests(), source_owner, "grounding", origin).await?;
-    let published =
-        seed_perspective(pg.pool_for_tests(), source_owner, "wanted", abstraction).await?;
+    let origin = seed_note(&pg, source_owner, "grounding").await?;
+    let abstraction = TestDerived::abstraction(MemoryId::new(origin))
+        .tags(&["grounding"])
+        .create(&pg, source_owner)
+        .await?
+        .memory_id;
+    let perspective = || TestDerived::perspective(abstraction).tags(&["wanted"]);
+    let published = perspective()
+        .create(&pg, source_owner)
+        .await?
+        .memory_id
+        .into_inner();
     let mut private = Vec::with_capacity(1_200);
     for _ in 0..1_200 {
         private.push(
-            seed_perspective(pg.pool_for_tests(), source_owner, "wanted", abstraction).await?,
+            perspective()
+                .create(&pg, source_owner)
+                .await?
+                .memory_id
+                .into_inner(),
         );
     }
 
@@ -499,24 +451,6 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
     Ok(())
 }
 
-async fn head(
-    pool: &PgPool,
-    entity: Uuid,
-    owner: OwnerId,
-    version: i32,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO proxiima_core.embedding_heads (entity_id, model_id, dim, embedding_version, owner_id)
-         VALUES ($1, 'memory-index', 384, $2, $3)",
-    )
-    .bind(entity)
-    .bind(version)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await
-    .map(drop)
-}
-
 fn key(entity: Uuid) -> VectorKey {
     VectorKey {
         entity_id: entity,
@@ -548,12 +482,11 @@ async fn the_drain_pays_head_deletes_and_owner_moves_to_the_index() -> TestResul
     let pool = pg.pool_for_tests().clone();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let gone = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    let moved = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    seed(&pool, other, "core/agent-note-v1", "wanted").await?;
+    let gone = seed_note(&pg, owner, "wanted").await?;
+    let moved = seed_note(&pg, owner, "wanted").await?;
+    seed_note(&pg, other, "wanted").await?;
     for entity in [gone, moved] {
-        head(&pool, entity, owner, 1).await?;
-        index.put(fact(entity), owner, 1, &[vector(1.0)]).await?;
+        embed(&pg, owner, entity, 1).await?;
     }
     sqlx::query("DELETE FROM proxiima_core.embedding_heads WHERE entity_id = $1")
         .bind(gone)
@@ -591,15 +524,18 @@ async fn the_sweep_repairs_the_index_against_the_heads() -> TestResult {
     let pool = pg.pool_for_tests().clone();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-    seed(&pool, other, "core/agent-note-v1", "wanted").await?;
-    let kept = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    let misowned = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    let lost = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    let stale_version = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
+    seed_note(&pg, other, "wanted").await?;
+    let kept = seed_note(&pg, owner, "wanted").await?;
+    let misowned = seed_note(&pg, owner, "wanted").await?;
+    let lost = seed_note(&pg, owner, "wanted").await?;
+    let stale_version = seed_note(&pg, owner, "wanted").await?;
     for entity in [kept, misowned, lost, stale_version] {
-        head(&pool, entity, owner, 2).await?;
+        embed(&pg, owner, entity, 2).await?;
     }
-    index.put(fact(kept), owner, 2, &[vector(1.0)]).await?;
+    // The index then drifts from the heads: it forgets `lost`, files
+    // `misowned` under another owner and holds an old version of
+    // `stale_version`.
+    index.delete(&[key(lost)]).await?;
     index.put(fact(misowned), other, 2, &[vector(1.0)]).await?;
     index
         .put(fact(stale_version), owner, 1, &[vector(1.0)])
@@ -652,13 +588,10 @@ async fn an_owner_erase_takes_its_entries_out_of_the_index() -> TestResult {
     let user = UserId::new(Uuid::now_v7());
     let owner = OwnerId::from(user);
     let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let erased = seed(&pool, owner, "core/agent-note-v1", "wanted").await?;
-    let kept = seed(&pool, other, "core/agent-note-v1", "wanted").await?;
+    let erased = seed_note(&pg, owner, "wanted").await?;
+    let kept = seed_note(&pg, other, "wanted").await?;
     for (entity, entity_owner) in [(erased, owner), (kept, other)] {
-        head(&pool, entity, entity_owner, 1).await?;
-        index
-            .put(fact(entity), entity_owner, 1, &[vector(1.0)])
-            .await?;
+        embed(&pg, entity_owner, entity, 1).await?;
     }
 
     let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
@@ -699,7 +632,7 @@ async fn short_remote_bound_survives_local_tag_admission() -> TestResult {
         });
         let (pg, _database) = fresh_pg_host_index("semantic_bound_admission", index.clone()).await;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let wrong_tag = seed(pg.pool_for_tests(), owner, "core/agent-note-v1", "other").await?;
+        let wrong_tag = seed_note(&pg, owner, "other").await?;
         index
             .put(
                 EmbeddableEntityRef::Memory {

@@ -10,7 +10,7 @@ use proxiima_core::verbs::query::EntityKind;
 use proxiima_core::{AccessKind, EdgeEndpoint, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{TestGoal, create_content, create_core_db};
 use uuid::Uuid;
 
 /// The five sidecar legs exactly as the engine assembles them: from the
@@ -181,6 +181,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
         // table in the owner bundle.
         let witnessed_t = Uuid::now_v7();
         let witnessed_handle = Uuid::now_v7();
+        // Raw INSERT on purpose: the ordinary write adds a sketch row, which the sketch count below pins
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/test-fact-v1', $2, $3)",
@@ -190,6 +191,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
         .bind(witnessed_t)
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: the ordinary write adds a sketch row, which the sketch count below pins
         sqlx::query(
             "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
              VALUES ($1, $2, 'fact', $3, 'core/test-fact-v1', uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -213,6 +215,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
 
         // A completed upload names where its bytes live (bucket, object key,
         // etag). The export carries the upload row, never those locators.
+        // Raw INSERT: no write path for blob reachable from test fixtures; only a citation admission writes one, and it adds a memory
         let upload_blob: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'opaque/archive-v1', $2)
@@ -222,6 +225,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
         .bind(vec![5u8; 32])
         .fetch_one(pool)
         .await?;
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len, status,
@@ -395,6 +399,7 @@ async fn export_carries_registered_citation_sidecar_rows() {
             let permit = OwnerWritePermit::new_for_tests(holder, AccessKind::Fact);
             pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
                 .await?;
+            // Raw INSERT: no write path for blob reachable from test fixtures; only a citation admission writes one, and it adds a memory
             let blob_id: Uuid = sqlx::query_scalar(
                 "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
                  VALUES ($1, $2, $3)
@@ -405,6 +410,7 @@ async fn export_carries_registered_citation_sidecar_rows() {
             .bind(vec![seed; 32])
             .fetch_one(pool)
             .await?;
+            // Raw INSERT: no write path for test_cited_object_v1 reachable from test fixtures; the test creates it
             sqlx::query(
                 "INSERT INTO proxiima_core.test_cited_object_v1 (cited_object_id, body)
                  VALUES ($1, $2)",
@@ -413,6 +419,7 @@ async fn export_carries_registered_citation_sidecar_rows() {
             .bind(body)
             .execute(pool)
             .await?;
+            // Raw INSERT: no write path for test_cited_span_v1 reachable from test fixtures; the test creates it
             sqlx::query(
                 "INSERT INTO proxiima_core.test_cited_span_v1
                      (span_blob_id, page_from)
@@ -477,6 +484,7 @@ async fn export_carries_owner_scoped_opaque_blob_metadata() {
                 .await?;
         }
 
+        // Raw INSERT: no write path for blob reachable from test fixtures; only a citation admission writes one, and it adds a memory
         let blob_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'opaque/archive-v1', $2)
@@ -486,6 +494,7 @@ async fn export_carries_owner_scoped_opaque_blob_metadata() {
         .bind(vec![7u8; 32])
         .fetch_one(pool)
         .await?;
+        // Raw INSERT: no write path for blob reachable from test fixtures; only a citation admission writes one, and it adds a memory
         sqlx::query(
             "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
              VALUES ($1, 'opaque/archive-v1', $2)",
@@ -662,24 +671,9 @@ async fn export_carries_the_owners_content_rows() {
             None,
         )
         .await?;
-        let content_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/test-abs-v1', $2)
-             RETURNING content_id",
-        )
-        .bind(owner.into_inner())
-        .bind(vec![7_u8; 32])
-        .fetch_one(pool)
-        .await?;
+        let content_id = create_content(pool, owner, "core/test-abs-v1", [7_u8; 32]).await?;
         // A neighbour's content stays out.
-        sqlx::query(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/test-abs-v1', $2)",
-        )
-        .bind(neighbour.into_inner())
-        .bind(vec![8_u8; 32])
-        .execute(pool)
-        .await?;
+        create_content(pool, neighbour, "core/test-abs-v1", [8_u8; 32]).await?;
 
         let auth =
             ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner { user_id: user });
@@ -726,28 +720,15 @@ async fn export_carries_goal_controller_grants_only() {
                 .await?;
         }
         let pool = pg.pool_for_tests();
-        let goal = Uuid::now_v7();
-        let other_goal = Uuid::now_v7();
-        for (goal, owner, request_id) in [(goal, controller, "grant-owner"), (other_goal, other, "grant-other")] {
-            sqlx::query(
-                "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-                 VALUES ($1, 'core/task-goal-v1', $2, $1)",
-            )
-            .bind(goal)
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
-            sqlx::query(
-                "INSERT INTO proxiima_core.goal (handle, t, owner_id, title, state, request_id, \"by\", via)
-                 VALUES ($1, $1, $2, 'grant goal', 'Active', $3, $4, NULL)",
-            )
-            .bind(goal)
-            .bind(owner.into_inner())
-            .bind(request_id)
-            .bind(owner.into_inner())
-            .execute(pool)
-            .await?;
-        }
+        let goal = TestGoal::new("grant-owner")
+            .create(&pg, controller)
+            .await?
+            .handle;
+        let other_goal = TestGoal::new("grant-other")
+            .create(&pg, other)
+            .await?
+            .handle;
+        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.goal_access_grant
                 (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -758,6 +739,7 @@ async fn export_carries_goal_controller_grants_only() {
         .bind(subject.into_inner())
         .execute(pool)
         .await?;
+        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.goal_access_grant
                 (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
@@ -801,7 +783,11 @@ async fn export_carries_source_owned_goal_publication_fields() {
         let controller = OwnerId::from(UserId::new(Uuid::now_v7()));
         let source_permit = OwnerWritePermit::new_for_tests(source, AccessKind::Fact);
         let memory = pg
-            .ingest_fact_atomic(&source_permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
+            .ingest_fact_atomic(
+                &source_permit,
+                &draft(MemoryKind::Fact, vec![], vec![]),
+                None,
+            )
             .await?
             .memory_id
             .into_inner();
@@ -813,23 +799,12 @@ async fn export_carries_source_owned_goal_publication_fields() {
         )
         .await?;
         let pool = pg.pool_for_tests();
-        let goal = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-             VALUES ($1, 'core/task-goal-v1', $2, $1)",
-        )
-        .bind(goal)
-        .bind(controller.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal (handle, t, owner_id, title, state, request_id, \"by\", via)
-             VALUES ($1, $1, $2, 'publication goal', 'Active', 'publication-goal', $2, NULL)",
-        )
-        .bind(goal)
-        .bind(controller.into_inner())
-        .execute(pool)
-        .await?;
+        let goal = TestGoal::new("publication-goal")
+            .title("publication goal")
+            .create(&pg, controller)
+            .await?
+            .handle;
+        // Raw INSERT: no write path for goal_memory_publication reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.goal_memory_publication
                 (goal_handle, memory_t, source_owner, source_generation,

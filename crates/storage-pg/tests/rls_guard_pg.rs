@@ -110,6 +110,7 @@ async fn assert_unscoped_owner_access_denied(connection: &mut sqlx::PgConnection
             .rows_affected(),
         0
     );
+    // Raw INSERT on purpose: an unscoped connection must be refused by RLS
     let error =
         sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
             .bind(uuid::Uuid::now_v7())
@@ -607,6 +608,7 @@ async fn runtime_guard_accepts_complete_schema_and_refuses_structural_breaks() {
     .unwrap();
     assert_eq!(count, 0);
     // SQL-POLICY: fixed-fragment
+    // Raw INSERT on purpose: a table with no scope column must refuse the write
     let missing_scope = sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {}.memory (id, owner_id) VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002')", quoted_ident(&schema))))
         .execute(&runtime).await;
     assert_rls_refusal(&missing_scope.expect_err("missing app.owner must refuse writes"));
@@ -982,6 +984,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let owner_b = uuid::Uuid::now_v7();
     let group_a = GroupId::new(owner_a);
     let group_b = GroupId::new(owner_b);
+    // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
     execute(
         &admin,
         &format!(
@@ -1001,6 +1004,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
         } else {
             owner_b_t = t;
         }
+        // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
         execute(
             &admin,
             &format!(
@@ -1010,8 +1014,10 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
         )
         .await;
         let mut transaction = admin.begin().await.unwrap();
+        // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
         sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,sidecar_tables, occurred_at, \"by\", via) VALUES ($1,$2,'fact',$3,'core/test',ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
             .bind(handle).bind(t).bind(owner).execute(&mut *transaction).await.unwrap();
+        // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
         sqlx::query(
             "INSERT INTO proxiima_core.agent_note_v1(t,note_id,title,body) VALUES ($1,$2,$3,$3)",
         )
@@ -1074,12 +1080,15 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let derived_handle = uuid::Uuid::now_v7();
     let derived_t = uuid::Uuid::now_v7();
     let derived_content = uuid::Uuid::now_v7();
+    // Raw INSERT on purpose: written as the runtime role to exercise the cross-owner pin trigger bridge
     sqlx::query("INSERT INTO proxiima_core.content(content_id,owner_id,schema_id,content_hash) VALUES ($1,$2,'core/test',decode(repeat('00',32),'hex'))")
         .bind(derived_content).bind(owner_a)
         .execute(&mut *cross_owner_tx).await.unwrap();
+    // Raw INSERT on purpose: written as the runtime role to exercise the cross-owner pin trigger bridge
     sqlx::query("INSERT INTO proxiima_core.memory_head(handle,schema_id,kind,owner_id,t) VALUES ($1,'core/test','abstraction',$2,$3)")
         .bind(derived_handle).bind(owner_a).bind(derived_t)
         .execute(&mut *cross_owner_tx).await.unwrap();
+    // Raw INSERT on purpose: written as the runtime role to exercise the cross-owner pin trigger bridge
     sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,content_id,origins, \"by\", via) VALUES ($1,$2,'abstraction',$3,'core/test',$4,ARRAY[$5]::uuid[], '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
         .bind(derived_handle).bind(derived_t).bind(owner_a).bind(derived_content).bind(owner_b_t)
         .execute(&mut *cross_owner_tx).await.unwrap();
@@ -1127,12 +1136,15 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let new_handle = uuid::Uuid::now_v7();
     let new_t = uuid::Uuid::now_v7();
     let mut writer = begin_owner_transaction(&runtime, scope).await.unwrap();
+    // Raw INSERT on purpose: written as the runtime role under owner RLS, the policy being tested
     sqlx::query("INSERT INTO proxiima_core.memory_head(handle,schema_id,kind,owner_id,t) VALUES ($1,'core/agent-note-v1','fact',$2,$3)")
         .bind(new_handle).bind(owner_a).bind(new_t)
         .execute(&mut *writer).await.unwrap();
+    // Raw INSERT on purpose: written as the runtime role under owner RLS, the policy being tested
     sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,sidecar_tables, occurred_at, \"by\", via) VALUES ($1,$2,'fact',$3,'core/agent-note-v1',ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
         .bind(new_handle).bind(new_t).bind(owner_a)
         .execute(&mut *writer).await.unwrap();
+    // Raw INSERT on purpose: written as the runtime role under owner RLS, the policy being tested
     sqlx::query("INSERT INTO proxiima_core.agent_note_v1(t,note_id,title,body) VALUES ($1,$2,'runtime','runtime')")
         .bind(new_t).bind(uuid::Uuid::now_v7())
         .execute(&mut *writer).await.unwrap();
@@ -1155,6 +1167,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let mut viewer_tx = begin_owner_transaction(&runtime, viewer_authz.owner_scope().unwrap())
         .await
         .unwrap();
+    // Raw INSERT on purpose: a viewer role must be refused by RLS
     let denied = sqlx::query("INSERT INTO proxiima_core.agent_note_v1(t,note_id,title,body) VALUES ($1,$2,'viewer','viewer')")
         .bind(owner_a_t)
         .bind(uuid::Uuid::now_v7())
@@ -1179,6 +1192,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let mut mixed_tx = begin_owner_transaction(&runtime, mixed_authz.owner_scope().unwrap())
         .await
         .unwrap();
+    // Raw INSERT on purpose: a sidecar row under another owner must be refused by RLS
     let cross_owner_write = sqlx::query("INSERT INTO proxiima_core.agent_note_v1(t,note_id,title,body) VALUES ($1,$2,'mixed','mixed')")
         .bind(owner_a_t)
         .bind(uuid::Uuid::now_v7())
@@ -1201,6 +1215,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
 
     let mut foreign_insert = begin_owner_transaction(&runtime, scope).await.unwrap();
     let foreign_t = uuid::Uuid::now_v7();
+    // Raw INSERT on purpose: a head under another owner must be refused by RLS
     let error = sqlx::query("INSERT INTO proxiima_core.memory_head(handle,schema_id,kind,owner_id,t) VALUES ($1,'core/agent-note-v1','fact',$2,$1)")
         .bind(foreign_t).bind(owner_b).execute(&mut *foreign_insert).await
         .expect_err("owner A cannot insert owner B's head");
@@ -1210,6 +1225,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     // Owner scope registers a lexical language on first use and writes no
     // other deployment metadata.
     let mut metadata_tx = begin_owner_transaction(&runtime, scope).await.unwrap();
+    // Raw INSERT on purpose: owner scope may register a lexical language and nothing else
     sqlx::query(
         "INSERT INTO proxiima_core.lexical_languages (config)
          VALUES ('simple'::regconfig) ON CONFLICT DO NOTHING",
@@ -1234,6 +1250,7 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
         [0, 0, 0],
         "owner scope rewrote deployment metadata"
     );
+    // Raw INSERT on purpose: owner scope must be refused a spiice surface
     let error = sqlx::query(
         "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
          VALUES ('proxiima_core.forged', 'forged')",

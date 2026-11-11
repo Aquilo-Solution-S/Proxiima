@@ -24,6 +24,7 @@ fn note_spec() -> MemorySchemaSpec {
 async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx::Error> {
     let owner_id = owner.into_inner();
     let other_id = other.into_inner();
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.owners(owner_id, kind)
          VALUES ($1, 'personal'), ($2, 'personal')",
@@ -34,6 +35,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .await?;
     let mut stamped = pool.begin().await?;
     // The first rows in descending t order are untagged; matches are older.
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id)
          SELECT uuidv7(), uuidv7(), 'fact', $1, 'core/agent-note-v1'
@@ -42,6 +44,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .bind(owner_id)
     .execute(pool)
     .await?;
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id)
          VALUES (uuidv7(), uuidv7(), 'fact', $1, 'core/agent-note-v1')",
@@ -49,6 +52,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .bind(other_id)
     .execute(pool)
     .await?;
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -59,6 +63,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     )
     .execute(&mut *stamped)
     .await?;
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1(t, note_id, title, body, tags)
          SELECT m.t, uuidv7(), 'tag test', 'tag test',
@@ -82,6 +87,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .fetch_one(&mut *stamped)
     .await?;
     let handle: Uuid = current.try_get("handle")?;
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     let old = sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -94,6 +100,7 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .fetch_one(&mut *stamped)
     .await?;
     let old_t: Uuid = old.try_get("t")?;
+    // Raw INSERT on purpose: one transaction builds a corpus with a version newer than its head and a controlled tag order, which the write path never produces
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1(t, note_id, title, body, tags)
          VALUES ($1, uuidv7(), 'old', 'old', ARRAY['rust']::text[])",

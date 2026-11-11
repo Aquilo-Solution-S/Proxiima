@@ -315,6 +315,7 @@ async fn admit(
     origins: &[Uuid],
 ) -> Result<(), sqlx::Error> {
     let handle = handle_for(t);
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, $2::proxiima_core.memory_kind, $3, $4, $5)",
@@ -336,6 +337,7 @@ async fn admit(
         hash.extend_from_slice(t.as_bytes());
         hash.extend_from_slice(t.as_bytes());
         Some(
+            // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
             sqlx::query_scalar(
                 "INSERT INTO proxiima_core.content (content_id, owner_id, schema_id, content_hash)
                  VALUES ($1, $2, $3, $4) RETURNING content_id",
@@ -348,6 +350,7 @@ async fn admit(
             .await?,
         )
     };
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, origins, content_id, sidecar_tables, occurred_at, \"by\", via)
@@ -381,6 +384,7 @@ async fn seed(
     language_for: impl Fn(usize) -> Option<&'static str>,
 ) -> Result<(), sqlx::Error> {
     for owner_index in 0..OWNERS {
+        // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
         sqlx::query(
             "INSERT INTO proxiima_core.owners (owner_id, kind)
              VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
@@ -395,6 +399,7 @@ async fn seed(
     for (index, (owner, note)) in corpus(notes_per_owner).into_iter().enumerate() {
         let owner_id = owner.into_inner();
         admit(&mut stamped, owner_id, note.t, "fact", NOTE_SCHEMA, &[]).await?;
+        // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
         sqlx::query(
             "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
              VALUES ($1, $2, $3, $4, $5)",
@@ -419,6 +424,7 @@ async fn seed(
             &[first_note_of(index % OWNERS)],
         )
         .await?;
+        // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
         sqlx::query(
             "INSERT INTO proxiima_core.agent_derivation_v1
                  (t, title, body, tags, model_id, client_name, client_version)
@@ -987,6 +993,7 @@ async fn seed_note_revision(
     title: &str,
     body: &str,
 ) -> Result<(), sqlx::Error> {
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -999,6 +1006,7 @@ async fn seed_note_revision(
     .bind(sidecar_of(NOTE_SCHEMA))
     .execute(&mut *conn)
     .await?;
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
          VALUES ($1, $2, $3, $4, '{}')",
@@ -1017,6 +1025,7 @@ async fn seed_note_revision(
 /// live derivation, all under one owner.
 async fn seed_starvation(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let owner_id = owner_at(0).into_inner();
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind)
          VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
@@ -1035,6 +1044,7 @@ async fn seed_starvation(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         // The head row has to exist before any memory row can reference
         // the handle, so it is created pointing at the revision it will
         // later supersede — which is exactly the order a real write takes.
+        // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', $2, $3, $4)",
@@ -1074,6 +1084,7 @@ async fn seed_starvation(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         &[det_uuid(20_000)],
     )
     .await?;
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.agent_derivation_v1
              (t, title, body, tags, model_id, client_name, client_version)
@@ -1265,6 +1276,7 @@ const KIND_PROBE_FILLER: usize = 6;
 /// they are doomed.
 async fn seed_kind_probe(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let owner_id = owner_at(0).into_inner();
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind)
          VALUES ($1, 'personal') ON CONFLICT DO NOTHING",
@@ -1278,6 +1290,7 @@ async fn seed_kind_probe(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let mut stamped = pool.begin().await?;
     let anchor = det_uuid(100);
     admit(&mut stamped, owner_id, anchor, "fact", NOTE_SCHEMA, &[]).await?;
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
          VALUES ($1, $2, 'anchor', $3, '{}')",
@@ -1300,6 +1313,7 @@ async fn seed_kind_probe(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             &[anchor],
         )
         .await?;
+        // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
         sqlx::query(
             "INSERT INTO proxiima_core.agent_derivation_v1
                  (t, title, body, tags, model_id, client_name, client_version)
@@ -1332,6 +1346,7 @@ async fn seed_kind_probe(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         .map(|index| format!("filler{index}"))
         .collect::<Vec<_>>()
         .join(" ");
+    // Raw INSERT on purpose: fixed ids and orderings, and revisions older than their head, pin results captured before the projection existed; the write path mints its own ids
     sqlx::query(
         "INSERT INTO proxiima_core.interpretation_v1
              (t, claim, confidence, model_id, client_name, client_version)

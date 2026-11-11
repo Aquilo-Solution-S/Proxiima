@@ -30,7 +30,9 @@ use proxiima_core::{
     StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{
+    create_core_db, create_embedding_of, create_group, create_source_cursor,
+};
 use proxiima_storage_pg::{
     PgHostStateLifecyclePort, PgHostStateParticipant, PgPoolConfig, PgStorage,
 };
@@ -493,6 +495,7 @@ impl PgHostStateLifecyclePort for Lifecycle {
             }
         };
         if fault == EraseFault::DeferredCommitFailure {
+            // Raw INSERT on purpose: an invalid host row injects a deferred commit failure
             sqlx::query(
                 "INSERT INTO proxiima_core.test_host_lifecycle_facts
                     (fact_id, owner_id, source_id, payload)
@@ -596,6 +599,7 @@ impl PgHostStateLifecyclePort for Lifecycle {
     ) -> Result<HostStateExportReceipt, StorageError> {
         let fault = *self.export_fault.lock().expect("export fault mutex");
         if fault == ExportFault::PersistentWrite {
+            // Raw INSERT on purpose: a write made during export injects a persistent-write fault
             sqlx::query(
                 "INSERT INTO proxiima_core.test_host_lifecycle_facts
                     (fact_id, owner_id, source_id, payload)
@@ -911,6 +915,7 @@ async fn seed_host_fact(
     source: &str,
     payload: &[u8],
 ) {
+    // Raw INSERT: no write path for test_host_lifecycle_facts reachable from test fixtures; the test host owns it
     sqlx::query(
         "INSERT INTO proxiima_core.test_host_lifecycle_facts
             (fact_id, owner_id, source_id, payload)
@@ -930,6 +935,7 @@ async fn seed_metadata(pool: &PgPool, owner: OwnerId) {
 }
 
 async fn seed_metadata_for_source(pool: &PgPool, owner: OwnerId, source: &str) {
+    // Raw INSERT: no write path for test_host_lifecycle_metadata reachable from test fixtures; the test host owns it
     sqlx::query(
         "INSERT INTO proxiima_core.test_host_lifecycle_metadata (owner_id, source_id, metadata)
          VALUES ($1, $2, 'opaque')",
@@ -942,6 +948,7 @@ async fn seed_metadata_for_source(pool: &PgPool, owner: OwnerId, source: &str) {
 }
 
 async fn seed_generic_counter_row(pool: &PgPool, owner: OwnerId) {
+    // Raw INSERT: no write path for test_host_lifecycle_generic_rows reachable from test fixtures; the test host owns it
     sqlx::query(
         "INSERT INTO proxiima_core.test_host_lifecycle_generic_rows (owner_id, value)
          VALUES ($1, 'generic')",
@@ -975,18 +982,6 @@ fn group_erase_auth(owner: OwnerId) -> EraseAuthorization {
     EraseAuthorization::new_for_tests(OwnerEraseTarget::GroupOwner {
         group_id: owner.as_group(),
     })
-}
-
-/// Register `owner` as a group, as group creation does in production.
-async fn register_group(pool: &PgPool, owner: OwnerId) {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'group'::proxiima_core.owner_kind) ON CONFLICT DO NOTHING",
-    )
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await
-    .expect("group registers");
 }
 
 async fn host_fact_count(pool: &PgPool, owner: OwnerId) -> i64 {
@@ -1088,7 +1083,9 @@ async fn source_erase_binds_exact_hot_and_cooled_fact_selection_and_owner_kind()
         assert_eq!(core_fact_count(pool, other_a).await, 1);
 
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        register_group(pool, group).await;
+        create_group(pool, group.as_group())
+            .await
+            .expect("group registers");
         let group_fact = ingest(&pg, group, "group-source", "group-fact").await;
         seed_host_fact(pool, group, group_fact, "group-source", &[9, 8, 7]).await;
         seed_metadata(pool, group).await;
@@ -1156,6 +1153,8 @@ async fn source_erase_combines_physical_and_original_copy_selectors_once() {
         // published admissions. Seed the payload-free origin index directly
         // to exercise both copy-selection domains; publication_outbox tests
         // cover production capture into this same index.
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_origin
                  (t, original_owner_id, source_id)
@@ -1257,6 +1256,8 @@ async fn source_erase_exclusive_fence_makes_waiting_origin_check_see_revocation(
         let user_id = owner.as_user();
         let source = SourceId::new("exclusive-source-first");
         let fact = ingest(&pg, owner, source.as_str(), "exclusive-source-fact").await;
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_origin
                  (t, original_owner_id, source_id)
@@ -1500,6 +1501,7 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let fact = MemoryId::new(proxiima_core::new_memory_uuid(90));
         let handle = Uuid::now_v7();
+        // Raw INSERT: no write path for spiice_surface reachable from test fixtures; the test builds this schema by hand
         sqlx::raw_sql(
             "CREATE SCHEMA test_host_retired AUTHORIZATION proxiima_test_platform;
              CREATE TABLE test_host_retired.removed_v1 (
@@ -1521,10 +1523,12 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
         // A historical admission is inserted with its original stamp: retirement
         // deliberately retains no payload writer, and memory is append-only.
         let mut seed = pool.begin().await?;
+        // Raw INSERT on purpose: a historical admission of a retired schema, which the write path no longer accepts
         sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
             .bind(owner.into_inner())
             .execute(&mut *seed)
             .await?;
+        // Raw INSERT on purpose: a historical admission of a retired schema, which the write path no longer accepts
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', $2, $3, $4)",
@@ -1535,6 +1539,7 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
         .bind(fact.into_inner())
         .execute(&mut *seed)
         .await?;
+        // Raw INSERT on purpose: a historical admission of a retired schema, which the write path no longer accepts
         sqlx::query(
             "INSERT INTO proxiima_core.memory
                     (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -1556,24 +1561,7 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
         .await?;
         seed.commit().await?;
         seed_host_fact(&pool, owner, fact, "retired-source", &[42]).await;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                 (entity_id, model_id, dim, embedding_version, vec, owner_id)
-             VALUES ($1, 'retired-test', 1024, 1, array_fill(1::real, ARRAY[1024])::vector, $2)",
-        )
-        .bind(fact.into_inner())
-        .bind(owner.into_inner())
-        .execute(&pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                 (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'retired-test', 1024, 1, $2)",
-        )
-        .bind(fact.into_inner())
-        .bind(owner.into_inner())
-        .execute(&pool)
-        .await?;
+        create_embedding_of(&pg, owner, fact, "retired-test", vec![vec![1.0; 1024]]).await?;
 
         let registry = frozen_registry_with(Some(&RETIRED_CONTRACT));
         let mut sidecars = proxiima_storage_pg::PgSidecarRegistry::new();
@@ -1680,6 +1668,8 @@ async fn exact_receipt_scope_and_retained_counts_fail_closed_and_wrong_owner_nev
         let selected = ingest(&pg, owner, source.as_str(), "exact-receipt-selected").await;
         seed_host_fact(pool, owner, selected, source.as_str(), &[1, 2, 3]).await;
         seed_metadata(pool, owner).await;
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_origin
                  (t, original_owner_id, source_id)
@@ -1783,6 +1773,8 @@ async fn invalid_callback_receipts_and_commit_failure_roll_back_core_and_host_ro
         let fact = ingest(&pg, owner, source.as_str(), "rollback-fact").await;
         seed_host_fact(pool, owner, fact, source.as_str(), &[42, 0, 254]).await;
         seed_metadata_for_source(pool, owner, source.as_str()).await;
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
         sqlx::query(
             "INSERT INTO proxiima_core.publication_origin
                  (t, original_owner_id, source_id)
@@ -1795,6 +1787,7 @@ async fn invalid_callback_receipts_and_commit_failure_roll_back_core_and_host_ro
         .await?;
         let outbox_bytes = [0x11_u8, 0x00, 0xff];
         let outbox_digest = [0xab_u8; 32];
+        // Raw INSERT: no write path for publication_outbox reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.publication_outbox
                  (t, owner_id, schema_id, schema_version, event_type, event_id,
@@ -2422,15 +2415,9 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
         seed_host_fact(pool, owner, fact, "snapshot-source", &[0x10, 0x20]).await;
         let delegation_id = Uuid::now_v7();
         let subject_id = Uuid::now_v7();
+        create_source_cursor(pool, owner, "snapshot-source", vec![0xaa, 0xbb]).await?;
         let mut seed = pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.source_cursors
-                (owner_id, source, cursor)
-             VALUES ($1, 'snapshot-source', decode('aabb', 'hex'))",
-        )
-        .bind(user_id.into_inner())
-        .execute(&mut *seed)
-        .await?;
+        // Raw INSERT: no write path for delegated_authority_grants reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.delegated_authority_grants
                 (delegation_id, subject_user_id, owner_id, tool_name,
@@ -2754,6 +2741,7 @@ async fn an_export_queued_behind_the_fence_reads_what_its_holder_committed() {
         sqlx::query("LOCK TABLE proxiima_core.export_erase_fence IN ROW EXCLUSIVE MODE")
             .execute(&mut *holder)
             .await?;
+        // Raw INSERT: no write path for test_host_lifecycle_facts reachable from test fixtures; the test host owns it
         sqlx::query(
             "INSERT INTO proxiima_core.test_host_lifecycle_facts
                 (fact_id, owner_id, source_id, payload)

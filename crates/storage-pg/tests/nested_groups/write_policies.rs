@@ -7,6 +7,7 @@ async fn insert_edge(
     parent: GroupId,
     child: GroupId,
 ) -> Result<(), sqlx::Error> {
+    // Raw INSERT on purpose: written as the runtime role to test the write policies of the table
     sqlx::query(
         "INSERT INTO proxiima_core.group_edges (parent_group_id, child_group_id, relation)
          VALUES ($1, $2, 'viewer')",
@@ -114,6 +115,7 @@ async fn group_lock_insert_accepts_managed_member() -> TestResult {
     let groups = h.groups(2).await?;
     let mut tx = h.runtime.begin().await?;
     scope(&mut tx, &[groups[1]]).await?;
+    // Raw INSERT on purpose: written as the runtime role to test the write policies of the table
     let (member_is_group,): (bool,) = sqlx::query_as(
         "INSERT INTO proxiima_core.group_lock_request
             (request_id, left_group_id, right_group_id)
@@ -136,6 +138,7 @@ async fn group_lock_insert_accepts_person_without_member_manage() -> TestResult 
     let groups = h.groups(1).await?;
     let mut tx = h.runtime.begin().await?;
     scope(&mut tx, &groups).await?;
+    // Raw INSERT on purpose: written as the runtime role to test the write policies of the table
     sqlx::query(
         "INSERT INTO proxiima_core.group_lock_request
             (request_id, left_group_id, right_group_id)
@@ -166,6 +169,7 @@ async fn group_lock_read_hides_unmanaged_endpoints() -> TestResult {
     )
     .execute(&mut *tx)
     .await?;
+    // Raw INSERT on purpose: written as the runtime role to test the write policies of the table
     sqlx::query(
         "INSERT INTO proxiima_core.group_lock_request
              (request_id, left_group_id, right_group_id)

@@ -13,8 +13,11 @@ use proxiima_core::verbs::query::{
     EntityKind, MemorySearchRequest, MemorySearchScope, SearchMode, SearchOrder,
     SupersessionStatus, TagMatch,
 };
-use proxiima_core::{EmbeddingDim, EmbeddingSpace, OwnerId, SpaceVector, UserId};
-use proxiima_storage_pg::test_fixtures::fresh_pg;
+use proxiima_core::{
+    EmbeddingDim, EmbeddingSpace, MemoryId, OwnerId, SpaceVector, StorageError, UserId,
+};
+use proxiima_storage_pg::PgStorage;
+use proxiima_storage_pg::test_fixtures::{TestNote, create_embedding_of, fresh_pg};
 use uuid::Uuid;
 
 use corpus::{NOTES, QUERIES};
@@ -130,60 +133,32 @@ impl Encoder {
 }
 
 async fn seed_note(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     note: &corpus::Note,
-) -> Result<Uuid, sqlx::Error> {
-    sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES($1,'personal') ON CONFLICT DO NOTHING")
-        .bind(owner.into_inner()).execute(pool).await?;
-    let handle = Uuid::now_v7();
-    let t = Uuid::now_v7();
-    let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO proxiima_core.memory_head(handle,kind,schema_id,owner_id,t) VALUES($1,'fact','core/agent-note-v1',$2,$3)")
-        .bind(handle).bind(owner.into_inner()).bind(t).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,sidecar_tables,occurred_at,\"by\",via) VALUES($1,$2,'fact',$3,'core/agent-note-v1',ARRAY['proxiima_core.agent_note_v1'],uuid_extract_timestamp($2),'00000000-0000-0000-0000-000000000509'::uuid,NULL)")
-        .bind(handle).bind(t).bind(owner.into_inner()).execute(&mut *tx).await?;
-    sqlx::query(
-        "INSERT INTO proxiima_core.agent_note_v1(t,note_id,title,body,tags) VALUES($1,$2,$3,$4,$5)",
-    )
-    .bind(t)
-    .bind(Uuid::now_v7())
-    .bind(note.key)
-    .bind(note.text)
-    .bind(vec![note.tag])
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    let schema = proxiima_core::SPIICE_0
-        .schemas
-        .iter()
-        .find(|schema| schema.schema_id().as_str() == "core/agent-note-v1")
-        .expect("declared note schema");
-    let sql =
-        proxiima_storage_pg::projection::projection_insert_sql(&proxiima_core::SPIICE_0, schema)
-            .expect("generated projection SQL");
-    // SQL-POLICY: generated
-    sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(t)
-        .bind(None::<&str>)
-        .bind("core/agent-note-v1")
-        .execute(pool)
+) -> Result<Uuid, StorageError> {
+    let written = TestNote::new(note.key, note.text)
+        .tags(&[note.tag])
+        .create(pg, owner)
         .await?;
-    Ok(t)
+    Ok(written.memory_id.into_inner())
 }
 
 async fn seed_embedding(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     entity: Uuid,
     vector: &SpaceVector,
-) -> Result<(), sqlx::Error> {
-    let width = i16::try_from(vector.space().dim().width()).expect("supported dimension fits i16");
-    sqlx::query("INSERT INTO proxiima_core.embeddings(entity_id,model_id,dim,embedding_version,chunk_ordinal,vec,owner_id) VALUES($1,$2,$3,1,0,$4,$5)")
-        .bind(entity).bind(vector.space().model_id()).bind(width).bind(pgvector::Vector::from(vector.values().to_vec())).bind(owner.into_inner()).execute(pool).await?;
-    sqlx::query("INSERT INTO proxiima_core.embedding_heads(entity_id,model_id,dim,embedding_version,owner_id) VALUES($1,$2,$3,1,$4)")
-        .bind(entity).bind(vector.space().model_id()).bind(width).bind(owner.into_inner()).execute(pool).await?;
-    Ok(())
+) -> Result<(), StorageError> {
+    create_embedding_of(
+        pg,
+        owner,
+        MemoryId::new(entity),
+        vector.space().model_id(),
+        vec![vector.values().to_vec()],
+    )
+    .await
+    .map(drop)
 }
 
 fn request(
@@ -219,31 +194,13 @@ async fn pg_queries_keep_owner_model_and_tag_admission_separate() -> TestResult 
     let (pg, _guard) = fresh_pg("retrieval_scope").await;
     let a = owner();
     let b = owner();
-    let a_words = seed_note(pg.pool_for_tests(), a, &NOTES[0][0]).await?;
-    let a_trigrams = seed_note(pg.pool_for_tests(), a, &NOTES[0][3]).await?;
-    let foreign = seed_note(pg.pool_for_tests(), b, &NOTES[1][0]).await?;
+    let a_words = seed_note(&pg, a, &NOTES[0][0]).await?;
+    let a_trigrams = seed_note(&pg, a, &NOTES[0][3]).await?;
+    let foreign = seed_note(&pg, b, &NOTES[1][0]).await?;
     let query = "supplier invoice";
-    seed_embedding(
-        pg.pool_for_tests(),
-        a,
-        a_words,
-        &Encoder::Words.encode(query),
-    )
-    .await?;
-    seed_embedding(
-        pg.pool_for_tests(),
-        a,
-        a_trigrams,
-        &Encoder::Trigrams.encode(query),
-    )
-    .await?;
-    seed_embedding(
-        pg.pool_for_tests(),
-        b,
-        foreign,
-        &Encoder::Words.encode(query),
-    )
-    .await?;
+    seed_embedding(&pg, a, a_words, &Encoder::Words.encode(query)).await?;
+    seed_embedding(&pg, a, a_trigrams, &Encoder::Trigrams.encode(query)).await?;
+    seed_embedding(&pg, b, foreign, &Encoder::Words.encode(query)).await?;
     let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
     for (encoder, expected, tag) in [
         (Encoder::Words, a_words, "finance"),
@@ -321,13 +278,13 @@ impl Aggregate {
 
 type Corpus = BTreeMap<Uuid, (usize, &'static corpus::Note)>;
 
-async fn seed_corpus(pool: &sqlx::PgPool, owners: &[OwnerId; 2]) -> Result<Corpus, sqlx::Error> {
+async fn seed_corpus(pg: &PgStorage, owners: &[OwnerId; 2]) -> Result<Corpus, StorageError> {
     let mut documents = BTreeMap::new();
     for (owner_index, notes) in NOTES.iter().enumerate() {
         for note in notes {
-            let id = seed_note(pool, owners[owner_index], note).await?;
+            let id = seed_note(pg, owners[owner_index], note).await?;
             for encoder in [Encoder::Words, Encoder::Trigrams] {
-                seed_embedding(pool, owners[owner_index], id, &encoder.encode(note.text)).await?;
+                seed_embedding(pg, owners[owner_index], id, &encoder.encode(note.text)).await?;
             }
             documents.insert(id, (owner_index, note));
         }
@@ -339,7 +296,7 @@ async fn seed_corpus(pool: &sqlx::PgPool, owners: &[OwnerId; 2]) -> Result<Corpu
 async fn held_out_authored_text_reports_metrics_by_stratum() -> TestResult {
     let (pg, _guard) = fresh_pg("retrieval_quality").await;
     let owners = [owner(), owner()];
-    let documents = seed_corpus(pg.pool_for_tests(), &owners).await?;
+    let documents = seed_corpus(&pg, &owners).await?;
     let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
     let mut strata = BTreeMap::<String, Aggregate>::new();
     let mut observations = Vec::new();
@@ -446,17 +403,11 @@ async fn pg_canary_reports_multiple_spaces_and_partial_sampling() -> TestResult 
     );
     for number in 1..=34_u128 {
         let selected = OwnerId::from(UserId::new(Uuid::from_u128(number)));
-        let id = seed_note(pg.pool_for_tests(), selected, &NOTES[0][0]).await?;
-        seed_embedding(
-            pg.pool_for_tests(),
-            selected,
-            id,
-            &Encoder::Words.encode(NOTES[0][0].text),
-        )
-        .await?;
+        let id = seed_note(&pg, selected, &NOTES[0][0]).await?;
+        seed_embedding(&pg, selected, id, &Encoder::Words.encode(NOTES[0][0].text)).await?;
         if number <= 2 {
             seed_embedding(
-                pg.pool_for_tests(),
+                &pg,
                 selected,
                 id,
                 &Encoder::Trigrams.encode(NOTES[0][0].text),

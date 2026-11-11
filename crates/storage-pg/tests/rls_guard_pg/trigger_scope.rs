@@ -73,6 +73,7 @@ async fn insert_memory(
         None
     } else {
         let content_id = Uuid::now_v7();
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query(
             "INSERT INTO proxiima_core.content(content_id, owner_id, schema_id, content_hash)
              VALUES ($1, $2, 'core/test', $3)",
@@ -84,6 +85,7 @@ async fn insert_memory(
         .await?;
         Some(content_id)
     };
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head(handle, schema_id, kind, owner_id, t)
          VALUES ($1, 'core/test', $2::text::proxiima_core.memory_kind, $3, $4)",
@@ -94,6 +96,7 @@ async fn insert_memory(
     .bind(t)
     .execute(&mut *connection)
     .await?;
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, content_id, origins, occurred_at, \"by\", via)
          VALUES ($1, $2, $3::text::proxiima_core.memory_kind, $4, 'core/test', $5, $6, CASE WHEN $3::text::proxiima_core.memory_kind = 'fact' THEN uuid_extract_timestamp($2) END, '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -137,6 +140,7 @@ async fn insert_goal(
     t: Uuid,
 ) -> Result<PgQueryResult, sqlx::Error> {
     let handle = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.goal_head(handle, schema_id, owner_id, t)
          VALUES ($1, 'core/task-goal-v1', $2, $3)",
@@ -146,6 +150,7 @@ async fn insert_goal(
     .bind(t)
     .execute(&mut *connection)
     .await?;
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.goal(handle, t, owner_id, title, state, request_id, \"by\", via)
          VALUES ($1, $2, $3, 'scope bridge', 'Active', $4, '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -192,6 +197,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
         super::setup_full_schema().await;
     let owner = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
         .bind(owner)
         .execute(&admin)
@@ -340,6 +346,7 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
     // assert_erased_pin_target_insert: a direct witness write is refused.
     savepoint(&mut tx).await;
     let outcome =
+        // Raw INSERT on purpose: a direct witness write must be refused
         sqlx::query("INSERT INTO proxiima_core.erased_pin_target(t, kind) VALUES ($1, 'fact')")
             .bind(Uuid::now_v7())
             .execute(&mut *tx)

@@ -7,11 +7,13 @@ use sqlx::{PgConnection, PgPool, Row};
 use uuid::Uuid;
 
 async fn seed(pool: &PgPool, owners: &[Uuid]) {
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) SELECT o, 'group' FROM unnest($1::uuid[]) AS o")
         .bind(owners)
         .execute(pool)
         .await
         .unwrap();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id)
          SELECT uuidv7(), uuidv7(), 'fact', $1,
@@ -23,6 +25,7 @@ async fn seed(pool: &PgPool, owners: &[Uuid]) {
     .await
     .unwrap();
     if owners.len() > 1 {
+        // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head(handle, t, kind, owner_id, schema_id)
              SELECT uuidv7(), uuidv7(), 'fact', o,
@@ -34,6 +37,7 @@ async fn seed(pool: &PgPool, owners: &[Uuid]) {
         .await
         .unwrap();
     }
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
          SELECT handle, t, 'fact', owner_id, schema_id, uuid_extract_timestamp(t),
@@ -47,6 +51,7 @@ async fn seed(pool: &PgPool, owners: &[Uuid]) {
     .unwrap();
     // Newer non-head revisions exercise the distinction between the ordered
     // head stream and history. The head remains the earlier row.
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory(handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
          SELECT h.handle, uuidv7(), 'fact', h.owner_id, h.schema_id, uuid_extract_timestamp(uuidv7()),
@@ -276,11 +281,13 @@ async fn kind_page_reads_its_partial_index_under_rls_and_generic_plans() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _) =
         super::setup_full_schema().await;
     let owners: Vec<_> = (0..16).map(|_| Uuid::now_v7()).collect();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) SELECT o, 'group' FROM unnest($1::uuid[]) AS o")
         .bind(&owners)
         .execute(&admin)
         .await
         .unwrap();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, t, kind, owner_id, schema_id)
          SELECT uuidv7(), uuidv7(), 'fact', $1, 'paging/fact-a'
@@ -294,6 +301,7 @@ async fn kind_page_reads_its_partial_index_under_rls_and_generic_plans() {
     // starts at heads), about 1,000 heads per owner of which one in ten is a
     // Perspective, so the planner's per-owner estimate is not toy-sized.
     // Owner 0 has 5,000 Facts and no Perspective.
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, t, kind, owner_id, schema_id)
          SELECT uuidv7(), uuidv7(),

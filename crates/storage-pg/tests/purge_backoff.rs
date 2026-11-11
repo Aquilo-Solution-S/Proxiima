@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use proxiima_core::{ColdObjectStore, ObjectStoreId, PurgeDeleted, StorageError};
+use proxiima_core::{ColdObjectStore, ObjectStoreId, PurgeDeleted, StorageError, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{create_core_db, create_user};
 use proxiima_storage_pg::{ColdPurgeRetryOptions, ColdPurgeRetryOutcome, PgStorage};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -69,6 +69,7 @@ async fn fresh() -> TestResult<(String, PgStorage)> {
 
 /// Owe `keys` in order, oldest first.
 async fn owe(pool: &PgPool, keys: &[String]) -> TestResult {
+    // Raw INSERT: no write path for cold_purge_pending reachable from test fixtures
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store, enqueued_at)
          SELECT key, NULL, $2, now() - interval '1 hour' + ord * interval '1 millisecond'
@@ -205,10 +206,8 @@ async fn a_debt_that_keeps_failing_is_named_stuck() -> TestResult {
         let pg = pg.with_cold(store.clone());
         let pool = pg.pool_for_tests();
         let owner = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner)).await?;
+        // Raw INSERT: no write path for cold_purge_pending reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, $2, $3)",
@@ -269,6 +268,7 @@ async fn a_debt_that_keeps_failing_is_named_stuck() -> TestResult {
         )
         .execute(pool)
         .await?;
+        // Raw INSERT: no write path for cold_purge_pending reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, $2, $3)
@@ -386,6 +386,7 @@ async fn an_object_purge_pass_drains_or_skips_under_the_maintenance_lock() -> Te
         let store = Arc::new(FlakyStore::new(all.clone(), failing));
         let pg = pg.with_cold(store.clone());
         owe(pg.pool_for_tests(), &all).await?;
+        // Raw INSERT: no write path for cold_purge_pending reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ('objects/elsewhere', NULL, 's3:test/other')",

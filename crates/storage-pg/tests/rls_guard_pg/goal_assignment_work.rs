@@ -19,6 +19,7 @@ const PERSPECTIVES: i32 = 3_000;
 const UNASSIGNED_EVERY: i32 = 1_500;
 
 async fn seed(admin: &PgPool, owner: Uuid) {
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
          ON CONFLICT DO NOTHING",
@@ -52,6 +53,7 @@ async fn seed(admin: &PgPool, owner: Uuid) {
 }
 
 async fn seed_perspectives(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, owner: Uuid) {
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     let perspective_content: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/test-perspective-v1', decode(repeat('00', 32), 'hex'))
@@ -61,6 +63,7 @@ async fn seed_perspectives(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>
     .fetch_one(&mut **seed)
     .await
     .unwrap();
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'perspective', 'core/test-perspective-v1', $1,
@@ -72,6 +75,7 @@ async fn seed_perspectives(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>
     .execute(&mut **seed)
     .await
     .unwrap();
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, content_id, occurred_at, \"by\", via)
@@ -88,6 +92,7 @@ async fn seed_perspectives(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>
 }
 
 async fn seed_goals(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, owner: Uuid) {
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
          SELECT handle, 'core/simple-text-v1', $1, t2 FROM series",
@@ -98,6 +103,7 @@ async fn seed_goals(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, owner
     .unwrap();
     // The first version of each series is Active and superseded; the head is
     // Active for the series marked so, Achieved otherwise.
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.goal
              (handle, t, owner_id, schema_id, title, state, request_id, motivated_by, \"by\", text)
@@ -109,6 +115,7 @@ async fn seed_goals(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, owner
     .execute(&mut **seed)
     .await
     .unwrap();
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.goal
              (handle, t, owner_id, schema_id, title, state, request_id, motivated_by, \"by\", text, close_fact_t)
@@ -122,6 +129,7 @@ async fn seed_goals(seed: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, owner
     .execute(&mut **seed)
     .await
     .unwrap();
+    // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
     sqlx::query(
         "INSERT INTO proxiima_core.goal_motivation_index (goal_t, perspective_t, owner_id)
          SELECT g.t, p.id, g.owner_id
@@ -303,6 +311,7 @@ async fn an_owner_of_few_goals_lists_them_without_reading_the_store() {
         super::setup_full_schema().await;
     let (small, large) = (Uuid::now_v7(), Uuid::now_v7());
     for (owner, series) in [(small, 300), (large, i64::from(SERIES))] {
+        // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
         sqlx::query(
             "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
              ON CONFLICT DO NOTHING",
@@ -325,6 +334,7 @@ async fn an_owner_of_few_goals_lists_them_without_reading_the_store() {
         .execute(&mut *seed)
         .await
         .unwrap();
+        // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
         sqlx::query(
             "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
              SELECT handle, 'core/simple-text-v1', $1, t2 FROM listed",
@@ -333,6 +343,7 @@ async fn an_owner_of_few_goals_lists_them_without_reading_the_store() {
         .execute(&mut *seed)
         .await
         .unwrap();
+        // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
         sqlx::query(
             "INSERT INTO proxiima_core.goal (handle, t, owner_id, schema_id, title, state, request_id, \"by\", text)
              SELECT handle, t1, $1, 'core/simple-text-v1', 'g' || n, 'Active', 'first-' || n,
@@ -343,6 +354,7 @@ async fn an_owner_of_few_goals_lists_them_without_reading_the_store() {
         .execute(&mut *seed)
         .await
         .unwrap();
+        // Raw INSERT on purpose: trigger-free bulk load, so the planner sees rows no write admits
         sqlx::query(
             "INSERT INTO proxiima_core.goal
                  (handle, t, owner_id, schema_id, title, state, request_id, \"by\", text, close_fact_t)
@@ -390,6 +402,7 @@ async fn an_owner_of_few_goals_lists_them_without_reading_the_store() {
 async fn insert_projection_fact(admin: &PgPool, owner: Uuid) -> Uuid {
     let fact_t = Uuid::now_v7();
     let fact_handle = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     let fact_content: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/test-fact', decode(repeat('11', 32), 'hex'))
@@ -399,6 +412,7 @@ async fn insert_projection_fact(admin: &PgPool, owner: Uuid) -> Uuid {
     .fetch_one(admin)
     .await
     .unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'fact', 'core/test-fact', $2, $3)",
@@ -409,6 +423,7 @@ async fn insert_projection_fact(admin: &PgPool, owner: Uuid) -> Uuid {
     .execute(admin)
     .await
     .unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, owner_id, kind, schema_id, content_id, occurred_at, \"by\", via)
@@ -430,6 +445,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
         super::setup_full_schema().await;
     let owner = Uuid::now_v7();
     let perspective = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group'), ($2, 'group')",
     )
@@ -440,6 +456,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
     .unwrap();
     let fact_t = insert_projection_fact(&admin, owner).await;
     let perspective_handle = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     let perspective_content: Uuid = sqlx::query_scalar(
         "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
          VALUES ($1, 'core/test', decode(repeat('00', 32), 'hex'))
@@ -449,6 +466,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
     .fetch_one(&admin)
     .await
     .unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'perspective', 'core/test', $2, $3)",
@@ -461,6 +479,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
     .unwrap();
     // The trigger-maintained projection is populated by the normal Goal write
     // path. This direct platform fixture only supplies the exact target row.
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, owner_id, kind, schema_id, content_id, occurred_at, \"by\", via, refs)
@@ -476,6 +495,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
     .unwrap();
     let goal_t = Uuid::now_v7();
     let handle = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
          VALUES ($1, 'core/simple-text-v1', $2, $3)",
@@ -486,6 +506,7 @@ async fn motivation_projection_matches_canonical_arrays_after_append() {
     .execute(&admin)
     .await
     .unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.goal
              (handle, t, owner_id, schema_id, title, state, request_id, motivated_by, \"by\", text)

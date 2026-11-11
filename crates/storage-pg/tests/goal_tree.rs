@@ -486,6 +486,7 @@ async fn the_parent_edge_is_fixed_and_never_self() {
         let p = tree.create("f7-p", &[]).await?;
         let children = tree.decompose(p, &["f7-a"]).await?;
         for (parent, label) in [(None, "NULL"), (Some(Uuid::now_v7()), "another handle")] {
+            // Raw INSERT on purpose: a Goal row with a parent the write path never produces, which a constraint must refuse
             let err = sqlx::query(
                 "INSERT INTO proxiima_core.goal
                     (handle, t, owner_id, title, state, request_id, close_fact_t,
@@ -513,6 +514,7 @@ async fn the_parent_edge_is_fixed_and_never_self() {
         // A fresh series naming itself as parent.
         let fresh = Uuid::now_v7();
         let mut self_parent = tree.pg.pool_for_tests().begin().await?;
+        // Raw INSERT on purpose: a Goal row with a parent the write path never produces, which a constraint must refuse
         sqlx::query(
             "INSERT INTO proxiima_core.goal_head(handle,t,owner_id,schema_id)
              SELECT $2,$2,owner_id,schema_id FROM proxiima_core.goal WHERE t=$1",
@@ -521,6 +523,7 @@ async fn the_parent_edge_is_fixed_and_never_self() {
         .bind(fresh)
         .execute(&mut *self_parent)
         .await?;
+        // Raw INSERT on purpose: a Goal row with a parent the write path never produces, which a constraint must refuse
         let err = sqlx::query(
             "INSERT INTO proxiima_core.goal
                 (handle, t, owner_id, title, state, request_id, close_fact_t,

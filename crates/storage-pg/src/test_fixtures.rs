@@ -548,11 +548,11 @@ fn unit_vector(width: usize) -> Vec<f32> {
 }
 
 /// Write one new embedding version of `memory` (a Fact) in the 1024-wide
-/// space of `model_id`, `chunks` unit vectors long, through the writer the
-/// product uses (`crate::verbs::fact_embeddings::insert_embedding`): the
-/// head advances to the new version, and an ineligible memory (forgotten, or
-/// not `owner`'s) writes nothing. Returns the version written, `0` when
-/// nothing was.
+/// space of `model_id`, `chunks` unit vectors long, through the write the
+/// embedding port makes (`PgStorage::insert_embedding_version`): the head
+/// advances to the new version, and an ineligible memory (forgotten, or not
+/// `owner`'s) writes nothing. Returns the version written, `0` when nothing
+/// was.
 ///
 /// # Errors
 ///
@@ -575,13 +575,15 @@ pub async fn create_embedding(
     .await
 }
 
-/// [`create_embedding`] with the chunk vectors named by the test, each
-/// 1024 values wide.
+/// [`create_embedding`] with the chunk vectors named by the test. Every
+/// vector has the same width, one the product supports
+/// ([`EmbeddingDim`](proxiima_core::EmbeddingDim)). The write is the one the
+/// embedding write port makes once it has checked the job claim.
 ///
 /// # Errors
 ///
-/// `Internal` when a vector is not 1024 wide; otherwise the storage errors
-/// from the write.
+/// `Internal` when no vector is given or the width is not a supported
+/// dimension; otherwise the storage errors from the write.
 pub async fn create_embedding_of(
     pg: &PgStorage,
     owner: OwnerId,
@@ -589,7 +591,11 @@ pub async fn create_embedding_of(
     model_id: &str,
     chunks: Vec<Vec<f32>>,
 ) -> Result<i32, StorageError> {
-    let space = proxiima_core::EmbeddingSpace::new(model_id, proxiima_core::EmbeddingDim::D1024);
+    let width = chunks.first().map_or(0, Vec::len);
+    let dim = proxiima_core::EmbeddingDim::from_width(width).ok_or_else(|| {
+        StorageError::Internal(format!("{width} is not a supported embedding width"))
+    })?;
+    let space = proxiima_core::EmbeddingSpace::new(model_id, dim);
     let vectors = chunks
         .into_iter()
         .map(|values| {
@@ -597,17 +603,14 @@ pub async fn create_embedding_of(
                 .map_err(|err| StorageError::Internal(err.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let entity = proxiima_core::EmbeddableEntityRef::Memory {
+        kind: proxiima_core::EntityKind::Fact,
+        memory_id: memory,
+    };
     let mut tx = pg.platform_transaction().await?;
-    let outcome = crate::verbs::fact_embeddings::insert_embedding(
-        &mut tx,
-        &owner,
-        proxiima_core::EmbeddableEntityRef::Memory {
-            kind: proxiima_core::EntityKind::Fact,
-            memory_id: memory,
-        },
-        &vectors,
-    )
-    .await?;
+    let outcome = pg
+        .insert_embedding_version(&mut tx, &owner, entity, &vectors)
+        .await?;
     tx.commit()
         .await
         .map_err(|err| StorageError::Unavailable(err.to_string()))?;
@@ -786,4 +789,114 @@ impl TestGoal {
             .map_err(|err| StorageError::Unavailable(err.to_string()))?;
         Ok(outcome)
     }
+}
+
+/// A `core/agent-derivation-v1` Abstraction or Perspective with defaults,
+/// written the way production writes a typed derived memory: the payload
+/// through the typed ingest, so the admission stamps `sidecar_tables`, fills
+/// the sidecar and projection rows, and records the origin edge. Name only
+/// what a test asserts on.
+#[derive(Debug, Clone)]
+pub struct TestDerived {
+    kind: MemoryKind,
+    origin: EdgeEndpoint,
+    derivation: proxiima_core::AgentDerivationV1,
+}
+
+impl TestDerived {
+    /// An Abstraction grounded in the Fact `origin`.
+    #[must_use]
+    pub fn abstraction(origin: MemoryId) -> Self {
+        Self::new(
+            MemoryKind::Abstraction,
+            EdgeEndpoint::memory(proxiima_core::EntityKind::Fact, origin),
+        )
+    }
+
+    /// A Perspective over the Abstraction `origin`.
+    #[must_use]
+    pub fn perspective(origin: MemoryId) -> Self {
+        Self::new(
+            MemoryKind::Perspective,
+            EdgeEndpoint::memory(proxiima_core::EntityKind::Abstraction, origin),
+        )
+    }
+
+    fn new(kind: MemoryKind, origin: EdgeEndpoint) -> Self {
+        Self {
+            kind,
+            origin,
+            derivation: proxiima_core::AgentDerivationV1 {
+                title: "test derivation".to_owned(),
+                body: "test derivation".to_owned(),
+                tags: Vec::new(),
+                idempotency_key: None,
+                source_memory_ids: Vec::new(),
+                model_id: "test".to_owned(),
+                client_name: "test".to_owned(),
+                client_version: "1".to_owned(),
+            },
+        }
+    }
+
+    /// The derivation's tags.
+    #[must_use]
+    pub fn tags(mut self, tags: &[&str]) -> Self {
+        self.derivation.tags = tags.iter().map(|tag| (*tag).to_owned()).collect();
+        self
+    }
+
+    /// Write the derived memory under `owner`.
+    ///
+    /// # Errors
+    ///
+    /// The storage error the write refuses with.
+    pub async fn create(
+        self,
+        pg: &PgStorage,
+        owner: OwnerId,
+    ) -> Result<FactIngestOutcome, StorageError> {
+        use proxiima_core::AbstractionPayload as _;
+        let mut command = TestMemory::fact().command;
+        command.schema_id = proxiima_core::AgentDerivationV1::schema_id();
+        command.lexical_language =
+            Some(proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT.to_owned());
+        command.kind = self.kind;
+        command.additional_references = vec![self.origin];
+        let payload = match self.kind {
+            MemoryKind::Perspective => proxiima_core::SidecarPayload::perspective(self.derivation),
+            _ => proxiima_core::SidecarPayload::abstraction(self.derivation),
+        };
+        let authorized = proxiima_core::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests(
+            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            command,
+            None,
+            Vec::new(),
+        )
+        .with_sidecar_payloads_for_tests(vec![payload]);
+        pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+    }
+}
+
+/// Store `cursor` as `owner`'s cursor for `source`, the way a host checkpoint
+/// does (`crate::verbs::source_cursors::store_source_cursor`). An existing
+/// cursor for the same source is replaced.
+///
+/// # Errors
+///
+/// Storage errors from the write.
+pub async fn create_source_cursor(
+    pool: &sqlx::PgPool,
+    owner: OwnerId,
+    source: &str,
+    cursor: Vec<u8>,
+) -> Result<(), StorageError> {
+    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    crate::verbs::source_cursors::store_source_cursor(
+        pool,
+        &permit,
+        source,
+        &proxiima_core::Cursor::from_bytes(cursor),
+    )
+    .await
 }

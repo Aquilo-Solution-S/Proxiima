@@ -20,38 +20,13 @@ fn chunk_query(dim: EmbeddingDim) -> SpaceVector {
 }
 
 async fn seed_chunks(
-    pool: &sqlx::PgPool,
+    pg: &PgStorage,
     owner: OwnerId,
     t: Uuid,
-    dim: EmbeddingDim,
     vectors: &[pgvector::Vector],
-) -> Result<(), sqlx::Error> {
-    let width = i16::try_from(dim.width()).expect("supported dimension fits i16");
-    // Raw INSERT: embeds at several widths, which create_embedding_of (1024 only) does not cover.
-    sqlx::query(
-        "INSERT INTO proxiima_core.embeddings
-            (entity_id, model_id, dim, embedding_version, chunk_ordinal, vec, owner_id)
-         SELECT $1, 'test-embed', $2, 1, (chunk.ordinality - 1)::integer,
-                chunk.vec, $4
-           FROM unnest($3::vector[]) WITH ORDINALITY AS chunk(vec, ordinality)",
-    )
-    .bind(t)
-    .bind(width)
-    .bind(vectors)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
-    // Raw INSERT: embeds at several widths, which create_embedding_of (1024 only) does not cover.
-    sqlx::query(
-        "INSERT INTO proxiima_core.embedding_heads
-            (entity_id, model_id, dim, embedding_version, owner_id)
-         VALUES ($1, 'test-embed', $2, 1, $3)",
-    )
-    .bind(t)
-    .bind(width)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
+) -> Result<(), proxiima_core::StorageError> {
+    let chunks = vectors.iter().map(pgvector::Vector::to_vec).collect();
+    create_embedding_of(pg, owner, MemoryId::new(t), "test-embed", chunks).await?;
     Ok(())
 }
 
@@ -60,7 +35,6 @@ async fn seed_chunks(
 #[tokio::test]
 async fn last_chunk_matches_semantic_and_hybrid_with_full_precision_score() -> TestResult {
     let (pg, _guard) = fresh_pg("last_embedding_chunk").await;
-    let pool = pg.pool_for_tests();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let target = seed_note(&pg, owner, "Long document", "Unrelated vocabulary").await?;
     let other = seed_note(
@@ -78,10 +52,9 @@ async fn last_chunk_matches_semantic_and_hybrid_with_full_precision_score() -> T
         EmbeddingDim::D3072,
     ] {
         seed_chunks(
-            pool,
+            &pg,
             owner,
             target,
-            dim,
             &[
                 chunk_vector(dim, 0.0, 1.0),
                 chunk_vector(dim, 0.6, 0.8),
@@ -90,14 +63,13 @@ async fn last_chunk_matches_semantic_and_hybrid_with_full_precision_score() -> T
         )
         .await?;
         seed_chunks(
-            pool,
+            &pg,
             owner,
             other,
-            dim,
             &[chunk_vector(dim, 0.6, 0.8), chunk_vector(dim, 0.0, 0.0)],
         )
         .await?;
-        seed_chunks(pool, owner, zero, dim, &[chunk_vector(dim, 0.0, 0.0)]).await?;
+        seed_chunks(&pg, owner, zero, &[chunk_vector(dim, 0.0, 0.0)]).await?;
         for mode in [SearchMode::Semantic, SearchMode::Hybrid] {
             let mut req = search_req(owner, "absent-query-phrase");
             req.mode = mode;
@@ -135,18 +107,10 @@ async fn last_chunk_matches_semantic_and_hybrid_with_full_precision_score() -> T
 #[tokio::test]
 async fn chunk_clusters_do_not_spend_distinct_memory_limit_or_cursor() -> TestResult {
     let (pg, _guard) = fresh_pg("clustered_embedding_chunks").await;
-    let pool = pg.pool_for_tests();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let dim = EmbeddingDim::D1024;
     let first = seed_note(&pg, owner, "Dominant", "Many embedding fragments").await?;
-    seed_chunks(
-        pool,
-        owner,
-        first,
-        dim,
-        &vec![chunk_vector(dim, 1.0, 0.0); 130],
-    )
-    .await?;
+    seed_chunks(&pg, owner, first, &vec![chunk_vector(dim, 1.0, 0.0); 130]).await?;
     let mut expected = vec![first];
     for (title, x, y) in [
         ("Second", 0.8, 0.6),
@@ -154,7 +118,7 @@ async fn chunk_clusters_do_not_spend_distinct_memory_limit_or_cursor() -> TestRe
         ("Fourth", 0.0, 1.0),
     ] {
         let t = seed_note(&pg, owner, title, "Independent memory").await?;
-        seed_chunks(pool, owner, t, dim, &[chunk_vector(dim, x, y)]).await?;
+        seed_chunks(&pg, owner, t, &[chunk_vector(dim, x, y)]).await?;
         expected.push(t);
     }
     let projection = note_projection();
@@ -208,20 +172,12 @@ async fn chunk_clusters_do_not_spend_distinct_memory_limit_or_cursor() -> TestRe
 #[tokio::test]
 async fn chunk_scan_stops_at_existing_cap_when_one_memory_dominates() -> TestResult {
     let (pg, _guard) = fresh_pg("embedding_chunk_cap").await;
-    let pool = pg.pool_for_tests();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let dim = EmbeddingDim::D1024;
     let first = seed_note(&pg, owner, "Dominant", "One thousand matching fragments").await?;
-    seed_chunks(
-        pool,
-        owner,
-        first,
-        dim,
-        &vec![chunk_vector(dim, 1.0, 0.0); 1_000],
-    )
-    .await?;
+    seed_chunks(&pg, owner, first, &vec![chunk_vector(dim, 1.0, 0.0); 1_000]).await?;
     let beyond = seed_note(&pg, owner, "Beyond cap", "More distant memory").await?;
-    seed_chunks(pool, owner, beyond, dim, &[chunk_vector(dim, 0.8, 0.6)]).await?;
+    seed_chunks(&pg, owner, beyond, &[chunk_vector(dim, 0.8, 0.6)]).await?;
     let mut req = search_req(owner, "absent-query-phrase");
     req.mode = SearchMode::Semantic;
     req.limit = 2;

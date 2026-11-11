@@ -73,12 +73,15 @@ async fn seed_memory(admin: &PgPool, owner: Uuid, kind: &str, anchor: Option<Uui
         None
     } else {
         let content = Uuid::now_v7();
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query("INSERT INTO proxiima_core.content(content_id,owner_id,schema_id,content_hash) VALUES ($1,$2,'predicate/memory',$3)")
             .bind(content).bind(owner).bind(id.as_bytes().repeat(2)).execute(admin).await.unwrap();
         Some(content)
     };
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.memory_head(handle,t,kind,owner_id,schema_id) VALUES ($1,$1,$2::text::proxiima_core.memory_kind,$3,'predicate/memory')")
         .bind(id).bind(kind).bind(owner).execute(admin).await.unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,content_id,refs,occurred_at, \"by\", via) VALUES ($1,$1,$2::text::proxiima_core.memory_kind,$3,'predicate/memory',$4,$5,CASE WHEN $2::text='fact' THEN uuid_extract_timestamp($1) END, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
         .bind(id).bind(kind).bind(owner).bind(content).bind(anchor.into_iter().collect::<Vec<_>>())
         .execute(admin).await.unwrap();
@@ -87,8 +90,10 @@ async fn seed_memory(admin: &PgPool, owner: Uuid, kind: &str, anchor: Option<Uui
 
 async fn seed_goal(admin: &PgPool, owner: Uuid) -> Uuid {
     let id = Uuid::now_v7();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.goal_head(handle,t,owner_id,schema_id) VALUES ($1,$1,$2,'core/task-goal-v1')")
         .bind(id).bind(owner).execute(admin).await.unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.goal(handle,t,owner_id,title,state,request_id, \"by\", via) VALUES ($1,$1,$2,'predicate goal','Active',$3, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
         .bind(id).bind(owner).bind(id.to_string()).execute(admin).await.unwrap();
     id
@@ -98,6 +103,7 @@ async fn seed_entities(admin: &PgPool) -> Seed {
     let owners = [Uuid::now_v7(), Uuid::now_v7()];
     let mut entities = Vec::new();
     for owner in owners {
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES ($1,'group')")
             .bind(owner)
             .execute(admin)
@@ -296,21 +302,25 @@ const CORE_TABLES: [CoreTable; 4] = [
     CoreTable {
         table: "projection",
         key: "memory_id",
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         insert: "INSERT INTO proxiima_core.projection(memory_id,owner_id,schema_id,lexical_language,search_tsv) VALUES ($1,$2,$3,'simple'::regconfig,to_tsvector('simple','predicate'))",
     },
     CoreTable {
         table: "embeddings",
         key: "entity_id",
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         insert: "INSERT INTO proxiima_core.embeddings(entity_id,owner_id,model_id,dim,vec) VALUES ($1,$2,$3,384,array_fill(0.25::real,ARRAY[384])::public.vector)",
     },
     CoreTable {
         table: "embedding_heads",
         key: "entity_id",
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         insert: "INSERT INTO proxiima_core.embedding_heads(entity_id,owner_id,model_id,embedding_version,dim) VALUES ($1,$2,$3,1,384)",
     },
     CoreTable {
         table: "embedding_jobs",
         key: "entity_id",
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         insert: "INSERT INTO proxiima_core.embedding_jobs(entity_id,owner_id,model_id,dim) VALUES ($1,$2,$3,384)",
     },
 ];

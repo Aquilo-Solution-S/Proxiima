@@ -25,12 +25,14 @@ fn role_url(database: &str, role: &str, password: &str) -> String {
 }
 
 async fn seed(admin: &sqlx::PgPool, group: GroupId, member: UserId, relations: &[Relation]) {
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group') ON CONFLICT DO NOTHING")
         .bind(group.into_inner())
         .execute(admin)
         .await
         .unwrap();
     for relation in relations {
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query(
             "INSERT INTO proxiima_core.group_memberships(group_id, member_user_id, relation)
              VALUES ($1, $2, $3)",

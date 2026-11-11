@@ -42,6 +42,7 @@ async fn platform_guard_completes_with_one_connection() {
     let name = quoted_ident(&schema);
     for row_owner in [Uuid::now_v7(), Uuid::now_v7()] {
         // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
+        // Raw INSERT: no write path for the memory table reachable from test fixtures; the test creates it
         sqlx::query(AssertSqlSafe(format!(
             "INSERT INTO {name}.memory(id, owner_id) VALUES ($1, $1)"
         )))
@@ -103,6 +104,7 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
     let owners = [Uuid::now_v7(), Uuid::now_v7()];
     for row_owner in owners {
         // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
+        // Raw INSERT: no write path for the memory table reachable from test fixtures; the test creates it
         sqlx::query(AssertSqlSafe(format!(
             "INSERT INTO {name}.memory(id, owner_id) VALUES ($1, $2)"
         )))
@@ -554,6 +556,7 @@ async fn trigger_definer_executes_without_a_direct_grant_and_exempts_only_execut
     let mut transaction = begin_owner_transaction(&runtime, authz.owner_scope().unwrap())
         .await
         .unwrap();
+    // Raw INSERT: no write path for the sidecar table reachable from test fixtures; the test creates it
     // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
     sqlx::query(AssertSqlSafe(format!(
         "INSERT INTO {name}.sidecar(id, owner_id) VALUES ($1, $1)"

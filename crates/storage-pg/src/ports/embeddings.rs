@@ -101,6 +101,34 @@ impl EmbeddingTextPort for PgStorage {
     }
 }
 
+impl PgStorage {
+    /// Write one embedding version where this store keeps its vectors: the
+    /// local `embeddings` table, or the host index with its head.
+    pub(crate) async fn insert_embedding_version(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        owner: &OwnerId,
+        entity: proxiima_core::EmbeddableEntityRef,
+        vectors: &[proxiima_core::SpaceVector],
+    ) -> Result<EmbeddingWriteOutcome, StorageError> {
+        match &self.vectors {
+            crate::vector_index::StoreVectors::Local => {
+                verbs::fact_embeddings::insert_embedding(tx, owner, entity, vectors).await
+            }
+            crate::vector_index::StoreVectors::Remote(index) => {
+                verbs::fact_embeddings::insert_embedding_head(
+                    tx,
+                    index.as_ref(),
+                    owner,
+                    entity,
+                    vectors,
+                )
+                .await
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl EmbeddingWritePort for PgStorage {
     async fn insert_embeddings(
@@ -124,27 +152,10 @@ impl EmbeddingWritePort for PgStorage {
                 write.proof,
             )
             .await?;
-            outcomes.push(match &self.vectors {
-                crate::vector_index::StoreVectors::Local => {
-                    verbs::fact_embeddings::insert_embedding(
-                        &mut tx,
-                        write.owner,
-                        write.entity,
-                        write.vectors,
-                    )
-                    .await?
-                }
-                crate::vector_index::StoreVectors::Remote(index) => {
-                    verbs::fact_embeddings::insert_embedding_head(
-                        &mut tx,
-                        index.as_ref(),
-                        write.owner,
-                        write.entity,
-                        write.vectors,
-                    )
-                    .await?
-                }
-            });
+            outcomes.push(
+                self.insert_embedding_version(&mut tx, write.owner, write.entity, write.vectors)
+                    .await?,
+            );
         }
         tx.commit().await.map_err(crate::error::map_err)?;
         Ok(outcomes)

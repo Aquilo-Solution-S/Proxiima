@@ -20,11 +20,13 @@ async fn insert_record(pool: &PgPool, handle: Uuid, row: &Record, anchor: Option
         None
     } else {
         let id = Uuid::now_v7();
+        // Raw INSERT on purpose: ids with equal UUIDv7 timestamps and heads ahead of their versions, which no write mints
         sqlx::query("INSERT INTO proxiima_core.content(content_id, owner_id, schema_id, content_hash) VALUES ($1,$2,$3,$4)")
             .bind(id).bind(row.owner).bind(&row.schema).bind(row.t.as_bytes().repeat(2))
             .execute(pool).await.unwrap();
         Some(id)
     };
+    // Raw INSERT on purpose: ids with equal UUIDv7 timestamps and heads ahead of their versions, which no write mints
     sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,content_id,refs, occurred_at, \"by\", via) VALUES ($1,$2,$3::text::proxiima_core.memory_kind,$4,$5,$6,$7, CASE WHEN $3::text::proxiima_core.memory_kind = 'fact' THEN uuid_extract_timestamp($2) END, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
         .bind(handle).bind(row.t).bind(row.kind).bind(row.owner).bind(&row.schema)
         .bind(content).bind(anchor.into_iter().collect::<Vec<_>>())
@@ -32,6 +34,7 @@ async fn insert_record(pool: &PgPool, handle: Uuid, row: &Record, anchor: Option
 }
 
 async fn insert_head(pool: &PgPool, handle: Uuid, row: &Record, t: Uuid) {
+    // Raw INSERT on purpose: ids with equal UUIDv7 timestamps and heads ahead of their versions, which no write mints
     sqlx::query("INSERT INTO proxiima_core.memory_head(handle,t,kind,owner_id,schema_id) VALUES ($1,$2,$3::text::proxiima_core.memory_kind,$4,$5)")
         .bind(handle).bind(t).bind(row.kind).bind(row.owner).bind(&row.schema)
         .execute(pool).await.unwrap();
@@ -43,6 +46,7 @@ async fn seed(pool: &PgPool, owners: &[Uuid; 3]) -> Vec<Record> {
     let base = Uuid::now_v7().as_u128() & !0xffff;
     let mut rows = Vec::new();
     for (index, owner) in owners.iter().copied().enumerate() {
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
             .bind(owner)
             .execute(pool)

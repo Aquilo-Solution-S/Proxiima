@@ -13,6 +13,7 @@ async fn insert_version(
     owner: Uuid,
     request_id: &str,
 ) -> Result<(), sqlx::Error> {
+    // Raw INSERT on purpose: written as another owner's scope, which the series key must refuse
     sqlx::query(
         "INSERT INTO proxiima_core.goal (handle, t, owner_id, schema_id, title, text, state, request_id, close_fact_t, \"by\", via)
          VALUES ($1, uuidv7(), $2, 'core/task-goal-v1', 'join', 'text', 'Active', $3, NULL, '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -31,6 +32,7 @@ async fn a_scope_of_another_owner_cannot_join_the_series() {
         super::setup_full_schema().await;
     let (holder, other) = (Uuid::now_v7(), Uuid::now_v7());
     for owner in [holder, other] {
+        // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
         sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'group')")
             .bind(owner)
             .execute(&admin)
@@ -39,6 +41,7 @@ async fn a_scope_of_another_owner_cannot_join_the_series() {
     }
     let handle = Uuid::now_v7();
     let mut seed = admin.acquire().await.unwrap();
+    // Raw INSERT: no write path reachable from test fixtures; this RLS database is hand-built and has no PgStorage
     sqlx::query(
         "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
          VALUES ($1, 'core/task-goal-v1', $2, uuidv7())",

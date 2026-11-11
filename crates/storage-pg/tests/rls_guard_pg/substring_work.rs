@@ -41,6 +41,7 @@ async fn seed(admin: &PgPool, owner: Uuid, count: i32, schema: &str, table: &str
         .execute(&mut *stamped)
         .await
         .unwrap();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.owners (owner_id, kind)
          VALUES ($1, 'group') ON CONFLICT DO NOTHING",
@@ -49,6 +50,7 @@ async fn seed(admin: &PgPool, owner: Uuid, count: i32, schema: &str, table: &str
     .execute(&mut *stamped)
     .await
     .unwrap();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          SELECT uuidv7(), 'fact', $3, $1, uuidv7()
@@ -60,6 +62,7 @@ async fn seed(admin: &PgPool, owner: Uuid, count: i32, schema: &str, table: &str
     .execute(&mut *stamped)
     .await
     .unwrap();
+    // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
@@ -76,6 +79,7 @@ async fn seed(admin: &PgPool, owner: Uuid, count: i32, schema: &str, table: &str
     .await
     .unwrap();
     if schema == "core/utterance-v1" {
+        // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
         sqlx::query(
             "INSERT INTO proxiima_core.utterance_v1 (t, speaker, conversation_id, text)
              SELECT m.t, 'user', 'c', 'utterance ' || row_number() OVER (ORDER BY m.t)
@@ -88,6 +92,7 @@ async fn seed(admin: &PgPool, owner: Uuid, count: i32, schema: &str, table: &str
         .await
         .unwrap();
     } else {
+        // Raw INSERT on purpose: bulk volume in one transaction, for a plan-shape test
         sqlx::query(
             "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
              SELECT m.t, uuidv7(), 'note ' || row_number() OVER (ORDER BY m.t),
