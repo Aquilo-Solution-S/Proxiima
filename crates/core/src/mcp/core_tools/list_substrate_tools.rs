@@ -173,6 +173,32 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
+    async fn an_expired_context_lists_no_tool() {
+        let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
+        let ctx = McpToolCtx {
+            owner,
+            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer)
+                .with_expires_at(Some(std::time::SystemTime::UNIX_EPOCH)),
+            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+            author: McpAuthorContext {
+                model_id: "test".into(),
+                trusted_model_id: None,
+                client_name: "test".into(),
+                client_version: "0".into(),
+                caller_self_perspective: None,
+            },
+            caller_self_perspective: None,
+            services: SpiiceServices::default(),
+            engine: None,
+            judged: proxiima_core::mcp::JudgedKey::default(),
+        };
+        let output = list_substrate_tools(ctx, ListSubstrateToolsArgs::default())
+            .await
+            .expect("catalog lists");
+        assert!(output.tools.is_empty());
+    }
+
+    #[tokio::test]
     async fn tool_catalog_exposes_action_level_metadata() {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
         let ctx = McpToolCtx {

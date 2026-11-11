@@ -207,6 +207,21 @@ mod tests {
     }
 
     #[test]
+    fn an_expired_context_reads_and_uploads_nothing() {
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let ctx = AuthzContext::single_owner(&owner, proxiima_core::AuthPath::System)
+            .with_expires_at(Some(std::time::SystemTime::UNIX_EPOCH));
+        assert!(matches!(
+            ensure_owner_access(&ctx, &owner),
+            Err(BlobError::Denied(_))
+        ));
+        assert!(matches!(
+            ensure_owner_write_access(&ctx, &owner),
+            Err(BlobError::Denied(_))
+        ));
+    }
+
+    #[test]
     fn owner_write_gate_allows_editor_group_and_self() {
         use proxiima_core::{GroupId, Role};
         let subject = UserId::new(Uuid::now_v7());

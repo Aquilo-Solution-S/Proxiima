@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -16,7 +17,7 @@ use http::header::{
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyStream, StreamBody};
-use proxiima_core::{Identity, OwnerId, RevalidationConfig, revalidate_stream};
+use proxiima_core::{OwnerId, RevalidationConfig, revalidate_stream};
 
 use crate::McpServerError;
 use crate::auth::McpEdgeAuth;
@@ -661,7 +662,7 @@ async fn mcp_auth(
         };
     };
     let principal = ctx.authz.principal();
-    let identity = ctx.authz.identity_for_revalidation();
+    let expires_at = ctx.authz.expires_at();
     request.extensions_mut().insert(ctx);
     let mut response = next.run(request).await;
     if bind_new_session
@@ -676,7 +677,7 @@ async fn mcp_auth(
             *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
         }
     }
-    revalidate_response(response, &identity, state.revalidation)
+    revalidate_response(response, expires_at, state.revalidation)
 }
 
 /// Outcome of resolving the caller's owner selection from the
@@ -771,10 +772,10 @@ fn unauthorized(state: &McpAuthLayerState, path: &str) -> Response {
 
 fn revalidate_response(
     response: Response,
-    identity: &Identity,
+    expires_at: Option<SystemTime>,
     config: RevalidationConfig,
 ) -> Response {
-    response.map(|body| Body::new(RevalidatedBody::new(body, identity, config)))
+    response.map(|body| Body::new(RevalidatedBody::new(body, expires_at, config)))
 }
 
 fn response_header_str(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -802,11 +803,11 @@ where
     B::Data: Send + 'static,
     B::Error: Send + 'static,
 {
-    fn new(body: B, identity: &Identity, config: RevalidationConfig) -> Self {
+    fn new(body: B, expires_at: Option<SystemTime>, config: RevalidationConfig) -> Self {
         Self {
             inner: Box::pin(StreamBody::new(revalidate_stream(
                 BodyStream::new(body),
-                identity,
+                expires_at,
                 config,
             ))),
         }
@@ -955,8 +956,8 @@ mod tests {
     use futures_util::stream;
     use proxiima_core::{
         AccessError, AccessKind, AuthError, AuthPath, Authenticator, AuthzContext, Credentials,
-        ForwarderRole, GroupId, Identity, OwnerAccessPort, OwnerId, OwnerRoles, RevalidationConfig,
-        Role, UserId,
+        ForwarderRole, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, RevalidationConfig, Role,
+        UserId,
     };
     use tokio::sync::mpsc;
     use tokio::time;
@@ -2604,14 +2605,6 @@ mod tests {
         assert!(message.contains(pattern));
     }
 
-    fn identity(expires_at: Option<SystemTime>) -> Identity {
-        let principal = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let subject = principal.as_user();
-        proxiima_core::AuthzContext::for_subject(subject, proxiima_core::AuthPath::HostBearer)
-            .with_expires_at(expires_at)
-            .identity_for_revalidation()
-    }
-
     fn receiver_body(receiver: mpsc::UnboundedReceiver<Result<Bytes, Infallible>>) -> Body {
         Body::from_stream(stream::unfold(receiver, |mut receiver| async {
             receiver.recv().await.map(|item| (item, receiver))
@@ -2620,10 +2613,10 @@ mod tests {
 
     fn collect_revalidated(
         body: Body,
-        identity: &Identity,
+        expires_at: Option<SystemTime>,
         config: RevalidationConfig,
     ) -> tokio::task::JoinHandle<Bytes> {
-        let body = Body::new(RevalidatedBody::new(body, identity, config));
+        let body = Body::new(RevalidatedBody::new(body, expires_at, config));
         tokio::spawn(async move {
             to_bytes(body, usize::MAX)
                 .await
@@ -2642,7 +2635,7 @@ mod tests {
             .expect("receiver is alive");
         let task = collect_revalidated(
             receiver_body(receiver),
-            &identity(Some(SystemTime::now() + Duration::from_secs(2))),
+            Some(SystemTime::now() + Duration::from_secs(2)),
             config,
         );
 
@@ -2658,7 +2651,7 @@ mod tests {
             max_stream_lifetime: Duration::from_secs(3),
         };
         let (_sender, receiver) = mpsc::unbounded_channel();
-        let task = collect_revalidated(receiver_body(receiver), &identity(None), config);
+        let task = collect_revalidated(receiver_body(receiver), None, config);
 
         tokio::task::yield_now().await;
         time::advance(Duration::from_secs(3)).await;
@@ -2672,11 +2665,7 @@ mod tests {
             max_stream_lifetime: Duration::from_mins(1),
         };
         let bytes = to_bytes(
-            Body::new(RevalidatedBody::new(
-                Body::from("short"),
-                &identity(None),
-                config,
-            )),
+            Body::new(RevalidatedBody::new(Body::from("short"), None, config)),
             usize::MAX,
         )
         .await

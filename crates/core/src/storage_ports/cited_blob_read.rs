@@ -360,7 +360,7 @@ mod tests {
             AuthPath::Delegated,
         )
         .with_expires_at(Some(expires_at));
-        let foreign_phase = DelegatedPhase::new(raw, expires_at, DelegationRuntimeBinding::fresh());
+        let foreign_phase = DelegatedPhase::new(raw, DelegationRuntimeBinding::fresh());
 
         let error = service
             .collect_verified(
@@ -391,7 +391,7 @@ mod tests {
             AuthPath::Delegated,
         )
         .with_expires_at(Some(expires_at));
-        let phase = DelegatedPhase::new(raw, expires_at, binding);
+        let phase = DelegatedPhase::new(raw, binding);
         let cited_object_id = Uuid::now_v7();
 
         let blob = service
@@ -443,7 +443,6 @@ mod tests {
         let foreign = DelegatedPhase::new(
             AuthzContext::single_owner(&owner, AuthPath::Delegated)
                 .with_expires_at(Some(expires_at)),
-            expires_at,
             DelegationRuntimeBinding::fresh(),
         );
         assert_eq!(
@@ -458,7 +457,6 @@ mod tests {
             crate::test_fixtures::authenticated_context(
                 AuthzContext::single_owner(&owner, AuthPath::Delegated).with_expires_at(Some(past)),
             ),
-            past,
             binding,
         );
         assert_eq!(
@@ -523,7 +521,6 @@ mod tests {
                 AuthzContext::single_owner(&owner, AuthPath::Delegated)
                     .with_expires_at(Some(expires)),
             ),
-            expires,
             binding,
         );
         let request = CitedBlobDeliveryRequest::Owner {
@@ -652,7 +649,6 @@ mod tests {
                 .with_tool_scope(crate::ToolScope::Palette(vec![
                     crate::ScopeKey::parse("core_search_memories").unwrap(),
                 ])),
-            expires,
             binding.clone(),
         );
         let request = CitedBlobDeliveryRequest::Owner {
@@ -671,7 +667,6 @@ mod tests {
             context.with_tool_scope(crate::ToolScope::Palette(vec![
                 crate::ScopeKey::parse("core_memory_spaces").unwrap(),
             ])),
-            expires,
             binding,
         );
         assert_eq!(

@@ -25,6 +25,7 @@ use crate::OwnerScope;
 use crate::access::{AccessKind, OwnerAccessPort, OwnerRoles, Role};
 use crate::auth::{AuthError, Credentials};
 use crate::error::ProtocolError;
+use crate::owner_scope::ScopeGrant;
 use crate::publication::{PublicationExtensions, PublicationExtensionsError};
 use crate::{GroupId, OwnerId, UserId};
 
@@ -57,15 +58,13 @@ where
     serde::Deserialize::deserialize(deserializer)
 }
 
-/// WHO: the authorization currency for owner scoping.
+/// WHO the caller is. What the caller may reach, and until when, lives once
+/// in the context's owner scope; ask [`AuthzContext`] for either.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Identity {
     subject: Option<UserId>,
     writer: Option<WriterAttribution>,
     principal: OwnerId,
-    accessible_principals: HashSet<OwnerId>,
-    /// Streams terminate past this; `None` = no expiry.
-    expires_at: Option<SystemTime>,
     /// Model/runner identity the authenticator bound to this principal.
     ///
     /// Authenticated provenance, on the same footing as `subject`: it
@@ -73,13 +72,6 @@ pub struct Identity {
     /// transport payload can set it. `None` means the deployment binds no
     /// model identity to this principal.
     trusted_model_id: Option<String>,
-}
-
-impl Identity {
-    #[must_use]
-    pub fn can_access_principal(&self, principal: &OwnerId) -> bool {
-        self.accessible_principals.contains(principal)
-    }
 }
 
 /// Rejected input to [`AuthzContext::with_trusted_model_id`].
@@ -361,25 +353,56 @@ impl std::fmt::Debug for VerifiedClaims {
     }
 }
 
-/// Confinement survives the transition from a host context to a sealed witness.
+/// The one holder of a context's roles, expiry and confinement, in whichever
+/// form the context has reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OwnerScopeState {
-    Unsealed { confined_to: Option<OwnerId> },
+    /// No roles: a denied context.
+    Denied,
+    /// Roles the host resolved, not yet sealed by authentication.
+    Unsealed(ScopeGrant),
     Sealed(OwnerScope),
 }
 
 impl OwnerScopeState {
     const fn sealed(&self) -> Option<&OwnerScope> {
         match self {
-            Self::Unsealed { .. } => None,
+            Self::Denied | Self::Unsealed(_) => None,
             Self::Sealed(scope) => Some(scope),
         }
     }
 
-    const fn confined_to(&self) -> Option<OwnerId> {
+    const fn grant(&self) -> Option<&ScopeGrant> {
         match self {
-            Self::Unsealed { confined_to } => *confined_to,
-            Self::Sealed(scope) => scope.confined_to(),
+            Self::Denied => None,
+            Self::Unsealed(grant) => Some(grant),
+            Self::Sealed(scope) => Some(scope.grant()),
+        }
+    }
+
+    /// Sealed under `writer`; a denied state has nothing to seal.
+    fn sealed_by(self, writer: WriterAttribution) -> Self {
+        match self {
+            Self::Denied => Self::Denied,
+            Self::Unsealed(grant) => Self::Sealed(OwnerScope::seal(grant, writer)),
+            Self::Sealed(scope) => Self::Sealed(OwnerScope::seal(scope.into_grant(), writer)),
+        }
+    }
+
+    fn narrowed(self, owner: OwnerId) -> Option<Self> {
+        match self {
+            Self::Denied => None,
+            Self::Unsealed(grant) => grant.narrow(owner).map(Self::Unsealed),
+            Self::Sealed(scope) => scope.narrow(owner).map(Self::Sealed),
+        }
+    }
+
+    /// The expiry moves earlier or stays ([`ScopeGrant::clamped_to`]).
+    fn clamped_to(self, expires_at: Option<SystemTime>) -> Self {
+        match self {
+            Self::Denied => Self::Denied,
+            Self::Unsealed(grant) => Self::Unsealed(grant.clamped_to(expires_at)),
+            Self::Sealed(scope) => Self::Sealed(scope.clamped_to(expires_at)),
         }
     }
 }
@@ -452,7 +475,6 @@ pub struct AuthzContext {
     identity: Identity,
     capabilities: CapabilitySet,
     auth_path: AuthPath,
-    owner_roles: Option<OwnerRoles>,
     owner_scope: OwnerScopeState,
     /// Mandatory owner from a verified forwarding credential. It selects no
     /// ordinary membership and survives request narrowing.
@@ -521,28 +543,24 @@ pub struct InvokingTool {
 #[must_use]
 pub struct DelegatedPhase {
     authz: AuthzContext,
-    expires_at: SystemTime,
     runtime_binding: DelegationRuntimeBinding,
 }
 
 impl DelegatedPhase {
-    pub(crate) fn new(
-        authz: AuthzContext,
-        expires_at: SystemTime,
-        runtime_binding: DelegationRuntimeBinding,
-    ) -> Self {
+    pub(crate) fn new(authz: AuthzContext, runtime_binding: DelegationRuntimeBinding) -> Self {
         debug_assert_eq!(authz.auth_path(), AuthPath::Delegated);
-        debug_assert_eq!(authz.expires_at(), Some(expires_at));
         Self {
             authz,
-            expires_at,
             runtime_binding,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn expire_for_test(&mut self) {
-        self.expires_at = SystemTime::UNIX_EPOCH;
+        self.authz = self
+            .authz
+            .clone()
+            .with_expires_at(Some(SystemTime::UNIX_EPOCH));
     }
 }
 
@@ -550,15 +568,13 @@ impl std::fmt::Debug for DelegatedPhase {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DelegatedPhase")
-            .field("expires_at", &self.expires_at)
+            .field("expires_at", &self.authz.expires_at())
             .finish_non_exhaustive()
     }
 }
 
 mod engine_authority_seal {
-    use super::{
-        AuthPath, AuthzContext, DelegatedPhase, EngineOperationAuthority, ProtocolError, SystemTime,
-    };
+    use super::{AuthPath, AuthzContext, DelegatedPhase, EngineOperationAuthority, ProtocolError};
 
     pub(crate) trait Sealed {
         fn context_for_engine_operation(
@@ -587,7 +603,7 @@ mod engine_authority_seal {
         fn context_for_engine_operation(
             &self,
         ) -> Result<EngineOperationAuthority<'_>, ProtocolError> {
-            if self.expires_at <= SystemTime::now() {
+            if self.authz.is_expired() {
                 return Err(ProtocolError::forbidden(
                     "delegated worker phase has expired",
                 ));
@@ -688,10 +704,8 @@ impl AuthzContext {
             by: owner_roles.subject().into_inner(),
             via: None,
         };
-        let mut context =
-            Self::server_resolved_with_writer(owner_roles.clone(), AuthPath::System, writer);
-        context.owner_scope =
-            OwnerScopeState::Sealed(OwnerScope::from_verified_roles(owner_roles, None, writer));
+        let mut context = Self::server_resolved_with_writer(owner_roles, AuthPath::System, writer);
+        context.owner_scope = context.owner_scope.sealed_by(writer);
         context.system_binding = Some(authority.binding());
         context
     }
@@ -724,35 +738,29 @@ impl AuthzContext {
             by: subject.into_inner(),
             via: None,
         };
-        let mut context =
-            Self::server_resolved_with_writer(roles.clone(), AuthPath::HostBearer, writer);
-        context.owner_scope =
-            OwnerScopeState::Sealed(OwnerScope::from_verified_roles(roles, None, writer));
+        let mut context = Self::server_resolved_with_writer(roles, AuthPath::HostBearer, writer);
+        context.owner_scope = context.owner_scope.sealed_by(writer);
         context
             .narrowed_to_owner(owner)
             .expect("single owner's verified role is self-accessible")
     }
 
     pub(crate) fn seal_verified_scope(mut self) -> Result<Self, AuthError> {
-        let roles = self
-            .owner_roles
-            .clone()
-            .ok_or(AuthError::InvalidCredentials)?;
+        if self.owner_scope.grant().is_none() {
+            return Err(AuthError::InvalidCredentials);
+        }
         let writer = self.writer().ok_or(AuthError::InvalidCredentials)?;
-        let mut scope = OwnerScope::from_verified_roles(roles, self.expires_at(), writer);
+        self.owner_scope = self.owner_scope.sealed_by(writer);
         if self.auth_path == AuthPath::HostBearer
             && self.forwarded_owner.is_none()
-            && self.owner_scope.confined_to().is_none()
+            && let OwnerScopeState::Sealed(scope) = self.owner_scope
         {
             let subject = scope.subject();
-            scope = scope
-                .with_goal_principal(crate::goal_collaboration::GoalPrincipalScope::new(subject));
+            self.owner_scope =
+                OwnerScopeState::Sealed(scope.with_goal_principal(
+                    crate::goal_collaboration::GoalPrincipalScope::new(subject),
+                ));
         }
-        let scope = match self.owner_scope.confined_to() {
-            Some(owner) => scope.narrow(owner).ok_or(AuthError::InvalidCredentials)?,
-            None => scope,
-        };
-        self.owner_scope = OwnerScopeState::Sealed(scope);
         Ok(self)
     }
 
@@ -776,9 +784,13 @@ impl AuthzContext {
         self.identity.principal
     }
 
+    pub(crate) fn is_expired(&self) -> bool {
+        self.owner_scope.grant().is_some_and(ScopeGrant::is_expired)
+    }
+
     #[must_use]
     pub fn expires_at(&self) -> Option<SystemTime> {
-        self.identity.expires_at
+        self.owner_scope.grant().and_then(ScopeGrant::expires_at)
     }
 
     /// Model/runner identity certified by the authenticating token, if the
@@ -834,8 +846,16 @@ impl AuthzContext {
     }
 
     /// The read set with the read authority storage checks it against.
+    ///
+    /// The reader keeps the wider roles it was bound with, but is handed out
+    /// with this context's current deadline: the one exit of the read set is
+    /// where its expiry is read, so it cannot outlive a shortened context.
     pub(crate) fn bound_reads(&self) -> BoundReadSet {
-        self.read_set.clone()
+        let mut bound = self.read_set.clone();
+        bound.reader = bound
+            .reader
+            .map(|reader| Box::new(reader.clamped_to(self.expires_at())));
+        bound
     }
 
     /// The other-store reads of the read set not yet read through the port.
@@ -906,30 +926,32 @@ impl AuthzContext {
 
     #[must_use]
     pub fn can_access_owner(&self, owner: &OwnerId) -> bool {
-        self.identity.can_access_principal(owner)
+        self.may_read(owner, AccessKind::Fact)
     }
 
-    pub(crate) fn accessible_owners(&self) -> impl Iterator<Item = OwnerId> + '_ {
-        self.identity.accessible_principals.iter().copied()
+    /// The owners whose Facts the context reads, in the order of memory
+    /// spaces.
+    pub(crate) fn accessible_owners(&self) -> impl Iterator<Item = OwnerId> {
+        self.readable_owners(AccessKind::Fact).into_iter()
     }
 
     #[must_use]
-    pub(crate) fn is_server_resolved(&self) -> bool {
-        self.owner_roles.is_some()
+    pub(crate) const fn is_server_resolved(&self) -> bool {
+        self.owner_scope.grant().is_some()
     }
 
     #[must_use]
     pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
-        self.owner_roles
-            .as_ref()
-            .is_some_and(|roles| roles.may_read(owner, kind))
+        self.owner_scope
+            .grant()
+            .is_some_and(|grant| grant.may_read(owner, kind))
     }
 
     #[must_use]
     pub fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
-        self.owner_roles
-            .as_ref()
-            .is_some_and(|roles| roles.may_write(owner, kind))
+        self.owner_scope
+            .grant()
+            .is_some_and(|grant| grant.may_write(owner, kind))
     }
 
     /// The owner-role rule for a tool call: a declared read needs read
@@ -986,9 +1008,9 @@ impl AuthzContext {
 
     #[must_use]
     pub fn may_manage(&self, owner: &OwnerId) -> bool {
-        self.owner_roles
-            .as_ref()
-            .is_some_and(|roles| roles.may_manage(owner))
+        self.owner_scope
+            .grant()
+            .is_some_and(|grant| grant.may_manage(owner))
     }
 
     /// Server-resolved role for one owner, if the authenticated subject has
@@ -996,21 +1018,21 @@ impl AuthzContext {
     /// resolves it again at every redemption.
     #[must_use]
     pub fn role_for_owner(&self, owner: &OwnerId) -> Option<crate::access::Role> {
-        self.owner_roles.as_ref()?.role_for(owner)
+        self.owner_scope.grant()?.role_for(owner)
     }
 
     #[must_use]
     pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
-        self.owner_roles
-            .as_ref()
-            .map_or_else(Vec::new, |roles| roles.readable_owners(kind))
+        self.owner_scope
+            .grant()
+            .map_or_else(Vec::new, |grant| grant.readable_owners(kind))
     }
 
     #[must_use]
     pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
-        self.owner_roles
-            .as_ref()
-            .map_or_else(Vec::new, |roles| roles.writable_owners(kind))
+        self.owner_scope
+            .grant()
+            .map_or_else(Vec::new, |grant| grant.writable_owners(kind))
     }
 
     #[must_use]
@@ -1028,10 +1050,6 @@ impl AuthzContext {
         writer: WriterAttribution,
     ) -> Self {
         let subject = owner_roles.subject();
-        let accessible_principals = owner_roles
-            .readable_owners(AccessKind::Fact)
-            .into_iter()
-            .collect();
         Self {
             identity: Identity {
                 subject: Some(subject),
@@ -1040,14 +1058,11 @@ impl AuthzContext {
                     AuthPath::Denied => None,
                 },
                 principal: OwnerId::from(subject),
-                accessible_principals,
-                expires_at: None,
                 trusted_model_id: None,
             },
             capabilities: CapabilitySet::all(),
             auth_path,
-            owner_roles: Some(owner_roles),
-            owner_scope: OwnerScopeState::Unsealed { confined_to: None },
+            owner_scope: OwnerScopeState::Unsealed(ScopeGrant::new(owner_roles, None)),
             forwarded_owner: None,
             publication_extensions: PublicationExtensions::new(),
             read_set: BoundReadSet::default(),
@@ -1095,14 +1110,7 @@ impl AuthzContext {
         owner: OwnerId,
     ) -> Option<Self> {
         let scope = self.owner_scope()?;
-        let expires_at = self
-            .expires_at()
-            .into_iter()
-            .chain(scope.expires_at())
-            .min();
-        if self.forwarded_owner != Some(owner)
-            || expires_at.is_some_and(|deadline| deadline <= SystemTime::now())
-        {
+        if self.forwarded_owner != Some(owner) || scope.is_expired() {
             return None;
         }
         let subject = self.subject()?;
@@ -1124,15 +1132,9 @@ impl AuthzContext {
             .ok()??;
         let roles = OwnerRoles::scoped_to(subject, owner, role.role());
         let mut next = self.clone();
-        next.identity.accessible_principals = roles
-            .readable_owners(AccessKind::Fact)
-            .into_iter()
-            .collect();
-        next.owner_roles = Some(roles.clone());
-        next.identity.expires_at = expires_at;
         next.owner_scope = OwnerScopeState::Sealed(OwnerScope::from_verified_roles(
             roles,
-            expires_at,
+            scope.expires_at(),
             scope.writer(),
         ));
         next.narrowed_to_owner(owner)
@@ -1301,22 +1303,7 @@ impl AuthzContext {
     /// names no default.
     #[must_use]
     pub fn narrowed_to_owner(mut self, owner: OwnerId) -> Option<Self> {
-        let roles = self.owner_roles.as_ref()?;
-        let subject = roles.subject();
-        let role = roles.role_for(&owner)?;
-        let narrowed_roles = OwnerRoles::scoped_to(subject, owner, role);
-        let accessible_principals = narrowed_roles
-            .readable_owners(AccessKind::Fact)
-            .into_iter()
-            .collect();
-        self.owner_roles = Some(narrowed_roles);
-        self.owner_scope = match self.owner_scope {
-            OwnerScopeState::Unsealed { .. } => OwnerScopeState::Unsealed {
-                confined_to: Some(owner),
-            },
-            OwnerScopeState::Sealed(scope) => OwnerScopeState::Sealed(scope.narrow(owner)?),
-        };
-        self.identity.accessible_principals = accessible_principals;
+        self.owner_scope = self.owner_scope.narrowed(owner)?;
         self.default_owner = None;
         Some(self)
     }
@@ -1338,19 +1325,13 @@ impl AuthzContext {
     /// caller-controlled payload would make the caller its own authorizer.
     #[must_use]
     pub fn with_host_resolved_role(mut self, group: GroupId, role: Role) -> Option<Self> {
-        if !matches!(
-            self.owner_scope,
-            OwnerScopeState::Unsealed { confined_to: None }
-        ) || self.forwarded_owner.is_some()
-        {
+        let OwnerScopeState::Unsealed(grant) = self.owner_scope else {
+            return None;
+        };
+        if grant.confined_to().is_some() || self.forwarded_owner.is_some() {
             return None;
         }
-        let roles = self.owner_roles.take()?.with_group_role(group, role);
-        self.identity.accessible_principals = roles
-            .readable_owners(AccessKind::Fact)
-            .into_iter()
-            .collect();
-        self.owner_roles = Some(roles);
+        self.owner_scope = OwnerScopeState::Unsealed(grant.with_group_role(group, role));
         Some(self)
     }
 
@@ -1372,19 +1353,13 @@ impl AuthzContext {
         let role = port.resolve_group_role(subject, group).await.ok()??;
         let scope = scope.add_group_role(group, role)?;
         let mut next = self.clone();
-        let roles = next.owner_roles.take()?.with_group_role(group, role);
-        next.identity.accessible_principals = roles
-            .readable_owners(AccessKind::Fact)
-            .into_iter()
-            .collect();
-        next.owner_roles = Some(roles);
         next.owner_scope = OwnerScopeState::Sealed(scope);
         Some(next)
     }
 
     #[must_use]
     pub fn with_expires_at(mut self, expires_at: Option<SystemTime>) -> Self {
-        self.identity.expires_at = expires_at;
+        self.owner_scope = self.owner_scope.clamped_to(expires_at);
         self
     }
 
@@ -1431,8 +1406,6 @@ impl AuthzContext {
                 subject: None,
                 writer: None,
                 principal: *owner,
-                accessible_principals: HashSet::new(),
-                expires_at: None,
                 trusted_model_id: None,
             },
             capabilities: CapabilitySet {
@@ -1440,8 +1413,7 @@ impl AuthzContext {
                 served_surface: ServedSurface::Palette(Vec::new()),
             },
             auth_path: AuthPath::Denied,
-            owner_roles: None,
-            owner_scope: OwnerScopeState::Unsealed { confined_to: None },
+            owner_scope: OwnerScopeState::Denied,
             forwarded_owner: None,
             publication_extensions: PublicationExtensions::new(),
             read_set: BoundReadSet::default(),
@@ -1481,7 +1453,7 @@ pub async fn authenticate(
 
 /// Revalidation cadence for long-lived authenticated streams.
 ///
-/// Streams terminate silently at `Identity::expires_at` when present, and
+/// Streams terminate silently at the context's expiry when present, and
 /// after `max_stream_lifetime` regardless of identity state. Nothing ends a
 /// stream earlier: there is no revocation before expiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1565,14 +1537,14 @@ impl<I> Stream for RevalidatedStream<I> {
 #[must_use]
 pub fn revalidate_stream<S>(
     stream: S,
-    identity: &Identity,
+    expires_at: Option<SystemTime>,
     config: RevalidationConfig,
 ) -> Pin<Box<dyn Stream<Item = S::Item> + Send>>
 where
     S: Stream + Send + 'static,
     S::Item: Send + 'static,
 {
-    let expires_at = identity.expires_at.map(system_time_sleep);
+    let expires_at = expires_at.map(system_time_sleep);
     let max_lifetime = Box::pin(tokio::time::sleep(config.max_stream_lifetime));
 
     Box::pin(RevalidatedStream {
@@ -1777,23 +1749,6 @@ mod tests {
         assert!(context.narrowed_to_owner(group).is_some());
     }
 
-    fn identity(expires_at: Option<SystemTime>) -> Identity {
-        let principal = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let mut accessible_principals = HashSet::with_capacity(1);
-        accessible_principals.insert(principal);
-        Identity {
-            subject: Some(principal.as_user()),
-            writer: Some(WriterAttribution {
-                by: principal.into_inner(),
-                via: None,
-            }),
-            principal,
-            accessible_principals,
-            expires_at,
-            trusted_model_id: None,
-        }
-    }
-
     fn receiver_stream<T: Send + 'static>(
         receiver: mpsc::UnboundedReceiver<T>,
     ) -> impl Stream<Item = T> + Send {
@@ -1810,8 +1765,8 @@ mod tests {
         assert_eq!(ctx.auth_path, AuthPath::System);
         assert!(ctx.is_server_resolved());
         assert!(ctx.may_write(&o, AccessKind::Fact));
-        assert!(ctx.identity.can_access_principal(&o));
-        assert!(ctx.identity.expires_at.is_none());
+        assert!(ctx.can_access_owner(&o));
+        assert!(ctx.expires_at().is_none());
         assert!(ctx.owner_scope().is_none());
     }
 
@@ -2144,8 +2099,8 @@ mod tests {
         let ctx = AuthzContext::denied_for_owner(&o);
 
         assert_eq!(ctx.auth_path, AuthPath::Denied);
-        assert!(ctx.identity.accessible_principals.is_empty());
-        assert!(!ctx.identity.can_access_principal(&o));
+        assert!(ctx.accessible_owners().next().is_none());
+        assert!(!ctx.can_access_owner(&o));
         assert!(
             !ctx.capabilities
                 .tool_scope
@@ -2190,6 +2145,76 @@ mod tests {
         assert!(ctx.may_read_goals(&OwnerId::from(subject)) && ctx.may_read_goals(&group));
     }
 
+    /// A bound read set keeps the wider roles it was bound with, and never
+    /// outlives the context's deadline.
+    #[test]
+    fn the_bound_reader_follows_the_contexts_deadline() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let bound = AuthzContext::for_subject_with_role(
+            subject,
+            [(group, Role::editor())],
+            AuthPath::HostBearer,
+        )
+        .with_expires_at(Some(SystemTime::now() + Duration::from_mins(5)))
+        .seal_verified_scope()
+        .unwrap()
+        .with_read_set(crate::ReadSet::default())
+        .unwrap();
+        let narrowed = bound.narrowed_to_owner(group).unwrap();
+
+        let reads = narrowed.bound_reads();
+        let reader = reads.reader().expect("bound on a sealed context");
+        assert!(reader.may_read(&OwnerId::from(subject), AccessKind::Fact));
+        assert!(reader.may_read(&group, AccessKind::Fact));
+
+        let expired = narrowed.with_expires_at(Some(SystemTime::UNIX_EPOCH));
+        let reads = expired.bound_reads();
+        let reader = reads.reader().expect("still bound");
+        assert!(reader.is_expired());
+        assert!(!reader.may_read(&group, AccessKind::Fact));
+    }
+
+    /// Roles, accessible owners and expiry answer from one state: a
+    /// narrowed context agrees with its sealed scope on all three, and an
+    /// expired one answers nothing anywhere.
+    #[test]
+    fn roles_accessible_owners_and_expiry_answer_from_one_state() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let personal = OwnerId::from(subject);
+        let deadline = SystemTime::now() + Duration::from_mins(5);
+        let sealed = AuthzContext::for_subject_with_role(
+            subject,
+            [(group, Role::editor())],
+            AuthPath::HostBearer,
+        )
+        .with_expires_at(Some(deadline))
+        .seal_verified_scope()
+        .unwrap();
+
+        let narrowed = sealed.clone().narrowed_to_owner(group).unwrap();
+        let scope = narrowed.owner_scope().unwrap();
+        assert_eq!(narrowed.expires_at(), Some(deadline));
+        assert_eq!(scope.expires_at(), Some(deadline));
+        assert_eq!(narrowed.accessible_owners().collect::<Vec<_>>(), [group]);
+        assert!(narrowed.can_access_owner(&group) && !narrowed.can_access_owner(&personal));
+        assert_eq!(narrowed.role_for_owner(&personal), None);
+        assert_eq!(scope.role_for_owner(&personal), None);
+
+        let expired = sealed.with_expires_at(Some(SystemTime::UNIX_EPOCH));
+        let scope = expired.owner_scope().unwrap();
+        for owner in [&group, &personal] {
+            assert!(!expired.may_read(owner, AccessKind::Fact), "{owner:?}");
+            assert!(!expired.may_write(owner, AccessKind::Fact), "{owner:?}");
+            assert!(!expired.can_access_owner(owner), "{owner:?}");
+            assert_eq!(expired.role_for_owner(owner), None, "{owner:?}");
+            assert!(!scope.may_read(owner, AccessKind::Fact), "{owner:?}");
+        }
+        assert!(expired.accessible_owners().next().is_none());
+        assert!(expired.clone().narrowed_to_owner(group).is_none());
+    }
+
     /// The forwarder shape: a subject whose resolved map carries no Group
     /// at all is still narrowed to one party, on a role the host resolved
     /// for that party alone. The role is folded into the map and the one
@@ -2212,7 +2237,7 @@ mod tests {
             .with_host_resolved_role(group_id, Role::editor())
             .expect("a host-resolved Group role folds into the map");
         assert!(
-            with_role.identity.can_access_principal(&group),
+            with_role.can_access_owner(&group),
             "the accessible set is recomputed from the extended map"
         );
         let narrowed = with_role
@@ -2229,11 +2254,9 @@ mod tests {
             vec![group],
             "the narrowed set is exactly the one party"
         );
-        assert!(narrowed.identity.can_access_principal(&group));
+        assert!(narrowed.can_access_owner(&group));
         assert!(
-            !narrowed
-                .identity
-                .can_access_principal(&OwnerId::from(subject)),
+            !narrowed.can_access_owner(&OwnerId::from(subject)),
             "accessible principals are recomputed from the narrowed roles"
         );
     }
@@ -2956,12 +2979,12 @@ mod tests {
         let (live_sender, live_receiver) = mpsc::unbounded_channel();
         let mut expired_stream = revalidate_stream(
             receiver_stream(expired_receiver),
-            &identity(Some(now + Duration::from_secs(10))),
+            Some(now + Duration::from_secs(10)),
             config,
         );
         let mut live_stream = revalidate_stream(
             receiver_stream(live_receiver),
-            &identity(Some(now + Duration::from_mins(1))),
+            Some(now + Duration::from_mins(1)),
             config,
         );
 
@@ -2983,7 +3006,7 @@ mod tests {
             max_stream_lifetime: Duration::from_secs(10),
         };
         let (_sender, receiver) = mpsc::unbounded_channel::<u8>();
-        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
+        let mut stream = revalidate_stream(receiver_stream(receiver), None, config);
 
         time::advance(Duration::from_secs(10)).await;
 
@@ -2996,7 +3019,7 @@ mod tests {
             max_stream_lifetime: Duration::from_secs(30),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
-        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
+        let mut stream = revalidate_stream(receiver_stream(receiver), None, config);
 
         time::advance(Duration::from_secs(20)).await;
         sender.send(1).expect("receiver is alive");
@@ -3012,7 +3035,7 @@ mod tests {
             max_stream_lifetime: Duration::from_secs(10),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
-        let mut stream = revalidate_stream(receiver_stream(receiver), &identity(None), config);
+        let mut stream = revalidate_stream(receiver_stream(receiver), None, config);
 
         sender.send(1).expect("receiver is alive");
         sender.send(2).expect("receiver is alive");

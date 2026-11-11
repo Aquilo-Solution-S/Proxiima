@@ -1170,6 +1170,63 @@ mod tests {
         assert!(out.is_err(), "core_remember must stay denied for a viewer");
     }
 
+    /// An expired context runs no tool. The same calls reach the terminal
+    /// with the same context while it is live.
+    #[tokio::test]
+    async fn an_expired_context_runs_no_tool() {
+        let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
+        let context = |expires_at| {
+            test_ctx_with_authz(
+                owner,
+                AuthzContext::single_owner(&owner, AuthPath::HostBearer)
+                    .with_tool_scope(ToolScope::All)
+                    .with_expires_at(Some(expires_at)),
+            )
+        };
+        let live = || context(std::time::SystemTime::now() + std::time::Duration::from_mins(5));
+        let expired = || context(std::time::SystemTime::UNIX_EPOCH);
+        let run = |name: &str, ctx: McpToolCtx| {
+            let name = name.to_string();
+            async move {
+                let behaviors: Vec<Arc<dyn RequestBehavior>> = vec![Arc::new(ScopeGateBehavior)];
+                let terminal: TerminalDispatch<'_> = Box::new(|_call| {
+                    Box::pin(async { Ok(ToolReply::Structured(serde_json::json!({"ok": true}))) })
+                });
+                Next::new(&behaviors, terminal)
+                    .run(ToolCall {
+                        name,
+                        args: serde_json::json!({ "text": "x" }),
+                        ctx,
+                    })
+                    .await
+            }
+        };
+        for access in [OwnerAccess::Read, OwnerAccess::Write, OwnerAccess::GoalWork] {
+            assert!(!expired().authz.may_run_tool(&owner, access), "{access:?}");
+        }
+
+        let read = crate::protocol::resource::SCHEMAS;
+        let write = protocol_tool::CORE_REMEMBER;
+        assert!(
+            run(read, live()).await.is_ok(),
+            "live read reaches the tool"
+        );
+        assert!(
+            run(write, live()).await.is_ok(),
+            "live write reaches the tool"
+        );
+        // The read is refused by the owner-role gate. The write never gets
+        // that far: owner-space resolution, which asks the same context,
+        // finds the owner inaccessible first.
+        assert!(
+            matches!(run(read, expired()).await, Err(McpToolError::NotAuthorized(ref t)) if t == read)
+        );
+        assert!(
+            matches!(run(write, expired()).await, Err(McpToolError::InvalidInput(ref m))
+                if m == "current memory space is not accessible")
+        );
+    }
+
     fn test_ctx_with_authz(owner: OwnerId, authz: AuthzContext) -> McpToolCtx {
         McpToolCtx {
             owner,

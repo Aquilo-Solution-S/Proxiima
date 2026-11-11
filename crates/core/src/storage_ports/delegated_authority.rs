@@ -633,11 +633,7 @@ impl DelegatedAuthorityService {
         // Seal only after those checks; never reconstruct from a queued owner.
         .seal_verified_scope()
         .map_err(|_| DelegatedAuthorityError::MembershipRevoked)?;
-        Ok(DelegatedPhase::new(
-            authz,
-            grant.expires_at(),
-            self.runtime_binding.clone(),
-        ))
+        Ok(DelegatedPhase::new(authz, self.runtime_binding.clone()))
     }
 
     /// Revoke as the issuer or a current owner manager. Both paths require a

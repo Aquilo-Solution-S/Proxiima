@@ -121,6 +121,11 @@ lifetime (`PROXIIMA_STREAM_MAX_LIFETIME`), whichever comes first. A delegated
 grant ends when it is revoked. The host shortens exposure with short-lived
 tokens, not with a revocation signal.
 
+A request context holds its roles and its expiry once, in its owner scope, and
+checks expiry in two places: at admission, and again wherever a permit is
+minted for a write or a read. An expired context reads, writes and runs
+nothing, whichever check asks.
+
 ### Blob downloads separate authorization from delivery
 
 Authority mode: `existing-kernel-no-change`. The existing kernel owns read

@@ -10,6 +10,115 @@ use std::time::SystemTime;
 
 use crate::{AccessKind, GroupId, OwnerId, OwnerRoles, Role, UserId, WriterAttribution};
 
+/// The roles a request holds, until when, and the one owner it is confined
+/// to. The single owner of all three: a context carries one grant, sealed or
+/// not, so no site can update one copy and forget another.
+///
+/// Every question about roles is answered here and none is answered once
+/// [`Self::is_expired`]; that is the only comparison with the clock for
+/// request authorization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScopeGrant {
+    roles: OwnerRoles,
+    expires_at: Option<SystemTime>,
+    selected: Option<OwnerId>,
+}
+
+impl ScopeGrant {
+    pub(crate) const fn new(roles: OwnerRoles, expires_at: Option<SystemTime>) -> Self {
+        Self {
+            roles,
+            expires_at,
+            selected: None,
+        }
+    }
+
+    pub(crate) const fn expires_at(&self) -> Option<SystemTime> {
+        self.expires_at
+    }
+
+    pub(crate) fn is_expired(&self) -> bool {
+        self.expires_at
+            .is_some_and(|deadline| deadline <= SystemTime::now())
+    }
+
+    /// The deadline moves earlier or stays: an expiry never extends, and
+    /// `None` keeps the one already set.
+    pub(crate) fn clamped_to(mut self, expires_at: Option<SystemTime>) -> Self {
+        self.expires_at = self.expires_at.into_iter().chain(expires_at).min();
+        self
+    }
+
+    pub(crate) const fn confined_to(&self) -> Option<OwnerId> {
+        self.selected
+    }
+
+    pub(crate) const fn subject(&self) -> UserId {
+        self.roles.subject()
+    }
+
+    pub(crate) fn with_group_role(mut self, group: GroupId, role: Role) -> Self {
+        self.roles = self.roles.with_group_role(group, role);
+        self
+    }
+
+    pub(crate) fn narrow(&self, owner: OwnerId) -> Option<Self> {
+        let role = self.role_for(&owner)?;
+        Some(Self {
+            roles: OwnerRoles::scoped_to(self.roles.subject(), owner, role),
+            expires_at: self.expires_at,
+            selected: Some(owner),
+        })
+    }
+
+    /// The roles while the grant lives, `None` once it expired: the only way
+    /// a question about access reaches them.
+    fn live(&self) -> Option<&OwnerRoles> {
+        (!self.is_expired()).then_some(&self.roles)
+    }
+
+    pub(crate) fn role_for(&self, owner: &OwnerId) -> Option<Role> {
+        self.live()?.role_for(owner)
+    }
+
+    pub(crate) fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+        self.live().is_some_and(|roles| roles.may_read(owner, kind))
+    }
+
+    pub(crate) fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+        self.live()
+            .is_some_and(|roles| roles.may_write(owner, kind))
+    }
+
+    pub(crate) fn may_manage(&self, owner: &OwnerId) -> bool {
+        self.live().is_some_and(|roles| roles.may_manage(owner))
+    }
+
+    pub(crate) fn administers(&self, owner: &OwnerId) -> bool {
+        self.live().is_some_and(|roles| roles.administers(owner))
+    }
+
+    pub(crate) fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+        self.live()
+            .map_or_else(Vec::new, |roles| roles.readable_owners(kind))
+    }
+
+    pub(crate) fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+        self.live()
+            .map_or_else(Vec::new, |roles| roles.writable_owners(kind))
+    }
+
+    pub(crate) fn goal_reading_owners(&self) -> Vec<OwnerId> {
+        self.live()
+            .map_or_else(Vec::new, OwnerRoles::goal_reading_owners)
+    }
+
+    pub(crate) fn administered_owners(&self) -> Vec<OwnerId> {
+        self.live()
+            .map_or_else(Vec::new, OwnerRoles::administered_owners)
+    }
+}
+
 /// Server-authenticated owner authority carried alongside an [`AuthzContext`](crate::AuthzContext).
 ///
 /// The fields are private and there is no public constructor.  In particular,
@@ -17,10 +126,8 @@ use crate::{AccessKind, GroupId, OwnerId, OwnerRoles, Role, UserId, WriterAttrib
 /// produce this witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerScope {
-    pub(crate) roles: OwnerRoles,
+    grant: ScopeGrant,
     writer: WriterAttribution,
-    expires_at: Option<SystemTime>,
-    selected: Option<OwnerId>,
     goal_principal: Option<crate::goal_collaboration::GoalPrincipalScope>,
     /// The owner a Goal work permit works ([`Self::goal_work`]).
     goal_work: Option<OwnerId>,
@@ -32,40 +139,55 @@ impl OwnerScope {
         expires_at: Option<SystemTime>,
         writer: WriterAttribution,
     ) -> Self {
+        Self::seal(ScopeGrant::new(roles, expires_at), writer)
+    }
+
+    pub(crate) const fn seal(grant: ScopeGrant, writer: WriterAttribution) -> Self {
         Self {
-            roles,
+            grant,
             writer,
-            expires_at,
-            selected: None,
             goal_principal: None,
             goal_work: None,
         }
     }
 
+    pub(crate) const fn grant(&self) -> &ScopeGrant {
+        &self.grant
+    }
+
+    pub(crate) fn into_grant(self) -> ScopeGrant {
+        self.grant
+    }
+
+    /// The same scope with its deadline moved earlier or kept
+    /// ([`ScopeGrant::clamped_to`]).
+    pub(crate) fn clamped_to(self, expires_at: Option<SystemTime>) -> Self {
+        let grant = self.grant.clone().clamped_to(expires_at);
+        self.with_grant(grant)
+    }
+
+    pub(crate) fn with_grant(self, grant: ScopeGrant) -> Self {
+        Self { grant, ..self }
+    }
+
     pub(crate) fn add_group_role(&self, group: GroupId, role: Role) -> Option<Self> {
         // On-demand host resolution belongs before request narrowing. A
         // narrowed witness can never grow its authority again.
-        if self.selected.is_some() || self.is_expired() {
+        if self.grant.confined_to().is_some() || self.is_expired() {
             return None;
         }
         Some(Self {
-            roles: self.roles.clone().with_group_role(group, role),
+            grant: self.grant.clone().with_group_role(group, role),
             writer: self.writer,
-            expires_at: self.expires_at,
-            selected: None,
             goal_principal: self.goal_principal,
             goal_work: None,
         })
     }
 
     pub(crate) fn narrow(&self, owner: OwnerId) -> Option<Self> {
-        let subject = self.roles.subject();
-        let role = self.roles.role_for(&owner)?;
         Some(Self {
-            roles: OwnerRoles::scoped_to(subject, owner, role),
+            grant: self.grant.narrow(owner)?,
             writer: self.writer,
-            expires_at: self.expires_at,
-            selected: Some(owner),
             goal_principal: None,
             goal_work: None,
         })
@@ -77,7 +199,7 @@ impl OwnerScope {
     pub(crate) fn for_goal_work(&self, owner: OwnerId) -> Self {
         Self {
             goal_work: self
-                .roles
+                .grant
                 .role_for(&owner)
                 .is_some_and(Role::works_goals)
                 .then_some(owner),
@@ -91,7 +213,7 @@ impl OwnerScope {
         mut self,
         principal: crate::goal_collaboration::GoalPrincipalScope,
     ) -> Self {
-        if self.selected.is_none() {
+        if self.grant.confined_to().is_none() {
             self.goal_principal = Some(principal);
         }
         self
@@ -104,10 +226,6 @@ impl OwnerScope {
         } else {
             self.goal_principal.as_ref()
         }
-    }
-
-    pub(crate) const fn confined_to(&self) -> Option<OwnerId> {
-        self.selected
     }
 
     /// The immutable writer captured when authentication sealed this scope.
@@ -132,79 +250,64 @@ impl OwnerScope {
 
     #[must_use]
     pub const fn subject(&self) -> UserId {
-        self.roles.subject()
+        self.grant.subject()
     }
 
     #[must_use]
-    pub fn expires_at(&self) -> Option<SystemTime> {
-        self.expires_at
+    pub const fn expires_at(&self) -> Option<SystemTime> {
+        self.grant.expires_at()
     }
 
     #[must_use]
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .is_some_and(|deadline| deadline <= SystemTime::now())
+        self.grant.is_expired()
     }
 
     #[must_use]
     pub fn role_for_owner(&self, owner: &OwnerId) -> Option<Role> {
-        self.roles.role_for(owner)
+        self.grant.role_for(owner)
     }
 
     #[must_use]
     pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
-        !self.is_expired() && self.roles.may_read(owner, kind)
+        self.grant.may_read(owner, kind)
     }
 
     #[must_use]
     pub fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
-        !self.is_expired() && self.roles.may_write(owner, kind)
+        self.grant.may_write(owner, kind)
     }
 
     /// Whether the scope reads an entry of `kind` owned by `owner`
     /// ([`Role::may_read_entry`]).
     #[must_use]
     pub fn may_read_entry(&self, owner: &OwnerId, kind: crate::EntityKind) -> bool {
-        !self.is_expired()
-            && self
-                .roles
-                .role_for(owner)
-                .is_some_and(|role| role.may_read_entry(kind))
+        self.grant
+            .role_for(owner)
+            .is_some_and(|role| role.may_read_entry(kind))
     }
 
     /// Whether the scope administers `owner` ([`Role::administers`]).
     #[must_use]
     pub fn administers(&self, owner: &OwnerId) -> bool {
-        !self.is_expired() && self.roles.administers(owner)
+        self.grant.administers(owner)
     }
 
     /// Owners whose Goals the scope reads ([`Role::reads_goals`]).
     #[must_use]
     pub fn goal_reading_owners(&self) -> Vec<OwnerId> {
-        if self.is_expired() {
-            Vec::new()
-        } else {
-            self.roles.goal_reading_owners()
-        }
+        self.grant.goal_reading_owners()
     }
 
     /// Owners the scope administers ([`Role::administers`]).
     #[must_use]
     pub fn administered_owners(&self) -> Vec<OwnerId> {
-        if self.is_expired() {
-            Vec::new()
-        } else {
-            self.roles.administered_owners()
-        }
+        self.grant.administered_owners()
     }
 
     #[must_use]
     pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
-        if self.is_expired() {
-            Vec::new()
-        } else {
-            self.roles.readable_owners(kind)
-        }
+        self.grant.readable_owners(kind)
     }
 
     #[must_use]
@@ -217,11 +320,7 @@ impl OwnerScope {
 
     #[must_use]
     pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
-        if self.is_expired() {
-            Vec::new()
-        } else {
-            self.roles.writable_owners(kind)
-        }
+        self.grant.writable_owners(kind)
     }
 
     /// The owner whose Goals a Goal work permit's scope works
