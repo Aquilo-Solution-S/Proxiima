@@ -596,7 +596,7 @@ fn sidecar_legs<'a>(
 /// (`sidecar_text_sql`) — the same expression the stored vector and the
 /// snippet are built from, so the three cannot disagree about what a row's
 /// searchable text is.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 fn substring_sql(
     schemas: &[&MemorySearchProjection],
     bands: RenderBands,
@@ -642,7 +642,7 @@ fn substring_sql(
 /// There is no query-side CTE here: the `LIKE` predicate reads no tsquery,
 /// so computing a `websearch_to_tsquery` and a `plainto_tsquery` per
 /// statement would be paid for and never read.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 fn substring_leg_sql(
     leg: &SidecarLeg<'_>,
     bands: RenderBands,
@@ -747,7 +747,7 @@ fn substring_leg_sql_parts(
 /// The admit-side restriction ([`admit_side_restriction`]) is the third
 /// predicate that has to be here rather than only at admit. See that
 /// function.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 fn ranked_projection_sql(
     spiice: &SpiiceScan<'_>,
     req: &MemorySearchRequest,
@@ -789,7 +789,7 @@ impl RankedCandidates {
         }
     }
 
-    #[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+    #[cfg(any(test, feature = "testkit"))]
     fn statement(&self, order: SearchOrder) -> String {
         let order = Self::order_sql(order);
         format!(
@@ -870,15 +870,15 @@ fn ranked_projection_sql_parts(
 }
 
 /// The candidate-side spelling of "this row's memory" in the ranked arm.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 const RANKED_MEMORY_ID: &str = "p.memory_id";
 /// …and in a substring leg, which already drives `proxiima_core.memory m`.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 const SUBSTRING_MEMORY_ID: &str = "m.t";
 
 /// Fixed candidate statements emitted into a projection's migration.
 /// Request switches are values; table names and scoring remain contract-owned.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 fn projection_candidate_statements(
     projections: &[MemorySearchProjection],
     substring: bool,
@@ -930,7 +930,7 @@ fn core_band_scan(projections: &[MemorySearchProjection]) -> Option<SpiiceScan<'
     )
 }
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 const fn candidate_order_of(recency: bool) -> SearchOrder {
     if recency {
         SearchOrder::Recency
@@ -971,7 +971,7 @@ impl SubstringCandidates {
         }
     }
 
-    #[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+    #[cfg(any(test, feature = "testkit"))]
     fn statement<'a>(legs: impl Iterator<Item = &'a CandidateLeg>, order: SearchOrder) -> String {
         let (open, between, close) = Self::frame();
         let legs = legs.map(|leg| leg.sql.as_str()).collect::<Vec<_>>();
@@ -1134,7 +1134,7 @@ fn kind_literal(kind: Option<EntityKind>) -> Option<&'static str> {
 /// the nested loop's index names when it gets a nested loop and does not
 /// forbid the alternative. `include_superseded` requests with no `kind`
 /// filter render nothing here and keep the unfiltered window.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 fn admit_side_restriction(req: &MemorySearchRequest, memory_id: &str) -> String {
     let heads_only = matches!(req.supersession, SupersessionStatus::HeadsOnly);
     let kind = kind_literal(req.kind);
@@ -1695,7 +1695,7 @@ fn ranks_after_cursor(result: &MemorySearchResult, after: SearchCursor) -> bool 
 ///
 /// Propagates the builder's, including a schema whose declaration is
 /// missing a band the renderer resolves by name.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn ranked_projection_sql_for_tests(
     schemas: &[&MemorySearchProjection],
@@ -1715,7 +1715,7 @@ pub fn ranked_projection_sql_for_tests(
 /// # Errors
 ///
 /// Propagates the builder's.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn substring_sql_for_tests(
     schemas: &[&MemorySearchProjection],
@@ -1735,7 +1735,7 @@ pub fn substring_sql_for_tests(
 /// # Errors
 ///
 /// Propagates the builder's; refuses projections that declare no substring leg.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn substring_candidate_sql_for_tests(
     projections: &[MemorySearchProjection],
@@ -1749,7 +1749,7 @@ pub fn substring_candidate_sql_for_tests(
 ///
 /// # Errors
 /// Refuses invalid projection identifiers.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn semantic_candidate_admission_sql_for_tests(
     req: &MemorySearchRequest,
@@ -1758,7 +1758,7 @@ pub fn semantic_candidate_admission_sql_for_tests(
     semantic_candidate_admission_sql(&core_search_spiices(req, projections), req)
 }
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn search_admit_sql_for_tests(heads_only: bool) -> String {

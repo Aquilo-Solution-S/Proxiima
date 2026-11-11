@@ -39,10 +39,20 @@ pub struct SpiiceWorkerContext {
 }
 
 impl SpiiceWorkerContext {
+    #[must_use]
+    pub fn service<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.services.get::<T>()
+    }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl SpiiceWorkerContext {
     /// Test-only context for exercising a bundle's `spawn_workers`
     /// without booting the serving runtime. Services start empty; attach the
     /// exact test set with [`with_services`](Self::with_services).
-    #[cfg(any(test, feature = "testkit", debug_assertions))]
     #[must_use]
     pub fn new_for_tests(engine: Arc<Engine>, cancel: CancellationToken) -> Self {
         Self {
@@ -53,19 +63,10 @@ impl SpiiceWorkerContext {
     }
 
     /// Attach the composed service set to a test context.
-    #[cfg(any(test, feature = "testkit", debug_assertions))]
     #[must_use]
     pub fn with_services(mut self, services: SpiiceServices) -> Self {
         self.services = services;
         self
-    }
-
-    #[must_use]
-    pub fn service<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.services.get::<T>()
     }
 }
 

@@ -225,7 +225,7 @@ impl CitedBlobOwnerReconcileService {
         Self { port }
     }
 
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn backend_identity_for_tests(&self) -> *const () {

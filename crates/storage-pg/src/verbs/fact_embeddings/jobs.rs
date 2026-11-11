@@ -66,7 +66,7 @@ const CLAIM_EMBEDDING_JOBS_SQL: &str = "WITH claimed AS (
 
 /// The claim statement, for EXPLAIN-based plan guards. Same cfg gate as
 /// `search.rs`'s `*_sql_for_tests` exports.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn claim_embedding_jobs_sql_for_tests() -> &'static str {
@@ -87,7 +87,7 @@ const RECLAIM_STALE_EMBEDDING_JOBS_SQL: &str = "UPDATE proxiima_core.embedding_j
             )";
 
 /// The reclaim statement, for EXPLAIN-based plan guards.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn reclaim_stale_embedding_jobs_sql_for_tests() -> &'static str {

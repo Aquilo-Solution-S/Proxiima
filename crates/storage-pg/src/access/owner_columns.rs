@@ -442,7 +442,7 @@ SELECT DISTINCT key FROM (
 ORDER BY key";
 
 /// The erase fence keys statement, for the plan pin.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn upload_fence_keys_sql_for_tests() -> &'static str {

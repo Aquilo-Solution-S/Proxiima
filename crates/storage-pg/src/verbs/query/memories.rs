@@ -562,7 +562,7 @@ fn validate_row_stamp(
 /// # Errors
 ///
 /// Never fails on the timeseries path (stateful-NK filters are not used).
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn memory_page_sql_for_tests(req: &QueryRequest) -> Result<String, StorageError> {
     Ok(memory_page_sql(
@@ -573,7 +573,7 @@ pub fn memory_page_sql_for_tests(req: &QueryRequest) -> Result<String, StorageEr
 }
 
 /// Render tagged query SQL with the frozen schema metadata used by production.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn memory_page_sql_for_tests_with_schemas(
     req: &QueryRequest,

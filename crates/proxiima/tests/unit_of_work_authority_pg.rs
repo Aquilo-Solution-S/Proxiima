@@ -1,5 +1,4 @@
 //! Current-subject authority reads share an owner unit's transaction and fence.
-#![cfg(feature = "testkit")]
 #![allow(clippy::too_many_lines)]
 
 #[path = "fixtures/host_state/mod.rs"]

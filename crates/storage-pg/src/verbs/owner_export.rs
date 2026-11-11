@@ -355,7 +355,7 @@ fn export_statement(
 ///
 /// As the export: an exportable surface that reaches no owner, or one with
 /// no primary key.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn export_statement_sql_for_tests(
     surface: &Surface,

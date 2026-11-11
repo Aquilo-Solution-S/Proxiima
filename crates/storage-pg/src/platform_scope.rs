@@ -43,7 +43,7 @@ impl PgPlatformScope {
     /// # Panics
     ///
     /// Panics only if the fixed test URL is rejected by `SQLx`'s URL parser.
-    #[cfg(feature = "test-fixtures")]
+    #[cfg(feature = "testkit")]
     #[must_use]
     pub fn for_tests() -> Self {
         Self {
@@ -106,7 +106,7 @@ impl PgPlatformScope {
 
     /// Bound the fence wait for a test that must observe the timeout without
     /// sitting out the shipped five seconds. Clones share the bound.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn set_fence_lock_timeout(&self, timeout: Duration) {
         self.fence_lock_timeout_ms
             .store(millis(timeout), Ordering::Relaxed);

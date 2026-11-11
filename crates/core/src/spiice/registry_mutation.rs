@@ -44,18 +44,6 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    #[doc(hidden)]
-    pub fn add_schema_capability_tags_or_panic_for_tests<'a>(
-        &mut self,
-        kind: PayloadKind,
-        schema_id: SchemaId,
-        version: SchemaVersion,
-        tags: impl IntoIterator<Item = &'a str>,
-    ) {
-        self.try_add_schema_capability_tags(kind, schema_id, version, tags)
-            .expect("schema capability tags must be valid");
-    }
-
     /// Register the composed app's owner resolver.
     /// # Errors
     ///
@@ -69,12 +57,6 @@ impl SpiiceRegistry {
         }
         self.owner_resolver = Some(resolver);
         Ok(())
-    }
-
-    #[doc(hidden)]
-    pub fn set_owner_resolver_or_panic_for_tests(&mut self, resolver: Arc<dyn OwnerResolver>) {
-        self.try_set_owner_resolver(resolver)
-            .expect("owner resolver registration must be valid");
     }
 
     pub fn add_authorization_hook(&mut self, hook: Arc<dyn AuthorizationHook>) {
@@ -95,12 +77,6 @@ impl SpiiceRegistry {
     ) -> Result<(), SpiiceRegistryError> {
         self.spiices.push(descriptor);
         Ok(())
-    }
-
-    #[doc(hidden)]
-    pub fn add_spiice_or_panic_for_tests(&mut self, descriptor: SpiiceDescriptor) {
-        self.try_add_spiice(descriptor)
-            .expect("spiice descriptor registration must be valid");
     }
 
     /// Register a spiice's [`SpiiceContract`].
@@ -124,12 +100,6 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    #[doc(hidden)]
-    pub fn add_contract_or_panic_for_tests(&mut self, contract: &'static SpiiceContract) {
-        self.try_add_contract(contract)
-            .expect("spiice contract registration must be valid");
-    }
-
     #[must_use]
     pub fn list_spiices(&self) -> &[SpiiceDescriptor] {
         &self.spiices
@@ -138,5 +108,38 @@ impl SpiiceRegistry {
     #[must_use]
     pub fn list_contracts(&self) -> &[&'static SpiiceContract] {
         &self.contracts
+    }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl SpiiceRegistry {
+    #[doc(hidden)]
+    pub fn add_schema_capability_tags_or_panic_for_tests<'a>(
+        &mut self,
+        kind: PayloadKind,
+        schema_id: SchemaId,
+        version: SchemaVersion,
+        tags: impl IntoIterator<Item = &'a str>,
+    ) {
+        self.try_add_schema_capability_tags(kind, schema_id, version, tags)
+            .expect("schema capability tags must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn set_owner_resolver_or_panic_for_tests(&mut self, resolver: Arc<dyn OwnerResolver>) {
+        self.try_set_owner_resolver(resolver)
+            .expect("owner resolver registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_spiice_or_panic_for_tests(&mut self, descriptor: SpiiceDescriptor) {
+        self.try_add_spiice(descriptor)
+            .expect("spiice descriptor registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_contract_or_panic_for_tests(&mut self, contract: &'static SpiiceContract) {
+        self.try_add_contract(contract)
+            .expect("spiice contract registration must be valid");
     }
 }

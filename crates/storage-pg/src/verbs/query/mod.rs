@@ -16,40 +16,40 @@ mod sidecar_heads;
 pub(crate) use citations::citations_of_facts_on_connection;
 pub(crate) use citations::facts_citing_object_on_connection;
 pub(crate) use counts::count_memories_on_connection;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use edges::inbound_pin_sql_for_tests;
 pub(crate) use edges::{
     load_inbound_pin_nodes_on_connection, load_pin_nodes_on_connection,
     load_visible_goal_ids_on_connection,
 };
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use goals::goal_page_sql_for_tests;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use lineage::{ancestor_hop_sql_for_tests, descendant_hop_sql_for_tests};
 pub(crate) use lineage::{
     external_edges_on_connection, lineage_nodes_on_connection, unread_targets_on_connection,
     walk_memory_lineage_on_connection,
 };
 pub(crate) use memories::query_memories_on_connection;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use memories::{memory_page_sql_for_tests, memory_page_sql_for_tests_with_schemas};
 pub(crate) use search::search_memories_on_connection;
 pub(crate) use search::{
     RankedCandidates, SubstringCandidates, projection_ranked_candidates,
     projection_substring_candidates,
 };
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use search::{
     ranked_projection_sql_for_tests, search_admit_sql_for_tests,
     semantic_candidate_admission_sql_for_tests, substring_candidate_sql_for_tests,
     substring_sql_for_tests,
 };
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use series_handle::owned_head_handle_sql_for_tests;
 pub(crate) use series_handle::{owned_head_handle, owned_head_memory_id, push_atom};
 pub(crate) use sidecar_heads::sidecar_heads_by_key_on_connection;
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn set_hnsw_search_sql_for_tests(tuning: &crate::tuning::PgTuning) -> String {

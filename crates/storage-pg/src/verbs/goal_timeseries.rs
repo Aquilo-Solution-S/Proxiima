@@ -210,7 +210,7 @@ pub(crate) async fn ingest_write_act_at(
 
 /// Test-fixtures only: it writes `draft.text` as given and carries nothing.
 /// Production writes go through the Goal write verbs (`goal_write`).
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 pub async fn write_goal(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

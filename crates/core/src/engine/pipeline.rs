@@ -43,7 +43,7 @@ impl WritePermit {
     /// Test-only write permit. The gates in this module remain the
     /// production mint; see
     /// [`crate::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests`].
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn for_tests(owner_write: OwnerWritePermit) -> Self {
         Self { owner_write }

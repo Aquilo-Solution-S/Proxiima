@@ -100,7 +100,7 @@ WITH page AS MATERIALIZED (
      (SELECT t FROM page ORDER BY t DESC LIMIT 1) AS last_examined";
 
 /// The reconcile page statement, for EXPLAIN-based plan guards.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn reconcile_embeddings_sql_for_tests() -> &'static str {

@@ -871,7 +871,7 @@ impl EraseAuthorization {
     }
 
     /// Test-only constructor. Engine remains the production mint.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(target: OwnerEraseTarget) -> Self {
         let verified = !matches!(
@@ -907,7 +907,7 @@ impl ExportAuthorization {
     }
 
     /// Test-only constructor. Engine remains the production mint.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(target: OwnerExportTarget) -> Self {
         Self::new(OwnerExportContext::new(

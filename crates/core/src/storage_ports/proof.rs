@@ -59,7 +59,7 @@ pub struct MembershipWritePermit<'a> {
 impl<'a> MembershipWritePermit<'a> {
     /// Test-fixture constructor for storage-port doubles and PG tests.
     /// Production code uses the engine-only constructor below.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub const fn new_for_tests(
         owner: &'a OwnerWritePermit,
@@ -273,7 +273,7 @@ impl std::fmt::Debug for OwnerWritePermit {
 
 impl OwnerWritePermit {
     /// Test-only constructor. Engine remains the production mint.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(owner: OwnerId, access_kind: AccessKind) -> Self {
         let subject = uuid::Uuid::now_v7();
@@ -299,7 +299,7 @@ impl OwnerWritePermit {
 
     /// Synthetic two-owner consent for storage transfer fixtures. Production
     /// permits are minted only after the engine authorizes both owners.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn transfer_for_tests(
         owner: OwnerId,
@@ -488,7 +488,7 @@ impl EmbeddingWriteProof {
     }
 
     /// Test-only constructor for exercising a backend's claim fence.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub const fn for_claim_for_tests(claim: &crate::EmbeddingJobClaim) -> Self {
         Self::for_claim(claim)

@@ -1,7 +1,7 @@
 use crate::storage::StorageError;
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 use crate::storage_ports::OwnerWritePermit;
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 use crate::verbs::fact_ingest::FactWriteCommand;
 use crate::verbs::fact_ingest::{
     AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,
@@ -19,7 +19,7 @@ pub trait FactIngestPort: Send + Sync {
     /// Compatibility adapter for storage fixtures. Production callers must
     /// use the Engine-minted authorized carrier above. A fixture model id
     /// names a 1024-wide space.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     async fn ingest_fact_atomic(
         &self,
         permit: &OwnerWritePermit,

@@ -173,7 +173,7 @@ impl ProxiimaHost {
     }
 
     /// Test-only backend pool access for integration fixtures.
-    #[cfg(any(test, feature = "testkit", debug_assertions))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub const fn pool_for_tests(&self) -> &PgPool {
         &self.pool

@@ -55,18 +55,20 @@ openai-compat-embed = ["dep:proxiima-llm-openai-compat"]
 # `PROXIIMA_REST_ENABLED`.
 rest = ["proxiima-mcp-server/rest"]
 # Test support for spiice crates (`proxiima::testkit`): PG fixtures, a verified
-# owner-scoped AuthzContext (core `test-fixtures`), split-role databases and
+# owner-scoped AuthzContext (core `testkit`), split-role databases and
 # the trigger drift assertion.
-testkit = ["dep:proxiima-pg-testkit", "proxiima-core/test-fixtures"]
+testkit = ["dep:proxiima-pg-testkit", "proxiima-core/testkit"]
 
 [dev-dependencies]
+# This crate's own tests use its seams.
+proxiima = { path = ".", features = ["testkit"] }
 proxiima-example = { path = "../../spiices/example", features = ["testkit"] }
-proxiima-storage-pg = { path = "../storage-pg", features = ["test-fixtures"] }
+proxiima-storage-pg = { path = "../storage-pg", features = ["testkit"] }
 aws-lc-rs = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 base64 = { workspace = true }
 futures = { workspace = true }
-proxiima-core = { path = "../core", features = ["test-fixtures"] }
+proxiima-core = { path = "../core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../pg-testkit" }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 tokio = { workspace = true, features = ["io-util", "test-util"] }
@@ -77,131 +79,3 @@ sha2 = { workspace = true }
 time = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 tracing-subscriber = { workspace = true }
-
-[[test]]
-name = "publication_supervision_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "owner_inverse_reach_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "forget_note_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "stamp_follows_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "not_transferable_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "scope_fence_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "spiice_kit_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "host_template_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "pending_migrations_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "schema_evolution_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "schema_evolution_goal_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "publication_boot_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "unit_of_work_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "kind_rule_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "core_mcp_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "stock_spiice_host_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "facade_graph_surface_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "unit_of_work_host_state_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "spiice_workers_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "host_membership_transaction_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "erase_own_series_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "stateful_heads_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "sidecar_heads_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "derived_supersession_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "goal_targeting_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "goal_collaboration_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "goal_read_paths_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "goal_work_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "memory_fork_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "owner_rls_installer_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "owner_rls_table_pg"
-required-features = ["testkit"]
-
-[[test]]
-name = "automatic_natural_key_pg"
-required-features = ["testkit"]

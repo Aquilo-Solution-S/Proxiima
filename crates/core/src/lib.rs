@@ -51,7 +51,7 @@ pub mod storage_ports;
 // Also under plain `cfg(test)`: the in-crate suites use the same probe
 // payloads and probe spiice the storage backend's tests do, and a fixture
 // that existed only under a feature flag would be a second copy.
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 pub mod test_fixtures;
 pub mod text_bounds;
 pub mod tool;

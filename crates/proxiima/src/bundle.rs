@@ -51,8 +51,8 @@ pub trait SpiiceBundle {
     ///
     /// To unit-test an implementation without booting the serving
     /// runtime, build the context with
-    /// [`SpiiceWorkerContext::new_for_tests`] (available under `cfg(test)`,
-    /// the `testkit` feature, or debug builds).
+    /// `SpiiceWorkerContext::new_for_tests` (available under `cfg(test)` or
+    /// the `testkit` feature).
     ///
     /// ```rust,no_run
     /// use proxiima::spiice::{

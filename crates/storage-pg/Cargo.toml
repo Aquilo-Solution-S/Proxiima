@@ -30,14 +30,14 @@ sha2 = { workspace = true }
 [features]
 default = []
 backend-api = []
-test-fixtures = ["dep:proxiima-pg-testkit", "proxiima-core/test-fixtures"]
+testkit = ["dep:proxiima-pg-testkit", "proxiima-core/testkit"]
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-proxiima-storage-pg = { path = ".", features = ["test-fixtures"] }
-proxiima-core = { path = "../core", features = ["test-fixtures"] }
+proxiima-storage-pg = { path = ".", features = ["testkit"] }
+proxiima-core = { path = "../core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../pg-testkit" }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

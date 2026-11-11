@@ -81,12 +81,6 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    #[doc(hidden)]
-    pub fn add_fact_schema_or_panic_for_tests<F: FactPayload>(&mut self) {
-        self.try_add_fact_schema::<F>()
-            .expect("fact schema registration must be valid");
-    }
-
     /// # Errors
     ///
     /// Currently infallible; returns a registry error if schema admission adds
@@ -112,12 +106,6 @@ impl SpiiceRegistry {
             crate::NaturalKeyDeclaration::EMPTY,
         );
         Ok(())
-    }
-
-    #[doc(hidden)]
-    pub fn add_abstraction_schema_or_panic_for_tests<A: AbstractionPayload>(&mut self) {
-        self.try_add_abstraction_schema::<A>()
-            .expect("abstraction schema registration must be valid");
     }
 
     /// # Errors
@@ -147,12 +135,6 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    #[doc(hidden)]
-    pub fn add_perspective_schema_or_panic_for_tests<P: PerspectivePayload>(&mut self) {
-        self.try_add_perspective_schema::<P>()
-            .expect("perspective schema registration must be valid");
-    }
-
     /// # Errors
     ///
     /// Currently infallible; returns a registry error if schema admission adds
@@ -176,12 +158,6 @@ impl SpiiceRegistry {
             crate::NaturalKeyDeclaration::EMPTY,
         );
         Ok(())
-    }
-
-    #[doc(hidden)]
-    pub fn add_goal_schema_or_panic_for_tests<G: GoalPayload>(&mut self) {
-        self.try_add_goal_schema::<G>()
-            .expect("goal schema registration must be valid");
     }
 
     /// # Errors
@@ -208,12 +184,6 @@ impl SpiiceRegistry {
             crate::NaturalKeyDeclaration::EMPTY,
         );
         Ok(())
-    }
-
-    #[doc(hidden)]
-    pub fn add_cited_object_schema_or_panic_for_tests<C: CitedObjectPayload>(&mut self) {
-        self.try_add_cited_object_schema::<C>()
-            .expect("cited-object schema registration must be valid");
     }
 
     /// Register an *opaque* cited-object schema — one with no Rust payload
@@ -250,5 +220,38 @@ impl SpiiceRegistry {
             schema_version,
             PayloadKind::CitedObject,
         ));
+    }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl SpiiceRegistry {
+    #[doc(hidden)]
+    pub fn add_fact_schema_or_panic_for_tests<F: FactPayload>(&mut self) {
+        self.try_add_fact_schema::<F>()
+            .expect("fact schema registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_abstraction_schema_or_panic_for_tests<A: AbstractionPayload>(&mut self) {
+        self.try_add_abstraction_schema::<A>()
+            .expect("abstraction schema registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_perspective_schema_or_panic_for_tests<P: PerspectivePayload>(&mut self) {
+        self.try_add_perspective_schema::<P>()
+            .expect("perspective schema registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_goal_schema_or_panic_for_tests<G: GoalPayload>(&mut self) {
+        self.try_add_goal_schema::<G>()
+            .expect("goal schema registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_cited_object_schema_or_panic_for_tests<C: CitedObjectPayload>(&mut self) {
+        self.try_add_cited_object_schema::<C>()
+            .expect("cited-object schema registration must be valid");
     }
 }

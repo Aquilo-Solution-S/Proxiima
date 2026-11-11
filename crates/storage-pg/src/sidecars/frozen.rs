@@ -264,6 +264,7 @@ impl PgSidecarRegistryFrozen {
 
     /// Test-only: a registered memory table that does not exist in PG.
     /// Forget must not SELECT it unless the row stamped it.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn with_unusable_memory_table(&self, schema_id: &str, table: &str) -> Self {
         self.with_memory_sidecar_for_tests(schema_id, table, "t")
@@ -279,6 +280,7 @@ impl PgSidecarRegistryFrozen {
     /// guardrail compares whole rendered trigger definitions, which a key
     /// column appears in three times. A registry with one differently-keyed
     /// table is what lets a test put a real one in front of it.
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn with_memory_sidecar_for_tests(
         &self,

@@ -226,7 +226,7 @@ const REFRESH_BACKLOG_ESTIMATE_SQL: &str = "UPDATE proxiima_core.publication_bac
           WHERE measured_at < now() - make_interval(secs => $1)";
 
 /// The statement a write reads the estimate with, for the plan pin.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn fresh_backlog_estimate_sql_for_tests() -> &'static str {
@@ -912,7 +912,7 @@ const PRUNE_PUBLISHED_SQL: &str = "DELETE FROM proxiima_core.publication_outbox
               )";
 
 /// The prune statement, for the plan pin.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn prune_published_sql_for_tests() -> &'static str {

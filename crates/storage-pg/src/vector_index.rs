@@ -265,7 +265,7 @@ fn candidate_scan_sql(lane: Lane, limit: &str) -> String {
 }
 
 /// The production candidate scan with its local chunk budget as bind four.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn candidate_scan_sql_for_tests(dim: EmbeddingDim) -> String {

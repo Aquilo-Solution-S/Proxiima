@@ -327,7 +327,7 @@ impl AuthorizedNodeLinks {
 
     /// Construct links for a backend fixture. Production code can only get
     /// this carrier from Engine authorization.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(origins: Vec<EdgeEndpoint>, references: Vec<EdgeEndpoint>) -> Self {
         Self::new(origins, references)
@@ -352,7 +352,7 @@ impl AuthorizedFactWrite {
     /// production mint; this exists so a storage-backend test can exercise
     /// the WRITE PORT — the only public write path — instead of reaching
     /// past it into a backend verb.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(
         owner_write: OwnerWritePermit,
@@ -381,7 +381,7 @@ impl AuthorizedFactWrite {
 
     /// Test-only: bind the typed sidecars that a production authorization
     /// call would carry into the opaque prepared write.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn with_sidecar_payloads_for_tests(mut self, sidecars: Vec<SidecarPayload>) -> Self {
         self.core.sidecar_payloads = sidecars;
@@ -391,7 +391,7 @@ impl AuthorizedFactWrite {
     /// Test-only mint that intentionally accepts links independent of the
     /// draft. Storage regression tests use it to prove that the backend
     /// persists the authorized carrier rather than compatibility fields.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_with_links_for_tests(
         owner_write: OwnerWritePermit,
@@ -419,7 +419,7 @@ impl AuthorizedFactWrite {
     /// limits — because that is what production hands storage; a fixture
     /// that could supply limits separately would be testing a shape the
     /// engine cannot produce.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn with_publication_for_tests(
         mut self,

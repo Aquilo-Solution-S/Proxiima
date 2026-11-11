@@ -15,7 +15,7 @@ workspace = true
 
 [features]
 default = []
-test-fixtures = []
+testkit = []
 
 [dependencies]
 serde = { workspace = true }
@@ -38,5 +38,7 @@ http = { workspace = true }
 whatlang = { workspace = true }
 
 [dev-dependencies]
+# This crate's own tests use its seams.
+proxiima-core = { path = ".", features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 sqlx = { workspace = true }

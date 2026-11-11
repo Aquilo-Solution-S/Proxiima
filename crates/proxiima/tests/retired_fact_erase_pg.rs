@@ -1,5 +1,4 @@
 //! A composed host drains a retired Fact through the bounded series inverse.
-#![cfg(feature = "testkit")]
 #![allow(clippy::too_many_lines)]
 
 #[allow(

@@ -345,7 +345,11 @@ pub fn core_pg_sidecars() -> PgSidecarRegistryFrozen {
     let mut registry = PgSidecarRegistry::new();
     register_core_pg_sidecars(&mut registry);
     registry
-        .freeze_against(&proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests())
+        .freeze_against(
+            &proxiima_core::SpiiceRegistry::new()
+                .try_freeze()
+                .expect("the core spiice registry freezes"),
+        )
         .expect("core PG sidecars match core schema registry")
 }
 

@@ -114,7 +114,7 @@ pub(crate) fn candidate_definitions(
 ///
 /// # Errors
 /// Refuses invalid identifiers or incomplete fixture metadata.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn candidate_artifacts_for_tests(
     projections: &[proxiima_core::verbs::schema::MemorySearchProjection],

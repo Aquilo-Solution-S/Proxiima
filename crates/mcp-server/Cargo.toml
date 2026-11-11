@@ -40,9 +40,9 @@ uuid = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-proxiima-core = { path = "../core", features = ["test-fixtures"] }
+proxiima-core = { path = "../core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../pg-testkit" }
-proxiima-storage-pg = { path = "../storage-pg", features = ["test-fixtures"] }
+proxiima-storage-pg = { path = "../storage-pg", features = ["testkit"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 tower = { workspace = true, features = ["util"] }

@@ -143,6 +143,7 @@ impl SpiiceRegistry {
         SpiiceRegistryFrozen::from_registry(self)
     }
 
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     #[doc(hidden)]
     pub fn freeze_or_panic_for_tests(self) -> SpiiceRegistryFrozen {

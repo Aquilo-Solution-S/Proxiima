@@ -1,7 +1,6 @@
 //! A host command declared Goal work commits for every member who works the
 //! Goal owner's Goals, together with the Facts it declares, owned by the
 //! Goal's owner. The member's other writes keep the relation's ceiling.
-#![cfg(feature = "testkit")]
 #![allow(clippy::too_many_lines)]
 
 #[path = "fixtures/host_state/mod.rs"]

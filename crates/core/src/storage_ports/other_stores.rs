@@ -183,7 +183,7 @@ pub struct RemoteMemory {
 impl RemoteMemory {
     /// A readable Fact of its own one-version series, for tests that need a
     /// valid value and name only the fields they care about.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn fixture(handle: Uuid) -> Self {
         Self {

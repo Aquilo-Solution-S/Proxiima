@@ -1599,7 +1599,7 @@ SELECT object_key, object_store FROM enqueued"
 );
 
 /// The unreferenced-blob sweep statement, for the plan pin.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn gc_unreferenced_blobs_sql_for_tests() -> &'static str {

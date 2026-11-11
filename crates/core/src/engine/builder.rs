@@ -54,7 +54,7 @@ impl Engine {
     /// # Panics
     ///
     /// Panics if registry registration or freeze fails.
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn compose_or_panic_for_tests(

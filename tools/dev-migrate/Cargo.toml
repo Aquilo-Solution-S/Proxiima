@@ -24,4 +24,4 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 proxiima-pg-testkit = { path = "../../crates/pg-testkit" }
-proxiima-storage-pg = { path = "../../crates/storage-pg", features = ["test-fixtures"] }
+proxiima-storage-pg = { path = "../../crates/storage-pg", features = ["testkit"] }

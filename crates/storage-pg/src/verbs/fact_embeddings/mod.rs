@@ -17,7 +17,7 @@ mod write;
 pub(crate) use jobs::enqueue_embedding_jobs_in_tx;
 #[cfg(test)]
 use jobs::release_embedding_jobs;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use jobs::{claim_embedding_jobs_sql_for_tests, reclaim_stale_embedding_jobs_sql_for_tests};
 pub(crate) use jobs::{
     claim_pending_embedding_jobs, complete_embedding_job, count_embedding_job_status,
@@ -28,7 +28,7 @@ pub(crate) use jobs::{
 pub(crate) use ops::{embedding_ann_observability, sweep_orphan_embedding_rows};
 #[cfg(test)]
 use reconcile::reconcile_embeddings;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 pub use reconcile::reconcile_embeddings_sql_for_tests;
 pub use reconcile::{
     EmbeddingReconcileOptions, EmbeddingReconcileOutcome, EmbeddingReconcileScope,

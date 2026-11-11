@@ -271,7 +271,7 @@ fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
 
 /// The statement [`query_goals_on_connection`] runs for `req`: `$1` is the
 /// owner list and the filter binds follow in [`goal_filters`] order.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn goal_page_sql_for_tests(req: &QueryRequest) -> String {

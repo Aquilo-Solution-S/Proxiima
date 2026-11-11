@@ -1,5 +1,4 @@
 //! Retirement is a common post-composition, pre-serving boot step.
-#![cfg(feature = "testkit")]
 #![allow(clippy::too_many_lines)]
 
 #[allow(dead_code, reason = "shared split-role fixture helpers")]

@@ -197,7 +197,7 @@ fn head_column_builder(
 /// # Errors
 ///
 /// `ConstraintViolation` when a column identifier is invalid.
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub fn owned_head_handle_sql_for_tests(
     owner: OwnerId,

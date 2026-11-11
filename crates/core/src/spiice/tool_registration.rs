@@ -79,12 +79,6 @@ impl SpiiceRegistry {
         self.try_add_mcp_tool::<T>(expected_prefix)
     }
 
-    #[doc(hidden)]
-    pub fn add_tool_or_panic_for_tests<T: Tool>(&mut self, expected_prefix: &str) {
-        self.try_add_tool::<T>(expected_prefix)
-            .expect("tool registration must be valid");
-    }
-
     /// Register a spiice-shipped MCP tool under `expected_prefix`.
     #[doc(hidden)]
     pub fn try_add_mcp_tool<T: McpTool>(
@@ -198,12 +192,6 @@ impl SpiiceRegistry {
         });
         Ok(())
     }
-
-    #[doc(hidden)]
-    pub fn add_mcp_tool_or_panic_for_tests<T: McpTool>(&mut self, expected_prefix: &str) {
-        self.try_add_mcp_tool::<T>(expected_prefix)
-            .expect("MCP tool registration must be valid");
-    }
 }
 
 fn validate_tool_name(
@@ -230,6 +218,21 @@ fn validate_tool_name(
         });
     }
     Ok(())
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl SpiiceRegistry {
+    #[doc(hidden)]
+    pub fn add_tool_or_panic_for_tests<T: Tool>(&mut self, expected_prefix: &str) {
+        self.try_add_tool::<T>(expected_prefix)
+            .expect("tool registration must be valid");
+    }
+
+    #[doc(hidden)]
+    pub fn add_mcp_tool_or_panic_for_tests<T: McpTool>(&mut self, expected_prefix: &str) {
+        self.try_add_mcp_tool::<T>(expected_prefix)
+            .expect("MCP tool registration must be valid");
+    }
 }
 
 #[cfg(test)]

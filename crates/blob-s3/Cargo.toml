@@ -27,9 +27,9 @@ tokio = { workspace = true, features = ["io-util", "sync"] }
 
 [dev-dependencies]
 aws-smithy-runtime-api = "1.12.3"
-proxiima-core = { path = "../core", features = ["test-fixtures"] }
+proxiima-core = { path = "../core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../pg-testkit" }
-proxiima-storage-pg = { path = "../storage-pg", features = ["test-fixtures"] }
+proxiima-storage-pg = { path = "../storage-pg", features = ["testkit"] }
 # The transfer contract is "the client speaks HTTP to the presigned URL".
 # Without a client here no test ever dereferences one, and the only hop that
 # actually carries bytes goes unexecuted.

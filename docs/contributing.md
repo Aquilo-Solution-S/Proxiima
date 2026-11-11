@@ -133,6 +133,10 @@ python3 -m mkdocs build --strict
 Postgres-backed tests need `PROXIIMA_TEST_PG_URL`; the local development
 bootstrap is described in [get started](get-started.md).
 
+Test seams (`*_for_tests` constructors, fixture modules, SQL text accessors)
+compile only under `cfg(test)` of their own crate or the `testkit` Cargo
+feature, which every crate that has seams defines and no release build enables.
+
 The suite runs eight test processes at once with no retries
 (`.config/nextest.toml`), and they share the server's `max_connections`.
 The dev compose file and CI set it to 200. A full run peaks near 60 client

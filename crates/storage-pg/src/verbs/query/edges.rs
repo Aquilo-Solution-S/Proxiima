@@ -116,7 +116,7 @@ pub(crate) async fn load_inbound_pin_nodes_on_connection(
     Ok(rows.into_iter().map(PinNodeRow::into_pin_node).collect())
 }
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn inbound_pin_sql_for_tests(

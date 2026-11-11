@@ -60,14 +60,14 @@ const DESCENDANT_FRONTIER_SQL: &str = "SELECT DISTINCT child.t
    AND child.forgotten_at IS NULL
    AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])";
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn ancestor_hop_sql_for_tests() -> &'static str {
     ANCESTOR_HOP_SQL
 }
 
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
 pub fn descendant_hop_sql_for_tests() -> &'static str {

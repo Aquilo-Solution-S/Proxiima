@@ -243,7 +243,7 @@ async fn serving_platform_pool(platform_url: &str) -> Result<sqlx::PgPool, Stora
 ///
 /// Returns database errors when the template, citation, or cloned sidecar
 /// cannot be admitted atomically.
-#[cfg(feature = "test-fixtures")]
+#[cfg(feature = "testkit")]
 pub async fn cited_abstraction_from_template(
     pool: &sqlx::PgPool,
     template: MemoryId,
@@ -309,7 +309,7 @@ pub async fn cited_abstraction_from_template(
 ///
 /// Refuses an invalid database URL or failed role provisioning, migration,
 /// platform validation, or database connection.
-#[cfg(feature = "test-fixtures")]
+#[cfg(feature = "testkit")]
 pub async fn connect_for_tests(url: String) -> Result<PgStorage, StorageError> {
     let database = url
         .rsplit('/')
@@ -353,7 +353,7 @@ impl PgStorage {
     ///
     /// Returns the provisioning, migration, validation, or connection error
     /// from [`connect_for_tests`].
-    #[cfg(feature = "test-fixtures")]
+    #[cfg(feature = "testkit")]
     pub async fn connect_for_tests(url: String) -> Result<Self, StorageError> {
         connect_for_tests(url).await
     }

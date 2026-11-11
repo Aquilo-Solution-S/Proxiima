@@ -4,7 +4,7 @@
 //! `PgStorage` struct, connection lifecycle, and migration runner,
 //! then delegates each narrow storage port method to its per-verb
 //! implementation.
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 extern crate self as proxiima_storage_pg;
 
 #[doc(hidden)]
@@ -72,7 +72,7 @@ pub mod sidecars;
 mod store_wide;
 pub mod vector_index;
 pub use store_wide::STORE_WIDE_TABLES;
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, feature = "testkit"))]
 pub mod test_fixtures;
 mod tuning;
 pub mod verbs;
@@ -114,7 +114,7 @@ pub use sidecars::{
 };
 pub use tuning::{HnswIterativeScan, PgTuning};
 pub use verbs::ingest_receipt::ingest_receipt;
-#[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+#[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub use verbs::owner_export::export_statement_sql_for_tests;
 
@@ -515,7 +515,7 @@ pub struct PgStorage {
     store_number: u16,
     pool: PgPool,
     /// Fixture setup/inspection only; runtime operations always use `pool`.
-    #[cfg(feature = "test-fixtures")]
+    #[cfg(feature = "testkit")]
     test_admin_pool: Option<PgPool>,
     platform_scope: PgPlatformScope,
     sidecars: PgSidecarRegistryFrozen,
@@ -679,7 +679,7 @@ impl PgMigrationStorage {
 
     /// The migration runner's pool. Serving code cannot use this as a
     /// `PgStorage` without supplying a validated platform capability.
-    #[cfg(any(feature = "backend-api", feature = "test-fixtures"))]
+    #[cfg(any(feature = "backend-api", feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn clone_pool_for_backend(&self) -> PgPool {
@@ -763,7 +763,7 @@ impl PgHostStateEraseContext {
     /// tables. A registry that declares host lifecycle state must come from a
     /// real validated `PgStorage` boot, so tests cannot silently omit its
     /// callback.
-    #[cfg(any(test, feature = "test-fixtures", debug_assertions))]
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     pub fn for_surfaces_for_tests(
         surfaces: proxiima_core::owner_inverse::OwnerSurfaces,
@@ -1157,7 +1157,7 @@ impl PgStorage {
         Ok(Self {
             store_number,
             pool,
-            #[cfg(feature = "test-fixtures")]
+            #[cfg(feature = "testkit")]
             test_admin_pool: None,
             platform_scope,
             sidecars,
@@ -1255,16 +1255,13 @@ impl PgStorage {
         self
     }
 
-    #[cfg(any(
-        test,
-        feature = "test-fixtures",
-        feature = "backend-api",
-        debug_assertions
-    ))]
+    /// Test-only raw pool (the fixture admin pool when one is attached).
+    /// Serving code that needs the pool uses `clone_pool_for_backend`.
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn pool_for_tests(&self) -> &PgPool {
-        #[cfg(feature = "test-fixtures")]
+        #[cfg(feature = "testkit")]
         if let Some(pool) = &self.test_admin_pool {
             return pool;
         }
@@ -1273,7 +1270,7 @@ impl PgStorage {
 
     /// Attach an independent fixture setup/inspection pool. Serving ports
     /// keep using the separately validated runtime connection.
-    #[cfg(feature = "test-fixtures")]
+    #[cfg(feature = "testkit")]
     #[doc(hidden)]
     #[must_use]
     pub fn with_admin_pool_for_tests(mut self, pool: PgPool) -> Self {
@@ -1281,7 +1278,7 @@ impl PgStorage {
         self
     }
 
-    #[cfg(any(feature = "backend-api", feature = "test-fixtures"))]
+    #[cfg(any(feature = "backend-api", feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn clone_pool_for_backend(&self) -> PgPool {

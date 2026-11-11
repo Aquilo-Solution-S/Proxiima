@@ -275,7 +275,7 @@ impl std::fmt::Debug for CitedBlobService {
 }
 
 impl CitedBlobService {
-    #[cfg(any(test, feature = "test-fixtures"))]
+    #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
     pub fn backend_identity_for_tests(&self) -> *const () {
