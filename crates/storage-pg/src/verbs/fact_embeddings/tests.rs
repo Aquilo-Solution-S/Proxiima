@@ -161,7 +161,10 @@ mod pg_tests {
 
     async fn owner_fact_write_permit(owner: &OwnerId) -> Result<OwnerWritePermit, StorageError> {
         let user_id = owner.as_user();
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        );
         let authz = authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer));
         engine
             .authorize_owner_write(&authz, owner, AccessKind::Fact)
@@ -1349,8 +1352,7 @@ mod pg_tests {
         let other_model_before = backfill_job_snapshot(pool, later, "other-model").await?;
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let configured_pg = pg.clone().with_spiices(&registry);
-        let engine = Engine::new(registry)
-            .with_storage_ports(Arc::new(configured_pg).storage_ports())
+        let engine = Engine::new(registry, Arc::new(configured_pg).storage_ports())
             .with_embedding_router(routed(RecordingBatchEmbedding {
                 batch_widths: Arc::default(),
             }));
@@ -2012,8 +2014,7 @@ mod pg_tests {
         let provider = Arc::new(AdmissionProvider::default());
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let configured_pg = pg.clone().with_spiices(&registry);
-        let engine = Engine::new(registry)
-            .with_storage_ports(Arc::new(configured_pg).storage_ports())
+        let engine = Engine::new(registry, Arc::new(configured_pg).storage_ports())
             .with_embedding_router(routed(CappedEmbedding {
                 max_chars,
                 model_id: "stub-fact-embed",

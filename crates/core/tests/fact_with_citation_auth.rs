@@ -97,7 +97,10 @@ fn engine() -> Engine {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
     registry.add_cited_object_schema_or_panic_for_tests::<TestCitedObject>();
-    Engine::new(registry.freeze_or_panic_for_tests())
+    Engine::new(
+        registry.freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
 }
 
 fn draft(_owner: &OwnerId) -> FactWriteCommand {

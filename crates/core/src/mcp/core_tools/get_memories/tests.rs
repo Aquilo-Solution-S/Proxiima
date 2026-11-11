@@ -162,11 +162,10 @@ fn fixture() -> Fixture {
         },
         requested: Mutex::new(Vec::new()),
     });
-    ctx.engine = Some(Arc::new(
-        crate::Engine::new(ctx.registry.as_ref().clone()).with_storage_ports(
-            crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
-        ),
-    ));
+    ctx.engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry.as_ref().clone(),
+        crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
+    )));
     let (started, receiver) = mpsc::unbounded_channel();
     let port = Arc::new(ControlledStore {
         owner: ctx.owner,

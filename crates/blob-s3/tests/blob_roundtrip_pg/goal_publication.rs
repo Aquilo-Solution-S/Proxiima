@@ -42,8 +42,10 @@ async fn goal_publication_reads_only_the_exact_cited_upload_route() {
             .expect("upload fact"),
     );
 
-    let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(Arc::new(pg.clone()).storage_ports());
+    let engine = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        Arc::new(pg.clone()).storage_ports(),
+    );
     let bob = UserId::new(Uuid::now_v7());
     let goal = goal_audience_fixture(&engine, &source, owner, bob).await;
     let bob_auth = authenticated_context(AuthzContext::for_subject(bob, AuthPath::HostBearer));

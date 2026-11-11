@@ -928,8 +928,10 @@ async fn engine_transfer_accepts_a_forgotten_memory() {
         )
         .await?;
 
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(Arc::new(pg.clone()).storage_ports());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            Arc::new(pg.clone()).storage_ports(),
+        );
         let authz = authenticated_context(AuthzContext::single_owner(&owner, AuthPath::HostBearer));
         engine
             .transfer_to_owner(&authz, EntityId::Memory(written.memory_id), destination)
@@ -988,8 +990,10 @@ async fn engine_transfer_uses_folded_nested_destination_role() {
         .await?;
         transaction.commit().await?;
 
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(Arc::new(pg.clone()).storage_ports());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            Arc::new(pg.clone()).storage_ports(),
+        );
         let authz = authenticated_context(AuthzContext::for_subject_with_role(
             person.as_user(),
             [(OwnerId::from(child), proxiima_core::Role::admin())],

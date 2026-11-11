@@ -219,6 +219,7 @@ async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
         );
         let (_, foreign) = proxiima_core::Engine::new(
             proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
         )
         .into_system_authority();
         let refused = engine

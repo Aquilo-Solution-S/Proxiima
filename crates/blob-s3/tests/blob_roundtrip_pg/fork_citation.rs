@@ -38,8 +38,10 @@ async fn mounted_citation_survives_source_owner_erase() {
         AuthPath::HostBearer,
     ));
     let destination = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(Arc::new(pg.clone()).storage_ports());
+    let engine = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        Arc::new(pg.clone()).storage_ports(),
+    );
     let source_data =
         seed_cited_source(&pg, &store, &config, &pool, &engine, &source_auth, source).await;
     let (destination_auth, _goal) =

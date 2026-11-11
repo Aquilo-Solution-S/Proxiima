@@ -337,8 +337,10 @@ async fn bootstrap() -> (String, PgStorage, proxiima_core::SpiiceRegistryFrozen)
 }
 
 fn engine(pg: &PgStorage, registry: &proxiima_core::SpiiceRegistryFrozen) -> proxiima_core::Engine {
-    proxiima_core::Engine::new(registry.clone())
-        .with_storage_ports(std::sync::Arc::new(pg.clone()).storage_ports())
+    proxiima_core::Engine::new(
+        registry.clone(),
+        std::sync::Arc::new(pg.clone()).storage_ports(),
+    )
 }
 
 async fn register_thing(

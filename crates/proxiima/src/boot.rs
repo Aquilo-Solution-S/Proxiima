@@ -466,8 +466,7 @@ fn compose_engine(
     if let Some(proof) = owner_drop_proof {
         storage_ports = storage_ports.owner_drop_proof(proof);
     }
-    let mut engine = Engine::new(registry)
-        .with_storage_ports(storage_ports.build())
+    let mut engine = Engine::new(registry, storage_ports.build())
         .with_embedding_runtime_policy(config.embedding_runtime_policy)
         .try_with_publication_config(config.publication.clone())
         .map_err(|error| ProxiimaError::Config(error.to_string()))?;

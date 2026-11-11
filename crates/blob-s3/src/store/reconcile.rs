@@ -667,8 +667,11 @@ mod tests {
             proxiima_storage_pg::PgPlatformScope::for_tests(),
         )
         .expect("test store config");
-        let (_, authority) =
-            Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
+        let (_, authority) = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        )
+        .into_system_authority();
 
         let error = store
             .reconcile_all(&authority)
@@ -689,10 +692,16 @@ mod tests {
             proxiima_storage_pg::PgPlatformScope::for_tests(),
         )
         .expect("test store config");
-        let (_, authority) =
-            Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
-        let (_, foreign) =
-            Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
+        let (_, authority) = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        )
+        .into_system_authority();
+        let (_, foreign) = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        )
+        .into_system_authority();
         store
             .bind_system_authority(&authority)
             .expect("store binds to the first boot");

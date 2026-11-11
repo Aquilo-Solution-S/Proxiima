@@ -151,8 +151,10 @@ async fn relation_change_commits_under_the_managing_owner_scope() {
     )
     .await
     .expect("runtime storage");
-    let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(Arc::new(pg).storage_ports());
+    let engine = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        Arc::new(pg).storage_ports(),
+    );
     let verifier = super::SyntheticVerifier {
         roles: OwnerRoles::for_subject(manager, [(OwnerId::from(group), Role::admin())]).unwrap(),
     };

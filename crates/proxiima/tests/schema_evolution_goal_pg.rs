@@ -494,12 +494,11 @@ async fn goal_schema_evolution_preserves_ids_series_sidecars_and_replay() {
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
     insert_owner(&admin, owner).await;
     let old = storage(&runtime, &platform, &ro, so).await;
-    let engine = proxiima_core::Engine::new(ro)
+    let engine = proxiima_core::Engine::new(ro, Arc::new(old).storage_ports())
         .try_with_publication_config(PublicationConfig::new(
             PublicationSource::new("urn:goal:evolution").unwrap(),
         ))
-        .unwrap()
-        .with_storage_ports(Arc::new(old).storage_ports());
+        .unwrap();
     let topology = GoalTopologyWrite::new(Vec::new(), Vec::new(), Vec::new()).unwrap();
     let request = IdempotencyKey::new("goal-create-evolution").unwrap();
     let (first, modified) =
@@ -575,12 +574,11 @@ async fn finish_goal_evolution(finish: GoalEvolutionFinish) {
         admin,
     } = finish;
     let new = storage(runtime.as_str(), platform.as_str(), &rn, sn).await;
-    let engine2 = proxiima_core::Engine::new(rn)
+    let engine2 = proxiima_core::Engine::new(rn, Arc::new(new).storage_ports())
         .try_with_publication_config(PublicationConfig::new(
             PublicationSource::new("urn:goal:evolution").unwrap(),
         ))
-        .unwrap()
-        .with_storage_ports(Arc::new(new).storage_ports());
+        .unwrap();
     let replay = engine2
         .create_goal(
             &authz,

@@ -439,7 +439,10 @@ mod tests {
             searches: std::sync::Mutex::new(Vec::new()),
         });
         let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         ctx.services = crate::SpiiceServices::with(OtherStoresService::new(port.clone()));
         (ctx, port)
     }
@@ -664,7 +667,10 @@ mod tests {
         let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
         ctx.services =
             crate::SpiiceServices::with(OtherStoresService::new(Arc::new(SlowOriginStore)));
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         let origins = (0..MAX_SOURCE_HANDLES - 1)
             .map(|_| crate::new_memory_uuid(1).to_string())
             .collect::<Vec<_>>();
@@ -744,7 +750,10 @@ mod tests {
         let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
         ctx.services =
             crate::SpiiceServices::with(OtherStoresService::new(Arc::new(ReadReplyStore(reply))));
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         ctx
     }
 
@@ -911,7 +920,10 @@ mod tests {
     fn graph_ctx(store: &Arc<GraphStore>) -> McpToolCtx {
         let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
         ctx.services = crate::SpiiceServices::with(OtherStoresService::new(store.clone()));
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         ctx
     }
 

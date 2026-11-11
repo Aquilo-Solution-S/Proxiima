@@ -95,12 +95,11 @@ async fn seed_terminal_goal() -> ReplacementFixture {
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
     insert_owner(&admin, owner).await;
     let old = storage(&runtime, &platform, &ro, so).await;
-    let engine = proxiima_core::Engine::new(ro)
+    let engine = proxiima_core::Engine::new(ro, Arc::new(old).storage_ports())
         .try_with_publication_config(PublicationConfig::new(
             PublicationSource::new("urn:goal:evolution").unwrap(),
         ))
-        .unwrap()
-        .with_storage_ports(Arc::new(old).storage_ports());
+        .unwrap();
     let topology = GoalTopologyWrite::new(Vec::new(), Vec::new(), Vec::new()).unwrap();
     let request = IdempotencyKey::new("goal-replacement-create").unwrap();
     let (first, modified) =
@@ -162,12 +161,11 @@ async fn terminal_goal_history_survives_new_admission_identity_replacement() {
         .expect("authorized terminal history replacement");
     let terminal = assert_replacement_history(&admin, owner, &first, &modified, &abandoned).await;
     let new = storage(&runtime, &platform, &rn, sn).await;
-    let engine2 = proxiima_core::Engine::new(rn)
+    let engine2 = proxiima_core::Engine::new(rn, Arc::new(new).storage_ports())
         .try_with_publication_config(PublicationConfig::new(
             PublicationSource::new("urn:goal:evolution").unwrap(),
         ))
-        .unwrap()
-        .with_storage_ports(Arc::new(new).storage_ports());
+        .unwrap();
     let replay = engine2
         .create_goal(
             &authz,

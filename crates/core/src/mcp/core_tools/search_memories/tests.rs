@@ -702,7 +702,10 @@ mod other_stores {
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         ctx.services = crate::SpiiceServices::with(OtherStoresService::new(port.clone()));
         ctx
     }
@@ -913,7 +916,10 @@ mod other_stores {
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        ctx.engine = Some(Arc::new(crate::Engine::new(ctx.registry.as_ref().clone())));
+        ctx.engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry.as_ref().clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )));
         ctx.services = crate::SpiiceServices::with(OtherStoresService::new(Arc::new(TwoStores)));
         let schema = caller_input_schema(&ctx, static_schema())
             .await

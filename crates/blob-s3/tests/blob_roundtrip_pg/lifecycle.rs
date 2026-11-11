@@ -96,11 +96,13 @@ async fn a_fact_citing_an_aborted_upload_is_a_conflict() {
     let service = CitedBlobService::new(Arc::new(AbortAfterStagePort {
         inner: store.clone(),
     }) as Arc<dyn CitedBlobPort>);
-    let error = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(Arc::new(pg.clone()).storage_ports())
-        .complete_upload_as_fact(&service, &ctx, owner, &upload_id, &[])
-        .await
-        .expect_err("a Fact may not cite an aborted upload");
+    let error = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        Arc::new(pg.clone()).storage_ports(),
+    )
+    .complete_upload_as_fact(&service, &ctx, owner, &upload_id, &[])
+    .await
+    .expect_err("a Fact may not cite an aborted upload");
     assert_eq!(error.code, ErrorCode::InvalidArgument, "{error:?}");
     assert!(error.message.contains("aborted"), "{error:?}");
     assert_eq!(upload_status(&pool, &upload_id).await, "aborted");

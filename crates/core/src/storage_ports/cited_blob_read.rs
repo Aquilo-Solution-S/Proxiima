@@ -688,8 +688,12 @@ mod tests {
     #[tokio::test]
     async fn shared_read_service_cannot_bind_with_a_fabricated_boot() {
         let registry = crate::SpiiceRegistry::new().freeze_or_panic_for_tests();
-        let (_, _, real_boot) = crate::Engine::new(registry.clone()).into_runtime_authorities();
-        let (_, _, other_boot) = crate::Engine::new(registry.clone()).into_runtime_authorities();
+        let (_, _, real_boot) =
+            crate::Engine::new(registry.clone(), crate::StoragePorts::rejecting_for_tests())
+                .into_runtime_authorities();
+        let (_, _, other_boot) =
+            crate::Engine::new(registry.clone(), crate::StoragePorts::rejecting_for_tests())
+                .into_runtime_authorities();
         let backend = Arc::new(RecordingRead::default());
         let shared_read = CitedBlobReadService::new_runtime(backend.clone(), &real_boot);
         let key = crate::ScopeKey::parse("core_memory_spaces").expect("registered read");

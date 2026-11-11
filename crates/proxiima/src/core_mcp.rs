@@ -430,7 +430,10 @@ mod tests {
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
             registry.clone(),
-            Arc::new(proxiima_core::Engine::new((*registry).clone())),
+            Arc::new(proxiima_core::Engine::new(
+                (*registry).clone(),
+                proxiima_core::StoragePorts::rejecting_for_tests(),
+            )),
             SpiiceServices::default(),
         );
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
@@ -486,7 +489,10 @@ mod tests {
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
             registry.clone(),
-            Arc::new(proxiima_core::Engine::new((*registry).clone())),
+            Arc::new(proxiima_core::Engine::new(
+                (*registry).clone(),
+                proxiima_core::StoragePorts::rejecting_for_tests(),
+            )),
             SpiiceServices::with(MarkerService("boot-wired")),
         );
         let handler = tools.into_dynamic_handler();

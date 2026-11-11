@@ -1310,7 +1310,10 @@ mod tests {
         let owner = test_owner();
         let mut registry = SpiiceRegistry::new();
         registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-        let engine = Engine::new(registry.freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
         let draft = FactWriteCommand::from_payload(
             "test/source",
@@ -1330,7 +1333,10 @@ mod tests {
     #[tokio::test]
     async fn fact_ingest_refuses_a_goal_change_a_goal_write_did_not_make() {
         let owner = test_owner();
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
         let forged = crate::GoalChangeV1 {
             series: uuid::Uuid::now_v7(),
@@ -1355,7 +1361,10 @@ mod tests {
         let owner = test_owner();
         let mut registry = SpiiceRegistry::new();
         registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-        let engine = Engine::new(registry.freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let draft = FactWriteCommand::from_payload(
             "test/source",
             &TestFact {
@@ -1376,7 +1385,10 @@ mod tests {
         let owner = test_owner();
         let mut registry = SpiiceRegistry::new();
         registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-        let engine = Engine::new(registry.freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let mut draft = FactWriteCommand::from_payload(
             "test/source",
             &TestFact {
@@ -1398,7 +1410,10 @@ mod tests {
         let owner = test_owner();
         let mut registry = SpiiceRegistry::new();
         registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-        let engine = Engine::new(registry.freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let draft = FactWriteCommand::from_payload(
             "test/source",
             &TestFact {
@@ -1431,9 +1446,12 @@ mod tests {
     fn listenable_engine() -> Engine {
         let source = crate::publication::PublicationSource::new("urn:proxiima:r6-tests")
             .expect("a URN is an absolute source");
-        Engine::new(crate::test_fixtures::probe_registry())
-            .try_with_publication_config(crate::publication::PublicationConfig::new(source))
-            .expect("a bound source boots")
+        Engine::new(
+            crate::test_fixtures::probe_registry(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
+        .try_with_publication_config(crate::publication::PublicationConfig::new(source))
+        .expect("a bound source boots")
     }
 
     fn listenable_probe(note: &str) -> crate::test_fixtures::ListenableProbeV1 {

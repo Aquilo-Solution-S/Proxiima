@@ -728,32 +728,30 @@ mod tests {
         let entity = EntityId::Memory(MemoryId::new(Uuid::now_v7()));
 
         let engine = || {
-            crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-                .with_storage_ports(
-                    MembershipStorage {
-                        observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(
-                            Vec::new(),
-                        )),
-                        observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                        member: OwnerId::from(subject),
-                        group: destination_group,
-                        // Real, sufficient, receiving-side consent, sitting
-                        // in storage for every case in this test.
-                        membership_relation: Relation::Admin,
-                        home_owner: Some(OwnerId::from(subject)),
-                        entity_readable: true,
-                        memory_kind: None,
-                        goal_evidence: None,
-                        observed_fact_writes: std::sync::Arc::new(
-                            std::sync::atomic::AtomicUsize::new(0),
-                        ),
-                        observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                        observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(
-                            Vec::new(),
-                        )),
-                    }
-                    .storage_ports(),
-                )
+            crate::Engine::new(
+                SpiiceRegistry::new().freeze_or_panic_for_tests(),
+                MembershipStorage {
+                    observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                    observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                    member: OwnerId::from(subject),
+                    group: destination_group,
+                    // Real, sufficient, receiving-side consent, sitting
+                    // in storage for every case in this test.
+                    membership_relation: Relation::Admin,
+                    home_owner: Some(OwnerId::from(subject)),
+                    entity_readable: true,
+                    memory_kind: None,
+                    goal_evidence: None,
+                    observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+                        0,
+                    )),
+                    observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                    observed_goal_authorship: std::sync::Arc::new(
+                        std::sync::Mutex::new(Vec::new()),
+                    ),
+                }
+                .storage_ports(),
+            )
         };
 
         let silent = AuthzContext::for_subject(subject, AuthPath::HostBearer);
@@ -822,7 +820,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_bootstrap_group_admin_requires_operator_authority() {
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let group = GroupId::new(Uuid::now_v7());
         let first_admin = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(first_admin, AuthPath::HostBearer);
@@ -857,7 +858,8 @@ mod tests {
         registry.add_authorization_hook(Arc::new(RecordingMembershipHook {
             changes: changes.clone(),
         }));
-        let engine = crate::Engine::new(registry.freeze_or_panic_for_tests()).with_storage_ports(
+        let engine = crate::Engine::new(
+            registry.freeze_or_panic_for_tests(),
             MembershipStorage {
                 observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -949,8 +951,10 @@ mod tests {
             veto,
             seen: seen.clone(),
         }));
-        let engine = crate::Engine::new(registry.freeze_or_panic_for_tests())
-            .with_storage_ports(membership_storage_with_home(member, group, None).storage_ports());
+        let engine = crate::Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            membership_storage_with_home(member, group, None).storage_ports(),
+        );
         (engine, seen)
     }
 
@@ -1191,7 +1195,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_transfer_refuses_goal_entities_before_owner_lookup() {
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let goal = crate::EntityId::Goal(crate::GoalId::new(Uuid::now_v7()));
@@ -1213,7 +1220,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_transfer_refuses_a_personal_destination() {
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        );
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
@@ -1238,13 +1248,13 @@ mod tests {
         let entity = EntityId::Memory(MemoryId::new(Uuid::now_v7()));
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
 
-        let missing = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(
-                membership_storage_with_home(caller, source_group, None).storage_ports(),
-            )
-            .transfer_to_owner(&authz, entity, destination)
-            .await
-            .expect_err("an absent entity must not be transferable");
+        let missing = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            membership_storage_with_home(caller, source_group, None).storage_ports(),
+        )
+        .transfer_to_owner(&authz, entity, destination)
+        .await
+        .expect_err("an absent entity must not be transferable");
 
         let foreign_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let mut foreign_storage =
@@ -1253,11 +1263,13 @@ mod tests {
         // The old bare home-owner lookup returned it and leaked Forbidden;
         // the visibility lookup must collapse it to the same miss as above.
         foreign_storage.entity_readable = false;
-        let foreign = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(foreign_storage.storage_ports())
-            .transfer_to_owner(&authz, entity, destination)
-            .await
-            .expect_err("a foreign entity must be indistinguishable from absent");
+        let foreign = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            foreign_storage.storage_ports(),
+        )
+        .transfer_to_owner(&authz, entity, destination)
+        .await
+        .expect_err("a foreign entity must be indistinguishable from absent");
 
         assert_eq!(missing.code, ErrorCode::NotFound);
         assert_eq!(foreign.code, ErrorCode::NotFound);
@@ -1296,10 +1308,10 @@ mod tests {
         );
 
         // add_member: write-without-manage is denied before touching storage.
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(
-                membership_storage_with_home(member, group, Some(group_owner)).storage_ports(),
-            );
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            membership_storage_with_home(member, group, Some(group_owner)).storage_ports(),
+        );
         let denied = engine
             .add_member(&write_only_authz, group, member.into(), Relation::Viewer)
             .await
@@ -1411,30 +1423,28 @@ mod tests {
         );
 
         let storage_with_relation = |relation: Relation| {
-            crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-                .with_storage_ports(
-                    MembershipStorage {
-                        observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(
-                            Vec::new(),
-                        )),
-                        observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                        member: OwnerId::from(caller),
-                        group: destination,
-                        membership_relation: relation,
-                        home_owner: Some(source_owner),
-                        entity_readable: true,
-                        memory_kind: None,
-                        goal_evidence: None,
-                        observed_fact_writes: std::sync::Arc::new(
-                            std::sync::atomic::AtomicUsize::new(0),
-                        ),
-                        observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                        observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(
-                            Vec::new(),
-                        )),
-                    }
-                    .storage_ports(),
-                )
+            crate::Engine::new(
+                SpiiceRegistry::new().freeze_or_panic_for_tests(),
+                MembershipStorage {
+                    observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                    observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                    member: OwnerId::from(caller),
+                    group: destination,
+                    membership_relation: relation,
+                    home_owner: Some(source_owner),
+                    entity_readable: true,
+                    memory_kind: None,
+                    goal_evidence: None,
+                    observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+                        0,
+                    )),
+                    observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                    observed_goal_authorship: std::sync::Arc::new(
+                        std::sync::Mutex::new(Vec::new()),
+                    ),
+                }
+                .storage_ports(),
+            )
         };
 
         // An Admin row on the destination is the receiving side's consent:
@@ -1478,28 +1488,24 @@ mod tests {
 
         // Admin on the destination in storage — the authority the grant
         // must NOT be able to borrow.
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(
-                MembershipStorage {
-                    observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    member: OwnerId::from(caller),
-                    group: destination,
-                    membership_relation: Relation::Admin,
-                    home_owner: Some(source_owner),
-                    entity_readable: true,
-                    memory_kind: None,
-                    goal_evidence: None,
-                    observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
-                        0,
-                    )),
-                    observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                    observed_goal_authorship: std::sync::Arc::new(
-                        std::sync::Mutex::new(Vec::new()),
-                    ),
-                }
-                .storage_ports(),
-            );
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            MembershipStorage {
+                observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                member: OwnerId::from(caller),
+                group: destination,
+                membership_relation: Relation::Admin,
+                home_owner: Some(source_owner),
+                entity_readable: true,
+                memory_kind: None,
+                goal_evidence: None,
+                observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            }
+            .storage_ports(),
+        );
         let delegated = AuthzContext::for_subject_with_role(
             caller,
             [(source_owner, Role::admin())],
@@ -1520,8 +1526,10 @@ mod tests {
         let destination = GroupId::new(Uuid::now_v7());
         let mut storage = membership_storage_with_home(caller, destination, Some(source));
         storage.membership_relation = Relation::Admin;
-        let engine = crate::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(storage.storage_ports());
+        let engine = crate::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            storage.storage_ports(),
+        );
         let ordinary = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         engine
             .authorize_transfer_destination_out_of_band(&ordinary, &destination.into())

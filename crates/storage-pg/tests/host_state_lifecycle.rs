@@ -1573,8 +1573,7 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
                 .await?
                 .try_with_spiices(&registry)?,
         );
-        let (engine, system) = proxiima_core::Engine::new(registry)
-            .with_storage_ports(retired_pg.storage_ports())
+        let (engine, system) = proxiima_core::Engine::new(registry, retired_pg.storage_ports())
             .into_system_authority();
         let schema = SchemaId::new(RETIRED_SCHEMA.to_owned());
         let target = engine.retired_fact_erase(&system, RETIRED_SPIICE, &schema)?;

@@ -11,13 +11,15 @@ use crate::storage_ports::{EngineStoragePorts, StoragePorts};
 use crate::verbs::schema::SpiiceRegistryFrozen;
 
 impl Engine {
+    /// Build an engine over `registry` and `storage`. An engine always has
+    /// storage; it is the only constructor, and [`Self::try_compose`] calls it.
     #[must_use]
-    pub fn new(registry: SpiiceRegistryFrozen) -> Self {
+    pub fn new(registry: SpiiceRegistryFrozen, storage: StoragePorts) -> Self {
         Self {
             registry,
             system_authority_binding: SystemAuthorityBinding::fresh(),
             delegation_runtime_binding: DelegationRuntimeBinding::fresh(),
-            storage: EngineStoragePorts::from(StoragePorts::rejecting()),
+            storage: EngineStoragePorts::from(storage),
             embedding_router: None,
             embedding_runtime_policy: crate::llm::EmbeddingRuntimePolicy::default(),
             embedding_control: super::embeddings::EmbeddingControl::default(),
@@ -86,19 +88,13 @@ impl Engine {
     ) -> Result<Self, SpiiceRegistryError> {
         let mut registry = crate::SpiiceRegistry::new();
         register(&mut registry)?;
-        Ok(Self::new(registry.try_freeze()?).with_storage_ports(storage))
+        Ok(Self::new(registry.try_freeze()?, storage))
     }
 
     /// Get a reference to the schema registry.
     #[must_use]
     pub fn registry(&self) -> &SpiiceRegistryFrozen {
         &self.registry
-    }
-
-    #[must_use]
-    pub fn with_storage_ports(mut self, storage: StoragePorts) -> Self {
-        self.storage = EngineStoragePorts::from(storage);
-        self
     }
 
     /// Install the host's embedding router: every write, drain and search
@@ -165,7 +161,8 @@ mod tests {
 
     #[test]
     fn compose_assembles_engine_over_registry_closure() {
-        let engine = Engine::compose_or_panic_for_tests(StoragePorts::rejecting(), |_registry| {});
+        let engine =
+            Engine::compose_or_panic_for_tests(StoragePorts::rejecting_for_tests(), |_registry| {});
         assert!(engine.mcp_url().is_none());
         assert!(engine.embedding_router().is_none());
     }
@@ -201,12 +198,15 @@ mod tests {
             Duration::from_secs(3),
         )
         .expect("valid policy");
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_embedding_runtime_policy(policy)
-            .with_embedding_router(Arc::new(
-                crate::llm::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
-                    .expect("supported lane"),
-            ));
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            StoragePorts::rejecting_for_tests(),
+        )
+        .with_embedding_runtime_policy(policy)
+        .with_embedding_router(Arc::new(
+            crate::llm::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
+                .expect("supported lane"),
+        ));
 
         let owner = crate::OwnerId::from(crate::UserId::new(uuid::Uuid::now_v7()));
         let route = engine.embedding_route(&owner).await.expect("route");
@@ -226,7 +226,10 @@ mod tests {
     /// and the message names the schema that made a source required.
     #[test]
     fn a_listenable_registry_refuses_to_boot_without_a_source() {
-        let engine = Engine::new(crate::test_fixtures::probe_registry());
+        let engine = Engine::new(
+            crate::test_fixtures::probe_registry(),
+            StoragePorts::rejecting_for_tests(),
+        );
         let err = engine
             .try_with_publication_config(crate::publication::PublicationConfig::default())
             .expect_err("an unbound source must fail the build");

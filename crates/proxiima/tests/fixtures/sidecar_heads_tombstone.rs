@@ -225,8 +225,7 @@ pub async fn assert_tombstone_head() -> TestResult {
         .with_sidecars(sidecars)
         .await?
         .with_spiices(&registry);
-    let engine =
-        proxiima::Engine::new(registry).with_storage_ports(Arc::new(storage).storage_ports());
+    let engine = proxiima::Engine::new(registry, Arc::new(storage).storage_ports());
     let owner = owner();
     let authz = authz(&[owner]);
     let mut admitted = Vec::<MemoryId>::new();

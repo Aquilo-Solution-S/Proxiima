@@ -54,12 +54,11 @@ async fn fresh_database_migrates_directly_to_v2_before_serving() {
         sidecars_v2(),
     )
     .await;
-    let engine = Engine::new(registry)
+    let engine = Engine::new(registry, Arc::new(pg_storage).storage_ports())
         .try_with_publication_config(PublicationConfig::new(
             PublicationSource::new("urn:proxiima:evolution").expect("publication source"),
         ))
-        .expect("publication configuration")
-        .with_storage_ports(Arc::new(pg_storage).storage_ports());
+        .expect("publication configuration");
     let authz = authenticated_context(AuthzContext::single_owner(&owner, AuthPath::HostBearer));
     let written = engine
         .ingest_fact(

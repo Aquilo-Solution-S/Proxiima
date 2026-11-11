@@ -215,8 +215,7 @@ impl McpToolHost {
             store_number,
         )
         .await?;
-        let engine =
-            Arc::new(Engine::new(frozen.clone()).with_storage_ports(Arc::new(pg).storage_ports()));
+        let engine = Arc::new(Engine::new(frozen.clone(), Arc::new(pg).storage_ports()));
         Ok(Self::from_engine(engine, SpiiceServices::default()))
     }
 

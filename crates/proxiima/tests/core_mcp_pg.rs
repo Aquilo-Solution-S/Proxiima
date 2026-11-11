@@ -521,7 +521,10 @@ async fn seed_group_membership(
 ) {
     let group = space_owner.as_group();
     let user = subject.as_user();
-    let engine = proxiima_core::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+    let engine = proxiima_core::Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    );
     let authz = verified(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(*space_owner, Role::admin())],

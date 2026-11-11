@@ -176,8 +176,10 @@ async fn observe_reports(
             config.clone(),
             pg.platform_scope_for_host(),
         )?;
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(Arc::new(pg.clone()).storage_ports());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            Arc::new(pg.clone()).storage_ports(),
+        );
         let service = CitedBlobService::new(Arc::new(store.clone()));
         let owner = owner_fixture();
         let authz = proxiima_core::test_fixtures::authenticated_context(

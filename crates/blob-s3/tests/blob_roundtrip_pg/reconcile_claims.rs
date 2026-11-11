@@ -9,8 +9,11 @@ use super::implied_keys::{fixture_in_own_bucket, versions_left};
 use super::*;
 
 fn bound_authority(store: &CitedBlobStore) -> proxiima_core::authz::SystemAuthority {
-    let (_, authority) =
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
+    let (_, authority) = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .into_system_authority();
     store
         .bind_system_authority(&authority)
         .expect("test store binds to its maintenance engine");

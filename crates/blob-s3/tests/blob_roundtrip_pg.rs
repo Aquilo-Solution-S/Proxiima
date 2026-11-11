@@ -226,10 +226,12 @@ async fn complete_via_engine(
 ) -> Result<UploadCompleted, ProtocolError> {
     let service =
         proxiima_core::storage_ports::CitedBlobService::new(std::sync::Arc::new(store.clone()));
-    Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(std::sync::Arc::new(pg.clone()).storage_ports())
-        .complete_upload_as_fact(&service, ctx, owner, upload_id, &[])
-        .await
+    Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        std::sync::Arc::new(pg.clone()).storage_ports(),
+    )
+    .complete_upload_as_fact(&service, ctx, owner, upload_id, &[])
+    .await
 }
 
 async fn complete_via_engine_with_expectation(
@@ -240,10 +242,12 @@ async fn complete_via_engine_with_expectation(
     upload_id: &str,
     expectation: &UploadCompletionExpectation,
 ) -> Result<UploadCompleted, ProtocolError> {
-    Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(std::sync::Arc::new(pg.clone()).storage_ports())
-        .complete_upload_as_fact_with_expectation(blobs, ctx, owner, upload_id, &[], expectation)
-        .await
+    Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        std::sync::Arc::new(pg.clone()).storage_ports(),
+    )
+    .complete_upload_as_fact_with_expectation(blobs, ctx, owner, upload_id, &[], expectation)
+    .await
 }
 
 async fn transfer_via_engine(
@@ -258,10 +262,12 @@ async fn transfer_via_engine(
             [(destination, Relation::Admin.role())],
             AuthPath::HostBearer,
         ));
-    Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(std::sync::Arc::new(pg.clone()).storage_ports())
-        .transfer_to_owner(&authz, entity, destination)
-        .await
+    Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        std::sync::Arc::new(pg.clone()).storage_ports(),
+    )
+    .transfer_to_owner(&authz, entity, destination)
+    .await
 }
 
 fn s3_config_for_dev() -> S3RuntimeConfig {
@@ -1757,7 +1763,11 @@ async fn authorize_owner_delivery(
 
 fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let (_, _, runtime_authority) = Engine::new(registry.clone()).into_runtime_authorities();
+    let (_, _, runtime_authority) = Engine::new(
+        registry.clone(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .into_runtime_authorities();
     CitedBlobDeliveryService::bind(
         CitedBlobReadService::new_runtime(Arc::new(store.clone()), &runtime_authority),
         &registry,
@@ -2411,14 +2421,20 @@ async fn assert_owner_reconcile_isolated(
 }
 
 async fn reconcile_with_bound_authority(store: &CitedBlobStore) -> CitedBlobReconcileOutcome {
-    let (_, authority) =
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
+    let (_, authority) = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .into_system_authority();
     store
         .bind_system_authority(&authority)
         .expect("test store binds to its maintenance engine");
 
-    let (_, foreign_authority) =
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests()).into_system_authority();
+    let (_, foreign_authority) = Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .into_system_authority();
     let foreign_error = store
         .reconcile_all(&foreign_authority)
         .await

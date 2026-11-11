@@ -588,7 +588,9 @@ async fn run_maintain_storage(config: StorageMaintenanceConfig) -> Result<(), Cl
         .map_err(|err| ProxiimaError::Config(err.to_string()))?;
         // This command is its own boot: its engine's authority is the one
         // the store answers host-wide operations to.
-        let (_, authority) = proxiima::Engine::new(registry).into_system_authority();
+        let (_, authority) =
+            proxiima::Engine::new(registry, Arc::new(storage.clone()).storage_ports())
+                .into_system_authority();
         blobs
             .bind_system_authority(&authority)
             .map_err(|err| ProxiimaError::Config(err.to_string()))?;

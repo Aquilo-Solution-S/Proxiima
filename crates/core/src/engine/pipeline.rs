@@ -592,11 +592,17 @@ mod tests {
     type ResolvedAuthz = AuthzContext;
 
     fn engine() -> Engine {
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
+        Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     fn engine_from_registry(registry: SpiiceRegistry) -> Engine {
-        Engine::new(registry.freeze_or_panic_for_tests())
+        Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     fn engine_with_ports(storage: MembershipStorage) -> Engine {
@@ -607,8 +613,10 @@ mod tests {
         registry: SpiiceRegistry,
         storage: MembershipStorage,
     ) -> Engine {
-        Engine::new(registry.freeze_or_panic_for_tests())
-            .with_storage_ports(storage.storage_ports())
+        Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            storage.storage_ports(),
+        )
     }
 
     fn owner() -> OwnerId {

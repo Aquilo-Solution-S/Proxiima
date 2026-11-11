@@ -132,8 +132,10 @@ async fn memory_rows(pg: &PgStorage, owner: OwnerId, kind: &str) -> TestResult<u
 }
 
 fn engine(pg: &PgStorage) -> Engine {
-    Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-        .with_storage_ports(Arc::new(pg.clone()).storage_ports())
+    Engine::new(
+        SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        Arc::new(pg.clone()).storage_ports(),
+    )
 }
 
 fn personal() -> (UserId, OwnerId) {

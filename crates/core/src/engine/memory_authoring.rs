@@ -1373,7 +1373,10 @@ mod tests {
     }
 
     fn engine() -> Engine {
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
+        Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     fn derivation_sidecar() -> SidecarPayload {
@@ -1652,10 +1655,10 @@ mod tests {
     #[tokio::test]
     async fn a_node_write_hands_storage_its_origins_and_references() {
         let recorder = Arc::new(RecordingAuthoring::default());
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-            .with_storage_ports(crate::StoragePorts::rejecting_with_memory_authoring(
-                recorder.clone(),
-            ));
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_with_memory_authoring(recorder.clone()),
+        );
         let owner = owner();
         let permit = OwnerWritePermit::new(
             owner,

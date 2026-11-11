@@ -486,7 +486,7 @@ pub use proxiima_core::{BoundReadSet, ReadPin, ReadSet, ReadSetError};
 /// The storage ports and their handles. [`StoragePortsBuilder`]'s setters take the
 /// `*Handle` aliases (`Arc<dyn ...Port>`), [`StoragePortsBuilder::try_build`]
 /// returns the `StoragePortsBuildError`, and a host that supplies its own backend
-/// ([`Engine::with_storage_ports`]) implements the `*Port` traits those handles
+/// ([`Engine::new`]) implements the `*Port` traits those handles
 /// wrap.
 pub use proxiima_core::{
     CitationPort, EmbeddingJobPort, EmbeddingMaintenancePort, EmbeddingTextPort,

@@ -826,7 +826,10 @@ mod tests {
     }
 
     fn engine() -> Engine {
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
+        Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     /// #514 F10: the goal-tree refusals reach the protocol as

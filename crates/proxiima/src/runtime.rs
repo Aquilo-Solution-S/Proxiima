@@ -1582,9 +1582,11 @@ mod tests {
             PgPlatformScope::for_tests(),
         )
         .expect("test store config");
-        let (engine, _system, delegation_runtime) =
-            proxiima_core::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-                .into_runtime_authorities();
+        let (engine, _system, delegation_runtime) = proxiima_core::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        )
+        .into_runtime_authorities();
         let registry = Arc::new(engine.registry().clone());
         let mut host = ProxiimaHost::for_tests(Arc::new(engine));
         host.blobs = Some(store);
@@ -1627,9 +1629,11 @@ mod tests {
 
     #[tokio::test]
     async fn delegation_service_is_authenticator_gated_and_shared_by_identity() {
-        let (engine, _system, delegation_runtime) =
-            proxiima_core::Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
-                .into_runtime_authorities();
+        let (engine, _system, delegation_runtime) = proxiima_core::Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        )
+        .into_runtime_authorities();
         let engine = Arc::new(engine);
         let registry = Arc::new(engine.registry().clone());
         let app_ctx = AppContext {

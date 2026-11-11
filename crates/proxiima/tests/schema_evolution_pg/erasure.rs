@@ -11,9 +11,9 @@ pub(super) async fn assert_split_capture_erasure(seeded: &SeededFacts, targets: 
         sidecars_v2_with(evolve_split),
     )
     .await;
-    let (engine, authority) = proxiima_core::Engine::new(registry)
-        .with_storage_ports(Arc::new(active).storage_ports())
-        .into_system_authority();
+    let (engine, authority) =
+        proxiima_core::Engine::new(registry, Arc::new(active).storage_ports())
+            .into_system_authority();
     let mut erase = engine.system_unit_of_work(&authority).unwrap();
     erase
         .erase_own_series(

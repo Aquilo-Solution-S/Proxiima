@@ -1,4 +1,5 @@
 use std::fmt;
+#[cfg(any(test, feature = "testkit"))]
 use std::sync::Arc;
 
 use super::handles::{
@@ -9,6 +10,7 @@ use super::handles::{
     OwnerMembershipAdminHandle, OwnerTransferHandle, RetentionHandle, SourceCursorHandle,
     WriteSessionFactoryHandle,
 };
+#[cfg(any(test, feature = "testkit"))]
 use super::rejecting::RejectingStorage;
 
 #[allow(dead_code)]
@@ -163,8 +165,12 @@ impl StoragePorts {
         StoragePortsBuilder::default()
     }
 
+    /// Ports that refuse every call, for unit tests that exercise an engine
+    /// without a database.
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
     #[must_use]
-    pub(crate) fn rejecting() -> Self {
+    pub fn rejecting_for_tests() -> Self {
         let rejecting = Arc::new(RejectingStorage);
         Self {
             fact_ingest: rejecting.clone(),
@@ -200,7 +206,7 @@ impl StoragePorts {
         owner_erase: OwnerInverseHandle,
         owner_drop_proof: Option<OwnerDropProofHandle>,
     ) -> Self {
-        let mut ports = Self::rejecting();
+        let mut ports = Self::rejecting_for_tests();
         ports.owner_erase = owner_erase;
         ports.owner_drop_proof = owner_drop_proof;
         ports
@@ -211,7 +217,7 @@ impl StoragePorts {
     pub(crate) fn rejecting_with_erase_authority(
         erase_authority: OwnerEraseAuthorityHandle,
     ) -> Self {
-        let mut ports = Self::rejecting();
+        let mut ports = Self::rejecting_for_tests();
         ports.erase_authority = Some(erase_authority);
         ports
     }
@@ -222,7 +228,7 @@ impl StoragePorts {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn rejecting_with_memory_authoring(memory_authoring: MemoryAuthoringHandle) -> Self {
-        let mut ports = Self::rejecting();
+        let mut ports = Self::rejecting_for_tests();
         ports.memory_authoring = memory_authoring;
         ports
     }
@@ -230,7 +236,7 @@ impl StoragePorts {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn rejecting_with_memory_inspect(memory_inspect: MemoryInspectHandle) -> Self {
-        let mut ports = Self::rejecting();
+        let mut ports = Self::rejecting_for_tests();
         ports.memory_inspect = memory_inspect;
         ports
     }
@@ -238,7 +244,7 @@ impl StoragePorts {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn rejecting_with_write_session(write_session: WriteSessionFactoryHandle) -> Self {
-        let mut ports = Self::rejecting();
+        let mut ports = Self::rejecting_for_tests();
         ports.write_session = write_session;
         ports
     }

@@ -724,7 +724,10 @@ mod tests {
     };
 
     fn engine() -> Engine {
-        Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests())
+        Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     fn tag_probe_ingress(
@@ -800,7 +803,10 @@ mod tests {
                 json_schema: None,
                 natural_key_declaration: crate::NaturalKeyDeclaration::EMPTY,
             });
-        Engine::new(registry.freeze_or_panic_for_tests())
+        Engine::new(
+            registry.freeze_or_panic_for_tests(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
     }
 
     /// #479 item 3: every core memory schema displays the field its search

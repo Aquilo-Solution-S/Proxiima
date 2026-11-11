@@ -140,7 +140,7 @@ async fn harness() -> Harness {
     .await
     .expect("typed sidecar key schema")
     .with_spiices(&registry);
-    let engine = Engine::new(registry).with_storage_ports(Arc::new(pg).storage_ports());
+    let engine = Engine::new(registry, Arc::new(pg).storage_ports());
     Harness { engine, pool, db }
 }
 
@@ -314,8 +314,11 @@ async fn retirement_rejects_active_undeclared_foreign_targets_and_another_engine
     ] {
         assert!(engine.retired_fact_erase(&system, spiice, &target).is_err());
     }
-    let (_, foreign_system) =
-        Engine::new(SpiiceRegistry::new().try_freeze().unwrap()).into_system_authority();
+    let (_, foreign_system) = Engine::new(
+        SpiiceRegistry::new().try_freeze().unwrap(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .into_system_authority();
     assert!(
         engine
             .retired_fact_erase(&foreign_system, SPIICE, &schema())

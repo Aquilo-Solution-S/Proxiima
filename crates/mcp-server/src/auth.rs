@@ -568,7 +568,10 @@ mod tests {
             .resolve("host-token", other)
             .await
             .expect("host resolves");
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        );
 
         let err = engine
             .get_graph(&ctx.authz, &GetGraphReadRequest { owner })
@@ -694,7 +697,10 @@ mod tests {
         assert!(ctx.authz.can_access_owner(&owner));
 
         let group = owner.as_group();
-        let engine = Engine::new(SpiiceRegistry::new().freeze_or_panic_for_tests());
+        let engine = Engine::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            proxiima_core::StoragePorts::rejecting_for_tests(),
+        );
         let err = engine
             .add_member(&ctx.authz, group, fake_user().into(), Relation::Editor)
             .await

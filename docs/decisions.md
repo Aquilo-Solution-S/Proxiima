@@ -272,3 +272,12 @@ invitees. Existing Roles on the Goal's owning Group apply automatically,
 alongside explicit Goal grants; their permissions combine. Source-owner and Goal-controller transfers invalidate existing
 consent. A cross-owner fork requires explicit source-owner fork permission
 and destination write permission.
+
+## PostgreSQL is the store
+
+The storage ports have one production implementation, the PostgreSQL backend,
+and an engine is always built over storage: `Engine::new` takes the registry
+and the `StoragePorts` together, so no engine can start without a store. The
+ports that refuse every call exist for tests only and are compiled only under
+`cfg(test)` or the `testkit` feature, which a production host does not enable.
+A second backend would be a new decision, not a flag on this one.

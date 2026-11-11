@@ -22,6 +22,7 @@ pub mod other_stores;
 mod owner_inverse;
 mod proof;
 pub mod publication;
+#[cfg(any(test, feature = "testkit"))]
 mod rejecting;
 mod retention;
 mod vector_index;
