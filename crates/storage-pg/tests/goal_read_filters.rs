@@ -13,7 +13,7 @@ use proxiima_core::{
     AccessKind, EdgeEndpoint, GoalId, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId,
 };
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::fresh_pg;
+use proxiima_storage_pg::test_fixtures::{TestGoal, create_group, fresh_pg};
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, GoalWriteOutcome, write_goal};
 use uuid::Uuid;
 
@@ -346,42 +346,27 @@ async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls(
     .await?;
     platform.run_migrations().await?;
     let admin = sqlx::PgPool::connect(&db.admin_url()).await?;
-    let owners = [Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
+    let runtime = PgStorage::connect_for_tests(db.runtime_url().to_owned()).await?;
+    let owner_ids = [(); 3].map(|()| OwnerId::from(GroupId::new(Uuid::now_v7())));
     let mut handles = Vec::new();
     let mut versions = Vec::new();
-    for owner in owners {
-        let handle = Uuid::now_v7();
-        let t = Uuid::now_v7();
-        let mut tx = admin.begin().await?;
-        sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES ($1,'group')")
-            .bind(owner)
-            .execute(&mut *tx)
+    for owner in owner_ids {
+        create_group(&admin, owner.as_group()).await?;
+        let goal = TestGoal::new(&Uuid::now_v7().to_string())
+            .create(&runtime, owner)
             .await?;
-        sqlx::query("INSERT INTO proxiima_core.goal_head(handle,t,owner_id,schema_id) VALUES ($1,$2,$3,'core/task-v1')")
-            .bind(handle).bind(t).bind(owner).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO proxiima_core.goal(handle,t,owner_id,title,state,request_id, \"by\", via) VALUES ($1,$2,$3,'RLS goal','Active',$4, '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
-            .bind(handle).bind(t).bind(owner).bind(t.to_string()).execute(&mut *tx).await?;
-        tx.commit().await?;
-        handles.push(handle);
-        versions.push(t);
+        handles.push(goal.handle);
+        versions.push(goal.t);
     }
     let mut facts = Vec::new();
     for (source, target) in [
-        (owners[0], versions[0]),
-        (owners[1], versions[1]),
-        (owners[2], versions[0]),
-        (owners[0], versions[2]),
+        (owner_ids[0], versions[0]),
+        (owner_ids[1], versions[1]),
+        (owner_ids[2], versions[0]),
+        (owner_ids[0], versions[2]),
     ] {
-        let t = Uuid::now_v7();
-        let mut tx = admin.begin().await?;
-        sqlx::query("INSERT INTO proxiima_core.memory_head(handle,t,owner_id,schema_id,kind) VALUES ($1,$1,$2,$3,'fact')")
-            .bind(t).bind(source).bind(FACT_SCHEMA).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO proxiima_core.memory(handle,t,owner_id,schema_id,kind,goal_refs,occurred_at, \"by\", via) VALUES ($1,$1,$2,$3,'fact',ARRAY[$4]::uuid[],uuid_extract_timestamp($1), '00000000-0000-0000-0000-000000000509'::uuid, NULL)")
-            .bind(t).bind(source).bind(FACT_SCHEMA).bind(target).execute(&mut *tx).await?;
-        tx.commit().await?;
-        facts.push(MemoryId::new(t));
+        facts.push(fact(&runtime, source, FACT_SCHEMA, &[target]).await);
     }
-    let owner_ids = owners.map(|id| OwnerId::from(GroupId::new(id)));
     let authz = proxiima_core::authenticate(
         &Verifier(OwnerRoles::for_subject(
             UserId::new(Uuid::now_v7()),
@@ -393,7 +378,6 @@ async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls(
         &Credentials::Bearer("goal-rls-fixture".into()),
     )
     .await?;
-    let runtime = PgStorage::connect_for_tests(db.runtime_url().to_owned()).await?;
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
     req.goal_handles = handles.clone();

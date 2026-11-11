@@ -217,6 +217,7 @@ async fn a_drain_stops_at_the_next_batch_once_its_lease_is_lost() -> TestResult 
             deletes: Mutex::new(0),
         });
         let pg = pg.with_cold(store.clone());
+        // Raw INSERT on purpose: five owner-less rows backdated by an hour, which the enqueue write never produces.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store, enqueued_at)
              SELECT 'objects/' || n, NULL, $1, now() - interval '1 hour'

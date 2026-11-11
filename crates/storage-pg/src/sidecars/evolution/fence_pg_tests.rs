@@ -24,6 +24,7 @@ async fn goal_writer_finishes_before_waiting_migration_locks_its_revision_table(
         let revision = Uuid::now_v7();
         let mut writer = pool.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)").execute(&mut *writer).await?;
+        // Raw INSERT on purpose: a Goal writer held open and uncommitted while a migration waits on it, which the Goal write path does not leave open.
         sqlx::query("INSERT INTO proxiima_core.goal_head(handle,schema_id,owner_id,t) VALUES($1,$2,$3,$4)")
             .bind(handle).bind(SOURCE).bind(owner).bind(revision).execute(&mut *writer).await?;
 
@@ -69,6 +70,7 @@ async fn owner_id(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *tx)
         .await?;
+    // Raw INSERT on purpose: written as the platform role under its own scope setting; the owner builder takes a pool with no such setting.
     sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
         .bind(owner)
         .execute(&mut *tx)
@@ -93,6 +95,7 @@ async fn completed_source_is_fenced_and_target_remains_writable() {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT on purpose: the completion record the fence reads, hand-built without running the evolution that writes it.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution (source_kind,source_schema_id,evolution_id,spiice_id,target_schema_ids,target_kinds) VALUES ('cited_object',$1,'evolution-1','example',ARRAY[$2],ARRAY['cited_object'])")
             .bind(SOURCE).bind(TARGET).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -102,6 +105,7 @@ async fn completed_source_is_fenced_and_target_remains_writable() {
             .execute(&mut *source).await?;
     sqlx::query("SELECT set_config('app.owner', $1::uuid[]::text, true), set_config('app.write_owner', $1::uuid[]::text, true)").bind(vec![owner])
             .execute(&mut *source).await?;
+        // Raw INSERT on purpose: a runtime-role write of the completed source schema, which the fence must refuse.
         let error = sqlx::query("INSERT INTO proxiima_core.blob (owner_id,schema_id,content_hash) VALUES ($1,$2,decode(repeat('01',32),'hex'))")
             .bind(owner).bind(SOURCE).execute(&mut *source).await
             .expect_err("completed source must refuse runtime writes");
@@ -111,12 +115,14 @@ async fn completed_source_is_fenced_and_target_remains_writable() {
         let mut target = runtime.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope', 'owner', true)").execute(&mut *target).await?;
         sqlx::query("SELECT set_config('app.owner', $1::uuid[]::text, true), set_config('app.write_owner', $1::uuid[]::text, true)").bind(vec![owner]).execute(&mut *target).await?;
+        // Raw INSERT on purpose: a runtime-role write of the target schema, which the fence must accept.
         sqlx::query("INSERT INTO proxiima_core.blob (owner_id,schema_id,content_hash) VALUES ($1,$2,decode(repeat('02',32),'hex'))")
             .bind(owner).bind(TARGET).execute(&mut *target).await?;
         target.commit().await?;
 
         let mut forge = runtime.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope', 'owner', true)").execute(&mut *forge).await?;
+        // Raw INSERT on purpose: a forged completion record from the runtime role, which RLS must refuse.
         let error = sqlx::query("INSERT INTO proxiima_core.schema_evolution (source_kind,source_schema_id,evolution_id,spiice_id,target_schema_ids,target_kinds) VALUES ('cited_object','forged-source','forged','forged',ARRAY['forged-target'],ARRAY['cited_object'])")
             .execute(&mut *forge).await.expect_err("runtime must not forge completion metadata");
         assert!(error.to_string().contains("row-level security"));
@@ -124,6 +130,7 @@ async fn completed_source_is_fenced_and_target_remains_writable() {
         let mut capture_link = runtime.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope','owner',true),set_config('app.owner',$1::uuid[]::text,true),set_config('app.write_owner',$1::uuid[]::text,true)")
             .bind(vec![owner]).execute(&mut *capture_link).await?;
+        // Raw INSERT on purpose: a forged capture link from the runtime role, which the grants must refuse.
         let error = sqlx::query("INSERT INTO proxiima_core.schema_evolution_publication(publication_t,memory_t) VALUES ($1,$2)")
             .bind(Uuid::now_v7()).bind(Uuid::now_v7()).execute(&mut *capture_link).await
             .expect_err("runtime must not forge links that erase captured publications");
@@ -149,6 +156,7 @@ async fn an_old_writer_waiting_on_retirement_is_refused_after_commit() {
         let mut retirement = platform.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)").execute(&mut *retirement).await?;
         sqlx::query("SELECT proxiima_core.lock_schema_evolution_exclusive($1)").bind(SOURCE).execute(&mut *retirement).await?;
+        // Raw INSERT on purpose: the completion record written inside the held retirement transaction the old writer waits on.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution(source_kind,source_schema_id,evolution_id,spiice_id,target_schema_ids,target_kinds)
                     VALUES('cited_object',$1,'retirement','example',ARRAY[$2],ARRAY['cited_object'])")
             .bind(SOURCE).bind(TARGET).execute(&mut *retirement).await?;
@@ -156,6 +164,7 @@ async fn an_old_writer_waiting_on_retirement_is_refused_after_commit() {
             let mut tx = runtime.begin().await?;
             sqlx::query("SELECT set_config('app.proxiima_scope','owner',true),set_config('app.owner',$1::uuid[]::text,true),set_config('app.write_owner',$1::uuid[]::text,true)")
                 .bind(vec![owner]).execute(&mut *tx).await?;
+            // Raw INSERT on purpose: an old writer of the retired source schema, which the fence must refuse after the commit.
             sqlx::query("INSERT INTO proxiima_core.blob(owner_id,schema_id,content_hash) VALUES($1,$2,decode(repeat('01',32),'hex'))")
                 .bind(owner).bind(SOURCE).execute(&mut *tx).await
         });
@@ -187,6 +196,7 @@ async fn authority_permit_must_be_deleted_before_commit() {
         let mut cleared = pool.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *cleared).await?;
+        // Raw INSERT on purpose: the authority permit, written and deleted in one transaction the way the evolution does.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution_authority (record_kind,source_id,target_id,source_schema,target_schema,record_owner,primary_target) VALUES ('blob',$1,$2,'s1','s2',$3,true)")
             .bind(source).bind(target).bind(owner).execute(&mut *cleared).await?;
         sqlx::query("DELETE FROM proxiima_core.schema_evolution_authority WHERE xact=pg_current_xact_id()")
@@ -196,6 +206,7 @@ async fn authority_permit_must_be_deleted_before_commit() {
         let mut residual = pool.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *residual).await?;
+        // Raw INSERT on purpose: an authority permit left in place, which the commit must refuse.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution_authority (record_kind,source_id,target_id,source_schema,target_schema,record_owner,primary_target) VALUES ('blob',$1,$2,'s1','s2',$3,true)")
             .bind(source).bind(target).bind(owner).execute(&mut *residual).await?;
         assert!(residual.commit().await.is_err());
@@ -218,10 +229,12 @@ async fn same_schema_string_is_kind_scoped() {
         let mut tx = platform.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx).await?;
+        // Raw INSERT on purpose: the completion record for an Abstraction schema that shares its string with a Fact schema.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution (source_kind,source_schema_id,evolution_id,spiice_id,target_schema_ids,target_kinds) VALUES ('abstraction','shared/schema-v1','e','example',ARRAY['shared/schema-v2'],ARRAY['abstraction'])")
             .execute(&mut *tx).await?;
         let fact_handle = Uuid::now_v7();
         let fact_t = Uuid::now_v7();
+        // Raw INSERT on purpose: a Fact and a Perspective under one schema string, in one rolled-back transaction beside the completion record.
         sqlx::query("INSERT INTO proxiima_core.memory_head (handle,kind,schema_id,owner_id,t) VALUES ($1,'fact','shared/fact-v1',$2,$3)")
             .bind(fact_handle).bind(owner).bind(fact_t).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO proxiima_core.memory (handle,t,kind,owner_id,schema_id,occurred_at,origins,refs,goal_refs,sidecar_tables,\"by\") VALUES ($1,$2,'fact',$3,'shared/fact-v1',now(),'{}','{}','{}','{}',$3)")
@@ -282,6 +295,7 @@ async fn migration_constraint_checkpoint_scopes_and_restores_modes() {
         sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)")
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT: rows of tables this test creates; no write path exists for them.
         sqlx::query("INSERT INTO unrelated_constraints.child(parent_id) VALUES (1)")
             .execute(&mut *tx)
             .await?;

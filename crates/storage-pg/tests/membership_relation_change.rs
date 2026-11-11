@@ -662,6 +662,7 @@ async fn replacement_waits_on_the_groups_membership_lock() {
     let member = h.member_with(&[Relation::Admin]).await;
 
     let mut holder = h.observer.begin().await.expect("holder");
+    // Raw INSERT on purpose: a lock request held open in an uncommitted transaction, so the replacement has a lock to wait on.
     sqlx::query(
         "INSERT INTO proxiima_core.group_lock_request (request_id, left_group_id)
          VALUES ($1, $2)",

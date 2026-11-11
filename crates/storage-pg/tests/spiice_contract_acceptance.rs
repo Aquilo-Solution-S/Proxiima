@@ -10,7 +10,7 @@ use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{SPIICE_0, SpiiceRegistry};
 use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{TestNote, create_core_db, create_user};
 use uuid::Uuid;
 
 // ── Goals don't transfer ────────────────────────────────────────────────
@@ -274,10 +274,8 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
         let pool = pg.pool_for_tests();
 
         let owner_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pool)
-            .await?;
+        let owner = proxiima_core::OwnerId::from(proxiima_core::UserId::new(owner_id));
+        create_user(pool, owner.as_user()).await?;
 
         // Text with a mix of whitespace, punctuation and non-ASCII, so a
         // recipe that trimmed, normalized or re-joined differently from the
@@ -287,8 +285,16 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
         let claim = "  Der Anspruch ist mehrdeutig  ";
         let utterance = "  hallo, Welt!  ";
 
+        // The Fact an Abstraction pins is written the way production writes it.
+        let note = TestNote::new(title, body)
+            .tags(&["ümlaut", "zwei worte"])
+            .create(&pg, owner)
+            .await?
+            .memory_id
+            .into_inner();
+
         let seeds: Vec<(&str, &str, Uuid)> = vec![
-            ("core/agent-note-v1", "fact", Uuid::now_v7()),
+            ("core/agent-note-v1", "fact", note),
             ("core/utterance-v1", "fact", Uuid::now_v7()),
             ("core/agent-derivation-v1", "abstraction", Uuid::now_v7()),
             ("core/interpretation-v1", "perspective", Uuid::now_v7()),
@@ -298,7 +304,12 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
         // memory row that names a sidecar table it has no row in is refused
         // at COMMIT.
         let mut stamped = pool.begin().await?;
-        for (schema_id, kind, t) in &seeds {
+        // The note above is already written. Raw INSERT for the three after it
+        // (memory head, content and memory rows, then their sidecars below): needs
+        // a builder for a typed Abstraction, Perspective and utterance Fact with
+        // the sidecar text this test names (the typed ingest writes them;
+        // `TestDerived` has no title or body setter).
+        for (schema_id, kind, t) in seeds.iter().skip(1) {
             let handle = Uuid::now_v7();
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
@@ -360,16 +371,9 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
             .await?;
         }
 
-        sqlx::query(
-            "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-             VALUES ($1, $2, $3, $4, ARRAY['ümlaut', 'zwei worte'])",
-        )
-        .bind(seeds[0].2)
-        .bind(Uuid::now_v7())
-        .bind(title)
-        .bind(body)
-        .execute(&mut *stamped)
-        .await?;
+        // Raw INSERT: needs a builder for utterance_v1, agent_derivation_v1 with a
+        // given title and body, and interpretation_v1 (the sidecars the typed
+        // ingest and `core_sidecars` write).
         sqlx::query(
             "INSERT INTO proxiima_core.utterance_v1 (t, speaker, conversation_id, text)
              VALUES ($1, 'agent', 'conv-1', $2)",
@@ -400,7 +404,6 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
         stamped.commit().await?;
 
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-        let owner = proxiima_core::OwnerId::from(proxiima_core::UserId::new(owner_id));
 
         let mut compared = 0_usize;
         for (schema_id, _, t) in &seeds {

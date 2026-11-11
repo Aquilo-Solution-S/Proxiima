@@ -102,6 +102,7 @@ async fn embedding_job_diagnostics_report_each_job_and_its_claim_age() {
         let admin = pg.pool_for_tests();
         let mut setup = admin.begin().await?;
         proxiima_storage_pg::access::owner_columns::ensure_owner_row(setup.as_mut(), &other).await?;
+        // Raw INSERT on purpose: jobs in every status, with a claim backdated to 2020, for an entity no memory has and for another owner, which the enqueue write never produces.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_jobs
                 (entity_id, model_id, owner_id, status, claimed_at, claim_token, dim, last_error)

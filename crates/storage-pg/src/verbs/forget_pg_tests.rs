@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::PgStorage;
 use crate::core_pg_sidecars;
-use crate::test_fixtures::create_core_db;
+use crate::test_fixtures::{TestNote, create_core_db, enqueue_embedding_job};
 use crate::verbs::forget::{
     ColdPurgeEntry, ColdPurgePlan, MemoryColdStore, erase_memory, erase_memory_series,
     erase_memory_series_after_snapshot, forget_memory, lock_admissions_for_erase,
@@ -556,6 +556,7 @@ async fn a_hard_erase_deletes_the_memorys_other_store_origins() {
             .await?
             .memory_id
             .into_inner();
+        // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
              VALUES ($1, '00000000-0000-8000-8000-000500000001', 'origin'), ($1, '00000000-0000-8000-8000-000600000001', 'origin'), ($2, '00000000-0000-8000-8000-000500000002', 'origin')",
@@ -1138,6 +1139,7 @@ async fn witnessed_targets_cannot_be_reused_or_newly_pinned() {
         // live head so the failure reaches the target collision guard rather
         // than the unrelated head-shape backstop.
         let holder = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        // Raw INSERT on purpose: a row recycling an erased t, which the write path never produces and the database must refuse.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.memory
                 (handle, t, kind, owner_id, schema_id, source_id, ingest_key,
@@ -1355,6 +1357,7 @@ async fn forget_pinless_abstraction_is_refused() {
         let owner_id = owner.into_inner();
         let handle = Uuid::now_v7();
         let t = Uuid::now_v7();
+        // Raw INSERT on purpose: a pinless Abstraction row, which the write path never produces and the database must refuse.
         let content_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/test-abs-v1', $2)
@@ -1559,6 +1562,7 @@ async fn forget_blocks_admit_until_its_lifecycle_lock_is_released() {
         let owner_id = owner.into_inner();
         let handle = Uuid::now_v7();
         let new_t = Uuid::now_v7();
+        // Raw INSERT on purpose: the admission is one statement that must park behind a held lifecycle lock, after its head and content land by hand.
         let content_id: Uuid = sqlx::query_scalar(
             "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
              VALUES ($1, 'core/test-abs-v1', $2)
@@ -2181,6 +2185,7 @@ async fn stale_purge_plan_rechecks_current_debt_before_provider_delete() {
         let mut entries = Vec::new();
         for key in [retired_key, reassigned_key, current_key] {
             cold.put(key, bytes);
+            // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
             let (object_key, object_store): (String, String) = sqlx::query_as(
                 "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
                  VALUES ($1, NULL, $2)
@@ -2291,6 +2296,7 @@ async fn a_refusing_cold_store_leaves_the_purge_mark_for_retry() {
             "erasing a memory owes the object store nothing"
         );
         let key = "objects/refused".to_owned();
+        // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
         let object_store: String = sqlx::query_scalar(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, $2, $3)
@@ -2482,7 +2488,6 @@ async fn a_kept_sidecar_that_is_not_owner_pinned_stops_the_erase() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
         let pool = pg.pool_for_tests();
 
         // Spiice #0's surfaces with exactly one field changed: the note
@@ -2500,17 +2505,10 @@ async fn a_kept_sidecar_that_is_not_owner_pinned_stops_the_erase() {
         assert_eq!(rewritten, 1, "the note sidecar is a declared surface");
         let kept_surfaces = proxiima_core::owner_inverse::OwnerSurfaces::from_surfaces(declared);
 
-        let written = ingest_stamped(
-            pool,
-            &permit,
-            &draft(None),
-            &[AGENT_NOTE.to_owned()],
-            &[
-                "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-             VALUES ($1, $1, 'n', 'kept', ARRAY['tag'])",
-            ],
-        )
-        .await?;
+        let written = TestNote::new("n", "kept")
+            .tags(&["tag"])
+            .create(&pg, owner)
+            .await?;
         let t = written.memory_id.into_inner();
 
         let mut tx = pool.begin().await?;
@@ -2596,14 +2594,7 @@ async fn forget_overlapping_drain_leaves_no_orphan_head() {
             .bind(t)
             .execute(&pool)
             .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, dim, owner_id)
-             VALUES ($1, 'test-embed', 1024, $2)",
-        )
-        .bind(t)
-        .bind(owner.into_inner())
-        .execute(&pool)
-        .await?;
+        enqueue_embedding_job(&pg, owner, t, "test-embed").await?;
 
         // The drainer claims the job and holds it.
         let mut drain = pool.begin().await?;
@@ -2627,6 +2618,7 @@ async fn forget_overlapping_drain_leaves_no_orphan_head() {
         await_backend_blocked_on(&pool, "DELETE FROM proxiima_core.embedding_jobs").await?;
 
         // The drainer finishes its write: one chunk and the head.
+        // Raw INSERT on purpose: the drainer finishes its write inside the transaction it holds open while the forget waits on it.
         sqlx::query(
             "INSERT INTO proxiima_core.embeddings
                 (entity_id, model_id, dim, embedding_version, chunk_ordinal, vec, owner_id)

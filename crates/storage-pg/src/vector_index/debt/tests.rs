@@ -5,7 +5,7 @@ use proxiima_core::{EmbeddableEntityRef, EntityKind, MemoryId, SpaceVector, User
 use uuid::Uuid;
 
 use super::*;
-use crate::test_fixtures::fresh_pg_host_index;
+use crate::test_fixtures::{create_user, fresh_pg_host_index};
 
 /// Index debt is read from the database, so its rows are parsed at that
 /// spring: an operation or width the store does not know is refused.
@@ -45,14 +45,8 @@ async fn an_erase_settles_its_owners_debt_before_commit() {
     );
     let (erased, forgotten, foreign) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
     for (entity, owner) in [(erased, owner), (forgotten, owner), (foreign, other)] {
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await
-        .unwrap();
+        create_user(pool, owner.as_user()).await.unwrap();
+        // Raw INSERT on purpose: a head for an entity no memory backs, which the embedding write never produces.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_heads (entity_id, model_id, dim, embedding_version, owner_id)
              VALUES ($1, 'debt', 384, 1, $2)",
@@ -181,13 +175,10 @@ async fn the_sweep_skips_a_head_its_drain_is_writing() {
     let (pg, _guard) = fresh_pg_host_index("vector_index_sweep_lock", index.clone()).await;
     let pool = pg.pool_for_tests().clone();
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-        .bind(owner.into_inner())
-        .execute(&pool)
-        .await
-        .unwrap();
+    create_user(&pool, owner.as_user()).await.unwrap();
     let (writing, lost) = (Uuid::now_v7(), Uuid::now_v7());
     for entity in [writing, lost] {
+        // Raw INSERT on purpose: a head for an entity no memory backs, which the embedding write never produces.
         sqlx::query(
             "INSERT INTO proxiima_core.embedding_heads (entity_id, model_id, dim, embedding_version, owner_id)
              VALUES ($1, 'debt', 384, 1, $2)",

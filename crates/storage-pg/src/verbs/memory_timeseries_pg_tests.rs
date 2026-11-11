@@ -8,7 +8,7 @@
 
 use crate::PgStorage;
 use crate::access::owner_columns::{ensure_owner_row, register_group};
-use crate::test_fixtures::create_core_db;
+use crate::test_fixtures::{TestMemory, create_core_db};
 use crate::verbs::forget::{lock_lifecycle_targets_tx, lock_memory_handles_tx};
 use crate::verbs::memory_timeseries::{read_memory_by_t, read_memory_head};
 use proxiima_core::storage_ports::FactIngestPort;
@@ -249,6 +249,7 @@ async fn a_revision_after_a_future_head_becomes_the_new_head() {
             proxiima_core::MemoryId::new(future_t).created_at() > time::OffsetDateTime::now_utc()
         );
         let mut seed = pool.begin().await?;
+        // Raw INSERT on purpose: a head committed by another process whose clock is an hour ahead, which this process never writes.
         sqlx::query(
             "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
              VALUES ($1, $2, 'fact', $3, $4, proxiima_core.memory_created_at($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -349,6 +350,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             "got: {err}"
         );
 
+        // Raw INSERT on purpose: a closed series, so the pin guard can be shown to refuse it (the only writer restores a captured row during schema evolution).
         sqlx::query("INSERT INTO proxiima_core.closed_handle (handle) VALUES ($1)")
             .bind(file.handle)
             .execute(pool)
@@ -364,16 +366,14 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
             "got: {err}"
         );
 
-        let hash = vec![7u8; 32];
-        let blob_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/bytes-v1', $2)
-             RETURNING blob_id",
-        )
-        .bind(owner.into_inner())
-        .bind(&hash)
-        .fetch_one(pool)
-        .await?;
+        // The citing Fact's admission records the object; its id is the blob a
+        // later write pins directly.
+        let blob_id = TestMemory::from_command(draft(None))
+            .cites("core/bytes-v1", [7u8; 32])
+            .create(&pg, owner)
+            .await?
+            .cited_object_id
+            .ok_or("cited object missing")?;
         let mut cited = draft(None);
         cited.blob_id = Some(blob_id);
         let cited_out = pg.ingest_fact_atomic(&permit, &cited, None).await?;
@@ -476,6 +476,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         )
         .execute(pool)
         .await?;
+        // Raw INSERT: a row of a table this test creates; no write path exists for it.
         sqlx::query("INSERT INTO proxiima_core.sidecar_sum (t, text) VALUES ($1, 'summary')")
             .bind(abs_out.memory_id.into_inner())
             .execute(pool)

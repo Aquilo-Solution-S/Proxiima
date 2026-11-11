@@ -11,19 +11,23 @@ use proxiima_core::{
     AccessError, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, Relation, Role, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{add_member, create_core_db};
 use proxiima_storage_pg::{
     PgOwnerAccessResolver, PgPlatformScope, PgStorage, group_role, roles_for_subject,
 };
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
+/// A membership written on the caller's own connection, so a test can leave
+/// it uncommitted.
 async fn seed_membership<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     group: GroupId,
     member: UserId,
     relation: Relation,
 ) {
+    // Raw INSERT on purpose: the row must land inside the caller's open transaction,
+    // which the pool-bound membership write does not offer.
     sqlx::query(
         "WITH registered AS (
               INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
@@ -84,15 +88,29 @@ async fn probes_answer_what_the_resolver_answers_for_every_membership_shape() {
         let promoted = group();
         let strangers_only = group();
         // One relation.
-        seed_membership(&pool, single, subject, Relation::Editor).await;
+        add_member(&pool, single, subject, Relation::Editor)
+            .await
+            .expect("seed membership");
         // Two relations in one group: their join, never the last row.
-        seed_membership(&pool, joined, subject, Relation::Viewer).await;
-        seed_membership(&pool, joined, subject, Relation::Ingest).await;
-        seed_membership(&pool, promoted, subject, Relation::Viewer).await;
-        seed_membership(&pool, promoted, subject, Relation::Admin).await;
+        add_member(&pool, joined, subject, Relation::Viewer)
+            .await
+            .expect("seed membership");
+        add_member(&pool, joined, subject, Relation::Ingest)
+            .await
+            .expect("seed membership");
+        add_member(&pool, promoted, subject, Relation::Viewer)
+            .await
+            .expect("seed membership");
+        add_member(&pool, promoted, subject, Relation::Admin)
+            .await
+            .expect("seed membership");
         // Someone else's membership must not leak into the subject's answer.
-        seed_membership(&pool, strangers_only, stranger, Relation::Admin).await;
-        seed_membership(&pool, single, stranger, Relation::Viewer).await;
+        add_member(&pool, strangers_only, stranger, Relation::Admin)
+            .await
+            .expect("seed membership");
+        add_member(&pool, single, stranger, Relation::Viewer)
+            .await
+            .expect("seed membership");
 
         let resolver = PgOwnerAccessResolver::new(pool.clone(), platform.clone());
         let mut conn = pool.acquire().await?;
@@ -250,7 +268,9 @@ async fn group_registered_subject_is_refused_before_personal_role_derivation() {
         let subject = UserId::new(group.into_inner());
         let member = user();
         let ordinary = user();
-        seed_membership(&pool, group, member, Relation::Viewer).await;
+        add_member(&pool, group, member, Relation::Viewer)
+            .await
+            .expect("seed membership");
         let resolver = PgOwnerAccessResolver::new(pool.clone(), platform.clone());
         let mut conn = pool.acquire().await?;
         let registered: bool = sqlx::query_scalar(

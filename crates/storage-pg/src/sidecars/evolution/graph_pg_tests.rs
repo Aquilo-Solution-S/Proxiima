@@ -16,6 +16,7 @@ async fn owner_id(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *tx)
         .await?;
+    // Raw INSERT on purpose: written as the platform role under its own scope setting; the owner builder takes a pool with no such setting.
     sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
         .bind(owner)
         .execute(&mut *tx)
@@ -33,6 +34,7 @@ async fn seed_goal_and_fact(pool: &PgPool, owner: Uuid) -> Result<(Uuid, Uuid, U
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *tx)
         .await?;
+    // Raw INSERT on purpose: rows under the old source schema, the shape the evolution under test migrates.
     sqlx::query(
         "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
          VALUES ($1, $2, $3, $4)",
@@ -90,6 +92,7 @@ async fn migrate_fact(
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *tx)
         .await?;
+    // Raw INSERT on purpose: the authority permit the evolution holds for the transaction that migrates the row.
     sqlx::query(
         "INSERT INTO proxiima_core.schema_evolution_authority
          (record_kind, source_id, target_id, source_schema, target_schema,
@@ -149,6 +152,7 @@ async fn graph_accepts_only_authorized_erased_origin_witness() {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT on purpose: the authority permit the evolution holds for the transaction that migrates the row.
         sqlx::query(
             "INSERT INTO proxiima_core.schema_evolution_authority
              (record_kind, source_id, target_id, source_schema, target_schema,
@@ -168,6 +172,7 @@ async fn graph_accepts_only_authorized_erased_origin_witness() {
             .bind(fact_t)
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT on purpose: the migrated target row, written inside the evolution transaction beside its permit.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'abstraction', $2, $3, $4)",
@@ -226,6 +231,7 @@ async fn assert_ordinary_origin_refused(
 ) -> Result<(), sqlx::Error> {
     let ordinary_handle = Uuid::now_v7();
     let ordinary_t = Uuid::now_v7();
+    // Raw INSERT on purpose: an ordinary Abstraction whose origin is erased, which the graph check must refuse.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
          VALUES ($1, 'abstraction', $2, $3, $4)",
@@ -278,6 +284,7 @@ async fn seed_graph_memory(
         (ids.fact_handle, ids.fact_t),
         (ids.support_fact_handle, ids.support_fact_t),
     ] {
+        // Raw INSERT on purpose: rows under the old source schema, the shape the evolution under test migrates.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', $2, $3, $4)",
@@ -372,6 +379,7 @@ async fn content_cleanup_is_scoped_and_keeps_referenced_history() {
             (scoped_orphan, owner, 0x11_u8),
             (unrelated_orphan, other_owner, 0x22_u8),
         ] {
+            // Raw INSERT on purpose: orphan Content rows of two owners, which no write path leaves behind.
             sqlx::query(
                 "INSERT INTO proxiima_core.content (content_id, owner_id, schema_id, content_hash)
                  VALUES ($1, $2, $3, $4)",
@@ -475,6 +483,7 @@ async fn goal_erase_follows_a_two_step_migration_chain() {
             (a_handle, a_t, "test/goal-v1", "chain-a"),
             (b_handle, b_t, "test/goal-v2", "chain-b"),
         ] {
+            // Raw INSERT on purpose: Goals under hand-picked schema strings, the source and the two migrated targets of the chain.
             sqlx::query("INSERT INTO proxiima_core.goal_head(handle,schema_id,owner_id,t) VALUES($1,$2,$3,$4)")
                 .bind(handle).bind(schema).bind(owner).bind(t)
                 .execute(&mut *tx).await?;
@@ -482,6 +491,7 @@ async fn goal_erase_follows_a_two_step_migration_chain() {
                 .bind(handle).bind(t).bind(owner).bind(schema).bind(request)
                 .execute(&mut *tx).await?;
         }
+        // Raw INSERT on purpose: the authority permits for a two-step migration chain, held for the transaction that migrates the Goal.
         sqlx::query("INSERT INTO proxiima_core.schema_evolution_authority(record_kind,source_id,target_id,source_schema,target_schema,source_handle,target_handle,record_owner,primary_target) VALUES ('goal',$1,$2,'test/goal-v1','test/goal-v2',$3,$4,$5,true),('goal',$2,$2,'test/goal-v2','test/goal-v3',$4,$4,$5,true)")
             .bind(a_t).bind(b_t).bind(a_handle).bind(b_handle).bind(owner)
             .execute(&mut *tx).await?;

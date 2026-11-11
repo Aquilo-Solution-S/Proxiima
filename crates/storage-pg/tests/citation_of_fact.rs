@@ -1,35 +1,13 @@
 //! citations_of_facts is memory ⋈ blob.
 #![allow(clippy::doc_markdown)]
 
-use proxiima_core::storage_ports::FactIngestPort;
-use proxiima_core::storage_ports::{CitationPort, OwnerWritePermit};
-use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, OwnerId, SchemaId, SchemaVersion, UserId};
+use proxiima_core::OwnerId;
+use proxiima_core::UserId;
+use proxiima_core::storage_ports::CitationPort;
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db};
 use uuid::Uuid;
-
-fn draft() -> FactWriteCommand {
-    FactWriteCommand {
-        schema_id: SchemaId::new("core/test-fact-v1".to_string()),
-        schema_version: SchemaVersion::new(1),
-        handle: None,
-        source_id: None,
-        ingest_key: None,
-        payload: Vec::new(),
-        rendered_text: None,
-        lexical_language: None,
-        receipt: None,
-        occurred_at: None,
-        citation: None,
-        additional_references: Vec::new(),
-        refs: Vec::new(),
-        blob_id: None,
-        kind: proxiima_core::MemoryKind::Fact,
-        request: None,
-    }
-}
 
 #[tokio::test]
 async fn citations_of_facts_key_each_citing_fact_by_blob_id_and_schema() {
@@ -41,23 +19,13 @@ async fn citations_of_facts_key_each_citing_fact_by_blob_id_and_schema() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-        let pool = pg.pool_for_tests();
-        let uncited = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
-
-        let hash = vec![9u8; 32];
-        let blob_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
-             VALUES ($1, 'core/bytes-v1', $2)
-             RETURNING blob_id",
-        )
-        .bind(owner.into_inner())
-        .bind(&hash)
-        .fetch_one(pool)
-        .await?;
-        let mut cited = draft();
-        cited.blob_id = Some(blob_id);
-        let written = pg.ingest_fact_atomic(&permit, &cited, None).await?;
+        let uncited = TestMemory::fact().create(&pg, owner).await?;
+        // The citing Fact's admission records the object, and names its id.
+        let written = TestMemory::fact()
+            .cites("core/bytes-v1", [9u8; 32])
+            .create(&pg, owner)
+            .await?;
+        let blob_id = written.cited_object_id.ok_or("cited object missing")?;
 
         let owner_scope = proxiima_core::test_fixtures::owner_scope_for_tests(&[owner]);
         let citations = pg

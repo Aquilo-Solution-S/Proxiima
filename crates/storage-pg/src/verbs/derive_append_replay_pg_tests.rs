@@ -4,7 +4,7 @@
 
 use super::{DerivedDraft, DerivedOutcome};
 use crate::PgStorage;
-use crate::test_fixtures::create_core_db;
+use crate::test_fixtures::{TestGoal, create_core_db};
 use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
@@ -73,29 +73,15 @@ fn keyed_perspective(owner: OwnerId, handle: Uuid, guided_by: &[GoalId]) -> Deri
     draft
 }
 
-async fn goal_target(pool: &sqlx::PgPool, owner: OwnerId) -> Result<GoalId, sqlx::Error> {
-    let handle = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-         VALUES ($1, 'core/task-goal-v1', $2, $1)",
-    )
-    .bind(handle)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
-    let t: Uuid = sqlx::query_scalar(
-        "INSERT INTO proxiima_core.goal
-             (handle, t, owner_id, title, state, request_id, motivated_by, \"by\")
-         VALUES ($1, $1, $2, 'replay target', 'Active', $3, '{}',
-                 '00000000-0000-0000-0000-000000000509'::uuid)
-         RETURNING t",
-    )
-    .bind(handle)
-    .bind(owner.into_inner())
-    .bind(format!("replay-target-{handle}"))
-    .fetch_one(pool)
-    .await?;
-    Ok(GoalId::new(t))
+async fn goal_target(
+    pg: &PgStorage,
+    owner: OwnerId,
+) -> Result<GoalId, proxiima_core::StorageError> {
+    let goal = TestGoal::new(&format!("replay-target-{}", Uuid::now_v7()))
+        .title("replay target")
+        .create(pg, owner)
+        .await?;
+    Ok(GoalId::new(goal.t))
 }
 
 /// The four steps a derived write is: the origin proof, the reference-kind
@@ -192,8 +178,8 @@ async fn changed_perspective_guidance_appends_with_same_origins() {
         abstraction.additional_references =
             vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
-        let goal_one = goal_target(pool, owner).await?;
-        let goal_two = goal_target(pool, owner).await?;
+        let goal_one = goal_target(&pg, owner).await?;
+        let goal_two = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
             EntityKind::Abstraction,
@@ -356,8 +342,8 @@ async fn changed_guidance_appends_and_exact_guidance_replays() {
         abstraction.additional_references =
             vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
         let origin = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
-        let goal_a = goal_target(pool, owner).await?;
-        let goal_b = goal_target(pool, owner).await?;
+        let goal_a = goal_target(&pg, owner).await?;
+        let goal_b = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
             EntityKind::Abstraction,
@@ -415,8 +401,8 @@ async fn keyed_reuse_with_changed_guidance_conflicts() {
         abstraction.additional_references =
             vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
         let origin = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
-        let goal_a = goal_target(pool, owner).await?;
-        let goal_b = goal_target(pool, owner).await?;
+        let goal_a = goal_target(&pg, owner).await?;
+        let goal_b = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
             EntityKind::Abstraction,

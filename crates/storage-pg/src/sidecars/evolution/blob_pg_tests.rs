@@ -127,6 +127,7 @@ async fn owner(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *tx)
         .await?;
+    // Raw INSERT on purpose: written as the platform role under its own scope setting; the owner builder takes a pool with no such setting.
     sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
         .bind(id)
         .execute(&mut *tx)
@@ -155,12 +156,15 @@ async fn cited_object_replacement_preserves_bytes_and_moves_only_primary_upload(
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT on purpose: the store identity a bare core database lacks, written inside the evolution transaction.
         sqlx::query("INSERT INTO proxiima_core.store_identity(singleton,store_number) VALUES(true,0) ON CONFLICT (singleton) DO NOTHING")
             .execute(&mut *tx).await?;
+        // Raw INSERT on purpose: a blob under the old source schema, the shape the evolution under test migrates.
         sqlx::query("INSERT INTO proxiima_core.blob (blob_id,owner_id,schema_id,content_hash) VALUES ($1,$2,$3,$4)")
             .bind(source).bind(owner).bind(SOURCE_SCHEMA).bind(&hash)
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query("INSERT INTO proxiima_core.blob_uploads (upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES ($1,$2,'test','objects/blob','blob.bin','application/octet-stream',32,$3,$4,'s3:test/bucket',now()+interval '1 day')")
             .bind(upload)
             .bind(owner)
@@ -168,6 +172,7 @@ async fn cited_object_replacement_preserves_bytes_and_moves_only_primary_upload(
             .bind(&hash)
             .execute(&mut *tx)
             .await?;
+        // Raw INSERT on purpose: an unrelated owner's rows under the old source schema, which the evolution must leave alone.
         sqlx::query("INSERT INTO proxiima_core.content(content_id,owner_id,schema_id,content_hash) VALUES ($1,$2,$3,decode(repeat('04',32),'hex'))")
             .bind(unrelated_content)
             .bind(unrelated_owner)
@@ -249,11 +254,14 @@ async fn cited_object_chain_moves_upload_to_terminal_primary() {
         let mut tx = platform.begin().await?;
         sqlx::query("SELECT set_config('app.proxiima_scope','platform',true)")
             .execute(&mut *tx).await?;
+        // Raw INSERT on purpose: the store identity a bare core database lacks, written inside the evolution transaction.
         sqlx::query("INSERT INTO proxiima_core.store_identity(singleton,store_number) VALUES(true,0) ON CONFLICT (singleton) DO NOTHING")
             .execute(&mut *tx).await?;
+        // Raw INSERT on purpose: a blob under the old source schema, the shape the evolution under test migrates.
         sqlx::query("INSERT INTO proxiima_core.blob(blob_id,owner_id,schema_id,content_hash) VALUES($1,$2,$3,$4)")
             .bind(source).bind(owner).bind(SOURCE_SCHEMA).bind(&hash)
             .execute(&mut *tx).await?;
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
         sqlx::query("INSERT INTO proxiima_core.blob_uploads(upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES($1,$2,'test','objects/chain','chain.bin','application/octet-stream',32,$3,$4,'s3:test/bucket',now()+interval '1 day')")
             .bind(upload).bind(owner).bind(source).bind(&hash)
             .execute(&mut *tx).await?;

@@ -7,6 +7,7 @@ use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::{OwnerId, SpiiceRegistry, UserId};
 use proxiima_pg_testkit::SplitRoleDb;
+use proxiima_storage_pg::test_fixtures::create_user;
 use proxiima_storage_pg::verbs::forget::erase_memory_series;
 use proxiima_storage_pg::{
     PgHostStateEraseContext, PgMigrationStorage, PgPoolConfig, PgTuning,
@@ -53,14 +54,12 @@ impl Harness {
             .connect(&db.admin_url())
             .await?;
         let owners = [(); 2].map(|()| OwnerId::from(UserId::new(Uuid::now_v7())));
+        for owner in owners {
+            create_user(&admin, owner.as_user()).await?;
+        }
         let mut connection = platform.acquire().await?;
         let mut tx = begin_migration_transaction(&mut connection).await?;
-        for owner in owners {
-            sqlx::query("INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1, 'personal')")
-                .bind(owner.into_inner())
-                .execute(&mut *tx)
-                .await?;
-        }
+        // Raw INSERT: a row of a table this test creates; no write path exists for it.
         sqlx::raw_sql(
             "CREATE TABLE public.schema_drop_unrelated (value text);
              INSERT INTO public.schema_drop_unrelated VALUES ('keep');
@@ -130,6 +129,9 @@ async fn insert_fact(
     forgotten: bool,
 ) -> Result<Uuid, sqlx::Error> {
     let t = Uuid::now_v7();
+    // Raw INSERT on purpose: a Fact of a retired schema, stamped with its sidecar
+    // table or already forgotten, which the write path no longer admits; this is
+    // the stored reference the drop guard must find.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head(handle,t,kind,owner_id,schema_id)
          VALUES ($1,$1,'fact',$2,$3)",

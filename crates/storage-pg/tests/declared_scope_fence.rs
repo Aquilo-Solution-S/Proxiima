@@ -272,6 +272,7 @@ async fn bootstrap() -> (String, PgStorage, proxiima_core::SpiiceRegistryFrozen)
     let registry = registry();
     let result = async {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
+        // Raw INSERT: a surface registration for tables this test creates; no write path exists for it.
         sqlx::raw_sql(
             "CREATE SCHEMA test_scope;
              CREATE TABLE test_scope.things (
@@ -345,6 +346,7 @@ async fn register_thing(
     owner: OwnerId,
     thing_id: Uuid,
 ) -> Result<(), sqlx::Error> {
+    // Raw INSERT: a row of a table this test creates; no write path exists for it.
     sqlx::query("INSERT INTO test_scope.things (owner_id, thing_id) VALUES ($1, $2)")
         .bind(owner.into_inner())
         .bind(thing_id)

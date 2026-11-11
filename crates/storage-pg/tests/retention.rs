@@ -9,7 +9,7 @@ use proxiima_core::storage_ports::OwnerInversePort;
 use proxiima_core::{SpiiceRegistry, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{create_core_db, create_user};
 use uuid::Uuid;
 
 fn surfaces() -> OwnerSurfaces {
@@ -18,11 +18,11 @@ fn surfaces() -> OwnerSurfaces {
 
 async fn person_with_rows(pool: &sqlx::PgPool) -> Result<UserId, sqlx::Error> {
     let person = Uuid::now_v7();
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-        .bind(person)
-        .execute(pool)
-        .await?;
+    create_user(pool, UserId::new(person))
+        .await
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     for (schema, days) in [("s.mail-v1", 30), ("s.page-v1", 365)] {
+        // Raw INSERT: needs a builder for retention (`set_retention` writes it).
         sqlx::query(
             "INSERT INTO proxiima_core.retention (owner_id, schema_id, keep_days)
              VALUES ($1, $2, $3)",

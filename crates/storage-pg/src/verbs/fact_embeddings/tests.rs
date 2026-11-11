@@ -214,6 +214,7 @@ mod pg_tests {
             },
             move |tx, outcome| {
                 Box::pin(async move {
+                    // Raw INSERT: needs a builder for a note with embedding spaces and a receipt (TestNote takes neither; the typed ingest is `ingest_fact_with_typed_sidecar`).
                     sqlx::query(
                         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body)
                          VALUES ($1, $2, $3, $4)",
@@ -659,6 +660,7 @@ mod pg_tests {
         )
         .execute(&mut *tx)
         .await?;
+        // Raw INSERT on purpose: bulk volume, thousands of heads in one locked transaction, which the one-memory-per-call write path cannot produce.
         sqlx::query(
             "INSERT INTO proxiima_core.owners (owner_id, kind)
              VALUES ($1, 'group') ON CONFLICT DO NOTHING",
@@ -1082,6 +1084,7 @@ mod pg_tests {
             .await?;
             assert_eq!(queued.len(), 3);
             // Re-insert the oldest job: same job_id, last in the heap.
+            // Raw INSERT on purpose: the oldest job re-inserted under its own job_id, so it is last in the heap and the claim order must still follow job_id.
             sqlx::query(
                 "WITH moved AS (
                      DELETE FROM proxiima_core.embedding_jobs WHERE job_id = $1
@@ -1832,6 +1835,7 @@ mod pg_tests {
             )
             .execute(pool)
             .await?;
+            // Raw INSERT: a row of a table this test creates; no write path exists for it.
             sqlx::query(
                 "INSERT INTO proxiima_core.renamed_embed_note_v1 (note_memory_id, embed_text)
                  VALUES ($1, 'the pilings under the north quay are sound')",

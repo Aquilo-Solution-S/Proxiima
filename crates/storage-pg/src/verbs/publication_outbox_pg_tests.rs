@@ -33,7 +33,7 @@ use proxiima_pg_testkit::drop_db;
 use uuid::Uuid;
 
 use crate::PgStorage;
-use crate::test_fixtures::fresh_pg;
+use crate::test_fixtures::{create_user, fresh_pg};
 
 const PUBLISHER: &str = "publication-outbox-tests";
 
@@ -46,15 +46,9 @@ fn owner_fixture() -> OwnerId {
 }
 
 async fn register_owner(pool: &sqlx::PgPool, owner: &OwnerId) {
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind)
-         VALUES ($1, 'personal'::proxiima_core.owner_kind)
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await
-    .expect("owner registers");
+    create_user(pool, owner.as_user())
+        .await
+        .expect("owner registers");
 }
 
 fn probe(note: &str) -> ListenableProbeV1 {

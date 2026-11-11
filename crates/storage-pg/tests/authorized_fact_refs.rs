@@ -220,6 +220,7 @@ async fn bootstrap() -> (String, PgStorage, proxiima_core::SpiiceRegistryFrozen)
     let registry = registry();
     let result = async {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
+        // Raw INSERT: a surface registration for a table this test creates; no write path exists for it.
         sqlx::raw_sql(
             "CREATE SCHEMA test_refs;
              CREATE TABLE test_refs.referenced_fact_v1 (
@@ -365,7 +366,7 @@ async fn stage_inline_citation_upload(pg: &PgStorage, owner: OwnerId) -> Result<
     create_user(pg.pool_for_tests(), owner.as_user())
         .await
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-    // Raw: no production path stages an upload row without the blob store.
+    // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
             (owner_id, bucket, object_key, filename, mime, expected_byte_len,
@@ -1067,7 +1068,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         let pool = pg.pool_for_tests();
 
         let reference_handle = Uuid::now_v7();
-        // Raw on purpose: a row the write path would not write.
+        // Raw INSERT on purpose: SQL contract test of the goal_refs, refs and origins foreign keys; the memory rows go in directly, the accepted one is the control for the rejected rows.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1091,7 +1092,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         // `refs` is the Memory spine now, so it rejects a Goal t exactly as
         // `origins` always did. Before the split this same insert succeeded.
         let memory_ref_handle = Uuid::now_v7();
-        // Raw on purpose: a row the write path would not write.
+        // Raw INSERT on purpose: a Goal t in refs, which the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1124,7 +1125,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         // t is not a Goal reference either. Neither column is a place to
         // put an id of the other kind.
         let goal_ref_handle = Uuid::now_v7();
-        // Raw on purpose: a row the write path would not write.
+        // Raw INSERT on purpose: a Memory t in goal_refs, which the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1154,7 +1155,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         );
 
         let origin_handle = Uuid::now_v7();
-        // Raw on purpose: a row the write path would not write.
+        // Raw INSERT on purpose: a Goal t in origins, which the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1214,7 +1215,7 @@ async fn goal_erase_serializes_against_reference_admission() {
                 .fetch_one(tx.as_mut())
                 .await?;
             let handle = Uuid::now_v7();
-            // Raw on purpose: a row the write path would not write.
+            // Raw INSERT on purpose: the reference admission must wait on a lock inside one held transaction, which the write path does not expose.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1313,7 +1314,7 @@ async fn crossed_memory_pins_lock_in_global_t_order() {
                 .fetch_one(tx.as_mut())
                 .await?;
             let handle = Uuid::now_v7();
-            // Raw on purpose: a row the write path would not write.
+            // Raw INSERT on purpose: lock-order test; the head and the reversed-order pins go in one held transaction, and the row is invalid.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",

@@ -569,6 +569,7 @@ async fn a_sidecar_keyed_on_its_own_column_name_still_files_its_projection_row()
         )
         .execute(pool)
         .await?;
+        // Raw INSERT: a row of a table this test creates; no write path exists for it.
         sqlx::query(
             "INSERT INTO proxiima_core.renamed_note_v1 (note_memory_id, title, body, tags)
              VALUES ($1, 'harbour survey', 'the pilings under the north quay are sound',
@@ -717,6 +718,7 @@ async fn an_undeclared_sidecar_row_is_caught_and_the_finding_says_there_is_no_re
         )
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: a note no memory declares (the declaring trigger is off), which the write path never leaves and the integrity check must report as drift.
         sqlx::query(
             "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
              VALUES ($1, $1, 'title', 'body', '{}')",

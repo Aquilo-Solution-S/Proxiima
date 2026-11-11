@@ -9,10 +9,8 @@ use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWri
 use proxiima_core::{AccessKind, ColdObjectStore, OwnerId, StorageError, UserId};
 use uuid::Uuid;
 
-use crate::test_fixtures::fresh_pg;
-use crate::verbs::forget::forget_pg_tests::{draft, ingest_stamped};
-
-const AGENT_NOTE: &str = "proxiima_core.agent_note_v1";
+use crate::test_fixtures::{TestNote, create_embedding, fresh_pg};
+use crate::verbs::forget::forget_pg_tests::draft;
 
 /// Counts every call and refuses it: forget must not reach an object store.
 #[derive(Default)]
@@ -36,12 +34,6 @@ impl ColdObjectStore for CountingCold {
     }
 }
 
-fn unit_vector() -> pgvector::Vector {
-    let mut values = vec![0.0; 1024];
-    values[0] = 1.0;
-    pgvector::Vector::from(values)
-}
-
 /// `(memory rows, forgotten memory rows, agent notes)` for `t`, read as the
 /// table owner, past every policy.
 async fn stored(pool: &sqlx::PgPool, t: Uuid) -> (i64, i64, i64) {
@@ -56,22 +48,14 @@ async fn stored(pool: &sqlx::PgPool, t: Uuid) -> (i64, i64, i64) {
     .expect("stored")
 }
 
-async fn note_fact(pg: &crate::PgStorage, permit: &OwnerWritePermit, body_bytes: usize) -> Uuid {
-    let insert = format!(
-        "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-         VALUES ($1, $1, 'n', repeat('x', {body_bytes}), ARRAY['tag'])"
-    );
-    ingest_stamped(
-        pg.pool_for_tests(),
-        permit,
-        &draft(None),
-        &[AGENT_NOTE.to_owned()],
-        &[insert.as_str()],
-    )
-    .await
-    .expect("note fact")
-    .memory_id
-    .into_inner()
+async fn note_fact(pg: &crate::PgStorage, owner: OwnerId, body_bytes: usize) -> Uuid {
+    TestNote::new("n", &"x".repeat(body_bytes))
+        .tags(&["tag"])
+        .create(pg, owner)
+        .await
+        .expect("note fact")
+        .memory_id
+        .into_inner()
 }
 
 #[tokio::test]
@@ -79,7 +63,7 @@ async fn a_fact_with_a_sidecar_row_over_64_kib_forgets() {
     let (pg, _db) = fresh_pg("forget_64k").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let t = note_fact(&pg, &permit, 70 * 1024).await;
+    let t = note_fact(&pg, owner, 70 * 1024).await;
 
     MemoryAuthoringPort::forget_memory(&pg, &permit, proxiima_core::MemoryId::new(t))
         .await
@@ -99,7 +83,7 @@ async fn forget_makes_no_object_store_call() {
     let pg = pg.with_cold(cold.clone());
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let t = note_fact(&pg, &permit, 16).await;
+    let t = note_fact(&pg, owner, 16).await;
 
     MemoryAuthoringPort::forget_memory(&pg, &permit, proxiima_core::MemoryId::new(t))
         .await
@@ -126,27 +110,9 @@ async fn forget_deletes_the_embeddings_and_keeps_the_row() {
         .execute(&pool)
         .await
         .expect("clear jobs");
-    sqlx::query(
-        "INSERT INTO proxiima_core.embeddings
-            (entity_id, model_id, dim, embedding_version, chunk_ordinal, vec, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, 0, $3, $2)",
-    )
-    .bind(t)
-    .bind(owner.into_inner())
-    .bind(unit_vector())
-    .execute(&pool)
-    .await
-    .expect("embedding");
-    sqlx::query(
-        "INSERT INTO proxiima_core.embedding_heads
-            (entity_id, model_id, dim, embedding_version, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, $2)",
-    )
-    .bind(t)
-    .bind(owner.into_inner())
-    .execute(&pool)
-    .await
-    .expect("head");
+    create_embedding(&pg, owner, proxiima_core::MemoryId::new(t), "test-embed", 1)
+        .await
+        .expect("embedding and head");
 
     MemoryAuthoringPort::forget_memory(&pg, &permit, proxiima_core::MemoryId::new(t))
         .await

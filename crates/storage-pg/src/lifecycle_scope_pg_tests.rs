@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::PgLifecycleScope;
 use crate::owner_scope::bind_owner_scope;
-use crate::test_fixtures::fresh_pg;
+use crate::test_fixtures::{TestMemory, TestNote, create_user, fresh_pg};
 use crate::verbs::forget::forget_pg_tests::{draft, ingest_stamped};
 
 const AGENT_NOTE: &str = "proxiima_core.agent_note_v1";
@@ -39,7 +39,8 @@ struct Seeded {
 
 /// A live Fact and an Abstraction derived from it that carries an agent note.
 async fn seed(pg: &crate::PgStorage, permit: &OwnerWritePermit) -> Seeded {
-    let parent = ingest_stamped(pg.pool_for_tests(), permit, &draft(None), &[], &[])
+    let parent = TestMemory::fact()
+        .create(pg, *permit.owner())
         .await
         .expect("parent")
         .memory_id
@@ -58,6 +59,8 @@ async fn seed(pg: &crate::PgStorage, permit: &OwnerWritePermit) -> Seeded {
         &cites,
         &[AGENT_NOTE.to_owned()],
         &[
+            // Raw INSERT on purpose: an Abstraction carrying an agent note, a pairing the
+            // write path never admits (notes are Facts), so the sidecar row goes in by hand.
             "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
            VALUES ($1, $1, 'n', 'kept', ARRAY['tag'])",
         ],
@@ -234,21 +237,13 @@ async fn another_owner_does_not_see_a_forgotten_memory_in_lifecycle_scope() {
 
 /// A standalone Fact with an agent note, forgotten by hand.
 async fn forgotten_note(pg: &crate::PgStorage, owner: OwnerId) -> Uuid {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let t = ingest_stamped(
-        pg.pool_for_tests(),
-        &permit,
-        &draft(None),
-        &[AGENT_NOTE.to_owned()],
-        &[
-            "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
-           VALUES ($1, $1, 'n', 'forgotten', ARRAY['tag'])",
-        ],
-    )
-    .await
-    .expect("note")
-    .memory_id
-    .into_inner();
+    let t = TestNote::new("n", "forgotten")
+        .tags(&["tag"])
+        .create(pg, owner)
+        .await
+        .expect("note")
+        .memory_id
+        .into_inner();
     forget_by_hand(pg, t).await;
     t
 }
@@ -319,9 +314,7 @@ async fn a_transfer_moves_a_forgotten_memory_and_keeps_the_flag() {
     let (pg, _guard) = fresh_pg("s7_transfer").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let dest = OwnerId::from(UserId::new(Uuid::now_v7()));
-    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal') ON CONFLICT DO NOTHING")
-        .bind(dest.into_inner())
-        .execute(pg.pool_for_tests())
+    create_user(pg.pool_for_tests(), dest.as_user())
         .await
         .expect("destination owner");
     let t = forgotten_note(&pg, owner).await;
@@ -359,17 +352,12 @@ async fn export_lists_a_forgotten_memory_with_its_forgotten_at() {
     let (pg, _guard) = fresh_pg("s8_export").await;
     let user = UserId::new(Uuid::now_v7());
     let owner = OwnerId::from(user);
-    let live = ingest_stamped(
-        pg.pool_for_tests(),
-        &OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
-        &draft(None),
-        &[],
-        &[],
-    )
-    .await
-    .expect("live")
-    .memory_id
-    .into_inner();
+    let live = TestMemory::fact()
+        .create(&pg, owner)
+        .await
+        .expect("live")
+        .memory_id
+        .into_inner();
     let forgotten = forgotten_note(&pg, owner).await;
     let auth =
         ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner { user_id: user });

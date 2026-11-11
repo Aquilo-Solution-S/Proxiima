@@ -57,6 +57,7 @@ fn draft() -> FactWriteCommand {
 /// derive path's privileged insert lands them.
 async fn add_origins(pg: &PgStorage, t: Uuid, n: usize) -> Result<(), sqlx::Error> {
     for _ in 0..n {
+        // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
         sqlx::query("INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind) VALUES ($1, $2, 'origin')")
             .bind(t)
             .bind(Uuid::now_v7())
@@ -344,6 +345,7 @@ async fn several_origins_export_byte_identically_across_insert_orders() -> TestR
             .execute(pg.pool_for_tests())
             .await?;
         for memory in order {
+            // Raw INSERT: needs a builder for memory_external_origin (the derive path writes it).
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind) VALUES ($1, $2, 'origin')",
             )

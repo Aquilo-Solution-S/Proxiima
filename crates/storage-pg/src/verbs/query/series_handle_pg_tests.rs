@@ -83,6 +83,7 @@ async fn a_sidecar_keyed_on_its_own_column_name_is_found_by_the_series_head_look
         )
         .execute(pool)
         .await?;
+        // Raw INSERT: a row of a table this test creates; no write path exists for it.
         sqlx::query(
             "INSERT INTO proxiima_core.renamed_series_note_v1 (note_memory_id, slug)
              VALUES ($1, 'north-quay')",
