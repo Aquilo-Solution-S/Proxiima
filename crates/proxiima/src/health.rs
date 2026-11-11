@@ -63,12 +63,12 @@ async fn ready(State(probe): State<Probe>) -> (StatusCode, String) {
             let mut answer = if faults.is_empty() {
                 "ready".to_owned()
             } else {
-                let statuses = faults
+                let reasons = faults
                     .into_iter()
-                    .map(|fault| fault.status().to_string())
+                    .map(|fault| fault.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("degraded: embedding configuration fault: HTTP {statuses}")
+                format!("degraded: embedding configuration fault: {reasons}")
             };
             // Counts only, from the object-purge feature's last pass: the
             // probe is anonymous and must not touch the queue itself.

@@ -222,7 +222,9 @@ With health endpoints enabled, anonymous `/healthz` is liveness and `/readyz`
 checks database reachability, shutdown state and observed embedding-client
 configuration faults. A paused client keeps readiness at HTTP 200 with a named
 degraded body, such as `degraded: embedding configuration fault: HTTP 401`,
-containing only sanitized status codes. With an object store, the body adds the
+containing only sanitized status codes or vector widths. A client that returns
+vectors of another width than the configured embedding space pauses until the
+route is replaced. With an object store, the body adds the
 purge queue as the last drain pass left it, counts only:
 `object-purge: owed=… due=… deferred=… stuck=…`. Purge debt never changes
 readiness: readiness answers whether this replica can serve traffic now, and

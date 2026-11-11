@@ -400,11 +400,12 @@ struct ControlledClient {
 impl ControlledClient {
     fn validate(&self, vector: Vec<f32>) -> Result<Vec<f32>, LlmError> {
         if vector.len() != self.space.dim().width() {
-            return Err(LlmError::retryable(format!(
-                "embedding width mismatch: expected {}, got {}",
-                self.space.dim(),
-                vector.len()
-            )));
+            return Err(LlmError::Configuration(
+                EmbeddingConfigurationFault::VectorWidth {
+                    expected: self.space.dim().width(),
+                    received: vector.len(),
+                },
+            ));
         }
         if vector.iter().any(|value| !value.is_finite()) {
             return Err(LlmError::retryable(
@@ -868,8 +869,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_success_is_retryable_and_input_refusal_does_not_pause() {
-        for reply in [Reply::WrongWidth, Reply::WrongCount, Reply::NonFinite] {
+    async fn a_wrong_count_or_non_finite_vector_is_retryable_and_input_refusal_does_not_pause() {
+        for reply in [Reply::WrongCount, Reply::NonFinite] {
             let control = EmbeddingControl::default();
             let client = RecordingClient::new("malformed", reply);
             let owner = OwnerId::new(uuid::Uuid::now_v7());
@@ -911,6 +912,47 @@ mod tests {
             control.blocked_pairs(Instant::now()).is_empty(),
             "input rescue can proceed immediately"
         );
+    }
+
+    #[tokio::test]
+    async fn a_wrong_vector_width_pauses_the_client_for_background_work_and_queries() {
+        let fault = EmbeddingConfigurationFault::VectorWidth {
+            expected: 384,
+            received: 383,
+        };
+        for background in [true, false] {
+            let control = EmbeddingControl::default();
+            let client = RecordingClient::new("wrong-width", Reply::WrongWidth);
+            let route = control.observe(
+                OwnerId::new(uuid::Uuid::now_v7()),
+                EmbeddingRoute::current(bound(&client)),
+                EmbeddingRuntimePolicy::default(),
+            );
+            let bound = route.current_client().expect("current");
+            let first = if background {
+                bound.embed_many(&["a".into(), "b".into()]).await.map(drop)
+            } else {
+                bound
+                    .embed_query("q", crate::llm::QueryTask::DEFAULT)
+                    .await
+                    .map(drop)
+            };
+            assert!(
+                matches!(first, Err(LlmError::Configuration(actual)) if actual == fault),
+                "background={background}: {first:?}"
+            );
+            assert!(matches!(bound.embed("suppressed").await,
+                    Err(LlmError::Configuration(actual)) if actual == fault));
+            assert!(
+                matches!(
+                    bound.embed_query("suppressed", crate::llm::QueryTask::DEFAULT).await,
+                    Err(LlmError::Configuration(actual)) if actual == fault
+                ),
+                "a paused client refuses queries too"
+            );
+            assert_eq!(client.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(control.configuration_faults(), [fault]);
+        }
     }
 
     #[tokio::test]

@@ -46,36 +46,29 @@ impl EmbeddingInputRefusal {
 }
 
 /// A client configuration fault pauses that original client until rebinding.
+///
+/// `Display` is the bare reason, safe for health projection; `LlmError`
+/// prefixes it with `embedding configuration fault: `.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, thiserror::Error)]
 pub enum EmbeddingConfigurationFault {
-    #[error("embedding configuration fault: HTTP 400")]
+    #[error("HTTP 400")]
     BadRequest,
-    #[error("embedding configuration fault: HTTP 401")]
+    #[error("HTTP 401")]
     Unauthorized,
-    #[error("embedding configuration fault: HTTP 403")]
+    #[error("HTTP 403")]
     Forbidden,
-    #[error("embedding configuration fault: HTTP 404")]
+    #[error("HTTP 404")]
     NotFound,
-}
-
-impl EmbeddingConfigurationFault {
-    /// The configuration refusal's HTTP status, safe for health projection.
-    #[must_use]
-    pub const fn status(self) -> u16 {
-        match self {
-            Self::BadRequest => 400,
-            Self::Unauthorized => 401,
-            Self::Forbidden => 403,
-            Self::NotFound => 404,
-        }
-    }
+    /// The client returned a vector of another width than its embedding space.
+    #[error("vector width {received} where the embedding space has {expected}")]
+    VectorWidth { expected: usize, received: usize },
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
     #[error("{0}")]
     InputRefused(EmbeddingInputRefusal),
-    #[error("{0}")]
+    #[error("embedding configuration fault: {0}")]
     Configuration(EmbeddingConfigurationFault),
     #[error("embedding call failed: {message}")]
     Retryable {
