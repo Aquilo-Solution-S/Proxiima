@@ -20,9 +20,14 @@ const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_mins(1);
 
 /// Maximum age of a cached JWKS before a hit opportunistically refreshes. Picks
 /// up key rotation even when every presented `kid` is already cached (so the
-/// unknown-kid miss path never fires). Rate-bounded by the same `last_refresh`
-/// clock, so a stale hit refetches at most once per age window.
+/// unknown-kid miss path never fires).
 const JWKS_MAX_AGE: Duration = Duration::from_hours(1);
+
+/// How long after its last successful fetch a key set is trusted. Between
+/// [`JWKS_MAX_AGE`] and this bound a failed or throttled refresh still serves
+/// the cached key, so a short issuer outage does not fail valid requests.
+/// Past it the set resolves nothing until a fetch succeeds.
+const JWKS_TRUST_BOUND: Duration = Duration::from_hours(4);
 
 /// Complete-request timeout used by [`HttpJwksResolver::new`]. It covers DNS,
 /// connection establishment, response headers, and response-body reads for
@@ -283,7 +288,9 @@ struct JwkSet {
 }
 
 /// Production resolver: discovers the JWKS endpoint and caches keys by kid,
-/// refreshing once on an unknown kid (key rotation).
+/// refreshing once on an unknown kid (key rotation) and hourly on a hit.
+/// While the issuer cannot be reached, a cached set stays trusted for four
+/// hours after its last successful fetch and resolves nothing after that.
 /// Discovery metadata must name the configured issuer exactly before its
 /// JWKS endpoint can be used.
 pub struct HttpJwksResolver {
@@ -291,13 +298,57 @@ pub struct HttpJwksResolver {
     jwks_uri: Option<String>,
     http: reqwest::Client,
     request_timeout: Duration,
-    cache: RwLock<HashMap<String, Arc<DecodingKey>>>,
-    /// Last successful JWKS refetch; drives TTL staleness checks.
-    last_refresh: RwLock<Option<Instant>>,
-    /// Last refetch attempt (success or failure); drives unknown-kid cooldown.
-    last_attempt: RwLock<Option<Instant>>,
-    /// Serializes the cooldown check, attempt mark, and outbound JWKS fetch.
+    state: RwLock<JwksState>,
+    /// Held by the one request that fetches. A cache miss waits for it; a hit
+    /// on an aging set never does.
     refresh_gate: Mutex<()>,
+}
+
+/// The fetched key set and the two clocks that govern it, read and written
+/// together.
+#[derive(Default)]
+struct JwksState {
+    set: Option<FetchedKeys>,
+    /// Last fetch attempt, successful or not; drives the refresh cooldown.
+    attempted_at: Option<Instant>,
+}
+
+struct FetchedKeys {
+    keys: HashMap<String, Arc<DecodingKey>>,
+    fetched_at: Instant,
+}
+
+/// What the cached set says about one `kid` at one moment.
+enum Cached {
+    /// The set is younger than [`JWKS_MAX_AGE`] and holds the key.
+    Fresh(Arc<DecodingKey>),
+    /// The set is due for a refresh and still inside [`JWKS_TRUST_BOUND`].
+    Aging(Arc<DecodingKey>),
+    /// No set, a set past its trust bound, or a set without this `kid`.
+    Absent,
+}
+
+impl JwksState {
+    fn lookup(&self, kid: &str, now: Instant) -> Cached {
+        let Some(set) = &self.set else {
+            return Cached::Absent;
+        };
+        let age = now.saturating_duration_since(set.fetched_at);
+        if age >= JWKS_TRUST_BOUND {
+            return Cached::Absent;
+        }
+        match set.keys.get(kid) {
+            Some(key) if age >= JWKS_MAX_AGE => Cached::Aging(Arc::clone(key)),
+            Some(key) => Cached::Fresh(Arc::clone(key)),
+            None => Cached::Absent,
+        }
+    }
+
+    /// Whether the cooldown since the last fetch attempt has passed.
+    fn attempt_due(&self, now: Instant) -> bool {
+        self.attempted_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= JWKS_REFRESH_COOLDOWN)
+    }
 }
 
 impl std::fmt::Debug for HttpJwksResolver {
@@ -368,9 +419,7 @@ impl HttpJwksResolver {
             jwks_uri,
             http,
             request_timeout,
-            cache: RwLock::new(HashMap::new()),
-            last_refresh: RwLock::new(None),
-            last_attempt: RwLock::new(None),
+            state: RwLock::default(),
             refresh_gate: Mutex::new(()),
         })
     }
@@ -400,7 +449,8 @@ impl HttpJwksResolver {
         Ok(cfg.jwks_uri)
     }
 
-    async fn refresh(&self) -> Result<(), KeyError> {
+    /// Fetch the issuer's current key set. The caller holds `refresh_gate`.
+    async fn fetch_keys(&self) -> Result<HashMap<String, Arc<DecodingKey>>, KeyError> {
         let endpoint = self.jwks_endpoint().await?;
         let set: JwkSet = self.fetch_json(endpoint).await?;
         let mut next = HashMap::new();
@@ -434,8 +484,76 @@ impl HttpJwksResolver {
                 "jwks contained no named RSA, P-256 or Ed25519 keys".into(),
             ));
         }
-        *self.cache.write().await = next;
-        Ok(())
+        Ok(next)
+    }
+
+    /// One fetch attempt at `now`, spaced by the cooldown. The caller holds
+    /// `refresh_gate`. Returns whether a set was fetched (`Ok(false)`: the
+    /// cooldown refused the attempt) and the moment the attempt ended, which
+    /// is when a fetched set starts to age: `now` advanced by the time since
+    /// `began`, when the lookup read `now`.
+    async fn refresh(&self, now: Instant, began: Instant) -> (Result<bool, KeyError>, Instant) {
+        {
+            let mut state = self.state.write().await;
+            if !state.attempt_due(now) {
+                return (Ok(false), now);
+            }
+            state.attempted_at = Some(now);
+        }
+        let fetched = self.fetch_keys().await;
+        let now = now + began.elapsed();
+        match fetched {
+            Ok(keys) => {
+                self.state.write().await.set = Some(FetchedKeys {
+                    keys,
+                    fetched_at: now,
+                });
+                (Ok(true), now)
+            }
+            Err(error) => (Err(error), now),
+        }
+    }
+
+    /// [`KeyResolver::key_for`] at `now`. The lookup's moment is given, and
+    /// advances only by the time the lookup itself waits and fetches.
+    async fn key_at(&self, kid: &str, now: Instant) -> Result<Arc<DecodingKey>, KeyError> {
+        let began = Instant::now();
+        let cached = self.state.read().await.lookup(kid, now);
+        let _refresh_guard = match cached {
+            Cached::Fresh(key) => return Ok(key),
+            // Another request is already fetching: an aging key does not wait
+            // for it.
+            Cached::Aging(key) => match self.refresh_gate.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => return Ok(key),
+            },
+            Cached::Absent => self.refresh_gate.lock().await,
+        };
+        // Another request may have fetched before this one took the gate.
+        let cached = self.state.read().await.lookup(kid, now);
+        if let Cached::Fresh(key) = cached {
+            return Ok(key);
+        }
+        // The cooldown spaces attempts, so a stream of unknown-kid tokens
+        // can't drive one upstream JWKS fetch per request.
+        let (refreshed, now) = self.refresh(now, began).await;
+        // Resolve against the set as it is when the attempt ends: a fetched
+        // set no longer holds a kid the issuer rotated out, and a set that
+        // crossed its trust bound during a failed fetch holds nothing.
+        let cached = self.state.read().await.lookup(kid, now);
+        match (cached, refreshed) {
+            (Cached::Fresh(key) | Cached::Aging(key), Ok(true)) => Ok(key),
+            (Cached::Fresh(key) | Cached::Aging(key), Ok(false)) => {
+                tracing::warn!("jwks cache past max age but refresh throttled");
+                Ok(key)
+            }
+            (Cached::Fresh(key) | Cached::Aging(key), Err(error)) => {
+                tracing::warn!(%error, "jwks refresh failed; using the cached key inside its trust bound");
+                Ok(key)
+            }
+            (Cached::Absent, Ok(_)) => Err(KeyError::UnknownKid),
+            (Cached::Absent, Err(error)) => Err(error),
+        }
     }
 
     /// GET `url` and parse the body as JSON. Discovery and key-set requests
@@ -471,18 +589,6 @@ impl HttpJwksResolver {
         }
         serde_json::from_slice(&body).map_err(|e| KeyError::Parse(e.to_string()))
     }
-
-    /// Whether an optional clock is unset or at least `min_age` old.
-    async fn clock_due(clock: &RwLock<Option<Instant>>, min_age: Duration) -> bool {
-        match *clock.read().await {
-            Some(last) => last.elapsed() >= min_age,
-            None => true,
-        }
-    }
-
-    async fn mark_attempt(&self) {
-        *self.last_attempt.write().await = Some(Instant::now());
-    }
 }
 
 fn build_http_client(issuer: &str, builder: reqwest::ClientBuilder) -> reqwest::Client {
@@ -512,75 +618,7 @@ fn validate_request_timeout(request_timeout: Duration) -> Result<(), OidcConfigE
 #[async_trait]
 impl KeyResolver for HttpJwksResolver {
     async fn key_for(&self, kid: &str) -> Result<Arc<DecodingKey>, KeyError> {
-        // Bind (not `if let` on the guard directly) so the read guard drops
-        // here — refresh() below takes the write lock and would self-deadlock
-        // if the read guard were still held across it.
-        let cached = self.cache.read().await.get(kid).cloned();
-        if let Some(k) = cached {
-            // Cache hit. If the cached set is older than JWKS_MAX_AGE, refresh
-            // opportunistically (rate-bounded by the same last_refresh clock).
-            // On success, resolve strictly against the fresh set so a rotated-
-            // out kid stops validating; on a refresh error, degrade to the
-            // still-cached key rather than failing an otherwise-valid request.
-            if Self::clock_due(&self.last_refresh, JWKS_MAX_AGE).await {
-                let _refresh_guard = self.refresh_gate.lock().await;
-
-                // Another task may have refreshed while this task waited for
-                // the gate. Resolve against that fresh set, including a kid
-                // that disappeared during rotation.
-                if !Self::clock_due(&self.last_refresh, JWKS_MAX_AGE).await {
-                    return self
-                        .cache
-                        .read()
-                        .await
-                        .get(kid)
-                        .cloned()
-                        .ok_or(KeyError::UnknownKid);
-                }
-                if !Self::clock_due(&self.last_attempt, JWKS_REFRESH_COOLDOWN).await {
-                    tracing::warn!("jwks cache past max age but refresh throttled");
-                    return Ok(k);
-                }
-                self.mark_attempt().await;
-                match self.refresh().await {
-                    Ok(()) => {
-                        *self.last_refresh.write().await = Some(Instant::now());
-                        return self
-                            .cache
-                            .read()
-                            .await
-                            .get(kid)
-                            .cloned()
-                            .ok_or(KeyError::UnknownKid);
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, "jwks ttl refresh failed; using stale cached key");
-                        return Ok(k);
-                    }
-                }
-            }
-            return Ok(k);
-        }
-        // Cache miss: refetch at most once per cooldown so a stream of
-        // unknown-kid tokens can't drive one upstream JWKS fetch per request.
-        let _refresh_guard = self.refresh_gate.lock().await;
-
-        // Another task may have fetched this kid while this task waited.
-        if let Some(key) = self.cache.read().await.get(kid).cloned() {
-            return Ok(key);
-        }
-        if !Self::clock_due(&self.last_attempt, JWKS_REFRESH_COOLDOWN).await {
-            return Err(KeyError::UnknownKid);
-        }
-        self.mark_attempt().await;
-        self.refresh().await?;
-        *self.last_refresh.write().await = Some(Instant::now());
-        self.cache
-            .read()
-            .await
-            .get(kid)
-            .cloned()
-            .ok_or(KeyError::UnknownKid)
+        self.key_at(kid, Instant::now()).await
     }
 }
 
@@ -698,6 +736,7 @@ mod fixtures {
 
 #[cfg(test)]
 mod http_tests {
+    use std::collections::HashMap;
     use std::convert::Infallible;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -715,8 +754,9 @@ mod http_tests {
     use crate::config::{OidcConfigError, validate_https_url};
 
     use super::{
-        DEFAULT_HTTP_REQUEST_TIMEOUT, HttpJwksResolver, JWKS_MAX_AGE, JWKS_REFRESH_COOLDOWN,
-        KeyError, KeyResolver, MAX_HTTP_REQUEST_TIMEOUT, MAX_RESPONSE_BYTES, build_http_client,
+        DEFAULT_HTTP_REQUEST_TIMEOUT, FetchedKeys, HttpJwksResolver, JWKS_MAX_AGE,
+        JWKS_TRUST_BOUND, JwksState, KeyError, KeyResolver, MAX_HTTP_REQUEST_TIMEOUT,
+        MAX_RESPONSE_BYTES, build_http_client,
     };
 
     // Static 2048-bit RSA public key as JWK n/e (base64url). Baked so this
@@ -864,20 +904,39 @@ mod http_tests {
         server.abort();
     }
 
-    async fn seed_stale_key(
+    /// Seeds a set holding `kid`, fetched now with no attempt on record.
+    /// Tests then look it up at a later moment through `key_at`.
+    async fn seed_key(
         resolver: &HttpJwksResolver,
         kid: &str,
-    ) -> Arc<jsonwebtoken::DecodingKey> {
+    ) -> (Arc<jsonwebtoken::DecodingKey>, Instant) {
         let key = test_key();
-        resolver
-            .cache
-            .write()
-            .await
-            .insert(kid.to_string(), Arc::clone(&key));
-        *resolver.last_refresh.write().await = Instant::now()
-            .checked_sub(JWKS_MAX_AGE)
-            .and_then(|time| time.checked_sub(Duration::from_secs(1)));
-        key
+        let fetched_at = Instant::now();
+        *resolver.state.write().await = JwksState {
+            set: Some(FetchedKeys {
+                keys: HashMap::from([(kid.to_owned(), Arc::clone(&key))]),
+                fetched_at,
+            }),
+            attempted_at: None,
+        };
+        (key, fetched_at)
+    }
+
+    /// A moment at which a set fetched at `fetched_at` is due for a refresh
+    /// and still trusted.
+    fn aging(fetched_at: Instant) -> Instant {
+        fetched_at + JWKS_MAX_AGE
+    }
+
+    async fn cached_kids(resolver: &HttpJwksResolver) -> Vec<String> {
+        let state = resolver.state.read().await;
+        let mut kids: Vec<String> = state
+            .set
+            .iter()
+            .flat_map(|set| set.keys.keys().cloned())
+            .collect();
+        kids.sort();
+        kids
     }
 
     #[tokio::test]
@@ -1021,7 +1080,7 @@ mod http_tests {
             ));
             assert_eq!(server.discovery_fetches.load(Ordering::SeqCst), 1);
             assert_eq!(server.jwks_fetches.load(Ordering::SeqCst), 0);
-            assert!(resolver.cache.read().await.is_empty());
+            assert!(cached_kids(&resolver).await.is_empty());
         }
     }
 
@@ -1041,7 +1100,7 @@ mod http_tests {
             ));
             assert_eq!(server.discovery_fetches.load(Ordering::SeqCst), 1);
             assert_eq!(server.jwks_fetches.load(Ordering::SeqCst), 0);
-            assert!(resolver.cache.read().await.is_empty());
+            assert!(cached_kids(&resolver).await.is_empty());
         }
     }
 
@@ -1072,19 +1131,22 @@ mod http_tests {
         let server =
             spawn_discovery_idp(|_| Some(serde_json::json!("http://another.example"))).await;
         let resolver = HttpJwksResolver::new(server.issuer.clone(), None).expect("issuer");
-        let cached = seed_stale_key(&resolver, "old").await;
+        let (cached, fetched_at) = seed_key(&resolver, "old").await;
+        let now = aging(fetched_at);
 
-        let returned = resolver.key_for("old").await.expect("trusted cached key");
+        let returned = resolver
+            .key_at("old", now)
+            .await
+            .expect("trusted cached key");
 
         assert!(Arc::ptr_eq(&returned, &cached));
         assert_eq!(server.discovery_fetches.load(Ordering::SeqCst), 1);
         assert_eq!(server.jwks_fetches.load(Ordering::SeqCst), 0);
         assert!(matches!(
-            resolver.key_for("k1").await,
+            resolver.key_at("k1", now).await,
             Err(KeyError::UnknownKid)
         ));
-        assert_eq!(resolver.cache.read().await.len(), 1);
-        assert!(resolver.cache.read().await.contains_key("old"));
+        assert_eq!(cached_kids(&resolver).await, ["old"]);
     }
 
     #[tokio::test]
@@ -1344,14 +1406,7 @@ mod http_tests {
         for kid in ["k1", "ec", "okp"] {
             assert!(resolver.key_for(kid).await.is_ok(), "{kid}");
         }
-        let mut cached = resolver
-            .cache
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        cached.sort();
+        let cached = cached_kids(&resolver).await;
         assert_eq!(cached, ["ec", "k1", "okp"], "only the well-formed keys");
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
         server.abort();
@@ -1369,7 +1424,7 @@ mod http_tests {
             resolver.key_for("ec-p384").await,
             Err(KeyError::Parse(_))
         ));
-        assert!(resolver.cache.read().await.is_empty());
+        assert!(cached_kids(&resolver).await.is_empty());
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
         server.abort();
     }
@@ -1389,7 +1444,7 @@ mod http_tests {
         let resolver = HttpJwksResolver::new(issuer, None).expect("loopback issuer");
 
         assert!(resolver.key_for("k1").await.is_ok());
-        assert_eq!(resolver.cache.read().await.len(), 1, "only the RSA key");
+        assert_eq!(cached_kids(&resolver).await.len(), 1, "only the RSA key");
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
         server.abort();
     }
@@ -1409,7 +1464,7 @@ mod http_tests {
         let resolver = HttpJwksResolver::new(issuer, None).expect("loopback issuer");
 
         assert!(resolver.key_for("k1").await.is_ok());
-        assert_eq!(resolver.cache.read().await.len(), 1, "only the good key");
+        assert_eq!(cached_kids(&resolver).await.len(), 1, "only the good key");
         server.abort();
     }
 
@@ -1542,7 +1597,7 @@ mod http_tests {
             assert!(named.is_ok(), "named RSA key must load: {:?}", named.err());
             assert!(matches!(absent, Err(KeyError::UnknownKid)));
             assert_eq!(fetches.load(Ordering::SeqCst), 1);
-            assert_eq!(resolver.cache.read().await.len(), 1);
+            assert_eq!(cached_kids(&resolver).await.len(), 1);
         }
     }
 
@@ -1561,7 +1616,7 @@ mod http_tests {
 
             assert!(matches!(result, Err(KeyError::Parse(_))));
             assert!(matches!(absent, Err(KeyError::UnknownKid)));
-            assert!(resolver.cache.read().await.is_empty());
+            assert!(cached_kids(&resolver).await.is_empty());
             assert_eq!(fetches.load(Ordering::SeqCst), 1);
         }
     }
@@ -1595,17 +1650,12 @@ mod http_tests {
         assert!(resolver.key_for("k1").await.is_ok());
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
 
-        // Age the cache past JWKS_MAX_AGE and clear the refresh cooldown so the
-        // ttl-driven refetch is not blocked by the initial miss-path fetch.
-        let stale = Instant::now().checked_sub(JWKS_MAX_AGE + Duration::from_secs(1));
-        *resolver.last_refresh.write().await = stale;
-        *resolver.last_attempt.write().await = stale.and_then(|t| {
-            t.checked_sub(JWKS_REFRESH_COOLDOWN)
-                .and_then(|t| t.checked_sub(Duration::from_secs(1)))
-        });
-
-        // A hit on the stale set triggers exactly one refetch and still resolves.
-        assert!(resolver.key_for("k1").await.is_ok());
+        // A hit once the set is past JWKS_MAX_AGE triggers exactly one refetch
+        // and still resolves; the set is fresh again afterwards.
+        let later = aging(Instant::now());
+        assert!(resolver.key_at("k1", later).await.is_ok());
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        assert!(resolver.key_at("k1", later).await.is_ok());
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
 
         server.abort();
@@ -1616,15 +1666,12 @@ mod http_tests {
         let (issuer, fetches, server) = spawn_failing_jwks().await;
         let resolver = HttpJwksResolver::new(issuer.clone(), Some(format!("{issuer}/keys")))
             .expect("loopback http allowed in tests");
-        let cached = seed_stale_key(&resolver, "k1").await;
-        *resolver.last_attempt.write().await = Instant::now()
-            .checked_sub(JWKS_REFRESH_COOLDOWN)
-            .and_then(|time| time.checked_sub(Duration::from_secs(1)));
+        let (cached, fetched_at) = seed_key(&resolver, "k1").await;
 
         let returned_key = resolver
-            .key_for("k1")
+            .key_at("k1", aging(fetched_at))
             .await
-            .expect("stale cached key must survive an IdP outage");
+            .expect("an aging cached key must survive an IdP outage");
 
         assert!(Arc::ptr_eq(&returned_key, &cached));
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
@@ -1640,18 +1687,15 @@ mod http_tests {
         let (issuer, fetches, server) = spawn_mock_idp(jwks).await;
         let resolver = HttpJwksResolver::new(issuer.clone(), Some(format!("{issuer}/keys")))
             .expect("loopback http allowed in tests");
-        let cached = seed_stale_key(&resolver, "k1").await;
-        *resolver.last_attempt.write().await = Instant::now()
-            .checked_sub(JWKS_REFRESH_COOLDOWN)
-            .and_then(|time| time.checked_sub(Duration::from_secs(1)));
+        let (cached, fetched_at) = seed_key(&resolver, "k1").await;
 
         let returned_key = resolver
-            .key_for("k1")
+            .key_at("k1", aging(fetched_at))
             .await
-            .expect("stale cached key must survive an empty RSA refresh");
+            .expect("an aging cached key must survive an empty RSA refresh");
 
         assert!(Arc::ptr_eq(&returned_key, &cached));
-        assert!(resolver.cache.read().await.contains_key("k1"));
+        assert_eq!(cached_kids(&resolver).await, ["k1"]);
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
         server.abort();
     }
@@ -1662,16 +1706,125 @@ mod http_tests {
         let (issuer, fetches, server) = spawn_mock_idp(jwks).await;
         let resolver = HttpJwksResolver::new(issuer.clone(), Some(format!("{issuer}/keys")))
             .expect("loopback http allowed in tests");
-        let cached = seed_stale_key(&resolver, "k1").await;
-        *resolver.last_attempt.write().await = Some(Instant::now());
+        let (cached, fetched_at) = seed_key(&resolver, "k1").await;
+        let now = aging(fetched_at);
+        resolver.state.write().await.attempted_at = Some(now);
 
         let returned_key = resolver
-            .key_for("k1")
+            .key_at("k1", now)
             .await
-            .expect("throttling must not discard a stale cached key");
+            .expect("throttling must not discard an aging cached key");
 
         assert!(Arc::ptr_eq(&returned_key, &cached));
         assert_eq!(fetches.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    /// Past the trust bound a cached key resolves only through a successful
+    /// fetch: a failed one refuses it, and so does the cooldown after it.
+    #[tokio::test]
+    async fn a_set_past_its_trust_bound_refuses_its_keys_until_a_fetch_succeeds() {
+        let (issuer, fetches, server) = spawn_failing_jwks().await;
+        let resolver = HttpJwksResolver::new(issuer.clone(), Some(format!("{issuer}/keys")))
+            .expect("loopback http allowed in tests");
+        let (cached, fetched_at) = seed_key(&resolver, "k1").await;
+
+        let returned_key = resolver
+            .key_at("k1", fetched_at + JWKS_MAX_AGE * 3)
+            .await
+            .expect("inside the bound a failed refresh serves the cached key");
+        assert!(Arc::ptr_eq(&returned_key, &cached));
+        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+
+        let past_bound = fetched_at + JWKS_TRUST_BOUND;
+        assert!(matches!(
+            resolver.key_at("k1", past_bound).await,
+            Err(KeyError::Fetch(_))
+        ));
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        assert!(matches!(
+            resolver.key_at("k1", past_bound).await,
+            Err(KeyError::UnknownKid)
+        ));
+        assert_eq!(
+            fetches.load(Ordering::SeqCst),
+            2,
+            "the cooldown spaces attempts"
+        );
+        server.abort();
+    }
+
+    /// The bound holds when the attempt ends, not when the lookup began.
+    #[tokio::test]
+    async fn a_failed_fetch_that_crosses_the_trust_bound_refuses_the_key() {
+        let (issuer, server) = spawn_stalling_idp().await;
+        let request_timeout = Duration::from_millis(50);
+        let resolver = HttpJwksResolver::with_request_timeout(
+            issuer.clone(),
+            Some(format!("{issuer}/keys")),
+            request_timeout,
+        )
+        .expect("short explicit timeout is valid");
+        let (_, fetched_at) = seed_key(&resolver, "k1").await;
+        let just_inside = JWKS_TRUST_BOUND
+            .checked_sub(request_timeout / 2)
+            .expect("the bound is longer than the timeout");
+
+        assert!(matches!(
+            resolver.key_at("k1", fetched_at + just_inside).await,
+            Err(KeyError::Parse(_))
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_set_past_its_trust_bound_resolves_again_after_a_successful_fetch() {
+        let jwks = serde_json::json!({
+            "keys": [{ "kid": "k1", "kty": "RSA", "n": TEST_JWK_N, "e": TEST_JWK_E }]
+        })
+        .to_string();
+        let (issuer, fetches, server) = spawn_mock_idp(jwks).await;
+        let resolver = HttpJwksResolver::new(issuer, None).expect("loopback issuer");
+        let (_, fetched_at) = seed_key(&resolver, "k1").await;
+
+        assert!(
+            resolver
+                .key_at("k1", fetched_at + JWKS_TRUST_BOUND)
+                .await
+                .is_ok()
+        );
+        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    /// While one request refreshes an aging set, the others resolve from the
+    /// cache without waiting for it.
+    #[tokio::test]
+    async fn hits_on_an_aging_set_do_not_wait_for_a_refresh_in_flight() {
+        let (issuer, server) = spawn_stalling_idp().await;
+        let resolver = Arc::new(
+            HttpJwksResolver::new(issuer.clone(), Some(format!("{issuer}/keys")))
+                .expect("loopback http allowed in tests"),
+        );
+        let (cached, fetched_at) = seed_key(&resolver, "k1").await;
+        let now = aging(fetched_at);
+
+        let refreshing = tokio::spawn({
+            let resolver = Arc::clone(&resolver);
+            async move { resolver.key_at("k1", now).await }
+        });
+        while resolver.state.read().await.attempted_at.is_none() {
+            tokio::task::yield_now().await;
+        }
+
+        let returned_key = tokio::time::timeout(Duration::from_secs(2), resolver.key_at("k1", now))
+            .await
+            .expect("a hit must not wait for the refresh in flight")
+            .expect("the aging key is still trusted");
+        assert!(Arc::ptr_eq(&returned_key, &cached));
+        assert!(!refreshing.is_finished(), "the refresh is still in flight");
+
+        refreshing.abort();
         server.abort();
     }
 
