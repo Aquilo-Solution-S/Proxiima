@@ -1,4 +1,4 @@
-//! The mutable core functions, triggers and policies pass.
+//! The mutable core functions, triggers, policies and views pass.
 
 use proxiima_core::{RELEASE_VERSION, StorageError};
 use sha2::{Digest, Sha384};
@@ -10,6 +10,8 @@ use crate::error::internal;
 pub const FUNCTIONS: &str = include_str!("../definitions/functions.sql");
 pub const TRIGGERS: &str = include_str!("../definitions/triggers.sql");
 pub const POLICIES: &str = include_str!("../definitions/policies.sql");
+/// The read-only views spiice and host SQL may name.
+pub const VIEWS: &str = include_str!("../definitions/views.sql");
 /// The vector candidate functions: applied only to a store that keeps its
 /// vectors in pgvector.
 pub const VECTOR: &str = include_str!("../definitions/vector.sql");
@@ -17,8 +19,8 @@ pub const VECTOR: &str = include_str!("../definitions/vector.sql");
 /// The definitions a store of this kind holds, in application order.
 fn files(vectors: VectorStorage) -> &'static [&'static str] {
     match vectors {
-        VectorStorage::Local => &[FUNCTIONS, TRIGGERS, POLICIES, VECTOR],
-        VectorStorage::HostIndex => &[FUNCTIONS, TRIGGERS, POLICIES],
+        VectorStorage::Local => &[FUNCTIONS, TRIGGERS, POLICIES, VIEWS, VECTOR],
+        VectorStorage::HostIndex => &[FUNCTIONS, TRIGGERS, POLICIES, VIEWS],
     }
 }
 
