@@ -4,11 +4,13 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::routing::any;
-use proxiima_core::RevalidationConfig;
+use proxiima_core::{RevalidationConfig, SpiiceRegistry, SpiiceServices};
 use proxiima_mcp_server::{
-    AuthorizationServers, MCP_PATH, McpEdgeAuth, ResourceServerMetadata,
-    mcp_auth_layer_with_metadata, public_discovery_router,
+    AuthorizationServers, HostAllowlist, MCP_PATH, McpEdgeAuth, McpToolHost,
+    ResourceServerMetadata, default_allowlist, mcp_auth_layer_with_metadata,
+    public_discovery_router, streamable_http_service,
 };
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 fn metadata() -> ResourceServerMetadata {
@@ -60,7 +62,18 @@ async fn challenge(app: Router, path: &str) -> String {
 }
 
 fn auth_layer() -> proxiima_mcp_server::McpAuthLayer {
+    let host = McpToolHost::from_parts(
+        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        SpiiceServices::default(),
+    );
+    let service = streamable_http_service(
+        host,
+        &default_allowlist(),
+        &HostAllowlist::default(),
+        &CancellationToken::new(),
+    );
     mcp_auth_layer_with_metadata(
+        &service,
         Arc::new(McpEdgeAuth::headless()),
         RevalidationConfig::default(),
         Some(&metadata()),

@@ -24,9 +24,56 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::DynamicHandler;
 use crate::security::{HostAllowlist, OriginAllowlist, cors_layer, host_guard_layer};
 use crate::server::McpToolHost;
+use crate::session::McpSessionBindings;
 
-/// The rmcp service `/mcp` is served by ([`streamable_http_service`]).
-pub type McpStreamableService = StreamableHttpService<DynamicHandler, LocalSessionManager>;
+/// The rmcp service `/mcp` is served by ([`streamable_http_service`]) with
+/// the session bindings that own its sessions. Mount it as a tower service;
+/// derive its auth layer with [`crate::mcp_auth_layer_with_metadata`].
+#[derive(Clone)]
+pub struct McpStreamableService {
+    inner: StreamableHttpService<DynamicHandler, LocalSessionManager>,
+    sessions: McpSessionBindings,
+}
+
+impl McpStreamableService {
+    pub(crate) const fn sessions(&self) -> &McpSessionBindings {
+        &self.sessions
+    }
+}
+
+impl std::fmt::Debug for McpStreamableService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpStreamableService")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<B> tower::Service<http::Request<B>> for McpStreamableService
+where
+    StreamableHttpService<DynamicHandler, LocalSessionManager>: tower::Service<http::Request<B>>,
+{
+    type Response =
+        <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
+            http::Request<B>,
+        >>::Response;
+    type Error = <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
+        http::Request<B>,
+    >>::Error;
+    type Future = <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
+        http::Request<B>,
+    >>::Future;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        self.inner.call(request)
+    }
+}
 
 /// `host_allowlist` is the same non-empty policy applied at the outer
 /// listener. Passing it into rmcp keeps `/mcp` independently guarded as
@@ -60,6 +107,25 @@ pub fn streamable_http_service_with_transport(
     cancel: &CancellationToken,
     transport: &McpTransportConfig,
 ) -> McpStreamableService {
+    service_over_sessions(
+        server,
+        allowlist,
+        host_allowlist,
+        cancel,
+        transport,
+        McpSessionBindings::new,
+    )
+}
+
+/// The service over the bindings `bindings` builds around its session store.
+fn service_over_sessions(
+    server: McpToolHost,
+    allowlist: &OriginAllowlist,
+    host_allowlist: &HostAllowlist,
+    cancel: &CancellationToken,
+    transport: &McpTransportConfig,
+    bindings: impl FnOnce(Arc<LocalSessionManager>) -> McpSessionBindings,
+) -> McpStreamableService {
     let config = StreamableHttpServerConfig::default()
         .with_allowed_origins(allowlist.origins())
         .with_allowed_hosts(host_allowlist.hosts().iter().cloned())
@@ -72,11 +138,16 @@ pub fn streamable_http_service_with_transport(
     let mut sessions = LocalSessionManager::default();
     sessions.session_config.keep_alive = transport.session_idle_timeout;
     let progress_heartbeat = transport.progress_heartbeat();
-    StreamableHttpService::new(
+    let sessions = Arc::new(sessions);
+    let inner = StreamableHttpService::new(
         move || Ok(DynamicHandler::new(server.clone()).with_progress_heartbeat(progress_heartbeat)),
-        Arc::new(sessions),
+        Arc::clone(&sessions),
         config,
-    )
+    );
+    McpStreamableService {
+        inner,
+        sessions: bindings(sessions),
+    }
 }
 
 /// The listener-wide guards over a router whose routes already carry their
@@ -238,9 +309,13 @@ mod tests {
     use super::{MAX_REQUEST_BODY_BYTES, enforce_body_limit, guard_listener};
     use crate::auth::McpEdgeAuth;
     use crate::security::{
-        HostAllowlist, default_allowlist, mcp_auth_layer_with_config, mcp_auth_layer_with_sessions,
+        HostAllowlist, default_allowlist, mcp_auth_layer_with_metadata,
+        mcp_auth_layer_with_sessions,
     };
     use crate::session::McpSessionBindings;
+    use rmcp::transport::streamable_http_server::session::{
+        SessionManager, local::LocalSessionManager,
+    };
 
     /// The production stack over an OK `/mcp` stub. Auth is headless (rejects
     /// every bearer), so any request that reaches auth returns 401 — letting
@@ -249,9 +324,11 @@ mod tests {
         guard_listener(
             Router::new()
                 .route("/mcp", any(|| async { StatusCode::OK }))
-                .layer(mcp_auth_layer_with_config(
+                .layer(mcp_auth_layer_with_sessions(
                     Arc::new(McpEdgeAuth::headless()),
+                    McpSessionBindings::default(),
                     RevalidationConfig::default(),
+                    None,
                 )),
             default_allowlist(),
             HostAllowlist::default(),
@@ -286,7 +363,12 @@ mod tests {
         }
     }
 
-    fn shared_transport_app(owner: OwnerId) -> (Router, OwnerId, OwnerId) {
+    /// The production `/mcp` service behind its derived auth layer, with the
+    /// bindings `bindings` builds, and the session store they own.
+    fn transport_app(
+        owner: OwnerId,
+        bindings: impl FnOnce(Arc<LocalSessionManager>) -> McpSessionBindings,
+    ) -> (Router, Arc<LocalSessionManager>, OwnerId, OwnerId) {
         let first = UserId::new(uuid::Uuid::now_v7());
         let second = UserId::new(uuid::Uuid::now_v7());
         let outsider = UserId::new(uuid::Uuid::now_v7());
@@ -296,23 +378,32 @@ mod tests {
             second,
             outsider,
         }));
-        let router = Router::new()
-            .nest_service(
-                "/mcp",
-                super::streamable_http_service(
-                    stub_host(),
-                    &default_allowlist(),
-                    &HostAllowlist::default(),
-                    &tokio_util::sync::CancellationToken::new(),
-                ),
-            )
-            .layer(mcp_auth_layer_with_sessions(
+        let mut store = None;
+        let service = super::service_over_sessions(
+            stub_host(),
+            &default_allowlist(),
+            &HostAllowlist::default(),
+            &tokio_util::sync::CancellationToken::new(),
+            &super::McpTransportConfig::default(),
+            |manager| {
+                store = Some(Arc::clone(&manager));
+                bindings(manager)
+            },
+        );
+        let router = Router::new().nest_service("/mcp", service.clone()).layer(
+            mcp_auth_layer_with_metadata(
+                &service,
                 Arc::new(auth),
-                McpSessionBindings::new(),
                 RevalidationConfig::default(),
                 None,
-            ));
-        (router, first.into(), second.into())
+            ),
+        );
+        (router, store.unwrap(), first.into(), second.into())
+    }
+
+    fn shared_transport_app(owner: OwnerId) -> (Router, OwnerId, OwnerId) {
+        let (router, _, first, second) = transport_app(owner, McpSessionBindings::new);
+        (router, first, second)
     }
 
     // An over-cap declared Content-Length is 413'd before auth.
@@ -425,13 +516,8 @@ mod tests {
         request
     }
 
-    async fn open_authenticated_session(
-        app: &Router,
-        bearer: &str,
-        owner: OwnerId,
-        client_name: &str,
-    ) -> http::HeaderValue {
-        let initialize = transport_session_request(
+    fn authenticated_initialize(bearer: &str, owner: OwnerId, client_name: &str) -> Request<Body> {
+        transport_session_request(
             bearer,
             owner,
             None,
@@ -445,7 +531,16 @@ mod tests {
                     "clientInfo": { "name": client_name, "version": "0" },
                 },
             }),
-        );
+        )
+    }
+
+    async fn open_authenticated_session(
+        app: &Router,
+        bearer: &str,
+        owner: OwnerId,
+        client_name: &str,
+    ) -> http::HeaderValue {
+        let initialize = authenticated_initialize(bearer, owner, client_name);
         let response = app.clone().oneshot(initialize).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let session = response.headers()["mcp-session-id"].clone();
@@ -577,6 +672,101 @@ mod tests {
         // Keep the principals in the test's type-visible setup so a future
         // fixture change cannot silently collapse the two identities.
         assert_ne!(first, second);
+    }
+
+    /// The session store holds no session the binding table does not.
+    async fn store_len(store: &LocalSessionManager) -> usize {
+        store.sessions.read().await.len()
+    }
+
+    async fn session_answers_404(
+        app: &Router,
+        owner: OwnerId,
+        session: &http::HeaderValue,
+    ) -> bool {
+        let request = transport_session_request(
+            "first-token",
+            owner,
+            Some(session),
+            &serde_json::json!({ "jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": {} }),
+        );
+        app.clone().oneshot(request).await.unwrap().status() == StatusCode::NOT_FOUND
+    }
+
+    /// A refused or evicted binding closes its session: past the per-principal
+    /// cap the oldest session is gone from rmcp's store, not only the table.
+    #[tokio::test]
+    async fn an_evicted_binding_closes_its_rmcp_session() {
+        let owner = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let (app, store, _, _) = transport_app(owner, McpSessionBindings::new);
+        let oldest = open_authenticated_session(&app, "first-token", owner, "oldest").await;
+        let oldest_id: Arc<str> = oldest.to_str().unwrap().into();
+        for index in 1..=crate::session::MAX_SESSIONS_PER_PRINCIPAL {
+            open_authenticated_session(&app, "first-token", owner, &format!("client-{index}"))
+                .await;
+        }
+
+        assert_eq!(
+            store_len(&store).await,
+            crate::session::MAX_SESSIONS_PER_PRINCIPAL
+        );
+        assert!(!store.has_session(&oldest_id).await.unwrap());
+        assert!(session_answers_404(&app, owner, &oldest).await);
+    }
+
+    /// A refused binding closes its session: with the table full of another
+    /// principal's sessions, `initialize` answers 503 and leaves no session.
+    #[tokio::test]
+    async fn a_refused_binding_closes_its_rmcp_session() {
+        let owner = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let (app, store, _, _) = transport_app(owner, |manager| {
+            McpSessionBindings::with_limits(manager, crate::session::SESSION_IDLE_TTL, 2)
+        });
+        open_authenticated_session(&app, "first-token", owner, "one").await;
+        open_authenticated_session(&app, "first-token", owner, "two").await;
+
+        let refused = app
+            .clone()
+            .oneshot(authenticated_initialize("second-token", owner, "newcomer"))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(refused.headers().get("mcp-session-id"), None);
+        assert_eq!(store_len(&store).await, 2);
+    }
+
+    /// Evicting a binding ends its rmcp session: the session's open
+    /// server-to-client stream ends.
+    #[tokio::test]
+    async fn evicting_a_binding_ends_its_open_stream() {
+        let owner = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let (app, _, _, _) = transport_app(owner, |manager| {
+            McpSessionBindings::with_limits(manager, crate::session::SESSION_IDLE_TTL, 2)
+        });
+        let session = open_authenticated_session(&app, "first-token", owner, "streaming").await;
+        let mut stream_request = Request::builder()
+            .method("GET")
+            .uri("http://localhost/mcp")
+            .header("Host", "localhost")
+            .header("Accept", "text/event-stream")
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .header("Authorization", "Bearer first-token")
+            .header("X-Proxiima-Owner", owner.to_string())
+            .body(Body::empty())
+            .unwrap();
+        stream_request
+            .headers_mut()
+            .insert("mcp-session-id", session);
+        let mut stream =
+            Messages::from_response(app.clone().oneshot(stream_request).await.unwrap());
+
+        open_authenticated_session(&app, "first-token", owner, "two").await;
+        assert!(
+            !stream.ends_within(QUIET).await,
+            "an open stream stays open"
+        );
+        open_authenticated_session(&app, "first-token", owner, "three").await;
+        assert!(stream.ends_within(std::time::Duration::from_secs(5)).await);
     }
 
     async fn first_router_message(app: Router, request: Request<Body>) -> serde_json::Value {
@@ -1721,6 +1911,14 @@ mod tests {
                 }
             };
             tokio::time::timeout(wait, read).await.ok().flatten()
+        }
+
+        /// Whether the body ends within `wait`, discarding what arrives.
+        async fn ends_within(&mut self, wait: std::time::Duration) -> bool {
+            use http_body_util::BodyExt;
+
+            let drain = async { while let Some(Ok(_)) = self.body.frame().await {} };
+            tokio::time::timeout(wait, drain).await.is_ok()
         }
 
         async fn next(&mut self) -> serde_json::Value {

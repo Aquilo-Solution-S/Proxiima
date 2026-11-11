@@ -199,8 +199,9 @@ pub async fn serve_loopback(
     );
     let app = proxiima_mcp_server::guard_listener(
         axum::Router::new()
-            .nest_service(proxiima_mcp_server::MCP_PATH, service)
+            .nest_service(proxiima_mcp_server::MCP_PATH, service.clone())
             .layer(proxiima_mcp_server::mcp_auth_layer_with_config(
+                &service,
                 auth,
                 revalidation,
             )),

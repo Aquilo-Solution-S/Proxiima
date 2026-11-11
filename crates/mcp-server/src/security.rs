@@ -22,6 +22,7 @@ use crate::McpServerError;
 use crate::auth::McpEdgeAuth;
 use crate::oauth::{ResourceChallenges, ResourceServerMetadata};
 use crate::session::{McpSessionBindings, parse_owner_key};
+use crate::transport::McpStreamableService;
 
 const MCP_SESSION_ID_HEADER: &str = "Mcp-Session-Id";
 pub(crate) const PROXIIMA_OWNER_HEADER: &str = "X-Proxiima-Owner";
@@ -562,24 +563,29 @@ pub struct McpAuthLayerState {
 ///
 /// Returns a [`McpAuthLayer`] (alias of [`FromFnLayer`]) so callers
 /// apply it directly with [`axum::Router::layer`].
+///
+/// The layer uses `service`'s session bindings, so a refused or evicted
+/// binding closes that service's session.
 pub fn mcp_auth_layer_with_config(
+    service: &McpStreamableService,
     auth: Arc<McpEdgeAuth>,
     revalidation: RevalidationConfig,
 ) -> McpAuthLayer {
-    mcp_auth_layer_with_metadata(auth, revalidation, None)
+    mcp_auth_layer_with_metadata(service, auth, revalidation, None)
 }
 
 #[must_use = "apply the returned layer to the MCP router"]
 pub fn mcp_auth_layer_with_metadata(
+    service: &McpStreamableService,
     auth: Arc<McpEdgeAuth>,
     revalidation: RevalidationConfig,
     metadata: Option<&ResourceServerMetadata>,
 ) -> McpAuthLayer {
-    mcp_auth_layer_with_sessions(auth, McpSessionBindings::new(), revalidation, metadata)
+    mcp_auth_layer_with_sessions(auth, service.sessions().clone(), revalidation, metadata)
 }
 
 #[must_use = "apply the returned layer to the MCP router"]
-pub fn mcp_auth_layer_with_sessions(
+pub(crate) fn mcp_auth_layer_with_sessions(
     auth: Arc<McpEdgeAuth>,
     sessions: McpSessionBindings,
     revalidation: RevalidationConfig,
@@ -1246,7 +1252,7 @@ mod tests {
     async fn forwarded_owner_claim_selects_without_header_and_accepts_only_equal_header() {
         let subject = UserId::new(uuid::Uuid::now_v7());
         for owner in [user_owner(), group_owner()] {
-            let sessions = McpSessionBindings::new();
+            let sessions = McpSessionBindings::default();
             let (app, probes) = verified_forwarder_app(
                 subject,
                 [("good-token", owner)],
@@ -1280,7 +1286,7 @@ mod tests {
             subject,
             [("good-token", owner)],
             vec![owner],
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
         let headers = [
             owner_key(user_owner()).parse().unwrap(),
@@ -1303,7 +1309,7 @@ mod tests {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let owner = user_owner();
         let other = group_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions.bind("live-session", owner, subject.into()).await;
         let (app, probes) = verified_forwarder_app(
             subject,
@@ -1348,7 +1354,7 @@ mod tests {
         let owner = group_owner();
         let first = UserId::new(uuid::Uuid::now_v7());
         let second = UserId::new(uuid::Uuid::now_v7());
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions.bind("first-session", owner, first.into()).await;
         let app = auth_app_with_auth(
             Arc::new(SharedOwnerTokenAuth {
@@ -1378,7 +1384,7 @@ mod tests {
     async fn forwarded_owner_session_header_disagreement_refuses_before_registry_probe() {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let owner = group_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions.bind("live-session", owner, subject.into()).await;
         let (app, probes) =
             verified_forwarder_app(subject, [("good-token", owner)], vec![owner], sessions);
@@ -1404,7 +1410,7 @@ mod tests {
             subject,
             [("good-token", owner)],
             vec![owner],
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
         for session in [
             http::HeaderValue::from_static("unknown-session"),
@@ -1452,7 +1458,7 @@ mod tests {
                 subject,
                 [(first, Role::editor()), (second, Role::viewer())],
             )),
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
 
         for party in [first, second, first] {
@@ -1485,7 +1491,7 @@ mod tests {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let bound = group_owner();
         let other = group_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions.bind("sess-1", bound, subject.into()).await;
         let app = group_access_app(
             Arc::new(GroupMemberAuth { subject }),
@@ -1535,7 +1541,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_bound_to_an_unresolvable_party_is_not_found() {
         let subject = UserId::new(uuid::Uuid::now_v7());
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         let owner = group_owner();
         sessions.bind("sess-1", owner, owner).await;
         let app = group_access_app(
@@ -1563,7 +1569,7 @@ mod tests {
                 .route("/mcp", any(effective_owners))
                 .layer(mcp_auth_layer_with_sessions(
                     Arc::new(auth),
-                    McpSessionBindings::new(),
+                    McpSessionBindings::default(),
                     RevalidationConfig::default(),
                     None,
                 ));
@@ -1585,7 +1591,7 @@ mod tests {
         let app = group_access_app(
             Arc::new(TokenAuth { owner }),
             Arc::new(access),
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
 
         let request = mcp_request("Bearer good-token")
@@ -1653,7 +1659,7 @@ mod tests {
     async fn a_request_that_selects_no_owner_acts_for_the_host_named_default() {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let tenant = group_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         let app = tenant_app(
             TenantAuth {
                 subject,
@@ -1688,7 +1694,7 @@ mod tests {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let personal = OwnerId::from(subject);
         let tenant = group_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         let app = tenant_app(
             TenantAuth {
                 subject,
@@ -1729,7 +1735,7 @@ mod tests {
                 tenant,
                 name_default: false,
             },
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
         let request = mcp_request("Bearer good-token")
             .body(Body::empty())
@@ -1742,7 +1748,7 @@ mod tests {
                 tenant,
                 name_default: true,
             },
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
         let request = mcp_request("Bearer good-token")
             .header("X-Proxiima-Owner", "group:not-a-uuid")
@@ -2254,7 +2260,7 @@ mod tests {
     #[tokio::test]
     async fn bad_token_with_valid_owner_is_unauthorized() {
         let owner = user_owner();
-        let app = auth_app(owner, McpSessionBindings::new());
+        let app = auth_app(owner, McpSessionBindings::default());
         let request = mcp_request("Bearer bad-token")
             .header("X-Proxiima-Owner", owner_key(owner))
             .body(Body::empty())
@@ -2267,7 +2273,7 @@ mod tests {
     #[tokio::test]
     async fn bad_token_with_unbound_session_is_unauthorized() {
         let owner = user_owner();
-        let app = auth_app(owner, McpSessionBindings::new());
+        let app = auth_app(owner, McpSessionBindings::default());
         let request = mcp_request("Bearer bad-token")
             .header("Mcp-Session-Id", "never-bound")
             .body(Body::empty())
@@ -2280,7 +2286,7 @@ mod tests {
     #[tokio::test]
     async fn valid_token_with_unbound_session_is_not_found() {
         let owner = user_owner();
-        let app = auth_app(owner, McpSessionBindings::new());
+        let app = auth_app(owner, McpSessionBindings::default());
         let request = mcp_request("Bearer good-token")
             .header("Mcp-Session-Id", "never-bound")
             .body(Body::empty())
@@ -2293,7 +2299,7 @@ mod tests {
     #[tokio::test]
     async fn valid_token_without_owner_selection_is_forbidden() {
         let owner = user_owner();
-        let app = auth_app(owner, McpSessionBindings::new());
+        let app = auth_app(owner, McpSessionBindings::default());
         let request = mcp_request("Bearer good-token")
             .body(Body::empty())
             .unwrap();
@@ -2304,7 +2310,7 @@ mod tests {
     #[tokio::test]
     async fn valid_token_with_owner_header_authorizes() {
         let owner = user_owner();
-        let app = auth_app(owner, McpSessionBindings::new());
+        let app = auth_app(owner, McpSessionBindings::default());
         let request = mcp_request("Bearer good-token")
             .header("X-Proxiima-Owner", owner_key(owner))
             .body(Body::empty())
@@ -2317,7 +2323,7 @@ mod tests {
     #[tokio::test]
     async fn valid_token_with_bound_session_authorizes() {
         let owner = user_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions.bind("sess-1", owner, owner).await;
         let app = auth_app(owner, sessions);
         let request = mcp_request("Bearer good-token")
@@ -2336,7 +2342,7 @@ mod tests {
                 owner,
                 calls: calls.clone(),
             }),
-            McpSessionBindings::new(),
+            McpSessionBindings::default(),
         );
 
         for expected_calls in 1..=2 {
@@ -2353,7 +2359,7 @@ mod tests {
     async fn foreign_owner_session_matches_unknown_session_response() {
         let authorized_owner = user_owner();
         let foreign_owner = user_owner();
-        let sessions = McpSessionBindings::new();
+        let sessions = McpSessionBindings::default();
         sessions
             .bind("foreign-session", foreign_owner, foreign_owner)
             .await;
@@ -2390,7 +2396,7 @@ mod tests {
     async fn foreign_owner_header_remains_unauthorized() {
         let authorized_owner = user_owner();
         let foreign_owner = user_owner();
-        let app = auth_app(authorized_owner, McpSessionBindings::new());
+        let app = auth_app(authorized_owner, McpSessionBindings::default());
         let request = mcp_request("Bearer good-token")
             .header("X-Proxiima-Owner", owner_key(foreign_owner))
             .body(Body::empty())

@@ -376,7 +376,21 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
     let origins = proxiima::OriginAllowlist::parse(["https://proxiima.example.com"])
         .expect("concrete origin");
 
+    let service = proxiima::streamable_http_service(
+        proxiima::McpToolHost::from_parts(
+            Arc::new(
+                proxiima::spiice::SpiiceRegistry::new()
+                    .try_freeze()
+                    .expect("empty registry freezes"),
+            ),
+            proxiima::SpiiceServices::default(),
+        ),
+        &origins,
+        &hosts,
+        &tokio_util::sync::CancellationToken::new(),
+    );
     let auth: proxiima::McpAuthLayer = proxiima::mcp_auth_layer_with_metadata(
+        &service,
         Arc::new(proxiima::McpEdgeAuth::headless()),
         revalidation,
         Some(&metadata),
@@ -386,7 +400,7 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
     let body_limit: proxiima::BodyLimitLayer = proxiima::body_limit_layer(16);
 
     let router = axum::Router::new()
-        .route("/mcp", axum::routing::post(|| async { StatusCode::OK }))
+        .nest_service("/mcp", service)
         .layer(auth)
         .layer(cors)
         .layer(host_guard)

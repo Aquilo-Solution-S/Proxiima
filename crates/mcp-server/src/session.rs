@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use proxiima_core::OwnerId;
+use rmcp::transport::streamable_http_server::session::{
+    SessionManager, local::LocalSessionManager,
+};
 use tokio::sync::RwLock;
 
 /// Idle lifetime of a session binding. A binding not observed within this
@@ -11,7 +14,7 @@ use tokio::sync::RwLock;
 /// so a generous ceiling covers long-lived Streamable-HTTP clients while
 /// still bounding memory; it stays in the same order of magnitude as the
 /// stream max-lifetime ceiling.
-const SESSION_IDLE_TTL: Duration = Duration::from_hours(1);
+pub(crate) const SESSION_IDLE_TTL: Duration = Duration::from_hours(1);
 
 /// Hard cap on concurrently bound sessions. When full, a principal may evict
 /// only one of its own bindings; a new principal is refused rather than
@@ -21,7 +24,7 @@ const MAX_SESSIONS: usize = 4096;
 /// Maximum number of sessions one authenticated principal may hold. When the
 /// principal reaches this limit, only its own least-recently-seen session is
 /// evicted.
-const MAX_SESSIONS_PER_PRINCIPAL: usize = 64;
+pub(crate) const MAX_SESSIONS_PER_PRINCIPAL: usize = 64;
 
 struct Binding {
     owner: OwnerId,
@@ -29,22 +32,22 @@ struct Binding {
     last_seen: AtomicU64,
 }
 
+/// The one owner of a session's lifetime: the binding table and the rmcp
+/// session store it fronts. A binding that is refused or removed closes the
+/// rmcp session with the same id, so the two never disagree.
 #[derive(Clone)]
 pub struct McpSessionBindings {
     inner: Arc<RwLock<HashMap<String, Binding>>>,
+    manager: Arc<LocalSessionManager>,
     idle_ttl: Duration,
     max_sessions: usize,
     clock_origin: Instant,
 }
 
+#[cfg(test)]
 impl Default for McpSessionBindings {
     fn default() -> Self {
-        Self {
-            inner: Arc::default(),
-            idle_ttl: SESSION_IDLE_TTL,
-            max_sessions: MAX_SESSIONS,
-            clock_origin: Instant::now(),
-        }
+        Self::new(Arc::default())
     }
 }
 
@@ -55,26 +58,56 @@ impl std::fmt::Debug for McpSessionBindings {
 }
 
 impl McpSessionBindings {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(manager: Arc<LocalSessionManager>) -> Self {
+        Self {
+            inner: Arc::default(),
+            manager,
+            idle_ttl: SESSION_IDLE_TTL,
+            max_sessions: MAX_SESSIONS,
+            clock_origin: Instant::now(),
+        }
     }
 
     /// Bindings with explicit idle TTL / size cap. Test-only seam for
     /// exercising eviction deterministically.
     #[cfg(test)]
-    fn with_limits(idle_ttl: Duration, max_sessions: usize) -> Self {
+    pub(crate) fn with_limits(
+        manager: Arc<LocalSessionManager>,
+        idle_ttl: Duration,
+        max_sessions: usize,
+    ) -> Self {
         Self {
-            inner: Arc::default(),
             idle_ttl,
             max_sessions,
-            clock_origin: Instant::now(),
+            ..Self::new(manager)
+        }
+    }
+
+    /// Close the rmcp session behind every removed binding. Called after the
+    /// table lock is released. The closing runs as its own task, so a request
+    /// cancelled while it waits here still closes every session.
+    async fn close_sessions(&self, ids: Vec<String>) {
+        if ids.is_empty() {
+            return;
+        }
+        let manager = Arc::clone(&self.manager);
+        let closing = tokio::spawn(async move {
+            for id in ids {
+                if let Err(error) = manager.close_session(&id.as_str().into()).await {
+                    tracing::warn!(session = %id, %error, "closing an unbound MCP session failed");
+                }
+            }
+        });
+        if let Err(error) = closing.await {
+            tracing::warn!(%error, "closing unbound MCP sessions did not finish");
         }
     }
 
     /// Bind a transport session to its selected owner and authenticated
     /// principal. Returns `false` when the global bound is full of other
-    /// principals' sessions; no other principal is evicted in that case.
+    /// principals' sessions; no other principal is evicted in that case and
+    /// the refused session is closed. Every evicted binding closes its
+    /// session too.
     pub async fn bind(
         &self,
         session_id: impl Into<String>,
@@ -92,32 +125,46 @@ impl McpSessionBindings {
         principal: OwnerId,
         now: Instant,
     ) -> bool {
-        let mut guard = self.inner.write().await;
-        let map = &mut *guard;
-        self.prune_idle(map, now);
-        Self::prune_principal(map, principal);
-        if map.len() >= self.max_sessions {
-            let Some((_, id)) = map
-                .iter()
-                .filter(|(_, binding)| binding.principal == principal)
-                .min_by_key(|(_, binding)| binding.last_seen.load(Ordering::Relaxed))
-                .map(|(id, binding)| (binding.last_seen.load(Ordering::Relaxed), id.clone()))
-            else {
-                // The global bound is full of other principals' sessions. A
-                // new principal cannot evict another caller's session.
-                return false;
-            };
-            map.remove(&id);
+        let (bound, mut removed) = {
+            let mut guard = self.inner.write().await;
+            let map = &mut *guard;
+            let mut removed = self.prune_idle(map, now);
+            removed.extend(Self::prune_principal(map, principal));
+            let mut bound = true;
+            if map.len() >= self.max_sessions {
+                let oldest = map
+                    .iter()
+                    .filter(|(_, binding)| binding.principal == principal)
+                    .min_by_key(|(_, binding)| binding.last_seen.load(Ordering::Relaxed))
+                    .map(|(id, _)| id.clone());
+                if let Some(id) = oldest {
+                    map.remove(&id);
+                    removed.push(id);
+                } else {
+                    // The global bound is full of other principals' sessions. A
+                    // new principal cannot evict another caller's session.
+                    bound = false;
+                }
+            }
+            if bound {
+                map.insert(
+                    session_id.clone(),
+                    Binding {
+                        owner,
+                        principal,
+                        last_seen: AtomicU64::new(self.timestamp_at(now)),
+                    },
+                );
+            }
+            (bound, removed)
+        };
+        // A rebound id keeps its session; a refused new id has none to keep.
+        removed.retain(|id| *id != session_id);
+        if !bound {
+            removed.push(session_id);
         }
-        map.insert(
-            session_id,
-            Binding {
-                owner,
-                principal,
-                last_seen: AtomicU64::new(self.timestamp_at(now)),
-            },
-        );
-        true
+        self.close_sessions(removed).await;
+        bound
     }
 
     /// Resolve a live session belonging to the authenticated principal.
@@ -151,34 +198,51 @@ impl McpSessionBindings {
         // Aged past the idle TTL: acquire the write lock only for removal,
         // then report unknown so the transport answers 404 and the client
         // re-initializes.
-        let mut guard = self.inner.write().await;
-        if guard
-            .get(session_id)
-            .is_some_and(|binding| self.is_expired(binding.last_seen.load(Ordering::Relaxed), now))
-        {
-            guard.remove(session_id);
+        let expired = {
+            let mut guard = self.inner.write().await;
+            let expired = guard.get(session_id).is_some_and(|binding| {
+                self.is_expired(binding.last_seen.load(Ordering::Relaxed), now)
+            });
+            if expired {
+                guard.remove(session_id);
+            }
+            expired
+        };
+        if expired {
+            self.close_sessions(vec![session_id.to_owned()]).await;
         }
         None
     }
 
-    fn prune_idle(&self, map: &mut HashMap<String, Binding>, now: Instant) {
+    fn prune_idle(&self, map: &mut HashMap<String, Binding>, now: Instant) -> Vec<String> {
         let now = self.timestamp_at(now);
-        map.retain(|_, binding| !self.is_expired(binding.last_seen.load(Ordering::Relaxed), now));
+        let mut removed = Vec::new();
+        map.retain(|id, binding| {
+            let keep = !self.is_expired(binding.last_seen.load(Ordering::Relaxed), now);
+            if !keep {
+                removed.push(id.clone());
+            }
+            keep
+        });
+        removed
     }
 
-    fn prune_principal(map: &mut HashMap<String, Binding>, principal: OwnerId) {
+    fn prune_principal(map: &mut HashMap<String, Binding>, principal: OwnerId) -> Vec<String> {
         let mut by_age: Vec<(u64, String)> = map
             .iter()
             .filter(|(_, binding)| binding.principal == principal)
             .map(|(id, binding)| (binding.last_seen.load(Ordering::Relaxed), id.clone()))
             .collect();
         let overflow = (by_age.len() + 1).saturating_sub(MAX_SESSIONS_PER_PRINCIPAL);
-        if overflow > 0 {
-            by_age.sort_unstable();
-            for (_, id) in by_age.into_iter().take(overflow) {
+        by_age.sort_unstable();
+        by_age
+            .into_iter()
+            .take(overflow)
+            .map(|(_, id)| {
                 map.remove(&id);
-            }
-        }
+                id
+            })
+            .collect()
     }
 
     fn timestamp_at(&self, now: Instant) -> u64 {
@@ -238,7 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn binds_and_reads_back_owner() {
-        let bindings = McpSessionBindings::new();
+        let bindings = McpSessionBindings::default();
         let owner = user_owner();
         bindings.bind("s1", owner, owner).await;
         assert_eq!(bindings.owner_for("s1", owner).await, Some(owner));
@@ -247,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_different_principal_cannot_read_or_refresh_a_binding() {
-        let bindings = McpSessionBindings::new();
+        let bindings = McpSessionBindings::default();
         let owner = user_owner();
         let other = user_owner();
         let base = Instant::now();
@@ -270,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn bind_prunes_idle_binding() {
-        let bindings = McpSessionBindings::new();
+        let bindings = McpSessionBindings::default();
         let owner = user_owner();
         let base = Instant::now();
         bindings.bind_at("old".into(), owner, owner, base).await;
@@ -283,7 +347,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_past_ttl_expires_binding() {
-        let bindings = McpSessionBindings::new();
+        let bindings = McpSessionBindings::default();
         let owner = user_owner();
         let base = Instant::now();
         bindings.bind_at("s".into(), owner, owner, base).await;
@@ -301,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn size_cap_evicts_least_recently_seen() {
-        let bindings = McpSessionBindings::with_limits(SESSION_IDLE_TTL, 2);
+        let bindings = McpSessionBindings::with_limits(Arc::default(), SESSION_IDLE_TTL, 2);
         let owner = user_owner();
         let base = Instant::now();
         bindings.bind_at("s1".into(), owner, owner, base).await;
@@ -327,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn principal_cap_evicts_only_that_principals_oldest_session() {
-        let bindings = McpSessionBindings::with_limits(SESSION_IDLE_TTL, 65);
+        let bindings = McpSessionBindings::with_limits(Arc::default(), SESSION_IDLE_TTL, 65);
         let principal = user_owner();
         let other_principal = user_owner();
         let selected_owner = user_owner();
@@ -395,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_principal_cannot_evict_when_global_bound_is_full() {
-        let bindings = McpSessionBindings::with_limits(SESSION_IDLE_TTL, 2);
+        let bindings = McpSessionBindings::with_limits(Arc::default(), SESSION_IDLE_TTL, 2);
         let first = user_owner();
         let second = user_owner();
         let newcomer = user_owner();

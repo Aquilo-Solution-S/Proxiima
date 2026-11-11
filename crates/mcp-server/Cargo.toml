@@ -34,6 +34,7 @@ http-body = { workspace = true }
 http-body-util = { workspace = true }
 tokio-util = { workspace = true }
 time = { workspace = true }
+tower = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }

@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -6,9 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use axum::Router;
-use axum::body::Body;
-use axum::extract::Request;
-use axum::response::IntoResponse;
 use proxiima_blob_s3::{CitedBlobStore, S3RuntimeConfig};
 use proxiima_core::OwnerId;
 use proxiima_core::authz::SystemAuthority;
@@ -21,12 +17,11 @@ use proxiima_core::{
     OwnerAccessPort, RevalidationConfig, ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
 };
 use proxiima_mcp_server::{
-    HostAllowlist, McpEdgeAuth, McpToolHost, McpTransportConfig, OriginAllowlist, assert_loopback,
-    default_allowlist, guard_listener,
+    HostAllowlist, McpEdgeAuth, McpStreamableService, McpToolHost, McpTransportConfig,
+    OriginAllowlist, assert_loopback, default_allowlist, guard_listener,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tower::Service;
 
 use crate::boot::Booted;
 use crate::features::{
@@ -1086,18 +1081,13 @@ async fn shutdown_signal() -> Result<(), ProxiimaError> {
 /// `host_allowlist` must also be passed to
 /// [`streamable_http_service`](proxiima_mcp_server::streamable_http_service) so the
 /// listener guard and rmcp's inner `/mcp` guard enforce the same authorities.
-pub fn layered_router<S>(
-    mcp_service: S,
+pub fn layered_router(
+    mcp_service: McpStreamableService,
     app_router: Router,
     edge_auth: Arc<McpEdgeAuth>,
     allowlist: OriginAllowlist,
     host_allowlist: HostAllowlist,
-) -> Router
-where
-    S: Service<Request<Body>, Error = Infallible> + Clone + Send + Sync + 'static,
-    S::Response: IntoResponse,
-    S::Future: Send + 'static,
-{
+) -> Router {
     layered_router_with_revalidation(
         mcp_service,
         app_router,
@@ -1112,26 +1102,20 @@ where
 ///
 /// Layer order is body limit, listener-wide Host validation, browser CORS,
 /// then bearer auth.
-pub fn layered_router_with_revalidation<S>(
-    mcp_service: S,
+pub fn layered_router_with_revalidation(
+    mcp_service: McpStreamableService,
     app_router: Router,
     edge_auth: Arc<McpEdgeAuth>,
     allowlist: OriginAllowlist,
     host_allowlist: HostAllowlist,
     revalidation: RevalidationConfig,
-) -> Router
-where
-    S: Service<Request<Body>, Error = Infallible> + Clone + Send + Sync + 'static,
-    S::Response: IntoResponse,
-    S::Future: Send + 'static,
-{
+) -> Router {
+    let auth_layer =
+        proxiima_mcp_server::mcp_auth_layer_with_config(&mcp_service, edge_auth, revalidation);
     let router = Router::new()
         .nest_service(proxiima_mcp_server::MCP_PATH, mcp_service)
         .merge(app_router)
-        .layer(proxiima_mcp_server::mcp_auth_layer_with_config(
-            edge_auth,
-            revalidation,
-        ));
+        .layer(auth_layer);
     guard_listener(
         router,
         allowlist,
@@ -1380,13 +1364,15 @@ fn build_router<A: SpiiceApp>(
         crate::retention_http::router(app_ctx.host().engine.clone(), Arc::clone(system_authority));
     let app_router = A::mount_http(Router::new(), app_ctx.clone());
     let public_router = A::mount_public_http(Router::new(), app_ctx);
+    let mcp_service = edge.mcp_service();
     let auth_layer = proxiima_mcp_server::mcp_auth_layer_with_metadata(
+        &mcp_service,
         Arc::clone(&edge.edge_auth),
         edge.revalidation,
         edge.resource_metadata.as_ref(),
     );
     let protected_router = Router::new()
-        .nest_service(proxiima_mcp_server::MCP_PATH, edge.mcp_service())
+        .nest_service(proxiima_mcp_server::MCP_PATH, mcp_service)
         .merge(edge.rest_router.clone())
         .merge(retention_router)
         .merge(app_router)

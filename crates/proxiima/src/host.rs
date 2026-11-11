@@ -595,7 +595,7 @@ pub use proxiima_mcp_server::security::McpAuthLayerState;
 /// types they and [`cors_layer`] return.
 pub use proxiima_mcp_server::{
     BodyLimitLayer, CorsLayer, HostGuardLayer, McpAuthLayer, body_limit_layer, enforce_body_limit,
-    host_guard_layer, mcp_auth_layer_with_metadata,
+    host_guard_layer, mcp_auth_layer_with_metadata, streamable_http_service,
 };
 pub use proxiima_mcp_server::{
     MAX_HOST_INSTRUCTIONS_CHARS, McpHostTool, McpHostTools, McpStreamableService, McpToolHost,

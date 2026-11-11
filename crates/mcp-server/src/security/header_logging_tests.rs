@@ -17,7 +17,7 @@ use tracing::{Event, Level, Metadata, Subscriber};
 
 use super::{
     HostAllowlist, HostRequestError, cors_layer, default_allowlist, host_guard_layer,
-    mcp_auth_layer_with_config, parse_request_host,
+    mcp_auth_layer_with_sessions, parse_request_host,
 };
 use crate::McpEdgeAuth;
 
@@ -113,9 +113,11 @@ fn assert_warning(warnings: &[Warning], message: &str, category: Option<&str>) {
 fn guarded_app() -> Router {
     Router::new()
         .route("/mcp", any(|| async { StatusCode::OK }))
-        .layer(mcp_auth_layer_with_config(
+        .layer(mcp_auth_layer_with_sessions(
             Arc::new(McpEdgeAuth::headless()),
+            crate::session::McpSessionBindings::default(),
             proxiima_core::RevalidationConfig::default(),
+            None,
         ))
         .layer(cors_layer(default_allowlist()))
         .layer(host_guard_layer(HostAllowlist::default()))

@@ -39,7 +39,7 @@ pub use security::{
     mcp_auth_layer_with_metadata,
 };
 pub use server::{MAX_HOST_TOOL_NAME_CHARS, McpToolHost, ToolInvocationError, reject_nul_in_args};
-pub use session::{McpSessionBindings, owner_key, parse_owner_key};
+pub use session::{owner_key, parse_owner_key};
 pub use tool_list::ToolListNotifier;
 pub use transport::{
     BodyLimitLayer, DEFAULT_PROGRESS_HEARTBEAT, MAX_REQUEST_BODY_BYTES, McpStreamableService,
