@@ -1,100 +1,9 @@
+use crate::authz::{KeyDeclaration, Replay, ToolEffect};
 use crate::spiice::SPIICE_0;
 use crate::spiice::contract::ResourceContract;
 use crate::{ResourceKey, ScopeKey, ToolName};
 
 use super::core_tools;
-
-/// What calling a tool, or one action of a dispatcher, does to state.
-///
-/// THE behaviour declaration: a flat tool declares one
-/// ([`crate::Tool::EFFECT`]), a dispatcher one per action
-/// ([`crate::mcp::McpActionArgSpec::effect`],
-/// [`crate::mcp::McpArgvActionSpec::effect`]), a host tool one
-/// (`McpHostTool::effect`). Every other answer is derived from it:
-///
-/// | Reader | Derived answer |
-/// |---|---|
-/// | owner-role gate | [`Self::ReadOnly`] needs read access, anything else write |
-/// | MCP / REST / `OpenAPI` hints | [`McpToolAnnotations::registered`], [`McpToolAnnotations::host`] |
-/// | REST `QUERY` | admitted for [`Self::ReadOnly`] only |
-/// | [`crate::UnitOfWork::erase_own_series`] | admits only a call whose action is [`Self::Destructive`] |
-///
-/// Ordered by strength, `ReadOnly < Additive < Destructive`; a dispatcher's
-/// tool-level effect is the [`Self::join`] of its actions, so a dispatcher
-/// with one destructive action is a destructive tool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ToolEffect {
-    /// Reads only; idempotent by construction.
-    ReadOnly,
-    /// Writes; removes nothing it did not create.
-    Additive(Replay),
-    /// May remove or overwrite what it did not create.
-    Destructive(Replay),
-}
-
-/// What an identical second call does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Replay {
-    /// Nothing further: the second call lands on the first one's result.
-    Idempotent,
-    /// Acts again.
-    NonIdempotent,
-}
-
-impl ToolEffect {
-    #[must_use]
-    pub const fn is_read_only(self) -> bool {
-        matches!(self, Self::ReadOnly)
-    }
-
-    #[must_use]
-    pub const fn is_destructive(self) -> bool {
-        matches!(self, Self::Destructive(_))
-    }
-
-    /// [`Self::ReadOnly`] replays as [`Replay::Idempotent`].
-    #[must_use]
-    pub const fn replay(self) -> Replay {
-        match self {
-            Self::ReadOnly => Replay::Idempotent,
-            Self::Additive(replay) | Self::Destructive(replay) => replay,
-        }
-    }
-
-    const fn strength(self) -> u8 {
-        match self {
-            Self::ReadOnly => 0,
-            Self::Additive(_) => 1,
-            Self::Destructive(_) => 2,
-        }
-    }
-
-    /// The effect of a surface that may run either: the stronger kind, and
-    /// idempotent only when both are.
-    #[must_use]
-    pub const fn join(self, other: Self) -> Self {
-        let replay = match (self.replay(), other.replay()) {
-            (Replay::Idempotent, Replay::Idempotent) => Replay::Idempotent,
-            _ => Replay::NonIdempotent,
-        };
-        let strongest = if self.strength() >= other.strength() {
-            self
-        } else {
-            other
-        };
-        match strongest {
-            Self::ReadOnly => Self::ReadOnly,
-            Self::Additive(_) => Self::Additive(replay),
-            Self::Destructive(_) => Self::Destructive(replay),
-        }
-    }
-
-    /// [`Self::join`] over `effects`; `None` when there are none.
-    #[must_use]
-    pub fn strongest(effects: impl IntoIterator<Item = Self>) -> Option<Self> {
-        effects.into_iter().reduce(Self::join)
-    }
-}
 
 /// The MCP behaviour hints (`readOnlyHint`, `destructiveHint`,
 /// `idempotentHint`, `openWorldHint`) as the wire carries them.
@@ -176,8 +85,8 @@ pub fn how_to_resource_key() -> ResourceKey {
 }
 
 #[must_use]
-pub const fn how_to_resource_declaration() -> super::KeyDeclaration {
-    super::KeyDeclaration::shared(Some(ToolEffect::ReadOnly))
+pub const fn how_to_resource_declaration() -> KeyDeclaration {
+    KeyDeclaration::shared(Some(ToolEffect::ReadOnly))
 }
 
 #[must_use = "iterators are lazy and must be consumed"]
@@ -290,7 +199,8 @@ pub fn canonical_served_read_keys(registry: &crate::SpiiceRegistryFrozen) -> Vec
 
 #[cfg(test)]
 mod effect_tests {
-    use super::{McpToolAnnotations, Replay, ToolEffect};
+    use super::McpToolAnnotations;
+    use crate::authz::{ALL_EFFECTS, Replay};
 
     #[test]
     fn mandatory_served_reads_include_owner_reads_resources_and_the_guide() {
@@ -331,56 +241,11 @@ mod effect_tests {
         assert!(!excluded.iter().any(|key| matches!(key, crate::ScopeKey::Action { tool, .. } if tool.as_str() == crate::protocol::tool::CORE_MEMBERSHIP)));
     }
 
-    const ALL: [ToolEffect; 5] = [
-        ToolEffect::ReadOnly,
-        ToolEffect::Additive(Replay::Idempotent),
-        ToolEffect::Additive(Replay::NonIdempotent),
-        ToolEffect::Destructive(Replay::Idempotent),
-        ToolEffect::Destructive(Replay::NonIdempotent),
-    ];
-
-    /// A lattice join: commutative, idempotent, associative, with
-    /// `ReadOnly` as its bottom — so a dispatcher's effect does not depend
-    /// on the order its actions are declared in.
-    #[test]
-    fn join_is_a_lattice_join_with_read_only_at_the_bottom() {
-        for a in ALL {
-            assert_eq!(a.join(a), a);
-            assert_eq!(a.join(ToolEffect::ReadOnly), a);
-            for b in ALL {
-                assert_eq!(a.join(b), b.join(a));
-                for c in ALL {
-                    assert_eq!(a.join(b).join(c), a.join(b.join(c)));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn join_takes_the_stronger_kind_and_idempotence_only_from_both() {
-        assert_eq!(
-            ToolEffect::Additive(Replay::Idempotent)
-                .join(ToolEffect::Destructive(Replay::Idempotent)),
-            ToolEffect::Destructive(Replay::Idempotent)
-        );
-        assert_eq!(
-            ToolEffect::Destructive(Replay::Idempotent)
-                .join(ToolEffect::Additive(Replay::NonIdempotent)),
-            ToolEffect::Destructive(Replay::NonIdempotent)
-        );
-        assert_eq!(
-            ToolEffect::ReadOnly.join(ToolEffect::Additive(Replay::Idempotent)),
-            ToolEffect::Additive(Replay::Idempotent),
-            "a read replays idempotently, so it does not spoil a sibling's idempotence"
-        );
-        assert_eq!(ToolEffect::strongest([]), None);
-    }
-
     /// The projection never emits a combination MCP gives no meaning:
     /// a read carries no destructive/idempotent hint, a write carries both.
     #[test]
     fn every_effect_projects_to_one_wire_shape() {
-        for effect in ALL {
+        for effect in ALL_EFFECTS {
             let hints = McpToolAnnotations::registered(effect);
             assert_eq!(hints.read_only, Some(effect.is_read_only()));
             assert_eq!(hints.open_world, Some(false));

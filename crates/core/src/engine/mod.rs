@@ -4,7 +4,7 @@
 mod access_admin;
 mod builder;
 mod embeddings;
-mod errors;
+pub(crate) mod errors;
 mod goal_collaboration;
 mod goal_write;
 mod ingest;
@@ -20,7 +20,7 @@ mod sidecar_heads;
 mod source_cursors;
 #[cfg(test)]
 mod storage_port_tests;
-mod unit_of_work;
+pub(crate) mod unit_of_work;
 mod upload;
 
 use std::sync::Arc;

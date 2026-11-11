@@ -5,10 +5,11 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ancestry::{AncestorEdge, AncestorTarget, NodeStatus, UnavailableReason, Unread};
+use super::ancestry::{AncestorEdge, AncestorTarget, Unread};
 use crate::MemoryId;
 use crate::mcp::cursor as wire_cursor;
 use crate::mcp::{McpToolCtx, McpToolError};
+use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest};
 
 const MAX_LINEAGE_DEPTH: u32 = 8;
@@ -593,11 +594,9 @@ mod tests {
     };
 
     use super::{LINEAGE_CURSOR, LineageNodeOutput, append_external_edges, lineage_fingerprint};
-    use crate::mcp::core_tools::ancestry::{
-        NodeStatus, UnavailableReason, Unread, project_remote_read,
-    };
+    use crate::mcp::core_tools::ancestry::{Unread, project_remote_read};
     use crate::mcp::core_tools::memory_spaces::test_ctx::ctx_for;
-    use crate::storage_ports::other_stores::RemoteOriginRead;
+    use crate::storage_ports::other_stores::{NodeStatus, RemoteOriginRead, UnavailableReason};
     use crate::storage_ports::other_stores::{
         OtherStores, OtherStoresError, RemoteMemory, RemoteRead, RemoteSearch, RemoteSearchResult,
         StoreCaller, StoreInfo,

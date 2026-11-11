@@ -2,10 +2,10 @@
 
 use uuid::Uuid;
 
+use crate::authz::KeyDeclaration;
 use crate::authz::{
     DelegationRuntimeAuthority, EngineAuthority, ScopeKey, context_for_engine_operation,
 };
-use crate::mcp::KeyDeclaration;
 use crate::{GoalHandle, MemoryId, ObjectStoreId, OwnerId, SpiiceRegistryFrozen};
 
 use super::cited_blob_read::{CitedBlobReadError, CitedBlobReadService};

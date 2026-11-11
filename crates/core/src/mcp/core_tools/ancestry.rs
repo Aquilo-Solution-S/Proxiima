@@ -18,14 +18,12 @@
 
 use std::collections::HashMap;
 
-use schemars::JsonSchema;
-use serde::Serialize;
 use uuid::Uuid;
 
 use crate::mcp::{McpToolCtx, McpToolError};
 use crate::spiice::Provenance;
 use crate::storage_ports::other_stores::{
-    MAX_LINEAGE_REMOTE_ORIGINS, OtherStoresError, RemoteOriginRead,
+    MAX_LINEAGE_REMOTE_ORIGINS, NodeStatus, OtherStoresError, RemoteOriginRead, UnavailableReason,
 };
 use crate::{EdgeKind, GetMemoriesReadRequest, MemoryId};
 
@@ -179,38 +177,6 @@ async fn payload_subjects(
         }
     }
     Ok(subjects)
-}
-
-/// `status` of a walk node that is not rendered from a read. The walk never
-/// fails on such a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeStatus {
-    /// The other store erased the memory.
-    Erased,
-    /// An other-store memory that could not be read; see
-    /// [`UnavailableReason`].
-    Unavailable,
-    /// A local memory the caller could read but which is forgotten.
-    Forgotten,
-}
-
-/// Why an `unavailable` other-store memory was not read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
-pub enum UnavailableReason {
-    /// The store answered that the caller cannot read it, or there is no
-    /// such store.
-    #[serde(rename = "not readable")]
-    NotReadable,
-    /// The store failed; retry later.
-    #[serde(rename = "store unavailable")]
-    StoreUnavailable,
-    /// The call-wide deadline passed before the store answered.
-    #[serde(rename = "deadline exceeded")]
-    DeadlineExceeded,
-    /// The page cap on other-store reads was reached.
-    #[serde(rename = "origin limit exceeded")]
-    OriginLimitExceeded,
 }
 
 /// An other-store memory a walk could not read: only `Unavailable` has a

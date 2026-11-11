@@ -5,8 +5,10 @@
 //! resulting [`AuthzContext`]. Companion to `auth.rs`, which now only
 //! carries credential material and auth failures.
 
+mod declaration;
 pub mod hooks;
 mod scope_key;
+mod tool_name;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -26,11 +28,15 @@ use crate::error::ProtocolError;
 use crate::publication::{PublicationExtensions, PublicationExtensionsError};
 use crate::{GroupId, OwnerId, UserId};
 
+#[cfg(test)]
+pub(crate) use declaration::ALL_EFFECTS;
+pub use declaration::{KeyDeclaration, McpToolAudience, OwnerNeed, Replay, ToolEffect};
 pub use hooks::{
     AuthorizationHook, AuthzInput, AuthzOperation, AuthzOutcome, AuthzVeto,
     GoalCollaborationChange, MembershipChange, OwnerResolver,
 };
 pub use scope_key::{ActionName, ResourceKey, ScopeKey, ScopeKeyError, ScopeKeyPart, ToolName};
+pub use tool_name::{provider_safe_tool_name, tool_name_matches};
 
 /// The principal and optional caller an authenticator attested for a write.
 ///
@@ -184,7 +190,7 @@ impl ServedSurface {
     /// Judge the declaration of this exact registered key. An undeclared
     /// name receives no automatic read admission.
     #[must_use]
-    pub fn admits(&self, key: &ScopeKey, declared: crate::mcp::KeyDeclaration) -> bool {
+    pub fn admits(&self, key: &ScopeKey, declared: KeyDeclaration) -> bool {
         declared.is_read()
             || match self {
                 Self::All => true,
@@ -197,7 +203,7 @@ impl ServedSurface {
         &self,
         tool: &ToolName,
         action: &ActionName,
-        declared: crate::mcp::KeyDeclaration,
+        declared: KeyDeclaration,
     ) -> bool {
         ScopeKey::action(tool.clone(), action.clone()).is_ok_and(|key| self.admits(&key, declared))
     }
@@ -239,7 +245,7 @@ impl CapabilitySet {
     }
 
     #[must_use]
-    pub fn admits(&self, key: &ScopeKey, declared: crate::mcp::KeyDeclaration) -> bool {
+    pub fn admits(&self, key: &ScopeKey, declared: KeyDeclaration) -> bool {
         self.tool_scope.allows(key) && self.served_surface.admits(key, declared)
     }
 
@@ -248,7 +254,7 @@ impl CapabilitySet {
         &self,
         tool: &ToolName,
         action: &ActionName,
-        declared: crate::mcp::KeyDeclaration,
+        declared: KeyDeclaration,
     ) -> bool {
         self.tool_scope.allows_action(tool, action)
             && self.served_surface.admits_action(tool, action, declared)
@@ -380,12 +386,12 @@ impl OwnerScopeState {
 
 /// What a tool call asks of the owner it selects
 /// ([`AuthzContext::may_run_tool`]). A key's declaration says which
-/// ([`KeyDeclaration::owner_access`](crate::mcp::KeyDeclaration::owner_access)).
+/// ([`KeyDeclaration::owner_access`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnerAccess {
     Read,
     Write,
-    /// A write declared [Goal work](crate::mcp::OwnerNeed::GoalWork).
+    /// A write declared [Goal work](OwnerNeed::GoalWork).
     GoalWork,
 }
 
@@ -489,7 +495,7 @@ pub struct InvokingTool {
     pub name: &'static str,
     /// `None` only for a flat tool that declared nothing, which a frozen
     /// registry refuses.
-    pub effect: Option<crate::mcp::ToolEffect>,
+    pub effect: Option<ToolEffect>,
 }
 
 /// Opaque authority for one redeemed durable-worker phase.
@@ -2528,8 +2534,6 @@ mod tests {
 
     #[test]
     fn deployment_admits_declared_reads_but_callers_require_exact_keys() {
-        use crate::mcp::KeyDeclaration;
-        use crate::{McpToolAudience, Replay, ToolEffect};
         let empty = ServedSurface::Palette(Vec::new());
         let search_key = key(protocol_tool::CORE_SEARCH_MEMORIES);
         let read = KeyDeclaration::shared(Some(ToolEffect::ReadOnly));
@@ -2592,7 +2596,7 @@ mod tests {
         );
         assert!(disjoint.capabilities().admits(
             &key(protocol_tool::CORE_SEARCH_MEMORIES),
-            crate::mcp::KeyDeclaration::shared(Some(crate::ToolEffect::ReadOnly))
+            KeyDeclaration::shared(Some(ToolEffect::ReadOnly))
         ));
     }
 

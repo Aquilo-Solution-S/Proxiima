@@ -1,5 +1,6 @@
 use futures::future::BoxFuture;
 
+use crate::authz::{KeyDeclaration, McpToolAudience, OwnerNeed};
 use crate::{ActionName, CapabilitySet, ScopeKey, ScopeKeyError, ToolCaller, ToolCtx, ToolName};
 
 use super::{McpToolCtx, McpToolError};
@@ -28,91 +29,6 @@ pub(crate) fn title_problem(title: &str) -> Option<&'static str> {
 pub enum McpToolOrigin {
     Substrate,
     Spiice(String),
-}
-
-/// Who a tool or action is for.
-///
-/// Hosts that compute separate tool surfaces per audience partition on this
-/// declaration instead of hardcoding tool names: a non-owner caller scope
-/// leaves the owner's keys out, including reads. An enum rather than a flag
-/// so the declaration site names its
-/// meaning, and a future audience is a new variant instead of a second bool
-/// that has to be read together with the first.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum McpToolAudience {
-    /// Eligible for every surface a host computes. The default: saying
-    /// nothing does not narrow anything.
-    #[default]
-    Shared,
-    /// Belongs to the owner alone; a host computing a surface for any
-    /// non-owner audience leaves this key out.
-    Owner,
-}
-
-/// What a key asks of the owner a call selects, beside what it does.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum OwnerNeed {
-    /// Memory access by the key's effect: read for a read, Fact write for
-    /// a write. The default: saying nothing widens nothing.
-    #[default]
-    Memory,
-    /// The key's write is Goal work: every member who
-    /// [works Goals](crate::Role::works_goals) runs and sees it, not only a
-    /// member who writes Facts. It widens no memory write: what the tool
-    /// writes to Facts, Perspectives or host state keeps the caller's
-    /// ceiling. A read stays a read.
-    GoalWork,
-}
-
-/// What one scope key declares: what it does, who it is for and what it
-/// asks of the owner. The scope gate, the owner-role gate and every listing
-/// judge a key by this one value ([`CapabilitySet::admits`],
-/// [`Self::owner_access`], [`McpToolDescriptor::declaration`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeyDeclaration {
-    /// `None` for a name nothing declares, which every gate reads as a write.
-    pub effect: Option<crate::mcp::ToolEffect>,
-    pub audience: McpToolAudience,
-    pub need: OwnerNeed,
-}
-
-impl KeyDeclaration {
-    /// A name nothing declares: a write.
-    pub const UNDECLARED: Self = Self::shared(None);
-
-    /// A declaration for every audience: a core resource's, a host tool's.
-    #[must_use]
-    pub const fn shared(effect: Option<crate::mcp::ToolEffect>) -> Self {
-        Self {
-            effect,
-            audience: McpToolAudience::Shared,
-            need: OwnerNeed::Memory,
-        }
-    }
-
-    /// Whether the key declares itself a read. Silence is a write.
-    #[must_use]
-    pub const fn is_read(self) -> bool {
-        matches!(self.effect, Some(effect) if effect.is_read_only())
-    }
-
-    /// What a call of this key asks of the owner it selects: the one rule
-    /// the owner-role gate and every listing share.
-    #[must_use]
-    pub const fn owner_access(self) -> crate::OwnerAccess {
-        match (self.is_read(), self.need) {
-            (true, OwnerNeed::Memory | OwnerNeed::GoalWork) => crate::OwnerAccess::Read,
-            (false, OwnerNeed::Memory) => crate::OwnerAccess::Write,
-            (false, OwnerNeed::GoalWork) => crate::OwnerAccess::GoalWork,
-        }
-    }
-
-    /// Whether this read is declared for every audience. Caller scope
-    /// membership is still required for both shared and owner reads.
-    #[must_use]
-    pub fn is_open_read(self) -> bool {
-        self.is_read() && self.audience == McpToolAudience::Shared
-    }
 }
 
 /// What a *flat* tool does with a top-level argument key its schema does not

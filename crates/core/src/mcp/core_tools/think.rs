@@ -7,10 +7,11 @@ use futures::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ancestry::{AncestorTarget, NodeStatus, UnavailableReason, Unread};
+use super::ancestry::{AncestorTarget, Unread};
 use crate::mcp::cursor as wire_cursor;
 use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::protocol::tool as protocol_tool;
+use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::{EdgeKind, InboundPinQuery, MemoryId};
 
 const MAX_SEEDS: usize = 8;

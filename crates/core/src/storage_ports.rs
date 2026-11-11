@@ -10,7 +10,7 @@ mod cited_blob_delivery;
 mod cited_blob_read;
 mod cited_blob_reconcile;
 mod cursors;
-mod delegated_authority;
+pub(crate) mod delegated_authority;
 mod embeddings;
 mod fact;
 mod goals;

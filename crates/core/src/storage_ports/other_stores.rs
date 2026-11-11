@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use futures::stream::{self, StreamExt};
+use schemars::JsonSchema;
+use serde::Serialize;
 use uuid::Uuid;
 
-use crate::mcp::core_tools::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{EntityKind, SearchMode, SearchOrder, SupersessionStatus, TagMatch};
 use crate::{AuthzContext, EdgeKind, OwnerId, SchemaVersion, WriterAttribution};
 
@@ -318,6 +319,38 @@ pub struct RemoteAncestors {
     pub edges: Vec<RemoteLineageEdge>,
     /// The owning store's cursor for the next page; `None` on the last page.
     pub next_cursor: Option<String>,
+}
+
+/// `status` of a walk node that is not rendered from a read. The walk never
+/// fails on such a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeStatus {
+    /// The other store erased the memory.
+    Erased,
+    /// An other-store memory that could not be read; see
+    /// [`UnavailableReason`].
+    Unavailable,
+    /// A local memory the caller could read but which is forgotten.
+    Forgotten,
+}
+
+/// Why an `unavailable` other-store memory was not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
+pub enum UnavailableReason {
+    /// The store answered that the caller cannot read it, or there is no
+    /// such store.
+    #[serde(rename = "not readable")]
+    NotReadable,
+    /// The store failed; retry later.
+    #[serde(rename = "store unavailable")]
+    StoreUnavailable,
+    /// The call-wide deadline passed before the store answered.
+    #[serde(rename = "deadline exceeded")]
+    DeadlineExceeded,
+    /// The page cap on other-store reads was reached.
+    #[serde(rename = "origin limit exceeded")]
+    OriginLimitExceeded,
 }
 
 /// One node of a remote ancestors page.

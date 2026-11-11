@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::mcp::provider_safe_tool_name;
+use super::provider_safe_tool_name;
 
 /// The reserved first segment of a resource key, and so the one tool name
 /// that cannot head an action.

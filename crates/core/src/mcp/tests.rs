@@ -1,5 +1,9 @@
 use super::*;
 
+mod delegated_authority;
+mod engine_errors;
+mod erase_gate;
+
 mod manifest_tests {
     use std::{collections::BTreeSet, sync::Arc};
 
