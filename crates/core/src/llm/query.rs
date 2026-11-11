@@ -157,7 +157,7 @@ impl QueryInstructions {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryInstruction, QueryInstructions, QueryTask};
+    use super::{QueryInstruction, QueryInstructionError, QueryInstructions, QueryTask};
 
     const CODE: QueryTask = QueryTask::named("notes");
 
@@ -168,7 +168,13 @@ mod tests {
     #[test]
     fn a_template_needs_the_placeholder_and_renders_every_occurrence() {
         let err = QueryInstruction::new("Instruct: find code").expect_err("no placeholder");
-        assert!(err.to_string().contains("{query}"), "{err}");
+        assert_eq!(
+            err,
+            QueryInstructionError {
+                template: "Instruct: find code".into()
+            },
+            "{err:?}"
+        );
         assert_eq!(
             instruction("Q:{query}|{query}").render("parse args"),
             "Q:parse args|parse args"

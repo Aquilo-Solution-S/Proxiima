@@ -1,6 +1,7 @@
 use proxiima_core::{
     EntityKind, InputContractId, MemoryId, MemoryOutputInvocation, OperatorId,
-    OperatorInvocationManifest, OperatorPhase, OutputEdgeManifest, SchemaId, SchemaVersion,
+    OperatorInvocationManifest, OperatorPhase, OperatorProofError, OutputEdgeManifest, SchemaId,
+    SchemaVersion,
 };
 use uuid::Uuid;
 
@@ -31,7 +32,14 @@ fn ftoa_manifest_rejects_missing_declared_input_edge() {
     let err = manifest
         .validate()
         .expect_err("declared input requires output→input ledger edge");
-    assert!(err.to_string().contains("missing provenance edge"));
+    assert_eq!(
+        err,
+        OperatorProofError::MissingProvenanceEdge {
+            output_memory_id: output,
+            input_memory_id: input,
+        },
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -50,5 +58,11 @@ fn atog_manifest_rejects_goal_output_for_memory_phase() {
     let err = manifest
         .validate()
         .expect_err("only A→Goal may output Goals");
-    assert!(err.to_string().contains("phase cannot output goal"));
+    assert_eq!(
+        err,
+        OperatorProofError::PhaseCannotOutputGoal {
+            phase: OperatorPhase::AtoP
+        },
+        "{err:?}"
+    );
 }

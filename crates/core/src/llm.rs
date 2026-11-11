@@ -612,11 +612,12 @@ mod tests {
         DEFAULT_EMBED_REQUEST_TIMEOUT, DEFAULT_EMBED_STALE_CLAIM_TIMEOUT,
         DEFAULT_EMBED_WORKER_INTERVAL, EmbeddingClient, EmbeddingConfigurationFault,
         EmbeddingInputRefusal, EmbeddingRuntimePolicy, EmbeddingRuntimePolicyError, LlmError,
-        MIN_EMBED_INPUT_CAP_CHARS, PROXIIMA_EMBED_BATCH_SIZE, PROXIIMA_EMBED_DRAIN_CONCURRENCY,
-        PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
-        PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS, embed_in_chunks, embed_in_chunks_after_failure,
-        embed_in_chunks_after_failure_with_timeout, embed_in_chunks_with_timeout,
-        embed_many_with_timeout, embed_with_timeout,
+        MAX_EMBED_BATCH_SIZE, MAX_EMBED_DRAIN_CONCURRENCY, MAX_EMBED_REQUEST_TIMEOUT,
+        MAX_EMBED_STALE_CLAIM_TIMEOUT, MIN_EMBED_INPUT_CAP_CHARS, PROXIIMA_EMBED_BATCH_SIZE,
+        PROXIIMA_EMBED_DRAIN_CONCURRENCY, PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+        PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS, PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+        embed_in_chunks, embed_in_chunks_after_failure, embed_in_chunks_after_failure_with_timeout,
+        embed_in_chunks_with_timeout, embed_many_with_timeout, embed_with_timeout,
     };
     use crate::env_from_pairs as lookup;
     use async_trait::async_trait;
@@ -667,24 +668,92 @@ mod tests {
 
     #[test]
     fn embedding_runtime_policy_rejects_bad_values_and_unsafe_relation() {
-        for (key, value) in [
-            (PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, "0"),
-            (PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, "3601"),
-            (PROXIIMA_EMBED_BATCH_SIZE, "0"),
-            (PROXIIMA_EMBED_BATCH_SIZE, "1025"),
-            (PROXIIMA_EMBED_DRAIN_CONCURRENCY, "0"),
-            (PROXIIMA_EMBED_DRAIN_CONCURRENCY, "65"),
-            (PROXIIMA_EMBED_DRAIN_CONCURRENCY, "many"),
-            (PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS, "nope"),
-            (PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS, "86401"),
+        let duration = |field, max, actual| EmbeddingRuntimePolicyError::DurationOutOfRange {
+            field,
+            min: 1,
+            max,
+            actual,
+        };
+        for (key, value, expected) in [
+            (
+                PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+                "0",
+                duration(
+                    PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+                    MAX_EMBED_REQUEST_TIMEOUT.as_secs(),
+                    0,
+                ),
+            ),
+            (
+                PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+                "3601",
+                duration(
+                    PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+                    MAX_EMBED_REQUEST_TIMEOUT.as_secs(),
+                    3_601,
+                ),
+            ),
+            (
+                PROXIIMA_EMBED_BATCH_SIZE,
+                "0",
+                EmbeddingRuntimePolicyError::BatchSizeOutOfRange {
+                    max: MAX_EMBED_BATCH_SIZE,
+                    actual: 0,
+                },
+            ),
+            (
+                PROXIIMA_EMBED_BATCH_SIZE,
+                "1025",
+                EmbeddingRuntimePolicyError::BatchSizeOutOfRange {
+                    max: MAX_EMBED_BATCH_SIZE,
+                    actual: 1_025,
+                },
+            ),
+            (
+                PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                "0",
+                EmbeddingRuntimePolicyError::DrainConcurrencyOutOfRange {
+                    max: MAX_EMBED_DRAIN_CONCURRENCY,
+                    actual: 0,
+                },
+            ),
+            (
+                PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                "65",
+                EmbeddingRuntimePolicyError::DrainConcurrencyOutOfRange {
+                    max: MAX_EMBED_DRAIN_CONCURRENCY,
+                    actual: 65,
+                },
+            ),
+            (
+                PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                "many",
+                EmbeddingRuntimePolicyError::MalformedCount {
+                    key: PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                    value: "many".into(),
+                },
+            ),
+            (
+                PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+                "nope",
+                EmbeddingRuntimePolicyError::MalformedSeconds {
+                    key: PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+                    value: "nope".into(),
+                },
+            ),
+            (
+                PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+                "86401",
+                duration(
+                    PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+                    MAX_EMBED_STALE_CLAIM_TIMEOUT.as_secs(),
+                    86_401,
+                ),
+            ),
         ] {
             let err = EmbeddingRuntimePolicy::from_lookup(&lookup(&[(key, value)]))
                 .expect_err("invalid setting must fail");
-            assert!(
-                err.to_string().contains(key)
-                    || err.to_string().contains("batch size")
-                    || err.to_string().contains("drain concurrency")
-            );
+            assert_eq!(err, expected, "{key}={value}");
         }
 
         let err = EmbeddingRuntimePolicy::from_lookup(&lookup(&[
@@ -692,7 +761,14 @@ mod tests {
             (PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS, "120"),
         ]))
         .expect_err("stale claim must outlive one request");
-        assert!(err.to_string().contains("strictly greater"));
+        assert_eq!(
+            err,
+            EmbeddingRuntimePolicyError::StaleClaimNotLongerThanRequest {
+                stale_seconds: 120,
+                request_seconds: 120,
+            },
+            "{err:?}"
+        );
     }
 
     #[test]
