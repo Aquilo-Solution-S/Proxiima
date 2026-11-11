@@ -5,7 +5,8 @@ use futures::future::BoxFuture;
 
 use super::core_tools::memory_spaces::{ResolvedMemorySpace, SpaceDefault, resolve_space_owner};
 use super::{
-    KeyDeclaration, McpToolCtx, McpToolDescriptor, McpToolError, Replay, ToolEffect, ToolReply,
+    KeyDeclaration, McpToolCtx, McpToolDescriptor, McpToolError, OwnerNeed, Replay, ToolEffect,
+    ToolReply,
 };
 use crate::{ActionName, OwnerAccess, ScopeKey};
 
@@ -210,7 +211,7 @@ impl McpToolCtx {
 pub struct McpHostToolCall {
     name: String,
     effect: ToolEffect,
-    goal_work: bool,
+    need: OwnerNeed,
 }
 
 impl McpHostToolCall {
@@ -219,29 +220,31 @@ impl McpHostToolCall {
         Self {
             name: name.into(),
             effect,
-            goal_work: false,
+            need: OwnerNeed::Memory,
         }
     }
 
-    /// Declare the tool's writes Goal work: the owner-role gate admits it
-    /// for every member who [works Goals](crate::Role::works_goals) instead
-    /// of asking for Fact write. It widens no memory write: the tool's
-    /// Fact, Perspective and host-state writes keep the caller's ceiling.
+    /// Declare the tool's writes [Goal work](OwnerNeed::GoalWork).
     #[must_use]
     pub const fn with_goal_work(mut self) -> Self {
-        self.goal_work = true;
+        self.need = OwnerNeed::GoalWork;
         self
     }
 
-    /// What a call of this tool asks of the owner it selects: a read for a
-    /// read-only tool, Goal work for a declared Goal work tool that writes,
-    /// otherwise a write.
+    /// What the host declared, for every audience: the host lists its tools
+    /// per caller.
+    #[must_use]
+    pub const fn declaration(&self) -> KeyDeclaration {
+        KeyDeclaration {
+            need: self.need,
+            ..KeyDeclaration::shared(Some(self.effect))
+        }
+    }
+
+    /// What a call of this tool asks of the owner it selects.
     #[must_use]
     pub const fn owner_access(&self) -> OwnerAccess {
-        match OwnerAccess::declared(self.effect.is_read_only()) {
-            OwnerAccess::Write if self.goal_work => OwnerAccess::GoalWork,
-            access => access,
-        }
+        self.declaration().owner_access()
     }
 
     #[must_use]
@@ -321,7 +324,7 @@ impl ScopeGateBehavior {
                 if !capabilities.admits_action(tool_name, &action, declared) {
                     return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
-                OwnerAccess::of_key(tool, Some(action.as_str()), declared.is_read())
+                declared.owner_access()
             }
             Some(descriptor) if !descriptor.argv_action_specs.is_empty() => {
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
@@ -341,7 +344,7 @@ impl ScopeGateBehavior {
                 if !capabilities.admits_action(tool_name, &action_name, declared) {
                     return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
-                OwnerAccess::of_key(tool, Some(action), declared.is_read())
+                declared.owner_access()
             }
             _ => {
                 let declared = Self::flat_declaration(tool, key.as_ref().ok(), descriptor, ctx);
@@ -358,10 +361,7 @@ impl ScopeGateBehavior {
                 if !allowed {
                     return Err(McpToolError::NotAuthorized(tool.to_string()));
                 }
-                match Self::host_call(tool, descriptor, ctx) {
-                    Some(host) => host.owner_access(),
-                    None => OwnerAccess::of_key(tool, None, declared.is_read()),
-                }
+                declared.owner_access()
             }
         };
         let owner = Self::resolve_scope_owner(tool, args, ctx)?;
@@ -474,9 +474,7 @@ impl ScopeGateBehavior {
                 }),
             (_, Some(descriptor)) => descriptor.declaration(None),
             (_, None) => Self::host_call(tool, None, ctx)
-                .map_or(KeyDeclaration::UNDECLARED, |host| {
-                    KeyDeclaration::shared(Some(host.effect))
-                }),
+                .map_or(KeyDeclaration::UNDECLARED, |host| host.declaration()),
         }
     }
 
@@ -1043,6 +1041,41 @@ mod tests {
         );
     }
 
+    /// Setting, modifying and transitioning a Goal are the Goal work
+    /// `core_goal` declares: a viewer member runs those and no other write
+    /// of the tool.
+    #[test]
+    fn core_goal_declares_set_modify_and_transition_goal_work() {
+        let group = OwnerId::from(crate::GroupId::new(uuid::Uuid::now_v7()));
+        let authz = AuthzContext::for_subject_with_role(
+            UserId::new(uuid::Uuid::now_v7()),
+            [(group, crate::Role::viewer())],
+            AuthPath::HostBearer,
+        );
+        let ctx = test_ctx_with_authz(group, authz);
+        let goal = ctx
+            .registry
+            .list_mcp_tools()
+            .iter()
+            .find(|tool| tool.name == protocol_tool::CORE_GOAL)
+            .expect("core_goal is registered");
+        let mut admitted = Vec::new();
+        for (action, _) in goal.actions() {
+            let declared = goal.declaration(Some(action)).owner_access();
+            let runs = ScopeGateBehavior::enforce_scope(
+                protocol_tool::CORE_GOAL,
+                &serde_json::json!({ "action": action }),
+                &ctx,
+            )
+            .is_ok();
+            assert_eq!(runs, declared == OwnerAccess::GoalWork, "{action}");
+            if runs {
+                admitted.push(action);
+            }
+        }
+        assert_eq!(admitted, ["set", "transition", "modify"]);
+    }
+
     /// A host's Goal work declaration turns its write into Goal work and
     /// leaves a read a read.
     #[test]
@@ -1166,7 +1199,7 @@ mod argv_scope_tests {
     use super::ScopeGateBehavior;
     use crate::mcp::{
         McpArgvActionSpec, McpAuthorContext, McpTool, McpToolAudience, McpToolCtx, McpToolError,
-        McpToolErrorKind, Replay, ToolEffect,
+        McpToolErrorKind, OwnerNeed, Replay, ToolEffect,
     };
     use crate::{
         AuthPath, AuthzContext, OwnerId, ScopeKey, SpiiceRegistry, SpiiceServices, ToolScope,
@@ -1205,6 +1238,7 @@ mod argv_scope_tests {
                 argv_prefix: &["approval"],
                 effect: ToolEffect::ReadOnly,
                 audience: McpToolAudience::Shared,
+                need: OwnerNeed::Memory,
                 title: "Test action",
             },
             McpArgvActionSpec {
@@ -1212,6 +1246,15 @@ mod argv_scope_tests {
                 argv_prefix: &["approval", "decide"],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
                 audience: McpToolAudience::Shared,
+                need: OwnerNeed::Memory,
+                title: "Test action",
+            },
+            McpArgvActionSpec {
+                action: "plan",
+                argv_prefix: &["plan"],
+                effect: ToolEffect::Additive(Replay::NonIdempotent),
+                audience: McpToolAudience::Shared,
+                need: OwnerNeed::GoalWork,
                 title: "Test action",
             },
         ];
@@ -1437,6 +1480,13 @@ mod argv_scope_tests {
             matches!(err, McpToolError::NotAuthorized(ref key) if key == ArgvTool::NAME),
             "got {err:?}",
         );
+
+        ScopeGateBehavior::enforce_scope(
+            ArgvTool::NAME,
+            &serde_json::json!({ "argv": ["plan", "--next"] }),
+            &ctx,
+        )
+        .expect("an argv write declared Goal work is callable by a viewer member");
     }
 
     /// The closed set holds at the gate too: argv outside the declared

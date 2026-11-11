@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ProtocolError;
 use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::storage_ports::CitedBlobService;
@@ -180,6 +180,7 @@ impl McpTool for CoreUploadTool {
             required_fields: &["filename", "mime", "byte_len"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "complete",
@@ -188,6 +189,7 @@ impl McpTool for CoreUploadTool {
             required_fields: &["upload_id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "abort",
@@ -196,6 +198,7 @@ impl McpTool for CoreUploadTool {
             required_fields: &["upload_id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
     ];
     type Args = CoreUploadArgs;

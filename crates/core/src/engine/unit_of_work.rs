@@ -1993,7 +1993,8 @@ mod tests {
 
         use super::BeginSpyFactory;
         use crate::mcp::{
-            McpActionArgSpec, McpAuthorContext, McpToolAudience, McpToolCtx, Replay, ToolEffect,
+            McpActionArgSpec, McpAuthorContext, McpToolAudience, McpToolCtx, OwnerNeed, Replay,
+            ToolEffect,
         };
         use crate::spiice::contract::{ProjectionDecl, SpiiceContract, ToolContract};
         use crate::storage_ports::StoragePorts;
@@ -2106,6 +2107,7 @@ mod tests {
                     required_fields: &[],
                     effect: ToolEffect::Destructive(Replay::NonIdempotent),
                     audience: McpToolAudience::Shared,
+                    need: OwnerNeed::Memory,
                     title: "Test action",
                 },
                 McpActionArgSpec {
@@ -2114,6 +2116,7 @@ mod tests {
                     required_fields: &[],
                     effect: ToolEffect::Additive(Replay::NonIdempotent),
                     audience: McpToolAudience::Shared,
+                    need: OwnerNeed::Memory,
                     title: "Test action",
                 },
             ];

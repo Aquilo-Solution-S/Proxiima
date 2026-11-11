@@ -105,8 +105,9 @@ membership, not the write ceiling: every directly authenticated member whose
 role reads Goals works them. A viewer member sets a group Goal and still
 writes none of the group's Facts or Perspectives. Achieving, decomposing and
 sharing a Goal keep the Goal write ceiling, and a forwarded or delegated
-request works Goals only with Goal write. A host tool declared Goal work
-(`McpHostTool::with_goal_work`) passes the owner-role gate by the same rule,
+request works Goals only with Goal write. An action declares Goal work in the
+catalog (`OwnerNeed::GoalWork` on its action spec, `McpHostTool::with_goal_work`
+for a host tool); the owner-role gate and every listing read that declaration,
 and a host-state command declared Goal work (`GoalWorkCommand`) commits on a
 `GoalWorkUnitOfWork` with the Facts it declares for its Goal. Every other
 memory and host-state write keeps the write ceiling. The role representation and its constructors are owned

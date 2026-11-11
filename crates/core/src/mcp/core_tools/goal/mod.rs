@@ -3,7 +3,7 @@ use crate::engine::{
     GoalModifyRequest, GoalTransitionRequest,
 };
 use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
@@ -270,6 +270,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["schema_id", "title", "text"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::GoalWork,
         },
         McpActionArgSpec {
             action: "grant_access",
@@ -285,6 +286,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "subject", "read_ceiling", "write_ceiling"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "revoke_access",
@@ -293,6 +295,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "subject"],
             effect: ToolEffect::Destructive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "publish",
@@ -301,6 +304,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "memory_id", "permitted_use"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "unpublish",
@@ -309,6 +313,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "memory_id"],
             effect: ToolEffect::Destructive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "bind_work",
@@ -317,6 +322,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "series"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "unbind_work",
@@ -325,6 +331,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal_handle", "series"],
             effect: ToolEffect::Destructive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "transition",
@@ -335,6 +342,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal", "transition"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::GoalWork,
         },
         McpActionArgSpec {
             action: "modify",
@@ -354,6 +362,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal", "schema_id", "title", "text"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::GoalWork,
         },
         McpActionArgSpec {
             action: "mark_achieved",
@@ -362,6 +371,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["goal"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "decompose",
@@ -376,6 +386,7 @@ impl McpTool for CoreGoalTool {
             required_fields: &["parent_goal", "children", "idempotency_key"],
             effect: ToolEffect::Additive(Replay::Idempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
     ];
     type Args = CoreGoalArgs;

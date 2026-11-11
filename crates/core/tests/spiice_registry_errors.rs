@@ -3,7 +3,8 @@ use std::sync::Arc;
 use proxiima_core::authz::OwnerResolver;
 use proxiima_core::error::ProtocolError;
 use proxiima_core::mcp::{
-    McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, Replay, ToolEffect,
+    McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed, Replay,
+    ToolEffect,
 };
 use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{
@@ -319,6 +320,7 @@ stub_tool!(
         required_fields: &["value"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -333,6 +335,7 @@ stub_tool!(
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -346,6 +349,7 @@ stub_tool!(
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -360,6 +364,7 @@ stub_tool!(
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -373,6 +378,7 @@ stub_tool!(
         required_fields: &[],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -386,6 +392,7 @@ stub_tool!(
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -400,6 +407,7 @@ stub_tool!(
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
         McpActionArgSpec {
@@ -408,6 +416,7 @@ stub_tool!(
             required_fields: &["id", "note"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
     ]
@@ -422,6 +431,7 @@ stub_tool!(
         required_fields: &["id"],
         effect: ToolEffect::ReadOnly,
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Test action",
     }]
 );
@@ -438,6 +448,7 @@ stub_tool!(
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
         McpActionArgSpec {
@@ -446,6 +457,7 @@ stub_tool!(
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
     ]

@@ -126,6 +126,7 @@ impl proxiima_core::mcp::McpTool for StubDispatchTool {
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
         proxiima_core::mcp::McpActionArgSpec {
@@ -134,6 +135,7 @@ impl proxiima_core::mcp::McpTool for StubDispatchTool {
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -179,6 +181,7 @@ impl proxiima_core::mcp::McpTool for StubArgvTool {
             argv_prefix: &["approval"],
             effect: ToolEffect::ReadOnly,
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
         proxiima_core::mcp::McpArgvActionSpec {
@@ -186,6 +189,7 @@ impl proxiima_core::mcp::McpTool for StubArgvTool {
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
     ];

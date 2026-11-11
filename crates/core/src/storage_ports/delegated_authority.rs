@@ -761,7 +761,8 @@ mod tests {
     use crate::access::AccessKind;
     use crate::error::ErrorCode;
     use crate::mcp::{
-        McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, Replay, ToolEffect,
+        McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed, Replay,
+        ToolEffect,
     };
     use crate::query::QueryRequest;
     use crate::{FactPayload, GroupId, PayloadKeyBuilder, SpiiceRegistry};
@@ -813,6 +814,7 @@ mod tests {
                 required_fields: &[],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
                 audience: McpToolAudience::Shared,
+                need: OwnerNeed::Memory,
                 title: "Test action",
             },
             McpActionArgSpec {
@@ -821,6 +823,7 @@ mod tests {
                 required_fields: &[],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
                 audience: McpToolAudience::Shared,
+                need: OwnerNeed::Memory,
                 title: "Test action",
             },
         ];

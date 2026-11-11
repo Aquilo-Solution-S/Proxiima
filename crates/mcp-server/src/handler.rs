@@ -928,7 +928,7 @@ fn resource_declaration_allowed_for_auth(
             .capabilities()
             .admits(&ScopeKey::Resource(key), declared)
     });
-    in_scope && owner_role_allows(auth, OwnerAccess::declared(declared.is_read()))
+    in_scope && owner_role_allows(auth, declared.owner_access())
 }
 
 pub(crate) fn how_to_allowed_for_auth(auth: Option<&McpAuthContext>) -> bool {
@@ -1156,14 +1156,7 @@ fn tool_owner_role_allows(
     descriptor: &McpToolDescriptor,
     action: Option<&str>,
 ) -> bool {
-    let access = OwnerAccess::of_key(
-        descriptor.name,
-        action,
-        action.map_or_else(
-            || descriptor.is_read_only(),
-            |action| descriptor.action_is_read_only(action),
-        ),
-    );
+    let access = descriptor.declaration(action).owner_access();
     let schema = action.map_or(Some(&descriptor.args_schema), |action| {
         descriptor.action_argument_schema(action)
     });
@@ -1438,6 +1431,7 @@ mod tests {
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
         proxiima_core::mcp::McpActionArgSpec {
@@ -1446,6 +1440,7 @@ mod tests {
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -1458,6 +1453,7 @@ mod tests {
             argv_prefix: &["approval"],
             effect: ToolEffect::ReadOnly,
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
         proxiima_core::mcp::McpArgvActionSpec {
@@ -1465,6 +1461,7 @@ mod tests {
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: proxiima_core::mcp::McpToolAudience::Shared,
+            need: proxiima_core::mcp::OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -2016,6 +2013,7 @@ mod tests {
                     required_fields: &["id"],
                     effect: ToolEffect::Additive(Replay::NonIdempotent),
                     audience: proxiima_core::mcp::McpToolAudience::Shared,
+                    need: proxiima_core::mcp::OwnerNeed::Memory,
                     title: "Test action",
                 },
                 McpActionArgSpec {
@@ -2024,6 +2022,7 @@ mod tests {
                     required_fields: &["id"],
                     effect: ToolEffect::Additive(Replay::NonIdempotent),
                     audience: proxiima_core::mcp::McpToolAudience::Shared,
+                    need: proxiima_core::mcp::OwnerNeed::Memory,
                     title: "Test action",
                 },
             ];
@@ -2467,6 +2466,7 @@ mod tests {
                 argv_prefix: &["approval"],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
                 audience: proxiima_core::mcp::McpToolAudience::Shared,
+                need: proxiima_core::mcp::OwnerNeed::Memory,
                 title: "Test action",
             }];
 

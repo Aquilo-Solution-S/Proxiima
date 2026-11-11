@@ -1,6 +1,6 @@
 use crate::mcp::ToolEffect;
 use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use futures::future::BoxFuture;
@@ -59,6 +59,7 @@ impl McpTool for CoreFactTool {
             required_fields: &["fact"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "facts_citing_object",
@@ -67,6 +68,7 @@ impl McpTool for CoreFactTool {
             required_fields: &["cited_object_id"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
     ];
     type Args = CoreFactArgs;

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
 use proxiima_core::mcp::{
-    JudgedKey, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    JudgedKey, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use proxiima_core::{AuthPath, AuthzContext, ScopeKey, SpiiceRegistry, SpiiceServices, ToolScope};
 use rmcp::service::{RunningService, serve_directly};
@@ -70,6 +70,7 @@ impl McpTool for Dispatch {
             required_fields: &[],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Look",
         },
         McpActionArgSpec {
@@ -78,6 +79,7 @@ impl McpTool for Dispatch {
             required_fields: &[],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Touch",
         },
     ];

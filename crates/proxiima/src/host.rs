@@ -410,7 +410,8 @@ pub use proxiima_core::mcp::{
 /// what an [`McpHostTool`] declares, and [`McpToolAnnotations`] the MCP hints
 /// it projects to.
 pub use proxiima_core::mcp::{
-    KeyDeclaration, McpArgvActionSpec, McpToolAnnotations, McpToolAudience, Replay, ToolEffect,
+    KeyDeclaration, McpArgvActionSpec, McpToolAnnotations, McpToolAudience, OwnerNeed, Replay,
+    ToolEffect,
 };
 /// The request-behavior onion. A behavior wraps [`McpToolCtx`] /
 /// [`McpToolError`]; spiices register one through `proxiima::spiice`.

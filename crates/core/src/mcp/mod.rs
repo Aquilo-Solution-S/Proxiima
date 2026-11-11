@@ -46,7 +46,7 @@ pub use schema::{
 };
 pub use tool::{
     KeyDeclaration, MAX_TITLE_CHARS, McpActionArgSpec, McpArgvActionSpec, McpCallFn, McpTool,
-    McpToolAudience, McpToolDescriptor, McpToolOrigin, McpUnknownFieldPolicy,
+    McpToolAudience, McpToolDescriptor, McpToolOrigin, McpUnknownFieldPolicy, OwnerNeed,
 };
 pub(crate) use tool::{
     prepare_flat_tool_args, resolve_argv_action, title_problem, validate_action_args,

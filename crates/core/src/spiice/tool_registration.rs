@@ -293,7 +293,7 @@ mod action_vocabulary_tests {
 
     use crate::mcp::{
         McpActionArgSpec, McpArgvActionSpec, McpAuthorContext, McpTool, McpToolAudience,
-        McpToolCtx, McpToolError, McpToolErrorKind, Replay, ToolEffect,
+        McpToolCtx, McpToolError, McpToolErrorKind, OwnerNeed, Replay, ToolEffect,
     };
     use crate::{
         AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceRegistryError, SpiiceServices,
@@ -320,6 +320,7 @@ mod action_vocabulary_tests {
             argv_prefix: &["approval"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
         McpArgvActionSpec {
@@ -327,6 +328,7 @@ mod action_vocabulary_tests {
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Owner,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -363,6 +365,7 @@ mod action_vocabulary_tests {
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         }];
         const ARGV_ACTION_SPECS: &'static [McpArgvActionSpec] = &[McpArgvActionSpec {
@@ -370,6 +373,7 @@ mod action_vocabulary_tests {
             argv_prefix: &["look"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         }];
         type Args = ArgvArgs;

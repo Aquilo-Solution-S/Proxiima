@@ -278,8 +278,9 @@ pub use authorized_read::{
 pub use detached::ingest_fact_detached;
 pub use sidecar_heads::sidecar_heads_by_key;
 
-/// Types of the [`Tool::ARGV_ACTION_SPECS`] and [`Tool::AUDIENCE`] consts.
-pub use proxiima_core::mcp::{McpArgvActionSpec, McpToolAudience};
+/// Types of the [`Tool::ARGV_ACTION_SPECS`] and [`Tool::AUDIENCE`] consts,
+/// and of an action spec's `need`.
+pub use proxiima_core::mcp::{McpArgvActionSpec, McpToolAudience, OwnerNeed};
 /// The request-behavior onion [`SpiiceRegistry::add_request_behavior`] takes,
 /// with the reply it passes along ([`ToolReply`]) and the view
 /// [`RequestBehavior::visible`] reads ([`ToolDescriptorView`]). Its transport

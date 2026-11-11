@@ -9,7 +9,7 @@ use crate::engine::GroupMemberPage;
 use crate::error::ProtocolError;
 use crate::mcp::cursor as wire_cursor;
 use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::{GroupId, OwnerId};
@@ -150,6 +150,7 @@ impl McpTool for CoreMembershipTool {
             required_fields: &["group", "member"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "remove_member",
@@ -158,6 +159,7 @@ impl McpTool for CoreMembershipTool {
             required_fields: &["group", "member"],
             effect: ToolEffect::Destructive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
         McpActionArgSpec {
             action: "list_members",
@@ -166,6 +168,7 @@ impl McpTool for CoreMembershipTool {
             required_fields: &["group"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         },
     ];
     type Args = CoreMembershipArgs;

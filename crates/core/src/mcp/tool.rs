@@ -49,14 +49,31 @@ pub enum McpToolAudience {
     Owner,
 }
 
-/// What one scope key declares: what it does and who it is for. The scope
-/// gate, the owner-role gate and every listing judge a key by this one
-/// value ([`CapabilitySet::admits`], [`McpToolDescriptor::declaration`]).
+/// What a key asks of the owner a call selects, beside what it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OwnerNeed {
+    /// Memory access by the key's effect: read for a read, Fact write for
+    /// a write. The default: saying nothing widens nothing.
+    #[default]
+    Memory,
+    /// The key's write is Goal work: every member who
+    /// [works Goals](crate::Role::works_goals) runs and sees it, not only a
+    /// member who writes Facts. It widens no memory write: what the tool
+    /// writes to Facts, Perspectives or host state keeps the caller's
+    /// ceiling. A read stays a read.
+    GoalWork,
+}
+
+/// What one scope key declares: what it does, who it is for and what it
+/// asks of the owner. The scope gate, the owner-role gate and every listing
+/// judge a key by this one value ([`CapabilitySet::admits`],
+/// [`Self::owner_access`], [`McpToolDescriptor::declaration`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyDeclaration {
     /// `None` for a name nothing declares, which every gate reads as a write.
     pub effect: Option<crate::mcp::ToolEffect>,
     pub audience: McpToolAudience,
+    pub need: OwnerNeed,
 }
 
 impl KeyDeclaration {
@@ -69,14 +86,25 @@ impl KeyDeclaration {
         Self {
             effect,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
         }
     }
 
-    /// Whether the owner-role gate asks for read access. Silence is a write.
+    /// Whether the key declares itself a read. Silence is a write.
     #[must_use]
-    pub fn is_read(self) -> bool {
-        self.effect
-            .is_some_and(crate::mcp::ToolEffect::is_read_only)
+    pub const fn is_read(self) -> bool {
+        matches!(self.effect, Some(effect) if effect.is_read_only())
+    }
+
+    /// What a call of this key asks of the owner it selects: the one rule
+    /// the owner-role gate and every listing share.
+    #[must_use]
+    pub const fn owner_access(self) -> crate::OwnerAccess {
+        match (self.is_read(), self.need) {
+            (true, OwnerNeed::Memory | OwnerNeed::GoalWork) => crate::OwnerAccess::Read,
+            (false, OwnerNeed::Memory) => crate::OwnerAccess::Write,
+            (false, OwnerNeed::GoalWork) => crate::OwnerAccess::GoalWork,
+        }
     }
 
     /// Whether this read is declared for every audience. Caller scope
@@ -266,30 +294,33 @@ impl McpToolDescriptor {
             return KeyDeclaration {
                 effect: self.effect,
                 audience: self.audience,
+                need: OwnerNeed::Memory,
             };
         }
         let declared = action.and_then(|action| {
             self.action_arg_specs
                 .iter()
-                .map(|spec| (spec.action, spec.effect, spec.audience))
+                .map(|spec| (spec.action, spec.effect, spec.audience, spec.need))
                 .chain(
                     self.argv_action_specs
                         .iter()
-                        .map(|spec| (spec.action, spec.effect, spec.audience)),
+                        .map(|spec| (spec.action, spec.effect, spec.audience, spec.need)),
                 )
-                .find(|(declared, _, _)| *declared == action)
+                .find(|(declared, ..)| *declared == action)
         });
         match declared {
-            Some((_, effect, audience)) => KeyDeclaration {
+            Some((_, effect, audience, need)) => KeyDeclaration {
                 effect: Some(effect),
                 audience: match self.audience {
                     McpToolAudience::Owner => McpToolAudience::Owner,
                     McpToolAudience::Shared => audience,
                 },
+                need,
             },
             None => KeyDeclaration {
                 effect: None,
                 audience: self.audience,
+                need: OwnerNeed::Memory,
             },
         }
     }
@@ -532,6 +563,8 @@ pub struct McpActionArgSpec {
     pub effect: crate::mcp::ToolEffect,
     /// Who this action is for. See [`McpToolAudience`].
     pub audience: McpToolAudience,
+    /// What this action asks of the owner. See [`OwnerNeed`].
+    pub need: OwnerNeed,
 }
 
 /// One action of an argv-keyed dispatcher: a tool whose arguments are a CLI
@@ -561,6 +594,8 @@ pub struct McpArgvActionSpec {
     pub effect: crate::mcp::ToolEffect,
     /// Who this action is for. See [`McpToolAudience`].
     pub audience: McpToolAudience,
+    /// What this action asks of the owner. See [`OwnerNeed`].
+    pub need: OwnerNeed,
 }
 
 /// Derive the action key of an argv-keyed dispatcher from `args["argv"]` by
@@ -899,7 +934,7 @@ where
 
 #[cfg(test)]
 mod argv_action_tests {
-    use super::{McpArgvActionSpec, McpToolAudience, resolve_argv_action};
+    use super::{McpArgvActionSpec, McpToolAudience, OwnerNeed, resolve_argv_action};
     use crate::mcp::{McpToolError, McpToolErrorKind, Replay, ToolEffect};
 
     /// Two commands sharing a first word, so only longest-prefix matching
@@ -910,6 +945,7 @@ mod argv_action_tests {
             argv_prefix: &["approval"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
         McpArgvActionSpec {
@@ -917,6 +953,7 @@ mod argv_action_tests {
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
     ];

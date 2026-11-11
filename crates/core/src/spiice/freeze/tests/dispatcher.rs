@@ -182,13 +182,14 @@ fn the_descriptor_titles_a_tool_and_each_of_its_actions() {
 /// Each action name of an argv-keyed dispatcher is declared once.
 #[test]
 fn an_argv_action_name_declared_twice_is_refused_at_freeze() {
-    use crate::mcp::{McpArgvActionSpec, McpToolAudience, ToolEffect};
+    use crate::mcp::{McpArgvActionSpec, McpToolAudience, OwnerNeed, ToolEffect};
 
     let spec = |prefix: &'static [&'static str]| McpArgvActionSpec {
         action: "approval",
         argv_prefix: prefix,
         effect: ToolEffect::ReadOnly,
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
         title: "Approve",
     };
     let mut registry = SpiiceRegistry::default();

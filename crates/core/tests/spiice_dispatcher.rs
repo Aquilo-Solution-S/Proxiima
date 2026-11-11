@@ -13,8 +13,8 @@ use std::sync::Arc;
 use futures::future::BoxFuture;
 use proxiima_core::mcp::{
     McpActionArgSpec, McpAuthorContext, McpToolAudience, McpToolCtx, McpToolError, McpToolOrigin,
-    Next, Replay, RequestBehavior, ScopeGateBehavior, TerminalDispatch, ToolCall, ToolEffect,
-    ToolReply,
+    Next, OwnerNeed, Replay, RequestBehavior, ScopeGateBehavior, TerminalDispatch, ToolCall,
+    ToolEffect, ToolReply,
 };
 use proxiima_core::spiice::{ProjectionDecl, SpiiceContract, ToolContract};
 use proxiima_core::{
@@ -66,6 +66,7 @@ impl Tool for DispatchTool {
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
         McpActionArgSpec {
@@ -74,6 +75,7 @@ impl Tool for DispatchTool {
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
             audience: McpToolAudience::Shared,
+            need: OwnerNeed::Memory,
             title: "Test action",
         },
     ];

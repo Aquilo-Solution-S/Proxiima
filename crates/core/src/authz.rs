@@ -379,37 +379,14 @@ impl OwnerScopeState {
 }
 
 /// What a tool call asks of the owner it selects
-/// ([`AuthzContext::may_run_tool`]).
+/// ([`AuthzContext::may_run_tool`]). A key's declaration says which
+/// ([`KeyDeclaration::owner_access`](crate::mcp::KeyDeclaration::owner_access)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnerAccess {
     Read,
     Write,
-    /// Core's `core_goal` set, modify and transition.
+    /// A write declared [Goal work](crate::mcp::OwnerNeed::GoalWork).
     GoalWork,
-}
-
-impl OwnerAccess {
-    /// The access one key asks for: Goal work for core's three Goal work
-    /// actions, otherwise read or write by the key's declaration.
-    #[must_use]
-    pub fn of_key(tool: &str, action: Option<&str>, read_only: bool) -> Self {
-        use crate::protocol::action::{CORE_GOAL_MODIFY, CORE_GOAL_SET, CORE_GOAL_TRANSITION};
-        let key = action.map(|action| (tool, action));
-        if [CORE_GOAL_SET, CORE_GOAL_MODIFY, CORE_GOAL_TRANSITION]
-            .iter()
-            .any(|work| work.split_once(':') == key)
-        {
-            Self::GoalWork
-        } else {
-            Self::declared(read_only)
-        }
-    }
-
-    /// Read or write by a declaration alone: a resource, a host tool.
-    #[must_use]
-    pub const fn declared(read_only: bool) -> Self {
-        if read_only { Self::Read } else { Self::Write }
-    }
 }
 
 /// A host read set (#677), the owner scope its local reads are judged by
@@ -1857,11 +1834,6 @@ mod tests {
 
     #[test]
     fn group_goal_work_follows_membership_not_the_memory_write_ceiling() {
-        use crate::protocol::{action, tool};
-        let key = |key: &'static str, read_only| {
-            let (tool, action) = key.split_once(':').expect("an action key");
-            OwnerAccess::of_key(tool, Some(action), read_only)
-        };
         let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
         let member = |role| {
             AuthzContext::for_subject_with_role(
@@ -1871,19 +1843,8 @@ mod tests {
             )
         };
         let viewer = member(Role::viewer());
-        for work in [
-            action::CORE_GOAL_SET,
-            action::CORE_GOAL_MODIFY,
-            action::CORE_GOAL_TRANSITION,
-        ] {
-            assert_eq!(key(work, false), OwnerAccess::GoalWork);
-            assert!(viewer.may_run_tool(&group, key(work, false)), "{work}");
-        }
-        assert!(!viewer.may_run_tool(&group, key(action::CORE_GOAL_MARK_ACHIEVED, false)));
-        assert!(!viewer.may_run_tool(
-            &group,
-            OwnerAccess::of_key(tool::CORE_REMEMBER, None, false)
-        ));
+        assert!(viewer.may_run_tool(&group, OwnerAccess::GoalWork));
+        assert!(!viewer.may_run_tool(&group, OwnerAccess::Write));
         assert!(!viewer.may_write(&group, AccessKind::Fact));
         assert!(!viewer.may_write(&group, AccessKind::Perspective));
         assert!(member(Role::admin()).may_work_goals(&group));
@@ -2552,8 +2513,8 @@ mod tests {
         let search_key = key(protocol_tool::CORE_SEARCH_MEMORIES);
         let read = KeyDeclaration::shared(Some(ToolEffect::ReadOnly));
         let owner_read = KeyDeclaration {
-            effect: read.effect,
             audience: McpToolAudience::Owner,
+            ..read
         };
         assert!(empty.admits(&search_key, read));
         assert!(empty.admits(&search_key, owner_read));

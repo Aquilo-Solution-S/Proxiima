@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::access::EntityId;
 use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError,
+    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
 };
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 
@@ -52,6 +52,7 @@ impl McpTool for CoreTransferTool {
         required_fields: &["entity", "to_owner"],
         effect: ToolEffect::Destructive(Replay::NonIdempotent),
         audience: McpToolAudience::Shared,
+        need: OwnerNeed::Memory,
     }];
     type Args = CoreTransferArgs;
     type Output = TransferOutput;

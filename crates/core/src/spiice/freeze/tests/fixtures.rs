@@ -300,6 +300,7 @@ pub(super) const FIXTURE_ACTIONS: &[crate::mcp::McpActionArgSpec] =
         required_fields: &[],
         effect: crate::mcp::ToolEffect::ReadOnly,
         audience: crate::mcp::McpToolAudience::Shared,
+        need: crate::mcp::OwnerNeed::Memory,
         title: "Test action",
     }];
 

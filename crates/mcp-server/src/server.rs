@@ -1149,7 +1149,10 @@ mod tests {
     use crate::auth::McpAuthContext;
     use proxiima_core::mcp::core_tools::get_memory::VersionSelector;
     use proxiima_core::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageDirectionArg;
-    use proxiima_core::mcp::{McpAuthorContext, McpHostToolCall, ToolContent};
+    use proxiima_core::mcp::{
+        McpActionArgSpec, McpAuthorContext, McpHostToolCall, McpTool, McpToolAudience, McpToolCtx,
+        OwnerNeed, ToolContent,
+    };
     use proxiima_core::{
         AuthzContext, OwnerId, ScopeKey, ServedSurface, SpiiceRegistry, ToolScope, UserId,
     };
@@ -2134,6 +2137,139 @@ mod tests {
             refused(call("host_goal", member_of(group, None)).await, "host_goal"),
             "a non-member works none of the group's Goals"
         );
+    }
+
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(tag = "action", rename_all = "snake_case")]
+    enum BoardArgs {
+        /// Move a Goal's card.
+        Advance {},
+        /// Pin a note.
+        Note {},
+    }
+
+    #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+    struct BoardOutput {}
+
+    /// A spiice dispatcher with two writes: one declared Goal work, one not.
+    #[derive(Debug)]
+    struct Board;
+
+    impl McpTool for Board {
+        const TITLE: &'static str = "Board";
+        const NAME: &'static str = "plan_board";
+        const DESCRIPTION: &'static str = "Two writes, one of them Goal work.";
+        const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
+            McpActionArgSpec {
+                action: "advance",
+                title: "Advance a card",
+                allowed_fields: &[],
+                required_fields: &[],
+                effect: WRITE,
+                audience: McpToolAudience::Shared,
+                need: OwnerNeed::GoalWork,
+            },
+            McpActionArgSpec {
+                action: "note",
+                title: "Pin a note",
+                allowed_fields: &[],
+                required_fields: &[],
+                effect: WRITE,
+                audience: McpToolAudience::Shared,
+                need: OwnerNeed::Memory,
+            },
+        ];
+        type Args = BoardArgs;
+        type Output = BoardOutput;
+
+        fn call(
+            _: McpToolCtx,
+            _: BoardArgs,
+        ) -> futures_util::future::BoxFuture<'static, Result<BoardOutput, McpToolError>> {
+            Box::pin(async { Ok(BoardOutput {}) })
+        }
+    }
+
+    /// A registered action declared Goal work runs for every member who
+    /// works the group's Goals, and `tools/list` and the catalog show it to
+    /// exactly them. The tool's other write and core's memory writes keep
+    /// asking for Fact write.
+    #[tokio::test]
+    async fn a_declared_goal_work_action_runs_for_every_member_who_works_goals() {
+        use proxiima_core::Role;
+        let mut registry = SpiiceRegistry::new();
+        registry.add_mcp_tool_or_panic_for_tests::<Board>("plan");
+        let server = McpToolHost::from_parts(
+            Arc::new(registry.freeze_or_panic_for_tests()),
+            SpiiceServices::default(),
+        );
+        let board = server
+            .registry()
+            .list_mcp_tools()
+            .iter()
+            .find(|tool| tool.name == Board::NAME)
+            .expect("the board is registered");
+        let group = OwnerId::from(proxiima_core::GroupId::new(uuid::Uuid::now_v7()));
+        let call = |tool: &'static str, args: serde_json::Value, auth: &McpAuthContext| {
+            server.call_tool(tool, args, author(), Some(auth.clone()))
+        };
+
+        for (who, role, advance, note) in [
+            ("a viewer", Some(Role::viewer()), true, false),
+            ("an admin", Some(Role::admin()), true, true),
+            ("an ingest member", Some(Role::ingest()), false, true),
+            ("a non-member", None, false, false),
+        ] {
+            let auth = member_of(group, role);
+            let catalog = server
+                .read_resource("proxiima://tools", author(), Some(auth.clone()))
+                .await
+                .unwrap_or_default();
+            let in_catalog: Vec<&str> = catalog["tools"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|tool| tool["tool_id"] == Board::NAME)
+                .flat_map(|tool| tool["actions"].as_array().expect("actions"))
+                .map(|action| action["action"].as_str().expect("action"))
+                .collect();
+            for (action, admitted) in [("advance", advance), ("note", note)] {
+                let result = call(Board::NAME, serde_json::json!({"action": action}), &auth).await;
+                assert_eq!(result.is_ok(), admitted, "{who} runs {action}: {result:?}");
+                assert!(admitted || refused(result, Board::NAME), "{who}, {action}");
+                assert_eq!(
+                    crate::handler::action_allowed_for_auth(
+                        crate::handler::Caller::new(Some(&auth)),
+                        board,
+                        action
+                    ),
+                    admitted,
+                    "{who} is listed {action}"
+                );
+                assert_eq!(
+                    in_catalog.contains(&action),
+                    admitted,
+                    "{who} finds {action} in the catalog"
+                );
+            }
+        }
+
+        let viewer = member_of(group, Some(Role::viewer()));
+        for (tool, args) in [
+            (
+                "core_remember",
+                serde_json::json!({"title": "t", "text": "x"}),
+            ),
+            (
+                "core_interpret",
+                serde_json::json!({"subjects": [], "text": "x"}),
+            ),
+        ] {
+            assert!(
+                refused(call(tool, args, &viewer).await, tool),
+                "a viewer member writes no memory through {tool}"
+            );
+        }
     }
 
     /// A listed entry cannot replace the effect declaration the gate reads:

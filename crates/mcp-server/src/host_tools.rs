@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use proxiima_core::mcp::{McpToolError, ToolCall, ToolEffect, ToolReply};
-use proxiima_core::{McpHostToolCall, SpiiceServices};
+use proxiima_core::{McpHostToolCall, OwnerNeed, SpiiceServices};
 
 use crate::auth::McpAuthContext;
 
@@ -70,8 +70,8 @@ pub struct McpHostTool {
     /// services already hold (`McpHostToolCall`, a request or boot service) is
     /// an internal error.
     pub services: SpiiceServices,
-    /// The tool's writes are Goal work (see [`Self::with_goal_work`]).
-    pub goal_work: bool,
+    /// What the tool asks of the owner (see [`Self::with_goal_work`]).
+    pub need: OwnerNeed,
 }
 
 impl McpHostTool {
@@ -91,7 +91,7 @@ impl McpHostTool {
             meta: None,
             open_world: None,
             services: SpiiceServices::default(),
-            goal_work: false,
+            need: OwnerNeed::Memory,
         }
     }
 
@@ -123,13 +123,11 @@ impl McpHostTool {
         self
     }
 
-    /// Declare the tool's writes Goal work on the owner a call selects:
-    /// every member who [works Goals](proxiima_core::Role::works_goals) runs
-    /// and sees it, not only a member who writes Facts
-    /// ([`McpHostToolCall::with_goal_work`]). A read-only tool stays a read.
+    /// Declare the tool's writes [Goal work](OwnerNeed::GoalWork) on the
+    /// owner a call selects.
     #[must_use]
     pub const fn with_goal_work(mut self) -> Self {
-        self.goal_work = true;
+        self.need = OwnerNeed::GoalWork;
         self
     }
 
@@ -137,10 +135,9 @@ impl McpHostTool {
     /// every listing read the tool's declaration from it.
     pub(crate) fn call_marker(&self) -> McpHostToolCall {
         let marker = McpHostToolCall::new(self.name.clone(), self.effect);
-        if self.goal_work {
-            marker.with_goal_work()
-        } else {
-            marker
+        match self.need {
+            OwnerNeed::Memory => marker,
+            OwnerNeed::GoalWork => marker.with_goal_work(),
         }
     }
 }
