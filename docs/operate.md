@@ -298,9 +298,11 @@ Neighbor overlap measures the sampled vector index, not usefulness for an
 agent's question. The offline fixture command
 `cargo test -p proxiima-storage-pg --test retrieval_quality --all-features --locked -- --nocapture`
 with the test database configured reports judged Recall@5, MRR, nDCG, coverage
-and latency by owner, encoder, search mode and tag selectivity. Its authored
-text and fixed feature-hash encoders establish a reproducible fixture baseline;
-they do not establish production embedding quality or a deployment threshold.
+and latency by owner, encoder, search mode and tag selectivity, and fails when
+Recall@5, MRR or nDCG of a stratum falls below its floor in the test file. Its
+authored text and fixed feature-hash encoders establish a reproducible fixture
+baseline, so a floor catches a ranking regression on that fixture; they do not
+establish production embedding quality or a deployment threshold.
 
 A store with a [host vector index](host-integration.md#vector-index) keeps no
 local vectors: the recall canary and HNSW tuning apply to the host's index, not

@@ -1,5 +1,7 @@
 //! Offline retrieval evaluation over authored text and explicit judgments.
 //! Fixed feature hashes are fixture encoders, not production embedding models.
+//! A floor in `FLOORS` catches a regression of this pipeline on this fixture;
+//! it is not a statement about production retrieval quality.
 
 #[path = "retrieval_quality/corpus.rs"]
 mod corpus;
@@ -292,8 +294,64 @@ async fn seed_corpus(pg: &PgStorage, owners: &[OwnerId; 2]) -> Result<Corpus, St
     Ok(documents)
 }
 
+/// Per-stratum floors: recall@5, MRR, nDCG@5. Each is the measured value
+/// rounded down to two decimals, so only float noise is tolerated. Latency is
+/// wall-clock and coverage is bounded by recall, so neither has a floor.
+#[rustfmt::skip]
+const FLOORS: [(&str, [f64; 3]); 16] = [
+    ("owner-0/fixture/fnv-trigram-v1/768/hybrid/tag-selective",  [1.00, 1.00, 1.00]),
+    ("owner-0/fixture/fnv-trigram-v1/768/hybrid/unfiltered",     [1.00, 1.00, 1.00]),
+    ("owner-0/fixture/fnv-trigram-v1/768/semantic/tag-selective",[1.00, 1.00, 1.00]),
+    ("owner-0/fixture/fnv-trigram-v1/768/semantic/unfiltered",   [1.00, 1.00, 0.98]),
+    ("owner-0/fixture/fnv-word-v1/384/hybrid/tag-selective",     [1.00, 1.00, 0.98]),
+    ("owner-0/fixture/fnv-word-v1/384/hybrid/unfiltered",        [0.91, 1.00, 0.93]),
+    ("owner-0/fixture/fnv-word-v1/384/semantic/tag-selective",   [1.00, 1.00, 0.98]),
+    ("owner-0/fixture/fnv-word-v1/384/semantic/unfiltered",      [0.91, 1.00, 0.92]),
+    ("owner-1/fixture/fnv-trigram-v1/768/hybrid/tag-selective",  [1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-trigram-v1/768/hybrid/unfiltered",     [1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-trigram-v1/768/semantic/tag-selective",[1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-trigram-v1/768/semantic/unfiltered",   [1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-word-v1/384/hybrid/tag-selective",     [1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-word-v1/384/hybrid/unfiltered",        [1.00, 1.00, 1.00]),
+    ("owner-1/fixture/fnv-word-v1/384/semantic/tag-selective",   [1.00, 0.91, 0.93]),
+    ("owner-1/fixture/fnv-word-v1/384/semantic/unfiltered",      [1.00, 0.91, 0.93]),
+];
+const FLOOR_NOISE: f64 = 1e-9;
+
+fn assert_floors(strata: &BTreeMap<String, Aggregate>) {
+    let mut violations = Vec::new();
+    for (key, aggregate) in strata {
+        let Some((_, floors)) = FLOORS.iter().find(|(floor_key, _)| floor_key == key) else {
+            violations.push(format!("{key}: measured but has no floor"));
+            continue;
+        };
+        for ((metric, measured), floor) in [
+            ("recall@5", aggregate.recall_at_5),
+            ("mrr", aggregate.mrr),
+            ("ndcg@5", aggregate.ndcg_at_5),
+        ]
+        .into_iter()
+        .zip(floors)
+        {
+            if measured < floor - FLOOR_NOISE {
+                violations.push(format!("{key}: {metric} {measured} below floor {floor}"));
+            }
+        }
+    }
+    for (key, _) in FLOORS {
+        if !strata.contains_key(key) {
+            violations.push(format!("{key}: has a floor but the run did not produce it"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "retrieval quality floors violated:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[tokio::test]
-async fn held_out_authored_text_reports_metrics_by_stratum() -> TestResult {
+async fn held_out_authored_text_meets_its_floors_by_stratum() -> TestResult {
     let (pg, _guard) = fresh_pg("retrieval_quality").await;
     let owners = [owner(), owner()];
     let documents = seed_corpus(&pg, &owners).await?;
@@ -389,6 +447,7 @@ async fn held_out_authored_text_reports_metrics_by_stratum() -> TestResult {
             "encoder":"fixed offline word/trigram feature hashes; no training", "production_quality_claim":false,
         })
     );
+    assert_floors(&strata);
     Ok(())
 }
 
