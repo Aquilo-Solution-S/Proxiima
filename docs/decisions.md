@@ -21,7 +21,7 @@ Source: [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/mai
 | Types, defaults, limits | Rustdoc |
 | Tool and resource schemas | Live catalog: `tools/list`, `proxiima://tools`, OpenAPI |
 | Tables | SQL migrations |
-| Core functions, triggers, policies | `crates/storage-pg/definitions/` |
+| Core functions, triggers, policies, views | `crates/storage-pg/definitions/` |
 | Invariants | Lean kernel |
 | Release changes | Release notes and `Upgrade:` footers |
 

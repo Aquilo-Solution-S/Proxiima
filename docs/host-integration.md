@@ -614,7 +614,41 @@ A spiice never queries `proxiima_core` directly, and neither does a host's
 own SQL: core's tables change between releases. A sidecar read through
 `PgSidecarReadCtx` that names the core schema is refused when it runs; any
 other statement is held by review, because linked code is
-[trusted](decisions.md#trust-has-three-separate-statements).
+[trusted](decisions.md#trust-has-three-separate-statements). Everything else
+in `proxiima_core` is internal. What code outside core may name:
+
+| Need | Contract |
+|---|---|
+| Install a memory sidecar from a migration | `proxiima_core.install_sidecar(schema, table, spiice id)`: the foreign key to the memory, the declaration triggers, the surface registration and owner row security, in one call. `class` overrides the row-security class, `memory_key` names a key column other than `t`. Platform scope only; names are plain lower-case identifiers |
+| Owner row security for any other table | `proxiima_core.install_owner_rls_table`, or `install_owner_rls` for a whole schema; `assert_owner_rls_census` closes the migration |
+| Memory rows in a view or trigger function | The view `proxiima_core.memory_version`: `t`, `handle`, `kind`, `owner_id`, `schema_id`, `origins`, `refs`, `forgotten_at`, `head` |
+| Lexical text in a spiice's own query | The pure functions `lexical_scrub`, `lexical_tsv`, `lexical_config`, `lexical_join`, `lexical_text_array` and `memory_entity_kind` |
+| A read on a transaction the caller holds | The functions below, in `proxiima::spiice` |
+
+`memory_version` is read-only: it joins a memory to its series head, so
+PostgreSQL refuses a write through it whatever a role was granted. It runs
+with the caller's row security (`security_invoker`). A forgotten memory is
+hidden outside the lifecycle scope, and `head` is true for the version its
+series points at. A lookup by `t` uses the memory's index. A caller's array
+predicate on `origins` or `refs` does not use their GIN indexes under owner
+row security, on the view or on the table; search goes through
+`core_search_memories`.
+
+The transaction reads take the `Transaction` the caller holds, opened by
+`begin_owner_transaction`, and never open their own. Row security on that
+transaction decides visibility whichever owner the argument names: a
+forgotten memory and another owner's memory are absent.
+
+| Read | Answer |
+|---|---|
+| `memory_versions` | The versions among the given memory ids: series handle, kind, schema, origins, and whether each is its series' head |
+| `series_versions` | Every version of one series |
+| `lock_memory_shared` | One version, share-locked until the transaction ends; an erase or transfer of it waits. The caller needs write authority over the memory's kind |
+| `memories_citing` | Every memory of any kind that cites one object |
+| `cited_objects_present` | The object ids the store records, among those given |
+| `memory_embeddings` | Each embedding space in which a memory has a current vector |
+| `lexical_languages` | The text-search configurations registered in the store |
+| `ingest_receipt` | One Fact admission by source id and ingest key, share-locked |
 
 ## Vector index
 

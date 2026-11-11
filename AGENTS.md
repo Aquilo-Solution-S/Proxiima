@@ -8,8 +8,8 @@ concepts and integration; avoid a second invariant or configuration ledger.
 - The Lean kernel in `docs/lean/Causa/` states principles. Rust code and tests
   define runtime behavior. Change a principle in Lean first; `lake build` and
   `scripts/check-lean-axioms.py` check the kernel, not a Rust refinement proof.
-- Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers
-  and policies: `crates/storage-pg/definitions/`. Settings:
+- Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers,
+  policies and views: `crates/storage-pg/definitions/`. Settings:
   [configuration](docs/configuration.md), checked bidirectionally by
   `scripts/check-settings.py`. Action/resource schemas: the live catalog.
 - Keep work within existing crates/packages. Adding a binary, crate, service,

@@ -120,9 +120,26 @@ edge-writing verb nor a new pin kind. See [concepts](concepts.md#pins).
 
 Add a migration in the spiice's migration directory. Its sidecar has the
 admission key and the payload's typed columns; table shape stays in that
-migration. Declare every table's owner-RLS class using the core installer and
-assert the schema census. The example migration in `spiice_kit_pg.rs` shows the
-installer; the example spiice's `migrations/` directory shows a lane on disk.
+migration. One call installs the sidecar against core, and the migration names
+no core table:
+
+```sql
+CREATE TABLE my_spiice.document_filed_v1 (
+    t uuid PRIMARY KEY,
+    source_path text NOT NULL,
+    title text NOT NULL
+);
+SELECT proxiima_core.install_sidecar('my_spiice', 'document_filed_v1', 'my-spiice');
+SELECT proxiima_core.assert_owner_rls_census('my_spiice');
+```
+
+The installer adds the foreign key to the memory, the declaration triggers,
+the surface registration and owner row security; serving boot refuses a
+sidecar whose triggers differ from its registration. Declare the owner-RLS
+class of every other table with `install_owner_rls_table`, and close the
+migration with the schema census. The example spiice's `fixtures/` directory
+shows a baseline; [the SQL contract](host-integration.md#sql-contract) lists
+what a migration may name.
 
 For a one-row payload, the typed helper connects fields to the sidecar:
 
@@ -292,7 +309,10 @@ and ingest key on a transaction the caller already holds, so a shared lock
 in that transaction covers the read. It share-locks the admission until the
 caller finishes the transaction. It returns the admission id, series handle
 and schema, or absence, and it does not admit a row. Owner row security
-applies, so a forgotten admission stays hidden. `Engine::embedding_job_diagnostics`
+applies, so a forgotten admission stays hidden. The other reads on a caller's
+transaction (versions and heads, a share lock, citers of an object, recorded
+objects, embedding spaces, lexical languages) are listed in
+[the SQL contract](host-integration.md#sql-contract). `Engine::embedding_job_diagnostics`
 returns one row per embedding job of the memories the caller names, at most
 `MAX_EMBEDDING_DIAGNOSTIC_UNITS`. A processing job's state carries its claim
 age from the database clock; pending and failed jobs do not. Coverage
