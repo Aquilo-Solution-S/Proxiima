@@ -45,6 +45,34 @@ pub(crate) const fn verified_algorithms(family: AlgorithmFamily) -> &'static [Al
     }
 }
 
+/// What a token's `typ` header says the token is. The list is closed: a
+/// header naming any other type is refused before a key is resolved, whether
+/// or not the access-token type is required.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenType {
+    /// No `typ`, or the generic `JWT`: the token does not say.
+    Unspecified,
+    /// `at+jwt` or `application/at+jwt`, the RFC 9068 access token.
+    AccessToken,
+}
+
+impl TokenType {
+    fn parse(typ: Option<&str>) -> Result<Self, OidcRejection> {
+        let Some(typ) = typ else {
+            return Ok(Self::Unspecified);
+        };
+        if typ.eq_ignore_ascii_case("JWT") {
+            Ok(Self::Unspecified)
+        } else if typ.eq_ignore_ascii_case("at+jwt")
+            || typ.eq_ignore_ascii_case("application/at+jwt")
+        {
+            Ok(Self::AccessToken)
+        } else {
+            Err(OidcRejection::WrongTokenType)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Claims {
     sub: String,
@@ -104,7 +132,9 @@ pub enum OidcRejection {
     ExpiryOutOfRange,
     #[error("token claims do not match the host's claim type: {0}")]
     CustomClaims(String),
-    #[error("token typ must be at+jwt or application/at+jwt")]
+    /// The `typ` header names something other than an access token, or the
+    /// validator requires `at+jwt` and the header does not say it.
+    #[error("token typ does not name an access token")]
     WrongTokenType,
     /// The binding's [`AuthorizedPartyPolicy`] is set, `aud` names several
     /// audiences and the token has no `azp`.
@@ -194,7 +224,11 @@ impl OidcTokenValidator {
         self
     }
 
-    /// Require the RFC 9068 access-token media type in the JWT header.
+    /// Require the RFC 9068 access-token media type (`at+jwt` or
+    /// `application/at+jwt`) in the JWT header. Turn it on whenever the issuer
+    /// sets it. Without the call a token with no `typ` or the generic `JWT`
+    /// also passes, because many issuers send nothing more specific; a `typ`
+    /// naming any other kind of token is refused either way.
     #[must_use]
     pub fn require_access_token_typ(mut self) -> Self {
         self.require_access_token_typ = true;
@@ -231,6 +265,10 @@ impl OidcTokenValidator {
     ) -> Result<ValidatedOidcToken<C>, OidcRejection> {
         let header = decode_header(token)
             .map_err(|err| OidcRejection::from_jwt(&err, &self.issuer, &self.audience))?;
+        let token_type = TokenType::parse(header.typ.as_deref())?;
+        if self.require_access_token_typ && token_type != TokenType::AccessToken {
+            return Err(OidcRejection::WrongTokenType);
+        }
         let kid = header.kid.ok_or(OidcRejection::MissingKeyId)?;
         let key = self
             .keys
@@ -265,14 +303,6 @@ impl OidcTokenValidator {
 
         let data = decode::<serde_json::Value>(token, &key, &validation)
             .map_err(|err| OidcRejection::from_jwt(&err, &self.issuer, &self.audience))?;
-        if self.require_access_token_typ {
-            let valid = header.typ.as_deref().is_some_and(|typ| {
-                typ.eq_ignore_ascii_case("at+jwt") || typ.eq_ignore_ascii_case("application/at+jwt")
-            });
-            if !valid {
-                return Err(OidcRejection::WrongTokenType);
-            }
-        }
         if let Some(policy) = &self.authorized_party {
             policy.check(&data.claims)?;
         }
@@ -651,13 +681,56 @@ mod tests {
         let keys = test_keys();
         let validator = OidcTokenValidator::new(config(), resolver(KID, keys.decoding.clone()))
             .expect("valid oidc config");
-        for typ in [Some("JWT"), None] {
+        for typ in [
+            None,
+            Some("JWT"),
+            Some("jwt"),
+            Some("at+jwt"),
+            Some("application/at+jwt"),
+        ] {
             let token =
                 token_with_typ(&keys, KID, ISSUER, AUDIENCE, "subject-1", future_exp(), typ);
             validator
                 .validate(&token)
                 .await
                 .expect("default remains compatible");
+        }
+    }
+
+    /// A header that names another kind of token is refused whether or not
+    /// the access-token type is required.
+    #[tokio::test]
+    async fn a_typ_naming_another_kind_of_token_is_refused() {
+        let keys = test_keys();
+        let lenient = OidcTokenValidator::new(config(), resolver(KID, keys.decoding.clone()))
+            .expect("valid oidc config");
+        let strict = OidcTokenValidator::new(config(), resolver(KID, keys.decoding.clone()))
+            .expect("valid oidc config")
+            .require_access_token_typ();
+        for typ in [
+            "id_token+jwt",
+            "logout+jwt",
+            "dpop+jwt",
+            "application/jwt",
+            "at+jwt ",
+            "",
+        ] {
+            let token = token_with_typ(
+                &keys,
+                KID,
+                ISSUER,
+                AUDIENCE,
+                "subject-1",
+                future_exp(),
+                Some(typ),
+            );
+            for validator in [&lenient, &strict] {
+                assert_eq!(
+                    validator.validate_with::<serde_json::Value>(&token).await,
+                    Err(OidcRejection::WrongTokenType),
+                    "typ {typ:?}"
+                );
+            }
         }
     }
 

@@ -90,7 +90,9 @@ pub use proxiima_core::{AccessError, OwnerRoles};
 ///
 /// Variables:
 /// - `PROXIIMA_OIDC_ISSUER` — the issuer URL; presence switches this on.
-/// - `PROXIIMA_OIDC_AUDIENCE` — the audience every token must carry.
+/// - `PROXIIMA_OIDC_AUDIENCE` — the audience every token must carry. It
+///   names this resource server, never an OAuth client id: an issuer puts a
+///   client id into the `aud` of the ID tokens it mints for that client.
 /// - `PROXIIMA_PUBLIC_URL` — this server's own URL, advertised to clients.
 /// - `PROXIIMA_OIDC_SUBJECT_MAP_JSON` — which subject maps to which owner.
 /// - `PROXIIMA_OIDC_JWKS_URI` — optional override; discovered otherwise.
@@ -101,7 +103,9 @@ pub use proxiima_core::{AccessError, OwnerRoles};
 ///   default 10 seconds, maximum 300 seconds.
 /// - `PROXIIMA_OIDC_ALLOWED_SUBJECTS` — optional comma-separated allowlist.
 /// - `PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP` — optional boolean; when
-///   `true`, require JWT `typ` to be `at+jwt` or `application/at+jwt`.
+///   `true`, require JWT `typ` to be `at+jwt` or `application/at+jwt`. Set
+///   it whenever the issuer sends that type (RFC 9068). Otherwise a token
+///   with no `typ` or `JWT` also passes; any other `typ` is always refused.
 ///
 /// # Errors
 ///

@@ -23,8 +23,8 @@ plus a migration pool of the same size during boot; size the server's
 | PROXIIMA_ALLOWED_HOSTS | Host allowlist | non-loopback listener | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_PUBLIC_URL | public OAuth URL | OIDC/public serving | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_OIDC_ISSUER | OIDC issuer | OIDC serving | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_AUDIENCE | token audience | OIDC serving | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require an access-token JWT type | issuers using RFC 9068 | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
+| PROXIIMA_OIDC_AUDIENCE | token audience: this resource server, never an OAuth client id | OIDC serving | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
+| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
 | PROXIIMA_OIDC_JWKS_URI | explicit JWKS endpoint | pinned discovery override | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
 | PROXIIMA_OIDC_JWKS_JSON | pinned JWKS document | issuer network unavailable | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
 | PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS | OIDC request timeout | tune issuer requests | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
