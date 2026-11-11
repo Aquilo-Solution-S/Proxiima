@@ -707,6 +707,14 @@ async fn split_roles(
             .execute(&mut target)
             .await?;
         for schema in &schemas {
+            // The blanket grant below also covers core views, which are read-only.
+            let restrict_core_views = if *schema == "proxiima_core" {
+                "IF to_regprocedure('proxiima_core.restrict_view_grants()') IS NOT NULL THEN
+                       PERFORM proxiima_core.restrict_view_grants();
+                     END IF;"
+            } else {
+                ""
+            };
             let statement = format!(
                 "DO $$ BEGIN
                    IF to_regnamespace('{schema_name}') IS NOT NULL THEN
@@ -714,6 +722,7 @@ async fn split_roles(
                      EXECUTE 'REVOKE CREATE ON SCHEMA {schema} FROM PUBLIC';
                      EXECUTE 'REVOKE CREATE ON SCHEMA {schema} FROM {runtime}';
                      EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {runtime}';
+                     {restrict_core_views}
                      EXECUTE 'GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA {schema} TO {runtime}';
                      EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE {platform} IN SCHEMA {schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {runtime}';
                      EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE {platform} IN SCHEMA {schema} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {runtime}';

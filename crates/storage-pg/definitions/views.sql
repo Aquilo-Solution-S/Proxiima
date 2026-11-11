@@ -18,3 +18,6 @@ SELECT m.t,
   FROM proxiima_core.memory AS m
   LEFT JOIN proxiima_core.memory_head AS h ON h.handle = m.handle AND h.t = m.t;
 COMMENT ON VIEW proxiima_core.memory_version IS 'Memory versions for spiice and host SQL: read-only, under the caller''s row security. head is true for the version its series currently points at (docs/host-integration.md §SQL contract).';
+
+-- Default privileges grant DML on a new view; a view is read-only.
+SELECT proxiima_core.restrict_view_grants();

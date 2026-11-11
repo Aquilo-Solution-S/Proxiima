@@ -28,6 +28,7 @@ struct RelationRow {
     force_row_security: bool,
     schema_create: bool,
     table_truncate: bool,
+    view_write: bool,
     owner_usage: bool,
     owner_set: bool,
     dangerous_set_role: bool,
@@ -347,6 +348,11 @@ async fn relations(
                 c.relforcerowsecurity AS force_row_security,
                 has_schema_privilege(current_user, n.oid, 'CREATE') AS schema_create,
                 has_table_privilege(current_user, c.oid, 'TRUNCATE') AS table_truncate,
+                (c.relkind = 'v' AND n.nspname = 'proxiima_core'
+                 AND (has_any_column_privilege(current_user, c.oid, 'INSERT')
+                      OR has_any_column_privilege(current_user, c.oid, 'UPDATE')
+                      OR has_table_privilege(current_user, c.oid, 'DELETE')
+                      OR has_table_privilege(current_user, c.oid, 'TRUNCATE'))) AS view_write,
                 pg_has_role(current_user, c.relowner, 'USAGE') AS owner_usage,
                 pg_has_role(current_user, c.relowner, 'SET') AS owner_set,
                 EXISTS (
@@ -857,6 +863,12 @@ pub(crate) async fn assert_runtime_rls_on(
         if relation.is_table() && relation.table_truncate {
             return Err(refused(format!(
                 "runtime role can TRUNCATE {relation_name}"
+            )));
+        }
+        if relation.view_write {
+            return Err(refused(format!(
+                "runtime role may write core view {relation_name}: it may only SELECT a core \
+                 view; the platform role runs proxiima_core.restrict_view_grants() to fix it"
             )));
         }
         if relation.owner_usage || relation.owner_set {

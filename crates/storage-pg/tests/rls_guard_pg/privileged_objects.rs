@@ -710,3 +710,293 @@ async fn definer_search_path_refuses_set_only_access_to_a_trusted_schema_owner()
     .await;
     control.close().await;
 }
+
+/// The core view the boot guard watches, and the grant a blanket
+/// `GRANT ... ON ALL TABLES IN SCHEMA proxiima_core` gives the runtime role.
+const CORE_VIEW: &str = "proxiima_core.memory_version";
+
+#[tokio::test]
+async fn runtime_guard_refuses_a_writable_core_view_until_the_grants_are_restricted() {
+    let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
+        super::setup_full_schema().await;
+    let schemas = ["proxiima_core", "proxiima_example"];
+    assert_runtime_rls(&runtime, &schemas).await.unwrap();
+
+    for grant in [
+        "GRANT INSERT ON proxiima_core.memory_version TO",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA proxiima_core TO",
+    ] {
+        execute(
+            &admin,
+            // SQL-POLICY: fixed-fragment — closed grant clauses and a quoted fixture role.
+            &format!("{grant} {}", quoted_ident(&runtime_role)),
+        )
+        .await;
+        let refused = assert_runtime_rls(&runtime, &schemas)
+            .await
+            .expect_err("a core view the runtime role may write must refuse boot")
+            .to_string();
+        assert!(refused.contains(CORE_VIEW), "{refused}");
+        assert!(refused.contains("restrict_view_grants"), "{refused}");
+
+        execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
+        assert_runtime_rls(&runtime, &schemas).await.unwrap();
+    }
+    platform.close().await;
+    runtime.close().await;
+    cleanup(&database, admin, &platform_role, &runtime_role).await;
+}
+
+#[tokio::test]
+async fn runtime_guard_accepts_a_writable_view_outside_the_core_schema() {
+    let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
+        super::setup_full_schema().await;
+    execute(
+        &admin,
+        "CREATE VIEW proxiima_example.writable_probe WITH (security_invoker = true) \
+         AS SELECT owner_id FROM proxiima_core.memory",
+    )
+    .await;
+    execute(
+        &admin,
+        // SQL-POLICY: fixed-fragment — quoted fixture role.
+        &format!(
+            "GRANT ALL ON proxiima_example.writable_probe TO {}",
+            quoted_ident(&runtime_role)
+        ),
+    )
+    .await;
+    execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
+    assert_runtime_rls(&runtime, &["proxiima_core", "proxiima_example"])
+        .await
+        .unwrap();
+    platform.close().await;
+    runtime.close().await;
+    cleanup(&database, admin, &platform_role, &runtime_role).await;
+}
+
+/// (grantee, privilege) rows of the ACL of `view`, PUBLIC spelled out, sorted.
+async fn acl(admin: &PgPool, view: &str) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT COALESCE(r.rolname::text, 'PUBLIC'), a.privilege_type
+           FROM pg_class AS c
+           CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+           LEFT JOIN pg_roles AS r ON r.oid = a.grantee
+          WHERE c.oid = $1::regclass
+          ORDER BY 1, 2",
+    )
+    .bind(view)
+    .fetch_all(admin)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn restricting_view_grants_leaves_select_for_everyone_and_the_owner_untouched() {
+    let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
+        super::setup_full_schema().await;
+    let view = "proxiima_core.restrict_probe";
+    execute(
+        &admin,
+        "CREATE VIEW proxiima_core.restrict_probe AS SELECT 1 AS one",
+    )
+    .await;
+    let (runtime_name, platform_name) = (quoted_ident(&runtime_role), quoted_ident(&platform_role));
+    for grant in [
+        format!("GRANT ALL ON {view} TO PUBLIC, {runtime_name}"),
+        format!("GRANT INSERT ON {view} TO {platform_name}"),
+    ] {
+        // SQL-POLICY: fixed-fragment — quoted fixture roles.
+        execute(&admin, &grant).await;
+    }
+    let owner: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    let before = acl(&admin, view).await;
+    let owner_rows = |rows: &[(String, String)]| -> Vec<(String, String)> {
+        rows.iter().filter(|row| row.0 == owner).cloned().collect()
+    };
+    assert!(!owner_rows(&before).is_empty());
+
+    execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
+    let after = acl(&admin, view).await;
+    let others: Vec<_> = after.iter().filter(|row| row.0 != owner).cloned().collect();
+    let mut expected = vec![
+        ("PUBLIC".to_owned(), "SELECT".to_owned()),
+        (runtime_role.clone(), "SELECT".to_owned()),
+    ];
+    expected.sort();
+    assert_eq!(
+        others, expected,
+        "SELECT only, and the INSERT-only grantee ends with nothing"
+    );
+    assert_eq!(owner_rows(&after), owner_rows(&before));
+
+    execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
+    assert_eq!(
+        acl(&admin, view).await,
+        after,
+        "running it twice changes nothing"
+    );
+    platform.close().await;
+    runtime.close().await;
+    cleanup(&database, admin, &platform_role, &runtime_role).await;
+}
+
+#[tokio::test]
+async fn runtime_guard_refuses_a_column_write_grant_on_a_core_view_until_the_grants_are_restricted()
+{
+    let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
+        super::setup_full_schema().await;
+    let schemas = ["proxiima_core", "proxiima_example"];
+    let view = "proxiima_core.column_grant_probe";
+    let runtime_name = quoted_ident(&runtime_role);
+    execute(
+        &admin,
+        "CREATE VIEW proxiima_core.column_grant_probe WITH (security_invoker = true) \
+         AS SELECT t, schema_id FROM proxiima_core.memory",
+    )
+    .await;
+    execute(
+        &admin,
+        // SQL-POLICY: fixed-fragment — quoted fixture role.
+        &format!("GRANT SELECT ON {view} TO {runtime_name}"),
+    )
+    .await;
+    assert_runtime_rls(&runtime, &schemas).await.unwrap();
+
+    for (privilege, grant) in [
+        ("UPDATE", "GRANT UPDATE (schema_id) ON"),
+        ("INSERT", "GRANT INSERT (schema_id) ON"),
+    ] {
+        execute(
+            &admin,
+            // SQL-POLICY: fixed-fragment — closed grant clauses, fixed view and a quoted fixture role.
+            &format!("{grant} {view} TO {runtime_name}"),
+        )
+        .await;
+        let refused = assert_runtime_rls(&runtime, &schemas)
+            .await
+            .expect_err("a column write grant on a core view must refuse boot")
+            .to_string();
+        assert!(refused.contains(view), "{refused}");
+        assert!(refused.contains("restrict_view_grants"), "{refused}");
+
+        execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
+        assert_runtime_rls(&runtime, &schemas).await.unwrap();
+        let (may_write, may_select): (bool, bool) = sqlx::query_as(
+            "SELECT has_any_column_privilege($1, $2::regclass, $3),
+                    has_table_privilege($1, $2::regclass, 'SELECT')",
+        )
+        .bind(&runtime_role)
+        .bind(view)
+        .bind(privilege)
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+        assert!(!may_write, "{privilege} column grant must be gone");
+        assert!(may_select, "the SELECT grant must stay");
+    }
+    platform.close().await;
+    runtime.close().await;
+    cleanup(&database, admin, &platform_role, &runtime_role).await;
+}
+
+#[tokio::test]
+async fn restricting_view_grants_takes_a_passed_on_grant_with_it_when_run_by_the_view_owner() {
+    let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
+        super::setup_full_schema().await;
+    let view = "proxiima_core.passed_on_probe";
+    let (runtime_name, platform_name) = (quoted_ident(&runtime_role), quoted_ident(&platform_role));
+    let middle = format!("rls_middle_{}", Uuid::now_v7().simple());
+    let middle_name = quoted_ident(&middle);
+
+    execute(
+        &admin,
+        // SQL-POLICY: fixed-fragment — quoted fixture role.
+        &format!("GRANT CREATE ON SCHEMA proxiima_core TO {platform_name}"),
+    )
+    .await;
+    execute(
+        &platform,
+        "CREATE VIEW proxiima_core.passed_on_probe WITH (security_invoker = true) \
+         AS SELECT t, schema_id FROM proxiima_core.memory",
+    )
+    .await;
+    execute(
+        &admin,
+        // SQL-POLICY: fixed-fragment — uniquely generated, quoted fixture role.
+        &format!("CREATE ROLE {middle_name} NOLOGIN"),
+    )
+    .await;
+    execute(
+        &platform,
+        // SQL-POLICY: fixed-fragment — fixed view and quoted fixture roles.
+        &format!("GRANT SELECT ON {view} TO {runtime_name}"),
+    )
+    .await;
+    execute(
+        &platform,
+        // SQL-POLICY: fixed-fragment — fixed view and quoted fixture roles.
+        &format!("GRANT UPDATE ON {view} TO {middle_name} WITH GRANT OPTION"),
+    )
+    .await;
+    execute(
+        &admin,
+        // SQL-POLICY: fixed-fragment — quoted fixture role.
+        &format!("GRANT USAGE ON SCHEMA proxiima_core TO {middle_name}"),
+    )
+    .await;
+    let mut connection = admin.acquire().await.unwrap();
+    for statement in [
+        // SQL-POLICY: fixed-fragment — quoted fixture roles and a fixed view.
+        format!("SET ROLE {middle_name}"),
+        // SQL-POLICY: fixed-fragment — quoted fixture roles and a fixed view.
+        format!("GRANT UPDATE ON {view} TO {runtime_name}"),
+        "RESET ROLE".to_owned(),
+    ] {
+        sqlx::query(AssertSqlSafe(statement))
+            .execute(&mut *connection)
+            .await
+            .unwrap();
+    }
+    drop(connection);
+    let may_update = |role: String| {
+        let admin = admin.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>("SELECT has_table_privilege($1, $2::regclass, 'UPDATE')")
+                .bind(role)
+                .bind(view)
+                .fetch_one(&admin)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(may_update(runtime_role.clone()).await, "fixture: passed on");
+
+    execute(&platform, "SELECT proxiima_core.restrict_view_grants()").await;
+    assert!(!may_update(middle.clone()).await);
+    assert!(!may_update(runtime_role.clone()).await);
+    let may_select: bool =
+        sqlx::query_scalar("SELECT has_table_privilege($1, $2::regclass, 'SELECT')")
+            .bind(&runtime_role)
+            .bind(view)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert!(may_select, "the SELECT grant must stay");
+    platform.close().await;
+    runtime.close().await;
+    cleanup(&database, admin, &platform_role, &runtime_role).await;
+    let control = PgPool::connect(&proxiima_pg_testkit::admin_url())
+        .await
+        .unwrap();
+    execute(
+        &control,
+        // SQL-POLICY: fixed-fragment — uniquely generated, quoted fixture role.
+        &format!("DROP ROLE {middle_name}"),
+    )
+    .await;
+    control.close().await;
+}

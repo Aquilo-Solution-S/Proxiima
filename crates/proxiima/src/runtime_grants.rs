@@ -12,6 +12,7 @@
 //! | 2 | `GRANT USAGE ON SCHEMA s` | each composed schema that exists |
 //! | 3 | `REVOKE CREATE ON SCHEMA s FROM PUBLIC` / `FROM runtime` | " |
 //! | 4 | `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA s` | " |
+//! | 4b | `SELECT proxiima_core.restrict_view_grants()` | `proxiima_core` only: its views stay `SELECT`-only |
 //! | 5 | `GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA s` | " |
 //! | 6 | `ALTER DEFAULT PRIVILEGES IN SCHEMA s GRANT` (4) `ON TABLES` / (5) `ON SEQUENCES` | " — objects the platform role creates later |
 //! | 7 | `GRANT USAGE ON SCHEMA l` | a ledger's schema that is not composed (`public`), when runtime lacks `USAGE` |
@@ -21,8 +22,8 @@
 //! Never granted: `TRUNCATE`, `REFERENCES`, `TRIGGER`, `CREATE`, ownership,
 //! role membership; no DML on `public` beyond the ledgers' `SELECT` (host
 //! tables may live there). All statements are `GRANT` / `REVOKE` /
-//! `ALTER DEFAULT PRIVILEGES`: idempotent. Every identifier is
-//! [`quote_ident`]ed.
+//! `ALTER DEFAULT PRIVILEGES`, or the view restriction, which only revokes:
+//! idempotent. Every identifier is [`quote_ident`]ed.
 //!
 //! Not issued: `GRANT SET ON PARAMETER app.proxiima_scope` — superuser-only,
 //! and unused by this release (the scope is bound transaction-locally).
@@ -43,6 +44,9 @@ use crate::runtime_config::cause_with;
 /// `pg_advisory_xact_lock` key owned by this step: ASCII `proxgrnt`, beside
 /// storage's `proxembm` / `proxretn` maintenance keys.
 const RUNTIME_GRANTS_LOCK_KEY: i64 = i64::from_be_bytes(*b"proxgrnt");
+
+/// The schema whose views are read-only for the runtime role.
+const CORE_SCHEMA: &str = "proxiima_core";
 
 /// A validated runtime-grant plan: whom to grant, over which candidate
 /// schemas and ledgers. Candidates that do not exist are skipped at apply.
@@ -320,6 +324,16 @@ fn grant_statements(
                      TO {runtime}"
                 ),
             ),
+        ]);
+        if name == CORE_SCHEMA {
+            // The blanket grant above also covers core views, which are read-only.
+            statements.push(GrantStatement::new(
+                "RESTRICT core view grants",
+                name,
+                "SELECT proxiima_core.restrict_view_grants()".to_owned(),
+            ));
+        }
+        statements.extend([
             GrantStatement::new(
                 "GRANT ON ALL SEQUENCES",
                 name,
@@ -477,6 +491,25 @@ mod tests {
         assert!(sql.contains(
             &"GRANT SELECT ON \"public\".\"_sqlx_migrations_proxiima_fixture\" TO \"runtime\""
         ));
+    }
+
+    #[test]
+    fn core_views_are_restricted_right_after_the_core_blanket_grant_and_only_there() {
+        let statements = grant_statements("runtime", &owned(&["proxiima_core", "proxiima_x"]), &[]);
+        let issued = sql(&statements);
+        let restrict = "SELECT proxiima_core.restrict_view_grants()";
+        assert_eq!(issued.iter().filter(|s| **s == restrict).count(), 1);
+        let blanket = issued
+            .iter()
+            .position(|s| s.contains("ALL TABLES IN SCHEMA \"proxiima_core\""))
+            .expect("core blanket grant");
+        assert_eq!(issued[blanket + 1], restrict);
+        let without_core = grant_statements("runtime", &owned(&["proxiima_x"]), &[]);
+        assert!(
+            sql(&without_core)
+                .iter()
+                .all(|s| !s.contains("restrict_view_grants"))
+        );
     }
 
     #[test]

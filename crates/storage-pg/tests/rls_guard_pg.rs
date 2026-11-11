@@ -477,6 +477,8 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
         ),
     )
     .await;
+    // The blanket grant covers core views too, which the runtime role may only read.
+    execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;
     let scope_grant: bool =
         sqlx::query_scalar("SELECT has_parameter_privilege($1, 'app.proxiima_scope', 'SET')")
             .bind(&platform)

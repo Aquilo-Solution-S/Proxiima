@@ -84,6 +84,10 @@ BEGIN
         EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO proxiima_runtime', object.nspname);
         EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO proxiima_runtime', object.nspname);
     END LOOP;
+    -- The blanket grants above also cover core views, which are read-only.
+    IF to_regprocedure('proxiima_core.restrict_view_grants()') IS NOT NULL THEN
+        PERFORM proxiima_core.restrict_view_grants();
+    END IF;
     -- Transfer tables before their owned sequences.
     FOR object IN SELECT n.nspname, c.relname, c.relkind FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace

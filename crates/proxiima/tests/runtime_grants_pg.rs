@@ -252,6 +252,14 @@ async fn assert_runtime_privileges(fixture: &Fixture) {
     .expect("table privilege census");
     assert_eq!(missing_dml, 0, "every composed table needs runtime DML");
     assert_eq!(escalating, 0, "no TRUNCATE/REFERENCES/TRIGGER for runtime");
+    let core_view = "proxiima_core.memory_version";
+    assert!(has(admin, Probe::Table, runtime, core_view, "SELECT").await);
+    for privilege in ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
+        assert!(
+            !has(admin, Probe::Table, runtime, core_view, privilege).await,
+            "runtime must not {privilege} the core view {core_view}"
+        );
+    }
     let (memberships, owned): (i64, i64) = sqlx::query_as(
         "SELECT
            (SELECT count(*) FROM pg_auth_members WHERE member = $1::regrole),

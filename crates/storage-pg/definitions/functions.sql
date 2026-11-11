@@ -1919,6 +1919,53 @@ $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) FROM PUBLIC;
 COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
 
+-- A core view is read-only for every role but its owner. Blanket grants and
+-- default privileges on a schema's tables also cover its views, so whatever
+-- grants them (the views definitions, the runtime grant step, an operator's
+-- GRANT ... ON ALL TABLES) calls this afterwards. SELECT grants stay; column
+-- grants are covered, and grants a grantee passed on go with it.
+CREATE OR REPLACE FUNCTION proxiima_core.restrict_view_grants()
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    found record;
+BEGIN
+    FOR found IN
+        SELECT DISTINCT c.oid::regclass AS view_name, g.grantee
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL (
+              SELECT a.grantee, a.privilege_type
+                FROM aclexplode(c.relacl) AS a
+              UNION ALL
+              SELECT a.grantee, a.privilege_type
+                FROM pg_attribute AS col
+                CROSS JOIN LATERAL aclexplode(col.attacl) AS a
+               WHERE col.attrelid = c.oid
+                 AND col.attnum > 0
+                 AND NOT col.attisdropped
+                 AND col.attacl IS NOT NULL
+          ) AS g
+         WHERE n.nspname = 'proxiima_core'
+           AND c.relkind = 'v'
+           AND g.grantee <> c.relowner
+           AND g.privilege_type <> 'SELECT'
+    LOOP
+        IF found.grantee = 0 THEN
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON %s FROM PUBLIC CASCADE',
+                           found.view_name);
+        ELSE
+            EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON %s FROM %I CASCADE',
+                           found.view_name, (SELECT r.rolname FROM pg_roles AS r WHERE r.oid = found.grantee));
+        END IF;
+    END LOOP;
+END
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.restrict_view_grants() FROM PUBLIC;
+COMMENT ON FUNCTION proxiima_core.restrict_view_grants() IS 'Revokes every privilege but SELECT on every view of proxiima_core from every role other than the view owner, PUBLIC included; column grants and grants a grantee passed on go too. Run by the platform role after any blanket grant on the schema''s tables; the runtime boot guard refuses a core view the runtime role may write (docs/host-integration.md §SQL contract).';
+
 -- Host only: record the Follows tables of the schemas this binary composes
 -- and install their owner RLS. The host calls it from its Rust registry
 -- (pg_sidecar!(owner: follows)) in the migration lane: once before the

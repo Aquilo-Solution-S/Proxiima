@@ -166,6 +166,34 @@ async fn no_write_goes_through_the_view() {
     assert_eq!(schema, "core/test-fact-v1", "the memory row is untouched");
 }
 
+#[tokio::test]
+async fn the_serving_role_may_only_select_the_view() {
+    let w = world("memory_version_view_grants").await;
+    let mut tx = w.tx(w.owner).await;
+    let mut held = Vec::new();
+    for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
+        let has: bool = sqlx::query_scalar(
+            "SELECT has_table_privilege(current_user, 'proxiima_core.memory_version', $1)",
+        )
+        .bind(privilege)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        held.push((privilege, has));
+    }
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        held,
+        [
+            ("SELECT", true),
+            ("INSERT", false),
+            ("UPDATE", false),
+            ("DELETE", false),
+            ("TRUNCATE", false),
+        ]
+    );
+}
+
 /// Every plan node under `plan`, depth first.
 fn plan_nodes<'a>(plan: &'a Value, out: &mut Vec<&'a Value>) {
     out.push(plan);

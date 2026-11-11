@@ -626,7 +626,9 @@ in `proxiima_core` is internal. What code outside core may name:
 | A read on a transaction the caller holds | The functions below, in `proxiima::spiice` |
 
 `memory_version` is read-only: it joins a memory to its series head, so
-PostgreSQL refuses a write through it whatever a role was granted. It runs
+PostgreSQL refuses a write through it whatever a role was granted. The serving
+role is granted `SELECT` only on a core view, and boot refuses a core view it
+could write. It runs
 with the caller's row security (`security_invoker`). A forgotten memory is
 hidden outside the lifecycle scope, and `head` is true for the version its
 series points at. A lookup by `t` uses the memory's index. A caller's array

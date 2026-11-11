@@ -19,6 +19,12 @@ The boot RLS guard covers composed schemas and schemas recorded in
 The platform connection reads that catalog; the runtime connection is checked
 against the combined inventory.
 
+The serving role holds `SELECT` only on a view of `proxiima_core`, and the
+runtime guard refuses a core view it may write. An operator who grants on all
+tables of `proxiima_core` after a migration runs
+`SELECT proxiima_core.restrict_view_grants()` as the platform role, or enables
+`PROXIIMA_RUNTIME_GRANTS`, which does it.
+
 `DATABASE_URL`, `PROXIIMA_PLATFORM_DATABASE_URL`, and the host-assigned
 `PROXIIMA_STORE_NUMBER` are required for the canonical host. Provision the
 platform role as the schema/migration owner and
