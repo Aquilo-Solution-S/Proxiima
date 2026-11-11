@@ -45,7 +45,7 @@ impl UploadRow {
     }
 }
 
-pub(super) use proxiima_storage_pg::access::owner_columns::UploadStatus;
+pub(super) use proxiima_storage_pg::access::upload_completion::UploadStatus;
 
 /// A stored bigint length as the length it is. A negative one is a corrupt row, refused where
 /// it is read rather than replaced by a length nobody stored.
@@ -186,7 +186,7 @@ pub(super) async fn mark_upload_expired_on_connection(
     if expired != 1 {
         return Ok((UploadStatus::Pending, Vec::new()));
     }
-    let owed = proxiima_storage_pg::access::owner_columns::owe_terminal_upload_keys_tx(
+    let owed = proxiima_storage_pg::access::upload_keys::owe_terminal_upload_keys_tx(
         tx, store, owner, upload_id,
     )
     .await

@@ -243,8 +243,7 @@ async fn enqueue_modelled_producer(
     preserved_time: Option<time::OffsetDateTime>,
 ) -> TestResult<time::OffsetDateTime> {
     let mut tx = pool.begin().await?;
-    proxiima_storage_pg::access::owner_columns::lock_object_keys_tx(&mut tx, &[key.to_owned()])
-        .await?;
+    proxiima_storage_pg::access::fences::lock_object_keys_tx(&mut tx, &[key.to_owned()]).await?;
     // Match the production missing-owner stage enqueue under its key fence.
     // Explicit SQL is the producer model, not a call to the stage API. The
     // optional preserved timestamp is an adversarial test-only control.

@@ -129,7 +129,7 @@ pub(super) async fn register_abandoned_group(
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
         .execute(&mut *register)
         .await?;
-    proxiima_storage_pg::access::owner_columns::register_group(&mut register, group).await?;
+    proxiima_storage_pg::access::owner_registry::register_group(&mut register, group).await?;
     register.commit().await?;
     platform.close().await;
     Ok(())

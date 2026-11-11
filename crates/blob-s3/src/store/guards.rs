@@ -39,7 +39,7 @@ pub(super) async fn lock_owner_fence(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     owner: &OwnerId,
 ) -> Result<(), BlobError> {
-    proxiima_storage_pg::access::owner_columns::lock_owner_fence_shared_tx(tx, owner)
+    proxiima_storage_pg::access::fences::lock_owner_fence_shared_tx(tx, owner)
         .await
         .map_err(|err| BlobError::State(format!("lock upload owner fence: {err}")))
 }
@@ -52,7 +52,7 @@ pub(super) async fn lock_fence_and_keys(
     keys: &[String],
 ) -> Result<(), BlobError> {
     lock_owner_fence(tx, owner).await?;
-    proxiima_storage_pg::access::owner_columns::lock_object_keys_tx(tx, keys)
+    proxiima_storage_pg::access::fences::lock_object_keys_tx(tx, keys)
         .await
         .map_err(|err| BlobError::State(format!("lock upload object key: {err}")))
 }

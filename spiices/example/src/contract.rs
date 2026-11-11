@@ -137,7 +137,7 @@ const SEALED_STAMP_V1: SchemaContract = SchemaContract {
                 at: "core/src/engine/access_admin.rs::Engine::transfer_to_owner",
             },
             Enforcement::StorageBackstop {
-                at: "storage-pg/src/access/owner_columns.rs::transfer_to_owner",
+                at: "storage-pg/src/access/transfer.rs::transfer_to_owner",
             },
         ],
     },

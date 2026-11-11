@@ -615,7 +615,7 @@ pub use proxiima_storage_pg::PgHostStateEraseContext;
 pub use proxiima_storage_pg::PgStorage;
 /// Trusted host owner registration on its platform transaction. This performs
 /// no authorization or transaction control; the host vouches for the write.
-pub use proxiima_storage_pg::access::owner_columns::ensure_owner_row;
+pub use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
 /// Begin a transaction under the caller's [`OwnerScope`], with the pool
 /// [`ProxiimaHost::clone_pool_for_host`] hands out.
 ///

@@ -4,7 +4,7 @@
 //! case by case. It pins that the declaration-driven transfer agrees with the
 //! pinned baseline — every relation holding the same multiset of rows, every
 //! baseline column of every row equal — over a corpus that touches every table
-//! `owner_columns.rs`'s transfer path names. Post-baseline columns are omitted
+//! `access/transfer.rs`'s transfer path names. Post-baseline columns are omitted
 //! only beside a dedicated assertion of the new invariant.
 //!
 //! The goldens were produced by running the shared half of this file verbatim

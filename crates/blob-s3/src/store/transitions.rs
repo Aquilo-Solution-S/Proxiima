@@ -58,7 +58,7 @@ pub(super) fn stage_locator_decision(
 }
 
 #[cfg(test)]
-pub(super) use proxiima_storage_pg::access::owner_columns::FinishTransitionDecision;
+pub(super) use proxiima_storage_pg::access::upload_completion::FinishTransitionDecision;
 
 #[cfg(test)]
 /// Shared publication classification, mapped into the blob error vocabulary.
@@ -68,7 +68,7 @@ pub(super) fn finish_transition_decision(
     cited_object_id: Uuid,
     rows_affected: u64,
 ) -> Result<FinishTransitionDecision, BlobError> {
-    proxiima_storage_pg::access::owner_columns::finish_transition_decision(
+    proxiima_storage_pg::access::upload_completion::finish_transition_decision(
         observed_status,
         observed_cited_object_id,
         cited_object_id,

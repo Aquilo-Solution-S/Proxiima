@@ -243,7 +243,7 @@ pub use proxiima_core::{MAX_QUERY_CHARS, MAX_TEXT_CAP_CHARS, reject_zero_limit};
 ///
 /// [`SpiiceContract::scopes`]: proxiima_core::SpiiceContract::scopes
 pub use proxiima_core::{ScopeDecl, ScopeKind, ScopeRef};
-pub use proxiima_storage_pg::access::owner_columns::{
+pub use proxiima_storage_pg::access::fences::{
     lock_scope_fence_exclusive_tx, lock_scope_fence_shared_tx,
 };
 /// Read one Fact receipt on the caller's transaction. See [`ingest_receipt`].

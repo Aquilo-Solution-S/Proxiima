@@ -258,8 +258,8 @@ pub(crate) async fn prepare_goal_write(
     // Goal admission takes the owner fence before owner-row arbitration. An
     // absent destination owner must never be inserted while a transfer holds
     // its exclusive fence and then wait on that fence with an uncommitted row.
-    crate::access::owner_columns::lock_owner_fence_shared_tx(tx, owner).await?;
-    let owner_id = crate::access::owner_columns::ensure_owner_row(tx.as_mut(), owner).await?;
+    crate::access::fences::lock_owner_fence_shared_tx(tx, owner).await?;
+    let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
     // The fence is held for the entire transaction. An owner erase therefore
     // either waits for this complete Goal (including lifecycle Facts) or
     // observes it in exact-scope revalidation.
@@ -343,7 +343,7 @@ async fn lock_and_validate_prepared_goal_write(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedGoalWrite,
 ) -> Result<(), StorageError> {
-    crate::access::owner_columns::lock_owner_fence_shared_tx(tx, &prepared.owner).await?;
+    crate::access::fences::lock_owner_fence_shared_tx(tx, &prepared.owner).await?;
     let handles = prepared
         .lifecycle_identities()
         .map(|identity| identity.handle)
@@ -535,7 +535,7 @@ pub(crate) async fn lock_prepared_goal_writes(
             GoalWritePreparation::Replay(_) => None,
         })
         .collect::<Vec<_>>();
-    crate::access::owner_columns::lock_owner_fences_shared_tx(tx, &owners).await?;
+    crate::access::fences::lock_owner_fences_shared_tx(tx, &owners).await?;
     let mut handles = Vec::new();
     let mut targets = Vec::new();
     for item in prepared {

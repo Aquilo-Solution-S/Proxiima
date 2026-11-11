@@ -731,7 +731,7 @@ fn substring_leg_sql_parts(
 /// two-column index. The two columns cannot disagree: the projection row is
 /// FK'd to `memory (t) ON DELETE CASCADE`, so it never outlives its
 /// admission, and owner transfer rewrites both in one transaction
-/// (`access::owner_columns`, driven by the projection surface's declared
+/// (`access::transfer`, driven by the projection surface's declared
 /// `TransferLeg::Rehomed` like every other followed table).
 ///
 /// And there is no sidecar join at all. `{sidecar}` is a per-SCHEMA value;

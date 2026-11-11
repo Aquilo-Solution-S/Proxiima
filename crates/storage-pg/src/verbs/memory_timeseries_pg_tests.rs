@@ -7,7 +7,7 @@
 )]
 
 use crate::PgStorage;
-use crate::access::owner_columns::{ensure_owner_row, register_group};
+use crate::access::owner_registry::{ensure_owner_row, register_group};
 use crate::test_fixtures::{TestMemory, create_core_db};
 use crate::verbs::forget::{lock_lifecycle_targets_tx, lock_memory_handles_tx};
 use crate::verbs::memory_timeseries::{read_memory_by_t, read_memory_head};

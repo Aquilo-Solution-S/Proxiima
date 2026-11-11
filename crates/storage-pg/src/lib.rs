@@ -80,17 +80,6 @@ mod write_wake;
 /// Stable, discoverable re-export of the exported `OwnerAccessPort` adapter
 /// (see [`access::PgOwnerAccessResolver`]) for embedding hosts.
 pub use access::PgOwnerAccessResolver;
-/// Owner-registry and membership writes on a caller's platform transaction.
-/// No authorization runs, the authorization hooks included: the host vouches
-/// for these writes as for its own rows. No transaction control, scope setting or retry runs; the caller
-/// retries its whole transaction. All effects follow from committed rows.
-pub use access::owner_columns::{
-    MembershipAddOutcome, add_group_member_on_connection as add_group_member,
-    bootstrap_group_admin_on_connection as bootstrap_group_admin, register_group,
-    remove_group_member_on_connection as remove_group_member,
-    remove_group_member_relation_on_connection as remove_group_member_relation,
-    replace_group_member_relation_on_connection as replace_group_member_relation,
-};
 /// Authority facts protected through a caller-owned platform transaction.
 pub use access::{
     AuthorityTargets, DirectGroupMembership, DirectUserMembership, GroupContainment,
@@ -99,6 +88,20 @@ pub use access::{
 /// Membership and role probes on a caller's connection (see [`access::roles_for_subject`]):
 /// what the resolver answers, for a host that already holds a transaction.
 pub use access::{direct_group_relations, group_parent, group_role, roles_for_subject};
+/// Owner-registry and membership writes on a caller's platform transaction.
+/// No authorization runs, the authorization hooks included: the host vouches
+/// for these writes as for its own rows. No transaction control, scope setting or retry runs; the caller
+/// retries its whole transaction. All effects follow from committed rows.
+pub use access::{
+    owner_columns::{
+        MembershipAddOutcome, add_group_member_on_connection as add_group_member,
+        bootstrap_group_admin_on_connection as bootstrap_group_admin,
+        remove_group_member_on_connection as remove_group_member,
+        remove_group_member_relation_on_connection as remove_group_member_relation,
+        replace_group_member_relation_on_connection as replace_group_member_relation,
+    },
+    owner_registry::register_group,
+};
 pub use delegated_authority::PgDelegationStore;
 pub use owner_scope::begin_owner_transaction;
 pub use platform_scope::{PgPlatformScope, begin_migration_transaction};
@@ -760,7 +763,7 @@ impl PgHostStateEraseContext {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         owner: &proxiima_core::OwnerId,
     ) -> Result<(), StorageError> {
-        crate::access::owner_columns::lock_owner_fence_exclusive_tx(tx, owner).await
+        crate::access::fences::lock_owner_fence_exclusive_tx(tx, owner).await
     }
 
     /// Explicit fixture constructor for registries without lifecycle-owned

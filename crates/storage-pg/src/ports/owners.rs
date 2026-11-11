@@ -336,7 +336,7 @@ impl OwnerTransferPort for PgStorage {
                 "transfer destination lacks engine consent".into(),
             ));
         }
-        access::owner_columns::transfer_to_owner(
+        access::transfer::transfer_to_owner(
             &self.pool,
             &self.platform_scope,
             permit,
@@ -416,8 +416,8 @@ impl RetentionPort for PgStorage {
         .await?;
         let result = async {
             if keep_days.is_some() {
-                access::owner_columns::lock_owner_fence_shared_tx(&mut tx, permit.owner()).await?;
-                access::owner_columns::ensure_owner_row(tx.as_mut(), permit.owner()).await?;
+                access::fences::lock_owner_fence_shared_tx(&mut tx, permit.owner()).await?;
+                access::owner_registry::ensure_owner_row(tx.as_mut(), permit.owner()).await?;
             }
             verbs::retention::set_retention(tx.as_mut(), permit, schema, keep_days).await
         }

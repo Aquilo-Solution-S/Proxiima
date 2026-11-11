@@ -186,7 +186,7 @@ async fn connection_membership_write_keeps_user_registry_constraint() {
     let group = GroupId::new(user_id.into_inner());
     let scope = platform_scope(&db).await;
     let mut tx = scope.begin().await.expect("platform transaction");
-    proxiima_storage_pg::access::owner_columns::ensure_owner_row(&mut tx, &OwnerId::from(user_id))
+    proxiima_storage_pg::access::owner_registry::ensure_owner_row(&mut tx, &OwnerId::from(user_id))
         .await
         .expect("register personal owner");
     tx.commit().await.expect("commit personal owner");
@@ -335,8 +335,11 @@ async fn direct_group_relations_read_the_callers_rows_without_a_fence() -> TestR
     let bystander = UserId::new(Uuid::now_v7());
     let mut tx = scope.begin().await?;
     for user in [person, bystander] {
-        proxiima_storage_pg::access::owner_columns::ensure_owner_row(&mut tx, &OwnerId::from(user))
-            .await?;
+        proxiima_storage_pg::access::owner_registry::ensure_owner_row(
+            &mut tx,
+            &OwnerId::from(user),
+        )
+        .await?;
     }
     proxiima::register_group(&mut tx, parent).await?;
     proxiima::register_group(&mut tx, child).await?;
@@ -540,7 +543,7 @@ async fn authority_reads_direct_relations_and_inherited_roles_on_the_borrowed_tr
     for group in groups {
         proxiima::register_group(&mut tx, group).await?;
     }
-    proxiima_storage_pg::access::owner_columns::ensure_owner_row(&mut tx, &OwnerId::from(person))
+    proxiima_storage_pg::access::owner_registry::ensure_owner_row(&mut tx, &OwnerId::from(person))
         .await?;
     for (group, member, relation) in [
         (root, middle.into(), Relation::Viewer),
@@ -899,7 +902,7 @@ async fn authority_refuses_foreign_transactions_fixed_snapshots_and_undeclared_t
     let registered_person = UserId::new(Uuid::now_v7());
     let mut setup = scope.begin().await?;
     proxiima::register_group(&mut setup, registered_group).await?;
-    proxiima_storage_pg::access::owner_columns::ensure_owner_row(
+    proxiima_storage_pg::access::owner_registry::ensure_owner_row(
         &mut setup,
         &OwnerId::from(registered_person),
     )

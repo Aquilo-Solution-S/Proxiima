@@ -716,7 +716,7 @@ async fn insert_note_row(
     t: Uuid,
 ) -> Result<(), sqlx::Error> {
     let owner_id = owner.into_inner();
-    proxiima_storage_pg::access::owner_columns::ensure_owner_row(tx, &owner)
+    proxiima_storage_pg::access::owner_registry::ensure_owner_row(tx, &owner)
         .await
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     let handle = Uuid::now_v7();

@@ -388,8 +388,7 @@ async fn series_erase_includes_hot_append_that_wins_the_handle_lock_first() {
         let mut append_holder = pool.begin().await?;
         // An admission holds its owner's fence before it takes a handle, so
         // the holder does too: the erase queues at the owner fence.
-        crate::access::owner_columns::lock_owner_fence_shared_tx(&mut append_holder, &owner)
-            .await?;
+        crate::access::fences::lock_owner_fence_shared_tx(&mut append_holder, &owner).await?;
         lock_memory_handles_tx(&mut append_holder, &[first.handle]).await?;
         let erase_pool = pool.clone();
         let erase_owner = owner;
@@ -634,8 +633,7 @@ async fn series_erase_linearizes_with_fully_forgotten_series() {
         let mut append_holder = pool.begin().await?;
         // An admission holds its owner's fence before it takes a handle, so
         // the holder does too: the erase queues at the owner fence.
-        crate::access::owner_columns::lock_owner_fence_shared_tx(&mut append_holder, &owner)
-            .await?;
+        crate::access::fences::lock_owner_fence_shared_tx(&mut append_holder, &owner).await?;
         lock_memory_handles_tx(&mut append_holder, &[first.handle]).await?;
         let erase_pool = pool.clone();
         let erase_owner = owner;
@@ -857,8 +855,7 @@ async fn non_head_erase_racing_append_preserves_the_greatest_head() {
         let mut append_holder = pool.begin().await?;
         // An admission holds its owner's fence before it takes a handle, so
         // the holder does too: the erase queues at the owner fence.
-        crate::access::owner_columns::lock_owner_fence_shared_tx(&mut append_holder, &owner)
-            .await?;
+        crate::access::fences::lock_owner_fence_shared_tx(&mut append_holder, &owner).await?;
         lock_memory_handles_tx(&mut append_holder, &[first.handle]).await?;
         let erase_pool = pool.clone();
         let erase_owner = owner;

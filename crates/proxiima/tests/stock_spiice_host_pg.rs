@@ -444,7 +444,7 @@ impl Stack {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
-        proxiima_storage_pg::access::owner_columns::register_group(
+        proxiima_storage_pg::access::owner_registry::register_group(
             &mut tx,
             proxiima_core::GroupId::new(group),
         )
@@ -461,7 +461,7 @@ impl Stack {
         sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
             .execute(&mut *tx)
             .await?;
-        proxiima_storage_pg::access::owner_columns::ensure_owner_row(
+        proxiima_storage_pg::access::owner_registry::ensure_owner_row(
             &mut tx,
             &proxiima_core::OwnerId::new(person),
         )

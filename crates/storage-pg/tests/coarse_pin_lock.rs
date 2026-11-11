@@ -12,7 +12,7 @@ use proxiima_core::{
     AccessKind, EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::access::owner_columns::ensure_owner_row;
+use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
 use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db};
 use proxiima_storage_pg::verbs::forget::erase_memory;
 use proxiima_storage_pg::{PgPoolConfig, PgStorage, PgTuning, core_pg_sidecars};

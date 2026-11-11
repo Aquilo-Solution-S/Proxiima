@@ -284,8 +284,7 @@ impl WriteSessionFactory for PgStorage {
         // and a transfer takes it exclusively before it moves a series, so
         // the footprint below is one ownership snapshot. A unit of another
         // owner is not held up.
-        crate::access::owner_columns::lock_owner_fence_exclusive_tx(&mut tx, permit.owner())
-            .await?;
+        crate::access::fences::lock_owner_fence_exclusive_tx(&mut tx, permit.owner()).await?;
         Ok(Box::new(PgWriteSession {
             store_number: self.store_number,
             tx,
@@ -609,8 +608,7 @@ impl WriteSession for PgWriteSession {
                 )));
             }
         }
-        crate::access::owner_columns::lock_owner_fence_shared_tx(&mut self.tx, permit.owner())
-            .await?;
+        crate::access::fences::lock_owner_fence_shared_tx(&mut self.tx, permit.owner()).await?;
         registered
             .participant
             .apply(

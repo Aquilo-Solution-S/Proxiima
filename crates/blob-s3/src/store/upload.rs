@@ -390,7 +390,7 @@ impl CitedBlobStore {
         let mut tx = self.begin_owner_tx(ctx.owner_scope()).await?;
         lock_owner_fence(&mut tx, &owner).await?;
         let owner_id =
-            proxiima_storage_pg::access::owner_columns::ensure_owner_row(tx.as_mut(), &owner)
+            proxiima_storage_pg::access::owner_registry::ensure_owner_row(tx.as_mut(), &owner)
                 .await
                 .map_err(|err| BlobError::State(format!("ensure upload owner: {err}")))?;
         sqlx::query(
@@ -909,7 +909,7 @@ impl CitedBlobStore {
         // drained these keys before the canonical PUT landed. Nobody may
         // cite a terminal upload, so the bytes just published are owed again,
         // under the fence the terminal transition and every erase take.
-        proxiima_storage_pg::access::owner_columns::owe_terminal_upload_keys_tx(
+        proxiima_storage_pg::access::upload_keys::owe_terminal_upload_keys_tx(
             tx,
             &self.store_id,
             owner,
@@ -994,7 +994,7 @@ impl CitedBlobStore {
         blob_id: Uuid,
     ) -> Result<String, BlobError> {
         let mut tx = self.begin_owner_tx(owner_scope).await?;
-        let bucket = proxiima_storage_pg::access::owner_columns::complete_upload_in_tx(
+        let bucket = proxiima_storage_pg::access::upload_completion::complete_upload_in_tx(
             &mut tx, owner, upload_id, blob_id,
         )
         .await
@@ -1109,7 +1109,7 @@ impl CitedBlobStore {
         // transfer key and its canonical object (if a stage published one)
         // are owed now, in the transaction that decides the abort.
         let owed = if rows_affected == 1 {
-            proxiima_storage_pg::access::owner_columns::owe_terminal_upload_keys_tx(
+            proxiima_storage_pg::access::upload_keys::owe_terminal_upload_keys_tx(
                 &mut tx,
                 &self.store_id,
                 owner,
@@ -1147,7 +1147,7 @@ impl CitedBlobStore {
             return;
         }
         let cold = self.cold_store();
-        let outcome = proxiima_storage_pg::access::owner_columns::purge_owed_keys_after_commit(
+        let outcome = proxiima_storage_pg::access::upload_keys::purge_owed_keys_after_commit(
             &self.pool,
             &self.platform_scope,
             &cold,

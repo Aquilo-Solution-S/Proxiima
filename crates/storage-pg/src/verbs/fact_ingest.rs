@@ -13,7 +13,7 @@
 //! `proxiima::spiice`; they cannot invoke it — see
 //! [`crate::sidecars::SidecarInsertPermit`].
 
-use crate::access::owner_columns::UploadStatus;
+use crate::access::upload_completion::UploadStatus;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -403,7 +403,7 @@ async fn upsert_blob(
     schema_id: &str,
     content_hash: &[u8; 32],
 ) -> Result<uuid::Uuid, StorageError> {
-    let owner_id = crate::access::owner_columns::ensure_owner_row(tx.as_mut(), owner).await?;
+    let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
     if schema_id == proxiima_core::UPLOADED_BLOB_SCHEMA_ID {
         require_staged_upload(tx, owner_id, content_hash).await?;
     }

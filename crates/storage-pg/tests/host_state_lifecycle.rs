@@ -2370,7 +2370,7 @@ async fn erase_fence_orders_write_session_and_export_snapshot_and_cancellation_l
         // A unit holds its owner's fence shared from its first write; a
         // whole-owner erase queues behind it.
         let mut writer = pool.begin().await?;
-        proxiima_storage_pg::access::owner_columns::lock_owner_fence_shared_tx(&mut writer, &owner)
+        proxiima_storage_pg::access::fences::lock_owner_fence_shared_tx(&mut writer, &owner)
             .await?;
         let reverse_gate = Arc::new(CallbackGate::default());
         lifecycle.set_erase_gate(Some(reverse_gate.clone()));

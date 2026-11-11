@@ -102,11 +102,11 @@ impl CitedBlobStore {
         owner: &proxiima_core::OwnerId,
         upload_id: Uuid,
     ) -> Result<Option<Vec<ColdPurgeEntry>>, StorageError> {
-        use proxiima_storage_pg::access::owner_columns as columns;
+        use proxiima_storage_pg::access::{fences, upload_keys};
 
         let mut tx = self.begin_platform_transaction().await?;
-        columns::lock_owner_fence_shared_tx(&mut tx, owner).await?;
-        columns::lock_object_keys_tx(&mut tx, &[canonical_object_key(upload_id)]).await?;
+        fences::lock_owner_fence_shared_tx(&mut tx, owner).await?;
+        fences::lock_object_keys_tx(&mut tx, &[canonical_object_key(upload_id)]).await?;
         let expired = sqlx::query(concat!(
             "UPDATE proxiima_core.blob_uploads
                 SET status = 'expired', error_message = 'upload expired'
@@ -128,7 +128,8 @@ impl CitedBlobStore {
             return Ok(None);
         }
         let entries =
-            columns::owe_terminal_upload_keys_tx(&mut tx, &self.store_id, owner, upload_id).await?;
+            upload_keys::owe_terminal_upload_keys_tx(&mut tx, &self.store_id, owner, upload_id)
+                .await?;
         tx.commit().await.map_err(unavailable)?;
         Ok(Some(entries))
     }

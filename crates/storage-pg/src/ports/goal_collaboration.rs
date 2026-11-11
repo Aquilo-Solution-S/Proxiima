@@ -38,7 +38,7 @@ pub(crate) async fn membership_roles(
     if scope.is_expired() {
         return Err(StorageError::NotFound);
     }
-    crate::access::owner_columns::lock_owner_fences_shared_tx(tx, owners).await?;
+    crate::access::fences::lock_owner_fences_shared_tx(tx, owners).await?;
     let mut people = extra_people.to_vec();
     people.push(scope.subject());
     let mut authority = storage
@@ -495,7 +495,7 @@ impl GoalCollaborationPort for PgStorage {
                 "Goal grant exceeds actor authority".into(),
             ));
         }
-        crate::access::owner_columns::ensure_owner_row(&mut tx, &OwnerId::from(input.subject))
+        crate::access::owner_registry::ensure_owner_row(&mut tx, &OwnerId::from(input.subject))
             .await?;
         let result = sqlx::query("INSERT INTO proxiima_core.goal_access_grant (goal_handle,subject_id,read_ceiling,write_ceiling,manage,controller_generation,expires_at,granted_by) SELECT $1,$2,$3,$4,$5,authority_generation,$6,$7 FROM proxiima_core.goal_head WHERE handle=$1 AND owner_id=$8 ON CONFLICT (goal_handle,subject_id) DO UPDATE SET read_ceiling=EXCLUDED.read_ceiling, write_ceiling=EXCLUDED.write_ceiling, manage=EXCLUDED.manage, controller_generation=EXCLUDED.controller_generation, expires_at=EXCLUDED.expires_at, granted_by=EXCLUDED.granted_by")
             .bind(input.goal.into_inner()).bind(input.subject.into_inner()).bind(read).bind(write).bind(manage).bind(expires_at).bind(permit.subject().into_inner()).bind(permit.controller().into_inner()).execute(&mut *tx).await.map_err(map_err)?;

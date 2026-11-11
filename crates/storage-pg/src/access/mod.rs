@@ -1,6 +1,12 @@
 mod authority;
+pub(crate) mod cited_blobs;
+pub mod fences;
 pub mod owner_columns;
+pub mod owner_registry;
 pub mod scope_surfaces;
+pub(crate) mod transfer;
+pub mod upload_completion;
+pub mod upload_keys;
 
 pub use authority::{
     AuthorityTargets, DirectGroupMembership, DirectUserMembership, GroupContainment,
@@ -61,7 +67,7 @@ impl PgOwnerAccessResolver {
     /// [`AccessError::Resolution`] when the probe fails.
     pub async fn is_registered_owner(&self, owner: OwnerId) -> Result<bool, AccessError> {
         let mut tx = self.begin_probe_transaction().await?;
-        let result = owner_columns::registered_owner_on_connection(&mut tx, owner)
+        let result = owner_registry::registered_owner_on_connection(&mut tx, owner)
             .await
             .map_err(|err| resolution_error(&err));
         tx.rollback().await.ok();

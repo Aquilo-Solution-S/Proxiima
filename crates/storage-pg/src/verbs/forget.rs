@@ -8,7 +8,7 @@ use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::spiice::{EraseLeg, ForgetLeg, KeyShape};
 use proxiima_core::{ColdObjectStore, ObjectStoreId, OwnerId, PurgeDeleted, StorageError};
 
-use crate::access::owner_columns::{other_upload_implies_key_sql, upload_implied_keys_sql};
+use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
 use crate::verbs::maintenance::PurgeBackoff;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -1529,8 +1529,8 @@ async fn gc_unreferenced_blobs(
     // would have both withhold and leak the bytes. The object-key fence is
     // what serializes the two; `FOR UPDATE` on `blob` cannot, because the
     // rows racing here belong to a different owner.
-    let object_keys = crate::access::owner_columns::blob_upload_object_keys(tx, cited).await?;
-    crate::access::owner_columns::lock_object_keys_tx(tx, &object_keys).await?;
+    let object_keys = crate::access::upload_keys::blob_upload_object_keys(tx, cited).await?;
+    crate::access::fences::lock_object_keys_tx(tx, &object_keys).await?;
     sqlx::query_as::<_, (String, String)>(GC_UNREFERENCED_BLOBS_SQL)
         .bind(cited)
         .bind(owner_id)

@@ -2,7 +2,7 @@
 // surfaces, lifecycle) — every argument is a distinct authority the erase has to be handed, and
 // bundling them into a struct would only move the arity to its constructor.
 
-use crate::access::owner_columns::{other_upload_implies_key_sql, upload_implied_keys_sql};
+use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
 use std::collections::BTreeMap;
 
 use proxiima_core::owner_inverse::{
@@ -16,10 +16,10 @@ use proxiima_core::storage_ports::{
 use proxiima_core::{ColdObjectStore, GroupId, OwnerId, SourceId, StorageError};
 use sqlx::{PgPool, Postgres, Transaction};
 
-use crate::access::owner_columns::{
-    lock_group_membership_tx, lock_owner_fence_exclusive_tx, lock_owner_fence_shared_tx,
-    lock_source_fence_exclusive_tx,
+use crate::access::fences::{
+    lock_owner_fence_exclusive_tx, lock_owner_fence_shared_tx, lock_source_fence_exclusive_tx,
 };
+use crate::access::owner_columns::lock_group_membership_tx;
 use crate::error::{map_err, with_bounded_retry};
 use crate::pg_ident::PgIdent;
 use crate::sidecars::int_to_u64;
@@ -1069,7 +1069,7 @@ async fn lock_selected_object_keys(
         .await
         .map_err(map_err)?,
     };
-    crate::access::owner_columns::lock_object_keys_tx(tx, &keys).await
+    crate::access::fences::lock_object_keys_tx(tx, &keys).await
 }
 
 async fn create_selected_sets(

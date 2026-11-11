@@ -100,7 +100,7 @@ pub(crate) async fn claim_request(
 ) -> Result<KeyVerdict<RequestReplay>, StorageError> {
     let owner_id = owner.into_inner();
     let source = request.scope().ledger_source();
-    crate::access::owner_columns::lock_source_fence_shared_tx(tx, owner, &source).await?;
+    crate::access::fences::lock_source_fence_shared_tx(tx, owner, &source).await?;
 
     let request_row = request.request_row_key();
     let fingerprint_row = request.fingerprint_row_key();

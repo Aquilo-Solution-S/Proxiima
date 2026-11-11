@@ -9,7 +9,8 @@ use proxiima_core::{
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
-use crate::access::owner_columns::{CitedBlobUploads, memory_access_kind};
+use crate::access::cited_blobs::CitedBlobUploads;
+use crate::access::owner_columns::memory_access_kind;
 use crate::ports::goal_collaboration::source_reads::{SourceReads, lock_goal_footprint};
 use crate::ports::goal_collaboration::{
     current_goal_role, current_role, fenced_roles, role_for_goal, source_admin,
@@ -239,7 +240,7 @@ async fn admit_fork(
         super::memory_timeseries::PreparedMemoryAdmission::New(prepared) => {
             let blob_id = match cited_blob {
                 Some(blob_id) => Some(
-                    crate::access::owner_columns::copy_cited_blob_for_owner(
+                    crate::access::cited_blobs::copy_cited_blob_for_owner(
                         tx,
                         &storage.surfaces,
                         source_owner.into_inner(),

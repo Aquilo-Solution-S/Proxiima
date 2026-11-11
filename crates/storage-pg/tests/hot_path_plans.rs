@@ -1012,7 +1012,7 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
         let mut tx = pg.platform_scope_for_host().begin().await?;
         let fence = format!(
             "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-            proxiima_storage_pg::access::owner_columns::upload_fence_keys_sql_for_tests()
+            proxiima_storage_pg::access::upload_keys::upload_fence_keys_sql_for_tests()
         );
         // SQL-POLICY: fixed-fragment — the production fence-keys read.
         let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(fence))

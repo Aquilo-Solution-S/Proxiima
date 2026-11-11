@@ -278,8 +278,7 @@ async fn fence_declared_scopes(
 ) -> Result<(), StorageError> {
     let owner_id = owner.into_inner();
     for scope in scopes {
-        crate::access::owner_columns::lock_scope_fence_shared_tx(tx, scope.kind, owner, scope.id)
-            .await?;
+        crate::access::fences::lock_scope_fence_shared_tx(tx, scope.kind, owner, scope.id).await?;
         // SQL-POLICY: generated
         let registered: bool =
             sqlx::query_scalar(sqlx::AssertSqlSafe(std::sync::Arc::clone(&scope.probe_sql)))
@@ -401,9 +400,9 @@ pub(crate) async fn prepare_memory_admission_at(
     // already hold the destination fence while it creates that row, so an
     // append must wait on the fence rather than insert the row and then wait
     // behind its own uncommitted owner row.
-    crate::access::owner_columns::lock_owner_fence_shared_tx(tx, owner).await?;
+    crate::access::fences::lock_owner_fence_shared_tx(tx, owner).await?;
     if let Some(source_id) = draft.source_id.as_deref() {
-        crate::access::owner_columns::lock_source_fence_shared_tx(tx, owner, source_id).await?;
+        crate::access::fences::lock_source_fence_shared_tx(tx, owner, source_id).await?;
     }
     // Then the spiice-declared lifecycle scopes, shared, BEFORE the handle
     // and `t` locks below. That order — owner fence, source fence, scope
@@ -413,7 +412,7 @@ pub(crate) async fn prepare_memory_admission_at(
     // the life of the transaction: an erase that committed first is visible,
     // and one that has not is waiting.
     fence_declared_scopes(tx, owner, admission.scopes).await?;
-    let owner_id = crate::access::owner_columns::ensure_owner_row(tx.as_mut(), owner).await?;
+    let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
     // These fences are held through commit, so a whole-owner/source erase
     // either waits for this write or observes it in the exact-scope
     // revalidation before deleting anything.
@@ -916,10 +915,9 @@ pub(crate) async fn lock_prepared_memory_targets(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedMemoryAdmissionNew,
 ) -> Result<(), StorageError> {
-    crate::access::owner_columns::lock_owner_fence_shared_tx(tx, &prepared.owner).await?;
+    crate::access::fences::lock_owner_fence_shared_tx(tx, &prepared.owner).await?;
     if let Some(source_id) = prepared.draft.source_id.as_deref() {
-        crate::access::owner_columns::lock_source_fence_shared_tx(tx, &prepared.owner, source_id)
-            .await?;
+        crate::access::fences::lock_source_fence_shared_tx(tx, &prepared.owner, source_id).await?;
     }
     crate::verbs::forget::lock_memory_handles_tx(tx, &[prepared.handle]).await?;
     crate::verbs::forget::lock_lifecycle_targets_tx(tx, &prepared.targets).await

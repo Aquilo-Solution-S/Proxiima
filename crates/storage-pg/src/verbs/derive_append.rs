@@ -532,7 +532,7 @@ async fn resolve_derived_content_id(
         return Ok(None);
     }
     let owner_id =
-        crate::access::owner_columns::ensure_owner_row(tx.as_mut(), &draft.owner).await?;
+        crate::access::owner_registry::ensure_owner_row(tx.as_mut(), &draft.owner).await?;
     if let Some(payloads) = content_payloads {
         return super::content::ensure_content_from_payloads(
             tx,

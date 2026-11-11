@@ -390,7 +390,7 @@ impl CitedBlobStore {
         objects: &mut BTreeSet<String>,
         ended: BTreeMap<String, EndedClaim>,
     ) -> Result<u64, StorageError> {
-        use proxiima_storage_pg::access::owner_columns as columns;
+        use proxiima_storage_pg::access::fences;
 
         let mut owed = 0_u64;
         for (key, claim) in ended {
@@ -398,8 +398,8 @@ impl CitedBlobStore {
                 continue;
             }
             let mut tx = self.begin_reconcile_transaction().await?;
-            columns::lock_owner_fence_shared_tx(&mut tx, &OwnerId::from(claim.owner_id)).await?;
-            columns::lock_object_keys_tx(&mut tx, std::slice::from_ref(&key)).await?;
+            fences::lock_owner_fence_shared_tx(&mut tx, &OwnerId::from(claim.owner_id)).await?;
+            fences::lock_object_keys_tx(&mut tx, std::slice::from_ref(&key)).await?;
             let inserted = sqlx::query(
                 "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
                  SELECT $1, $2, $3

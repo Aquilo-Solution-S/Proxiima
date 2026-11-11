@@ -360,7 +360,7 @@ impl PgStorage {
 }
 
 /// Register `user` in `proxiima_core.owners` the way the first write under it
-/// does ([`crate::access::owner_columns::ensure_owner_row`]). Idempotent.
+/// does ([`crate::access::owner_registry::ensure_owner_row`]). Idempotent.
 ///
 /// # Errors
 ///
@@ -370,13 +370,13 @@ pub async fn create_user(pool: &sqlx::PgPool, user: UserId) -> Result<(), Storag
         .acquire()
         .await
         .map_err(|err| StorageError::Unavailable(err.to_string()))?;
-    crate::access::owner_columns::ensure_owner_row(&mut conn, &OwnerId::from(user)).await?;
+    crate::access::owner_registry::ensure_owner_row(&mut conn, &OwnerId::from(user)).await?;
     Ok(())
 }
 
 /// Register `group` as a group in `proxiima_core.owners`, the way a host
 /// creates one before writing under it
-/// ([`crate::access::owner_columns::register_group`]). Idempotent; an id
+/// ([`crate::access::owner_registry::register_group`]). Idempotent; an id
 /// already registered as a user is a `Conflict`.
 ///
 /// # Errors
@@ -387,7 +387,7 @@ pub async fn create_group(pool: &sqlx::PgPool, group: GroupId) -> Result<(), Sto
         .acquire()
         .await
         .map_err(|err| StorageError::Unavailable(err.to_string()))?;
-    crate::access::owner_columns::register_group(&mut conn, group).await
+    crate::access::owner_registry::register_group(&mut conn, group).await
 }
 
 /// Grant `member` the `relation` in `group` the way the engine's

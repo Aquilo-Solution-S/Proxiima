@@ -23,7 +23,7 @@ use proxiima_core::{
     ScopeKind, SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::access::owner_columns::lock_scope_fence_exclusive_tx;
+use proxiima_storage_pg::access::fences::lock_scope_fence_exclusive_tx;
 use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgSidecarRegistry, PgStorage, register_core_pg_sidecars};
 use serde::{Deserialize, Serialize};
