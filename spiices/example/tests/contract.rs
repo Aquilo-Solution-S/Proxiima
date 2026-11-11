@@ -49,11 +49,12 @@ fn the_one_tool_is_list_notebooks_and_it_reads() {
 }
 
 #[test]
-fn the_installer_section_is_one_call_then_the_census() {
+fn the_installer_section_is_the_non_sidecar_tables_then_the_census() {
     let calls = proxiima_example::installer_calls();
-    assert_eq!(calls.len(), 2, "{calls:?}");
-    assert!(calls[0].contains("install_owner_rls('proxiima_example'"));
-    assert!(calls[1].contains("assert_owner_rls_census('proxiima_example')"));
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(calls[0].contains("install_owner_rls_table('proxiima_example', 'notebooks'"));
+    assert!(calls[1].contains("install_owner_rls_table('proxiima_example', 'settings'"));
+    assert!(calls[2].contains("assert_owner_rls_census('proxiima_example')"));
     assert_eq!(
         proxiima_example::baseline_sql_with_owner_rls(&calls),
         proxiima_example::BASELINE_SQL

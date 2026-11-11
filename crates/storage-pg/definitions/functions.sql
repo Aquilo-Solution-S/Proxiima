@@ -1798,6 +1798,127 @@ $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_owner_rls_table(target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text) FROM PUBLIC;
 COMMENT ON FUNCTION proxiima_core.install_owner_rls_table(target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text) IS 'Owner-RLS policies for one table of a spiice or host schema; the per-table form of install_owner_rls. A table in proxiima_core.owner_follows gets the host follows rule instead of class owner_id or memory_owner (docs/build-a-spiice.md §2, docs/host-integration.md §Boot a composed host).';
 
+-- One call installs a memory sidecar: its foreign key to proxiima_core.memory,
+-- its surface row, its integrity triggers (the shapes of
+-- crates/storage-pg/src/integrity.rs) and its owner-RLS policies, so a spiice
+-- migration names no core table. registrant is the spiice id. Re-running it
+-- with the same arguments changes nothing; the owner mode is read from the
+-- table, never passed.
+CREATE OR REPLACE FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class DEFAULT NULL::proxiima_core.owner_rls_class, memory_key text DEFAULT 't'::text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    rel_oid oid;
+    key_attnum smallint;
+    derived text;
+    stored_spiice text;
+    has_owner_id boolean;
+    follows boolean;
+    pinned boolean;
+    surface text;
+BEGIN
+    IF current_setting('app.proxiima_scope', true) IS DISTINCT FROM 'platform' THEN
+        RAISE EXCEPTION 'install_sidecar: runs in platform scope only';
+    END IF;
+    IF registrant IS NULL OR registrant = '' THEN
+        RAISE EXCEPTION 'install_sidecar: %.% needs the id of the spiice that registers it',
+            COALESCE(target_schema, 'NULL'), COALESCE(target_table, 'NULL');
+    END IF;
+    -- quote_ident leaves only a plain lower-case name that is no reserved
+    -- word unchanged: the trigger generators spell these names unquoted.
+    IF target_schema IS NULL OR quote_ident(target_schema) <> target_schema OR octet_length(target_schema) > 63 THEN
+        RAISE EXCEPTION 'install_sidecar: schema % is not a plain lower-case identifier of at most 63 bytes', COALESCE(target_schema, 'NULL');
+    END IF;
+    IF target_table IS NULL OR quote_ident(target_table) <> target_table OR octet_length(target_table) > 63 THEN
+        RAISE EXCEPTION 'install_sidecar: table %.% is not a plain lower-case identifier of at most 63 bytes', target_schema, COALESCE(target_table, 'NULL');
+    END IF;
+    IF memory_key IS NULL OR quote_ident(memory_key) <> memory_key OR octet_length(memory_key) > 63 THEN
+        RAISE EXCEPTION 'install_sidecar: %.% memory key % is not a plain lower-case identifier of at most 63 bytes',
+            target_schema, target_table, COALESCE(memory_key, 'NULL');
+    END IF;
+    FOREACH derived IN ARRAY ARRAY[
+        target_table || '_' || memory_key || '_fkey',
+        target_table || '_declared_by_memory',
+        target_table || '_declared_by_memory_on_update',
+        target_table || '_declared_by_memory_on_delete',
+        'memory_declares_' || target_schema || '_' || target_table
+    ] LOOP
+        IF octet_length(derived) > 63 THEN
+            RAISE EXCEPTION 'install_sidecar: %.% would need the name %, longer than 63 bytes; shorten the table, schema or key name',
+                target_schema, target_table, derived;
+        END IF;
+    END LOOP;
+
+    -- A write locks the memory before its sidecar; so does this.
+    LOCK TABLE proxiima_core.memory IN ACCESS EXCLUSIVE MODE;
+    SELECT c.oid INTO rel_oid
+      FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
+    IF rel_oid IS NULL THEN
+        RAISE EXCEPTION 'install_sidecar: %.% is not an existing base table', target_schema, target_table;
+    END IF;
+    SELECT a.attnum INTO key_attnum
+      FROM pg_attribute AS a
+     WHERE a.attrelid = rel_oid AND a.attname = memory_key AND NOT a.attisdropped AND a.attnum > 0;
+    IF key_attnum IS NULL THEN
+        RAISE EXCEPTION 'install_sidecar: %.% has no column %', target_schema, target_table, memory_key;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint AS k
+         WHERE k.conrelid = rel_oid AND k.contype = 'f'
+           AND k.confrelid = 'proxiima_core.memory'::regclass
+           AND k.conkey = ARRAY[key_attnum]
+           AND k.confkey = ARRAY[(SELECT a.attnum FROM pg_attribute AS a
+                                   WHERE a.attrelid = 'proxiima_core.memory'::regclass AND a.attname = 't')]
+    ) THEN
+        EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES proxiima_core.memory (t)',
+            target_schema, target_table, target_table || '_' || memory_key || '_fkey', memory_key);
+    END IF;
+
+    surface := target_schema || '.' || target_table;
+    INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
+    VALUES (surface, registrant)
+    ON CONFLICT (table_name) DO NOTHING;
+    SELECT s.spiice_id INTO stored_spiice FROM proxiima_core.spiice_surface AS s WHERE s.table_name = surface;
+    IF stored_spiice <> registrant THEN
+        RAISE EXCEPTION 'install_sidecar: %.% is already registered to spiice %, not %',
+            target_schema, target_table, stored_spiice, registrant;
+    END IF;
+
+    has_owner_id := EXISTS (
+        SELECT 1 FROM pg_attribute AS a
+         WHERE a.attrelid = rel_oid AND a.attname = 'owner_id' AND NOT a.attisdropped AND a.attnum > 0
+    );
+    follows := EXISTS (SELECT 1 FROM proxiima_core.owner_follows AS f WHERE f.table_name = surface);
+    pinned := has_owner_id AND NOT follows;
+
+    EXECUTE format('CREATE OR REPLACE TRIGGER %I BEFORE INSERT ON %I.%I FOR EACH ROW EXECUTE FUNCTION proxiima_core.assert_memory_declares_sidecar(%L)',
+        target_table || '_declared_by_memory', target_schema, target_table, memory_key);
+    EXECUTE format('CREATE OR REPLACE TRIGGER %I BEFORE UPDATE OF %I ON %I.%I FOR EACH ROW EXECUTE FUNCTION proxiima_core.assert_memory_declares_sidecar(%L)',
+        target_table || '_declared_by_memory_on_update', memory_key, target_schema, target_table, memory_key);
+    -- An owner-pinned sidecar gets no delete guard and no presence trigger
+    -- (crates/storage-pg/src/sidecars/frozen.rs, presence_trigger_artifacts).
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I',
+        target_table || '_declared_by_memory_on_delete', target_schema, target_table);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON proxiima_core.memory',
+        'memory_declares_' || target_schema || '_' || target_table);
+    IF NOT pinned THEN
+        EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %I.%I DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION proxiima_core.assert_row_not_still_declared(%L, %L)',
+            target_table || '_declared_by_memory_on_delete', target_schema, target_table, surface, memory_key);
+        EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT OR UPDATE OF sidecar_tables ON proxiima_core.memory DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (%L = ANY (NEW.sidecar_tables)) EXECUTE FUNCTION proxiima_core.assert_declared_sidecar_present(%L, %L)',
+            'memory_declares_' || target_schema || '_' || target_table, surface, surface, memory_key);
+    END IF;
+
+    PERFORM proxiima_core.install_owner_rls_table(target_schema, target_table,
+        COALESCE(class, CASE WHEN has_owner_id THEN 'owner_id' ELSE 'fk_parent' END::proxiima_core.owner_rls_class));
+END
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) FROM PUBLIC;
+COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
+
 -- Host only: record the Follows tables of the schemas this binary composes
 -- and install their owner RLS. The host calls it from its Rust registry
 -- (pg_sidecar!(owner: follows)) in the migration lane: once before the

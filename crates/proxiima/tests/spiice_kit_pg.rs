@@ -17,7 +17,9 @@ use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle};
 use proxiima::testkit::{SplitRoleDb, assert_trigger_migrations, scoped_authz};
 use proxiima::{AppInfo, Proxiima, QueryRequest, ServedSurface, SpiiceApp, company_owner};
 use proxiima_example::testkit::{register_notebook, remember_note};
-use proxiima_example::{BASELINE_SQL, ExampleSpiice, NoteV1, baseline_sql_with_owner_rls};
+use proxiima_example::{
+    BASELINE_SQL, ExampleSpiice, NoteV1, SPIICE_ID, baseline_sql_with_owner_rls,
+};
 use sqlx::SqlSafeStr;
 use sqlx::migrate::{Migration, MigrationType, Migrator};
 use uuid::Uuid;
@@ -37,7 +39,9 @@ fn gap_sql() -> String {
 }
 
 /// How a host that adds its tables one migration at a time installs the
-/// example's owner RLS: one `install_owner_rls_table` call per table.
+/// owner RLS of the tables that are not sidecars (the baseline's sidecars
+/// are classified by `install_sidecar`): one `install_owner_rls_table` call
+/// per table.
 #[derive(Clone, Copy)]
 enum PerTableHost {
     /// Calls the installer for every table, then asserts the census.
@@ -59,8 +63,6 @@ fn per_table_sql(host: PerTableHost) -> String {
     };
     let calls: Vec<&str> = [
         "SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'notebooks', 'owner_id')",
-        "SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'note_v1', 'fk_parent')",
-        "SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'digest_v1', 'fk_parent')",
     ]
     .iter()
     .chain(rest)
@@ -329,23 +331,56 @@ fn the_bundle_is_the_hand_written_one() {
         debug_entries(&format!("{registry:?}")),
         debug_entries(&format!("{hand_written:?}"))
     );
+}
 
+/// The example's frozen sidecars: the registry the generators read.
+fn frozen_example_sidecars() -> proxiima::spiice::PgSidecarRegistryFrozen {
+    let mut registry = proxiima::spiice::SpiiceRegistry::new();
+    ExampleSpiice::register(&mut registry).expect("the example spiice registers");
+    let registry = registry.try_freeze().expect("and freezes");
+    let mut sidecars = PgSidecarRegistry::new();
+    proxiima::spiice::register_core_pg_sidecars(&mut sidecars);
+    ExampleSpiice::register_pg_sidecars(&mut sidecars);
+    sidecars
+        .freeze_against(&registry)
+        .expect("the example's PG registrations match its contract")
+}
+
+/// What the generators emit for the example, as a migration would carry it:
+/// every declaration statement, then every presence-family statement, minus
+/// those `keep` refuses.
+fn generated_trigger_migration(keep: impl Fn(&str) -> bool) -> String {
+    let sidecars = frozen_example_sidecars();
+    let mut artifacts = sidecars
+        .declaration_trigger_artifacts(SPIICE_ID)
+        .expect("declaration triggers");
+    artifacts.extend(
+        sidecars
+            .presence_trigger_artifacts(SPIICE_ID)
+            .expect("presence triggers"),
+    );
+    artifacts
+        .into_iter()
+        .map(|artifact| artifact.forward)
+        .filter(|forward| keep(forward))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_trigger_drift_assertion_accepts_the_generators_own_output() {
     assert_trigger_migrations::<ExampleSpiice>(
-        "proxiima-example",
-        &[BASELINE_SQL, proxiima_example::STAMP_FOLLOWS_SQL],
+        SPIICE_ID,
+        &[&generated_trigger_migration(|_| true)],
     );
 }
 
 #[test]
 #[should_panic(expected = "appear in no migration")]
 fn the_trigger_drift_assertion_names_a_missing_trigger() {
-    let without_presence = [BASELINE_SQL, proxiima_example::STAMP_FOLLOWS_SQL]
-        .join(";\n")
-        .split(";\n")
-        .filter(|statement| !statement.contains("assert_declared_sidecar_present"))
-        .collect::<Vec<_>>()
-        .join(";\n");
-    assert_trigger_migrations::<ExampleSpiice>("proxiima-example", &[&without_presence]);
+    let without_presence =
+        generated_trigger_migration(|forward| !forward.contains("assert_declared_sidecar_present"));
+    assert_trigger_migrations::<ExampleSpiice>(SPIICE_ID, &[&without_presence]);
 }
 
 /// Boot `F` as a single owner, register a notebook, write a note into it

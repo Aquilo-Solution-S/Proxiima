@@ -30,14 +30,12 @@ pub fn migrator() -> sqlx::migrate::Migrator {
 /// The current-name baseline SQL for tutorial variants; the migrator retains historical SQL.
 pub const BASELINE_SQL: &str = include_str!("../fixtures/20261018000011_baseline.sql");
 
-/// The `stamp_follows` migration (#474 `owner:follows`).
-pub const STAMP_FOLLOWS_SQL: &str = include_str!("../fixtures/20261019100000_stamp_follows.sql");
-
 const OWNER_RLS_BEGIN: &str = "-- owner-rls: begin\n";
 const OWNER_RLS_END: &str = "-- owner-rls: end\n";
 
 /// The baseline split around its owner-RLS section: before, the section
-/// (one installer call, then the census), after.
+/// (a per-table call for each table that is not a sidecar, then the census),
+/// after. The sidecars are classified by `install_sidecar` before it.
 fn owner_rls_split() -> (&'static str, &'static str, &'static str) {
     let (before, rest) = BASELINE_SQL
         .split_once(OWNER_RLS_BEGIN)
@@ -48,8 +46,8 @@ fn owner_rls_split() -> (&'static str, &'static str, &'static str) {
     (before, section, after)
 }
 
-/// The statements of the baseline's owner-RLS section, in order: the one
-/// installer call, then the census. The tutorial's variants replace them.
+/// The statements of the baseline's owner-RLS section, in order: the
+/// per-table calls, then the census. The tutorial's variants replace them.
 #[must_use]
 pub fn installer_calls() -> Vec<&'static str> {
     owner_rls_split()

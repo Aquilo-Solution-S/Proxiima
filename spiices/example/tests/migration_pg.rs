@@ -1,63 +1,11 @@
-//! The example spiice's migrations: generated trigger text, owner RLS on a
-//! split-role database, and its one tool's owner scope.
+//! The example spiice's migrations: owner RLS on a split-role database, and
+//! its one tool's owner scope.
 
-use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle, SpiiceRegistry};
-use proxiima::testkit::{SplitRoleDb, assert_trigger_migrations, scoped_authz};
+use proxiima::testkit::{SplitRoleDb, scoped_authz};
 use proxiima::{QueryRequest, company_owner};
 use proxiima_example::testkit::{build_engine, register_notebook, remember_note};
-use proxiima_example::{
-    BASELINE_SQL, ExampleSpiice, ExampleStore, NoteV1, SPIICE_ID, STAMP_FOLLOWS_SQL,
-};
+use proxiima_example::{ExampleStore, NoteV1};
 use uuid::Uuid;
-
-fn frozen_sidecars() -> proxiima::spiice::PgSidecarRegistryFrozen {
-    let mut registry = SpiiceRegistry::new();
-    ExampleSpiice::register(&mut registry).expect("the example spiice registers");
-    let registry = registry.try_freeze().expect("and freezes");
-    let mut sidecars = PgSidecarRegistry::new();
-    proxiima::spiice::register_core_pg_sidecars(&mut sidecars);
-    ExampleSpiice::register_pg_sidecars(&mut sidecars);
-    sidecars
-        .freeze_against(&registry)
-        .expect("the example's PG registrations match its contract")
-}
-
-#[test]
-fn the_testkit_drift_assertion_holds_for_the_example_spiice() {
-    assert_trigger_migrations::<ExampleSpiice>(SPIICE_ID, &[BASELINE_SQL, STAMP_FOLLOWS_SQL]);
-}
-
-#[test]
-fn generated_declaration_triggers_are_the_example_migration_text() {
-    let artifacts = frozen_sidecars()
-        .declaration_trigger_artifacts(SPIICE_ID)
-        .expect("the example's declaration triggers");
-    assert_eq!(artifacts.len(), 3, "one per sidecar");
-    for artifact in &artifacts {
-        assert!(
-            BASELINE_SQL.contains(&artifact.forward)
-                || STAMP_FOLLOWS_SQL.contains(&artifact.forward),
-            "no example migration carries the generator's output verbatim:\n{}",
-            artifact.forward
-        );
-    }
-}
-
-#[test]
-fn generated_presence_triggers_are_the_example_migration_text() {
-    let artifacts = frozen_sidecars()
-        .presence_trigger_artifacts(SPIICE_ID)
-        .expect("the example's presence triggers");
-    assert!(!artifacts.is_empty());
-    for artifact in &artifacts {
-        assert!(
-            BASELINE_SQL.contains(&artifact.forward)
-                || STAMP_FOLLOWS_SQL.contains(&artifact.forward),
-            "no example migration carries the generator's output verbatim:\n{}",
-            artifact.forward
-        );
-    }
-}
 
 /// The example migrator applies on a split-role database, its census passes,
 /// and the Engine admits a scoped note into the typed sidecar.
