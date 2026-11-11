@@ -325,7 +325,8 @@ fn migrator() -> Migrator {
     m.add_goal_source::<GoalV1>();
     m.add_goal::<GoalV2>();
     s.add_evolution(PgSchemaEvolution::new(&EV, m, evolve));
-    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
+    // Raw INSERT: no installer registers a Goal sidecar (`install_sidecar` keys
+    // the table to `proxiima_core.memory`).
     let sql = sqlx::AssertSqlSafe(
         "CREATE SCHEMA IF NOT EXISTS evolution_goal_test;
          CREATE TABLE IF NOT EXISTS evolution_goal_test.goal_v1 (

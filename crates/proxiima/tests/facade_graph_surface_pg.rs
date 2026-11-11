@@ -1414,10 +1414,10 @@ async fn insert_raw_fact_admission(
 /// guard them did not exist at all. A spiice's DDL belongs in its migrator;
 /// that is the whole of what changed here.
 ///
-/// The trigger statements are read off the frozen registry rather than
-/// written out, because that is what a spiice's migration author does:
-/// `declaration_trigger_artifacts` and `presence_trigger_artifacts` emit
-/// them, the migration carries them.
+/// The foreign key, the surface row, the triggers and the row security of a
+/// sidecar come from `proxiima_core.install_sidecar`, because that is what a
+/// spiice's migration author calls; boot compares the installed triggers with
+/// the frozen registry.
 fn facade_migrator() -> sqlx::migrate::Migrator {
     use sqlx::SqlSafeStr;
 
@@ -1427,7 +1427,7 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
     let mut sidecars = PgSidecarRegistry::new();
     proxiima_storage_pg::register_core_pg_sidecars(&mut sidecars);
     FacadeSurfaceApp::register_pg_sidecars(&mut sidecars);
-    let sidecars = sidecars
+    sidecars
         .freeze_against(&registry)
         .expect("the facade test PG registrations match its contract");
     let projection = proxiima_storage_pg::projection::projection_artifacts(&FACADE_CONTRACT)
@@ -1453,12 +1453,11 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
         )"
         .to_owned(),
         // A test spiice is a spiice: `memory.sidecar_tables` is constrained
-        // to be a subset of `proxiima_core.spiice_surface`, so a fixture that
-        // stamps a sidecar has to declare it like any other.
-        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
-        "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
-             ('facade_surface.fact_v1', 'facade-test'),
-             ('facade_surface.abstraction_v1', 'facade-test')"
+        // to be a subset of `proxiima_core.spiice_surface`, so the installer
+        // declares each sidecar like any other spiice migration.
+        "SELECT proxiima_core.install_sidecar('facade_surface', 'fact_v1', 'facade-test')"
+            .to_owned(),
+        "SELECT proxiima_core.install_sidecar('facade_surface', 'abstraction_v1', 'facade-test')"
             .to_owned(),
     ];
     statements.extend(
@@ -1467,37 +1466,13 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
             .into_iter()
             .map(|statement| statement.trim_end_matches(';').to_owned()),
     );
-    statements.extend(
-        sidecars
-            .declaration_trigger_artifacts("facade-test")
-            .expect("the facade test spiice's declaration triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
-    );
     statements.push(
-        "ALTER TABLE facade_surface.fact_v1 ENABLE ROW LEVEL SECURITY;\n\
-         ALTER TABLE facade_surface.fact_v1 FORCE ROW LEVEL SECURITY;\n\
-         ALTER TABLE facade_surface.abstraction_v1 ENABLE ROW LEVEL SECURITY;\n\
-         ALTER TABLE facade_surface.abstraction_v1 FORCE ROW LEVEL SECURITY;\n\
-         ALTER TABLE facade_surface.projection ENABLE ROW LEVEL SECURITY;\n\
+        "ALTER TABLE facade_surface.projection ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE facade_surface.projection FORCE ROW LEVEL SECURITY;\n\
-         CREATE POLICY proxiima_owner_read ON facade_surface.fact_v1 FOR SELECT TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.fact_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_owner_write ON facade_surface.fact_v1 FOR ALL TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.fact_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]))) WITH CHECK (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.fact_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_platform ON facade_surface.fact_v1 FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform');\n\
-         CREATE POLICY proxiima_owner_read ON facade_surface.abstraction_v1 FOR SELECT TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.abstraction_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.read_abstraction', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_owner_write ON facade_surface.abstraction_v1 FOR ALL TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.abstraction_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_abstraction', true), '')::uuid[], '{}'::uuid[]))::uuid[]))) WITH CHECK (EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = facade_surface.abstraction_v1.t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_abstraction', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_platform ON facade_surface.abstraction_v1 FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform');\n\
          CREATE POLICY proxiima_owner_read ON facade_surface.projection FOR SELECT TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
          CREATE POLICY proxiima_owner_write ON facade_surface.projection FOR ALL TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])) WITH CHECK (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
          CREATE POLICY proxiima_platform ON facade_surface.projection FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')"
             .to_owned(),
-    );
-    statements.extend(
-        sidecars
-            .presence_trigger_artifacts("facade-test")
-            .expect("the facade test spiice's presence triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
     );
     // Search candidate functions are installed by Proxiima's composed
     // definitions phase. A consumer migration owns tables, projections,

@@ -304,7 +304,9 @@ impl Fixture {
         let pool = example_engine::fixture_pool(&db.admin_url(), 3)
             .await
             .unwrap();
-        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
+        // Raw INSERT on purpose: a retired payload table and a host table with no
+        // memory foreign key; `install_sidecar` registers only memory sidecars and
+        // installs triggers this fixture picks one by one below.
         sqlx::raw_sql(
             "CREATE SCHEMA test_boot_retired AUTHORIZATION proxiima_test_platform;
              GRANT USAGE ON SCHEMA test_boot_retired TO proxiima_test_runtime;

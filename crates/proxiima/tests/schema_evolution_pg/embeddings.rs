@@ -150,27 +150,14 @@ async fn seed_derived_rows(
     owner: OwnerId,
     memory_id: Uuid,
     status: &str,
-) -> Result<(), sqlx::Error> {
-    // Raw INSERT: needs a builder for embeddings written through a pool (the Fact
-    // builder takes a `PgStorage`).
-    sqlx::query(
-        "INSERT INTO proxiima_core.embeddings
-         (entity_id, model_id, dim, embedding_version, vec, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, ARRAY_FILL(0.0::real, ARRAY[1024])::vector, $2)",
+) -> Result<(), Box<dyn std::error::Error>> {
+    proxiima_storage_pg::test_fixtures::create_embedding_of(
+        pool,
+        owner,
+        proxiima_core::MemoryId::new(memory_id),
+        "test-embed",
+        vec![vec![0.0; 1024]],
     )
-    .bind(memory_id)
-    .bind(owner.into_inner())
-    .execute(pool)
-    .await?;
-    // Raw INSERT: needs a builder for embeddings written through a pool.
-    sqlx::query(
-        "INSERT INTO proxiima_core.embedding_heads
-         (entity_id, model_id, dim, embedding_version, owner_id)
-         VALUES ($1, 'test-embed', 1024, 1, $2)",
-    )
-    .bind(memory_id)
-    .bind(owner.into_inner())
-    .execute(pool)
     .await?;
     let claim = Uuid::now_v7();
     // Raw INSERT on purpose: a job in a named status, including one claimed mid-flight.

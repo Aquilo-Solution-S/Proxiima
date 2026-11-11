@@ -83,7 +83,8 @@ async fn harness() -> Harness {
         .unwrap();
     // These rows represent a schema admitted before its payload was removed.
     // The non-default key proves retirement uses the frozen inverse metadata.
-    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
+    // Raw INSERT on purpose: a retired payload no registration declares; the
+    // declaration trigger `install_sidecar` adds would refuse this test's direct rows.
     sqlx::raw_sql(
         "CREATE SCHEMA test_retired AUTHORIZATION proxiima_test_platform;
          CREATE TABLE test_retired.removed_v1 (

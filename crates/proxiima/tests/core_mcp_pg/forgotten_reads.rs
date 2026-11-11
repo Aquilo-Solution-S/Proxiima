@@ -296,27 +296,13 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         let mut vector = vec![0.0_f32; 1024];
         vector[0] = 0.8;
         vector[1] = 0.6;
-        // Raw INSERT: needs a builder for embeddings written through a pool (the Fact
-        // builder takes a `PgStorage`).
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, vec, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2::real[]::vector, $3)",
+        proxiima_storage_pg::test_fixtures::create_embedding_of(
+            &admin,
+            owner,
+            proxiima_core::MemoryId::new(gone_t),
+            "test-embed",
+            vec![vector],
         )
-        .bind(gone_t)
-        .bind(&vector)
-        .bind(owner.into_inner())
-        .execute(&admin)
-        .await?;
-        // Raw INSERT: needs a builder for embeddings written through a pool.
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2)",
-        )
-        .bind(gone_t)
-        .bind(owner.into_inner())
-        .execute(&admin)
         .await?;
         admin.close().await;
         router.set_default(BoundEmbeddingClient::bind(test_embedding())?);

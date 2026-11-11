@@ -135,9 +135,7 @@ static PUB_CONTRACT: SpiiceContract = SpiiceContract {
 };
 
 /// The fixture spiice's own baseline, as a real spiice ships one: the
-/// sidecar table, its `spiice_surface` declaration, and the declaration and
-/// presence triggers read off the frozen registrations rather than written
-/// out by hand.
+/// sidecar table, installed by `proxiima_core.install_sidecar`.
 fn probe_migrator() -> Migrator {
     let mut registry = SpiiceRegistry::new();
     ListenableApp::register(&mut registry).expect("the publication fixture registers");
@@ -145,45 +143,21 @@ fn probe_migrator() -> Migrator {
     let mut sidecars = proxiima::spiice::PgSidecarRegistry::new();
     proxiima_storage_pg::register_core_pg_sidecars(&mut sidecars);
     ListenableApp::register_pg_sidecars(&mut sidecars);
-    let sidecars = sidecars
+    // The registrations must match the contract; the installer below creates
+    // the triggers they describe.
+    sidecars
         .freeze_against(&registry)
         .expect("the fixture's PG registrations match its contract");
 
-    let mut statements = vec![
-        "CREATE SCHEMA pubtest".to_owned(),
+    let statements = [
+        "CREATE SCHEMA pubtest",
         "CREATE TABLE pubtest.probe_v1 (
             t uuid PRIMARY KEY,
             probe_id uuid NOT NULL,
             note text NOT NULL
-        )"
-        .to_owned(),
-        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
-        "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES
-             ('pubtest.probe_v1', 'pubtest')"
-            .to_owned(),
+        )",
+        "SELECT proxiima_core.install_sidecar('pubtest', 'probe_v1', 'pubtest')",
     ];
-    statements.extend(
-        sidecars
-            .declaration_trigger_artifacts("pubtest")
-            .expect("the fixture's declaration triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
-    );
-    statements.push(
-        "ALTER TABLE pubtest.probe_v1 ENABLE ROW LEVEL SECURITY;\n\
-         ALTER TABLE pubtest.probe_v1 FORCE ROW LEVEL SECURITY;\n\
-         CREATE POLICY proxiima_owner_read ON pubtest.probe_v1 FOR SELECT TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.t = t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_owner_write ON pubtest.probe_v1 FOR ALL TO PUBLIC USING (EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.t = t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]))) WITH CHECK (EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.t = t AND m.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])));\n\
-         CREATE POLICY proxiima_platform ON pubtest.probe_v1 FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')"
-            .to_owned(),
-    );
-    statements.extend(
-        sidecars
-            .presence_trigger_artifacts("pubtest")
-            .expect("the fixture's presence triggers")
-            .into_iter()
-            .map(|artifact| artifact.forward),
-    );
 
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(

@@ -193,7 +193,6 @@ pub async fn assert_tombstone_head() -> TestResult {
         example_engine::fixture_pool(&db.admin_url(), 2).await,
     )
     .await?;
-    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     sqlx::raw_sql(
         "CREATE SCHEMA heads_fixture;
          CREATE TABLE heads_fixture.observation_v1 (
@@ -201,22 +200,26 @@ pub async fn assert_tombstone_head() -> TestResult {
              key text NOT NULL, state text NOT NULL
          );
          ALTER SCHEMA heads_fixture OWNER TO proxiima_test_platform;
-         ALTER TABLE heads_fixture.observation_v1 OWNER TO proxiima_test_platform;
-         INSERT INTO proxiima_core.spiice_surface(table_name,spiice_id)
-             VALUES ('heads_fixture.observation_v1','heads-fixture');
-         SELECT proxiima_core.install_owner_rls('heads_fixture', ARRAY[]::text[],
-             ARRAY['observation_v1']::text[], ARRAY[]::text[]);
-         GRANT USAGE ON SCHEMA heads_fixture TO proxiima_test_runtime;
+         ALTER TABLE heads_fixture.observation_v1 OWNER TO proxiima_test_platform;",
+    )
+    .execute(&admin)
+    .await?;
+    let platform = example_engine::fixture_pool(db.platform_url(), 2).await?;
+    proxiima_storage_pg::test_fixtures::install_sidecar(
+        &platform,
+        "heads_fixture",
+        "observation_v1",
+        "heads-fixture",
+        "admission_id",
+    )
+    .await?;
+    platform.close().await;
+    sqlx::raw_sql(
+        "GRANT USAGE ON SCHEMA heads_fixture TO proxiima_test_runtime;
          GRANT SELECT, INSERT, UPDATE, DELETE ON heads_fixture.observation_v1 TO proxiima_test_runtime;",
-    ).execute(&admin).await?;
-    let mut triggers = sidecars.declaration_trigger_artifacts("heads-fixture")?;
-    triggers.extend(sidecars.presence_trigger_artifacts("heads-fixture")?);
-    for artifact in triggers {
-        // SQL-POLICY: generated — the frozen fixture registry owns the trigger identifiers.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(artifact.forward))
-            .execute(&admin)
-            .await?;
-    }
+    )
+    .execute(&admin)
+    .await?;
     let storage = fixture_storage(&db)
         .await?
         .with_sidecars(sidecars)

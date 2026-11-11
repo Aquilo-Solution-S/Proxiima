@@ -357,7 +357,8 @@ async fn exercise_full_registry_erase(
     .bind(owner.into_inner())
     .execute(&pool)
     .await?;
-    // Raw INSERT: needs a builder for publication_origin.
+    // Raw INSERT: the only writer of the row is `capture_publication_in_tx`, which needs a
+    // `PublicationPlan` and seals and enqueues an outbox event before it inserts the row.
     sqlx::query(
         "INSERT INTO proxiima_core.publication_origin
              (t, original_owner_id, source_id)

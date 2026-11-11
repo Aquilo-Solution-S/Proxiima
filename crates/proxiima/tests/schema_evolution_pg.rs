@@ -435,9 +435,10 @@ fn migrator(transform: proxiima::spiice::SchemaMigrationFn) -> Migrator {
         migration_schemas,
         transform,
     ));
-    let sidecars = sidecars.freeze_against(&registry).unwrap();
-    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
-    let mut sql = String::from(
+    // The registrations must match the contract; the installer below creates
+    // the triggers they describe.
+    sidecars.freeze_against(&registry).unwrap();
+    let sql = String::from(
         "CREATE SCHEMA IF NOT EXISTS evolution_test;
          CREATE TABLE IF NOT EXISTS evolution_test.fact_v1 (
              t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE,
@@ -447,24 +448,9 @@ fn migrator(transform: proxiima::spiice::SchemaMigrationFn) -> Migrator {
              t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE,
              task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL
          );
-         INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
-             VALUES ('evolution_test.fact_v1', 'evolution-test'),
-                    ('evolution_test.fact_v2', 'evolution-test')
-             ON CONFLICT DO NOTHING;
-         SELECT proxiima_core.install_owner_rls(
-             'evolution_test', ARRAY[]::text[],
-             ARRAY['fact_v1', 'fact_v2']::text[], ARRAY[]::text[]);",
+         SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v1', 'evolution-test');
+         SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v2', 'evolution-test');",
     );
-    for artifact in sidecars
-        .declaration_trigger_artifacts(SPIICE)
-        .unwrap()
-        .into_iter()
-        .chain(sidecars.presence_trigger_artifacts(SPIICE).unwrap())
-    {
-        // SQL-POLICY: generated — declaration and presence artifacts come from the frozen sidecar registry.
-        sql.push_str(&artifact.forward);
-        sql.push(';');
-    }
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             ANCHOR,
@@ -483,8 +469,7 @@ fn chain_migrator() -> Migrator {
         ANCHOR_V3,
         Cow::Borrowed("evolution v3 sidecars"),
         MigrationType::Simple,
-        // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
-        sqlx::AssertSqlSafe("CREATE TABLE IF NOT EXISTS evolution_test.fact_v3 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE, task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL); INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id) VALUES ('evolution_test.fact_v3', 'evolution-test') ON CONFLICT DO NOTHING; SELECT proxiima_core.install_owner_rls('evolution_test', ARRAY[]::text[], ARRAY['fact_v1', 'fact_v2', 'fact_v3']::text[], ARRAY[]::text[]);")
+        sqlx::AssertSqlSafe("CREATE TABLE IF NOT EXISTS evolution_test.fact_v3 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE, task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL); SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v3', 'evolution-test');")
             .into_sql_str(),
         false,
     ));

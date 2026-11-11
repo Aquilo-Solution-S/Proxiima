@@ -452,7 +452,7 @@ async fn a_zero_interval_turns_the_drain_off() -> TestResult<()> {
                 .await,
         )
         .await?;
-        // Raw INSERT: needs a builder for cold_purge_pending (the stage enqueues a debt with no owner).
+        // Raw INSERT: a debt with no owner is written only inside `resolve_erased_owner_row`, after its count of the key's references; no function writes it alone.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, NULL, $2)",
@@ -500,7 +500,7 @@ async fn a_server_refuses_to_start_over_another_stores_debt() -> TestResult<()> 
             .await?
             .shutdown()
             .await;
-        // Raw INSERT: needs a builder for cold_purge_pending (a debt owed to another store).
+        // Raw INSERT: a debt with no owner is written only inside `resolve_erased_owner_row`, after its count of the key's references; no function writes it alone.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              VALUES ($1, NULL, 's3:id/elsewhere'), ($2, NULL, 's3:id/elsewhere')",

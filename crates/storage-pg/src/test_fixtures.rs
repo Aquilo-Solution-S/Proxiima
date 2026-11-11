@@ -547,28 +547,146 @@ fn unit_vector(width: usize) -> Vec<f32> {
     values
 }
 
-/// Write one new embedding version of `memory` (a Fact) in the 1024-wide
-/// space of `model_id`, `chunks` unit vectors long, through the write the
-/// embedding port makes (`PgStorage::insert_embedding_version`): the head
-/// advances to the new version, and an ineligible memory (forgotten, or not
-/// `owner`'s) writes nothing. Returns the version written, `0` when nothing
-/// was.
+/// An entity an embedding is written for: a Fact by its [`MemoryId`], a
+/// Goal by its [`GoalId`](proxiima_core::GoalId), or any
+/// [`EmbeddableEntityRef`](proxiima_core::EmbeddableEntityRef) (an
+/// Abstraction or a Perspective).
+pub trait EmbeddingTarget {
+    /// The embeddable entity this names.
+    fn entity(self) -> proxiima_core::EmbeddableEntityRef;
+}
+
+impl EmbeddingTarget for MemoryId {
+    fn entity(self) -> proxiima_core::EmbeddableEntityRef {
+        proxiima_core::EmbeddableEntityRef::Memory {
+            kind: proxiima_core::EntityKind::Fact,
+            memory_id: self,
+        }
+    }
+}
+
+impl EmbeddingTarget for proxiima_core::GoalId {
+    fn entity(self) -> proxiima_core::EmbeddableEntityRef {
+        proxiima_core::EmbeddableEntityRef::Goal(self)
+    }
+}
+
+impl EmbeddingTarget for proxiima_core::EmbeddableEntityRef {
+    fn entity(self) -> proxiima_core::EmbeddableEntityRef {
+        self
+    }
+}
+
+/// Where a test writes an embedding: a [`PgStorage`], or the admin pool of a
+/// database a host under test serves, when the test holds no storage handle.
+/// The pool write is the local vector write in a plain transaction, so it is
+/// only right for a role that bypasses row security and a store whose vectors
+/// live in the database; any other role is refused.
+#[async_trait::async_trait]
+pub trait EmbeddingHome: Sync {
+    /// Write one new embedding version of `entity` the way the embedding port
+    /// does once it has checked the job claim; returns the version written.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the write.
+    async fn write_embedding(
+        &self,
+        owner: &OwnerId,
+        entity: proxiima_core::EmbeddableEntityRef,
+        vectors: &[proxiima_core::SpaceVector],
+    ) -> Result<i32, StorageError>;
+}
+
+#[async_trait::async_trait]
+impl EmbeddingHome for PgStorage {
+    async fn write_embedding(
+        &self,
+        owner: &OwnerId,
+        entity: proxiima_core::EmbeddableEntityRef,
+        vectors: &[proxiima_core::SpaceVector],
+    ) -> Result<i32, StorageError> {
+        let mut tx = self.platform_transaction().await?;
+        let outcome = self
+            .insert_embedding_version(&mut tx, owner, entity, vectors)
+            .await?;
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(outcome.embedding_version)
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: EmbeddingHome + Send> EmbeddingHome for Arc<T> {
+    async fn write_embedding(
+        &self,
+        owner: &OwnerId,
+        entity: proxiima_core::EmbeddableEntityRef,
+        vectors: &[proxiima_core::SpaceVector],
+    ) -> Result<i32, StorageError> {
+        self.as_ref().write_embedding(owner, entity, vectors).await
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingHome for sqlx::PgPool {
+    async fn write_embedding(
+        &self,
+        owner: &OwnerId,
+        entity: proxiima_core::EmbeddableEntityRef,
+        vectors: &[proxiima_core::SpaceVector],
+    ) -> Result<i32, StorageError> {
+        let mut tx = self
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        // Under row security the write would see no entity and report "nothing
+        // written", which a test would take for a seeded row.
+        let sees_every_row: bool = sqlx::query_scalar(
+            "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user",
+        )
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(crate::error::map_err)?;
+        if !sees_every_row {
+            return Err(StorageError::Internal(
+                "an embedding is seeded through a pool only as a role that bypasses row security"
+                    .into(),
+            ));
+        }
+        let outcome =
+            crate::verbs::fact_embeddings::insert_embedding(&mut tx, owner, entity, vectors)
+                .await?;
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(outcome.embedding_version)
+    }
+}
+
+/// Write one new embedding version of `target` (a Fact, a Goal or a derived
+/// memory) in the 1024-wide space of `model_id`, `chunks` unit vectors long,
+/// through the write the embedding port makes
+/// (`PgStorage::insert_embedding_version`): the head advances to the new
+/// version, and an ineligible entity (forgotten, or not `owner`'s) writes
+/// nothing. Returns the version written, `0` when nothing was.
 ///
 /// # Errors
 ///
 /// Storage errors from the write.
 pub async fn create_embedding(
-    pg: &PgStorage,
+    home: &impl EmbeddingHome,
     owner: OwnerId,
-    memory: MemoryId,
+    target: impl EmbeddingTarget,
     model_id: &str,
     chunks: usize,
 ) -> Result<i32, StorageError> {
     let width = proxiima_core::EmbeddingDim::D1024.width();
     create_embedding_of(
-        pg,
+        home,
         owner,
-        memory,
+        target,
         model_id,
         vec![unit_vector(width); chunks],
     )
@@ -585,9 +703,9 @@ pub async fn create_embedding(
 /// `Internal` when no vector is given or the width is not a supported
 /// dimension; otherwise the storage errors from the write.
 pub async fn create_embedding_of(
-    pg: &PgStorage,
+    home: &impl EmbeddingHome,
     owner: OwnerId,
-    memory: MemoryId,
+    target: impl EmbeddingTarget,
     model_id: &str,
     chunks: Vec<Vec<f32>>,
 ) -> Result<i32, StorageError> {
@@ -603,18 +721,8 @@ pub async fn create_embedding_of(
                 .map_err(|err| StorageError::Internal(err.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let entity = proxiima_core::EmbeddableEntityRef::Memory {
-        kind: proxiima_core::EntityKind::Fact,
-        memory_id: memory,
-    };
-    let mut tx = pg.platform_transaction().await?;
-    let outcome = pg
-        .insert_embedding_version(&mut tx, &owner, entity, &vectors)
-        .await?;
-    tx.commit()
+    home.write_embedding(&owner, target.entity(), &vectors)
         .await
-        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
-    Ok(outcome.embedding_version)
 }
 
 /// Queue `entity_id` for embedding in the 1024-wide space of `model_id`, the
@@ -899,4 +1007,65 @@ pub async fn create_source_cursor(
         &proxiima_core::Cursor::from_bytes(cursor),
     )
     .await
+}
+
+/// Record `remote`, a memory of another store, as an origin of `memory` the
+/// way a derive that names one does
+/// (`crate::verbs::derive_append::record_external_edges`).
+///
+/// # Errors
+///
+/// Storage errors from the write.
+pub async fn create_external_origin(
+    pool: &sqlx::PgPool,
+    memory: MemoryId,
+    remote: Uuid,
+) -> Result<(), StorageError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    let outcome = crate::verbs::derive_append::DerivedOutcome {
+        memory_id: memory,
+        idempotent_replay: false,
+        forgotten: false,
+    };
+    crate::verbs::derive_append::record_external_edges(&mut tx, &outcome, &[remote], &[]).await?;
+    tx.commit()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))
+}
+
+/// Install `schema.table` as a memory sidecar of `spiice_id`, keyed to the
+/// memory by `memory_key`, the way a spiice migration does
+/// (`proxiima_core.install_sidecar`): the foreign key, the surface row, the
+/// integrity triggers and owner row security. `platform` is a pool of the
+/// platform role, which owns the table.
+///
+/// # Errors
+///
+/// Storage errors from the migration transaction or the installer.
+pub async fn install_sidecar(
+    platform: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+    spiice_id: &str,
+    memory_key: &str,
+) -> Result<(), StorageError> {
+    let mut conn = platform
+        .acquire()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    let mut tx = crate::begin_migration_transaction(&mut conn).await?;
+    sqlx::query("SELECT proxiima_core.install_sidecar($1, $2, $3, memory_key => $4)")
+        .bind(schema)
+        .bind(table)
+        .bind(spiice_id)
+        .bind(memory_key)
+        .execute(tx.as_mut())
+        .await
+        .map_err(crate::error::map_err)?;
+    tx.commit()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))
 }

@@ -713,8 +713,8 @@ async fn insert_goal_version(
     text: Option<&str>,
 ) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
     let owner_id = owner.into_inner();
-    // Raw INSERT: needs a builder for a Goal version with a named state, text
-    // and `t` (`TestGoal` writes an Active goal, and `write_goal` mints `t`).
+    // Raw INSERT on purpose: a Goal version at an exact past `t`; `write_goal` mints `t`
+    // from the clock, so no writer takes one.
     let handle = if let Some(handle) = handle {
         sqlx::query("UPDATE proxiima_core.goal_head SET t = $2 WHERE handle = $1")
             .bind(handle)

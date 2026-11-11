@@ -435,7 +435,6 @@ async fn fixture(
     example_engine::initialize_store_number(&db).await?;
     let (registry, sidecars) = registries()?;
     let admin = example_engine::fixture_pool(&db.admin_url(), 2).await?;
-    // Raw INSERT: needs a builder for spiice_surface (a spiice migration declares its tables).
     sqlx::raw_sql(
         "CREATE SCHEMA automatic_key;
          CREATE TABLE automatic_key.text_v1 (
@@ -470,25 +469,37 @@ async fn fixture(
          ALTER TABLE automatic_key.int2_v1 OWNER TO proxiima_test_platform;
          ALTER TABLE automatic_key.int4_v1 OWNER TO proxiima_test_platform;
          ALTER TABLE automatic_key.int8_v1 OWNER TO proxiima_test_platform;
-         ALTER TABLE automatic_key.char_v1 OWNER TO proxiima_test_platform;
-         INSERT INTO proxiima_core.spiice_surface(table_name,spiice_id)
-             VALUES ('automatic_key.text_v1','automatic-key'), ('automatic_key.composite_v1','automatic-key'),
-                    ('automatic_key.uuid_v1','automatic-key'), ('automatic_key.bool_v1','automatic-key'),
-                    ('automatic_key.int2_v1','automatic-key'), ('automatic_key.int4_v1','automatic-key'),
-                    ('automatic_key.int8_v1','automatic-key'), ('automatic_key.char_v1','automatic-key');
-         SELECT proxiima_core.install_owner_rls('automatic_key', ARRAY[]::text[],
-             ARRAY['text_v1','composite_v1','uuid_v1','bool_v1','int2_v1','int4_v1','int8_v1','char_v1']::text[], ARRAY[]::text[]);
-         GRANT USAGE ON SCHEMA automatic_key TO proxiima_test_runtime;
-         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA automatic_key TO proxiima_test_runtime;",
-    ).execute(&admin).await?;
-    let mut triggers = sidecars.declaration_trigger_artifacts("automatic-key")?;
-    triggers.extend(sidecars.presence_trigger_artifacts("automatic-key")?);
-    for artifact in triggers {
-        // SQL-POLICY: generated — the frozen fixture registry owns the trigger identifiers.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(artifact.forward))
-            .execute(&admin)
-            .await?;
+         ALTER TABLE automatic_key.char_v1 OWNER TO proxiima_test_platform;",
+    )
+    .execute(&admin)
+    .await?;
+    let platform = example_engine::fixture_pool(db.platform_url(), 2).await?;
+    for table in [
+        "text_v1",
+        "composite_v1",
+        "uuid_v1",
+        "bool_v1",
+        "int2_v1",
+        "int4_v1",
+        "int8_v1",
+        "char_v1",
+    ] {
+        proxiima_storage_pg::test_fixtures::install_sidecar(
+            &platform,
+            "automatic_key",
+            table,
+            "automatic-key",
+            "admission_id",
+        )
+        .await?;
     }
+    platform.close().await;
+    sqlx::raw_sql(
+        "GRANT USAGE ON SCHEMA automatic_key TO proxiima_test_runtime;
+         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA automatic_key TO proxiima_test_runtime;",
+    )
+    .execute(&admin)
+    .await?;
     let storage = connect_storage(&db)
         .await?
         .with_sidecars(sidecars)

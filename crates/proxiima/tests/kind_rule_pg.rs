@@ -296,31 +296,18 @@ async fn seed(tools: &CoreMcpTools, group: OwnerId) -> TestResult<Seeded> {
 
 /// Vectors for every seeded memory, written before the route has a client so
 /// no background job races them (as `core_mcp_pg/hybrid_search.rs`).
-async fn embed(admin: &PgPool, seeded: &Seeded, owner: Uuid) -> TestResult {
-    let mut vector = vec![0.0_f32; 1024];
-    vector[0] = 1.0;
-    for (_, t) in seeded.ids()? {
-        // Raw INSERT: needs a builder for embeddings of Abstractions and Perspectives
-        // (the Fact builder cannot write them).
-        sqlx::query(
-            "INSERT INTO proxiima_core.embeddings
-                (entity_id, model_id, dim, embedding_version, vec, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2::real[]::vector, $3)",
+async fn embed(admin: &PgPool, seeded: &Seeded, owner: OwnerId) -> TestResult {
+    for (kind, t) in seeded.ids()? {
+        test_fixtures::create_embedding(
+            admin,
+            owner,
+            proxiima_core::EmbeddableEntityRef::Memory {
+                kind,
+                memory_id: MemoryId::new(t),
+            },
+            "test-embed",
+            1,
         )
-        .bind(t)
-        .bind(&vector)
-        .bind(owner)
-        .execute(admin)
-        .await?;
-        // Raw INSERT: needs a builder for embeddings of Abstractions and Perspectives.
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_heads
-                (entity_id, model_id, dim, embedding_version, owner_id)
-             VALUES ($1, 'test-embed', 1024, 1, $2)",
-        )
-        .bind(t)
-        .bind(owner)
-        .execute(admin)
         .await?;
     }
     Ok(())
@@ -945,7 +932,7 @@ async fn every_role_acts_exactly_up_to_its_limit(
         let tools = built.host().core_mcp_tools();
         let seeded = seed(&tools, group).await?;
         let admin = PgPool::connect(&db_url(&database)).await?;
-        embed(&admin, &seeded, group.into_inner()).await?;
+        embed(&admin, &seeded, group).await?;
         router.set_default(BoundEmbeddingClient::bind(Arc::new(
             ConstantEmbedding::prefixed("test-embed", &[1.0, 0.0, 0.0]),
         ))?);
@@ -1225,7 +1212,8 @@ async fn assert_fact_scope_sql(
 
     // Rows the seeding cannot reach through a verb without S3.
     let abstraction = handle_id(&seeded.abstraction)?;
-    // Raw INSERT: needs a builder for closed_handle.
+    // Raw INSERT: only a schema evolution closes a handle, inline in its step
+    // (`preserve_closed_series`); no function writes the row alone.
     sqlx::query(
         "INSERT INTO proxiima_core.closed_handle (handle)
          SELECT handle FROM proxiima_core.memory WHERE t = $1",
@@ -1241,14 +1229,11 @@ async fn assert_fact_scope_sql(
         .await?;
     // An other-store origin of the Abstraction: the row reads and
     // writes at its memory's kind.
-    // Raw INSERT: needs a builder for memory_external_origin.
-    sqlx::query(
-        "INSERT INTO proxiima_core.memory_external_origin (t, memory, edge_kind)
-         VALUES ($1, $2, 'origin')",
+    test_fixtures::create_external_origin(
+        admin,
+        MemoryId::new(abstraction),
+        proxiima_core::new_memory_uuid(5),
     )
-    .bind(abstraction)
-    .bind(proxiima_core::new_memory_uuid(5))
-    .execute(admin)
     .await?;
     // Raw INSERT on purpose: a permanently failed job, a state a fresh enqueue never writes.
     sqlx::query(
@@ -1326,7 +1311,8 @@ async fn assert_fact_scope_sql(
     // `FOR UPDATE SKIP LOCKED` the rows before the census reads them.
     let mut debt = admin.begin().await?;
     for (_, t) in seeded.ids()? {
-        // Raw INSERT: needs a builder for vector_index_debt.
+        // Raw INSERT on purpose: the debt must sit uncommitted in this open transaction;
+        // production writes it from triggers on `embedding_heads`.
         sqlx::query(
             "INSERT INTO proxiima_core.vector_index_debt (entity_id, model_id, dim, owner_id, op)
              VALUES ($1, 'stale-embed', 1024, $2, 'delete')",
@@ -1520,27 +1506,20 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
                 .fetch_one(&admin)
                 .await?;
         let fact = handle_id(&seeded.fact)?;
-        for entity in [fact, goal] {
-            // Raw INSERT: needs a builder for embeddings of Goals.
-            sqlx::query(
-                "INSERT INTO proxiima_core.embeddings
-                    (entity_id, model_id, dim, embedding_version, vec, owner_id)
-                 VALUES ($1, 'goal-probe', 1024, 1, $3::real[]::vector, $2)",
+        for (entity, target) in [
+            (fact, proxiima_core::EmbeddableEntityRef::Memory {
+                kind: EntityKind::Fact,
+                memory_id: MemoryId::new(fact),
+            }),
+            (goal, proxiima_core::EmbeddableEntityRef::Goal(proxiima_core::GoalId::new(goal))),
+        ] {
+            test_fixtures::create_embedding_of(
+                &admin,
+                group,
+                target,
+                "goal-probe",
+                vec![vec![0.5_f32; 1024]],
             )
-            .bind(entity)
-            .bind(owner_id)
-            .bind(vec![0.5_f32; 1024])
-            .execute(&admin)
-            .await?;
-            // Raw INSERT: needs a builder for embeddings of Goals.
-            sqlx::query(
-                "INSERT INTO proxiima_core.embedding_heads
-                    (entity_id, model_id, dim, embedding_version, owner_id)
-                 VALUES ($1, 'goal-probe', 1024, 1, $2)",
-            )
-            .bind(entity)
-            .bind(owner_id)
-            .execute(&admin)
             .await?;
             // Raw INSERT on purpose: a permanently failed job, a state a fresh enqueue never writes.
             sqlx::query(
