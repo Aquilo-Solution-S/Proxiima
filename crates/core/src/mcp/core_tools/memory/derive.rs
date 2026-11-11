@@ -91,19 +91,20 @@ pub struct DeriveArgs {
     #[schemars(description = "Derived memory kind to author: Abstraction or Perspective.")]
     pub kind: DerivedKind,
     #[schemars(
-        length(max = 240),
-        description = "Short title, 1 to 240 chars after trimming."
+        length(min = 1, max = 240),
+        description = "Short title, trimmed before the length check."
     )]
     pub title: String,
     #[schemars(
-        length(max = 20000),
-        description = "Body text, 1 to 20000 chars after trimming."
+        length(min = 1, max = 20000),
+        description = "Body text, trimmed before the length check."
     )]
     pub body: String,
     #[serde(default)]
     #[schemars(
-        length(max = 16),
-        description = "Search tags, 1 to 48 chars each; stored and matched lowercase."
+        length(max = super::util::MAX_TAGS),
+        inner(length(min = 1, max = super::util::MAX_TAG_CHARS)),
+        description = "Search tags; stored and matched lowercase."
     )]
     pub tags: Vec<String>,
     #[schemars(
@@ -117,7 +118,8 @@ pub struct DeriveArgs {
     )]
     pub model_id: Option<String>,
     #[schemars(
-        description = "Optional key, 1 to 180 chars, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Omit to key on title, body, tags and sources. Use `supersedes` for a new version."
+        length(min = 1, max = crate::IdempotencyKey::MAX_CHARS),
+        description = "Optional key naming this one request: same key and content replays; changed content is `idempotency_conflict`. Omit to key on title, body, tags and sources. Use `supersedes` for a new version."
     )]
     pub idempotency_key: Option<String>,
     #[serde(default)]

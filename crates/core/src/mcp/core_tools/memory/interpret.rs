@@ -26,8 +26,8 @@ pub(crate) fn default_confidence() -> u8 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct InterpretArgs {
     #[schemars(
-        length(max = 1000),
-        description = "The claim being made about the subjects — what you take them to mean, and why. 1 to 1000 chars, trimmed before the length check."
+        length(min = 1, max = MAX_CLAIM_CHARS),
+        description = "The claim being made about the subjects — what you take them to mean, and why. Trimmed before the length check."
     )]
     pub claim: String,
     #[serde(default = "default_confidence")]

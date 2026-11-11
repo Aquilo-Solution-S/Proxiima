@@ -18,16 +18,18 @@ pub struct RecordUtteranceArgs {
     #[schemars(description = "Who produced the utterance: `user` or `agent`.")]
     pub speaker: Speaker,
     #[schemars(
-        description = "Non-empty stable id grouping the utterances of one conversation; surrounding whitespace is removed."
+        length(min = 1),
+        description = "Stable id grouping the utterances of one conversation; surrounding whitespace is removed."
     )]
     pub conversation_id: String,
     #[schemars(
-        length(max = 20000),
-        description = "The utterance text, 1 to 20000 chars. Leading and trailing whitespace is removed before the length check."
+        length(min = 1, max = 20000),
+        description = "The utterance text. Leading and trailing whitespace is removed before the length check."
     )]
     pub text: String,
     #[schemars(
-        description = "Optional key, 1 to 180 chars, naming this one request: same key and content replays; changed content is `idempotency_conflict`."
+        length(min = 1, max = crate::IdempotencyKey::MAX_CHARS),
+        description = "Optional key naming this one request: same key and content replays; changed content is `idempotency_conflict`."
     )]
     pub idempotency_key: Option<String>,
     #[serde(default)]

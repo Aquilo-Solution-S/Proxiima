@@ -114,8 +114,8 @@ impl From<SearchMemoriesSupersession> for SupersessionStatus {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchMemoriesArgs {
     #[schemars(
-        length(max = 512),
-        description = "Search query over owner-visible memories. 1 to 512 chars."
+        length(min = 1, max = crate::tool::MAX_QUERY_CHARS),
+        description = "Search query over owner-visible memories."
     )]
     pub query: String,
     #[serde(default = "default_mode")]
@@ -144,8 +144,8 @@ pub struct SearchMemoriesArgs {
     pub schema_id: Option<String>,
     #[serde(default)]
     #[schemars(
-        length(max = 16),
-        description = "Optional tag filter, at most 16 tags. Tags are matched in stored form — trimmed and lowercased — so `Rust` and `rust` filter alike. Empty means no tag filter."
+        length(max = MAX_SEARCH_TAGS),
+        description = "Optional tag filter. Tags are matched in stored form — trimmed and lowercased — so `Rust` and `rust` filter alike. Empty means no tag filter."
     )]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -186,8 +186,8 @@ pub struct SearchMemoriesArgs {
     pub body_max_chars: Option<usize>,
     #[serde(default)]
     #[schemars(
-        length(max = 16),
-        description = "Memory space keys from core_memory_spaces, at most 16. Empty/omitted searches current owner."
+        length(max = MAX_SEARCH_SPACES),
+        description = "Memory space keys from core_memory_spaces. Empty/omitted searches current owner."
     )]
     pub spaces: Vec<String>,
     #[serde(default)]

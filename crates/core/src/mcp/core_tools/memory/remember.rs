@@ -19,23 +19,25 @@ pub(crate) const NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RememberArgs {
     #[schemars(
-        length(max = 240),
-        description = "Short title for the agent-observed Fact, 1 to 240 chars. Leading and trailing whitespace is removed before the length check."
+        length(min = 1, max = 240),
+        description = "Short title for the agent-observed Fact. Leading and trailing whitespace is removed before the length check."
     )]
     pub title: String,
     #[schemars(
-        length(max = 20000),
-        description = "Body text for the agent-observed Fact, 1 to 20000 chars. Leading and trailing whitespace is removed before the length check."
+        length(min = 1, max = 20000),
+        description = "Body text for the agent-observed Fact. Leading and trailing whitespace is removed before the length check."
     )]
     pub body: String,
     #[serde(default)]
     #[schemars(
-        length(max = 16),
-        description = "Search tags, 1 to 48 chars each; stored and matched lowercase."
+        length(max = super::util::MAX_TAGS),
+        inner(length(min = 1, max = super::util::MAX_TAG_CHARS)),
+        description = "Search tags; stored and matched lowercase."
     )]
     pub tags: Vec<String>,
     #[schemars(
-        description = "Optional key, 1 to 180 chars, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
+        length(min = 1, max = crate::IdempotencyKey::MAX_CHARS),
+        description = "Optional key naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
     )]
     pub idempotency_key: Option<String>,
     #[serde(default)]

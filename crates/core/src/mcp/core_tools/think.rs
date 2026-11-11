@@ -39,7 +39,10 @@ pub struct ThinkArgs {
     )]
     pub depth: u32,
     #[serde(default = "default_limit")]
-    #[schemars(description = "Visits per page, at least 1; values above 200 are clamped.")]
+    #[schemars(
+        range(min = 1),
+        description = "Visits per page; values above 200 are clamped."
+    )]
     pub limit: u32,
     #[serde(default)]
     #[schemars(

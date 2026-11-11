@@ -42,7 +42,6 @@ pub use names::{provider_safe_tool_name, tool_name_matches};
 pub use reply::{ToolContent, ToolReply};
 pub use schema::{
     McpActionSchema, McpDispatcherSchema, mcp_wire_output_schema, normalize_mcp_output_schema,
-    schema_bound_mismatches,
 };
 pub use tool::{
     KeyDeclaration, MAX_TITLE_CHARS, McpActionArgSpec, McpArgvActionSpec, McpCallFn, McpTool,
