@@ -1287,42 +1287,16 @@ fn the_spiice_sdk_names_the_host_state_erase_disposition() {
     assert_eq!(host_tier, proxiima::HostStateEraseDisposition::Retain);
 }
 
+/// Host-state participation is host API. The names are nameable from the host
+/// tier; the SDK's refusal to name `PgHostStateParticipant` and
+/// `HostStateCommand` is held by the `compile_fail` doctests in the crate docs.
 #[test]
-fn host_state_participation_is_host_api_not_spiice_sdk() {
-    let spiice_exports = include_str!("../src/spiice.rs");
-    let host_exports = include_str!("../src/host.rs");
-    assert!(
-        !spiice_exports.contains("HostStateCommand"),
-        "Spiice SDK must not export host-state command types"
-    );
-    assert!(
-        !spiice_exports.contains("PgHostStateParticipant"),
-        "Spiice SDK must not export the PG host-state participant"
-    );
-    assert!(
-        host_exports.contains("HostStateCommand"),
-        "Host API names HostStateCommand"
-    );
-    assert!(
-        host_exports.contains("PgHostStateParticipant"),
-        "Host API names PgHostStateParticipant"
-    );
-    for dispatch in [
-        "PgCommandDispatcher",
-        "AgreedCommand",
-        "HostStateHandler",
-        "HostStatePayloadOwners",
-        "CommandRegistrationError",
-    ] {
-        assert!(
-            !spiice_exports.contains(dispatch),
-            "Spiice SDK must not export `{dispatch}`, the host-state dispatch"
-        );
-        assert!(
-            host_exports.contains(dispatch),
-            "Host API names `{dispatch}`"
-        );
-    }
+#[allow(unused_imports)]
+fn host_state_participation_is_host_api() {
+    use proxiima::{
+        AgreedCommand, CommandRegistrationError, HostStateCommand, HostStateHandler,
+        HostStatePayloadOwners, PgCommandDispatcher, PgHostStateParticipant,
+    };
 }
 
 /// Naming [`proxiima::spiice::AuthorizationHook`] is not enough: `veto`

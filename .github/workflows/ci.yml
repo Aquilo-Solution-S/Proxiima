@@ -121,7 +121,7 @@ jobs:
         run: cargo test --doc --workspace --all-features --locked
 
   docs:
-    name: docs links + status + lean
+    name: docs links + lean
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

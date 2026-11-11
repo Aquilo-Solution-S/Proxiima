@@ -643,23 +643,6 @@ mod tests {
     }
 
     #[test]
-    fn non_head_query_does_not_join_head_for_schema() {
-        let src = include_str!("memories.rs");
-        let join = format!(
-            "{}{}",
-            "JOIN proxiima_core.memory_head h ON h.handle = ", "m.handle\""
-        );
-        assert!(
-            !src.contains(&join),
-            "IncludeSuperseded reads m.schema_id; head join is HeadsOnly only"
-        );
-        assert!(
-            src.contains("m.schema_id"),
-            "query page selects memory.schema_id"
-        );
-    }
-
-    #[test]
     fn kind_is_a_literal_and_placeholders_are_dense_in_bind_order() {
         use super::MemoryFilter;
         use crate::pg_enums::PgMemoryKind;

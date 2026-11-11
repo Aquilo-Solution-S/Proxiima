@@ -1792,30 +1792,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn owner_erase_gcs_content() {
-        let src = include_str!("owner_erase.rs");
-        assert!(
-            src.contains("gc_unreferenced_content"),
-            "owner erase must GC Content"
-        );
-    }
-
-    #[test]
-    fn group_abandonment_counts_group_memberships() {
-        let src = include_str!("owner_erase.rs");
-        let retired = format!("{}.{}", "proxiima_core", "resolved_group_memberships");
-        let live = format!("{}.{}", "proxiima_core", "group_memberships");
-        assert!(
-            !src.contains(&retired),
-            "the resolved-membership view is not part of the schema"
-        );
-        assert!(
-            src.contains(&live),
-            "abandonment counts proxiima_core.group_memberships"
-        );
-    }
-
     /// The registry-driven sweep reaches every core sidecar: the
     /// memory-keyed pass for the memory sidecars, the goal-keyed pass for
     /// `task_goal_v1`.

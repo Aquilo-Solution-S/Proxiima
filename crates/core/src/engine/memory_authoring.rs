@@ -1540,40 +1540,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn kind_resolution_reuses_the_authorized_home_owner() {
-        let source = include_str!("memory_authoring.rs");
-        // Scan production code only: the anchors below also occur in this
-        // test's own literals, and an anchor that names nothing would let
-        // the region run silently up to here.
-        let source = source
-            .split_once("#[cfg(test)]\nmod tests {")
-            .expect("test module marker")
-            .0;
-        let end_anchor = "/// Forget one owned memory `t`: mark its row";
+    /// Kind resolution reuses the owner the read admission returned: each
+    /// origin is handed to the owner lookups once, and its kind is loaded in
+    /// one batch.
+    #[tokio::test]
+    async fn kind_resolution_reuses_the_authorized_home_owner() {
+        let owner = owner();
+        let origin = MemoryId::new(uuid::Uuid::now_v7());
+        let reads = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kind_loads = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let engine = Engine::compose_or_panic_for_tests(
+            crate::engine::membership_storage::MembershipStorage {
+                observed_entity_reads: reads.clone(),
+                observed_kind_loads: kind_loads.clone(),
+                member: owner,
+                group: crate::GroupId::new(uuid::Uuid::now_v7()),
+                membership_relation: crate::Relation::Viewer,
+                home_owner: Some(owner),
+                entity_readable: true,
+                memory_kind: Some(EntityKind::Fact),
+                goal_evidence: None,
+                observed_fact_writes: Arc::default(),
+                observed_modify_evidence: Arc::default(),
+                observed_goal_authorship: Arc::default(),
+            }
+            .storage_ports(),
+            |_| {},
+        );
+        let authz = AuthzContext::single_owner(&owner, crate::AuthPath::HostBearer);
+        let origins = [EdgeEndpoint::memory(EntityKind::Fact, origin)];
+        engine
+            .derive_memory(
+                &authz,
+                request(owner, &origins).into_typed().expect("typed"),
+            )
+            .await
+            .expect_err("the test storage refuses every write");
         assert_eq!(
-            source.matches(end_anchor).count(),
-            1,
-            "the resolver's end anchor must name exactly one production item"
+            *reads.lock().expect("reads"),
+            [crate::EntityId::Memory(origin)]
         );
-        let start = source
-            .find("async fn resolve_memory_targets")
-            .expect("kind resolver");
-        let end = source[start..].find(end_anchor).expect("end of resolver");
-        let body = &source[start..start + end];
-        let reload = format!("{}{}", ".home_", "owner(");
-        assert!(
-            !body.contains(&reload),
-            "target kind lookup must reuse the authorized home owner, not query an unscoped owner again"
-        );
-        assert!(
-            body.contains("authorize_entry_read"),
-            "committed targets pass the read gate before their kind is loaded"
-        );
-        assert!(
-            body.contains("permit.owner()"),
-            "kind lookup uses the owner returned by the read permit"
-        );
+        assert_eq!(*kind_loads.lock().expect("kind loads"), [vec![origin]]);
     }
 
     /// Public origin declarations carry row IDs, not caller-selected kinds.

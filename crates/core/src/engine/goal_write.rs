@@ -851,27 +851,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn evidence_admit_does_not_reload_kind() {
-        let src = include_str!("goal_write.rs");
-        let start = src
-            .find("async fn validate_goal_evidence_authorized")
-            .expect("validate_goal_evidence_authorized");
-        let rest = &src[start..];
-        let end = rest
-            .find("async fn require_perspective_kind")
-            .expect("next fn");
-        let reload = format!("{}{}", "load_required_memory_", "kind");
-        assert!(
-            !rest[..end].contains(&reload),
-            "evidence kind is the in-tx TOCTOU, not a second pre-tx walk"
-        );
-        assert!(
-            rest[..end].contains("authorize_entry_read"),
-            "read-admit stays; only the kind walk is dropped"
-        );
-    }
-
     fn owner() -> crate::OwnerId {
         OwnerId::from(crate::UserId::new(uuid::Uuid::now_v7()))
     }
@@ -1122,6 +1101,7 @@ mod tests {
         storage.goal_evidence = Some(evidence.clone());
         storage.observed_modify_evidence = observed.clone();
         let observed_reads = storage.observed_entity_reads.clone();
+        let observed_kind_loads = storage.observed_kind_loads.clone();
         let engine = engine_with_ports(storage);
         let req = GoalModifyRequest {
             owner,
@@ -1154,6 +1134,13 @@ mod tests {
                 .map(EntityId::Memory)
                 .collect::<Vec<_>>(),
             "the Engine must still read-admit the exact stored evidence vector"
+        );
+        assert!(
+            observed_kind_loads
+                .lock()
+                .expect("kind load recorder lock")
+                .is_empty(),
+            "evidence kind is the in-tx check, not a second pre-tx load"
         );
     }
 

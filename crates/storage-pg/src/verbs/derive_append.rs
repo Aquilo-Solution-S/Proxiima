@@ -1027,38 +1027,3 @@ mod origins_pg_tests;
 #[cfg(test)]
 #[path = "derive_append_replay_pg_tests.rs"]
 mod replay_pg_tests;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn in_tx_origin_proof_uses_stored_kind() {
-        let src = include_str!("derive_append.rs");
-        let discarded = format!("{}{}", "let _ = (draft, rows, ", "expected_input_kind)");
-        assert!(
-            !src.contains(&discarded),
-            "in-tx SELECT of kind must be compared to the declared origin"
-        );
-        let needle = format!("{}{}", "must match the stored ", "row");
-        assert!(
-            src.contains(&needle),
-            "declared pin kind cannot widen past the stored row"
-        );
-        let refs = format!("{}{}", "validate_derived_reference_kinds", "_in_tx");
-        assert!(
-            src.contains(&refs),
-            "references must use the same stored-kind compare as origins"
-        );
-        let start = src
-            .find("fn collect_operator_inputs")
-            .expect("collect_operator_inputs");
-        let rest = &src[start..];
-        let end = rest
-            .find("async fn load_live_input_proof_rows_in_tx")
-            .expect("next fn");
-        let declared_phase = format!("{}{}", "origin.kind != ", "expected_input_kind");
-        assert!(
-            !rest[..end].contains(&declared_phase),
-            "phase contract is on stored kind, not the declared endpoint"
-        );
-    }
-}

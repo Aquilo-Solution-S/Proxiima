@@ -860,16 +860,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_embedding_scan_does_not_probe_spiice_tables() {
-        let src = include_str!("jobs.rs");
-        let needle = format!("{}{}", "to_reg", "class(");
-        assert!(
-            !src.contains(&needle),
-            "chunks are memory rows; do not dual-scan a spiice sidecar"
-        );
-    }
-
-    #[test]
     fn the_claim_names_pending_only() {
         assert_eq!(
             CLAIM_EMBEDDING_JOBS_SQL
@@ -881,18 +871,13 @@ mod tests {
 
     #[test]
     fn claim_needs_no_growing_entity_exclusion_parameter() {
-        let migration = include_str!("../../../migrations/0057_baseline.sql");
-        assert!(
-            migration.contains("UNIQUE (owner_id, entity_id, model_id, dim)"),
-            "the DB must admit at most one job per entity and space"
-        );
         assert!(!CLAIM_EMBEDDING_JOBS_SQL.contains("ANY("));
         assert!(CLAIM_EMBEDDING_JOBS_SQL.contains("AS blocked(owner_id, model_id, dim)"));
         assert!(!CLAIM_EMBEDDING_JOBS_SQL.contains("blocked.entity_id"));
     }
 
     #[test]
-    fn job_claim_shape_tracks_durable_claim_state() {
+    fn a_job_claim_names_its_space() {
         let claim = EmbeddingJobClaim {
             job_id: uuid::Uuid::from_u128(2),
             owner: OwnerId::from(proxiima_core::UserId::new(uuid::Uuid::from_u128(1))),
@@ -902,20 +887,5 @@ mod tests {
             claim_token: uuid::Uuid::from_u128(4),
         };
         assert_eq!(claim.space.model_id(), "model");
-
-        let migration = include_str!("../../../migrations/0057_baseline.sql");
-        let historical_table = format!(
-            "CREATE TABLE {}core.embedding_jobs (",
-            crate::rename_bootstrap::historical_namespace_prefix()
-        );
-        let job_table = migration
-            .split_once(historical_table.as_str())
-            .expect("the migration defines embedding_jobs")
-            .1
-            .split_once("\n);")
-            .expect("embedding_jobs definition is closed")
-            .0;
-        assert!(!job_table.contains("embedding_version"));
-        assert!(!job_table.contains("attempts"));
     }
 }

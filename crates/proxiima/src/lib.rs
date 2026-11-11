@@ -62,6 +62,16 @@
 //! use proxiima::spiice::begin_owner_transaction;
 //! ```
 //!
+//! Nor does it name the host-state participant or its command trait:
+//!
+//! ```compile_fail,E0432
+//! use proxiima::spiice::PgHostStateParticipant;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use proxiima::spiice::HostStateCommand;
+//! ```
+//!
 //! The host-only capability and its permit cannot be caller-constructed:
 //!
 //! ```compile_fail

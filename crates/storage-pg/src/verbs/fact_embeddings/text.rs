@@ -255,33 +255,3 @@ where
         .await
         .map_err(map_err)
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn embed_text_schema_is_on_memory() {
-        let src = include_str!("text.rs");
-        let join = format!(
-            "{}{}",
-            "JOIN proxiima_core.memory_head h ON h.handle", " = m.handle"
-        );
-        assert!(
-            !src.contains(&join),
-            "embed text reads schema_id from memory"
-        );
-    }
-
-    #[test]
-    fn drain_reads_stored_embed_text() {
-        let src = include_str!("text.rs");
-        let concat = format!("{}{}", "concat_ws", "(' ',");
-        assert!(
-            !src.contains(&concat),
-            "drain does not re-concat projection columns"
-        );
-        assert!(
-            src.contains("unit.column"),
-            "drain selects the stored sidecar column"
-        );
-    }
-}

@@ -1772,35 +1772,60 @@ mod tests {
         TagMatch,
     };
 
-    #[test]
-    fn admit_reads_schema_from_memory() {
-        let src = include_str!("search.rs");
-        let join = format!(
-            "{}{}",
-            "JOIN proxiima_core.memory_head h ON h.handle = ", "m.handle\""
-        );
-        assert!(
-            !src.contains(&join),
-            "non-HeadsOnly admit does not join head for schema_id"
-        );
-        assert!(
-            src.contains("m.schema_id"),
-            "admit selects memory.schema_id"
-        );
+    /// The plan pins test the migrated candidate functions, so the scan must
+    /// call them: with either one dropped, the search that reaches it fails.
+    /// An empty store reaches both arms, the substring one because the ranked
+    /// arm returns nothing for any schema.
+    #[tokio::test]
+    async fn each_scan_arm_calls_its_migrated_candidate_function() {
+        use proxiima_core::storage_ports::MemoryReadPort;
+
+        let owner = OwnerId::from(proxiima_core::UserId::new(uuid::Uuid::now_v7()));
+        let scope = proxiima_core::test_fixtures::owner_scope_for_tests(&[owner]);
+        let note = proxiima_core::SpiiceRegistry::new()
+            .freeze_or_panic_for_tests()
+            .search_projections()
+            .iter()
+            .find(|projection| projection.schema_id.as_str() == "core/agent-note-v1")
+            .expect("the core note projection")
+            .clone();
+        let mut req = request_with_tags();
+        req.read_owners = vec![owner];
+        req.scope = proxiima_core::verbs::query::MemorySearchScope::Owner(owner);
+        req.tags.clear();
+        for function in [
+            None,
+            Some("search_lexical_candidates"),
+            Some("search_substring_candidates"),
+        ] {
+            let (pg, _db) = crate::test_fixtures::fresh_pg("search_arm_fns").await;
+            if let Some(function) = function {
+                // SQL-POLICY: fixed-fragment
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DO $$ BEGIN EXECUTE 'DROP FUNCTION ' || (
+                         SELECT oid::regprocedure::text FROM pg_proc
+                          WHERE proname = '{function}'
+                            AND pronamespace = 'proxiima_core'::regnamespace); END $$"
+                )))
+                .execute(pg.pool_for_tests())
+                .await
+                .expect("drop the candidate function");
+            }
+            let found = pg
+                .search_memories(Some(&scope), &req, std::slice::from_ref(&note))
+                .await;
+            assert_eq!(
+                found.is_err(),
+                function.is_some(),
+                "{function:?}: {found:?}"
+            );
+        }
     }
 
     #[test]
-    fn production_search_uses_exported_builders() {
+    fn production_search_admits_through_search_admit_sql() {
         let src = include_str!("search.rs");
         let prod = src.split("mod tests").next().expect("production");
-        assert!(
-            prod.contains("search_candidates::call_sql(&spiice.head().projection_table, false)"),
-            "the ranked scan must call the fixed candidate function"
-        );
-        assert!(
-            prod.contains("search_candidates::call_sql(&spiice.head().projection_table, true)"),
-            "the substring scan must call the fixed candidate function"
-        );
         let admit = format!("{}{}", "search_admit_sql(matches!(", "");
         assert!(prod.contains(&admit), "admit must run search_admit_sql");
     }

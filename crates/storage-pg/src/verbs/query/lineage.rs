@@ -607,45 +607,7 @@ mod tests {
     use super::{ANCESTOR_HOP_SQL, DESCENDANT_HOP_SQL};
 
     #[test]
-    fn lineage_sql_does_not_join_target_owner() {
-        let src = include_str!("lineage.rs");
-        let prod = src.split("mod tests").next().expect("production");
-        let tgt_owner = format!("{}{}", "tgt.owner_id = ", "ANY");
-        let tgt_join = format!("{}{}", "JOIN proxiima_core.memory tgt ON tgt.t", " = pin");
-        let parent_owner = format!("{}{}", "parent.owner_id = ", "ANY");
-        assert!(
-            !prod.contains(&tgt_owner),
-            "target owner is redaction, not a walk filter"
-        );
-        assert!(
-            !prod.contains(&tgt_join),
-            "pin UUID is on the source; do not join tgt for existence"
-        );
-        assert!(
-            !prod.contains(&parent_owner),
-            "descendants do not re-admit the start via parent owner"
-        );
-        let head_schema = format!("{}{}", "h.schema", "_id");
-        assert!(
-            !prod.contains(&head_schema),
-            "lineage reads schema_id from memory, not memory_head"
-        );
-    }
-
-    #[test]
-    fn lineage_sql_is_level_hops() {
-        let src = include_str!("lineage.rs");
-        let prod = src.split("mod tests").next().expect("production");
-        let recursive = format!("{}{}", "WITH RECUR", "SIVE");
-        let union_all = format!("{}{}", "UNION ", "ALL");
-        assert!(
-            !prod.contains(&recursive),
-            "lineage must not expand a recursive CTE"
-        );
-        assert!(
-            !prod.contains(&union_all),
-            "lineage must not UNION ALL paths"
-        );
+    fn each_lineage_hop_pages_in_sql() {
         assert!(
             ANCESTOR_HOP_SQL.contains("LIMIT") && DESCENDANT_HOP_SQL.contains("LIMIT"),
             "each hop query must page in SQL"

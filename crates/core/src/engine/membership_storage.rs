@@ -27,9 +27,10 @@ pub(crate) struct MembershipStorage {
     pub(crate) observed_fact_writes: Arc<AtomicUsize>,
     pub(crate) observed_modify_evidence: Arc<Mutex<Option<Vec<MemoryId>>>>,
     pub(crate) observed_goal_authorship: Arc<Mutex<Vec<GoalAuthorship>>>,
-    /// Every entity handed to `visible_home_owner`, in call order. The
-    /// admission path reads a repeated declaration once, so a duplicate
-    /// target must not appear twice here.
+    /// Every entity handed to `visible_home_owner` or `home_owner`, in call
+    /// order. The admission path reads a repeated declaration once, so a
+    /// duplicate target must not appear twice here, and kind resolution
+    /// reuses the owner the read admission returned instead of asking again.
     pub(crate) observed_entity_reads: Arc<Mutex<Vec<EntityId>>>,
     /// The id batch of each `load_memory_kinds` call, in call order. Kind
     /// resolution is batched per owner, so N declared targets under one
@@ -786,8 +787,12 @@ impl OwnerAccessReadPort for MembershipStorage {
     async fn home_owner(
         &self,
         _owner_scope: Option<&crate::OwnerScope>,
-        _entity: EntityId,
+        entity: EntityId,
     ) -> Result<Option<OwnerId>, StorageError> {
+        self.observed_entity_reads
+            .lock()
+            .expect("observed entity reads")
+            .push(entity);
         Ok(self.home_owner)
     }
 }

@@ -189,11 +189,10 @@ impl Encode<'_, Postgres> for QueryVector {
 mod tests {
     use super::*;
 
-    /// The fragments must spell exactly the expression and predicate
-    /// baseline indexes, or the lane falls back to a sequential scan.
+    /// The fragments are the lane's expression and predicate; that the
+    /// planner serves each from its index is pinned by `hot_path_plans`.
     #[test]
-    fn every_lane_spells_its_migration_index() {
-        let migration = include_str!("../migrations/0058_pgvector_local_vectors.sql");
+    fn every_lane_spells_its_expression_and_binds_its_cast() {
         for dim in EmbeddingDim::ALL {
             let lane = Lane::of(dim);
             assert_eq!(usize::try_from(lane.width).ok(), Some(dim.width()));
@@ -204,15 +203,6 @@ mod tests {
             } else {
                 "vector"
             };
-            let index = format!(
-                "CREATE INDEX embeddings_hnsw_d{w} ON {schema}.embeddings USING hnsw (((vec)::public.{kind}({w})) public.{kind}_cosine_ops) WHERE (dim = {w});",
-                schema = format_args!(
-                    "{}core",
-                    crate::rename_bootstrap::historical_namespace_prefix()
-                ),
-                w = dim.width(),
-            );
-            assert!(migration.contains(&index), "missing lane index: {index}");
             assert_eq!(lane.predicate, format!("emb.dim = {}", dim.width()));
             assert_eq!(lane.vec, format!("emb.vec::{kind}({})", dim.width()));
             assert_eq!(lane.cast, format!("::{kind}({})", dim.width()));

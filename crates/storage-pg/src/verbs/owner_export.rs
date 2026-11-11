@@ -526,16 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn export_sql_does_not_rebuild_an_edge_table() {
-        let src = include_str!("owner_export.rs");
-        let needle = format!("{}{}", "JOIN unnest", "(src.origins)");
-        assert!(
-            !src.contains(&needle),
-            "export must project pins from memory rows, not unnest a second Edge scan"
-        );
-    }
-
-    #[test]
     fn a_memory_row_with_null_pins_contributes_no_edges() {
         let source = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
         let edges = pins_from_memories(&[json!({

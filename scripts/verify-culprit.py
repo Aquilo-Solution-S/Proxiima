@@ -151,7 +151,7 @@ def self_test() -> None:
         {"name": "probe c1 / changed paths", "conclusion": "success"},
         {"name": "probe c2 / test (postgres + pgvector)", "conclusion": "failure"},
         {"name": "probe c3 / test (postgres + pgvector)", "conclusion": "cancelled"},
-        {"name": "probe c4 / docs links + status + lean", "conclusion": "failure"},
+        {"name": "probe c4 / docs links + lean", "conclusion": "failure"},
         {"name": "culprit", "conclusion": None},
     ]
     found = probe_outcomes(["c1", "c2", "c3", "c4", "c5"], jobs)
