@@ -2,6 +2,7 @@
 //! listenable schema, its sidecar table, and the app that boots them. Shared by
 //! the in-process delivery tests, which capture through the real Postgres
 //! path.
+#![cfg(test)]
 
 use std::borrow::Cow;
 use std::time::Duration;

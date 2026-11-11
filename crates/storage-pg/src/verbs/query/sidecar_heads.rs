@@ -33,9 +33,9 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
               ORDER BY memory_handle, memory_t DESC
          ), candidates AS (
              SELECT m.t, m.handle, m.owner_id
-               FROM proxiima_core.memory m
+               FROM proxiima_core.live_memory m
                JOIN proxiima_core.memory_head h ON h.handle = m.handle AND h.t = m.t
-              WHERE m.forgotten_at IS NULL AND m.owner_id = ANY(",
+              WHERE m.owner_id = ANY(",
     );
     sql.push_bind(
         read_owners
@@ -63,7 +63,7 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
     sql.push(" s JOIN visible ON visible.t = s.");
     // SQL-POLICY: PgIdent
     sql.push(memory_key.as_str());
-    sql.push(" JOIN proxiima_core.memory m ON m.t = visible.t WHERE m.schema_id = ");
+    sql.push(" JOIN proxiima_core.live_memory m ON m.t = visible.t WHERE m.schema_id = ");
     sql.push_bind(query.schema_id().as_str());
     sql.push(" AND m.kind = 'fact'");
     for (column, value) in columns.iter().zip(query.key_prefix()) {

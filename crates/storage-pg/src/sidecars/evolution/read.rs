@@ -219,8 +219,7 @@ async fn read_memories(
         "SELECT handle,t,kind::text,owner_id,schema_id,source_id,ingest_key,blob_id,content_id,
                 origins,refs,goal_refs,guided_by,reads,forked_from,sidecar_tables,occurred_at,\"by\",via,
                 lexical_language::text,forgotten_at
-           FROM proxiima_core.memory
-          /* FORGET-POLICY: includes-forgotten (all historical representations migrate) */
+           FROM proxiima_core.memory_including_forgotten
           WHERE owner_id = $1 AND (schema_id,kind::text) IN (SELECT * FROM unnest($2::text[],$3::text[]))
           ORDER BY t",
     )

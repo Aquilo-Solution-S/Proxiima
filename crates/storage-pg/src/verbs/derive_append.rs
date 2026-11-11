@@ -162,7 +162,7 @@ pub(crate) async fn validate_retained_pins_in_tx(
     }
     let row = sqlx::query(
         "SELECT owner_id, forked_from, kind::text AS kind, origins, refs, goal_refs
-         FROM proxiima_core.memory /* FORGET-POLICY: live-only (retained prior must remain writable) */
+         FROM proxiima_core.memory
          WHERE t=$1 AND forgotten_at IS NULL
          FOR SHARE",
     )
@@ -268,8 +268,8 @@ async fn admit_derived(
     let kind = derived_kind(draft)?;
     let handle = if let Some(prior) = draft.supersedes {
         let prior_handle: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT handle FROM proxiima_core.memory /* FORGET-POLICY: live-only (a write never builds on a forgotten memory; owner RLS hides it too) */
-              WHERE t = $1 AND owner_id = $2 AND forgotten_at IS NULL",
+            "SELECT handle FROM proxiima_core.live_memory
+              WHERE t = $1 AND owner_id = $2",
         )
         .bind(prior.into_inner())
         .bind(draft.owner.into_inner())
@@ -418,7 +418,7 @@ async fn derived_replay_in_lifecycle(
     // before #488.
     let incoming_origins = pin_memory_ids(origins);
     let forgotten_version: Option<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT t FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a replay answers for a forgotten version) */
+        "SELECT t FROM proxiima_core.memory_including_forgotten
           WHERE handle = $1 AND owner_id = $2
             AND kind = $3::proxiima_core.memory_kind AND schema_id = $4
             AND forgotten_at IS NOT NULL AND origins = $5::uuid[]
@@ -463,7 +463,7 @@ async fn load_derived_replay_head(
     sqlx::query_as(
         "SELECT h.t, m.forgotten_at IS NOT NULL
            FROM proxiima_core.memory_head h
-           JOIN proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (a replay answers for a forgotten head) */ ON m.t = h.t
+           JOIN proxiima_core.memory_including_forgotten m ON m.t = h.t
           WHERE h.handle = $1 AND h.owner_id = $2
             AND h.kind = $3::proxiima_core.memory_kind AND h.schema_id = $4",
     )
@@ -775,16 +775,16 @@ async fn load_pin_ids(
 ) -> Result<Vec<uuid::Uuid>, StorageError> {
     let sql = match column {
         PinColumn::Origins => {
-            "SELECT unnest(origins) FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a replay compares a forgotten head's pins in the lifecycle scope) */ WHERE t = $1"
+            "SELECT unnest(origins) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
         }
         PinColumn::Refs => {
-            "SELECT unnest(refs) FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a replay compares a forgotten head's pins in the lifecycle scope) */ WHERE t = $1"
+            "SELECT unnest(refs) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
         }
         PinColumn::GoalRefs => {
-            "SELECT unnest(goal_refs) FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a replay compares a forgotten head's pins in the lifecycle scope) */ WHERE t = $1"
+            "SELECT unnest(goal_refs) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
         }
         PinColumn::GuidedBy => {
-            "SELECT unnest(guided_by) FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (a replay compares a forgotten head's pins in the lifecycle scope) */ WHERE t = $1"
+            "SELECT unnest(guided_by) FROM proxiima_core.memory_including_forgotten WHERE t = $1"
         }
     };
     // SQL-POLICY: fixed-fragment
@@ -973,7 +973,7 @@ async fn load_replay_input_proof_rows_in_tx(
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let rows: Result<Vec<(uuid::Uuid, PgMemoryKind)>, StorageError> = sqlx::query_as(
         "SELECT m.t, m.kind
-           FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (a replay's inputs may have been forgotten since) */
+           FROM proxiima_core.memory_including_forgotten m
           WHERE m.t = ANY($1::uuid[])",
     )
     .bind(input_ids)
@@ -1007,8 +1007,8 @@ async fn load_stored_memory_kinds_in_tx(
     }
     let rows: Vec<(uuid::Uuid, PgMemoryKind)> = sqlx::query_as(
         "SELECT m.t, m.kind
-           FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a write never builds on a forgotten memory; owner RLS hides it too) */
-          WHERE m.t = ANY($1::uuid[]) AND m.forgotten_at IS NULL",
+           FROM proxiima_core.live_memory m
+          WHERE m.t = ANY($1::uuid[])",
     )
     .bind(ids)
     .fetch_all(&mut **tx)

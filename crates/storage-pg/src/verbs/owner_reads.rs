@@ -53,7 +53,7 @@ macro_rules! version_select {
             "SELECT m.t, m.handle, m.kind, m.schema_id, m.origins,
                     EXISTS (SELECT 1 FROM proxiima_core.memory_head h
                              WHERE h.handle = m.handle AND h.t = m.t) AS head
-               FROM proxiima_core.memory m
+               FROM proxiima_core.memory_including_forgotten m
               WHERE m.owner_id = $1 AND ",
             $filter
         )
@@ -62,8 +62,14 @@ macro_rules! version_select {
 
 const VERSIONS_OF_IDS_SQL: &str = version_select!("m.t = ANY($2) ORDER BY m.t");
 const VERSIONS_OF_SERIES_SQL: &str = version_select!("m.handle = $2 ORDER BY m.t");
-const LOCK_ONE_SQL: &str = version_select!("m.t = $2 FOR SHARE OF m");
 const VERSIONS_CITING_SQL: &str = version_select!("m.blob_id = $2 ORDER BY m.t");
+/// The same row as `version_select!`, read from the table: a row lock cannot
+/// be taken through a view.
+const LOCK_ONE_SQL: &str = "SELECT m.t, m.handle, m.kind, m.schema_id, m.origins,
+                    EXISTS (SELECT 1 FROM proxiima_core.memory_head h
+                             WHERE h.handle = m.handle AND h.t = m.t) AS head
+               FROM proxiima_core.memory m
+              WHERE m.owner_id = $1 AND m.t = $2 FOR SHARE OF m";
 
 fn raw_ids(memory_ids: &[MemoryId]) -> Vec<Uuid> {
     memory_ids.iter().map(|id| id.into_inner()).collect()
@@ -210,7 +216,7 @@ pub async fn memory_embeddings(
     let rows: Vec<(Uuid, String, i16)> = sqlx::query_as(
         "SELECT h.entity_id, h.model_id, h.dim
            FROM proxiima_core.embedding_heads h
-           JOIN proxiima_core.memory m
+           JOIN proxiima_core.memory_including_forgotten m
              ON m.t = h.entity_id AND m.owner_id = h.owner_id
           WHERE h.owner_id = $1 AND h.entity_id = ANY($2)
           ORDER BY h.entity_id, h.model_id, h.dim",

@@ -345,7 +345,7 @@ pub(super) async fn load_goal_blob_read_record_on_connection(
                 u.upload_id, u.mounted_from_upload_id, u.sha256,
                 u.expected_byte_len AS byte_len, u.mime, u.filename
            FROM proxiima_core.blob b
-           JOIN proxiima_core.memory m ON m.blob_id = b.blob_id
+           JOIN proxiima_core.live_memory m ON m.blob_id = b.blob_id
            JOIN proxiima_core.goal_memory_publication p
              ON p.memory_t = m.t AND p.goal_handle = $4
            JOIN proxiima_core.goal_memory_read_routes() route

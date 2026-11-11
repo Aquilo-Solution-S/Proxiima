@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use proxiima_core::StorageError;
 use proxiima_core::owner_inverse::{ExportAuthorization, OwnerExportBundle, OwnerSurfaces};
-use proxiima_core::spiice::{ExportRule, Surface};
+use proxiima_core::spiice::{ExportRule, KeyShape, Surface};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -327,7 +327,12 @@ fn export_statement(
         // A forgotten memory keeps its row (#488), so the home table alone
         // reaches the rows forget keeps. Derived from the declaration (see
         // `KeyShape::home`), never from a table name.
-        let base = PgIdent::table(base_table)?.as_str().to_owned();
+        // A memory home is read through the view that keeps forgotten rows.
+        let base = if matches!(surface.key, KeyShape::MemoryT { .. }) {
+            "proxiima_core.memory_including_forgotten".to_owned()
+        } else {
+            PgIdent::table(base_table)?.as_str().to_owned()
+        };
         let base_column = PgIdent::column(base_column)?;
         let key_column = PgIdent::column(key_column)?;
         format!(
@@ -636,7 +641,10 @@ mod tests {
         let sql = export_statement(&surface("proxiima_core.agent_note_v1"), &pk(&["t"]))
             .expect("generates")
             .expect("the note sidecar is exported");
-        assert!(sql.contains("JOIN proxiima_core.memory base"), "{sql}");
+        assert!(
+            sql.contains("JOIN proxiima_core.memory_including_forgotten base"),
+            "{sql}"
+        );
         assert!(sql.contains("WHERE base.owner_id = $1"), "{sql}");
         assert!(sql.contains("to_jsonb(s)"), "{sql}");
     }
@@ -655,7 +663,7 @@ mod tests {
         assert_eq!(
             flat,
             "SELECT to_jsonb(s) FROM proxiima_core.memory_external_origin s \
-             JOIN proxiima_core.memory base ON base.t = s.t \
+             JOIN proxiima_core.memory_including_forgotten base ON base.t = s.t \
              WHERE base.owner_id = $1 ORDER BY s.t, s.memory"
         );
     }

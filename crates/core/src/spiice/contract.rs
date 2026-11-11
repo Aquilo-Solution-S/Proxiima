@@ -836,9 +836,9 @@ impl KeyShape {
     /// One widening, read off the declaration rather than a table name: an
     /// owner-less `MemoryT` surface whose forget leg is `Keep` outlives the
     /// forget of the memory it hangs off, so its home is the memory row,
-    /// forgotten or not. Forget keeps the row (#488), so the join is plain
-    /// `proxiima_core.memory`; the readers that must see forgotten parents
-    /// (export, erase, transfer) run in the lifecycle scope.
+    /// forgotten or not. Forget keeps the row (#488), so the home is
+    /// `proxiima_core.memory` itself; the readers that must see forgotten
+    /// parents (export, erase, transfer) run in the lifecycle scope.
     #[must_use]
     pub const fn home(self) -> Option<(&'static str, &'static str, &'static str)> {
         match self {

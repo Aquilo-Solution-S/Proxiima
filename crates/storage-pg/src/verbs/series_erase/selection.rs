@@ -123,7 +123,7 @@ pub(super) async fn sidecar_equals_seeds(
         QueryBuilder::<Postgres>::new("SELECT t FROM (SELECT DISTINCT ON (m.handle) m.t FROM ");
     // SQL-POLICY: PgIdent — the registered sidecar and its declared key.
     builder.push(sidecar.table.as_str());
-    builder.push(" s JOIN proxiima_core.memory m ON m.t = s.");
+    builder.push(" s JOIN proxiima_core.memory_including_forgotten m ON m.t = s.");
     builder.push(sidecar.key.as_str());
     // SQL-POLICY: fixed-fragment — the owner and schema scope, before
     // anything the caller asked for.
@@ -182,7 +182,7 @@ pub(super) async fn declared_before_seeds(
         concat!(
             newest_versions_cte!(),
             "SELECT n.t FROM newest n
-  JOIN proxiima_core.memory m ON m.t = n.t
+  JOIN proxiima_core.memory_including_forgotten m ON m.t = n.t
   JOIN {tbl} s ON s.{key} = n.t
  WHERE m.owner_id = $1 AND m.schema_id = $2 AND s.{col} < $3
  ORDER BY s.{col}, n.t

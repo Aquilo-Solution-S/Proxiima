@@ -291,8 +291,8 @@ impl GoalCollaborationPort for PgStorage {
         crate::owner_scope::bind_owner_scope(&mut tx, permit.scope()).await?;
         let row = sqlx::query(
             "SELECT owner_id, forked_from, kind::text AS kind, origins, refs, goal_refs
-             FROM proxiima_core.memory /* FORGET-POLICY: live-only (revision prior must still be writable) */
-             WHERE t=$1 AND forgotten_at IS NULL AND forked_from IS NOT NULL
+             FROM proxiima_core.live_memory
+             WHERE t=$1 AND forked_from IS NOT NULL
              ",
         )
         .bind(permit.prior().into_inner())
@@ -323,7 +323,7 @@ impl GoalCollaborationPort for PgStorage {
         ids.extend(reference_ids.iter().copied());
         self.platform_scope.bind_transaction(&mut tx).await?;
         let rows: Vec<(uuid::Uuid, String)> = sqlx::query_as(
-            "SELECT t, kind::text FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (retained pins need kind only) */
+            "SELECT t, kind::text FROM proxiima_core.memory_including_forgotten
              WHERE t=ANY($1::uuid[])
              UNION ALL
              SELECT t, kind::text FROM proxiima_core.erased_pin_target
@@ -559,7 +559,7 @@ impl GoalCollaborationPort for PgStorage {
         }
         require_manager(lock_goal_manager(&mut tx, permit, &roles).await?)?;
         let live_source: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT t FROM proxiima_core.memory /* FORGET-POLICY: live-only (publish only the current live source admission) */ WHERE t=$1 AND owner_id=$2 AND forgotten_at IS NULL FOR SHARE"
+            "SELECT t FROM proxiima_core.memory WHERE t=$1 AND owner_id=$2 AND forgotten_at IS NULL FOR SHARE"
         ).bind(input.memory.into_inner()).bind(source.owner().into_inner())
             .fetch_optional(&mut *tx).await.map_err(map_err)?;
         if live_source.is_none() {
@@ -569,7 +569,7 @@ impl GoalCollaborationPort for PgStorage {
             PublicationUse::Read => "read",
             PublicationUse::Fork => "fork",
         };
-        let result = sqlx::query("INSERT INTO proxiima_core.goal_memory_publication (goal_handle,memory_t,source_owner,source_generation,controller_generation,permitted_use,published_by,cited_upload_id) SELECT $1,m.t,m.owner_id,mh.authority_generation,gh.authority_generation,$2::proxiima_core.goal_publication_use,$3,cited.upload_id FROM proxiima_core.memory m /* FORGET-POLICY: live-only (publication requires live exact source) */ JOIN proxiima_core.memory_head mh ON mh.handle=m.handle JOIN proxiima_core.goal_head gh ON gh.handle=$1 LEFT JOIN LATERAL (SELECT u.upload_id FROM proxiima_core.blob_uploads u WHERE u.blob_id=m.blob_id AND u.owner_id=m.owner_id AND u.status='completed' ORDER BY u.completed_at DESC NULLS LAST,u.upload_id DESC LIMIT 1) cited ON true WHERE m.t=$4 AND m.owner_id=$5 AND mh.owner_id=m.owner_id AND m.forgotten_at IS NULL AND gh.owner_id=$6 ON CONFLICT (goal_handle,memory_t) DO UPDATE SET cited_upload_id=EXCLUDED.cited_upload_id,permitted_use=EXCLUDED.permitted_use,source_generation=EXCLUDED.source_generation,controller_generation=EXCLUDED.controller_generation,published_by=EXCLUDED.published_by")
+        let result = sqlx::query("INSERT INTO proxiima_core.goal_memory_publication (goal_handle,memory_t,source_owner,source_generation,controller_generation,permitted_use,published_by,cited_upload_id) SELECT $1,m.t,m.owner_id,mh.authority_generation,gh.authority_generation,$2::proxiima_core.goal_publication_use,$3,cited.upload_id FROM proxiima_core.live_memory m JOIN proxiima_core.memory_head mh ON mh.handle=m.handle JOIN proxiima_core.goal_head gh ON gh.handle=$1 LEFT JOIN LATERAL (SELECT u.upload_id FROM proxiima_core.blob_uploads u WHERE u.blob_id=m.blob_id AND u.owner_id=m.owner_id AND u.status='completed' ORDER BY u.completed_at DESC NULLS LAST,u.upload_id DESC LIMIT 1) cited ON true WHERE m.t=$4 AND m.owner_id=$5 AND mh.owner_id=m.owner_id AND gh.owner_id=$6 ON CONFLICT (goal_handle,memory_t) DO UPDATE SET cited_upload_id=EXCLUDED.cited_upload_id,permitted_use=EXCLUDED.permitted_use,source_generation=EXCLUDED.source_generation,controller_generation=EXCLUDED.controller_generation,published_by=EXCLUDED.published_by")
             .bind(input.goal.into_inner()).bind(use_value).bind(permit.subject().into_inner()).bind(input.memory.into_inner()).bind(source.owner().into_inner()).bind(permit.controller().into_inner()).execute(&mut *tx).await.map_err(map_err)?;
         require_rows(result.rows_affected(), "publish")?;
         tx.commit().await.map_err(map_err)

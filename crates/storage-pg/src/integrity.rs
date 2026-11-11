@@ -143,7 +143,7 @@ DECLARE
 BEGIN
     IF NOT EXISTS (
         SELECT 1
-          FROM proxiima_core.memory m
+          FROM proxiima_core.memory_including_forgotten m
          WHERE m.t = memory_t
            AND m.sidecar_tables @> ARRAY[surface]
     ) THEN
@@ -336,7 +336,7 @@ BEGIN
     END IF;
     IF EXISTS (
         SELECT 1
-          FROM proxiima_core.memory m
+          FROM proxiima_core.memory_including_forgotten m
          WHERE m.t = memory_t
            AND m.sidecar_tables @> ARRAY[surface]
     ) THEN
@@ -442,7 +442,7 @@ BEGIN
     END IF;
     SELECT m.sidecar_tables
       INTO persisted_sidecars
-      FROM proxiima_core.memory m
+      FROM proxiima_core.memory_including_forgotten m
      WHERE m.t = NEW.t;
     IF NOT (surface = ANY (COALESCE(persisted_sidecars, '{}'::text[]))) THEN
         IF proxiima_core.schema_evolution_intermediate_memory_schema_permits(
@@ -936,7 +936,7 @@ pub(crate) fn unprojected_rows_sql(
     Ok(format!(
         "SELECT count(*)
   FROM {sidecar} c
-  JOIN proxiima_core.memory m ON m.t = c.{key}
+  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.{key}
  WHERE m.schema_id = $1
    AND NOT EXISTS (
            SELECT 1
@@ -968,7 +968,7 @@ pub(crate) fn undeclared_rows_sql(
   FROM {sidecar} c
  WHERE NOT EXISTS (
            SELECT 1
-             FROM proxiima_core.memory m
+             FROM proxiima_core.memory_including_forgotten m
             WHERE m.t = c.{key}
               AND m.sidecar_tables @> ARRAY[$1::text]
        )",
@@ -1000,7 +1000,7 @@ pub(crate) fn missing_stamped_rows_sql(
     // SQL-POLICY: PgIdent
     Ok(format!(
         "SELECT count(*)
-  FROM proxiima_core.memory m
+  FROM proxiima_core.memory_including_forgotten m
  WHERE m.sidecar_tables @> ARRAY[$1::text]
    AND NOT EXISTS (
            SELECT 1

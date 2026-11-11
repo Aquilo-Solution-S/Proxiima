@@ -217,9 +217,8 @@ fn best_chunk_scores_sql(lane: Lane, candidates_only: bool) -> String {
            AND head.model_id = emb.model_id
            AND head.dim = emb.dim
            AND head.embedding_version = emb.embedding_version
-          JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ ON m.t = emb.entity_id
+          JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
-           AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (semantic candidates under owner RLS) */
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t)){chunk_limit}
         )
@@ -249,10 +248,9 @@ fn candidate_scan_sql(lane: Lane, limit: &str) -> String {
                       AND head.embedding_version = emb.embedding_version
                )
                AND EXISTS (
-                   SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+                   SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-                      AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (semantic candidates under owner RLS) */
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
                )

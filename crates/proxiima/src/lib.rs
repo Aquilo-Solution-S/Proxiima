@@ -155,7 +155,6 @@ mod mcp_edge;
 mod migrations;
 mod object_maintenance;
 mod outbox_http;
-#[cfg(test)]
 mod outbox_test_fixture;
 mod owner_access;
 mod proxiima_host;

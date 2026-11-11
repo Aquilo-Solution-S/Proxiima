@@ -1,6 +1,147 @@
 -- Core row-level security policies. The installer replaces only the three policies declared for each table.
 -- Every table is installed once through owner_rls_apply_class; exceptional expressions follow each call.
 
+-- Generate SQL for an unaliased, schema-qualified target relation.
+-- Parent queries retain their ordinary RLS; generation does not bind a scope.
+CREATE OR REPLACE FUNCTION proxiima_core.owner_rls_class_predicates(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text)
+ RETURNS TABLE(read_expr text, write_expr text, select_expr text)
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    rel_oid oid;
+    fk jsonb;
+    fk_child text;
+    fk_schema text;
+    fk_table text;
+    fk_column text;
+    parent_has_t boolean;
+    memory_key text;
+    memory_keys integer;
+    memory_on_key boolean;
+    direction text;
+    fact_owners text;
+    abstraction_owners text;
+    perspective_owners text;
+    goal_owners text;
+    kind_of text;
+BEGIN
+    SELECT c.oid INTO rel_oid
+      FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
+
+    CASE class
+        WHEN 'owner_id' THEN
+            memory_key := CASE WHEN target_schema = 'proxiima_core' THEN
+                CASE target_table
+                    WHEN 'projection' THEN 'memory_id'
+                    WHEN 'embeddings' THEN 'entity_id'
+                    WHEN 'embedding_heads' THEN 'entity_id'
+                    WHEN 'embedding_jobs' THEN 'entity_id'
+                    WHEN 'vector_index_debt' THEN 'entity_id'
+                END
+            END;
+            IF memory_key IS NOT NULL THEN
+                IF owner_column IS DISTINCT FROM 'owner_id' THEN
+                    RAISE EXCEPTION '%: %.% requires owner column owner_id',
+                        caller, target_schema, target_table
+                        USING ERRCODE = 'PX002';
+                END IF;
+                FOREACH direction IN ARRAY ARRAY['read', 'write'] LOOP
+                    fact_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
+                        CASE direction WHEN 'read' THEN 'app.owner' ELSE 'app.write_owner' END, '', '{}');
+                    abstraction_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
+                        'app.' || direction || '_abstraction', '', '{}');
+                    perspective_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
+                        'app.' || direction || '_perspective', '', '{}');
+                    goal_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
+                        'app.' || direction || '_goal', '', '{}');
+                    kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s WHEN ''perspective'' THEN %s ELSE %s END',
+                        fact_owners, abstraction_owners, perspective_owners, goal_owners);
+                    kind_of := format($expr$(
+                        %1$I.%2$I.%3$I = ANY(%4$s)
+                        OR (
+                            %1$I.%2$I.%3$I = ANY(%5$s)
+                            AND EXISTS (
+                                SELECT 1 FROM proxiima_core.memory AS parent
+                                 WHERE parent.t = %1$I.%2$I.%6$I
+                                   AND parent.owner_id = ANY(%7$s)
+                            )
+                        )
+                    )$expr$, target_schema, target_table, owner_column,
+                        goal_owners, fact_owners, memory_key, kind_of);
+                    IF direction = 'read' THEN
+                        read_expr := kind_of;
+                    ELSE
+                        write_expr := kind_of;
+                    END IF;
+                END LOOP;
+            ELSE
+                read_expr := format($expr$%I.%I.%I = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])$expr$, target_schema, target_table, owner_column);
+                write_expr := format($expr$%I.%I.%I = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])$expr$, target_schema, target_table, owner_column);
+            END IF;
+            IF memory_key IS NULL AND EXISTS (
+                SELECT 1 FROM pg_constraint c WHERE c.conrelid=rel_oid AND c.contype='f'
+                AND c.confrelid='proxiima_core.memory'::regclass AND array_length(c.conkey,1)=1
+            ) THEN
+                memory_key := proxiima_core.owner_rls_memory_key(caller,target_schema,target_table);
+            END IF;
+            IF memory_key IS NOT NULL THEN
+                read_expr := format('(%s) OR EXISTS (SELECT 1 FROM proxiima_core.memory parent WHERE parent.t=%I.%I.%I AND parent.owner_id=%I.%I.%I AND proxiima_core.goal_memory_read_admitted(parent.t))',
+                    read_expr,target_schema,target_table,memory_key,target_schema,target_table,owner_column);
+            END IF;
+        WHEN 'memory_owner' THEN
+            memory_key := proxiima_core.owner_rls_memory_key(caller,target_schema,target_table);
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                 WHERE attrelid = rel_oid AND attname = memory_key AND atttypid = 'uuid'::regtype
+                   AND attnum > 0 AND NOT attisdropped
+            ) THEN
+                RAISE EXCEPTION '%: %.% is % but has no uuid t column',
+                    caller, target_schema, target_table, class_label
+                    USING ERRCODE = 'PX002';
+            END IF;
+            -- Reading this sidecar follows the parent memory's complete RLS
+            -- admission, including exact Goal routes. Do not mirror its read
+            -- policy in a second owner/Goal expression here. Writes still
+            -- require an owner write ceiling for the parent's actual kind.
+            read_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = %I.%I.%I)',
+                target_schema, target_table, memory_key);
+            kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s ELSE %s END',
+                '(SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]',
+                '(SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]',
+                '(SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]');
+            write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = %I.%I.%I AND parent.owner_id = ANY(%s))',
+                target_schema, target_table, memory_key, kind_of);
+        WHEN 'ownerless' THEN
+            read_expr := 'false';
+            write_expr := 'false';
+        WHEN 'fk_parent' THEN
+            fk := proxiima_core.owner_rls_parent_fk(caller, target_schema, target_table);
+            fk_child := fk ->> 'child_column';
+            fk_schema := fk ->> 'parent_schema';
+            fk_table := fk ->> 'parent_table';
+            fk_column := fk ->> 'parent_column';
+            SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = format('%I.%I', fk_schema, fk_table)::regclass AND attname = 't' AND attnum > 0 AND NOT attisdropped) INTO parent_has_t;
+            read_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent WHERE parent.%I = %I.%I.%I AND current_setting(''app.proxiima_scope'', true) = ''owner'')', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
+            IF fk_schema = 'proxiima_core' AND fk_table = 'memory' THEN
+                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.%I = %I.%I.%I AND ((parent.kind = ''fact'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''abstraction'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''perspective'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_column, target_schema, target_table, fk_child);
+            ELSIF fk_schema = 'proxiima_core' AND fk_table = 'goal' THEN
+                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.goal AS parent WHERE parent.%I = %I.%I.%I AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_goal'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))', fk_column, target_schema, target_table, fk_child);
+            ELSIF parent_has_t THEN
+                write_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent JOIN proxiima_core.memory AS owner_memory ON owner_memory.t = parent.t WHERE parent.%I = %I.%I.%I AND ((owner_memory.kind = ''fact'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''abstraction'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''perspective'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
+            ELSE
+                RAISE EXCEPTION 'owner RLS writable classification missing for %.%', target_schema, target_table
+                    USING ERRCODE = 'PX002';
+            END IF;
+    END CASE;
+
+    select_expr := format('(%s) OR (%s)', read_expr, write_expr);
+    RETURN NEXT;
+END
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.owner_rls_class_predicates(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text) FROM PUBLIC;
+
 -- agent_derivation_v1
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class fk_parent', 'proxiima_core', 'agent_derivation_v1', 'fk_parent', NULL);
 

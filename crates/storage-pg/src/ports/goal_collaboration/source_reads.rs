@@ -43,10 +43,10 @@ impl SourceReads {
         let rows = sqlx::query(
             "WITH routes AS MATERIALIZED (SELECT * FROM proxiima_core.goal_memory_read_routes())
              SELECT m.t, m.owner_id, m.kind::text AS kind, r.goal_handle, r.controller_owner
-               FROM proxiima_core.memory m /* FORGET-POLICY: live-only (source admission under owner RLS) */
+               FROM proxiima_core.live_memory m
                LEFT JOIN LATERAL (SELECT goal_handle, controller_owner FROM routes
                                   WHERE memory_t=m.t ORDER BY goal_handle LIMIT 1) r ON true
-              WHERE m.t=ANY($1::uuid[]) AND m.forgotten_at IS NULL
+              WHERE m.t=ANY($1::uuid[])
              UNION ALL
              SELECT g.t, g.owner_id, 'goal', g.handle, g.owner_id
                FROM proxiima_core.goal g WHERE g.t=ANY($2::uuid[])
@@ -149,7 +149,7 @@ impl SourceReads {
                 return Err(StorageError::NotFound);
             }
             if source.kind != EntityKind::Goal {
-                let row: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory /* FORGET-POLICY: live-only (commit source liveness) */ WHERE t=$1 AND forgotten_at IS NULL FOR SHARE")
+                let row: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory WHERE t=$1 AND forgotten_at IS NULL FOR SHARE")
                     .bind(source.id).fetch_optional(&mut **tx).await.map_err(map_err)?;
                 if row != Some(source.owner.into_inner()) {
                     return Err(StorageError::NotFound);

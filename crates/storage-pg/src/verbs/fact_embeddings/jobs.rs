@@ -47,10 +47,9 @@ const CLAIM_EMBEDDING_JOBS_SQL: &str = "WITH claimed AS (
             SET status = 'processing',
                 claimed_at = now(),
                 claim_token = uuidv7()
-           FROM claimed, proxiima_core.memory m, proxiima_core.owners o /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+           FROM claimed, proxiima_core.live_memory m, proxiima_core.owners o
           WHERE j.job_id = claimed.job_id
             AND m.t = j.entity_id
-            AND m.forgotten_at IS NULL
             AND o.owner_id = j.owner_id
         RETURNING j.job_id,
                   j.owner_id,
@@ -164,7 +163,7 @@ async fn missing_embedding_ids<'e>(
     let rows = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT m.t
            FROM proxiima_core.memory_head h
-           JOIN proxiima_core.memory m ON m.handle = h.handle AND m.t = h.t AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+           JOIN proxiima_core.live_memory m ON m.handle = h.handle AND m.t = h.t
           WHERE m.owner_id = $1
             AND NOT (m.schema_id = ANY($4::text[]))
             AND NOT EXISTS (
@@ -667,11 +666,10 @@ pub(crate) async fn embedding_job_diagnostics<'e>(
                      THEN floor(extract(epoch FROM (now() - j.claimed_at)))::bigint
                 END AS claim_age_seconds
            FROM proxiima_core.embedding_jobs j
-           JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (under owner RLS, a job follows a readable memory) */
+           JOIN proxiima_core.live_memory m
              ON m.t = j.entity_id AND m.owner_id = j.owner_id
           WHERE j.owner_id = $1
             AND j.entity_id = ANY($2::uuid[])
-            AND m.forgotten_at IS NULL
           ORDER BY j.entity_id, j.model_id, j.dim",
     )
     .bind(owner.into_inner())

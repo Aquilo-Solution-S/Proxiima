@@ -195,7 +195,7 @@ async fn validate_goal_work_target(
                 "SELECT EXISTS (
                    SELECT 1 FROM proxiima_core.goal_work_binding w
                    JOIN proxiima_core.memory_head h ON h.handle = w.memory_handle
-                   JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (work revision under owner RLS) */ ON m.handle = h.handle AND m.forgotten_at IS NULL
+                   JOIN proxiima_core.live_memory m ON m.handle = h.handle
                   WHERE w.goal_handle = $1 AND m.t = $2
                     AND w.source_owner = $3 AND w.controller_generation = $4
                     AND w.source_generation = h.authority_generation AND h.owner_id = w.source_owner
@@ -273,7 +273,7 @@ async fn admit_goal_work(
         .bind(permit.command().subject().into_inner())
         .bind(
             sqlx::query_scalar::<_, uuid::Uuid>(
-                "SELECT handle FROM proxiima_core.memory /* FORGET-POLICY: live-only (new work admission under owner RLS) */ WHERE t = $1 AND forgotten_at IS NULL",
+                "SELECT handle FROM proxiima_core.live_memory WHERE t = $1",
             )
             .bind(outcome.memory_id.into_inner())
             .fetch_one(&mut **tx)

@@ -84,7 +84,7 @@ pub fn memory_insert_sql(
         }
     }
     if stamp_owner {
-        sql.push_str(" FROM proxiima_core.memory m WHERE m.t = $1");
+        sql.push_str(" FROM proxiima_core.memory_including_forgotten m WHERE m.t = $1");
     } else {
         sql.push(')');
     }
@@ -155,7 +155,7 @@ pub fn memory_select_batch_owner_pinned_sql(
     write!(
         &mut sql,
         " FROM {table} s \
-           JOIN proxiima_core.memory m \
+           JOIN proxiima_core.memory_including_forgotten m \
              ON m.t = s.{key_column} AND m.owner_id = s.owner_id \
           WHERE s.{key_column} = ANY($1)"
     )

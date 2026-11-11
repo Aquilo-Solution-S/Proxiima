@@ -22,11 +22,10 @@ const ANCESTOR_HOP_SQL: &str = "SELECT DISTINCT ON (m.t, pin)
        m.t AS src, m.kind AS src_kind, pin AS tgt,
        NOT (pin = ANY (m.origins)) AS is_read,
        proxiima_core.memory_created_at(m.t) AS created_at
-  FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
+  FROM proxiima_core.live_memory m
   JOIN unnest(m.origins || m.reads) AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])
-   AND m.forgotten_at IS NULL
    AND ($3::uuid IS NULL OR (m.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY m.t DESC, pin DESC
  LIMIT $5";
@@ -37,10 +36,9 @@ const DESCENDANT_HOP_SQL: &str = "SELECT DISTINCT ON (child.t, pin)
        child.t AS src, child.kind AS src_kind, pin AS tgt,
        NOT (pin = ANY (child.origins)) AS is_read,
        proxiima_core.memory_created_at(child.t) AS created_at
-  FROM proxiima_core.memory child /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
+  FROM proxiima_core.live_memory child
   JOIN unnest(child.origins || child.reads) AS pin ON true
  WHERE child.owner_id = ANY($2::uuid[])
-   AND child.forgotten_at IS NULL
    AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])
    AND pin = ANY($1::uuid[])
    AND ($3::uuid IS NULL OR (child.t, pin) < ($3::uuid, $4::uuid))
@@ -48,16 +46,14 @@ const DESCENDANT_HOP_SQL: &str = "SELECT DISTINCT ON (child.t, pin)
  LIMIT $5";
 
 const ANCESTOR_FRONTIER_SQL: &str = "SELECT DISTINCT pin
-  FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
+  FROM proxiima_core.live_memory m
   JOIN unnest(m.origins || m.reads) AS pin ON true
  WHERE m.t = ANY($1::uuid[])
-   AND m.owner_id = ANY($2::uuid[])
-   AND m.forgotten_at IS NULL";
+   AND m.owner_id = ANY($2::uuid[])";
 
 const DESCENDANT_FRONTIER_SQL: &str = "SELECT DISTINCT child.t
-  FROM proxiima_core.memory child /* FORGET-POLICY: live-only (a lineage hop walks readable memories; owner RLS hides it too) */
+  FROM proxiima_core.live_memory child
  WHERE child.owner_id = ANY($2::uuid[])
-   AND child.forgotten_at IS NULL
    AND (child.origins && $1::uuid[] OR child.reads && $1::uuid[])";
 
 #[cfg(any(test, feature = "testkit"))]
@@ -198,9 +194,8 @@ async fn lineage_node_rows_on_connection(
     projections: &[MemorySearchProjection],
 ) -> Result<(Vec<(Uuid, EntityKind, String)>, HashMap<Uuid, String>), StorageError> {
     let rows: Vec<(Uuid, PgMemoryKind, String)> = sqlx::query_as(
-        "SELECT m.t, m.kind, m.schema_id FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage node is a readable memory; owner RLS hides it too) */
-          WHERE m.t = ANY($1::uuid[]) AND m.owner_id = ANY($2::uuid[])
-            AND m.forgotten_at IS NULL",
+        "SELECT m.t, m.kind, m.schema_id FROM proxiima_core.live_memory m
+          WHERE m.t = ANY($1::uuid[]) AND m.owner_id = ANY($2::uuid[])",
     )
     .bind(node_ids)
     .bind(owner_ids)
@@ -267,7 +262,7 @@ pub(crate) async fn unread_targets_on_connection(
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(&mut *connection).await?;
     let rows: Result<Vec<(Uuid, PgMemoryKind, String)>, StorageError> = sqlx::query_as(
         "SELECT m.t, m.kind, m.schema_id
-           FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (forgotten-target probe: only the forgotten rows the reader's permits reach) */
+           FROM proxiima_core.memory_including_forgotten m
           WHERE m.t = ANY($1::uuid[]) AND m.owner_id = ANY($2::uuid[])
             AND m.forgotten_at IS NOT NULL",
     )
@@ -283,11 +278,10 @@ pub(crate) async fn unread_targets_on_connection(
           WHERE erased.t = ANY($1::uuid[])
             AND EXISTS (
                 SELECT 1
-                  FROM proxiima_core.memory pinning /* FORGET-POLICY: live-only (an erased target is named only through a readable memory that pins it) */
+                  FROM proxiima_core.live_memory pinning
                  WHERE (pinning.origins @> ARRAY[erased.t] OR pinning.refs @> ARRAY[erased.t]
                         OR pinning.reads @> ARRAY[erased.t] OR pinning.forked_from = erased.t)
                    AND pinning.owner_id = ANY($2::uuid[])
-                   AND pinning.forgotten_at IS NULL
             )",
     )
     .bind(memory_ids)
@@ -323,9 +317,8 @@ pub(crate) async fn external_edges_on_connection(
     let rows: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
         "SELECT e.t, e.memory, e.edge_kind
            FROM proxiima_core.memory_external_origin e
-           JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (a lineage edge hangs off a readable memory; owner RLS hides it too) */ ON m.t = e.t
+           JOIN proxiima_core.live_memory m ON m.t = e.t
           WHERE e.t = ANY($1::uuid[]) AND m.owner_id = ANY($2::uuid[])
-            AND m.forgotten_at IS NULL
           ORDER BY e.t, e.memory",
     )
     .bind(memory_ids)

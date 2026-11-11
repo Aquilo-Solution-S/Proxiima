@@ -256,7 +256,7 @@ fn memory_insert_sql_stamps_owner_for_follows() {
     assert!(
         follows.contains("owner_id")
             && follows.contains("SELECT $1, m.owner_id")
-            && follows.contains("FROM proxiima_core.memory m WHERE m.t = $1"),
+            && follows.contains("FROM proxiima_core.memory_including_forgotten m WHERE m.t = $1"),
         "Follows shares the Pinned stamp arm: {follows}"
     );
     assert!(

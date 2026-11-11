@@ -335,7 +335,6 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.schema_evolution_existing_pin_permits(text, uuid, uuid) FROM PUBLIC;
 
--- FORGET-POLICY: includes-forgotten (snapshot original pins before representation migration) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_schema_evolution_authority_writer()
  RETURNS trigger LANGUAGE plpgsql
  SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
@@ -372,7 +371,7 @@ BEGIN
                || source.reads
                || CASE WHEN source.forked_from IS NULL THEN '{}'::uuid[] ELSE ARRAY[source.forked_from] END
           INTO NEW.source_pins
-          FROM proxiima_core.memory source
+          FROM proxiima_core.memory_including_forgotten source
          WHERE source.t = NEW.source_id
            AND source.schema_id = NEW.source_schema
            AND source.owner_id = NEW.record_owner;
@@ -514,7 +513,7 @@ AS $function$
 BEGIN
     IF NOT proxiima_core.schema_evolution_target_matches(
         'memory', OLD.t, NEW.t,
-        (SELECT schema_id FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (migration keeps historical receipt aliases) */ WHERE t = NEW.t),
+        (SELECT schema_id FROM proxiima_core.memory_including_forgotten WHERE t = NEW.t),
         OLD.owner_id
     )
        OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
@@ -528,7 +527,6 @@ BEGIN
 END
 $function$;
 
--- FORGET-POLICY: includes-forgotten (DROP must preserve every stored admission) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_fact_schema_drained(
     retired_schema_id text, retiring_tables text[]
 ) RETURNS void
@@ -578,7 +576,7 @@ BEGIN
         END IF;
     END LOOP;
     IF EXISTS (
-        SELECT 1 FROM proxiima_core.memory m
+        SELECT 1 FROM proxiima_core.memory_including_forgotten m
          WHERE m.schema_id = retired_schema_id OR m.sidecar_tables && retiring_tables
     ) THEN
         RAISE EXCEPTION 'cannot drop schema %: stored admissions still name the schema or its sidecars',
@@ -590,7 +588,6 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.assert_fact_schema_drained(text, text[]) FROM PUBLIC;
 
--- FORGET-POLICY: includes-forgotten (sidecar integrity applies to historical representations) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_declared_sidecar_present() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -604,7 +601,7 @@ BEGIN
     END IF;
     SELECT m.sidecar_tables
       INTO persisted_sidecars
-      FROM proxiima_core.memory m
+      FROM proxiima_core.memory_including_forgotten m
      WHERE m.t = NEW.t;
     IF NOT (surface = ANY (COALESCE(persisted_sidecars, '{}'::text[]))) THEN
         IF proxiima_core.schema_evolution_intermediate_memory_schema_permits(
@@ -642,7 +639,6 @@ $$;
 -- the block made, so the reader scope never outlives this one statement (a
 -- cancelled or dropped caller included). Security invoker: the caller's RLS
 -- is the readability rule.
--- FORGET-POLICY: live-only (a session reads no forgotten memory, under owner RLS) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.live_memory_owners_as(
     setting_names text[],
     setting_values text[],
@@ -660,8 +656,8 @@ BEGIN
         PERFORM set_config(s.name, s.value, true)
            FROM unnest(setting_names, setting_values) AS s(name, value);
         SELECT array_agg(m.t), array_agg(m.owner_id) INTO found_t, found_owner
-          FROM proxiima_core.memory m
-         WHERE m.t = ANY (ids) AND m.forgotten_at IS NULL;
+          FROM proxiima_core.live_memory m
+         WHERE m.t = ANY (ids);
         RAISE EXCEPTION 'restore the owner scope' USING ERRCODE = 'P7677';
     EXCEPTION WHEN SQLSTATE 'P7677' THEN
         NULL;
@@ -670,7 +666,6 @@ BEGIN
 END;
 $function$;
 
--- FORGET-POLICY: includes-forgotten (pin integrity holds for forgotten targets) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_erased_pin_target_insert()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -691,7 +686,7 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (
-        SELECT 1 FROM proxiima_core.memory m
+        SELECT 1 FROM proxiima_core.memory_including_forgotten m
          WHERE m.t = NEW.t AND m.kind::text = NEW.kind::text
         UNION ALL
         SELECT 1 FROM proxiima_core.goal g
@@ -707,7 +702,6 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.assert_erased_pin_target_insert() FROM PUBLIC;
 
--- FORGET-POLICY: includes-forgotten (a forgotten memory keeps its sidecar rows) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_memory_declares_sidecar() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -717,7 +711,7 @@ DECLARE
 BEGIN
     IF NOT EXISTS (
         SELECT 1
-          FROM proxiima_core.memory m
+          FROM proxiima_core.memory_including_forgotten m
          WHERE m.t = memory_t
            AND m.sidecar_tables @> ARRAY[surface]
     ) THEN
@@ -767,7 +761,6 @@ $function$;
 REVOKE ALL ON FUNCTION proxiima_core.assert_owner_rls_census(target_schema text) FROM PUBLIC;
 COMMENT ON FUNCTION proxiima_core.assert_owner_rls_census(target_schema text) IS 'Raises on the first base table of the schema without ENABLE/FORCE RLS, the closed policy set and the owner-role platform policy.';
 
--- FORGET-POLICY: includes-forgotten (a forgotten memory keeps its sidecar rows) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.assert_row_not_still_declared() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -791,7 +784,7 @@ BEGIN
     END IF;
     IF EXISTS (
         SELECT 1
-          FROM proxiima_core.memory m
+          FROM proxiima_core.memory_including_forgotten m
          WHERE m.t = memory_t
            AND m.sidecar_tables @> ARRAY[surface]
     ) THEN
@@ -843,7 +836,6 @@ $function$;
 -- Fires on memory.forgotten_at being set (#488). The name predates the
 -- forget-is-a-state change; the trigger that calls it is memory_forget_grounding.
 -- Since S13 it only takes the footprint and depender locks; it refuses nothing.
--- FORGET-POLICY: includes-forgotten (forget grounding: locks every depender, checks the live ones) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.cooled_forget_grounding()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -861,14 +853,14 @@ BEGIN
     END IF;
     SELECT COALESCE(array_agg(m.t ORDER BY m.t), '{}'::uuid[])
       INTO dependent_ids
-      FROM proxiima_core.memory m
+      FROM proxiima_core.memory_including_forgotten m
      WHERE m.kind <> 'fact'
        AND m.t <> NEW.t
        AND (m.origins @> ARRAY[NEW.t] OR m.refs @> ARRAY[NEW.t]);
     PERFORM proxiima_core.lock_pin_targets(ARRAY[NEW.t] || dependent_ids);
     IF EXISTS (
         SELECT 1
-          FROM proxiima_core.memory m
+          FROM proxiima_core.memory_including_forgotten m
          WHERE m.kind <> 'fact'
            AND m.t <> NEW.t
            AND (m.origins @> ARRAY[NEW.t] OR m.refs @> ARRAY[NEW.t])
@@ -1140,7 +1132,6 @@ BEGIN
 END;
 $function$;
 
--- FORGET-POLICY: includes-forgotten (pin integrity holds for forgotten targets) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.goal_pin_target_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1172,7 +1163,7 @@ BEGIN
             USING ERRCODE = 'PX002';
     END IF;
     IF EXISTS (SELECT 1 FROM proxiima_core.erased_pin_target WHERE t = NEW.t)
-       OR EXISTS (SELECT 1 FROM proxiima_core.memory WHERE t = NEW.t)
+       OR EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten WHERE t = NEW.t)
     THEN
         RAISE EXCEPTION 'goal t % collides with an existing entity', NEW.t
             USING ERRCODE = 'PX002';
@@ -1180,7 +1171,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
           FROM unnest(NEW.motivated_by) AS p(id)
-          LEFT JOIN proxiima_core.memory m ON m.t = p.id
+          LEFT JOIN proxiima_core.memory_including_forgotten m ON m.t = p.id
          WHERE (m.t IS NULL OR m.kind <> 'perspective'::proxiima_core.memory_kind)
            AND NOT (m.t IS NULL AND EXISTS (
                SELECT 1 FROM proxiima_core.erased_pin_target e
@@ -1194,7 +1185,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
           FROM unnest(NEW.motivated_by) AS p(id)
-          JOIN proxiima_core.memory m ON m.t = p.id
+          JOIN proxiima_core.memory_including_forgotten m ON m.t = p.id
          WHERE m.owner_id <> NEW.owner_id
     ) THEN
         RAISE EXCEPTION 'goal motivation target owner differs from Goal owner'
@@ -2436,7 +2427,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
           FROM proxiima_core.schema_evolution_terminal_mappings(NULL, ARRAY[OLD.t]) mapping
-          JOIN proxiima_core.memory target /* FORGET-POLICY: includes-forgotten (a forgotten replacement remains a migration target) */
+          JOIN proxiima_core.memory_including_forgotten target
             ON target.t = mapping.target_id AND target.schema_id = mapping.target_schema
            AND target.owner_id = mapping.record_owner
          WHERE mapping.record_kind = 'memory' AND mapping.record_owner = OLD.owner_id
@@ -2552,7 +2543,6 @@ BEGIN
 END;
 $function$;
 
--- FORGET-POLICY: includes-forgotten (pin integrity holds for forgotten targets) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -2671,7 +2661,7 @@ BEGIN
     -- historical origin, whose witness kind is checked below.
     SELECT p.id INTO pin
       FROM unnest(NEW.origins) AS p(id)
-      LEFT JOIN proxiima_core.memory m ON m.t = p.id
+      LEFT JOIN proxiima_core.memory_including_forgotten m ON m.t = p.id
      WHERE m.t IS NULL
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, p.id)
      LIMIT 1;
@@ -2683,7 +2673,7 @@ BEGIN
     -- `refs` carries only Memory targets after the 0004 split.
     SELECT p.id INTO pin
       FROM unnest(NEW.refs) AS p(id)
-      LEFT JOIN proxiima_core.memory m ON m.t = p.id
+      LEFT JOIN proxiima_core.memory_including_forgotten m ON m.t = p.id
      WHERE m.t IS NULL
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, p.id)
      LIMIT 1;
@@ -2696,7 +2686,7 @@ BEGIN
     -- certified the writing session read. Context, never grounding.
     SELECT p.id INTO pin
       FROM unnest(NEW.reads) AS p(id)
-      LEFT JOIN proxiima_core.memory m ON m.t = p.id
+      LEFT JOIN proxiima_core.memory_including_forgotten m ON m.t = p.id
      WHERE m.t IS NULL
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, p.id)
      LIMIT 1;
@@ -2742,7 +2732,7 @@ BEGIN
     END IF;
 
     SELECT m.handle INTO pin_handle
-      FROM proxiima_core.memory m
+      FROM proxiima_core.memory_including_forgotten m
       JOIN proxiima_core.closed_handle c ON c.handle = m.handle
      WHERE m.t = ANY (NEW.origins || NEW.refs || NEW.reads)
        AND NOT proxiima_core.schema_evolution_existing_pin_permits('memory', NEW.t, m.t)
@@ -2757,7 +2747,7 @@ BEGIN
             SELECT 1
               FROM unnest(NEW.origins) AS o(id)
              WHERE NOT EXISTS (
-                       SELECT 1 FROM proxiima_core.memory m
+                       SELECT 1 FROM proxiima_core.memory_including_forgotten m
                         WHERE m.t = o.id AND m.kind IN ('fact', 'abstraction')
                        UNION ALL
                        SELECT 1 FROM proxiima_core.erased_pin_target e
@@ -2773,7 +2763,7 @@ BEGIN
             SELECT 1
               FROM unnest(NEW.origins) AS o(id)
              WHERE NOT EXISTS (
-                       SELECT 1 FROM proxiima_core.memory m
+                       SELECT 1 FROM proxiima_core.memory_including_forgotten m
                         WHERE m.t = o.id AND m.kind = 'abstraction'
                        UNION ALL
                        SELECT 1 FROM proxiima_core.erased_pin_target e
@@ -2879,148 +2869,6 @@ BEGIN
 END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.owner_rls_memory_key(text,text,text) FROM PUBLIC;
-
--- Generate SQL for an unaliased, schema-qualified target relation.
--- Parent queries retain their ordinary RLS; generation does not bind a scope.
--- FORGET-POLICY: live-only (policy subqueries run under owner RLS) applies to every read in this function
-CREATE OR REPLACE FUNCTION proxiima_core.owner_rls_class_predicates(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text)
- RETURNS TABLE(read_expr text, write_expr text, select_expr text)
- LANGUAGE plpgsql
- SET search_path TO 'pg_catalog'
-AS $function$
-DECLARE
-    rel_oid oid;
-    fk jsonb;
-    fk_child text;
-    fk_schema text;
-    fk_table text;
-    fk_column text;
-    parent_has_t boolean;
-    memory_key text;
-    memory_keys integer;
-    memory_on_key boolean;
-    direction text;
-    fact_owners text;
-    abstraction_owners text;
-    perspective_owners text;
-    goal_owners text;
-    kind_of text;
-BEGIN
-    SELECT c.oid INTO rel_oid
-      FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
-     WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
-
-    CASE class
-        WHEN 'owner_id' THEN
-            memory_key := CASE WHEN target_schema = 'proxiima_core' THEN
-                CASE target_table
-                    WHEN 'projection' THEN 'memory_id'
-                    WHEN 'embeddings' THEN 'entity_id'
-                    WHEN 'embedding_heads' THEN 'entity_id'
-                    WHEN 'embedding_jobs' THEN 'entity_id'
-                    WHEN 'vector_index_debt' THEN 'entity_id'
-                END
-            END;
-            IF memory_key IS NOT NULL THEN
-                IF owner_column IS DISTINCT FROM 'owner_id' THEN
-                    RAISE EXCEPTION '%: %.% requires owner column owner_id',
-                        caller, target_schema, target_table
-                        USING ERRCODE = 'PX002';
-                END IF;
-                FOREACH direction IN ARRAY ARRAY['read', 'write'] LOOP
-                    fact_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
-                        CASE direction WHEN 'read' THEN 'app.owner' ELSE 'app.write_owner' END, '', '{}');
-                    abstraction_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
-                        'app.' || direction || '_abstraction', '', '{}');
-                    perspective_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
-                        'app.' || direction || '_perspective', '', '{}');
-                    goal_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
-                        'app.' || direction || '_goal', '', '{}');
-                    kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s WHEN ''perspective'' THEN %s ELSE %s END',
-                        fact_owners, abstraction_owners, perspective_owners, goal_owners);
-                    kind_of := format($expr$(
-                        %1$I.%2$I.%3$I = ANY(%4$s)
-                        OR (
-                            %1$I.%2$I.%3$I = ANY(%5$s)
-                            AND EXISTS (
-                                SELECT 1 FROM proxiima_core.memory AS parent
-                                 WHERE parent.t = %1$I.%2$I.%6$I
-                                   AND parent.owner_id = ANY(%7$s)
-                            )
-                        )
-                    )$expr$, target_schema, target_table, owner_column,
-                        goal_owners, fact_owners, memory_key, kind_of);
-                    IF direction = 'read' THEN
-                        read_expr := kind_of;
-                    ELSE
-                        write_expr := kind_of;
-                    END IF;
-                END LOOP;
-            ELSE
-                read_expr := format($expr$%I.%I.%I = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])$expr$, target_schema, target_table, owner_column);
-                write_expr := format($expr$%I.%I.%I = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])$expr$, target_schema, target_table, owner_column);
-            END IF;
-            IF memory_key IS NULL AND EXISTS (
-                SELECT 1 FROM pg_constraint c WHERE c.conrelid=rel_oid AND c.contype='f'
-                AND c.confrelid='proxiima_core.memory'::regclass AND array_length(c.conkey,1)=1
-            ) THEN
-                memory_key := proxiima_core.owner_rls_memory_key(caller,target_schema,target_table);
-            END IF;
-            IF memory_key IS NOT NULL THEN
-                read_expr := format('(%s) OR EXISTS (SELECT 1 FROM proxiima_core.memory parent WHERE parent.t=%I.%I.%I AND parent.owner_id=%I.%I.%I AND proxiima_core.goal_memory_read_admitted(parent.t))',
-                    read_expr,target_schema,target_table,memory_key,target_schema,target_table,owner_column);
-            END IF;
-        WHEN 'memory_owner' THEN
-            memory_key := proxiima_core.owner_rls_memory_key(caller,target_schema,target_table);
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_attribute
-                 WHERE attrelid = rel_oid AND attname = memory_key AND atttypid = 'uuid'::regtype
-                   AND attnum > 0 AND NOT attisdropped
-            ) THEN
-                RAISE EXCEPTION '%: %.% is % but has no uuid t column',
-                    caller, target_schema, target_table, class_label
-                    USING ERRCODE = 'PX002';
-            END IF;
-            -- Reading this sidecar follows the parent memory's complete RLS
-            -- admission, including exact Goal routes. Do not mirror its read
-            -- policy in a second owner/Goal expression here. Writes still
-            -- require an owner write ceiling for the parent's actual kind.
-            read_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = %I.%I.%I)',
-                target_schema, target_table, memory_key);
-            kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s ELSE %s END',
-                '(SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]',
-                '(SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]',
-                '(SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]');
-            write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.t = %I.%I.%I AND parent.owner_id = ANY(%s))',
-                target_schema, target_table, memory_key, kind_of);
-        WHEN 'ownerless' THEN
-            read_expr := 'false';
-            write_expr := 'false';
-        WHEN 'fk_parent' THEN
-            fk := proxiima_core.owner_rls_parent_fk(caller, target_schema, target_table);
-            fk_child := fk ->> 'child_column';
-            fk_schema := fk ->> 'parent_schema';
-            fk_table := fk ->> 'parent_table';
-            fk_column := fk ->> 'parent_column';
-            SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = format('%I.%I', fk_schema, fk_table)::regclass AND attname = 't' AND attnum > 0 AND NOT attisdropped) INTO parent_has_t;
-            read_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent WHERE parent.%I = %I.%I.%I AND current_setting(''app.proxiima_scope'', true) = ''owner'')', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
-            IF fk_schema = 'proxiima_core' AND fk_table = 'memory' THEN
-                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.%I = %I.%I.%I AND ((parent.kind = ''fact'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''abstraction'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''perspective'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_column, target_schema, target_table, fk_child);
-            ELSIF fk_schema = 'proxiima_core' AND fk_table = 'goal' THEN
-                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.goal AS parent WHERE parent.%I = %I.%I.%I AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_goal'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))', fk_column, target_schema, target_table, fk_child);
-            ELSIF parent_has_t THEN
-                write_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent JOIN proxiima_core.memory AS owner_memory ON owner_memory.t = parent.t WHERE parent.%I = %I.%I.%I AND ((owner_memory.kind = ''fact'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''abstraction'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''perspective'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
-            ELSE
-                RAISE EXCEPTION 'owner RLS writable classification missing for %.%', target_schema, target_table
-                    USING ERRCODE = 'PX002';
-            END IF;
-    END CASE;
-
-    select_expr := format('(%s) OR (%s)', read_expr, write_expr);
-    RETURN NEXT;
-END
-$function$;
-REVOKE ALL ON FUNCTION proxiima_core.owner_rls_class_predicates(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION proxiima_core.owner_rls_apply_class(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text)
  RETURNS void
@@ -3145,11 +2993,10 @@ AS $function$
           FROM audience a
           JOIN proxiima_core.goal_memory_publication p ON p.goal_handle = a.goal_handle
            AND p.controller_generation = a.authority_generation
-          JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (publications expose live exact admissions under owner RLS) */ ON m.t = p.memory_t AND m.owner_id = p.source_owner
+          JOIN proxiima_core.live_memory m ON m.t = p.memory_t AND m.owner_id = p.source_owner
           JOIN proxiima_core.memory_head mh ON mh.handle = m.handle
            AND mh.owner_id = m.owner_id AND mh.authority_generation = p.source_generation
-         WHERE m.forgotten_at IS NULL
-           AND a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
+         WHERE a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
     ), working AS (
         SELECT m.t, m.handle, m.owner_id, a.goal_handle, a.owner_id
           FROM audience a
@@ -3157,9 +3004,8 @@ AS $function$
            AND w.controller_generation = a.authority_generation AND w.source_owner = a.owner_id
           JOIN proxiima_core.memory_head mh ON mh.handle = w.memory_handle
            AND mh.owner_id = w.source_owner AND mh.authority_generation = w.source_generation
-          JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (working routes expose live versions under owner RLS) */ ON m.handle = mh.handle AND m.owner_id = mh.owner_id
-         WHERE m.forgotten_at IS NULL
-           AND a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
+          JOIN proxiima_core.live_memory m ON m.handle = mh.handle AND m.owner_id = mh.owner_id
+         WHERE a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
     )
     SELECT * FROM published UNION SELECT * FROM working
 $function$;
@@ -3177,7 +3023,6 @@ REVOKE ALL ON FUNCTION proxiima_core.goal_visible_memory_ids() FROM PUBLIC;
 
 -- Latest visible Goal publication/work version; an independently readable
 -- newer owner head wins. Private heads never replace an audience's version.
--- FORGET-POLICY: live-only (latest visible admissions under owner RLS)
 CREATE OR REPLACE FUNCTION proxiima_core.goal_visible_memory_heads()
 RETURNS TABLE(memory_t uuid, memory_handle uuid, owner_id uuid)
 LANGUAGE sql STABLE SECURITY DEFINER
@@ -3192,8 +3037,8 @@ AS $function$
       FROM visible v
      WHERE NOT EXISTS (
          SELECT 1 FROM proxiima_core.memory_head h
-          JOIN proxiima_core.memory m ON m.t=h.t AND m.handle=h.handle
-         WHERE h.handle=v.memory_handle AND h.t>v.memory_t AND m.forgotten_at IS NULL
+          JOIN proxiima_core.live_memory m ON m.t=h.t AND m.handle=h.handle
+         WHERE h.handle=v.memory_handle AND h.t>v.memory_t
            AND h.owner_id=ANY(CASE h.kind
                WHEN 'fact' THEN COALESCE(NULLIF(current_setting('app.owner',true),'')::uuid[],'{}')
                WHEN 'abstraction' THEN COALESCE(NULLIF(current_setting('app.read_abstraction',true),'')::uuid[],'{}')
@@ -3467,7 +3312,6 @@ REVOKE ALL ON FUNCTION proxiima_core.owner_rls_parent_fk(caller text, target_sch
 
 -- Pin functions
 
--- FORGET-POLICY: includes-forgotten (grounding support counts forgotten sources) applies to every read in this function
 CREATE OR REPLACE FUNCTION proxiima_core.pins_have_grounding_support(pins uuid[], cooling uuid, cooling_kind proxiima_core.memory_kind)
  RETURNS boolean
  LANGUAGE plpgsql
@@ -3489,7 +3333,7 @@ BEGIN
                  ELSE
                    -- Any memory row grounds, forgotten or not.
                    EXISTS (
-                        SELECT 1 FROM proxiima_core.memory h
+                        SELECT 1 FROM proxiima_core.memory_including_forgotten h
                          WHERE h.t = p.id
                    )
                END
@@ -3650,7 +3494,7 @@ RETURN QUERY EXECUTE 'WITH analyzed_query AS MATERIALIZED (
             AND p.schema_id = ANY($8::text[])
             AND (p.search_tsv @@ q.tsq OR ($9::boolean AND q.any_tsq IS NOT NULL AND p.search_tsv @@ q.any_tsq))
              AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND authorized_memory.forgotten_at IS NULL AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t)))
+                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t)))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
@@ -3695,7 +3539,7 @@ BEGIN
 IF requested_schemas && ARRAY['core/agent-derivation-v1']::text[] THEN legs := legs || '(SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
-               FROM proxiima_core.memory source /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+               FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
                 AND source.schema_id = ANY(ARRAY[''core/agent-derivation-v1'']::text[])
@@ -3708,7 +3552,7 @@ IF requested_schemas && ARRAY['core/agent-derivation-v1']::text[] THEN legs := l
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.title, ''''), NULLIF(c.body, ''''), proxiima_core.lexical_text_array(c.tags)])) LIKE $1 ESCAPE ''\'')
              AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN c.tags @> $3::text[] ELSE c.tags && $3::text[] END)
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND authorized_memory.forgotten_at IS NULL AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/agent-derivation-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/agent-derivation-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -3718,7 +3562,7 @@ IF requested_schemas && ARRAY['core/agent-derivation-v1']::text[] THEN legs := l
 IF requested_schemas && ARRAY['core/agent-note-v1']::text[] THEN legs := legs || '(SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
-               FROM proxiima_core.memory source /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+               FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
                 AND source.schema_id = ANY(ARRAY[''core/agent-note-v1'']::text[])
@@ -3731,7 +3575,7 @@ IF requested_schemas && ARRAY['core/agent-note-v1']::text[] THEN legs := legs ||
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.title, ''''), NULLIF(c.body, ''''), proxiima_core.lexical_text_array(c.tags)])) LIKE $1 ESCAPE ''\'')
              AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN c.tags @> $3::text[] ELSE c.tags && $3::text[] END)
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND authorized_memory.forgotten_at IS NULL AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/agent-note-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/agent-note-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -3741,7 +3585,7 @@ IF requested_schemas && ARRAY['core/agent-note-v1']::text[] THEN legs := legs ||
 IF requested_schemas && ARRAY['core/interpretation-v1']::text[] THEN legs := legs || '(SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
-               FROM proxiima_core.memory source /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+               FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
                 AND source.schema_id = ANY(ARRAY[''core/interpretation-v1'']::text[])
@@ -3754,7 +3598,7 @@ IF requested_schemas && ARRAY['core/interpretation-v1']::text[] THEN legs := leg
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.claim, '''')])) LIKE $1 ESCAPE ''\'')
              AND $3::text[] IS NULL
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND authorized_memory.forgotten_at IS NULL AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/interpretation-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/interpretation-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -3764,7 +3608,7 @@ IF requested_schemas && ARRAY['core/interpretation-v1']::text[] THEN legs := leg
 IF requested_schemas && ARRAY['core/utterance-v1']::text[] THEN legs := legs || '(SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
-               FROM proxiima_core.memory source /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+               FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
                 AND source.schema_id = ANY(ARRAY[''core/utterance-v1'']::text[])
@@ -3777,7 +3621,7 @@ IF requested_schemas && ARRAY['core/utterance-v1']::text[] THEN legs := legs || 
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.text, '''')])) LIKE $1 ESCAPE ''\'')
              AND $3::text[] IS NULL
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND authorized_memory.forgotten_at IS NULL AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/utterance-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.handle = authorized_memory.handle AND authorized_head.t = authorized_memory.t AND authorized_head.schema_id = ANY(ARRAY[''core/utterance-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL

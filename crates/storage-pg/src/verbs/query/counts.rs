@@ -38,12 +38,12 @@ pub(crate) async fn count_memories_on_connection(
          ), candidates AS (
              SELECT h.handle, h.t, h.kind
                FROM proxiima_core.memory_head h
-               JOIN proxiima_core.memory m ON m.t = h.t
+               JOIN proxiima_core.live_memory m ON m.t = h.t
               WHERE h.owner_id = ANY($1::uuid[])
              UNION ALL
              SELECT v.memory_handle, v.memory_t, m.kind
                FROM goal_visible v
-               JOIN proxiima_core.memory m ON m.t = v.memory_t
+               JOIN proxiima_core.live_memory m ON m.t = v.memory_t
          ), latest AS (
              SELECT DISTINCT ON (handle) handle, kind
                FROM candidates

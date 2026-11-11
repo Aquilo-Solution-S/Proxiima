@@ -147,8 +147,8 @@ async fn memory_endpoints(
         .chain(memories.iter().map(|memory| memory.into_inner()))
         .collect();
     let rows: Vec<(uuid::Uuid, PgMemoryKind)> = sqlx::query_as(
-        "SELECT t,kind FROM proxiima_core.memory /* FORGET-POLICY: live-only (new Goal sources under owner RLS) */
-         WHERE t=ANY($1::uuid[]) AND forgotten_at IS NULL",
+        "SELECT t,kind FROM proxiima_core.live_memory
+         WHERE t=ANY($1::uuid[])",
     )
     .bind(&local)
     .fetch_all(&mut **tx)
@@ -204,9 +204,13 @@ pub(crate) async fn begin_goal_edit<'a>(
         .map(|item| item.memory_id().into_inner())
         .collect();
     let rows: Vec<(uuid::Uuid, PgMemoryKind)> = sqlx::query_as(
-        "SELECT t,kind FROM proxiima_core.memory /* FORGET-POLICY: live-only (new Goal evidence under owner RLS) */
-         WHERE t=ANY($1::uuid[]) AND forgotten_at IS NULL",
-    ).bind(&local).fetch_all(&mut *tx).await.map_err(map_err)?;
+        "SELECT t,kind FROM proxiima_core.live_memory
+         WHERE t=ANY($1::uuid[])",
+    )
+    .bind(&local)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(map_err)?;
     if local
         .iter()
         .any(|id| !rows.iter().any(|(found, _)| found == id))

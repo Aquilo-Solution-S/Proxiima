@@ -432,7 +432,7 @@ async fn delete_owned_surfaces(
                 format!(
                     "DELETE FROM {tbl} a
                       WHERE a.{owner} = $1
-                        AND EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                        AND EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m
                                      WHERE m.t = a.{key} AND m.source_id = $2)",
                     tbl = ident.as_str(),
                     owner = owner_column.as_str(),
@@ -1097,7 +1097,7 @@ async fn create_selected_sets(
             sqlx::query(
                 "INSERT INTO selected_memories(memory_id, handle, kind)
                  SELECT t, handle, kind::text
-                   FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                   FROM proxiima_core.memory_including_forgotten
                   WHERE owner_id = $1",
             )
             .bind(owner_id)
@@ -1109,7 +1109,7 @@ async fn create_selected_sets(
             sqlx::query(
                 "INSERT INTO selected_memories(memory_id, handle, kind)
                  SELECT m.t, m.handle, m.kind::text
-                   FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                   FROM proxiima_core.memory_including_forgotten m
                   WHERE m.owner_id = $1
                     AND m.source_id = $2",
             )
@@ -1140,7 +1140,7 @@ async fn create_selected_sets(
             sqlx::query(
                 "INSERT INTO selected_blobs(blob_id)
                  SELECT DISTINCT m.blob_id
-                   FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                   FROM proxiima_core.memory_including_forgotten m
                    JOIN selected_memories sm ON sm.memory_id = m.t
                   WHERE m.blob_id IS NOT NULL",
             )
@@ -1209,7 +1209,7 @@ async fn sync_selected_heads(tx: &mut Tx<'_>, owner_id: uuid::Uuid) -> Result<()
                                PARTITION BY handle
                                ORDER BY (forgotten_at IS NULL) DESC, t DESC
                            ) AS n
-                      FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (the head is the newest live version, like sync_memory_head) */
+                      FROM proxiima_core.memory_including_forgotten
                      WHERE owner_id = $1
                        AND handle IN (SELECT handle FROM selected_memory_handles)
                   ) ranked
@@ -1227,7 +1227,7 @@ async fn sync_selected_heads(tx: &mut Tx<'_>, owner_id: uuid::Uuid) -> Result<()
           WHERE h.owner_id = $1
             AND h.handle IN (SELECT handle FROM selected_memory_handles)
             AND NOT EXISTS (
-                SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                SELECT 1 FROM proxiima_core.memory_including_forgotten m
                  WHERE m.handle = h.handle AND m.owner_id = $1
             )",
     )
@@ -1242,7 +1242,7 @@ async fn sync_selected_heads(tx: &mut Tx<'_>, owner_id: uuid::Uuid) -> Result<()
           WHERE c.owner_id = $1
             AND c.handle IN (SELECT handle FROM selected_memory_handles)
             AND NOT EXISTS (
-                SELECT 1 FROM proxiima_core.memory m WHERE m.handle = c.handle /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                SELECT 1 FROM proxiima_core.memory_including_forgotten m WHERE m.handle = c.handle
             )",
     )
     .bind(owner_id)
@@ -1438,7 +1438,7 @@ async fn delete_selected_memories(
     scope: SelectionScope<'_>,
 ) -> Result<u64, StorageError> {
     let result = sqlx::query(
-        "DELETE FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+        "DELETE FROM proxiima_core.memory m
           USING selected_memories s
           WHERE m.t = s.memory_id
             AND m.owner_id = $1
@@ -1473,7 +1473,7 @@ async fn selected_content_ids(
 ) -> Result<Vec<uuid::Uuid>, StorageError> {
     sqlx::query_scalar(
         "SELECT DISTINCT m.content_id
-           FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+           FROM proxiima_core.memory_including_forgotten m
            JOIN selected_memories sm ON sm.memory_id = m.t
           WHERE m.owner_id = $1
             AND ($2::text IS NULL OR m.source_id = $2)
@@ -1605,7 +1605,7 @@ async fn delete_blobs(
         sqlx::query(
             "DELETE FROM selected_blobs sb
               WHERE EXISTS (
-                    SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+                    SELECT 1 FROM proxiima_core.memory_including_forgotten m
                      WHERE m.blob_id = sb.blob_id
               )",
         )

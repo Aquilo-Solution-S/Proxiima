@@ -166,7 +166,7 @@ async fn transfer_memory_t(
 ) -> Result<bool, StorageError> {
     let row: Option<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT handle, schema_id
-           FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+           FROM proxiima_core.memory_including_forgotten
           WHERE t = $1 AND owner_id = $2",
     )
     .bind(t)
@@ -190,7 +190,8 @@ async fn transfer_memory_t(
     transfer_memory_handle(tx, surfaces, t, handle, from_id, to_owner, embeddings).await
 }
 
-const SERIES_TS_SQL: &str = "SELECT t FROM proxiima_core.memory WHERE handle = $1 AND owner_id = $2 /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+const SERIES_TS_SQL: &str =
+    "SELECT t FROM proxiima_core.memory_including_forgotten WHERE handle = $1 AND owner_id = $2
      ORDER BY t";
 
 /// Acquire the transfer's complete lifecycle boundary in the global order:
@@ -273,13 +274,13 @@ async fn transfer_memory_handle(
     let has_guidance: bool = sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1
-               FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (owner transfer moves forgotten rows too) */
+               FROM proxiima_core.memory_including_forgotten m
                JOIN proxiima_core.goal g ON g.t = ANY(m.guided_by)
               WHERE m.t = ANY($1::uuid[])
          ) OR EXISTS (
              SELECT 1
                FROM proxiima_core.goal g
-               JOIN proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (owner transfer moves forgotten rows too) */ ON m.t = ANY(g.motivated_by)
+               JOIN proxiima_core.memory_including_forgotten m ON m.t = ANY(g.motivated_by)
               WHERE m.t = ANY($1::uuid[])
          )",
     )
@@ -552,7 +553,7 @@ async fn transfer_cited_blobs(
     let leg = dedupe_leg(surfaces, BLOB_SURFACE)?;
     let blob_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT blob_id
-           FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+           FROM proxiima_core.memory_including_forgotten
           WHERE handle = $1 AND owner_id = $2 AND blob_id IS NOT NULL
           ORDER BY blob_id",
     )
@@ -700,7 +701,7 @@ async fn transfer_one_cited_blob(
     let shared: bool = sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1
-               FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+               FROM proxiima_core.memory_including_forgotten
               WHERE blob_id = $1
                 AND handle <> $2
                 AND owner_id <> $3
@@ -776,7 +777,7 @@ async fn transfer_content_for_handle(
            FROM proxiima_core.content c
            JOIN (
                  SELECT DISTINCT content_id
-                   FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+                   FROM proxiima_core.memory_including_forgotten
                   WHERE handle = $1 AND owner_id = $2 AND content_id IS NOT NULL
                 ) series_content ON series_content.content_id = c.content_id
           ORDER BY c.content_id",

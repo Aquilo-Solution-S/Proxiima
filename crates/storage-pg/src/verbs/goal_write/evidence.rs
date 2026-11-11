@@ -33,15 +33,14 @@ async fn evidence_target(
     let kind = if let Some(origin) = item.remote_origin() {
         origin.kind()
     } else {
-        let stored: Option<PgMemoryKind> =
-            sqlx::query_scalar(
-                "SELECT kind FROM proxiima_core.memory /* FORGET-POLICY: live-only (new and carried Goal evidence, including platform edits) */
-                 WHERE t = $1 AND forgotten_at IS NULL",
-            )
-                .bind(item.memory_id().into_inner())
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(map_err)?;
+        let stored: Option<PgMemoryKind> = sqlx::query_scalar(
+            "SELECT kind FROM proxiima_core.live_memory
+                 WHERE t = $1",
+        )
+        .bind(item.memory_id().into_inner())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(map_err)?;
         let Some(stored) = stored else {
             return Err(StorageError::ConstraintViolation(
                 proxiima_core::verbs::goal_write::EVIDENCE_DOES_NOT_EXIST.into(),

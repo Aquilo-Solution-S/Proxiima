@@ -46,6 +46,13 @@ projection declares the key; stateless schemas use
 boundary: `with_sidecars(...).await` validates declared key columns against
 the real SQL schema and must be awaited and propagated during boot.
 
+Core SQL reads memories through `proxiima_core.live_memory` or
+`proxiima_core.memory_including_forgotten`, so each statement states whether it
+wants forgotten memories. The table itself is named only by writes, by a read
+that locks its rows (a view cannot be locked by the serving role), and by
+row-security policy text. `scripts/check-architecture-guardrails.py` refuses
+any other read.
+
 Do not add a runtime spiice registry, raw spiice SQL against core tables,
 caller-supplied owner authorization, a fourth edge kind, generic JSON payload
 escape hatches, or compatibility aliases for removed ontology. If a feature
@@ -66,6 +73,12 @@ equals the old head's schema and seed rows. A migration that only a
 pgvector-backed store needs has a description starting with `pgvector`; a store
 with a host vector index skips it, and its definitions live in
 `definitions/vector.sql`.
+
+A migration that drops, renames or retypes a column of `proxiima_core.memory`
+first drops `proxiima_core.live_memory` and
+`proxiima_core.memory_including_forgotten` (and `memory_version` if it lists the
+column); the definitions pass recreates them. A fresh test database does not
+show the omission, because the views do not exist yet when migrations run.
 
 Before retiring a Fact sidecar, run the erase-capable release with its host
 inverses and sidecars still present. Stop producers of the retired schema.

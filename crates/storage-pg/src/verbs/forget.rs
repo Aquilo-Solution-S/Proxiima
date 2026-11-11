@@ -470,7 +470,7 @@ async fn lock_forget_footprint_tx(
     // only the source handle here would invert the order and leave the
     // dependent handle outside this operation's serialization domain.
     let dependent_handles: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+        "SELECT DISTINCT handle FROM proxiima_core.memory_including_forgotten
           WHERE kind <> 'fact'
             AND t <> $1
             AND (origins @> ARRAY[$1]::uuid[] OR refs @> ARRAY[$1]::uuid[])
@@ -486,7 +486,7 @@ async fn lock_forget_footprint_tx(
     lock_memory_handles_tx(tx, &handles).await?;
 
     let grounded: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT t, handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+        "SELECT t, handle FROM proxiima_core.memory_including_forgotten
           WHERE kind <> 'fact'
             AND t <> $1
             AND (origins @> ARRAY[$1]::uuid[] OR refs @> ARRAY[$1]::uuid[])
@@ -515,7 +515,7 @@ async fn lock_forget_footprint_tx(
     lock_lifecycle_targets_tx(tx, &targets).await?;
 
     let after: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT t, handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+        "SELECT t, handle FROM proxiima_core.memory_including_forgotten
           WHERE kind <> 'fact'
             AND t <> $1
             AND (origins @> ARRAY[$1]::uuid[] OR refs @> ARRAY[$1]::uuid[])
@@ -747,7 +747,7 @@ pub(crate) async fn sync_memory_head(
     handle: Uuid,
 ) -> Result<(), StorageError> {
     let remaining: Option<Uuid> = sqlx::query_scalar(
-        "SELECT t FROM proxiima_core.memory WHERE handle = $1 ORDER BY (forgotten_at IS NULL) DESC, t DESC LIMIT 1", /* FORGET-POLICY: includes-forgotten (head sync sees forgotten rows, then skips them) */
+        "SELECT t FROM proxiima_core.memory_including_forgotten WHERE handle = $1 ORDER BY (forgotten_at IS NULL) DESC, t DESC LIMIT 1",
     )
     .bind(handle)
     .fetch_optional(tx.as_mut())
@@ -779,7 +779,7 @@ async fn probe_memory_handle_for_owner(
     owner_id: Uuid,
 ) -> Result<Option<Uuid>, StorageError> {
     sqlx::query_scalar(
-        "SELECT handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+        "SELECT handle FROM proxiima_core.memory_including_forgotten
           WHERE t = $1 AND owner_id = $2",
     )
     .bind(t)
@@ -790,7 +790,7 @@ async fn probe_memory_handle_for_owner(
 }
 
 /// The owner's row for `t`, locked, when it is live.
-const LOCK_LIVE_OWNED_SQL: &str = "SELECT handle, kind FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+const LOCK_LIVE_OWNED_SQL: &str = "SELECT handle, kind FROM proxiima_core.memory
           WHERE t = $1 AND owner_id = $2 AND forgotten_at IS NULL
           FOR UPDATE";
 
@@ -867,7 +867,7 @@ async fn forget_in_lifecycle(
         return Err(StorageError::NotFound);
     }
     sqlx::query(
-        "UPDATE proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+        "UPDATE proxiima_core.memory
             SET forgotten_at = now()
           WHERE t = $1 AND owner_id = $2",
     )
@@ -884,7 +884,7 @@ async fn forget_in_lifecycle(
 /// The owner's row for `t`, locked, in either state.
 const LOCK_OWNED_FOR_RESTORE_SQL: &str = "SELECT handle, kind, schema_id, sidecar_tables,
                 lexical_language::text, forgotten_at IS NOT NULL
-           FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+           FROM proxiima_core.memory
           WHERE t = $1 AND owner_id = $2
           FOR UPDATE";
 
@@ -952,7 +952,7 @@ async fn restore_in_lifecycle(
     sidecars.ensure_schema_restorable(&schema_id)?;
     if forgotten {
         sqlx::query(
-            "UPDATE proxiima_core.memory /* FORGET-POLICY: includes-forgotten (forget and restore see the row in either state) */
+            "UPDATE proxiima_core.memory
                 SET forgotten_at = NULL
               WHERE t = $1 AND owner_id = $2",
         )
@@ -1037,7 +1037,7 @@ async fn erase_memory_in_lifecycle(
         ));
     }
     let content_id = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT content_id FROM proxiima_core.memory WHERE t = $1 AND owner_id = $2", /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+        "SELECT content_id FROM proxiima_core.memory_including_forgotten WHERE t = $1 AND owner_id = $2",
     )
     .bind(t)
     .bind(owner.into_inner())
@@ -1047,7 +1047,7 @@ async fn erase_memory_in_lifecycle(
     .flatten();
     let is_fact: bool = sqlx::query_scalar(
         "SELECT EXISTS (
-             SELECT 1 FROM proxiima_core.memory WHERE t = $1 AND owner_id = $2 AND kind = 'fact' /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+             SELECT 1 FROM proxiima_core.memory_including_forgotten WHERE t = $1 AND owner_id = $2 AND kind = 'fact'
          )",
     )
     .bind(t)
@@ -1067,7 +1067,7 @@ async fn erase_memory_in_lifecycle(
     )
     .await?;
     let stamped: Vec<String> = sqlx::query_scalar(
-        "SELECT unnest(sidecar_tables) FROM proxiima_core.memory WHERE t = $1 AND owner_id = $2", /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+        "SELECT unnest(sidecar_tables) FROM proxiima_core.memory_including_forgotten WHERE t = $1 AND owner_id = $2",
     )
     .bind(t)
     .bind(owner.into_inner())
@@ -1078,7 +1078,7 @@ async fn erase_memory_in_lifecycle(
     // (memory_external_origin) finds its owner through its memory, so its
     // delete must run while that parent is still there.
     delete_memory_dependents(tx, sidecars, surfaces, &stamped, t).await?;
-    sqlx::query("DELETE FROM proxiima_core.memory WHERE t = $1 AND owner_id = $2") /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+    sqlx::query("DELETE FROM proxiima_core.memory WHERE t = $1 AND owner_id = $2")
         .bind(t)
         .bind(owner.into_inner())
         .execute(tx.as_mut())
@@ -1291,10 +1291,10 @@ async fn snapshot_series_for_erase_tx(
 
 const SNAPSHOT_SERIES_FOR_ERASE_SQL: &str = "\
 WITH handles AS (
-    SELECT DISTINCT handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+    SELECT DISTINCT handle FROM proxiima_core.memory_including_forgotten
      WHERE t = ANY($1::uuid[]) AND owner_id = $2
 ), versions AS (
-    SELECT m.handle, m.t FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+    SELECT m.handle, m.t FROM proxiima_core.memory_including_forgotten m
       JOIN handles h ON h.handle = m.handle
      WHERE m.owner_id = $2
 )
@@ -1322,7 +1322,7 @@ async fn snapshot_series_for_handles_tx(
 }
 
 const SNAPSHOT_SERIES_BY_HANDLES_SQL: &str = "\
-SELECT m.handle, m.t FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+SELECT m.handle, m.t FROM proxiima_core.memory_including_forgotten m
   JOIN unnest($1::uuid[]) h(handle) ON h.handle = m.handle
  WHERE m.owner_id = $2
  ORDER BY handle, t";
@@ -1383,7 +1383,7 @@ pub(crate) async fn lock_admissions_for_erase(
     // it yet; acquire every named series handle here so a later series erase
     // only re-enters handles this transaction already owns.
     let handles: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+        "SELECT DISTINCT handle FROM proxiima_core.memory_including_forgotten
           WHERE t = ANY($1::uuid[]) AND owner_id = $2
           ORDER BY handle",
     )
@@ -1395,7 +1395,7 @@ pub(crate) async fn lock_admissions_for_erase(
     lock_memory_handles_tx(tx, &handles).await?;
 
     let present: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT t FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+        "SELECT t FROM proxiima_core.memory_including_forgotten
           WHERE t = ANY($1::uuid[]) AND owner_id = $2
           ORDER BY t",
     )
@@ -1422,7 +1422,7 @@ pub(crate) async fn lock_admissions_for_erase(
 }
 
 const LOCK_ADMISSIONS_SQL: &str =
-    "SELECT t FROM proxiima_core.memory WHERE t = ANY($1::uuid[]) ORDER BY t FOR UPDATE"; /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+    "SELECT t FROM proxiima_core.memory WHERE t = ANY($1::uuid[]) ORDER BY t FOR UPDATE";
 
 /// The blobs the given admissions cite, held.
 ///
@@ -1477,7 +1477,7 @@ pub async fn cited_blobs_locked_for_erase(
 /// rather than in a `UNION` the locking clause could not attach to.
 const CITED_BLOBS_LOCKED_SQL: &str = "\
 WITH cited AS (
-    SELECT m.blob_id FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (erase removes forgotten rows too) */
+    SELECT m.blob_id FROM proxiima_core.memory_including_forgotten m
      WHERE m.t = ANY($1::uuid[]) AND m.owner_id = $2 AND m.blob_id IS NOT NULL
 )
 SELECT b.blob_id FROM proxiima_core.blob b
@@ -1555,7 +1555,7 @@ WITH orphans AS MATERIALIZED (
      WHERE b.blob_id = ANY($1::uuid[])
        AND b.owner_id = $2
        AND NOT EXISTS (
-               SELECT 1 FROM proxiima_core.memory m WHERE m.blob_id = b.blob_id /* FORGET-POLICY: includes-forgotten (a forgotten memory still cites its content) */
+               SELECT 1 FROM proxiima_core.memory_including_forgotten m WHERE m.blob_id = b.blob_id
            )
 ),
 enqueued AS (

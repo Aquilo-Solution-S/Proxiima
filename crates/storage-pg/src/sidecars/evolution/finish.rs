@@ -13,7 +13,7 @@ pub(super) async fn finish(
     registry: &PgSidecarRegistryFrozen,
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<(), StorageError> {
-    let memory_ids:Vec<Uuid>=sqlx::query_scalar("SELECT DISTINCT m.t FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (migration replaces every representation) */
+    let memory_ids:Vec<Uuid>=sqlx::query_scalar("SELECT DISTINCT m.t FROM proxiima_core.memory_including_forgotten m
         JOIN proxiima_core.schema_evolution_authority a ON a.source_id=m.t AND a.source_schema=m.schema_id
          AND a.record_kind='memory' AND a.xact=pg_current_xact_id()")
         .fetch_all(&mut **tx).await.map_err(map_err)?;
@@ -36,8 +36,13 @@ pub(super) async fn finish(
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;
-    let source_content: Vec<Option<Uuid>> = sqlx::query_scalar("DELETE FROM proxiima_core.memory WHERE t=ANY($1::uuid[]) /* FORGET-POLICY: includes-forgotten (explicit mapped representation removal) */ RETURNING content_id")
-        .bind(&memory_ids).fetch_all(&mut **tx).await.map_err(map_err)?;
+    let source_content: Vec<Option<Uuid>> = sqlx::query_scalar(
+        "DELETE FROM proxiima_core.memory WHERE t=ANY($1::uuid[]) RETURNING content_id",
+    )
+    .bind(&memory_ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_err)?;
     sqlx::query("DELETE FROM proxiima_core.goal WHERE t=ANY($1::uuid[])")
         .bind(&goal_ids)
         .execute(&mut **tx)
@@ -55,7 +60,7 @@ pub(super) async fn finish(
     .await?;
     sqlx::query("DELETE FROM proxiima_core.memory_head h WHERE EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority a
         WHERE a.xact=pg_current_xact_id() AND a.record_kind='memory' AND a.source_handle=h.handle)
-        AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (historical series stays while any version survives) */ WHERE m.handle=h.handle)")
+        AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m WHERE m.handle=h.handle)")
         .execute(&mut **tx).await.map_err(map_err)?;
     sqlx::query("DELETE FROM proxiima_core.goal_head h WHERE EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority a
         WHERE a.xact=pg_current_xact_id() AND a.record_kind='goal' AND a.source_handle=h.handle)
@@ -93,7 +98,7 @@ pub(super) async fn remove_unused_content(
     content_ids: &[Uuid],
 ) -> Result<(), StorageError> {
     sqlx::query("DELETE FROM proxiima_core.content c WHERE c.content_id=ANY($1::uuid[])
-        AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (historical content remains reachable) */ WHERE m.content_id=c.content_id)")
+        AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m WHERE m.content_id=c.content_id)")
         .bind(content_ids).execute(&mut **tx).await.map_err(map_err)?;
     Ok(())
 }
@@ -168,7 +173,7 @@ async fn incoming_pins(
     goals: &[Uuid],
     blobs: &[Uuid],
 ) -> Result<(), StorageError> {
-    let dangling:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (all surviving pins need their target) */
+    let dangling:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m
         WHERE m.t<>ALL($1::uuid[]) AND (m.origins&&$1::uuid[] OR m.refs&&$1::uuid[] OR m.reads&&$1::uuid[] OR m.forked_from=ANY($1::uuid[])
            OR m.goal_refs&&$2::uuid[] OR m.guided_by&&$2::uuid[] OR m.blob_id=ANY($3::uuid[])))
         OR EXISTS (SELECT 1 FROM proxiima_core.goal g WHERE g.t<>ALL($2::uuid[])
@@ -208,7 +213,7 @@ async fn remove_source_sidecars(
     tx: &mut Transaction<'_, Postgres>,
     memories: &[Uuid],
 ) -> Result<(), StorageError> {
-    let tables:Vec<String>=sqlx::query_scalar("SELECT DISTINCT unnest(sidecar_tables) FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (mapped source footprint is removed) */ WHERE t=ANY($1::uuid[])")
+    let tables:Vec<String>=sqlx::query_scalar("SELECT DISTINCT unnest(sidecar_tables) FROM proxiima_core.memory_including_forgotten WHERE t=ANY($1::uuid[])")
         .bind(memories).fetch_all(&mut **tx).await.map_err(map_err)?;
     for table in tables {
         let surface = registry
@@ -249,7 +254,7 @@ async fn validate_targets(tx: &mut Transaction<'_, Postgres>) -> Result<(), Stor
           AND NOT EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority next
               WHERE next.xact=a.xact AND next.record_kind=a.record_kind AND next.source_id=a.target_id AND next.source_schema=a.target_schema)
           AND NOT (CASE a.record_kind
-            WHEN 'memory' THEN EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (terminal migration output) */ WHERE m.t=a.target_id AND m.schema_id=a.target_schema AND m.owner_id=a.record_owner AND m.handle=a.target_handle)
+            WHEN 'memory' THEN EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m WHERE m.t=a.target_id AND m.schema_id=a.target_schema AND m.owner_id=a.record_owner AND m.handle=a.target_handle)
             WHEN 'goal' THEN EXISTS (SELECT 1 FROM proxiima_core.goal g WHERE g.t=a.target_id AND g.schema_id=a.target_schema AND g.owner_id=a.record_owner AND g.handle=a.target_handle)
             WHEN 'blob' THEN EXISTS (SELECT 1 FROM proxiima_core.blob b WHERE b.blob_id=a.target_id AND b.schema_id=a.target_schema AND b.owner_id=a.record_owner)
             ELSE false END))")
@@ -259,8 +264,7 @@ async fn validate_targets(tx: &mut Transaction<'_, Postgres>) -> Result<(), Stor
             "schema migration is missing a declared terminal target",
         ));
     }
-    let invalid:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.memory m
-        /* FORGET-POLICY: includes-forgotten (the persisted target graph includes history) */
+    let invalid:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m
         JOIN proxiima_core.schema_evolution_authority a ON a.target_id=m.t AND a.record_kind='memory' AND a.xact=pg_current_xact_id()
         LEFT JOIN proxiima_core.memory_head h ON h.handle=m.handle
         WHERE h.handle IS NULL OR m.owner_id<>h.owner_id OR m.kind<>h.kind OR m.schema_id<>h.schema_id
@@ -274,8 +278,7 @@ async fn validate_targets(tx: &mut Transaction<'_, Postgres>) -> Result<(), Stor
             "migration target violates head, owner, or content alignment",
         ));
     }
-    let old_rows:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM proxiima_core.memory m JOIN proxiima_core.schema_evolution e ON e.source_schema_id=m.schema_id AND e.source_kind=m.kind::text
-          /* FORGET-POLICY: includes-forgotten (no old representation can activate) */)
+    let old_rows:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM proxiima_core.memory_including_forgotten m JOIN proxiima_core.schema_evolution e ON e.source_schema_id=m.schema_id AND e.source_kind=m.kind::text)
         OR EXISTS(SELECT 1 FROM proxiima_core.goal g JOIN proxiima_core.schema_evolution e ON e.source_schema_id=g.schema_id AND e.source_kind='goal')
         OR EXISTS(SELECT 1 FROM proxiima_core.blob b JOIN proxiima_core.schema_evolution e ON e.source_schema_id=b.schema_id AND e.source_kind='cited_object')")
         .fetch_one(&mut **tx).await.map_err(map_err)?;

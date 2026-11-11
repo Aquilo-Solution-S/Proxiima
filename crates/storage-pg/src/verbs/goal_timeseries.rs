@@ -792,15 +792,14 @@ async fn ensure_live_memory_kind(
     label: &str,
     allowed: &[PgMemoryKind],
 ) -> Result<(), StorageError> {
-    let kind: Option<PgMemoryKind> =
-        sqlx::query_scalar(
-            "SELECT kind FROM proxiima_core.memory /* FORGET-POLICY: live-only (Goal target admission under lifecycle locks, including platform edits) */
-             WHERE t = $1 AND forgotten_at IS NULL",
-        )
-            .bind(t)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_err)?;
+    let kind: Option<PgMemoryKind> = sqlx::query_scalar(
+        "SELECT kind FROM proxiima_core.live_memory
+             WHERE t = $1",
+    )
+    .bind(t)
+    .fetch_optional(tx.as_mut())
+    .await
+    .map_err(map_err)?;
     let Some(kind) = kind else {
         return Err(StorageError::ConstraintViolation(format!(
             "{label} does not exist"

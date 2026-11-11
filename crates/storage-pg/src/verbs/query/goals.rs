@@ -118,7 +118,7 @@ async fn load_visible_perspective_ids(
     }
     let rows: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT t
-           FROM proxiima_core.memory
+           FROM proxiima_core.live_memory
           WHERE t = ANY($1::uuid[])
             AND owner_id = ANY($2::uuid[])
             AND kind = 'perspective'::proxiima_core.memory_kind",

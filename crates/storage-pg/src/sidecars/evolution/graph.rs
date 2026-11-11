@@ -9,7 +9,7 @@ use crate::error::map_err;
 /// grounding: its pin must have existed in the captured source declaration.
 pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS (
-        SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (migration validates retained history) */
+        SELECT 1 FROM proxiima_core.memory_including_forgotten m
         WHERE EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority a WHERE a.xact=pg_current_xact_id() AND a.record_kind='memory' AND a.target_id=m.t)
         AND (
           (m.kind='abstraction' AND cardinality(m.origins)=0)
@@ -24,7 +24,7 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
               UNION ALL SELECT id,'read' FROM unnest(m.reads) p(id)
               UNION ALL SELECT m.forked_from,'fork' WHERE m.forked_from IS NOT NULL
             ) pin
-            LEFT JOIN proxiima_core.memory target /* FORGET-POLICY: includes-forgotten (retained pin targets) */ ON target.t=pin.id
+            LEFT JOIN proxiima_core.memory_including_forgotten target ON target.t=pin.id
             LEFT JOIN proxiima_core.goal target_goal ON target_goal.t=pin.id
             LEFT JOIN proxiima_core.erased_pin_target witness ON witness.t=pin.id
             CROSS JOIN LATERAL (SELECT COALESCE(target.kind::text,CASE WHEN target_goal.t IS NOT NULL THEN 'goal' END,witness.kind::text) kind) actual
@@ -62,7 +62,7 @@ async fn validate_goal_pins(tx: &mut Transaction<'_, Postgres>) -> Result<(), St
           UNION ALL SELECT id,'dependency' FROM unnest(g.dependency_t) p(id)
           UNION ALL SELECT id,'motivation' FROM unnest(g.motivated_by) p(id)
         ) pin
-        LEFT JOIN proxiima_core.memory target /* FORGET-POLICY: includes-forgotten (historical Goal pins) */ ON target.t=pin.id
+        LEFT JOIN proxiima_core.memory_including_forgotten target ON target.t=pin.id
         LEFT JOIN proxiima_core.goal target_goal ON target_goal.t=pin.id
         LEFT JOIN proxiima_core.erased_pin_target witness ON witness.t=pin.id
         CROSS JOIN LATERAL (SELECT COALESCE(target.kind::text,CASE WHEN target_goal.t IS NOT NULL THEN 'goal' END,witness.kind::text) kind) actual

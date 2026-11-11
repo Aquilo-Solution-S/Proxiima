@@ -106,10 +106,10 @@ struct Version {
 /// Every version of every series named by `ts`, any owner, with its schema.
 const VERSIONS_OF_SQL: &str = "\
 WITH handles AS (
-    SELECT DISTINCT handle FROM proxiima_core.memory WHERE t = ANY($1::uuid[])
+    SELECT DISTINCT handle FROM proxiima_core.memory_including_forgotten WHERE t = ANY($1::uuid[])
 )
 SELECT m.t, m.handle, m.owner_id, m.schema_id
-  FROM proxiima_core.memory m JOIN handles h ON h.handle = m.handle";
+  FROM proxiima_core.memory_including_forgotten m JOIN handles h ON h.handle = m.handle";
 
 /// The footprint: a closed set of whole series.
 #[derive(Debug, Default)]
@@ -318,10 +318,10 @@ macro_rules! newest_versions_cte {
     () => {
         "\
 WITH own AS (
-    SELECT DISTINCT handle FROM proxiima_core.memory
+    SELECT DISTINCT handle FROM proxiima_core.memory_including_forgotten
      WHERE owner_id = $1 AND schema_id = $2
 ), versions AS (
-    SELECT m.handle, m.t, m.occurred_at FROM proxiima_core.memory m JOIN own USING (handle)
+    SELECT m.handle, m.t, m.occurred_at FROM proxiima_core.memory_including_forgotten m JOIN own USING (handle)
 ), newest AS (
     SELECT DISTINCT ON (handle) t, occurred_at FROM versions ORDER BY handle, t DESC
 )
@@ -378,7 +378,7 @@ async fn footprint_grew(
     let ts = footprint.ts();
     let handles: Vec<Uuid> = footprint.handles().into_iter().collect();
     let now: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT t FROM proxiima_core.memory WHERE handle = ANY($1::uuid[])
+        "SELECT t FROM proxiima_core.memory_including_forgotten WHERE handle = ANY($1::uuid[])
          ORDER BY 1",
     )
     .bind(&handles)
@@ -455,7 +455,7 @@ async fn delete_referencing_rows(
 
 /// Hot memories outside the footprint whose pins name one of its versions.
 const DANGLING_PINS_SQL: &str = "\
-SELECT count(*) FROM proxiima_core.memory
+SELECT count(*) FROM proxiima_core.memory_including_forgotten
  WHERE (origins && $1::uuid[] OR refs && $1::uuid[])
    AND NOT t = ANY($1::uuid[])";
 
@@ -483,7 +483,7 @@ async fn resolve_footprint(
             let seeds = sqlx::query_scalar(concat!(
                 newest_versions_cte!(),
                 "SELECT t FROM newest ORDER BY t LIMIT $3"
-            )) /* FORGET-POLICY: includes-forgotten (retirement selects every version's series) */
+            ))
             .bind(owner_id)
             .bind(schema.as_str())
             .bind(limit)

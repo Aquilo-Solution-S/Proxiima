@@ -257,7 +257,7 @@ pub async fn cited_abstraction_from_template(
              (handle, kind, schema_id, owner_id, t, publication_sequence)
          SELECT $1, kind, schema_id, owner_id, $2, 0
            FROM proxiima_core.memory_head
-          WHERE handle = (SELECT handle FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (fixture clones the exact stored template) */ WHERE t = $3)",
+          WHERE handle = (SELECT handle FROM proxiima_core.memory_including_forgotten WHERE t = $3)",
     )
     .bind(handle)
     .bind(memory)
@@ -265,14 +265,14 @@ pub async fn cited_abstraction_from_template(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO proxiima_core.memory /* FORGET-POLICY: includes-forgotten (fixture preserves the template's forgotten state) */
+        "INSERT INTO proxiima_core.memory
              (handle, t, kind, owner_id, schema_id, source_id, ingest_key,
               blob_id, content_id, origins, refs, sidecar_tables, goal_refs,
               guided_by, reads, occurred_at, by, via, lexical_language, forgotten_at)
          SELECT $1, $2, kind, owner_id, schema_id, NULL, NULL,
                 $3, content_id, origins, refs, sidecar_tables, goal_refs,
                 guided_by, reads, occurred_at, by, via, lexical_language, forgotten_at
-           FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (fixture clones the exact stored template) */
+           FROM proxiima_core.memory_including_forgotten
           WHERE t = $4",
     )
     .bind(handle)

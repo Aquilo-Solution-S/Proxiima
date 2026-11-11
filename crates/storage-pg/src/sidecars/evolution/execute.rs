@@ -272,9 +272,8 @@ pub(super) async fn run(
              SELECT * FROM unnest($1::text[], $2::text[])
          )
          SELECT m.owner_id
-           FROM proxiima_core.memory m
+           FROM proxiima_core.memory_including_forgotten m
            JOIN source_pairs s ON s.schema_id = m.schema_id AND s.kind = m.kind::text
-          /* FORGET-POLICY: includes-forgotten (all persisted representations migrate) */
          UNION
          SELECT g.owner_id
            FROM proxiima_core.goal g

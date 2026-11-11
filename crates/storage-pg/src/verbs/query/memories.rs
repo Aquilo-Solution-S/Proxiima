@@ -454,7 +454,7 @@ fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64)
                 proxiima_core.memory_created_at(m.t) AS created_at, \
                 m.owner_id, m.schema_id, m.sidecar_tables, \
                 m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
-         FROM proxiima_core.memory m \
+         FROM proxiima_core.live_memory m \
          {head_join}\
          WHERE m.owner_id = ANY($1::uuid[])",
     );
@@ -487,7 +487,7 @@ fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> String {
         sql,
         " ORDER BY h.t DESC OFFSET 0) h \
            CROSS JOIN LATERAL ( \
-             SELECT m.* FROM proxiima_core.memory m \
+             SELECT m.* FROM proxiima_core.live_memory m \
              WHERE m.handle = h.handle AND m.t = h.t AND m.owner_id = o.owner_id \
              OFFSET 0 \
            ) m \
@@ -508,7 +508,7 @@ fn merge_goal_heads_sql(owner_sql: &str, filters: &[MemoryFilter], fetch_limit: 
          SELECT m.t AS memory_id, m.handle, proxiima_core.memory_created_at(m.t) AS created_at, \
                 m.owner_id, m.schema_id, m.sidecar_tables, m.kind AS kind, m.origins, m.refs, \
                 m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
-         FROM latest v JOIN proxiima_core.memory m ON m.t = v.memory_t \
+         FROM latest v JOIN proxiima_core.live_memory m ON m.t = v.memory_t \
          WHERE m.owner_id = ANY($1::uuid[]) \
            AND NOT EXISTS (SELECT 1 FROM proxiima_core.memory_head own_head \
                            WHERE own_head.handle = m.handle AND own_head.t > m.t)",

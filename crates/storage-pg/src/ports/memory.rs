@@ -156,7 +156,7 @@ impl MemoryAuthoringPort for PgStorage {
         .await?;
         let rows: Vec<(uuid::Uuid, crate::pg_enums::PgMemoryKind)> = sqlx::query_as(
             "SELECT m.t, m.kind
-             FROM proxiima_core.memory m
+             FROM proxiima_core.live_memory m
              WHERE m.owner_id = $1
                AND m.t = ANY($2::uuid[])",
         )

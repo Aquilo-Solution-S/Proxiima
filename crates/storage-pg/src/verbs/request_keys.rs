@@ -55,7 +55,7 @@ pub(crate) async fn judge_request(
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let row: Result<Option<(Uuid, bool)>, StorageError> = sqlx::query_as(
         "SELECT handle, forgotten_at IS NOT NULL
-           FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (keyed replay answers forgotten) */
+           FROM proxiima_core.memory_including_forgotten
           WHERE t = $1 AND owner_id = $2",
     )
     .bind(t)

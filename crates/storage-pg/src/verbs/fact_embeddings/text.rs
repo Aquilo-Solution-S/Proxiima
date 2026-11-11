@@ -99,8 +99,8 @@ pub async fn load_embedding_texts_on_connection(
         .collect();
     let rows: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
         "SELECT t, owner_id, schema_id
-           FROM proxiima_core.memory /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
-          WHERE t = ANY($1::uuid[]) AND forgotten_at IS NULL",
+           FROM proxiima_core.live_memory
+          WHERE t = ANY($1::uuid[])",
     )
     .bind(&ids)
     .fetch_all(&mut *pool)
@@ -215,10 +215,9 @@ where
 {
     sqlx::query_scalar(
         "SELECT m.schema_id
-           FROM proxiima_core.memory m /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+           FROM proxiima_core.live_memory m
           WHERE m.t = $1
-            AND m.owner_id = $2
-            AND m.forgotten_at IS NULL",
+            AND m.owner_id = $2",
     )
     .bind(memory_id.into_inner())
     .bind(owner.into_inner())

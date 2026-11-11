@@ -183,7 +183,7 @@ pub(super) async fn ensure_series_uploads_published(
                 AND u.content_hash IS NOT NULL
                 AND b.blob_id IN (
                     SELECT m.blob_id
-                      FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+                      FROM proxiima_core.memory_including_forgotten m
                      WHERE m.handle = $2
                        AND m.owner_id = $1
                        AND m.blob_id IS NOT NULL

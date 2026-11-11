@@ -711,10 +711,6 @@ async fn definer_search_path_refuses_set_only_access_to_a_trusted_schema_owner()
     control.close().await;
 }
 
-/// The core view the boot guard watches, and the grant a blanket
-/// `GRANT ... ON ALL TABLES IN SCHEMA proxiima_core` gives the runtime role.
-const CORE_VIEW: &str = "proxiima_core.memory_version";
-
 #[tokio::test]
 async fn runtime_guard_refuses_a_writable_core_view_until_the_grants_are_restricted() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
@@ -722,9 +718,17 @@ async fn runtime_guard_refuses_a_writable_core_view_until_the_grants_are_restric
     let schemas = ["proxiima_core", "proxiima_example"];
     assert_runtime_rls(&runtime, &schemas).await.unwrap();
 
-    for grant in [
-        "GRANT INSERT ON proxiima_core.memory_version TO",
-        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA proxiima_core TO",
+    // One grant names its view; a blanket grant makes every core view writable,
+    // and the guard names one of them.
+    for (grant, view) in [
+        (
+            "GRANT INSERT ON proxiima_core.memory_version TO",
+            "core view proxiima_core.memory_version",
+        ),
+        (
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA proxiima_core TO",
+            "core view proxiima_core.",
+        ),
     ] {
         execute(
             &admin,
@@ -736,7 +740,7 @@ async fn runtime_guard_refuses_a_writable_core_view_until_the_grants_are_restric
             .await
             .expect_err("a core view the runtime role may write must refuse boot")
             .to_string();
-        assert!(refused.contains(CORE_VIEW), "{refused}");
+        assert!(refused.contains(view), "{refused}");
         assert!(refused.contains("restrict_view_grants"), "{refused}");
 
         execute(&admin, "SELECT proxiima_core.restrict_view_grants()").await;

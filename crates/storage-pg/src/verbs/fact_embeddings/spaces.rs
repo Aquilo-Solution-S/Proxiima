@@ -27,7 +27,7 @@ const EMBEDDING_COVERAGE_SQL: &str = "
 WITH heads AS MATERIALIZED (
      SELECT m.t
        FROM proxiima_core.memory_head mh
-       JOIN proxiima_core.memory m ON m.handle = mh.handle AND m.t = mh.t AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+       JOIN proxiima_core.live_memory m ON m.handle = mh.handle AND m.t = mh.t
       WHERE m.owner_id = $1
         AND mh.schema_id <> ALL($2::text[])
  ),
@@ -311,7 +311,7 @@ pub(crate) async fn enqueue_series_head_in_tx(
         "INSERT INTO proxiima_core.embedding_jobs (entity_id, model_id, dim, owner_id)
          SELECT mh.t, r.model_id, r.dim, $2
            FROM proxiima_core.memory_head mh
-           JOIN proxiima_core.memory m ON m.handle = mh.handle AND m.t = mh.t AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+           JOIN proxiima_core.live_memory m ON m.handle = mh.handle AND m.t = mh.t
           CROSS JOIN unnest($3::text[], $4::smallint[]) AS r(model_id, dim)
           WHERE mh.handle = $1
             AND mh.schema_id <> ALL($5::text[])

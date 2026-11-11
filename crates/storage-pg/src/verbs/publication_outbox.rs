@@ -173,7 +173,7 @@ pub(crate) async fn capture_publication_in_tx(
     }
     let captured = sqlx::query_scalar::<_, Option<String>>(
         "SELECT memory.source_id
-           FROM proxiima_core.memory memory /* FORGET-POLICY: includes-forgotten (reads the Fact this transaction just inserted) */
+           FROM proxiima_core.memory_including_forgotten memory
            JOIN proxiima_core.owners owner ON owner.owner_id = memory.owner_id
           WHERE memory.t = $1
             AND memory.owner_id = $2

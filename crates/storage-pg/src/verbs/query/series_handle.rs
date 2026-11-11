@@ -164,9 +164,7 @@ fn head_column_builder(
     // The natural-key series lookup runs this in the lifecycle scope, so it
     // reaches a forgotten head (#488 review r3); other callers read under
     // owner RLS, which hides one.
-    builder.push(
-        " s JOIN proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (a natural key's series outlives forgetting its head) */ ON m.t = s.",
-    );
+    builder.push(" s JOIN proxiima_core.memory_including_forgotten m ON m.t = s.");
     // SQL-POLICY: PgIdent
     builder.push(key.as_str());
     // SQL-POLICY: fixed-fragment

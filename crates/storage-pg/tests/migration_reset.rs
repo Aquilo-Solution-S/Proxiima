@@ -19,7 +19,7 @@ const KINDS: [VectorStorage; 2] = [VectorStorage::Local, VectorStorage::HostInde
 
 /// The definitions files a store of this kind holds.
 fn definition_files(vectors: VectorStorage) -> Vec<&'static str> {
-    let mut files = vec![definitions::FUNCTIONS];
+    let mut files = vec![definitions::FUNCTIONS, definitions::POLICIES];
     if vectors == VectorStorage::Local {
         files.push(definitions::VECTOR);
     }

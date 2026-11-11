@@ -220,11 +220,12 @@ mod tests {
         );
         tx.commit().await.unwrap();
         let forgotten: bool = sqlx::query_scalar(
-            "SELECT forgotten_at IS NOT NULL FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (prove refused restore leaves the row forgotten) */ WHERE t = $1",
+            "SELECT forgotten_at IS NOT NULL FROM proxiima_core.memory WHERE t = $1",
         )
         .bind(memory.memory_id.into_inner())
         .fetch_one(pg.pool_for_tests())
-        .await.unwrap();
+        .await
+        .unwrap();
         assert!(forgotten);
     }
 

@@ -694,7 +694,7 @@ fn substring_leg_sql_parts(
         "SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
-               FROM proxiima_core.memory source /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */
+               FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
                 AND source.schema_id = ANY(ARRAY[{own_schemas}]::text[])
@@ -1052,11 +1052,10 @@ fn candidate_tags(column: &str) -> String {
 /// an extra predicate on `authorized_head`, or empty.
 fn candidate_authorization(memory_id: &str, head_filter: &str) -> String {
     format!(
-        " AND EXISTS (SELECT 1 FROM proxiima_core.memory authorized_memory /* FORGET-POLICY: live-only (candidate authorization under owner RLS) */ \
+        " AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory \
          WHERE authorized_memory.t = {memory_id} \
          AND (authorized_memory.owner_id = ANY($7::uuid[]) \
               OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) \
-         AND authorized_memory.forgotten_at IS NULL \
          AND ($11::text IS NULL OR authorized_memory.kind::text = $11) \
          AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head \
          WHERE authorized_head.handle = authorized_memory.handle \
@@ -1142,7 +1141,7 @@ fn admit_side_restriction(req: &MemorySearchRequest, memory_id: &str) -> String 
         return String::new();
     }
     if memory_id == SUBSTRING_MEMORY_ID {
-        // The leg already drives `proxiima_core.memory m`, so the kind is a
+        // The leg already drives `proxiima_core.live_memory m`, so the kind is a
         // column predicate on a row it has already fetched and only the head
         // lookup needs a probe.
         let kind_pred = kind.map_or_else(String::new, |kind| {
@@ -1171,7 +1170,7 @@ fn admit_side_restriction(req: &MemorySearchRequest, memory_id: &str) -> String 
     format!(
         "
             AND EXISTS (SELECT 1
-                          FROM proxiima_core.memory hm{head_join}
+                          FROM proxiima_core.live_memory hm{head_join}
                          WHERE hm.t = {memory_id}{kind_pred})"
     )
 }
@@ -1266,7 +1265,7 @@ fn search_admit_sql(heads_only: bool) -> String {
                 m.schema_id,
                 proxiima_core.memory_created_at(m.t) AS created_at,
                 m.occurred_at, m.\"by\", m.via
-           FROM proxiima_core.memory m
+           FROM proxiima_core.live_memory m
           WHERE m.t = ANY($1::uuid[])
             AND (m.owner_id = ANY($2::uuid[])
                  OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[])))
@@ -1939,7 +1938,7 @@ mod tests {
         // the composite `gin(owner_id, search_tsv)` needs. The head
         // restriction names `memory` and `memory_head` in an EXISTS, so the
         // property is asserted directly rather than by a blanket string
-        // test for `proxiima_core.memory`.
+        // test for `proxiima_core.live_memory`.
         assert!(
             !ranked.contains("m.owner_id"),
             "the ranked arm's owner is on the projection, never reached through memory"
@@ -1966,7 +1965,7 @@ mod tests {
             "$6 is the recency cursor, and it pages DOWNWARD"
         );
         assert!(
-            substring.contains("FROM proxiima_core.memory source")
+            substring.contains("FROM proxiima_core.live_memory source")
                 && substring.contains("ON c.t = m.t"),
             "a sidecar carries no owner; the leg must drive from memory"
         );
@@ -2131,7 +2130,7 @@ mod tests {
         assert!(
             !ranked
                 .split_whitespace()
-                .any(|token| token == "proxiima_core.memory"),
+                .any(|token| token == "proxiima_core.live_memory"),
             "with neither filter the ranked arm reads the projection ALONE, \
              as it always did"
         );
@@ -2142,7 +2141,8 @@ mod tests {
         req.kind = Some(EntityKind::Perspective);
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
         assert!(
-            ranked.contains("FROM proxiima_core.memory hm\n") && !ranked.contains("memory_head"),
+            ranked.contains("FROM proxiima_core.live_memory hm\n")
+                && !ranked.contains("memory_head"),
             "a kind-only restriction probes the memory row and nothing else"
         );
         assert!(

@@ -96,6 +96,19 @@ async fn sees(connection: &mut sqlx::PgConnection, t: Uuid) -> (i64, i64) {
     (rows, notes)
 }
 
+/// Whether one transaction sees a memory through `live_memory` and through
+/// `memory_including_forgotten`.
+async fn in_views(connection: &mut sqlx::PgConnection, t: Uuid) -> (bool, bool) {
+    sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM proxiima_core.live_memory WHERE t = $1),
+                EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten WHERE t = $1)",
+    )
+    .bind(t)
+    .fetch_one(&mut *connection)
+    .await
+    .expect("view read")
+}
+
 async fn walk_from(
     pg: &crate::PgStorage,
     scope: &proxiima_core::OwnerScope,
@@ -194,6 +207,11 @@ async fn the_lifecycle_scope_sees_a_forgotten_memory_and_does_not_leak() {
         sees(&mut tx, child).await,
         (1, 1),
         "lifecycle sees row and sidecar"
+    );
+    assert_eq!(
+        in_views(&mut tx, child).await,
+        (false, true),
+        "the scope shows the row; only live_memory still leaves it out"
     );
     tx.commit().await.expect("commit");
 

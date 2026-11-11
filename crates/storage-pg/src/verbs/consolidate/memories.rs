@@ -20,7 +20,7 @@ pub(crate) async fn load_memory_by_id_on_connection(
     schemas: &[MemorySchemaSpec],
 ) -> Result<Option<MemorySnapshot>, StorageError> {
     let raw: Option<StoredMemoryRow> = sqlx::query_as(
-        "SELECT m.t, m.handle, m.kind AS kind, m.schema_id, m.owner_id, m.sidecar_tables, m.occurred_at, m.\"by\", m.via, m.guided_by FROM proxiima_core.memory m WHERE m.t = $1",
+        "SELECT m.t, m.handle, m.kind AS kind, m.schema_id, m.owner_id, m.sidecar_tables, m.occurred_at, m.\"by\", m.via, m.guided_by FROM proxiima_core.live_memory m WHERE m.t = $1",
     ).bind(memory_id.into_inner()).fetch_optional(&mut *connection).await.map_err(map_err)?;
     let Some(row) = raw.map(StoredMemoryRow::into_hydration) else {
         return Ok(None);
@@ -51,7 +51,7 @@ pub(crate) async fn load_memories_by_ids_on_connection(
         .collect();
     let ids: Vec<uuid::Uuid> = memory_ids.iter().map(|id| id.into_inner()).collect();
     let raw: Vec<StoredMemoryRow> = sqlx::query_as(
-        "SELECT m.t, m.handle, m.kind AS kind, m.schema_id, m.owner_id, m.sidecar_tables, m.occurred_at, m.\"by\", m.via, m.guided_by FROM proxiima_core.memory m WHERE m.owner_id = ANY($1::uuid[]) AND m.t = ANY($2::uuid[]) ORDER BY m.t",
+        "SELECT m.t, m.handle, m.kind AS kind, m.schema_id, m.owner_id, m.sidecar_tables, m.occurred_at, m.\"by\", m.via, m.guided_by FROM proxiima_core.live_memory m WHERE m.owner_id = ANY($1::uuid[]) AND m.t = ANY($2::uuid[]) ORDER BY m.t",
     ).bind(&owner_ids).bind(&ids).fetch_all(&mut *connection).await.map_err(map_err)?;
     let mut rows = raw
         .into_iter()
@@ -111,10 +111,10 @@ pub(crate) async fn load_series_head_on_connection(
         .collect();
     let head: Option<uuid::Uuid> = sqlx::query_scalar(
         "WITH source AS MATERIALIZED (
-             SELECT m.handle FROM proxiima_core.memory m
+             SELECT m.handle FROM proxiima_core.live_memory m
               WHERE m.t=$1 AND m.owner_id=ANY($2::uuid[])
          ), candidates AS (
-             SELECT h.t FROM source s JOIN proxiima_core.memory_head h ON h.handle=s.handle JOIN proxiima_core.memory current_head ON current_head.t=h.t AND current_head.forgotten_at IS NULL
+             SELECT h.t FROM source s JOIN proxiima_core.memory_head h ON h.handle=s.handle JOIN proxiima_core.live_memory current_head ON current_head.t=h.t
              UNION
              SELECT v.memory_t FROM source s JOIN proxiima_core.goal_visible_memory_heads() v ON v.memory_handle=s.handle
          ) SELECT t FROM candidates ORDER BY t DESC LIMIT 1"
@@ -143,7 +143,7 @@ pub(crate) async fn load_memory_graph_payloads_on_connection(
         .iter()
         .map(|i| i.memory_id.into_inner())
         .collect();
-    let raw: Vec<(uuid::Uuid, PgMemoryKind, String, Vec<String>)> = sqlx::query_as("SELECT m.t, m.kind, m.schema_id, m.sidecar_tables FROM proxiima_core.memory m WHERE m.t = ANY($1::uuid[])").bind(&ids).fetch_all(&mut *connection).await.map_err(map_err)?;
+    let raw: Vec<(uuid::Uuid, PgMemoryKind, String, Vec<String>)> = sqlx::query_as("SELECT m.t, m.kind, m.schema_id, m.sidecar_tables FROM proxiima_core.live_memory m WHERE m.t = ANY($1::uuid[])").bind(&ids).fetch_all(&mut *connection).await.map_err(map_err)?;
     let by_id = raw
         .into_iter()
         .map(|(id, kind, schema_id, tables)| (id, (EntityKind::from(kind), schema_id, tables)))

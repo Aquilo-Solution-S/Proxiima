@@ -93,7 +93,7 @@ async fn embedding_ann_observability_on_connection(
              UNION ALL
              SELECT kind::text AS entity_kind,
                     t AS entity_id
-               FROM proxiima_core.memory WHERE forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+               FROM proxiima_core.live_memory
          ),
          orphan_embeddings AS (
              SELECT count(*)::bigint AS count
@@ -452,7 +452,7 @@ pub(crate) async fn sweep_orphan_embedding_rows(
              UNION ALL
              SELECT kind::text AS entity_kind,
                     t AS entity_id
-               FROM proxiima_core.memory WHERE forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+               FROM proxiima_core.live_memory
          ),
          deleted_jobs AS (
              DELETE FROM proxiima_core.embedding_jobs job

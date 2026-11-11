@@ -23,9 +23,8 @@ const RECONCILE_PAGE: i64 = 2_000;
 const RECONCILE_EMBEDDINGS_SQL: &str = "
 WITH page AS MATERIALIZED (
      SELECT m.t, m.handle, m.owner_id
-       FROM proxiima_core.memory m /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
-      WHERE m.forgotten_at IS NULL
-        AND ($8::uuid IS NULL OR m.t > $8)
+       FROM proxiima_core.live_memory m
+      WHERE ($8::uuid IS NULL OR m.t > $8)
         AND ($7::uuid[] IS NULL OR m.owner_id = ANY($7::uuid[]))
         AND ($3::text <> 'since'
              OR proxiima_core.memory_created_at(m.t) >= $4)
@@ -75,7 +74,7 @@ WITH page AS MATERIALIZED (
  limited AS MATERIALIZED (
      SELECT e.*
        FROM eligible e
-       JOIN proxiima_core.memory m ON m.t = e.memory_id AND m.forgotten_at IS NULL /* FORGET-POLICY: live-only (embedding drain and reconcile act on live memories) */
+       JOIN proxiima_core.memory m ON m.t = e.memory_id AND m.forgotten_at IS NULL
       ORDER BY e.memory_id ASC
       LIMIT $2
       FOR UPDATE OF m

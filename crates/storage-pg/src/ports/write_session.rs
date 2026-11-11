@@ -243,15 +243,19 @@ impl WriteSessionFactory for PgStorage {
     ) -> Result<Vec<proxiima_core::OwnerId>, StorageError> {
         let mut tx = self.platform_transaction().await?;
         let owners: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT DISTINCT owner_id FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (retirement inventories all admissions) */
+            "SELECT DISTINCT owner_id FROM proxiima_core.memory_including_forgotten
               WHERE schema_id = $1 AND ($2::uuid IS NULL OR owner_id > $2)
               ORDER BY owner_id LIMIT $3",
         )
         .bind(schema.as_str())
         .bind(after.map(proxiima_core::OwnerId::into_inner))
-        .bind(i64::try_from(proxiima_core::verbs::own_erase::MAX_ERASE_SERIES_PER_CALL)
-            .map_err(|err| StorageError::Internal(err.to_string()))?)
-        .fetch_all(tx.as_mut()).await.map_err(crate::error::map_err)?;
+        .bind(
+            i64::try_from(proxiima_core::verbs::own_erase::MAX_ERASE_SERIES_PER_CALL)
+                .map_err(|err| StorageError::Internal(err.to_string()))?,
+        )
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(crate::error::map_err)?;
         Ok(owners
             .into_iter()
             .map(proxiima_core::OwnerId::new)
@@ -636,8 +640,8 @@ impl WriteSession for PgWriteSession {
         // enters the lifecycle scope, so it reads live rows only: forgetting
         // a forgotten memory is NotFound here.
         sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT handle FROM proxiima_core.memory /* FORGET-POLICY: live-only (owner-scope precondition; a forgotten t is NotFound) */
-              WHERE t = $1 AND owner_id = $2 AND kind::text = ANY($3) AND forgotten_at IS NULL",
+            "SELECT handle FROM proxiima_core.live_memory
+              WHERE t = $1 AND owner_id = $2 AND kind::text = ANY($3)",
         )
         .bind(t)
         .bind(owner_id)

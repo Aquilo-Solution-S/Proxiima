@@ -436,7 +436,7 @@ SELECT c.{key},
        {tag},
        {language_value}
   FROM {sidecar} c
-  JOIN proxiima_core.memory m ON m.t = c.{key}
+  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.{key}
  WHERE c.{key} = $1
    AND m.schema_id = $3",
         table = table.as_str(),
@@ -736,7 +736,7 @@ mod tests {
         );
         assert!(
             insert.contains(&format!(
-                "JOIN proxiima_core.memory m ON m.t = c.{sidecar_key}"
+                "JOIN proxiima_core.memory_including_forgotten m ON m.t = c.{sidecar_key}"
             )),
             "and the join reads the DECLARED sidecar column against the kernel's fixed \
              `t`: {insert}"
@@ -825,7 +825,7 @@ mod tests {
         let sql = projection_insert_sql(&SPIICE_0, note).expect("insert");
         assert!(sql.contains("m.owner_id"), "owner comes from memory");
         assert!(
-            sql.contains("JOIN proxiima_core.memory m ON m.t = c.t"),
+            sql.contains("JOIN proxiima_core.memory_including_forgotten m ON m.t = c.t"),
             "the owner is joined, never bound"
         );
         assert!(sql.contains("c.tags"), "the tag column is copied");

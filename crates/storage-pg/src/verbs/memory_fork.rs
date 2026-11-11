@@ -62,7 +62,7 @@ async fn load_fork_source(
 ) -> Result<ForkSource, StorageError> {
     crate::owner_scope::bind_owner_scope(tx, permit.scope()).await?;
     let source = sqlx::query("SELECT m.kind::text,m.owner_id,m.schema_id,m.origins,m.refs,m.goal_refs,m.lexical_language::text,m.blob_id
-        FROM proxiima_core.memory m /* FORGET-POLICY: live-only (exact fork source) */ WHERE m.t=$1 AND m.forgotten_at IS NULL")
+        FROM proxiima_core.live_memory m WHERE m.t=$1")
         .bind(request.source.into_inner())
         .fetch_optional(&mut **tx)
         .await
@@ -110,7 +110,7 @@ async fn load_fork_source(
     let route_ids: Vec<_> = routes.iter().map(|(goal, _)| *goal).collect();
     let fork_route: Option<Uuid> = sqlx::query_scalar("SELECT p.goal_handle FROM proxiima_core.goal_memory_publication p
         JOIN proxiima_core.goal_head gh ON gh.handle=p.goal_handle AND gh.authority_generation=p.controller_generation
-        JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (fork consent under owner RLS) */ ON m.t=p.memory_t AND m.owner_id=p.source_owner AND m.forgotten_at IS NULL
+        JOIN proxiima_core.live_memory m ON m.t=p.memory_t AND m.owner_id=p.source_owner
         JOIN proxiima_core.memory_head mh ON mh.handle=m.handle AND mh.owner_id=p.source_owner AND mh.authority_generation=p.source_generation
         WHERE p.memory_t=$1 AND p.goal_handle=ANY($2::uuid[]) AND p.permitted_use='fork' ORDER BY p.goal_handle LIMIT 1")
         .bind(request.source.into_inner()).bind(&route_ids).fetch_optional(&mut **tx).await.map_err(map_err)?;
@@ -473,7 +473,7 @@ async fn check_fork_consent(
     let (goal, controller) = consent.ok_or(StorageError::NotFound)?;
     let publication = sqlx::query("SELECT gh.authority_generation,p.cited_upload_id FROM proxiima_core.goal_memory_publication p
         JOIN proxiima_core.goal_head gh ON gh.handle=p.goal_handle AND gh.owner_id=$3 AND gh.authority_generation=p.controller_generation
-        JOIN proxiima_core.memory m /* FORGET-POLICY: live-only (fork consent under owner RLS) */ ON m.t=p.memory_t AND m.owner_id=p.source_owner AND m.forgotten_at IS NULL
+        JOIN proxiima_core.live_memory m ON m.t=p.memory_t AND m.owner_id=p.source_owner
         JOIN proxiima_core.memory_head mh ON mh.handle=m.handle AND mh.owner_id=p.source_owner AND mh.authority_generation=p.source_generation
         WHERE p.goal_handle=$1 AND p.memory_t=$2 AND p.source_owner=$4 AND p.permitted_use='fork'")
         .bind(goal.into_inner()).bind(permit.source().into_inner()).bind(controller.into_inner()).bind(permit.source_owner().into_inner()).fetch_optional(&mut **tx).await.map_err(map_err)?
@@ -497,12 +497,13 @@ async fn copied_memory_endpoints(
     tx: &mut Transaction<'_, Postgres>,
     ids: &[Uuid],
 ) -> Result<Vec<EdgeEndpoint>, StorageError> {
-    let rows: Vec<(Uuid, String)> =
-        sqlx::query_as("SELECT t,kind::text FROM proxiima_core.memory /* FORGET-POLICY: includes-forgotten (copy the readable source declaration, without ancestor hydration) */ WHERE t=ANY($1::uuid[])")
-            .bind(ids)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(map_err)?;
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT t,kind::text FROM proxiima_core.memory_including_forgotten WHERE t=ANY($1::uuid[])",
+    )
+    .bind(ids)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(map_err)?;
     ids.iter()
         .map(|id| {
             let (_, raw) = rows

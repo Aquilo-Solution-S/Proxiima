@@ -1,9 +1,11 @@
 //! `proxiima_core.memory_version`, the read-only view of memory versions for
-//! spiice and host SQL, against Postgres.
+//! spiice and host SQL, and core's own `live_memory` and
+//! `memory_including_forgotten`, against Postgres.
 //!
-//! It shows what the view promises: the caller's row security decides what is
-//! visible, no write goes through it, and a lookup by id still reaches the
-//! index of the table under it.
+//! It shows what the views promise: the caller's row security decides what is
+//! visible, no write goes through them, and a lookup by id still reaches the
+//! index of the table under them. The two core views differ in one thing:
+//! whether a forgotten memory is in them.
 
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;
@@ -52,6 +54,17 @@ impl World {
         MemoryAuthoringPort::forget_memory(&self.pg, &permit, memory_id)
             .await
             .expect("forget");
+    }
+
+    /// A transaction in platform scope, where row security shows every row and
+    /// the read itself decides what it wants.
+    async fn platform_tx(&self) -> Transaction<'static, Postgres> {
+        let mut tx = self.pg.pool_for_tests().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+            .execute(&mut *tx)
+            .await
+            .expect("platform scope");
+        tx
     }
 
     /// The ids among `ids` that the transaction sees through the view.
@@ -257,5 +270,131 @@ async fn a_lookup_by_id_through_the_view_uses_the_memory_index() {
     assert!(
         !head_scans.is_empty() && head_scans.iter().all(|scan| scan != "Seq Scan"),
         "{nodes:#?}"
+    );
+}
+
+const LIVE: &str = "proxiima_core.live_memory";
+const WITH_FORGOTTEN: &str = "proxiima_core.memory_including_forgotten";
+
+/// The ids among `ids` that `tx` sees through `view`, oldest first.
+async fn seen_through(
+    tx: &mut Transaction<'static, Postgres>,
+    view: &str,
+    ids: &[MemoryId],
+) -> Vec<Uuid> {
+    let raw: Vec<Uuid> = ids.iter().map(|id| id.into_inner()).collect();
+    // SQL-POLICY: fixed-fragment (a view name from the constants above)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT t FROM {view} WHERE t = ANY($1) ORDER BY t"
+    )))
+    .bind(&raw)
+    .fetch_all(&mut **tx)
+    .await
+    .expect("view read")
+}
+
+fn raw(ids: &[MemoryId]) -> Vec<Uuid> {
+    ids.iter().map(|id| id.into_inner()).collect()
+}
+
+#[tokio::test]
+async fn in_platform_scope_only_the_live_view_leaves_a_forgotten_memory_out() {
+    let w = world("memory_version_view_platform").await;
+    let (live, _) = w.write(w.owner, TestMemory::fact()).await;
+    let (gone, _) = w.write(w.owner, TestMemory::fact()).await;
+    w.forget(w.owner, gone).await;
+    let all = [live, gone];
+    let mut tx = w.platform_tx().await;
+    assert_eq!(seen_through(&mut tx, LIVE, &all).await, raw(&[live]));
+    assert_eq!(seen_through(&mut tx, WITH_FORGOTTEN, &all).await, raw(&all));
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn in_owner_scope_row_security_hides_a_forgotten_memory_from_both_views() {
+    let w = world("memory_version_view_owner_scope").await;
+    let (live, _) = w.write(w.owner, TestMemory::fact()).await;
+    let (gone, _) = w.write(w.owner, TestMemory::fact()).await;
+    let (foreign, _) = w.write(w.other, TestMemory::fact()).await;
+    w.forget(w.owner, gone).await;
+    let all = [live, gone, foreign];
+
+    let mut tx = w.tx(w.owner).await;
+    assert_eq!(seen_through(&mut tx, LIVE, &all).await, raw(&[live]));
+    assert_eq!(
+        seen_through(&mut tx, WITH_FORGOTTEN, &all).await,
+        raw(&[live])
+    );
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_serving_role_cannot_write_or_lock_through_the_core_views() {
+    let w = world("memory_version_view_core_writes").await;
+    let (memory_id, _) = w.write(w.owner, TestMemory::fact()).await;
+    let t = memory_id.into_inner();
+    // Each is refused with 42501: the role holds SELECT on the view and
+    // nothing else, and a row lock through a view needs UPDATE on it.
+    for sql in [
+        "INSERT INTO proxiima_core.live_memory (t) VALUES ($1)",
+        "UPDATE proxiima_core.live_memory SET schema_id = 'x' WHERE t = $1",
+        "DELETE FROM proxiima_core.live_memory WHERE t = $1",
+        "SELECT t FROM proxiima_core.live_memory WHERE t = $1 FOR SHARE",
+        "INSERT INTO proxiima_core.memory_including_forgotten (t) VALUES ($1)",
+        "UPDATE proxiima_core.memory_including_forgotten SET schema_id = 'x' WHERE t = $1",
+        "DELETE FROM proxiima_core.memory_including_forgotten WHERE t = $1",
+        "SELECT t FROM proxiima_core.memory_including_forgotten WHERE t = $1 FOR SHARE",
+    ] {
+        let mut tx = w.tx(w.owner).await;
+        // SQL-POLICY: fixed-fragment (a literal of the list above)
+        let refused = sqlx::query(sql).bind(t).execute(&mut *tx).await;
+        tx.rollback().await.unwrap();
+        assert_eq!(refusal(refused), "42501", "{sql}");
+    }
+}
+
+/// The index each scan of `relation` in `nodes` walks.
+fn indexes(nodes: &[Value], relation: &str) -> Vec<String> {
+    nodes
+        .iter()
+        .filter(|node| node["Relation Name"] == relation)
+        .filter_map(|node| node["Index Name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_lookup_by_id_through_the_live_view_walks_the_index_the_table_read_does() {
+    let w = world("memory_version_view_live_plan").await;
+    let (memory_id, _) = w.write(w.owner, TestMemory::fact()).await;
+    let id = memory_id.into_inner();
+
+    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
+    let through_view = plan_of(
+        &w,
+        &format!("SELECT owner_id FROM proxiima_core.live_memory WHERE t = '{id}'"),
+    )
+    .await;
+    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
+    let on_table = plan_of(
+        &w,
+        &format!(
+            "SELECT owner_id FROM proxiima_core.memory WHERE t = '{id}' AND forgotten_at IS NULL"
+        ),
+    )
+    .await;
+    assert_eq!(
+        indexes(&through_view, "memory"),
+        ["memory_t_key"],
+        "{through_view:#?}"
+    );
+    assert_eq!(
+        indexes(&through_view, "memory"),
+        indexes(&on_table, "memory"),
+        "{through_view:#?}"
+    );
+    assert_eq!(
+        scans(&through_view, "memory"),
+        scans(&on_table, "memory"),
+        "{through_view:#?}"
     );
 }

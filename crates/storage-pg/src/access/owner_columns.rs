@@ -997,7 +997,7 @@ pub(crate) async fn visible_home_owners(
     if !memories.is_empty() {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> = sqlx::query_as(
             "WITH candidates AS (
-                 SELECT t, owner_id, kind, schema_id FROM proxiima_core.memory WHERE t = ANY($1::uuid[]) /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+                 SELECT t, owner_id, kind, schema_id FROM proxiima_core.memory_including_forgotten WHERE t = ANY($1::uuid[])
              )
              SELECT c.t, c.owner_id, c.kind::text, c.schema_id
                FROM candidates c
@@ -1072,7 +1072,7 @@ pub(crate) async fn home_owner<'e>(
         EntityId::Memory(memory_id) => {
             sqlx::query_scalar(
                 "SELECT m.owner_id
-               FROM proxiima_core.memory m /* FORGET-POLICY: includes-forgotten (transfer moves forgotten rows too) */
+               FROM proxiima_core.memory_including_forgotten m
               WHERE m.t = $1",
             )
             .bind(memory_id.into_inner())

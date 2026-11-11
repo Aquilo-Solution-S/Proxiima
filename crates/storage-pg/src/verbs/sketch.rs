@@ -83,13 +83,13 @@ pub async fn upsert_sketch(
 /// A sketch row is readable only through its parent: a live memory, or a
 /// goal, with the same `t`. The sketch outlives a forget (a restore needs the
 /// text back), so a read that started from a caller-supplied id must not
-/// return a forgotten memory's sketch. The explicit `forgotten_at IS NULL`
+/// return a forgotten memory's sketch. Reading `live_memory`
 /// keeps that true in the lifecycle scope too; owner RLS on `memory` and
 /// `goal` decides what the reader may see at all.
 macro_rules! sketch_parent_readable {
     () => {
-        "(EXISTS (SELECT 1 FROM proxiima_core.memory m /* FORGET-POLICY: live-only (a forgotten memory's sketch is not readable) */ \
-           WHERE m.t = s.t AND m.forgotten_at IS NULL) \
+        "(EXISTS (SELECT 1 FROM proxiima_core.live_memory m \
+           WHERE m.t = s.t) \
           OR EXISTS (SELECT 1 FROM proxiima_core.goal g WHERE g.t = s.t))"
     };
 }
