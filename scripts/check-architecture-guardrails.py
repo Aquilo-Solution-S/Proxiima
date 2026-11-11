@@ -11,22 +11,9 @@ import argparse
 import re
 import sys
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOW = "ARCH-GUARDRAIL-ALLOW"
-
-# Dated exemptions for spiice code that still reads `proxiima_core.*` tables
-# directly instead of going through an authorized spiice-read facade. Every
-# entry needs an ISO `expires` date and a `reason`; once an entry expires it
-# stops suppressing findings and the failure renders the expiration date so
-# reviewers see why it started failing.
-#
-# A spiice under spiices/ holds zero raw `proxiima_core.*` SQL in its `src` —
-# every spiice read goes through `proxiima::spiice::authorized_*` — so the allowlist
-# is empty.
-ALLOWLISTED_SPIICE_CORE_SQL: dict[str, dict[str, str]] = {}
 
 
 @dataclass(frozen=True)
@@ -63,171 +50,6 @@ def iter_files(*roots: str) -> list[Path]:
             and "/.git/" not in p.as_posix()
         )
     return sorted(files)
-
-
-def iter_rust_string_literals(text: str):
-    """Yield ``(start_line, start_offset, literal_text)`` for each Rust string /
-    raw-string / byte-string literal in ``text``, in source order.
-
-    A regex applied line-by-line cannot see a raw string whose opening
-    delimiter and offending text land on different lines (multi-line SQL
-    literals are the norm in this codebase). This walks the source once,
-    skipping line comments, block comments, and char literals so their quote
-    characters cannot desynchronize the scan, and yields the full span of
-    every string literal regardless of how many lines it covers.
-    """
-    i = 0
-    n = len(text)
-    line = 1
-    while i < n:
-        ch = text[i]
-        if ch == "\n":
-            line += 1
-            i += 1
-            continue
-        if text.startswith("//", i):
-            nl = text.find("\n", i)
-            i = n if nl == -1 else nl
-            continue
-        if text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            if end == -1:
-                break
-            line += text.count("\n", i, end)
-            i = end + 2
-            continue
-        raw_match = re.match(r'[bB]?r(#*)"', text[i:])
-        if raw_match:
-            hashes = raw_match.group(1)
-            start = i
-            start_line = line
-            body_start = i + raw_match.end()
-            closer = '"' + hashes
-            end = text.find(closer, body_start)
-            literal = text[start:] if end == -1 else text[start : end + len(closer)]
-            line += literal.count("\n")
-            i = n if end == -1 else end + len(closer)
-            yield start_line, start, literal
-            continue
-        str_match = re.match(r'[bB]?"', text[i:])
-        if str_match:
-            start = i
-            start_line = line
-            j = i + str_match.end()
-            while j < n:
-                if text[j] == "\\":
-                    j += 2
-                    continue
-                if text[j] == '"':
-                    j += 1
-                    break
-                j += 1
-            literal = text[start:j]
-            line += literal.count("\n")
-            i = j
-            yield start_line, start, literal
-            continue
-        if ch == "'":
-            char_match = re.match(r"'(?:\\.|[^'\\])'", text[i:])
-            if char_match:
-                i += char_match.end()
-                continue
-        i += 1
-
-
-#: Pure `proxiima_core` SQL functions a spiice may call from its own query.
-#:
-#: The rule this supports is that a spiice must not reach core *data* — it
-#: goes through an authorized port instead. These are not data: each is
-#: IMMUTABLE, STRICT and PARALLEL SAFE, reads no row, enforces no
-#: authorization, and returns a pure function of its arguments. They exist to
-#: be shared, and a spiice that could not call them would have to restate the
-#: definition — which is the drift they were introduced to prevent
-#: (`0011_v007.sql`). Anything with a table or view behind it stays denied.
-PURE_CORE_SQL_FUNCTIONS = (
-    "lexical_scrub",
-    "lexical_tsv",
-    "lexical_config",
-    "lexical_join",
-    "lexical_text_array",
-    "memory_entity_kind",
-)
-
-_PURE_CORE_SQL_CALL = re.compile(
-    r"proxiima_core\.(?:" + "|".join(PURE_CORE_SQL_FUNCTIONS) + r")\s*\("
-)
-
-
-def spiice_core_sql_hits(text: str) -> list[tuple[int, int, str]]:
-    """Return ``(start_line, end_line, literal)`` for every string literal
-    containing a schema-qualified ``proxiima_core.`` reference.
-
-    A literal dot after `proxiima_core` is a schema-qualified SQL identifier
-    (`proxiima_core.memories`); a colon there is Rust path syntax
-    (`proxiima_core::verbs`) and must stay allowed everywhere.
-
-    Calls to `PURE_CORE_SQL_FUNCTIONS` are masked out before the check, so a
-    literal that references core only to call one of them is not a finding
-    while a literal that also names a table still is.
-    """
-    hits: list[tuple[int, int, str]] = []
-    for start_line, _start_offset, literal in iter_rust_string_literals(text):
-        if "proxiima_core." not in literal:
-            continue
-        if "proxiima_core." not in _PURE_CORE_SQL_CALL.sub("", literal):
-            continue
-        hits.append((start_line, start_line + literal.count("\n"), literal))
-    return hits
-
-
-def allow_marker_lines(text: str) -> set[int]:
-    """Line numbers carrying an ARCH-GUARDRAIL-ALLOW marker outside every
-    string literal.
-
-    Marker text INSIDE a literal (e.g. a `-- ARCH-GUARDRAIL-ALLOW` SQL comment
-    within a flagged raw string) must never suppress the finding on that
-    literal, otherwise the scanned content could self-authorize.
-    """
-    literal_spans = [
-        (start_offset, start_offset + len(literal))
-        for _start_line, start_offset, literal in iter_rust_string_literals(text)
-    ]
-    marker_lines: set[int] = set()
-    for match in re.finditer(re.escape(ALLOW), text):
-        if any(start <= match.start() < end for start, end in literal_spans):
-            continue
-        marker_lines.add(text.count("\n", 0, match.start()) + 1)
-    return marker_lines
-
-
-def check_spiice_core_sql(findings: list[Finding]) -> None:
-    spiices = ROOT / "spiices"
-    if not spiices.exists():
-        return
-    paths = [p for p in spiices.rglob("src/**/*.rs") if p.is_file()]
-    for path in sorted(paths):
-        rel = path.relative_to(ROOT).as_posix()
-        text = path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        allow_lines = allow_marker_lines(text)
-        allowance = ALLOWLISTED_SPIICE_CORE_SQL.get(rel)
-        for start_line, end_line, literal in spiice_core_sql_hits(text):
-            if allow_lines & set(range(start_line, end_line + 1)):
-                continue
-            snippet = lines[start_line - 1].strip() if start_line - 1 < len(lines) else literal.strip()
-            if allowance is not None:
-                if date.today() <= date.fromisoformat(allowance["expires"]):
-                    continue
-                findings.append(
-                    Finding(
-                        path,
-                        start_line,
-                        "spiice raw proxiima_core SQL",
-                        f"allowlist expired {allowance['expires']} ({allowance['reason']}): {snippet}",
-                    )
-                )
-                continue
-            findings.append(Finding(path, start_line, "spiice raw proxiima_core SQL", snippet))
 
 
 # Census of reads of `proxiima_core.memory` that do not go through the owner
@@ -417,34 +239,10 @@ def check_lifecycle_guc(findings: list[Finding]) -> None:
 
 
 def run_self_test() -> int:
-    """Assert the spiice core SQL detector fires on its committed fixture.
-
-    Runs the raw detection logic (no allowlist, no ALLOW markers) so a
-    regression in the whole-literal tokenizer cannot hide behind either
-    suppression path. Green requires: the multi-line raw-string evasion case
-    detected, the single-line case detected, and `proxiima_core::` Rust paths
-    not flagged.
-    """
-    fixture = ROOT / "scripts/fixtures/architecture-guardrails/spiice_core_sql.rs"
-    rel = fixture.relative_to(ROOT)
-    text = fixture.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    hits = spiice_core_sql_hits(text)
-    for start_line, _end_line, _literal in hits:
-        print(f"{rel}:{start_line}: spiice raw proxiima_core SQL: {lines[start_line - 1].strip()}")
+    """Assert each check's detector fires on its committed fixture or inline sample."""
     failures: list[str] = []
-    if not any(
-        end_line > start_line and "proxiima_core." not in literal.splitlines()[0]
-        for start_line, end_line, literal in hits
-    ):
-        failures.append("multi-line raw-string evasion case not detected")
-    if not any(start_line == end_line for start_line, end_line, _literal in hits):
-        failures.append("single-line literal case not detected")
-    if len(hits) != 2:
-        failures.append(
-            f"expected exactly 2 flagged literals (`proxiima_core::` Rust paths must stay allowed), got {len(hits)}"
-        )
     memory_fixture = ROOT / "scripts/fixtures/architecture-guardrails/memory_reads.rs"
+    rel = memory_fixture.relative_to(ROOT)
     memory_hits = memory_read_hits(memory_fixture.read_text(encoding="utf-8"), ".rs")
     unmarked = [line for line, kind in memory_hits if kind is None]
     marked = sorted(kind for _line, kind in memory_hits if kind is not None)
@@ -491,7 +289,7 @@ def run_self_test() -> int:
         for failure in failures:
             print(f"self-test failed: {failure}: {rel}", file=sys.stderr)
         return 1
-    print(f"self-test detected {len(hits)} spiice raw proxiima_core SQL literals", file=sys.stderr)
+    print("self-test passed", file=sys.stderr)
     return 0
 
 
@@ -500,7 +298,7 @@ def main() -> int:
     parser.add_argument(
         "--self-test",
         action="store_true",
-        help="assert the spiice core SQL detector fires on its fixture; exits zero when it does",
+        help="assert the detectors fire on their fixtures; exits zero when they do",
     )
     args = parser.parse_args()
 
@@ -508,7 +306,6 @@ def main() -> int:
         return run_self_test()
 
     findings: list[Finding] = []
-    check_spiice_core_sql(findings)
     check_memory_reads(findings)
     check_lifecycle_guc(findings)
 

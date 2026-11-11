@@ -68,7 +68,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 | F/A/P layering, closed pin roles, declared provenance | Typed write/operator ports; Lean principles; graph tests |
 | Server-resolved owner roles and source-owned pins | `AuthzContext`, owner command ports, mandatory owner RLS |
 | Optional kernel witnesses, typed schema contracts | Payload traits, registry freeze, authorized sidecar helpers |
-| Build-time spiices; no raw spiice core SQL | Facade SDK, architecture/SQL guardrails |
+| Build-time spiices; no raw spiice core SQL | Facade SDK; the sidecar read context refuses core SQL; review |
 | Atomic writes and scoped host state | `UnitOfWork`, private permits, PG rollback tests |
 | Hard deletion through authorized inverses | `wipeable` principle, erase ports, inverse-completeness tests |
 | Independent embeddings; similarity authors no pins | Retrieval/write separation and graph tests |

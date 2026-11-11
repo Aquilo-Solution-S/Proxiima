@@ -606,7 +606,15 @@ including a backdated observation. Single and batch reads preserve these fields.
 A search hit of a citing Fact names its cited object (`RemoteHit::citation`),
 as a local `core_search_memories` hit does. The extra-store transaction is separate from a Proxiima
 `UnitOfWork`; use host-state participation when the change must be atomic with
-a Fact write. A spiice never queries `proxiima_core` directly.
+a Fact write.
+
+## SQL contract
+
+A spiice never queries `proxiima_core` directly, and neither does a host's
+own SQL: core's tables change between releases. A sidecar read through
+`PgSidecarReadCtx` that names the core schema is refused when it runs; any
+other statement is held by review, because linked code is
+[trusted](decisions.md#trust-has-three-separate-statements).
 
 ## Vector index
 
