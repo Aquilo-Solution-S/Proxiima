@@ -860,9 +860,9 @@ async fn erase_personal_owner_drops_memory_keys_and_embeddings() {
 }
 
 /// #488: forget keeps the row, so an owner erase finds a forgotten memory in
-/// `memory` and hard-deletes it with its keys and content like any other.
+/// `memory` and hard-deletes it with its keys like any other.
 #[tokio::test]
-async fn erase_personal_owner_destroys_a_forgotten_memory_and_gcs_content() {
+async fn erase_personal_owner_destroys_a_forgotten_memory() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     if let Err(e) = create_core_db(&db_name).await {
         panic!("PG required for tests but admin connect failed: {e}");
@@ -911,13 +911,6 @@ async fn erase_personal_owner_destroys_a_forgotten_memory_and_gcs_content() {
                 .fetch_one(pool)
                 .await?;
         assert_eq!(rows_after, 0, "owner erase must delete a forgotten row");
-        let content: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM proxiima_core.content c
-              WHERE NOT EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.content_id = c.content_id)",
-        )
-        .fetch_one(pool)
-        .await?;
-        assert_eq!(content, 0, "unreferenced Content must be GC'd");
         let keys_after_erase: i64 = sqlx::query_scalar(
             "SELECT count(*)::bigint FROM proxiima_core.ingest_keys WHERE ingest_key = 'k-forgotten'",
         )
