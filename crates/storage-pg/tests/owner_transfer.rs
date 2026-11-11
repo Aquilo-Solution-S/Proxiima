@@ -23,7 +23,7 @@ use proxiima_core::{
     UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::test_fixtures::{create_core_db, register_group_for_tests};
+use proxiima_storage_pg::test_fixtures::{create_core_db, create_group};
 use proxiima_storage_pg::verbs::forget::{MemoryColdStore, erase_memory_series};
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use proxiima_storage_pg::{
@@ -221,7 +221,7 @@ async fn registered_destination(
     pool: &sqlx::PgPool,
 ) -> Result<OwnerId, proxiima_core::StorageError> {
     let group = GroupId::new(Uuid::now_v7());
-    register_group_for_tests(pool, group).await?;
+    create_group(pool, group).await?;
     Ok(OwnerId::from(group))
 }
 

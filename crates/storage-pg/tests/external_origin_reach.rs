@@ -19,7 +19,7 @@ use proxiima_core::storage_ports::{
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{AccessKind, EntityId, GroupId, OwnerId, SchemaId, SchemaVersion, UserId};
-use proxiima_storage_pg::test_fixtures::{fresh_pg, register_group_for_tests};
+use proxiima_storage_pg::test_fixtures::{create_group, fresh_pg};
 use proxiima_storage_pg::verbs::forget::erase_memory_series;
 use proxiima_storage_pg::{PgStorage, begin_owner_transaction, core_pg_sidecars};
 use uuid::Uuid;
@@ -291,7 +291,7 @@ async fn transfer_moves_read_access_to_external_origins() -> TestResult {
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
     let group = GroupId::new(Uuid::now_v7());
-    register_group_for_tests(pg.pool_for_tests(), group).await?;
+    create_group(pg.pool_for_tests(), group).await?;
     let destination = OwnerId::from(group);
     let written = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
     let t = written.memory_id.into_inner();

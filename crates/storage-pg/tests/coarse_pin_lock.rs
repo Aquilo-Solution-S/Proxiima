@@ -7,14 +7,13 @@ use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
-use proxiima_core::verbs::fact_ingest::FactWriteCommand;
+use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, MemoryId, OwnerId, SchemaId, SchemaVersion, StorageError,
-    UserId,
+    AccessKind, EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::access::owner_columns::ensure_owner_row;
+use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db};
 use proxiima_storage_pg::verbs::forget::erase_memory;
 use proxiima_storage_pg::{PgPoolConfig, PgStorage, PgTuning, core_pg_sidecars};
 use sqlx::{PgConnection, PgPool};
@@ -28,34 +27,8 @@ const COARSE: &str = "LOCK TABLE proxiima_core.memory, proxiima_core.goal \
 /// Target locks a transaction takes before it reads `pg_locks`.
 const DECIDE_AFTER: i64 = 256;
 
-fn fact_draft() -> FactWriteCommand {
-    FactWriteCommand {
-        schema_id: SchemaId::new("core/test-fact-v1".to_owned()),
-        schema_version: SchemaVersion::new(1),
-        handle: None,
-        source_id: None,
-        ingest_key: None,
-        payload: Vec::new(),
-        rendered_text: None,
-        lexical_language: None,
-        receipt: None,
-        occurred_at: None,
-        citation: None,
-        additional_references: Vec::new(),
-        refs: Vec::new(),
-        blob_id: None,
-        kind: proxiima_core::MemoryKind::Fact,
-        request: None,
-    }
-}
-
-fn abstraction_draft(origin: MemoryId) -> FactWriteCommand {
-    let mut draft = fact_draft();
-    draft.kind = proxiima_core::MemoryKind::Abstraction;
-    draft.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, origin)];
-    draft
-}
-
+// Raw INSERT on purpose: the test needs bulk row volume inside one locked
+// transaction, which the one-memory-per-call write path cannot produce.
 /// `rows` Facts under one new handle, in one statement.
 async fn insert_facts(
     conn: &mut PgConnection,
@@ -90,6 +63,8 @@ async fn insert_facts(
     Ok(())
 }
 
+// Raw INSERT on purpose: the test needs bulk row volume inside one locked
+// transaction, which the one-memory-per-call write path cannot produce.
 /// `pairs` Abstractions, each pinning two Facts. Head is inserted before
 /// memory so `memory_align_head` sees the series.
 async fn insert_derived_pairs(
@@ -165,6 +140,8 @@ async fn insert_derived_pairs(
     Ok(())
 }
 
+// Raw INSERT on purpose: the test needs bulk row volume inside one locked
+// transaction, which the one-memory-per-call write path cannot produce.
 /// One non-Fact row pinning `origins`, with its own handle and content.
 async fn insert_derived(
     conn: &mut PgConnection,
@@ -274,11 +251,10 @@ async fn engine_db(name: &str) -> Result<PgStorage, Box<dyn Error>> {
 }
 
 /// Seed the owner row through the engine; returns the owner and one hot Fact.
-async fn seed_owner(pg: &PgStorage) -> Result<(OwnerId, OwnerWritePermit, MemoryId), StorageError> {
+async fn seed_owner(pg: &PgStorage) -> Result<(OwnerId, MemoryId), StorageError> {
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
-    Ok((owner, permit, fact.memory_id))
+    let fact = TestMemory::fact().create(pg, owner).await?;
+    Ok((owner, fact.memory_id))
 }
 
 #[tokio::test]
@@ -286,7 +262,7 @@ async fn coarse_mode_needs_both_tables_in_share_row_exclusive() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     let result: TestResult = async {
         let pg = engine_db(&db_name).await?;
-        let (owner, _, _) = seed_owner(&pg).await?;
+        let (owner, _) = seed_owner(&pg).await?;
         let pool = pg.pool_for_tests();
         let cases = [
             ("no lock", None, false),
@@ -381,14 +357,11 @@ async fn coarse_mode_still_refuses_missing_and_erased_targets() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     let result: TestResult = async {
         let pg = engine_db(&db_name).await?;
-        let (owner, permit, erased) = seed_owner(&pg).await?;
+        let (owner, erased) = seed_owner(&pg).await?;
         let owner_id = owner.into_inner();
         let pool = pg.pool_for_tests();
         // A live pin grounds the row, so the refusal is the target's own.
-        let live = pg
-            .ingest_fact_atomic(&permit, &fact_draft(), None)
-            .await?
-            .memory_id;
+        let live = TestMemory::fact().create(&pg, owner).await?.memory_id;
         let mut tx = pool.begin().await?;
         erase_memory(
             &mut tx,
@@ -444,11 +417,13 @@ async fn concurrent_forget_waits_for_the_bulk_transaction() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     let result: TestResult = async {
         let pg = engine_db(&db_name).await?;
-        let (owner, permit, fact) = seed_owner(&pg).await?;
+        let (owner, fact) = seed_owner(&pg).await?;
         let owner_id = owner.into_inner();
         let pool = pg.pool_for_tests();
-        let abstraction = pg
-            .ingest_fact_atomic(&permit, &abstraction_draft(fact), None)
+        let abstraction = TestMemory::fact()
+            .kind(MemoryKind::Abstraction)
+            .references(vec![EdgeEndpoint::memory(EntityKind::Fact, fact)])
+            .create(&pg, owner)
             .await?
             .memory_id;
 
@@ -513,7 +488,7 @@ async fn concurrent_erase_waits_for_the_bulk_transaction() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     let result: TestResult = async {
         let pg = engine_db(&db_name).await?;
-        let (owner, permit, first) = seed_owner(&pg).await?;
+        let (owner, first) = seed_owner(&pg).await?;
         let owner_id = owner.into_inner();
         let pool = pg.pool_for_tests();
         let context = pg.host_state_erase_context()?;
@@ -562,14 +537,8 @@ async fn concurrent_erase_waits_for_the_bulk_transaction() {
         assert!(witnessed);
 
         // Erase first: the bulk's lock waits for it and then sees the witness.
-        let second = pg
-            .ingest_fact_atomic(&permit, &fact_draft(), None)
-            .await?
-            .memory_id;
-        let live = pg
-            .ingest_fact_atomic(&permit, &fact_draft(), None)
-            .await?
-            .memory_id;
+        let second = TestMemory::fact().create(&pg, owner).await?.memory_id;
+        let live = TestMemory::fact().create(&pg, owner).await?.memory_id;
         let mut erase = pool.begin().await?;
         erase_memory(&mut erase, &sidecars, &context, &owner, second.into_inner()).await?;
         let done = AtomicBool::new(false);
@@ -718,10 +687,7 @@ async fn hundred_thousand_memories_commit_under_the_coarse_lock() {
             .execute(&mut *tx)
             .await?;
         sqlx::query(COARSE).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(&mut *tx)
-            .await?;
+        ensure_owner_row(&mut tx, &OwnerId::new(owner_id)).await?;
         for _ in 0..10 {
             insert_facts(&mut tx, owner_id, 9_900).await?;
         }

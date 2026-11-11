@@ -8,6 +8,7 @@ use proxiima_core::owner_inverse::{EraseAuthorization, OwnerEraseTarget, OwnerSu
 use proxiima_core::storage_ports::OwnerInversePort;
 use proxiima_core::{AccessCeiling, GroupId, OwnerId, Relation, Role, StorageError, UserId};
 use proxiima_pg_testkit::{DbGuard, create_db, db_url, split_role_urls};
+use proxiima_storage_pg::test_fixtures::{create_group, create_user};
 use proxiima_storage_pg::{
     AuthorityTargets, PgPlatformScope, PgStorage, add_group_member, begin_migration_transaction,
     group_role, register_group, remove_group_member, remove_group_member_relation,
@@ -63,18 +64,12 @@ impl Harness {
     }
 
     async fn groups(&self, count: usize) -> TestResult<Vec<GroupId>> {
-        let mut tx = self.pool.begin().await?;
         let mut groups = Vec::new();
         for _ in 0..count {
             let group = GroupId::new(Uuid::now_v7());
-            // Seed the released registry shape too, before the v0.0.31 gateway exists.
-            sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')")
-                .bind(group.into_inner())
-                .execute(&mut *tx)
-                .await?;
+            create_group(&self.pool, group).await?;
             groups.push(group);
         }
-        tx.commit().await?;
         Ok(groups)
     }
 
@@ -263,8 +258,7 @@ async fn projection_equals_reference_after_seeded_person_and_group_write_sequenc
     )
     .await?;
     for person in people {
-        sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES($1,'personal') ON CONFLICT DO NOTHING")
-            .bind(person.into_inner()).execute(&h.pool).await?;
+        create_user(&h.pool, person.as_user()).await?;
         let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
             user_id: person.as_user(),
             drop_event_id: "seeded-drop".into(),
@@ -430,6 +424,7 @@ async fn database_and_host_refuse_second_parent_cycles_self_edges_and_person_kin
                 .await
                 .is_err()
         );
+        // Raw INSERT on purpose: a group edge the write path refuses.
         let error = sqlx::query("INSERT INTO proxiima_core.group_edges (parent_group_id, child_group_id, relation) VALUES ($1,$2,'viewer')")
             .bind(parent.into_inner()).bind(child.into_inner()).execute(&h.pool).await;
         assert!(
@@ -444,8 +439,10 @@ async fn database_and_host_refuse_second_parent_cycles_self_edges_and_person_kin
     .fetch_one(&h.pool)
     .await?;
     assert_eq!(personal_rows, 0, "registered group becomes an edge");
+    // Raw INSERT on purpose: re-registers a group as a user, which the write path refuses.
     sqlx::query("INSERT INTO proxiima_core.owners(owner_id,kind) VALUES($1,'personal') ON CONFLICT (owner_id) DO NOTHING")
         .bind(g[1].into_inner()).execute(&h.pool).await?;
+    // Raw INSERT on purpose: a person row naming a group, which the write path refuses.
     assert!(sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation) VALUES ($1,$2,'viewer')")
         .bind(g[0].into_inner()).bind(g[2].into_inner()).execute(&h.pool).await.is_err(), "raw person row cannot name group");
     let person = OwnerId::new(Uuid::now_v7());
@@ -457,6 +454,7 @@ async fn database_and_host_refuse_second_parent_cycles_self_edges_and_person_kin
     );
     tx.rollback().await?;
     assert!(
+        // Raw INSERT on purpose: registers a user's id as a group, which the write path refuses.
         sqlx::query("INSERT INTO proxiima_core.owners (owner_id,kind) VALUES ($1,'group')")
             .bind(person.into_inner())
             .execute(&h.pool)
@@ -591,6 +589,7 @@ async fn racing_person_and_subgroup_writes_wait_on_one_tree_in_both_orders() -> 
         .await?;
     let group = g[1];
     let pending = tokio::spawn(async move {
+        // Raw INSERT on purpose: a concurrent raw writer, to test the membership trigger's locks.
         sqlx::query("INSERT INTO proxiima_core.group_memberships(group_id,member_user_id,relation) VALUES($1,$2,'ingest') ON CONFLICT DO NOTHING")
             .bind(group.into_inner()).bind(person.into_inner()).execute(&mut *second).await?;
         second.commit().await
@@ -618,6 +617,7 @@ async fn owner_scoped_writes_fold_the_whole_tree_without_leaking_platform_scope(
     let person = OwnerId::new(Uuid::now_v7());
     let mut tx = h.runtime.begin().await?;
     scope(&mut tx, &[g[2]]).await?;
+    // Raw INSERT on purpose: a raw owner-scoped writer, to test the membership trigger under RLS.
     sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id,member_user_id,relation) VALUES ($1,$2,'admin')")
         .bind(g[2].into_inner()).bind(person.into_inner()).execute(&mut *tx).await?;
     let current_scope: String = sqlx::query_scalar("SELECT current_setting('app.proxiima_scope')")
@@ -652,6 +652,7 @@ async fn owner_scoped_writes_fold_the_whole_tree_without_leaking_platform_scope(
     // Repeat and commit; compare with a platform-scoped write.
     let mut tx = h.runtime.begin().await?;
     scope(&mut tx, &[g[2]]).await?;
+    // Raw INSERT on purpose: a raw owner-scoped writer, to test the membership trigger under RLS.
     sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id,member_user_id,relation) VALUES ($1,$2,'admin')")
         .bind(g[2].into_inner()).bind(person.into_inner()).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -737,6 +738,7 @@ async fn authority_rechecks_the_original_root_map_then_fences_the_fresh_roots() 
         .fetch_one(&mut *contender)
         .await?;
     let pending = tokio::spawn(async move {
+        // Raw INSERT on purpose: a raw lock request, to test the group-tree lock order.
         sqlx::query("INSERT INTO proxiima_core.group_lock_request (request_id, left_group_id) VALUES ($1, $2)")
             .bind(Uuid::now_v7()).bind(destination.into_inner()).execute(&mut *contender).await?;
         contender.commit().await
@@ -759,6 +761,7 @@ async fn authority_refuses_a_new_direct_group_discovered_after_the_person_key_wa
     // The gateway can take the initially empty person's pseudotree, then
     // positively wait on this key before a new direct group is committed.
     sqlx::query(
+        // Raw INSERT on purpose: a raw lock request, to test the group-tree lock order.
         "INSERT INTO proxiima_core.group_lock_request (request_id, left_group_id) VALUES ($1, $2)",
     )
     .bind(Uuid::now_v7())
@@ -787,6 +790,7 @@ async fn authority_refuses_a_new_direct_group_discovered_after_the_person_key_wa
     });
     wait_for_advisory(&h.pool, pid).await?;
     assert!(!pending.is_finished());
+    // Raw INSERT on purpose: a raw membership row, to test the membership trigger's lock order.
     sqlx::query("INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation) VALUES ($1, $2, 'viewer')")
         .bind(group.into_inner()).bind(person.into_inner()).execute(&mut *writer).await?;
     writer.commit().await?;

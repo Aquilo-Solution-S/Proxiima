@@ -5,7 +5,12 @@ use proxiima_storage_pg::{
     PgPlatformScope, PgPoolConfig, PgStorage, PgTuning, VectorStorage, core_migrator_for,
 };
 
-use proxiima_core::{MemoryId, memory_store_number, new_memory_uuid};
+use proxiima_core::storage_ports::{FactIngestPort, OwnerWritePermit};
+use proxiima_core::verbs::fact_ingest::{FactIngestOutcome, FactWriteCommand};
+use proxiima_core::{
+    AccessKind, EdgeEndpoint, GroupId, MemoryId, MemoryKind, OwnerId, Relation, SchemaId,
+    SchemaVersion, UserId, memory_store_number, new_memory_uuid,
+};
 use proxiima_pg_testkit::{
     DbGuard, FNV_OFFSET_BASIS, TemplateFamily, create_db_from_template,
     create_named_db_from_template, db_url, drop_db, ensure_template, ensure_template_in,
@@ -354,22 +359,147 @@ impl PgStorage {
     }
 }
 
-/// Register `group` as a group in `proxiima_core.owners`, the way a host
-/// creates one before writing under it. Idempotent; an id already
-/// registered as a user is a `Conflict`.
+/// Register `user` in `proxiima_core.owners` the way the first write under it
+/// does ([`crate::access::owner_columns::ensure_owner_row`]). Idempotent.
 ///
 /// # Errors
 ///
 /// Storage errors from the registration.
-pub async fn register_group_for_tests(
-    pool: &sqlx::PgPool,
-    group: proxiima_core::GroupId,
-) -> Result<(), proxiima_core::StorageError> {
+pub async fn create_user(pool: &sqlx::PgPool, user: UserId) -> Result<(), StorageError> {
     let mut conn = pool
         .acquire()
         .await
-        .map_err(|err| proxiima_core::StorageError::Unavailable(err.to_string()))?;
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    crate::access::owner_columns::ensure_owner_row(&mut conn, &OwnerId::from(user)).await?;
+    Ok(())
+}
+
+/// Register `group` as a group in `proxiima_core.owners`, the way a host
+/// creates one before writing under it
+/// ([`crate::access::owner_columns::register_group`]). Idempotent; an id
+/// already registered as a user is a `Conflict`.
+///
+/// # Errors
+///
+/// Storage errors from the registration.
+pub async fn create_group(pool: &sqlx::PgPool, group: GroupId) -> Result<(), StorageError> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
     crate::access::owner_columns::register_group(&mut conn, group).await
+}
+
+/// Grant `member` the `relation` in `group` the way the engine's
+/// `add_member` does
+/// ([`crate::access::owner_columns::add_group_member_on_connection`]): an
+/// unseen group is registered first, a user member adds a person relation,
+/// and a group member attaches that group as a child. Idempotent.
+///
+/// # Errors
+///
+/// `Conflict` when `group` is registered as a user or the child group is
+/// already attached elsewhere; other storage errors from the write.
+pub async fn add_member(
+    pool: &sqlx::PgPool,
+    group: GroupId,
+    member: impl Into<OwnerId>,
+    relation: Relation,
+) -> Result<(), StorageError> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+    crate::access::owner_columns::add_group_member_on_connection(
+        &mut conn,
+        group,
+        member.into(),
+        relation,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A memory with defaults, written through the port the product uses
+/// ([`FactIngestPort::ingest_fact_atomic`]): name only the fields a test
+/// asserts on.
+#[derive(Debug, Clone)]
+pub struct TestMemory {
+    command: FactWriteCommand,
+}
+
+impl TestMemory {
+    /// A payload-less `core/test-fact-v1` Fact with no source, receipt,
+    /// references or citation.
+    #[must_use]
+    pub fn fact() -> Self {
+        Self::from_command(FactWriteCommand {
+            schema_id: SchemaId::new("core/test-fact-v1".to_owned()),
+            schema_version: SchemaVersion::new(1),
+            handle: None,
+            source_id: None,
+            ingest_key: None,
+            payload: Vec::new(),
+            rendered_text: None,
+            lexical_language: None,
+            receipt: None,
+            occurred_at: None,
+            citation: None,
+            additional_references: Vec::new(),
+            refs: Vec::new(),
+            blob_id: None,
+            kind: MemoryKind::Fact,
+            request: None,
+        })
+    }
+
+    /// Write a command the test built itself, such as a typed spiice payload.
+    #[must_use]
+    pub fn from_command(command: FactWriteCommand) -> Self {
+        Self { command }
+    }
+
+    /// The memory kind (Fact, Abstraction or Perspective).
+    #[must_use]
+    pub fn kind(mut self, kind: MemoryKind) -> Self {
+        self.command.kind = kind;
+        self
+    }
+
+    /// Append a version to this series instead of starting a new one.
+    #[must_use]
+    pub fn handle(mut self, handle: Uuid) -> Self {
+        self.command.handle = Some(handle);
+        self
+    }
+
+    /// The memories this one references.
+    #[must_use]
+    pub fn references(mut self, references: Vec<EdgeEndpoint>) -> Self {
+        self.command.additional_references = references;
+        self
+    }
+
+    /// Observation-neutral pins (visit, write-act).
+    #[must_use]
+    pub fn refs(mut self, refs: Vec<Uuid>) -> Self {
+        self.command.refs = refs;
+        self
+    }
+
+    /// Write the memory under `owner`.
+    ///
+    /// # Errors
+    ///
+    /// The storage error the write refuses with.
+    pub async fn create(
+        self,
+        pg: &PgStorage,
+        owner: OwnerId,
+    ) -> Result<FactIngestOutcome, StorageError> {
+        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        pg.ingest_fact_atomic(&permit, &self.command, None).await
+    }
 }
 
 /// Stable writer for synthetic storage rows with no authenticated request.

@@ -30,7 +30,7 @@ use proxiima_core::{
     StorageError, UploadedBlobPayload, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db, create_user};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use proxiima_storage_pg::{PgSidecarRegistry, PgStorage, register_core_pg_sidecars};
 use serde::{Deserialize, Serialize};
@@ -258,17 +258,13 @@ async fn bootstrap() -> (String, PgStorage, proxiima_core::SpiiceRegistryFrozen)
 }
 
 async fn seed_fact(pg: &PgStorage, owner: OwnerId) -> Result<MemoryId, StorageError> {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    Ok(pg
-        .ingest_fact_atomic(
-            &permit,
-            &draft(
-                &format!("seed-{}", Uuid::now_v7()),
-                Uuid::now_v7(),
-                Uuid::now_v7(),
-            ),
-            None,
-        )
+    let command = draft(
+        &format!("seed-{}", Uuid::now_v7()),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+    Ok(TestMemory::from_command(command)
+        .create(pg, owner)
         .await?
         .memory_id)
 }
@@ -289,9 +285,8 @@ async fn seed_abstraction(
     draft.receipt = None;
     draft.refs.clear();
     draft.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, origin)];
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    Ok(pg
-        .ingest_fact_atomic(&permit, &draft, None)
+    Ok(TestMemory::from_command(draft)
+        .create(pg, owner)
         .await?
         .memory_id)
 }
@@ -310,9 +305,8 @@ async fn seed_perspective(pg: &PgStorage, owner: OwnerId) -> Result<MemoryId, St
     draft.receipt = None;
     draft.refs.clear();
     draft.additional_references = vec![EdgeEndpoint::memory(EntityKind::Abstraction, abstraction)];
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    Ok(pg
-        .ingest_fact_atomic(&permit, &draft, None)
+    Ok(TestMemory::from_command(draft)
+        .create(pg, owner)
         .await?
         .memory_id)
 }
@@ -368,13 +362,10 @@ fn inline_citation() -> InlineCitedObjectDraft {
 /// an uploaded-blob citation must stand on.
 async fn stage_inline_citation_upload(pg: &PgStorage, owner: OwnerId) -> Result<(), sqlx::Error> {
     let owner_id = owner.into_inner();
-    sqlx::query(
-        "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')
-         ON CONFLICT (owner_id) DO NOTHING",
-    )
-    .bind(owner_id)
-    .execute(pg.pool_for_tests())
-    .await?;
+    create_user(pg.pool_for_tests(), owner.as_user())
+        .await
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    // Raw: no production path stages an upload row without the blob store.
     sqlx::query(
         "INSERT INTO proxiima_core.blob_uploads
             (owner_id, bucket, object_key, filename, mime, expected_byte_len,
@@ -1076,6 +1067,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         let pool = pg.pool_for_tests();
 
         let reference_handle = Uuid::now_v7();
+        // Raw on purpose: a row the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1099,6 +1091,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         // `refs` is the Memory spine now, so it rejects a Goal t exactly as
         // `origins` always did. Before the split this same insert succeeded.
         let memory_ref_handle = Uuid::now_v7();
+        // Raw on purpose: a row the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1131,6 +1124,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         // t is not a Goal reference either. Neither column is a place to
         // put an id of the other kind.
         let goal_ref_handle = Uuid::now_v7();
+        // Raw on purpose: a row the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1160,6 +1154,7 @@ async fn sql_accepts_goal_refs_but_rejects_goals_in_origins_or_refs() {
         );
 
         let origin_handle = Uuid::now_v7();
+        // Raw on purpose: a row the write path would not write.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1219,6 +1214,7 @@ async fn goal_erase_serializes_against_reference_admission() {
                 .fetch_one(tx.as_mut())
                 .await?;
             let handle = Uuid::now_v7();
+            // Raw on purpose: a row the write path would not write.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
@@ -1317,6 +1313,7 @@ async fn crossed_memory_pins_lock_in_global_t_order() {
                 .fetch_one(tx.as_mut())
                 .await?;
             let handle = Uuid::now_v7();
+            // Raw on purpose: a row the write path would not write.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",

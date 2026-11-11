@@ -1226,7 +1226,7 @@ async fn an_owner_erase_does_not_scan_other_owners_tables() {
         EraseAuthorization, OwnerEraseOutcome, OwnerEraseTarget, OwnerSurfaces,
     };
     use proxiima_core::storage_ports::OwnerInversePort;
-    use proxiima_storage_pg::test_fixtures::register_group_for_tests;
+    use proxiima_storage_pg::test_fixtures::create_group;
 
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     if let Err(e) = create_core_db(&db_name).await {
@@ -1238,8 +1238,8 @@ async fn an_owner_erase_does_not_scan_other_owners_tables() {
         let pool = pg.pool_for_tests();
         let target = GroupId::new(Uuid::now_v7());
         let bystander = GroupId::new(Uuid::now_v7());
-        register_group_for_tests(pool, target).await?;
-        register_group_for_tests(pool, bystander).await?;
+        create_group(pool, target).await?;
+        create_group(pool, bystander).await?;
         for (owner, count) in [(target, 40_i32), (bystander, 5_000_i32)] {
             sqlx::query(
                 "WITH s AS (SELECT uuidv7() AS handle, uuidv7() AS t FROM generate_series(1, $2::int)),

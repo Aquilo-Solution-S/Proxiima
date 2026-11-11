@@ -4,7 +4,7 @@ use proxiima_core::owner_inverse::{
 use proxiima_core::storage_ports::OwnerInversePort;
 use proxiima_core::{GroupId, OwnerId, Relation, SpiiceRegistry, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::{create_core_db, register_group_for_tests};
+use proxiima_storage_pg::test_fixtures::{create_core_db, create_group};
 use proxiima_storage_pg::{PgStorage, add_group_member};
 use uuid::Uuid;
 
@@ -21,8 +21,8 @@ async fn nested_group_erasure_refuses_parent_and_removes_child_edge()
         let pg = PgStorage::connect_for_tests(db_url(&name)).await?;
         let parent = GroupId::new(Uuid::now_v7());
         let child = GroupId::new(Uuid::now_v7());
-        register_group_for_tests(pg.pool_for_tests(), parent).await?;
-        register_group_for_tests(pg.pool_for_tests(), child).await?;
+        create_group(pg.pool_for_tests(), parent).await?;
+        create_group(pg.pool_for_tests(), child).await?;
         let mut tx = pg.pool_for_tests().begin().await?;
         add_group_member(&mut tx, parent, OwnerId::from(child), Relation::Viewer).await?;
         tx.commit().await?;
@@ -68,7 +68,7 @@ async fn erasing_person_removes_projected_roles() -> Result<(), Box<dyn std::err
         let pg = PgStorage::connect_for_tests(db_url(&name)).await?;
         let group = GroupId::new(Uuid::now_v7());
         let person = UserId::new(Uuid::now_v7());
-        register_group_for_tests(pg.pool_for_tests(), group).await?;
+        create_group(pg.pool_for_tests(), group).await?;
         let mut tx = pg.pool_for_tests().begin().await?;
         add_group_member(&mut tx, group, OwnerId::from(person), Relation::Viewer).await?;
         tx.commit().await?;

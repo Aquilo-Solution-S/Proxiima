@@ -10,27 +10,10 @@
 
 use proxiima_core::{GroupId, OwnerAccessPort, OwnerId, Relation, Role, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{add_member, create_core_db, create_user};
 use proxiima_storage_pg::{PgOwnerAccessResolver, PgStorage};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
-
-async fn seed_membership(pool: &sqlx::PgPool, group: GroupId, member: UserId, relation: Relation) {
-    sqlx::query(
-        "WITH registered AS (
-              INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')
-              ON CONFLICT (owner_id) DO NOTHING
-          )
-          INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation)
-          VALUES ($1, $2, $3)",
-    )
-    .bind(group.into_inner())
-    .bind(member.into_inner())
-    .bind(relation)
-    .execute(pool)
-    .await
-    .expect("seed membership");
-}
 
 #[tokio::test]
 async fn per_group_probe_matches_the_eager_map_for_every_group_shape() {
@@ -51,27 +34,21 @@ async fn per_group_probe_matches_the_eager_map_for_every_group_shape() {
         let layered_group = GroupId::new(Uuid::now_v7());
         let unmapped_group = GroupId::new(Uuid::now_v7());
         let promoted_group = GroupId::new(Uuid::now_v7());
-        let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let personal = UserId::new(Uuid::now_v7());
         let unknown = OwnerId::new(Uuid::now_v7());
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal')",
-        )
-        .bind(personal.into_inner())
-        .execute(&pool)
-        .await?;
-        seed_membership(&pool, editor_group, forwarder, Relation::Editor).await;
+        create_user(&pool, personal).await?;
+        add_member(&pool, editor_group, forwarder, Relation::Editor).await?;
         // Promoted after joining: an Admin row beside the Viewer row. The rows
         // come back in enum order, Admin first.
-        seed_membership(&pool, promoted_group, forwarder, Relation::Viewer).await;
-        seed_membership(&pool, promoted_group, forwarder, Relation::Admin).await;
-        seed_membership(&pool, layered_group, forwarder, Relation::Viewer).await;
-        seed_membership(&pool, layered_group, forwarder, Relation::Ingest).await;
+        add_member(&pool, promoted_group, forwarder, Relation::Viewer).await?;
+        add_member(&pool, promoted_group, forwarder, Relation::Admin).await?;
+        add_member(&pool, layered_group, forwarder, Relation::Viewer).await?;
+        add_member(&pool, layered_group, forwarder, Relation::Ingest).await?;
         // Someone else's membership in the unmapped group must not leak in.
-        seed_membership(&pool, unmapped_group, stranger, Relation::Admin).await;
+        add_member(&pool, unmapped_group, stranger, Relation::Admin).await?;
 
         let port = PgOwnerAccessResolver::new(pool, pg.platform_scope_for_host());
-        assert!(port.is_registered_owner(personal).await?);
+        assert!(port.is_registered_owner(personal.into()).await?);
         assert!(
             port.is_registered_owner(OwnerId::from(editor_group))
                 .await?

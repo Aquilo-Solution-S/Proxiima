@@ -9,7 +9,7 @@ use proxiima_core::{
     SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
-use proxiima_storage_pg::test_fixtures::register_group_for_tests;
+use proxiima_storage_pg::test_fixtures::create_group;
 use proxiima_storage_pg::{PgPlatformScope, PgStorage};
 use proxiima_storage_pg::{PgPoolConfig, PgTuning};
 use sqlx::PgPool;
@@ -78,8 +78,8 @@ impl Harness {
         );
         let parent = GroupId::new(Uuid::now_v7());
         let child = GroupId::new(Uuid::now_v7());
-        register_group_for_tests(&admin_pool, parent).await?;
-        register_group_for_tests(&admin_pool, child).await?;
+        create_group(&admin_pool, parent).await?;
+        create_group(&admin_pool, child).await?;
         let admin = UserId::new(Uuid::now_v7());
         storage
             .bootstrap_group_admin(parent, admin, admin.into_inner())

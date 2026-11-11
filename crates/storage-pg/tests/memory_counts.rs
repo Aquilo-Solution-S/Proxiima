@@ -7,43 +7,21 @@ use std::sync::Arc;
 use proxiima_core::MemoryKind;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::read_models::MemoryCounts;
-use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
+use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::authenticated_context;
-use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
     AccessKind, AuthPath, AuthzContext, EdgeEndpoint, Engine, EntityKind, GroupId, MemoryId,
-    OwnerId, Role, SchemaId, SchemaVersion, SpiiceRegistry, UserId,
+    OwnerId, Role, SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{TestMemory, create_core_db};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-fn memory(kind: MemoryKind, handle: Option<Uuid>) -> FactWriteCommand {
-    FactWriteCommand {
-        schema_id: SchemaId::new("core/test-fact-v1".to_string()),
-        schema_version: SchemaVersion::new(1),
-        handle,
-        source_id: None,
-        ingest_key: None,
-        payload: Vec::new(),
-        rendered_text: None,
-        lexical_language: None,
-        receipt: None,
-        occurred_at: None,
-        citation: None,
-        additional_references: Vec::new(),
-        refs: Vec::new(),
-        blob_id: None,
-        kind,
-        request: None,
-    }
-}
 
 /// What [`seed`] wrote that the tests need to name again.
 struct Seeded {
@@ -67,31 +45,29 @@ fn seeded_counts(extra_facts: u64) -> MemoryCounts {
 /// Abstraction; a Goal written Active then Achieved on one handle and a second
 /// Paused Goal (two Goal heads over three rows).
 async fn seed(pg: &PgStorage, owner: OwnerId, extra_facts: u64) -> TestResult<Seeded> {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-    let forgettable = pg
-        .ingest_fact_atomic(&permit, &memory(MemoryKind::Fact, None), None)
-        .await?;
+    let forgettable = TestMemory::fact().create(pg, owner).await?;
     for _ in 0..extra_facts {
-        pg.ingest_fact_atomic(&permit, &memory(MemoryKind::Fact, None), None)
-            .await?;
+        TestMemory::fact().create(pg, owner).await?;
     }
-    let series = pg
-        .ingest_fact_atomic(&permit, &memory(MemoryKind::Fact, None), None)
+    let series = TestMemory::fact().create(pg, owner).await?;
+    TestMemory::fact()
+        .handle(series.handle)
+        .create(pg, owner)
         .await?;
-    pg.ingest_fact_atomic(
-        &permit,
-        &memory(MemoryKind::Fact, Some(series.handle)),
-        None,
-    )
-    .await?;
 
-    let mut abstraction = memory(MemoryKind::Abstraction, None);
-    abstraction.additional_references =
-        vec![EdgeEndpoint::memory(EntityKind::Fact, series.memory_id)];
-    let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
-    let mut perspective = memory(MemoryKind::Perspective, None);
-    perspective.refs = vec![abstraction.memory_id.into_inner()];
-    pg.ingest_fact_atomic(&permit, &perspective, None).await?;
+    let abstraction = TestMemory::fact()
+        .kind(MemoryKind::Abstraction)
+        .references(vec![EdgeEndpoint::memory(
+            EntityKind::Fact,
+            series.memory_id,
+        )])
+        .create(pg, owner)
+        .await?;
+    TestMemory::fact()
+        .kind(MemoryKind::Perspective)
+        .refs(vec![abstraction.memory_id.into_inner()])
+        .create(pg, owner)
+        .await?;
 
     let goal = |handle, state, request_id: &str| GoalWriteCommand {
         handle,

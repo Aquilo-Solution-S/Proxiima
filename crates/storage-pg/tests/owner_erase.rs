@@ -19,7 +19,7 @@ use proxiima_core::{
     StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::test_fixtures::{create_core_db, register_group_for_tests};
+use proxiima_storage_pg::test_fixtures::{create_core_db, create_group};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use proxiima_storage_pg::{ColdPurgeRetryOptions, PgStorage};
@@ -519,7 +519,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         let colleague = OwnerId::from(UserId::new(Uuid::now_v7()));
         let company = GroupId::new(Uuid::now_v7());
         let other = OwnerId::from(company);
-        register_group_for_tests(pg.pool_for_tests(), company).await?;
+        create_group(pg.pool_for_tests(), company).await?;
         for owner in [controller, subject, colleague, other] {
             let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
             pg.ingest_fact_atomic(&permit, &draft(Some(("seed", "grant"))), None)
@@ -1759,7 +1759,7 @@ async fn erase_group_owner_completes_when_abandoned() {
 
         let group = GroupId::new(Uuid::now_v7());
         let owner = OwnerId::from(group);
-        register_group_for_tests(pool, group).await?;
+        create_group(pool, group).await?;
         let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
         let written = pg
             .ingest_fact_atomic(&permit, &draft(Some(("src", "g-empty"))), None)
