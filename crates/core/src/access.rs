@@ -689,7 +689,7 @@ pub trait OwnerAccessPort: Send + Sync {
 /// The stored name of a membership preset. Authorization reads the preset's
 /// [`Role`] ([`Self::role`]), never the name.
 ///
-/// Wire spelling is lowercase (`admin`, `editor`, `viewer`, `ingest`).
+/// Wire spelling is [`Self::as_str`], the lowercase variant name.
 /// [`std::str::FromStr`] folds case so a tool arg is not casing-sensitive.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, sqlx::Type, serde::Serialize, schemars::JsonSchema,
@@ -700,17 +700,16 @@ pub trait OwnerAccessPort: Send + Sync {
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Relation {
-    #[serde(alias = "Admin", alias = "ADMIN")]
     Admin,
-    #[serde(alias = "Editor", alias = "EDITOR")]
     Editor,
-    #[serde(alias = "Viewer", alias = "VIEWER")]
     Viewer,
-    #[serde(alias = "Ingest", alias = "INGEST")]
     Ingest,
 }
 
 impl Relation {
+    /// Every relation, in the order of the database enum.
+    pub const ALL: [Self; 4] = [Self::Admin, Self::Editor, Self::Viewer, Self::Ingest];
+
     #[must_use]
     pub const fn role(self) -> Role {
         match self {
@@ -739,13 +738,14 @@ impl std::fmt::Display for Relation {
     }
 }
 
-/// A membership relation that is not `admin`, `editor`, `viewer`, or `ingest`.
+/// A membership relation that is none of [`Relation::ALL`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelationParseError;
 
 impl std::fmt::Display for RelationParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("relation must be one of: admin, editor, viewer, ingest")
+        let names = Relation::ALL.map(Relation::as_str).join(", ");
+        write!(f, "relation must be one of: {names}")
     }
 }
 
@@ -755,13 +755,10 @@ impl std::str::FromStr for Relation {
     type Err = RelationParseError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        match raw.to_ascii_lowercase().as_str() {
-            "admin" => Ok(Self::Admin),
-            "editor" => Ok(Self::Editor),
-            "viewer" => Ok(Self::Viewer),
-            "ingest" => Ok(Self::Ingest),
-            _ => Err(RelationParseError),
-        }
+        Self::ALL
+            .into_iter()
+            .find(|relation| relation.as_str().eq_ignore_ascii_case(raw))
+            .ok_or(RelationParseError)
     }
 }
 
