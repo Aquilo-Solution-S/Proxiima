@@ -4,8 +4,12 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use proxiima_core::{GroupId, OwnerId, UserId};
 use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
+use proxiima_storage_pg::test_fixtures::{
+    TestGoal, TestMemory, create_content, create_group, create_user,
+};
 use uuid::Uuid;
 
 trait DatabaseFixture {
@@ -95,6 +99,8 @@ async fn seed_historical_goal_series(
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', false)")
         .execute(&mut *seed)
         .await?;
+    // Raw INSERT on purpose: this database stops before the goal schema evolution, where no
+    // current write path runs. The rows below stay raw for that reason.
     sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
         .bind(owner)
         .execute(&mut *seed)
@@ -907,14 +913,13 @@ async fn embedding_lanes_refuse_unsupported_dimensions_and_widths() {
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
         let owner_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner_id)).await?;
         for (dim, width, check) in [
             (512_i16, 512_i32, "embeddings_dim_lane_chk"),
             (1024, 768, "embeddings_vec_width_chk"),
         ] {
+            // Raw INSERT on purpose: the CHECKs under test refuse a lane and a width the embedding
+            // write never produces.
             let err = sqlx::query(
                 "INSERT INTO proxiima_core.embeddings (entity_id, model_id, dim, vec, owner_id)
                  VALUES ($1, 'legacy-model', $2, array_fill(0.5::real, ARRAY[$3])::vector, $4)",
@@ -953,11 +958,9 @@ async fn blob_upload_content_hash_rejects_noncanonical_length() {
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
         let owner = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner)).await?;
         let upload = Uuid::now_v7();
+        // Raw INSERT: no write path for blob_uploads reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
@@ -1008,45 +1011,25 @@ async fn reference_integrity_migration_enforces_goal_refs() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.owners (owner_id, kind)
-             VALUES ($1, 'personal')",
-        )
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        let owner = OwnerId::from(user);
+        create_user(pool, user).await?;
 
-        let goal_handle = Uuid::now_v7();
-        let goal_t = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-             VALUES ($1, 'test/goal-v1', $2, $3)",
-        )
-        .bind(goal_handle)
-        .bind(owner)
-        .bind(goal_t)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal
-                 (handle, t, owner_id, title, state, request_id, \"by\", via)
-             VALUES ($1, $2, $3, 'reference target', 'Active', 'reference-goal', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(goal_handle)
-        .bind(goal_t)
-        .bind(owner)
-        .execute(pool)
-        .await?;
-
+        let goal_t = TestGoal::new("reference-goal")
+            .title("reference target")
+            .create(&pg, owner)
+            .await?
+            .t;
         let fact_handle = Uuid::now_v7();
         let fact_t = Uuid::now_v7();
+        // Raw INSERT: a Fact's Goal reference is admitted by the engine's fact authorization. The
+        // builders in the test fixtures write below it, and none fills `goal_refs`. Head and row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'test/fact-v1', $2, $3)",
         )
         .bind(fact_handle)
-        .bind(owner)
+        .bind(user.into_inner())
         .bind(fact_t)
         .execute(pool)
         .await?;
@@ -1057,52 +1040,30 @@ async fn reference_integrity_migration_enforces_goal_refs() {
         )
         .bind(fact_handle)
         .bind(fact_t)
-        .bind(owner)
+        .bind(user.into_inner())
         .bind(goal_t)
         .execute(pool)
         .await?;
 
         // Origins are Memory-only. Include a real Fact origin so the
         // grounding check cannot be the reason this insert is rejected.
-        let source_handle = Uuid::now_v7();
-        let source_t = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'fact', 'test/source-v1', $2, $3)",
-        )
-        .bind(source_handle)
-        .bind(owner)
-        .bind(source_t)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory
-                 (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
-             VALUES ($1, $2, 'fact', $3, 'test/source-v1', uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(source_handle)
-        .bind(source_t)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let source_t = TestMemory::fact()
+            .create(&pg, owner)
+            .await?
+            .memory_id
+            .into_inner();
 
-        let content_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
-             VALUES ($1, 'test/abstraction-v1', $2)
-             RETURNING content_id",
-        )
-        .bind(owner)
-        .bind(vec![7_u8; 32])
-        .fetch_one(pool)
-        .await?;
+        let content_id = create_content(pool, owner, "test/abstraction-v1", [7; 32]).await?;
         let abstraction_handle = Uuid::now_v7();
         let abstraction_t = Uuid::now_v7();
+        // Raw INSERT on purpose: the row under test, an Abstraction with a Goal among its origins.
+        // Head and row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'abstraction', 'test/abstraction-v1', $2, $3)",
         )
         .bind(abstraction_handle)
-        .bind(owner)
+        .bind(user.into_inner())
         .bind(abstraction_t)
         .execute(pool)
         .await?;
@@ -1114,7 +1075,7 @@ async fn reference_integrity_migration_enforces_goal_refs() {
         )
         .bind(abstraction_handle)
         .bind(abstraction_t)
-        .bind(owner)
+        .bind(user.into_inner())
         .bind(source_t)
         .bind(goal_t)
         .bind(content_id)
@@ -1153,33 +1114,15 @@ async fn erased_pin_target_direct_insert_is_rejected_and_delete_records_kind() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        let handle = Uuid::now_v7();
-        let t = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'fact', 'core/test-v1', $2, $3)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .bind(t)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory
-                 (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
-             VALUES ($1, $2, 'fact', $3, 'core/test-v1', uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(handle)
-        .bind(t)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        create_user(pool, user).await?;
+        let t = TestMemory::fact()
+            .create(&pg, OwnerId::from(user))
+            .await?
+            .memory_id
+            .into_inner();
 
+        // Raw INSERT on purpose: the statement under test is a direct witness insert.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.erased_pin_target (t, kind)
              VALUES ($1, 'fact')",
@@ -1245,31 +1188,14 @@ async fn conflicting_witness_rejects_delete_and_goal_t_reuse() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        let t = Uuid::now_v7();
-        let handle = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'fact', 'core/test-v1', $2, $3)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .bind(t)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
-             VALUES ($1, $2, 'fact', $3, 'core/test-v1', uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(handle)
-        .bind(t)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        let owner = user.into_inner();
+        create_user(pool, user).await?;
+        let t = TestMemory::fact()
+            .create(&pg, OwnerId::from(user))
+            .await?
+            .memory_id
+            .into_inner();
         sqlx::query("DELETE FROM proxiima_core.memory WHERE t = $1")
             .bind(t)
             .execute(pool)
@@ -1286,6 +1212,8 @@ async fn conflicting_witness_rejects_delete_and_goal_t_reuse() {
         // head must not survive the failed Goal insert.
         let mut tx = pool.begin().await?;
         let goal_handle = Uuid::now_v7();
+        // Raw INSERT on purpose: the row under test, a Goal on the `t` of an erased Memory. Head
+        // and row.
         sqlx::query(
             "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
              VALUES ($1, 'core/task-v1', $2, $3)",
@@ -1324,8 +1252,9 @@ async fn conflicting_witness_rejects_delete_and_goal_t_reuse() {
         sqlx::query("ALTER TABLE proxiima_core.memory DISABLE TRIGGER memory_pin_checks")
             .execute(&mut *tx)
             .await?;
-        // Fixture-only resurrection creates a live row solely to drive the
-        // hard-delete trigger against a conflicting witness kind.
+        // Raw INSERT on purpose: a fixture-only resurrection on an erased `t`, with the pin
+        // trigger off, creates a live row solely to drive the hard-delete trigger against a
+        // conflicting witness kind. Head and row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/test-v1', $2, $3)",
@@ -1337,7 +1266,7 @@ async fn conflicting_witness_rejects_delete_and_goal_t_reuse() {
         .await?;
         sqlx::query(
             "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
-             VALUES ($1, $2, 'fact', $3, 'core/test-v1', uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+             VALUES ($1, $2, 'fact', $3, 'core/test-v1', now(), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
         )
         .bind(replacement_handle)
         .bind(t)
@@ -1421,13 +1350,13 @@ async fn memory_is_append_only_and_head_t_only() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
+        let user = UserId::new(Uuid::now_v7());
+        let owner = user.into_inner();
+        create_user(pool, user).await?;
         let handle = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
         let t = Uuid::now_v7();
+        // Raw INSERT on purpose: the test asserts the writer stamp 0x509 survives a transfer, and
+        // the Fact write stamps its permit's subject instead. Head and row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/test-v1', $2, $3)",
@@ -1490,10 +1419,7 @@ async fn memory_is_append_only_and_head_t_only() {
         assert!(err.to_string().contains("frozen"), "got: {err}");
 
         let destination = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'group')")
-            .bind(destination)
-            .execute(pool)
-            .await?;
+        create_group(pool, GroupId::new(destination)).await?;
         let mut tx = pool.begin().await?;
         sqlx::query("UPDATE proxiima_core.memory_head SET owner_id = $2 WHERE handle = $1")
             .bind(handle)
@@ -1520,6 +1446,7 @@ async fn memory_is_append_only_and_head_t_only() {
         assert_eq!(writer, (Uuid::from_u128(0x509), None));
 
         let delegation_id = Uuid::now_v7();
+        // Raw INSERT: no write path for delegated_authority_grants reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.delegated_authority_grants
                 (delegation_id, subject_user_id, owner_id, tool_name,
@@ -1549,6 +1476,7 @@ async fn memory_is_append_only_and_head_t_only() {
         assert_eq!(grant_writer, (writer.0, Some(Uuid::from_u128(0x510))));
 
 
+        // Raw INSERT on purpose: the row under test, a version whose kind differs from its head.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, \"by\", via)
              VALUES ($1, $3, 'abstraction', $2, 'core/test-v1', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
@@ -1580,35 +1508,20 @@ async fn memory_reference_arrays_remain_append_only() {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        let handle = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'fact', 'core/test-v1', $2, $3)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .bind(handle)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory
-                 (handle, t, kind, owner_id, schema_id, refs, goal_refs, occurred_at, \"by\", via)
-             VALUES ($1, $1, 'fact', $2, 'core/test-v1', '{}', '{}', uuid_extract_timestamp($1), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        create_user(pool, user).await?;
+        let t = TestMemory::fact()
+            .create(&pg, OwnerId::from(user))
+            .await?
+            .memory_id
+            .into_inner();
         let target = Uuid::now_v7();
         for (column, query) in [
             (
                 "refs",
-                sqlx::query("UPDATE proxiima_core.memory SET refs = ARRAY[$1]::uuid[] WHERE t = $2"),
+                sqlx::query(
+                    "UPDATE proxiima_core.memory SET refs = ARRAY[$1]::uuid[] WHERE t = $2",
+                ),
             ),
             (
                 "goal_refs",
@@ -1619,7 +1532,7 @@ async fn memory_reference_arrays_remain_append_only() {
         ] {
             let err = query
                 .bind(target)
-                .bind(handle)
+                .bind(t)
                 .execute(pool)
                 .await
                 .expect_err("reference arrays must remain append-only");
@@ -1646,40 +1559,27 @@ async fn fact_occurred_at_is_immutable_and_required() {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
-        let handle = Uuid::now_v7();
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
-             VALUES ($1, 'fact', 'core/test-v1', $2, $1)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.memory
-                 (handle, t, kind, owner_id, schema_id, occurred_at, \"by\", via)
-             VALUES ($1, $1, 'fact', $2, 'core/test-v1', uuid_extract_timestamp($1), '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        let owner = user.into_inner();
+        create_user(pool, user).await?;
+        let t = TestMemory::fact()
+            .create(&pg, OwnerId::from(user))
+            .await?
+            .memory_id
+            .into_inner();
         let refused = sqlx::query(
             "UPDATE proxiima_core.memory SET occurred_at = occurred_at - interval '1 day'
               WHERE t = $1",
         )
-        .bind(handle)
+        .bind(t)
         .execute(pool)
         .await
         .expect_err("a Fact's occurrence time must not be rewritable");
         assert!(refused.to_string().contains("append-only"), "{refused}");
 
         let missing = Uuid::now_v7();
+        // Raw INSERT on purpose: the row under test, a Fact without an occurrence time. Head and
+        // row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/test-v1', $2, $1)",
@@ -1747,10 +1647,9 @@ async fn spiice_surface_is_the_registry_and_the_stamp_must_be_a_subset() {
 
         let owner_id = Uuid::now_v7();
         let handle = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pg.pool_for_tests())
-            .await?;
+        create_user(pg.pool_for_tests(), UserId::new(owner_id)).await?;
+        // Raw INSERT on purpose: the row under test, a memory stamped with a table no spiice
+        // declares. Head and row.
         sqlx::query(
             "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
              VALUES ($1, 'fact', 'core/agent-note-v1', $2, $3)",
@@ -2046,10 +1945,7 @@ async fn a_sidecar_row_no_memory_declares_is_refused_by_the_database() {
         let pool = pg.pool_for_tests();
 
         let owner_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner_id)).await?;
 
         // Two memories of the same schema. One declares the note sidecar,
         // one declares nothing — so the ONLY difference between the two
@@ -2061,6 +1957,8 @@ async fn a_sidecar_row_no_memory_declares_is_refused_by_the_database() {
         for declared in [false, true] {
             let handle = Uuid::now_v7();
             let mut stamped = pool.begin().await?;
+            // Raw INSERT on purpose: the two memories differ only in their stamp, and the write
+            // path cannot leave a note unstamped.
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
                  VALUES ($1, 'fact', 'core/agent-note-v1', $2, $1)",
@@ -2100,6 +1998,8 @@ async fn a_sidecar_row_no_memory_declares_is_refused_by_the_database() {
             ids.push(handle);
         }
 
+        // Raw INSERT on purpose: the statement under test, a sidecar row for a memory that never
+        // declared its table.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
              VALUES ($1, $1, 'title', 'body', '{}')",
@@ -2141,35 +2041,21 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
-        let owner = Uuid::now_v7();
-        let handle = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner)
-            .execute(pool)
-            .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
-             VALUES ($1, 'core/goal-v1', $2, $3)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .bind(handle)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal
-                 (handle, t, owner_id, title, state, request_id, \"by\", via)
-             VALUES ($1, $1, $2, 'replay', 'Active', 'replay-test', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-        )
-        .bind(handle)
-        .bind(owner)
-        .execute(pool)
-        .await?;
+        let user = UserId::new(Uuid::now_v7());
+        let owner = user.into_inner();
+        create_user(pool, user).await?;
+        let goal_t = TestGoal::new("replay-test")
+            .title("replay")
+            .create(&pg, OwnerId::from(user))
+            .await?
+            .t;
+        // Raw INSERT on purpose: every declaration below feeds one constraint (CHECK, primary key,
+        // foreign key) a request id and payload the replay writer would derive itself.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
              VALUES ($1, $2, 'replay-array', '[]'::jsonb, 0)",
         )
-        .bind(handle)
+        .bind(goal_t)
         .bind(owner)
         .execute(pool)
         .await
@@ -2189,7 +2075,7 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
              VALUES ($1, $2, 'replay-negative', '{}'::jsonb, -1)",
         )
-        .bind(handle)
+        .bind(goal_t)
         .bind(owner)
         .execute(pool)
         .await
@@ -2208,7 +2094,7 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
              VALUES ($1, $2, 'replay-one', '{}'::jsonb, 0)",
         )
-        .bind(handle)
+        .bind(goal_t)
         .bind(owner)
         .execute(pool)
         .await?;
@@ -2216,7 +2102,7 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
              VALUES ($1, $2, 'replay-two', '{}'::jsonb, 0)",
         )
-        .bind(handle)
+        .bind(goal_t)
         .bind(owner)
         .execute(pool)
         .await?;
@@ -2224,7 +2110,7 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
             "INSERT INTO proxiima_core.goal_replay_declaration (goal_t, owner_id, request_id, declaration, edge_count)
              VALUES ($1, $2, 'replay-two', '{}'::jsonb, 0)",
         )
-        .bind(handle)
+        .bind(goal_t)
         .bind(owner)
         .execute(pool)
         .await
@@ -2261,13 +2147,13 @@ async fn goal_replay_declaration_enforces_identity_and_cascade() {
             "{err}"
         );
         sqlx::query("DELETE FROM proxiima_core.goal WHERE t = $1")
-            .bind(handle)
+            .bind(goal_t)
             .execute(pool)
             .await?;
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM proxiima_core.goal_replay_declaration WHERE goal_t = $1",
         )
-        .bind(handle)
+        .bind(goal_t)
         .fetch_one(pool)
         .await?;
         assert_eq!(
@@ -2308,6 +2194,8 @@ async fn goal_change_checks_refuse_the_rows_they_name() {
             sqlx::query("SET LOCAL session_replication_role = replica")
                 .execute(&mut *tx)
                 .await?;
+            // Raw INSERT on purpose: each row breaks one CHECK of goal_change_v1, with the
+            // declaration triggers off.
             let inserted = sqlx::query(
                 "INSERT INTO proxiima_core.goal_change_v1
                      (t, series, goal_t, revision, state, change_kind, parent_t, pending)
@@ -2548,6 +2436,8 @@ async fn a_key_repoint_onto_an_undeclared_memory_is_refused() {
         )
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: the test installs this table's triggers from the generator output
+        // under test; `install_sidecar` would install its own.
         sqlx::query(
             "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
              VALUES ($1, 'repoint-test')",
@@ -2568,15 +2458,14 @@ async fn a_key_repoint_onto_an_undeclared_memory_is_refused() {
         }
 
         let owner_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner_id)).await?;
 
         // One memory that declares the table, one that declares nothing —
         // the repoint target.
         let declared = Uuid::now_v7();
         let bare = Uuid::now_v7();
+        // Raw INSERT on purpose: the pair differs only in its stamp, and the stamp
+        // names a table of this test, which the write path never writes.
         for (t, stamp) in [(declared, vec![TABLE.to_owned()]), (bare, Vec::new())] {
             sqlx::query(
                 "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
@@ -2597,6 +2486,7 @@ async fn a_key_repoint_onto_an_undeclared_memory_is_refused() {
             .execute(pool)
             .await?;
         }
+        // Raw INSERT: a row of a table this test creates; no write path exists for it
         sqlx::query("INSERT INTO public.repointable_sidecar_v1 (t, body) VALUES ($1, 'body')")
             .bind(declared)
             .execute(pool)
@@ -2749,6 +2639,8 @@ async fn the_boot_guardrail_accepts_a_sidecar_keyed_on_something_other_than_t() 
         )
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: the test installs this table's triggers from the generator output
+        // under test; `install_sidecar` would install its own.
         sqlx::query(
             "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
              VALUES ($1, 'odd-key-test')",
@@ -2831,6 +2723,8 @@ async fn the_trigger_reads_the_declared_key_column_of_a_renamed_sidecar() {
         )
         .execute(pool)
         .await?;
+        // Raw INSERT on purpose: the test installs this table's trigger from the generator output
+        // under test; `install_sidecar` would install its own.
         sqlx::query(
             "INSERT INTO proxiima_core.spiice_surface (table_name, spiice_id)
              VALUES ($1, 'renamed-test')",
@@ -2846,11 +2740,10 @@ async fn the_trigger_reads_the_declared_key_column_of_a_renamed_sidecar() {
             .await?;
 
         let owner_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(owner_id)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(owner_id)).await?;
         let mut ids = Vec::new();
+        // Raw INSERT on purpose: the pair differs only in its stamp, and the stamp
+        // names a table of this test, which the write path never writes.
         for declared in [false, true] {
             let handle = Uuid::now_v7();
             sqlx::query(
@@ -2879,6 +2772,7 @@ async fn the_trigger_reads_the_declared_key_column_of_a_renamed_sidecar() {
             ids.push(handle);
         }
 
+        // Raw INSERT: a row of a table this test creates; no write path exists for it
         let err = sqlx::query(
             "INSERT INTO public.renamed_sidecar_v1 (note_memory_id, body) VALUES ($1, 'body')",
         )
@@ -2891,6 +2785,7 @@ async fn the_trigger_reads_the_declared_key_column_of_a_renamed_sidecar() {
             "the refusal names the table and the memory it read off {KEY}: {err}"
         );
 
+        // Raw INSERT: a row of a table this test creates; no write path exists for it
         sqlx::query(
             "INSERT INTO public.renamed_sidecar_v1 (note_memory_id, body) VALUES ($1, 'body')",
         )
@@ -2919,11 +2814,10 @@ async fn the_database_refuses_a_membership_under_a_users_id()
         apply_current_migrations(&pg).await?;
         let pool = pg.pool_for_tests();
         let (user, member) = (Uuid::now_v7(), Uuid::now_v7());
-        sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
-            .bind(user)
-            .execute(pool)
-            .await?;
+        create_user(pool, UserId::new(user)).await?;
         for group_id in [user, Uuid::now_v7()] {
+            // Raw INSERT on purpose: the rows under test, a membership under a user id and under
+            // an unregistered id.
             let err = sqlx::query(
                 "INSERT INTO proxiima_core.group_memberships (group_id, member_user_id, relation)
                  VALUES ($1, $2, 'viewer')",
@@ -2939,6 +2833,8 @@ async fn the_database_refuses_a_membership_under_a_users_id()
                 "{err}"
             );
         }
+        // Raw INSERT on purpose: the row under test spells `group_kind` itself to get around the
+        // registered-group rule.
         let err = sqlx::query(
             "INSERT INTO proxiima_core.group_memberships
                  (group_id, member_user_id, relation, group_kind)
