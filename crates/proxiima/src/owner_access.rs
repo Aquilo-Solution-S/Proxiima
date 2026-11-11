@@ -306,7 +306,7 @@ mod tests {
             .await
             .unwrap()
             .expect("registered owner gets the configured policy role");
-        assert_eq!(policy_role.role(), Role::editor());
+        assert_eq!(policy_role, ForwarderRole::Editor);
         assert!(!policy_role.role().manages());
         assert_eq!(
             port.resolve_group_role(forwarder, group).await.unwrap(),
@@ -351,9 +351,8 @@ mod tests {
             assert_eq!(
                 port.resolve_forwarded_owner_role(forwarder, owner)
                     .await
-                    .unwrap()
-                    .map(ForwarderRole::role),
-                Some(Role::editor())
+                    .unwrap(),
+                Some(ForwarderRole::Editor)
             );
             assert!(
                 port.resolve_roles_for_subject(forwarder)
@@ -441,7 +440,7 @@ mod tests {
         ]))
         .unwrap()
         .unwrap();
-        assert_eq!(policy.role(), Role::editor());
+        assert_eq!(policy.role(), ForwarderRole::Editor.role());
         for pairs in [
             vec![(FORWARDER_SUBJECTS, id.as_str())],
             vec![(FORWARDER_ROLE, "viewer")],
@@ -483,9 +482,8 @@ mod tests {
         assert_eq!(
             late.resolve_forwarded_owner_role(subject, owner)
                 .await
-                .unwrap()
-                .map(ForwarderRole::role),
-            Some(Role::ingest())
+                .unwrap(),
+            Some(ForwarderRole::Ingest)
         );
         assert_eq!(late.resolve_group_role(subject, group).await.unwrap(), None);
     }

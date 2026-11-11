@@ -25,8 +25,8 @@ use proxiima_core::verbs::goal_write::{
 };
 use proxiima_core::verbs::query::{EntityKind, GoalRow, QueryRequest};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, GoalId, GoalPayload, MemoryId, OwnerId, PendingWork, SchemaId,
-    SchemaVersion, SimpleTextGoalV1, SpiiceRegistry, SpiiceRegistryFrozen, StorageError, UserId,
+    EdgeEndpoint, GoalId, GoalPayload, MemoryId, OwnerId, PendingWork, SchemaId, SchemaVersion,
+    SimpleTextGoalV1, SpiiceRegistry, SpiiceRegistryFrozen, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -92,7 +92,7 @@ struct Harness {
 impl Harness {
     async fn new(pg: PgStorage) -> TestResult<Self> {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let fact = pg
             .ingest_fact_atomic(&permit, &memory_draft(MemoryKind::Fact), None)
             .await?;

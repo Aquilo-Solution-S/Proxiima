@@ -361,7 +361,13 @@ pub(crate) async fn begin_owner_lifecycle_transaction(
     permit: &proxiima_core::storage_ports::OwnerWritePermit,
 ) -> Result<Transaction<'static, Postgres>, StorageError> {
     if let Some(scope) = permit.owner_scope() {
-        if !scope.may_write(permit.owner(), permit.access_kind()) {
+        use proxiima_core::storage_ports::WriteAuthority;
+        let admitted = match permit.authority() {
+            WriteAuthority::Memory(kind) => scope.may_write(permit.owner(), kind),
+            WriteAuthority::Administration => scope.administers(permit.owner()),
+            WriteAuthority::GoalWork => false,
+        };
+        if !admitted {
             return Err(refused(
                 "lifecycle owner is outside authenticated authority",
             ));

@@ -161,6 +161,43 @@ impl OwnerScope {
         !self.is_expired() && self.roles.may_write(owner, kind)
     }
 
+    /// Whether the scope reads an entry of `kind` owned by `owner`
+    /// ([`Role::may_read_entry`]).
+    #[must_use]
+    pub fn may_read_entry(&self, owner: &OwnerId, kind: crate::EntityKind) -> bool {
+        !self.is_expired()
+            && self
+                .roles
+                .role_for(owner)
+                .is_some_and(|role| role.may_read_entry(kind))
+    }
+
+    /// Whether the scope administers `owner` ([`Role::administers`]).
+    #[must_use]
+    pub fn administers(&self, owner: &OwnerId) -> bool {
+        !self.is_expired() && self.roles.administers(owner)
+    }
+
+    /// Owners whose Goals the scope reads ([`Role::reads_goals`]).
+    #[must_use]
+    pub fn goal_reading_owners(&self) -> Vec<OwnerId> {
+        if self.is_expired() {
+            Vec::new()
+        } else {
+            self.roles.goal_reading_owners()
+        }
+    }
+
+    /// Owners the scope administers ([`Role::administers`]).
+    #[must_use]
+    pub fn administered_owners(&self) -> Vec<OwnerId> {
+        if self.is_expired() {
+            Vec::new()
+        } else {
+            self.roles.administered_owners()
+        }
+    }
+
     #[must_use]
     pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
         if self.is_expired() {

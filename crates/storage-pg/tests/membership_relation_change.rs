@@ -18,8 +18,8 @@ use proxiima_core::storage_ports::{
 };
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
-    AccessCeiling, AccessKind, AuthPath, AuthzContext, Engine, ErrorCode, GroupId, OwnerId,
-    Relation, Role, SpiiceRegistry, StorageError, UserId,
+    AuthPath, AuthzContext, Engine, ErrorCode, GroupId, OwnerId, Relation, Role, SpiiceRegistry,
+    StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::create_core_db;
@@ -124,7 +124,7 @@ impl Harness {
     }
 
     fn permit(&self) -> OwnerWritePermit {
-        OwnerWritePermit::new_for_tests(OwnerId::from(self.group), AccessKind::Goal)
+        OwnerWritePermit::admin_for_tests(OwnerId::from(self.group))
     }
 
     /// A member holding exactly `relations`.
@@ -461,8 +461,7 @@ async fn a_veto_on_either_change_leaves_the_membership_unchanged() {
 async fn a_caller_with_write_but_without_manage_is_refused_by_both_methods() {
     let h = Harness::new(None).await;
     let member = h.member_with(&[Relation::Admin]).await;
-    let write_only = Role::new(AccessCeiling::Goal, AccessCeiling::Goal, false)
-        .expect("write == read is a valid role");
+    let write_only = Role::personal();
     let caller = AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(OwnerId::from(h.group), write_only)],
@@ -490,10 +489,7 @@ async fn a_caller_with_write_but_without_manage_is_refused_by_both_methods() {
 async fn a_permit_for_another_group_is_refused_by_both_port_methods() {
     let h = Harness::new(None).await;
     let member = h.member_with(&[Relation::Admin]).await;
-    let other = OwnerWritePermit::new_for_tests(
-        OwnerId::from(GroupId::new(Uuid::now_v7())),
-        AccessKind::Goal,
-    );
+    let other = OwnerWritePermit::admin_for_tests(OwnerId::from(GroupId::new(Uuid::now_v7())));
 
     let replace =
         h.pg.replace_group_member_relation(

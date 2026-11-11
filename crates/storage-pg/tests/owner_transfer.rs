@@ -211,7 +211,11 @@ fn note_payload(title: &str, body: &str) -> SidecarPayload {
 }
 
 fn transfer_permit(permit: &OwnerWritePermit, destination: OwnerId) -> OwnerWritePermit {
-    OwnerWritePermit::transfer_for_tests(*permit.owner(), permit.access_kind(), destination)
+    let kind = permit
+        .authority()
+        .memory_limit()
+        .expect("a transfer source permit bounds memory");
+    OwnerWritePermit::transfer_for_tests(*permit.owner(), kind, destination)
 }
 
 fn destination() -> OwnerId {
@@ -2451,11 +2455,11 @@ async fn visible_home_owners_answer_each_entity_in_order() {
         assert_eq!(
             homes,
             vec![
-                Some((reader, AccessKind::Fact, note.clone())),
+                Some((reader, proxiima_core::EntityKind::Fact, note.clone())),
                 None,
-                Some((reader, AccessKind::Goal, None)),
+                Some((reader, proxiima_core::EntityKind::Goal, None)),
                 None,
-                Some((reader, AccessKind::Fact, note)),
+                Some((reader, proxiima_core::EntityKind::Fact, note)),
             ]
         );
         for (entity, home) in entities.iter().zip(&homes) {
@@ -2478,7 +2482,7 @@ async fn transfer_refuses_goal_entities() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let dest = destination();
         let pool = pg.pool_for_tests();
         let mut tx = pool.begin().await?;

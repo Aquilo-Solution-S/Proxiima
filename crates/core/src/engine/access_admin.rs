@@ -635,11 +635,10 @@ impl Engine {
 
 /// Membership-admin and group transfer require the `manage` bit, not merely
 /// owner admin. `authorize_owner_admin` is satisfied by any role that
-/// administers the owner (`write >= Goal`), so a custom
-/// `OwnerAccessPort` could hand out `Role::new(Goal, Goal, false)` — write-Goal
-/// but `manage = false` — and pass the write gate. Consult `may_manage`
-/// explicitly so only roles with `manage = true` (e.g. `Role::admin`) mutate
-/// membership or move a group-owned entity to another owner.
+/// administers the owner, and a host may resolve one that administers
+/// without managing. Consult `may_manage` explicitly so only roles that
+/// manage (e.g. `Role::admin`) mutate membership or move a group-owned
+/// entity to another owner.
 fn require_group_manage(authz: &AuthzContext, group_owner: &OwnerId) -> Result<(), ProtocolError> {
     if authz.may_manage(group_owner) {
         Ok(())
@@ -1109,17 +1108,19 @@ mod tests {
         );
     }
 
-    /// `authorize_owner_admin` passes any role that writes Goals; only
-    /// `require_group_manage` separates `Role::new(Goal, Goal, false)` from
-    /// Admin. The control is the same engine with Admin reaching storage.
+    /// `authorize_owner_admin` passes any role that administers; only
+    /// `require_group_manage` separates an administering role that does not
+    /// manage from Admin. The control is the same engine with Admin reaching storage.
     #[tokio::test]
     async fn access_admin_relation_methods_require_manage_not_just_write() {
         use crate::access::AccessCeiling;
 
         let group = GroupId::new(Uuid::now_v7());
         let member = UserId::new(Uuid::now_v7());
-        let write_only = Role::new(AccessCeiling::Goal, AccessCeiling::Goal, false)
-            .expect("write==read is a valid role");
+        let write_only = Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective)
+            .expect("write==read is a valid role")
+            .with_goals(crate::GoalAccess::Works)
+            .administering();
         let write_only_authz = AuthzContext::for_subject_with_role(
             UserId::new(Uuid::now_v7()),
             [(OwnerId::from(group), write_only)],
@@ -1273,9 +1274,11 @@ mod tests {
         let member = UserId::new(Uuid::now_v7());
         let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
 
-        // write == Goal (satisfies `authorize_write(.., Admin)`) but manage == false.
-        let write_only = Role::new(AccessCeiling::Goal, AccessCeiling::Goal, false)
-            .expect("write==read is a valid role");
+        // Administers (satisfies `authorize_owner_admin`) but manage == false.
+        let write_only = Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective)
+            .expect("write==read is a valid role")
+            .with_goals(crate::GoalAccess::Works)
+            .administering();
         let write_only_authz = AuthzContext::for_subject_with_role(
             caller,
             [(group_owner, write_only)],

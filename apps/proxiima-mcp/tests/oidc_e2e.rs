@@ -926,7 +926,7 @@ async fn oidc_e2e_group_auth_host_resolved_editor_role_permits_tool_call()
             AuthPath::HostBearer,
         ));
     let permit = permit_engine
-        .authorize_owner_write(&permit_authz, &group_owner, AccessKind::Goal)
+        .authorize_owner_write(&permit_authz, &group_owner, AccessKind::Perspective)
         .await?;
     storage
         .add_group_member(

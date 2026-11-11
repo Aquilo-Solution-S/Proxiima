@@ -396,7 +396,7 @@ async fn create_goal(
         Vec::new(),
         Vec::new(),
     )?;
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+    let permit = OwnerWritePermit::admin_for_tests(owner);
     Ok(pg
         .create_goal_atomic(
             &CreateGoalAtomicRequest {

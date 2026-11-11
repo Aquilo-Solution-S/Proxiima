@@ -822,7 +822,7 @@ fn host_api_exposes_role_for_authenticated_adapters() {
     // `Role::new` / `Role::may_write` / `OwnerRoles::for_subject` name these.
     // Hosts that only imported `Role` had to take `proxiima-core` to spell them.
     let ceiling = proxiima::AccessCeiling::Fact;
-    let role = proxiima::Role::new(ceiling, ceiling, false).expect("write <= read");
+    let role = proxiima::Role::new(ceiling, ceiling).expect("write <= read");
     assert!(role.may_write(proxiima::AccessKind::Fact));
     let user = proxiima::UserId::new(uuid::Uuid::max());
     let group = proxiima::OwnerId::from(proxiima::GroupId::new(uuid::Uuid::nil()));
@@ -1312,6 +1312,8 @@ impl proxiima::spiice::AuthorizationHook for TierAuthzHook {
         match &input.operation {
             proxiima::spiice::AuthzOperation::Read { .. }
             | proxiima::spiice::AuthzOperation::Write { .. }
+            | proxiima::spiice::AuthzOperation::GoalRead
+            | proxiima::spiice::AuthzOperation::GoalWork
             | proxiima::spiice::AuthzOperation::OwnerAdmin
             | proxiima::spiice::AuthzOperation::Membership {
                 change: proxiima::spiice::MembershipChange::Add,

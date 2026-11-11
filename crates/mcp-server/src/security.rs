@@ -1139,7 +1139,7 @@ mod tests {
         };
         let mut owners: Vec<String> = ctx
             .authz
-            .readable_owners(AccessKind::Goal)
+            .readable_owners(AccessKind::Perspective)
             .into_iter()
             .map(owner_key)
             .collect();

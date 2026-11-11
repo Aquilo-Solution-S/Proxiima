@@ -14,7 +14,7 @@ pub enum EntryReadRoute {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleEntry {
     pub owner: OwnerId,
-    pub kind: crate::AccessKind,
+    pub kind: crate::EntityKind,
     pub schema: Option<crate::SchemaId>,
     pub route: EntryReadRoute,
 }
@@ -58,7 +58,7 @@ pub trait OwnerAccessReadPort: Send + Sync {
         _owner_scope: Option<&crate::OwnerScope>,
         entity: EntityId,
         read_owners: &[OwnerId],
-    ) -> Result<Option<(OwnerId, crate::AccessKind, Option<crate::SchemaId>)>, StorageError>;
+    ) -> Result<Option<(OwnerId, crate::EntityKind, Option<crate::SchemaId>)>, StorageError>;
 
     /// [`Self::visible_home_owner`] of every entity in `entities`, in order.
     /// A store that can answer them together overrides this: the default asks
@@ -68,7 +68,7 @@ pub trait OwnerAccessReadPort: Send + Sync {
         owner_scope: Option<&crate::OwnerScope>,
         entities: &[EntityId],
         read_owners: &[OwnerId],
-    ) -> Result<Vec<Option<(OwnerId, crate::AccessKind, Option<crate::SchemaId>)>>, StorageError>
+    ) -> Result<Vec<Option<(OwnerId, crate::EntityKind, Option<crate::SchemaId>)>>, StorageError>
     {
         let mut homes = Vec::with_capacity(entities.len());
         for entity in entities {
@@ -224,7 +224,7 @@ mod tests {
     use crate::storage_ports::{
         MembershipMemberAuthority, MembershipWritePermit, OwnerWritePermit,
     };
-    use crate::{AccessKind, GroupId, OwnerId, Relation, StorageError, UserId};
+    use crate::{GroupId, OwnerId, Relation, StorageError, UserId};
     use uuid::Uuid;
 
     /// A port written before the relation-level methods existed: it supplies
@@ -285,7 +285,7 @@ mod tests {
     async fn a_port_without_the_relation_methods_refuses_them_by_name() {
         let group = GroupId::new(Uuid::now_v7());
         let member = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(OwnerId::from(group), AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(OwnerId::from(group));
         let membership_permit = MembershipWritePermit::new(
             &permit,
             OwnerId::from(group),

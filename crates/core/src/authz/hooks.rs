@@ -40,9 +40,10 @@ pub enum GoalCollaborationChange {
     Fork,
 }
 
-/// What one gate checks on the resolved owner. Reads and writes follow one
-/// rule: a role may act on `kind` when its limit for that direction is at
-/// least `kind`.
+/// What one gate checks on the resolved owner: each operation names the
+/// part of the role it needs. A memory read or write needs the limit for that
+/// direction to be at least `kind`; Goal work and owner administration are
+/// capabilities of their own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthzOperation {
     /// Read `kind` on the owner.
@@ -55,8 +56,14 @@ pub enum AuthzOperation {
     /// the entry's home owner, with the entry's real kind. A vetoed owner
     /// drops out of the read: its entries read exactly like absent ones.
     Read { kind: AccessKind },
+    /// Read a Goal of the owner ([`crate::Role::reads_goals`]). An entry
+    /// read of a Goal gates its home owner with this.
+    GoalRead,
     /// Write `kind` on the owner.
     Write { kind: AccessKind },
+    /// Set, modify or transition a Goal of the owner
+    /// ([`crate::Role::works_goals`]).
+    GoalWork,
     /// Owner-level administration ([`crate::Role::administers`]).
     OwnerAdmin,
     /// Membership mutation audited by group, member, relation, and direction.

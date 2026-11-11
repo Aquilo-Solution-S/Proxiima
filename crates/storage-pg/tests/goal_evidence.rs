@@ -16,8 +16,8 @@ use proxiima_core::verbs::goal_write::{
     OperatorKind, SystemOrigin,
 };
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, InputContractId, ModelId, OperatorId, OwnerId,
-    PromptVersion, SchemaId, SchemaVersion, SpiiceRegistry, StorageError, UserId,
+    EdgeEndpoint, EntityKind, InputContractId, ModelId, OperatorId, OwnerId, PromptVersion,
+    SchemaId, SchemaVersion, SpiiceRegistry, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -60,7 +60,7 @@ async fn perspective_evidence_is_rejected_in_tx() {
             .with_cold(Arc::new(MemoryColdStore));
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let owner_scope = owner_scope_for_tests(&[owner]);
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let fact = pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact), None).await?;
         let mut abs = draft(MemoryKind::Abstraction);
         abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
@@ -521,7 +521,7 @@ async fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
         .await?
         .with_cold(Arc::new(MemoryColdStore));
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+    let permit = OwnerWritePermit::admin_for_tests(owner);
     let fact = pg
         .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact), None)
         .await?;

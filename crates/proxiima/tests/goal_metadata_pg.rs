@@ -90,12 +90,7 @@ async fn guest_metadata_edit_refuses_forgotten_carried_targets() {
             &GoalAudienceGrantInput {
                 goal: goal.goal_handle,
                 subject: guest,
-                role: Role::new(
-                    proxiima_core::AccessCeiling::Goal,
-                    proxiima_core::AccessCeiling::Goal,
-                    false,
-                )
-                .unwrap(),
+                role: Role::editor(),
                 expires_at: None,
             },
         )
@@ -192,12 +187,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: bob,
-                role: Role::new(
-                    proxiima_core::AccessCeiling::Goal,
-                    proxiima_core::AccessCeiling::Goal,
-                    true,
-                )
-                .unwrap(),
+                role: Role::editor().managing(),
                 expires_at: None,
             },
         )
@@ -209,7 +199,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: carol,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -222,7 +212,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: carol,
-                role: Role::editor(),
+                role: Role::editor().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -240,7 +230,89 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
     .await
     .expect("Carol's regranted row");
     assert_eq!(row.0, bob.into_inner(), "regrant records its actual actor");
-    assert_eq!((row.1, row.2, row.3), (4, 3, false));
+    assert_eq!((row.1, row.2, row.3), (3, 3, false));
+
+    h.pool.close().await;
+}
+
+/// A grant holds what a guest may do on one Goal: never the owner's
+/// administration, and a guest manager hands out no more than its own grant.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_grant_carries_no_administration_and_a_manager_grants_what_it_holds() {
+    if proxiima_pg_testkit::admin_url_or_skip().is_none() {
+        return;
+    }
+    let h = ExampleEngine::new("proxiima_goal_metadata_grant_bound", |_| {}).await;
+    let alice = UserId::new(Uuid::now_v7());
+    let alice_authz = direct(alice);
+    let bob = UserId::new(Uuid::now_v7());
+    let carol = UserId::new(Uuid::now_v7());
+    let (goal, _) = goal(&h, OwnerId::from(alice), &alice_authz).await;
+    let grant = |subject: UserId, role: Role| GoalAudienceGrantInput {
+        goal,
+        subject,
+        role,
+        expires_at: None,
+    };
+    let reads = proxiima_core::GoalAccess::Reads;
+    h.engine
+        .grant_goal_access(&alice_authz, &grant(bob, Role::editor().managing()))
+        .await
+        .expect("Alice grants Bob editing, managing Goal access");
+    h.engine
+        .grant_goal_access(
+            &alice_authz,
+            &grant(carol, Role::editor().with_goals(reads)),
+        )
+        .await
+        .expect("Alice grants Carol reading Goal access");
+
+    // Administration is the owner's: no grant carries it, whoever asks.
+    for granter in [&alice_authz, &direct(bob)] {
+        let refused = h
+            .engine
+            .grant_goal_access(granter, &grant(carol, Role::admin()))
+            .await
+            .expect_err("a Goal grant carries no owner administration");
+        assert!(
+            refused
+                .to_string()
+                .contains("carries no owner administration"),
+            "{refused}"
+        );
+    }
+
+    // A guest manager grants what its own grant holds, and no more.
+    let dave = UserId::new(Uuid::now_v7());
+    h.engine
+        .grant_goal_access(
+            &alice_authz,
+            &grant(dave, Role::viewer().with_goals(reads).managing()),
+        )
+        .await
+        .expect("Alice grants Dave reading, managing Goal access");
+    h.engine
+        .grant_goal_access(&direct(dave), &grant(carol, Role::editor()))
+        .await
+        .expect_err("a reading manager grants no editing");
+    h.engine
+        .grant_goal_access(
+            &direct(carol),
+            &grant(dave, Role::viewer().with_goals(reads)),
+        )
+        .await
+        .expect_err("a guest who does not manage grants nothing");
+    let carol_row: (i16, i16, bool) = sqlx::query_as(
+        "SELECT read_ceiling, write_ceiling, manage
+           FROM proxiima_core.goal_access_grant
+          WHERE goal_handle = $1 AND subject_id = $2",
+    )
+    .bind(goal.into_inner())
+    .bind(carol.into_inner())
+    .fetch_one(&h.pool)
+    .await
+    .expect("Carol's row after the refused grants");
+    assert_eq!(carol_row, (3, 3, false), "a refused grant changes nothing");
     h.pool.close().await;
 }
 
@@ -276,12 +348,7 @@ async fn g4_guest_edits_metadata_and_revocation_rechecks_replay() {
             &GoalAudienceGrantInput {
                 goal: handle,
                 subject: guest,
-                role: Role::new(
-                    proxiima_core::AccessCeiling::Goal,
-                    proxiima_core::AccessCeiling::Goal,
-                    false,
-                )
-                .unwrap(),
+                role: Role::editor(),
                 expires_at: None,
             },
         )
@@ -294,7 +361,7 @@ async fn g4_guest_edits_metadata_and_revocation_rechecks_replay() {
             &GoalAudienceGrantInput {
                 goal: handle,
                 subject: viewer,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -472,12 +539,7 @@ async fn g4_guest_cannot_discover_open_child_on_achievement_or_abandonment() {
             &GoalAudienceGrantInput {
                 goal: parent_handle,
                 subject: guest,
-                role: Role::new(
-                    proxiima_core::AccessCeiling::Goal,
-                    proxiima_core::AccessCeiling::Goal,
-                    false,
-                )
-                .unwrap(),
+                role: Role::editor(),
                 expires_at: None,
             },
         )
@@ -544,12 +606,7 @@ async fn g4_guest_cannot_create_decompose_edit_unrelated_or_change_motivation() 
             &GoalAudienceGrantInput {
                 goal: parent_handle,
                 subject: guest,
-                role: Role::new(
-                    proxiima_core::AccessCeiling::Goal,
-                    proxiima_core::AccessCeiling::Goal,
-                    false,
-                )
-                .unwrap(),
+                role: Role::editor(),
                 expires_at: None,
             },
         )

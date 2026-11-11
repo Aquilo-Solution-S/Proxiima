@@ -81,30 +81,35 @@ owner's memory grants no access to its target; unreadable targets are redacted.
 
 ### Roles and operation permissions
 
-Roles have separate read and write ceilings over
-`Fact < Abstraction < Perspective < Goal`, plus group-management authority.
-Writing a kind always implies reading it. This access ladder is separate
-from the [derivation rules](#layering).
+Roles have separate read and write ceilings over the memory kinds
+`Fact < Abstraction < Perspective`, and three capabilities beside them: Goal
+access (none, reads, works), owner administration, and group management.
+Writing a kind always implies reading it, and a Goal is no rung: no memory
+ceiling grants Goal access, and Goal access grants no memory. The stored row
+policies do not hold every such role yet: one that reads Goals below a
+Perspective read ceiling, or administers below a Perspective write ceiling,
+is refused wherever a request under it would go through those policies.
+This access ladder is separate from the [derivation rules](#layering).
 
 The standard relations illustrate the intended jobs:
 
-| Role | Reads | Writes | Manages group membership |
-|---|---|---|---|
-| Personal (derived) | All four kinds | All four kinds | No; personal membership is fixed |
-| Viewer | All four kinds | None | No |
-| Ingest | Facts | Facts | No |
-| Editor | All four kinds | Facts, Abstractions, Perspectives | No |
-| Admin | All four kinds | All four kinds | Yes |
+| Role | Reads | Writes | Goals | Administers | Manages group membership |
+|---|---|---|---|---|---|
+| Personal (derived) | All memory kinds | All memory kinds | Works | Yes | No; personal membership is fixed |
+| Viewer | All memory kinds | None | Works | No | No |
+| Ingest | Facts | Facts | None | No | No |
+| Editor | All memory kinds | All memory kinds | Works | No | No |
+| Admin | All memory kinds | All memory kinds | Works | Yes | Yes |
 
 Thus an ingestion service cannot read Perspectives, and an admin of one group
 has no role in another group merely because it is called an admin.
 
 Goal work (setting, modifying and transitioning an owner's Goals) follows
-membership, not the write ceiling: every directly authenticated member whose
-role reads Goals works them. A viewer member sets a group Goal and still
+Goal access, not the write ceiling: every directly authenticated member whose
+role works Goals does so. A viewer member sets a group Goal and still
 writes none of the group's Facts or Perspectives. Achieving, decomposing and
-sharing a Goal keep the Goal write ceiling, and a forwarded or delegated
-request works Goals only with Goal write. An action declares Goal work in the
+sharing a Goal need administration. A forwarded request reads Goals at most,
+and a delegated request works Goals only where it administers. An action declares Goal work in the
 catalog (`OwnerNeed::GoalWork` on its action spec, `McpHostTool::with_goal_work`
 for a host tool); the owner-role gate and every listing read that declaration,
 and a host-state command declared Goal work (`GoalWorkCommand`) commits on a
@@ -164,10 +169,10 @@ does **not** grant access to Team. The arrows show authority climbing from a
 member through a child to its parent, not parent administrators acquiring
 every descendant's data.
 
-Along one path, each cap takes the weaker read/write ceilings and requires
-management on both sides to propagate management. Across several relations
-or membership paths into the same owner, capabilities combine using the
-strongest read/write ceilings and management from either path. A viewer path
+Along one path, each cap takes the weaker read/write ceilings and Goal
+access, and requires administration or management on both sides to propagate
+it. Across several relations or membership paths into the same owner,
+capabilities combine using the strongest of each from either path. A viewer path
 therefore does not cancel a separate editor membership. Removing a relation
 removes that path; another membership can still confer access.
 
@@ -598,7 +603,7 @@ limit is therefore unnecessary.
 | Read a publication | Exact admission, source-owner consent, and an applicable owning-Group Role or Goal guest grant |
 | Read a working draft | Explicit series work binding and applicable read ceiling |
 | Create or revise Abstractions or Perspectives | Explicit work destination and applicable write ceiling |
-| Edit a Goal's title or progress | Owning-Group Role or explicit guest Role with Goal-level write; ordinary lifecycle rules still apply |
+| Edit a Goal's title or progress | Owning-Group Role or explicit guest Role that works Goals; ordinary lifecycle rules still apply |
 | Publish or change an audience | Explicit authority for that sharing operation |
 | Transfer or erase | Existing owner/lifecycle authority; Goal work grants do not provide it |
 

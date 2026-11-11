@@ -81,7 +81,9 @@ impl OwnerAccessReadPort for PgStorage {
                         owner,
                         kind,
                         schema,
-                        route: if scope.may_read(&owner, kind) || scope.goal_principal().is_none() {
+                        route: if scope.may_read_entry(&owner, kind)
+                            || scope.goal_principal().is_none()
+                        {
                             EntryReadRoute::Owner
                         } else {
                             EntryReadRoute::Goal
@@ -124,7 +126,7 @@ impl OwnerAccessReadPort for PgStorage {
     ) -> Result<
         Option<(
             OwnerId,
-            proxiima_core::AccessKind,
+            proxiima_core::EntityKind,
             Option<proxiima_core::SchemaId>,
         )>,
         StorageError,
@@ -144,7 +146,7 @@ impl OwnerAccessReadPort for PgStorage {
         Vec<
             Option<(
                 OwnerId,
-                proxiima_core::AccessKind,
+                proxiima_core::EntityKind,
                 Option<proxiima_core::SchemaId>,
             )>,
         >,

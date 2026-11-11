@@ -682,7 +682,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &GoalAudienceGrantInput {
                 goal: read_goal,
                 subject: bob,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -1096,7 +1096,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &GoalAudienceGrantInput {
                 goal: viewer_goal,
                 subject: bob,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )

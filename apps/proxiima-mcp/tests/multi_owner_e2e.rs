@@ -567,7 +567,7 @@ async fn membership_permit(owner: OwnerId) -> Result<OwnerWritePermit, Box<dyn s
             AuthPath::HostBearer,
         ));
     Ok(engine
-        .authorize_owner_write(&authz, &owner, AccessKind::Goal)
+        .authorize_owner_write(&authz, &owner, AccessKind::Perspective)
         .await?)
 }
 

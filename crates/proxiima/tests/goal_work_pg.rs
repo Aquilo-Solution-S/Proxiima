@@ -109,7 +109,7 @@ async fn external_goal_editor_can_create_and_revise_bound_perspective() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: viewer_user,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -639,6 +639,103 @@ async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
         vec![group.into_inner()],
         "only the readable goal is stored"
     );
+    // Achieving is administration. Goal work does not reach it, neither as
+    // the owner's member nor through the Goal's own route.
+    let achieve = |key: &str| proxiima_core::GoalMarkAchievedRequest {
+        owner: group,
+        prior_goal_id: set.goal_id,
+        authorship: GoalAuthorship::User,
+        request_id: IdempotencyKey::new(key).expect("key"),
+        evidence: Vec::new(),
+        author_self_perspective_id: None,
+    };
+    let refused = h
+        .engine
+        .mark_goal_achieved(&viewer_auth, &achieve("viewer-achieve"))
+        .await;
+    assert!(
+        refused.is_err(),
+        "a viewer member does not achieve a group goal"
+    );
+    // A grant on the Goal adds what the grant holds, not what the membership
+    // holds over the owner: with a reading, managing grant the viewer still
+    // achieves nothing and hands out no editing.
+    h.engine
+        .grant_goal_access(
+            &admin_auth,
+            &GoalAudienceGrantInput {
+                goal: set.goal_handle,
+                subject: viewer_user,
+                role: Role::viewer()
+                    .with_goals(proxiima_core::GoalAccess::Reads)
+                    .managing(),
+                expires_at: None,
+            },
+        )
+        .await
+        .expect("the admin grants the viewer reading, managing Goal access");
+    let refused = h
+        .engine
+        .mark_goal_achieved(&viewer_auth, &achieve("viewer-achieve-as-guest"))
+        .await;
+    assert!(
+        refused.is_err(),
+        "a reading grant adds no achieving to Goal work by membership"
+    );
+    let refused = h
+        .engine
+        .grant_goal_access(
+            &viewer_auth,
+            &GoalAudienceGrantInput {
+                goal: set.goal_handle,
+                subject: UserId::new(Uuid::now_v7()),
+                role: Role::editor(),
+                expires_at: None,
+            },
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a reading manager grants no editing, whatever its membership works"
+    );
+    // Every guest reads the Goal it was granted on, so a grant hands out
+    // Goal read: a manager whose own role reads no Goals grants nothing.
+    let without_goals = authenticated_context(AuthzContext::server_resolved(
+        OwnerRoles::for_subject(
+            admin_user,
+            [(
+                group,
+                Role::new(
+                    proxiima_core::AccessCeiling::Perspective,
+                    proxiima_core::AccessCeiling::Perspective,
+                )
+                .expect("role")
+                .managing(),
+            )],
+        )
+        .expect("a managing role without Goal access"),
+        AuthPath::HostBearer,
+    ));
+    let refused = h
+        .engine
+        .grant_goal_access(
+            &without_goals,
+            &GoalAudienceGrantInput {
+                goal: set.goal_handle,
+                subject: UserId::new(Uuid::now_v7()),
+                role: Role::new(
+                    proxiima_core::AccessCeiling::None,
+                    proxiima_core::AccessCeiling::None,
+                )
+                .expect("role"),
+                expires_at: None,
+            },
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "a manager who reads no Goals grants no Goal read"
+    );
     // A context narrowed to the group carries no Goal principal; it reads
     // the goal it names by its membership role.
     let narrowed = authenticated_context(
@@ -664,5 +761,9 @@ async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
         .into_iter()
         .collect();
     assert_eq!(depends, vec![1], "a readable dependency is kept");
+    h.engine
+        .mark_goal_achieved(&admin_auth, &achieve("admin-achieve"))
+        .await
+        .expect("an admin achieves the goal the viewer could not");
     h.pool.close().await;
 }

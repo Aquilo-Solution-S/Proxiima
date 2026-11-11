@@ -50,9 +50,10 @@ theorem cross_owner_target_admitted :
       may_read requester (memory_owner target) (memory_kind target).accessKind :=
   pin_write_admitted_target_read
 
-/-- Goal pin: writer writes the Goal owner, reads the named Memory. -/
+/-- Goal pin: the writer works the Goal owner's Goals or administers that
+    owner, whichever the Goal operation needs, and reads the named Memory. -/
 def goal_pin_write_admitted (requester : User) (g : Goal) (target : Memory) : Prop :=
-  may_write requester (goal_owner g) .goal ∧
+  (may_work_goals requester (goal_owner g) ∨ may_administer requester (goal_owner g)) ∧
   may_read requester (memory_owner target) (memory_kind target).accessKind
 
 /- ================================================================
@@ -104,19 +105,50 @@ def goal_publication_read_admitted
   publication.controller_generation = current_controller_generation ∧
   publication.source_generation = memory_owner_generation
 
-/-- Editing an existing Goal's title or progress is separate from creating
-    Goals or changing their decomposition. A guest needs Goal-level write
-    for this exact stable Goal and its current controller generation. -/
+/-- Reading the Goal itself: a role that reads the owner's Goals, or a current
+    grant on this exact Goal. Every guest reads the Goal it was granted on,
+    whatever its ceilings. -/
+def goal_read_admitted (requester : User) (controller : GoalControllerEpoch)
+    (grant : Option GoalAudienceGrant) (goal : Goal)
+    (current_controller_generation : Nat) : Prop :=
+  controller.goal_handle = goal_handle goal ∧
+  controller.owner = goal_owner goal ∧
+  controller.generation = current_controller_generation ∧
+  (may_read_goals requester (goal_owner goal) ∨
+    ∃ guest, grant = some guest ∧ guest.goal = controller ∧
+      guest.subject = requester ∧
+      guest.controller_generation = current_controller_generation)
+
+/-- Modifying or transitioning an existing Goal is Goal work, under one rule
+    for members and guests: the role works Goals. A guest's grant counts for
+    this exact stable Goal and its current controller generation. Achieving
+    the Goal is `goal_achieve_admitted`. -/
 def goal_edit_admitted (requester : User) (controller : GoalControllerEpoch)
     (grant : Option GoalAudienceGrant) (goal : Goal)
     (current_controller_generation : Nat) : Prop :=
   controller.goal_handle = goal_handle goal ∧
   controller.owner = goal_owner goal ∧
   controller.generation = current_controller_generation ∧
-  (may_write requester (goal_owner goal) .goal ∨
+  (may_work_goals requester (goal_owner goal) ∨
     ∃ guest, grant = some guest ∧ guest.goal = controller ∧
-      guest.subject = requester ∧ guest.role.mayWrite .goal ∧
+      guest.subject = requester ∧ guest.role.worksGoals ∧
       guest.controller_generation = current_controller_generation)
+
+/-- Whoever edits a Goal reads it. -/
+theorem goal_edit_implies_read (requester : User)
+    (controller : GoalControllerEpoch) (grant : Option GoalAudienceGrant)
+    (goal : Goal) (generation : Nat) :
+    goal_edit_admitted requester controller grant goal generation →
+      goal_read_admitted requester controller grant goal generation := by
+  rintro ⟨hhandle, howner, hgen, hroute⟩
+  refine ⟨hhandle, howner, hgen, ?_⟩
+  cases hroute with
+  | inl member =>
+      obtain ⟨x, hx, hw⟩ := member
+      exact Or.inl ⟨x, hx, x.worksGoals_readsGoals hw⟩
+  | inr guest =>
+      obtain ⟨g, hsome, hgoal, hsubject, _, hctrl⟩ := guest
+      exact Or.inr ⟨g, hsome, hgoal, hsubject, hctrl⟩
 
 theorem goal_edit_requires_exact_goal (requester : User)
     (controller : GoalControllerEpoch) (grant : Option GoalAudienceGrant)
@@ -133,6 +165,33 @@ theorem goal_edit_stale_controller_denied (requester : User)
     ¬ goal_edit_admitted requester controller grant goal generation := by
   intro admitted
   exact h admitted.2.2.1
+
+/-- Achieving a Goal closes it. Over the owner that is administration; on the
+    Goal's own route it belongs to the grant that works this Goal. A member's
+    Goal work alone achieves nothing. -/
+def goal_achieve_admitted (requester : User) (controller : GoalControllerEpoch)
+    (grant : Option GoalAudienceGrant) (goal : Goal)
+    (current_controller_generation : Nat) : Prop :=
+  controller.goal_handle = goal_handle goal ∧
+  controller.owner = goal_owner goal ∧
+  controller.generation = current_controller_generation ∧
+  (may_administer requester (goal_owner goal) ∨
+    ∃ guest, grant = some guest ∧ guest.goal = controller ∧
+      guest.subject = requester ∧ guest.role.worksGoals ∧
+      guest.controller_generation = current_controller_generation)
+
+/-- Without administration and without a grant on the Goal, nobody achieves
+    it, whatever Goal work the role holds. -/
+theorem goal_achieve_needs_administration_or_grant (requester : User)
+    (controller : GoalControllerEpoch) (goal : Goal) (generation : Nat)
+    (h : ¬ may_administer requester (goal_owner goal)) :
+    ¬ goal_achieve_admitted requester controller none goal generation := by
+  rintro ⟨_, _, _, hroute⟩
+  cases hroute with
+  | inl admin => exact h admin
+  | inr guest =>
+      obtain ⟨g, hsome, _⟩ := guest
+      cases hsome
 
 /-- A work route is same-owner and write-ceiling bounded.  It grants no Goal
     administration, transfer, erase, or owner-membership capability. -/

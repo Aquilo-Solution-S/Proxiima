@@ -143,6 +143,12 @@ impl From<AuthorDerivedOutcome> for DerivedMemoryOutcome {
     }
 }
 
+/// The access kind of a derived memory's output kind.
+fn access_kind(kind: EntityKind) -> Result<crate::AccessKind, ProtocolError> {
+    crate::AccessKind::of(kind)
+        .ok_or_else(|| ProtocolError::invalid_argument("kind", "a derived memory is no Goal"))
+}
+
 fn infer_derivation_phase(
     kind: EntityKind,
     origins: &[EdgeEndpoint],
@@ -583,15 +589,7 @@ impl Engine {
         Ok(unique
             .into_iter()
             .zip(permits)
-            .map(|(id, permit)| {
-                let kind = match permit.kind() {
-                    crate::AccessKind::Fact => EntityKind::Fact,
-                    crate::AccessKind::Abstraction => EntityKind::Abstraction,
-                    crate::AccessKind::Perspective => EntityKind::Perspective,
-                    crate::AccessKind::Goal => EntityKind::Goal,
-                };
-                (id, kind)
-            })
+            .map(|(id, permit)| (id, permit.kind()))
             .collect())
     }
 
@@ -784,8 +782,12 @@ impl Engine {
             )
             .await?;
         let owner = command.controller();
-        let permit =
-            crate::GoalWorkPermit::new(command, kind.into(), memory.target, authz.bound_reads());
+        let permit = crate::GoalWorkPermit::new(
+            command,
+            access_kind(kind)?,
+            memory.target,
+            authz.bound_reads(),
+        );
         let item = self
             .prepare_derived_with_permit(authz, memory, &[], &[], owner, permit)
             .await?;
@@ -827,7 +829,9 @@ impl Engine {
                 (scope, command.controller())
             }
             crate::MemoryDestination::Owner(owner) => {
-                let permit = self.authorize_write(authz, &owner, kind.into()).await?;
+                let permit = self
+                    .authorize_write(authz, &owner, access_kind(kind)?)
+                    .await?;
                 let scope = permit
                     .owner_scope()
                     .ok_or_else(|| ProtocolError::forbidden("owner scope required"))?
@@ -906,7 +910,9 @@ impl Engine {
                 "Goal work requires a standalone authoring transaction",
             ));
         };
-        let write_permit = self.authorize_write(authority, &owner, kind.into()).await?;
+        let write_permit = self
+            .authorize_write(authority, &owner, access_kind(kind)?)
+            .await?;
         let owner = *write_permit.owner();
         self.prepare_derived_with_permit(
             authority,
@@ -1451,7 +1457,7 @@ mod tests {
         let owner = owner();
         let permit = OwnerWritePermit::new(
             owner,
-            crate::access::AccessKind::Perspective,
+            crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
             None,
             crate::BoundReadSet::default(),
         );
@@ -1480,7 +1486,7 @@ mod tests {
         let owner = owner();
         let permit = OwnerWritePermit::new(
             owner,
-            crate::access::AccessKind::Perspective,
+            crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
             None,
             crate::BoundReadSet::default(),
         );
@@ -1653,7 +1659,7 @@ mod tests {
         let owner = owner();
         let permit = OwnerWritePermit::new(
             owner,
-            crate::access::AccessKind::Perspective,
+            crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
             None,
             crate::BoundReadSet::default(),
         );

@@ -70,7 +70,6 @@ pub(crate) async fn count_memories_on_connection(
                  ON a.goal_handle = h.handle
                 AND a.controller_generation = h.authority_generation
               WHERE h.owner_id=ANY($1::uuid[]) AND a.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
-                AND a.read_ceiling >= 4
                 AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
          ) SELECT count(*)::bigint FROM candidates",
     )

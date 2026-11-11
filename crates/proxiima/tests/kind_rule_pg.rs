@@ -1,8 +1,9 @@
-//! One rule for reads and writes (#387): a role acts on kind K of an owner
-//! in a direction when its limit for that direction is at least K.
+//! One rule for reads and writes (#387): a role acts on memory kind K of an
+//! owner in a direction when its limit for that direction is at least K, and
+//! on the owner's Goals by its Goal access, whatever its limits.
 //!
-//! Every preset plus `new(G,A)` and `new(A,A)`, both directions, all four
-//! kinds, on every read surface and write verb, served by the runtime role
+//! Every preset plus four custom roles, both directions, all four kinds, on
+//! every read surface and write verb, served by the runtime role
 //! under owner RLS, and embedding backfill. Then direct SQL under a
 //! Fact-only scope on every owner-keyed table. Upload and forget need S3: the
 //! same run on a host with an object store, ignored without the S3 lane.
@@ -29,7 +30,7 @@ use proxiima_core::storage_ports::{
 use proxiima_core::test_fixtures::{ConstantEmbedding, TestEmbeddingRouter};
 use proxiima_core::{
     AccessCeiling, AccessKind, AgentNoteV1, AuthPath, EdgeTargetProjection, EntityKind, EntityRef,
-    GroupId, MemoryId, OwnerId, OwnerRoles, Role, SpiiceRegistry, StorageError,
+    GoalAccess, GroupId, MemoryId, OwnerId, OwnerRoles, Role, SpiiceRegistry, StorageError,
     UploadedBlobPayload, UserId,
 };
 use proxiima_pg_testkit::{db_url, split_role_urls};
@@ -69,30 +70,45 @@ const KINDS: [EntityKind; 4] = [
     EntityKind::Goal,
 ];
 
-fn access(kind: EntityKind) -> AccessKind {
-    AccessKind::from(kind)
+/// Whether `role` writes `kind`: a memory kind up to its write limit. A Goal
+/// when it administers: Goal work below administration is read again from
+/// the membership rows, and these roles are the host's word alone.
+fn writes(role: Role, kind: EntityKind) -> bool {
+    AccessKind::of(kind).map_or(role.administers(), |kind| role.may_write(kind))
 }
 
-/// Every preset, plus the two custom roles the issue names.
-fn roles() -> [(&'static str, Role); 6] {
+/// Every preset, plus limits below the top with and without Goal work.
+fn roles() -> [(&'static str, Role); 7] {
     [
         ("viewer", Role::viewer()),
         ("ingest", Role::ingest()),
         ("editor", Role::editor()),
         ("admin", Role::admin()),
         (
-            "new(G,A)",
-            Role::new(AccessCeiling::Goal, AccessCeiling::Abstraction, false).expect("role"),
+            "new(P,A) works Goals",
+            Role::new(AccessCeiling::Perspective, AccessCeiling::Abstraction)
+                .expect("role")
+                .with_goals(GoalAccess::Works),
         ),
         (
             "new(A,A)",
-            Role::new(
-                AccessCeiling::Abstraction,
-                AccessCeiling::Abstraction,
-                false,
-            )
-            .expect("role"),
+            Role::new(AccessCeiling::Abstraction, AccessCeiling::Abstraction).expect("role"),
         ),
+        (
+            "new(P,P) without Goals",
+            Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective).expect("role"),
+        ),
+    ]
+}
+
+/// Roles the row policies cannot hold yet: they read four rungs, so Goal
+/// read would read every memory kind and administration would write it.
+fn roles_without_row_policies() -> [(&'static str, Role); 3] {
+    let fact = Role::new(AccessCeiling::Fact, AccessCeiling::Fact).expect("role");
+    [
+        ("new(F,F) works Goals", fact.with_goals(GoalAccess::Works)),
+        ("new(F,F) reads Goals", fact.with_goals(GoalAccess::Reads)),
+        ("viewer who administers", Role::viewer().administering()),
     ]
 }
 
@@ -323,7 +339,7 @@ async fn assert_reads(
 ) -> TestResult {
     let authz = context(group, role);
     let engine = built.host().engine();
-    let readable = |kind: EntityKind| role.may_read(access(kind));
+    let readable = |kind: EntityKind| role.may_read_entry(kind);
     let ids = seeded.ids()?;
 
     for mode in ["lexical", "semantic", "hybrid"] {
@@ -534,7 +550,7 @@ async fn assert_writes(
     seeded: &Seeded,
 ) -> TestResult {
     let authz = context(group, role);
-    let writes = |kind: EntityKind| role.may_write(access(kind));
+    let writes = |kind: EntityKind| writes(role, kind);
 
     let fact = remember(tools, &authz, group, &format!("{name} fact")).await;
     assert_eq!(
@@ -572,6 +588,14 @@ async fn assert_writes(
     assert_eq!(
         goal.is_ok(),
         writes(EntityKind::Goal),
+        "{name} Goal: {goal:?}"
+    );
+    // The tool gate decides by Goal access and by no memory limit: it
+    // refuses `new(P,P) without Goals` and passes `new(F,F) works Goals` on.
+    let refused_at_the_gate = matches!(goal, Err(proxiima::CoreMcpError::NotAuthorized(_)));
+    assert_eq!(
+        refused_at_the_gate,
+        !role.works_goals(),
         "{name} Goal: {goal:?}"
     );
     Ok(())
@@ -800,7 +824,7 @@ async fn assert_s3_writes(
         .await;
         assert_eq!(
             forgot.is_ok(),
-            role.may_write(access(kind)),
+            writes(role, kind),
             "{name} forget {kind:?}: {forgot:?}"
         );
     }
@@ -848,7 +872,7 @@ async fn assert_backfill(
             (EntityKind::Perspective, "perspective"),
         ]
         .into_iter()
-        .filter(|(kind, _)| role.may_write(access(*kind)))
+        .filter(|(kind, _)| writes(role, *kind))
         .map(|(_, stored)| stored)
         .collect();
         assert_eq!(touched, expected, "{name} backfill: {queued:?}");
@@ -928,6 +952,17 @@ async fn every_role_acts_exactly_up_to_its_limit(
             if with_s3 {
                 assert_s3_writes(&built, &tools, group, name, role).await?;
             }
+        }
+
+        // Refused whole where the scope is bound, not served with what the
+        // policies would add.
+        for (name, role) in roles_without_row_policies() {
+            let read = built
+                .host()
+                .engine()
+                .query(&context(group, role), &QueryRequest::readable())
+                .await;
+            assert!(read.is_err(), "{name} is not bound: {read:?}");
         }
 
         assert_backfill(&built, &admin, &router, group).await?;
@@ -1503,8 +1538,8 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
 
         let (runtime_url, _) = split_role_urls(&database).await?;
         let runtime = PgPool::connect(&runtime_url).await?;
-        let perspective = Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective, false)
-            .expect("role");
+        let perspective =
+            Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective).expect("role");
         for (name, role, expected) in [
             ("new(P,P)", perspective, BTreeSet::from([fact])),
             ("viewer", Role::viewer(), BTreeSet::from([fact, goal])),
@@ -1597,11 +1632,7 @@ async fn a_derivation_meets_no_content_above_its_limit() -> TestResult {
 
         let abstractions = context(
             group,
-            Role::new(
-                AccessCeiling::Abstraction,
-                AccessCeiling::Abstraction,
-                false,
-            )?,
+            Role::new(AccessCeiling::Abstraction, AccessCeiling::Abstraction)?,
         );
         let abstraction = derive(
             &tools,

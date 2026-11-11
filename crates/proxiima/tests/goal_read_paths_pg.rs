@@ -204,7 +204,7 @@ async fn goal_route_counts_latest_visible_series_once() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: guest,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )

@@ -13,7 +13,7 @@ use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::verbs::query::{EntityKind, GoalMotivationFilter, QueryRequest};
-use proxiima_core::{AccessKind, EdgeEndpoint, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId};
+use proxiima_core::{EdgeEndpoint, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::create_core_db;
@@ -51,7 +51,7 @@ async fn goal_write_replay_terminal_and_write_act() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let pool = pg.pool_for_tests();
         let first_writer = proxiima_core::WriterAttribution {
             by: Uuid::now_v7(),
@@ -240,7 +240,7 @@ async fn goal_query_projects_motivation_and_evidence_filters() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let pool = pg.pool_for_tests();
 
         let base = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;

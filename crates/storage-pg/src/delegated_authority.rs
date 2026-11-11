@@ -7,11 +7,11 @@ use proxiima_core::storage_ports::{
     DelegationGrant, DelegationGrantStorage, DelegationId, DelegationMutationPermit,
     DelegationStorePort,
 };
-use proxiima_core::{ActionName, OwnerId, Role, StorageError, UserId};
+use proxiima_core::{ActionName, OwnerId, StorageError, UserId};
 use sqlx::Row as _;
 use time::OffsetDateTime;
 
-use crate::access::owner_columns::PgAccessCeiling;
+use crate::access::owner_columns::{PgAccessCeiling, delegated_ceiling_columns, member_role};
 use crate::error::{internal, map_err};
 
 /// Backend adapter used by the runtime-composed delegated-authority service.
@@ -45,6 +45,7 @@ impl DelegationStorePort for PgDelegationStore {
         grant: &DelegationGrant,
     ) -> Result<(), StorageError> {
         let owner_id = grant.owner().into_inner();
+        let (read_ceiling, write_ceiling) = delegated_ceiling_columns(grant.role_ceiling())?;
         let mut tx = self.platform.begin().await?;
         // `auth_epoch` is NOT NULL and read by no one; the column goes at the
         // next schema reset.
@@ -60,8 +61,8 @@ impl DelegationStorePort for PgDelegationStore {
         .bind(owner_id)
         .bind(grant.command().tool().as_str())
         .bind(grant.command().action().map(ActionName::as_str))
-        .bind(PgAccessCeiling::from(grant.role_ceiling().read_ceiling()))
-        .bind(PgAccessCeiling::from(grant.role_ceiling().write_ceiling()))
+        .bind(read_ceiling)
+        .bind(write_ceiling)
         .bind(OffsetDateTime::from(grant.expires_at()))
         .bind(OffsetDateTime::from(grant.issued_at()))
         .bind(grant.writer().by)
@@ -141,8 +142,7 @@ fn decode_grant(
     let owner = OwnerId::new(owner_id);
     let read: PgAccessCeiling = row.try_get("read_ceiling").map_err(internal)?;
     let write: PgAccessCeiling = row.try_get("write_ceiling").map_err(internal)?;
-    let role_ceiling = Role::new(read.into(), write.into(), false)
-        .map_err(|error| StorageError::Internal(error.to_string()))?;
+    let role_ceiling = member_role(read, write, false)?;
 
     DelegationGrant::from_storage(
         permit,

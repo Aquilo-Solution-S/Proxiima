@@ -327,7 +327,8 @@ pub(crate) async fn author_work_memory(
     permit: &GoalWorkPermit,
     _proof: OperatorWriteProof,
 ) -> Result<AuthorDerivedOutcome, StorageError> {
-    if req.owner != permit.owner() || proxiima_core::AccessKind::from(req.kind) != permit.kind() {
+    if req.owner != permit.owner() || proxiima_core::AccessKind::of(req.kind) != Some(permit.kind())
+    {
         return Err(StorageError::ConstraintViolation(
             "Goal work draft does not match its sealed destination".into(),
         ));

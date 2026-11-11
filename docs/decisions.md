@@ -217,9 +217,9 @@ commits with the transformed records.
 
 ## Goal collaboration keeps one durable owner
 
-Goal-level write includes the title and progress of that existing Goal.
-Creating Goals and changing their decomposition still require owner authority;
-a guest grant never becomes owner-wide Goal write.
+A guest grant that works Goals covers the title and progress of that one
+Goal. Creating Goals and changing their decomposition still require owner
+authority; a guest grant never becomes owner-wide Goal work.
 
 The target collaboration model keeps each Goal and memory series under one
 personal or Group owner. Context, exact-admission publication, and series work bindings

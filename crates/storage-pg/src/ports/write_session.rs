@@ -11,7 +11,7 @@ use proxiima_core::verbs::goal_write::{
 use proxiima_core::verbs::query::SidecarAtom;
 use proxiima_core::{
     AuthorDerivedOutcome, AuthorDerivedRequest, ColdObjectStore, GroupId, MembershipRow, MemoryId,
-    Role, StorageError, UserId,
+    StorageError, UserId,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -93,14 +93,9 @@ impl<'connection> PgHostStateSession<'_, 'connection> {
         let memberships = rows
             .into_iter()
             .map(|(group, read, write, manage)| {
-                let role = Role::new(read.into(), write.into(), manage).map_err(|error| {
-                    StorageError::ConstraintViolation(format!(
-                        "group role projection contains an invalid role: {error}"
-                    ))
-                })?;
                 Ok(MembershipRow {
                     group: GroupId::new(group),
-                    role,
+                    role: crate::access::owner_columns::member_role(read, write, manage)?,
                 })
             })
             .collect::<Result<Vec<_>, StorageError>>()?;
@@ -267,7 +262,7 @@ impl WriteSessionFactory for PgStorage {
         &self,
         permit: &OwnerWritePermit,
     ) -> Result<Box<dyn WriteSession>, StorageError> {
-        if permit.access_kind() != proxiima_core::AccessKind::Goal {
+        if permit.authority() != proxiima_core::storage_ports::WriteAuthority::Administration {
             return Err(StorageError::ConstraintViolation(
                 "a series erase requires an Admin-level owner permit".into(),
             ));
@@ -649,7 +644,7 @@ impl WriteSession for PgWriteSession {
         .bind(t)
         .bind(owner_id)
         .bind(PgMemoryKind::labels(&verbs::forget::kinds_within(
-            permit.access_kind(),
+            permit.authority().memory_limit(),
         )))
         .fetch_optional(&mut *self.tx)
         .await

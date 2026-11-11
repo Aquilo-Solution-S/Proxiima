@@ -71,48 +71,81 @@ instance : Inhabited User := ⟨User.ofToken "causa-kernel-witness"⟩
 -- The access ladder and roles
 -- ============================================================
 
-/-- The four core entity kinds, ranked for ACCESS. This is the access axis
-    (who may touch what); it is distinct from the edge-directionality layer ℓ
-    in `Causa.Edges`, which keeps Goals outside the F/A/P comparison (ME-14).
-    Here all four are linearly ranked. -/
+/-- The three memory kinds, ranked for ACCESS. This is the access axis (who
+    may touch what); it is distinct from the edge-directionality layer ℓ in
+    `Causa.Edges`. A Goal is intent, not memory, and is not on this ladder:
+    what a role may do with Goals is `Role.goals`. -/
 inductive AccessKind where
-  | fact | abstraction | perspective | goal
+  | fact | abstraction | perspective
   deriving DecidableEq, Repr
 
 def AccessKind.rank : AccessKind → Nat
-  | .fact => 0 | .abstraction => 1 | .perspective => 2 | .goal => 3
+  | .fact => 0 | .abstraction => 1 | .perspective => 2
 
-/-- A role = two capability ceilings over the access ladder plus a
-    meta-management flag. `read` / `write` are layer counts (0 = none, 1 = F,
-    2 = F+A, 3 = F+A+P, 4 = all incl. Goals); capability over a kind `k` is
-    `k.rank < ceiling`. `manage` is the authority to write the GROUP's own role
-    map (add/remove members, assign roles) — distinct from writing entities.
+/-- What a role may do with the owner's Goals: nothing, read them, or work
+    them (set, modify, transition). Its own chain, beside the memory ladder. -/
+inductive GoalAccess where
+  | none | reads | works
+  deriving DecidableEq, Repr
+
+def GoalAccess.rank : GoalAccess → Nat
+  | .none => 0 | .reads => 1 | .works => 2
+
+/-- The weaker of two. -/
+def GoalAccess.meet (x y : GoalAccess) : GoalAccess :=
+  if x.rank ≤ y.rank then x else y
+
+/-- The stronger of two. -/
+def GoalAccess.join (x y : GoalAccess) : GoalAccess :=
+  if x.rank ≤ y.rank then y else x
+
+/-- A role = two ceilings over the memory ladder and three capabilities.
+    `read` / `write` are layer counts (0 = none, 1 = F, 2 = F+A, 3 = F+A+P);
+    capability over a kind `k` is `k.rank < ceiling`. `goals` is what the role
+    may do with the owner's Goals. `administer` is authority over the owner
+    itself: transfer, erase, and achieving, decomposing and sharing its Goals.
+    `manage` is the authority to write the GROUP's own role map (add/remove
+    members, assign roles). No capability follows from a ceiling's position.
     `write_le_read` makes "write ⊆ read" a structural field, not an axiom — a
     member can always read at least what it may write. -/
 structure Role where
   read  : Nat
   write : Nat
+  goals : GoalAccess
+  administer : Bool
   manage : Bool
   write_le_read : write ≤ read
 
 def Role.mayRead  (x : Role) (k : AccessKind) : Prop := k.rank < x.read
 def Role.mayWrite (x : Role) (k : AccessKind) : Prop := k.rank < x.write
+/-- Reads the owner's Goals. -/
+def Role.readsGoals (x : Role) : Prop := x.goals ≠ .none
+/-- Works the owner's Goals: sets, modifies and transitions them. -/
+def Role.worksGoals (x : Role) : Prop := x.goals = .works
+/-- Administers the owner: transfer, erase, and achieving, decomposing and
+    sharing its Goals. -/
+def Role.administers (x : Role) : Prop := x.administer = true
 /-- Meta-management authority: may add/remove members and assign roles in the
     group. A group-level rule still gates the use of it — personal groups
     forbid management entirely (see `personal_forbids_manage`). -/
 def Role.manages (x : Role) : Prop := x.manage = true
 
-/-- Maximal ENTITY authority over one's own scope, but NOT an admin role: the
+/-- Working Goals includes reading them. -/
+theorem Role.worksGoals_readsGoals (x : Role) (h : x.worksGoals) : x.readsGoals := by
+  simp only [Role.worksGoals] at h
+  simp [Role.readsGoals, h]
+
+/-- Maximal authority over one's own scope, but NOT a managing role: the
     personal group is auto-derived and unmanageable, so `manage := false`. -/
-def Role.personal : Role := ⟨4, 4, false, by omega⟩
-/-- Read every kind, write none, no management. -/
-def Role.viewer   : Role := ⟨4, 0, false, by omega⟩
-/-- Source ingest: Facts in and out only. -/
-def Role.ingest   : Role := ⟨1, 1, false, by omega⟩
-/-- Author up to Perspectives, not Goals (illustrative preset). -/
-def Role.editor   : Role := ⟨4, 3, false, by omega⟩
-/-- Group admin: full read/write plus meta-management of the group. -/
-def Role.admin    : Role := ⟨4, 4, true, by omega⟩
+def Role.personal : Role := ⟨3, 3, .works, true, false, by omega⟩
+/-- Read every kind, write none, work Goals, no administration. -/
+def Role.viewer   : Role := ⟨3, 0, .works, false, false, by omega⟩
+/-- Source ingest: Facts in and out only, no Goals. -/
+def Role.ingest   : Role := ⟨1, 1, .none, false, false, by omega⟩
+/-- Author every memory kind and work Goals, no administration. -/
+def Role.editor   : Role := ⟨3, 3, .works, false, false, by omega⟩
+/-- Group admin: everything, including administration and management. -/
+def Role.admin    : Role := ⟨3, 3, .works, true, true, by omega⟩
 
 -- ============================================================
 -- Role lattice — combine roles across membership paths
@@ -122,15 +155,33 @@ def Role.admin    : Role := ⟨4, 4, true, by omega⟩
     sub-group's inherited authority. `write_le_read` is preserved (min is
     monotone). -/
 def Role.meet (x y : Role) : Role :=
-  ⟨min x.read y.read, min x.write y.write, x.manage && y.manage, by
+  ⟨min x.read y.read, min x.write y.write, x.goals.meet y.goals,
+    x.administer && y.administer, x.manage && y.manage, by
     have hx := x.write_le_read; have hy := y.write_le_read; omega⟩
 
 /-- Join: the STRONGER of two roles per capability. Used when a user is a member
     via two paths — the higher capability wins. `write_le_read` is preserved
     (max is monotone). -/
 def Role.join (x y : Role) : Role :=
-  ⟨max x.read y.read, max x.write y.write, x.manage || y.manage, by
+  ⟨max x.read y.read, max x.write y.write, x.goals.join y.goals,
+    x.administer || y.administer, x.manage || y.manage, by
     have hx := x.write_le_read; have hy := y.write_le_read; omega⟩
+
+/-- A cap that lacks a capability removes it: the meet works Goals,
+    administers or manages only where the cap does. -/
+theorem Role.meet_capped (x cap : Role) :
+    ((x.meet cap).worksGoals → cap.worksGoals) ∧
+    ((x.meet cap).administers → cap.administers) ∧
+    ((x.meet cap).manages → cap.manages) := by
+  refine ⟨?_, ?_, ?_⟩
+  · simp only [Role.worksGoals, Role.meet, GoalAccess.meet]
+    generalize x.goals = a
+    generalize cap.goals = c
+    cases a <;> cases c <;> simp [GoalAccess.rank]
+  · simp only [Role.administers, Role.meet, Bool.and_eq_true]
+    exact fun h => h.2
+  · simp only [Role.manages, Role.meet, Bool.and_eq_true]
+    exact fun h => h.2
 
 -- ============================================================
 -- Group and Owner

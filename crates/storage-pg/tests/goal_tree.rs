@@ -17,8 +17,8 @@ use proxiima_core::verbs::goal_write::{
     GoalWriteOutcome, IdempotencyKey, ModifyGoalAtomicRequest, TransitionGoalAtomicRequest,
 };
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, GoalId, MemoryId, OwnerId, PendingWork, SchemaId,
-    SchemaVersion, SpiiceRegistry, SpiiceRegistryFrozen, StorageError, UserId,
+    EdgeEndpoint, EntityKind, GoalId, MemoryId, OwnerId, PendingWork, SchemaId, SchemaVersion,
+    SpiiceRegistry, SpiiceRegistryFrozen, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -102,7 +102,7 @@ impl Tree {
             .await?
             .with_cold(Arc::new(MemoryColdStore));
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let fact = pg
             .ingest_fact_atomic(&permit, &fact_draft(MemoryKind::Fact), None)
             .await?;

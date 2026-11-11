@@ -1177,7 +1177,7 @@ impl<'a> UnitOfWork<'a> {
     {
         let permit = self
             .engine
-            .authorize_write(self.authz()?, &request.owner, AccessKind::Goal)
+            .authorize_owner_admin(self.authz()?, &request.owner)
             .await?;
         let request = self.engine.normalize_goal_request(request)?;
         self.create_goal_payload_authorized(request, None, &permit)
@@ -1192,7 +1192,7 @@ impl<'a> UnitOfWork<'a> {
     ) -> Result<GoalWriteOutcome, ProtocolError> {
         let permit = self
             .engine
-            .authorize_write(self.authz()?, &req.owner, AccessKind::Goal)
+            .authorize_owner_admin(self.authz()?, &req.owner)
             .await?;
         let req = super::GoalCreatePayloadWriteRequest {
             payload: self.engine.normalize_payload_write(req.payload)?,

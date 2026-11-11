@@ -35,8 +35,8 @@ use proxiima::spiice::{
     ToolCtx, ToolEffect, ToolError,
 };
 use proxiima::{
-    AccessKind, AppContext, AppInfo, Authz, Proxiima, Role, RunningProxiima, RuntimeBuilder,
-    SpiiceApp,
+    AccessKind, AppContext, AppInfo, Authz, ForwarderRole, Proxiima, RunningProxiima,
+    RuntimeBuilder, SpiiceApp,
 };
 use proxiima_pg_testkit::SplitRoleDb;
 use serde_json::{Value, json};
@@ -694,7 +694,7 @@ async fn a_forwarded_call_reaches_the_tool_with_its_ticket_under_the_fixed_role(
         );
         assert_eq!(
             seen["role"],
-            format!("{:?}", Role::editor()),
+            format!("{:?}", ForwarderRole::Editor.role()),
             "the forwarder holds exactly PROXIIMA_FORWARDER_ROLE in the Group: {seen}"
         );
         assert_eq!(
@@ -802,7 +802,11 @@ async fn a_viewer_forwarder_is_refused_the_write_an_editor_forwarder_gets() {
         )
         .await?;
         assert_eq!(seen["ticket"], "t-789", "{seen}");
-        assert_eq!(seen["role"], format!("{:?}", Role::viewer()), "{seen}");
+        assert_eq!(
+            seen["role"],
+            format!("{:?}", ForwarderRole::Viewer.role()),
+            "{seen}"
+        );
         assert!(
             seen["editor_write_refusal"].is_string(),
             "a viewer forwarder must be refused an Editor write: {seen}"
@@ -928,7 +932,7 @@ async fn forwarded_owner_claim_reaches_personal_memory_and_isolates_every_reques
             assert_eq!(probe["owner"], owner.to_string());
             assert_eq!(probe["principal"], stack.forwarder.to_string());
             assert_eq!(probe["readable_owners"], json!([owner.to_string()]));
-            assert_eq!(probe["role"], format!("{:?}", Role::editor()));
+            assert_eq!(probe["role"], format!("{:?}", ForwarderRole::Editor.role()));
             assert_eq!(probe["may_manage"], false);
             let memory =
                 remember_and_read_writer(&client, &base, &token, &session, owner, body, writer)

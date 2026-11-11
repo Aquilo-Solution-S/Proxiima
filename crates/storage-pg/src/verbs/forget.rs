@@ -53,13 +53,13 @@ impl Reach {
     pub(crate) fn of(permit: &proxiima_core::storage_ports::OwnerWritePermit) -> Self {
         Self {
             owner_id: permit.owner().into_inner(),
-            kinds: kinds_within(permit.access_kind()),
+            kinds: kinds_within(permit.authority().memory_limit()),
         }
     }
 }
 
-/// The stored Memory kinds at or below `limit`.
-pub(crate) fn kinds_within(limit: proxiima_core::AccessKind) -> Vec<PgMemoryKind> {
+/// The stored Memory kinds at or below `limit`; none without a limit.
+pub(crate) fn kinds_within(limit: Option<proxiima_core::AccessKind>) -> Vec<PgMemoryKind> {
     use proxiima_core::AccessKind;
     [
         (AccessKind::Fact, PgMemoryKind::Fact),
@@ -67,7 +67,7 @@ pub(crate) fn kinds_within(limit: proxiima_core::AccessKind) -> Vec<PgMemoryKind
         (AccessKind::Perspective, PgMemoryKind::Perspective),
     ]
     .into_iter()
-    .filter(|(access, _)| access.rank() <= limit.rank())
+    .filter(|(access, _)| limit.is_some_and(|limit| access.rank() <= limit.rank()))
     .map(|(_, kind)| kind)
     .collect()
 }

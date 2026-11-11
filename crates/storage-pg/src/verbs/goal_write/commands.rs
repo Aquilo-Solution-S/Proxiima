@@ -1101,7 +1101,7 @@ mod lifecycle_lock_tests {
         let result: Result<(), Box<dyn std::error::Error>> = async {
             let pg = PgStorage::connect_for_tests(url.clone()).await?;
             let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-            let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+            let permit = OwnerWritePermit::admin_for_tests(owner);
             let target = pg.ingest_fact_atomic(&permit, &fact(), None).await?;
             let pool = pg.pool_for_tests();
             let mut tx = pool.begin().await?;
@@ -1185,7 +1185,7 @@ mod lifecycle_lock_tests {
         let result: Result<(), Box<dyn std::error::Error>> = async {
             let pg = PgStorage::connect_for_tests(url.clone()).await?;
             let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-            let _permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+            let _permit = OwnerWritePermit::admin_for_tests(owner);
             let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
             let draft = GoalDraft {
                 owner,

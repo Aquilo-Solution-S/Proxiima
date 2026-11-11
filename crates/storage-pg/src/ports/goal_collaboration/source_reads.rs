@@ -1,7 +1,7 @@
 //! Exact source reads carried through the collaboration transaction's fences.
 
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, GoalHandle, OwnerId, OwnerRoles, OwnerScope, StorageError,
+    EdgeEndpoint, EntityKind, GoalHandle, OwnerId, OwnerRoles, OwnerScope, StorageError,
 };
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -12,7 +12,7 @@ use crate::{PgStorage, error::map_err};
 struct Source {
     id: Uuid,
     owner: OwnerId,
-    kind: AccessKind,
+    kind: EntityKind,
     route: Option<(GoalHandle, OwnerId)>,
 }
 
@@ -60,10 +60,10 @@ impl SourceReads {
         let mut sources = Vec::with_capacity(rows.len());
         for row in rows {
             let kind = match row.get::<String, _>("kind").as_str() {
-                "fact" => AccessKind::Fact,
-                "abstraction" => AccessKind::Abstraction,
-                "perspective" => AccessKind::Perspective,
-                "goal" => AccessKind::Goal,
+                "fact" => EntityKind::Fact,
+                "abstraction" => EntityKind::Abstraction,
+                "perspective" => EntityKind::Perspective,
+                "goal" => EntityKind::Goal,
                 _ => {
                     return Err(StorageError::ConstraintViolation(
                         "unknown source kind".into(),
@@ -85,7 +85,7 @@ impl SourceReads {
         if endpoints.iter().any(|e| {
             !sources
                 .iter()
-                .any(|s| s.id == e.entity_id() && s.kind == AccessKind::from(e.kind))
+                .any(|s| s.id == e.entity_id() && s.kind == e.kind)
         }) {
             return Err(StorageError::NotFound);
         }
@@ -130,7 +130,7 @@ impl SourceReads {
         }
         for source in &self.sources {
             let owner_read = super::current_role(scope, roles, source.owner)
-                .is_some_and(|role| role.may_read(source.kind));
+                .is_some_and(|role| role.may_read_entry(source.kind));
             // A Goal route is read only for a source the owner role does
             // not admit, so a context without a Goal principal reads its
             // owners' sources by role alone.
@@ -141,14 +141,14 @@ impl SourceReads {
                     .bind(goal.into_inner()).bind(controller.into_inner()).fetch_one(&mut **tx).await.map_err(map_err)?;
                 super::role_for_goal(tx, scope, roles, goal, controller, generation)
                     .await?
-                    .is_some_and(|role| role.may_read(source.kind))
+                    .is_some_and(|role| role.may_read_entry(source.kind))
             } else {
                 false
             };
             if !owner_read && !goal_read {
                 return Err(StorageError::NotFound);
             }
-            if source.kind != AccessKind::Goal {
+            if source.kind != EntityKind::Goal {
                 let row: Option<Uuid> = sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory /* FORGET-POLICY: live-only (commit source liveness) */ WHERE t=$1 AND forgotten_at IS NULL FOR SHARE")
                     .bind(source.id).fetch_optional(&mut **tx).await.map_err(map_err)?;
                 if row != Some(source.owner.into_inner()) {

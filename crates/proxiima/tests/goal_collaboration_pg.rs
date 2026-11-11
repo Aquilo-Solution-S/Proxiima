@@ -228,7 +228,7 @@ async fn publication_keeps_exact_version_and_includes_later_invitees() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: reader,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -315,7 +315,7 @@ async fn transfer_invalidates_publication_until_fresh_source_publish() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: reader,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -450,7 +450,7 @@ async fn independent_goal_routes_revoke_one_without_revoking_the_other() {
                 &GoalAudienceGrantInput {
                     goal,
                     subject,
-                    role: Role::viewer(),
+                    role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                     expires_at: None,
                 },
             )
@@ -573,7 +573,7 @@ async fn owning_group_role_reads_foreign_publication_without_guest_grant() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: reader,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )
@@ -619,7 +619,7 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
             &GoalAudienceGrantInput {
                 goal,
                 subject: reader,
-                role: Role::viewer(),
+                role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
         )

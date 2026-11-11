@@ -5,8 +5,8 @@ use proxiima_core::scope::ScopeKind;
 use proxiima_core::spiice::{TransferLeg, TransferRule};
 use proxiima_core::storage_ports::{MembershipEndpointAuthority, MembershipMemberAuthority};
 use proxiima_core::{
-    AccessKind, EntityId, GroupId, MembershipRow, OwnerId, Relation, Role, SchemaId, StorageError,
-    UserId,
+    AccessCeiling, AccessKind, EntityId, EntityKind, GoalAccess, GroupId, MembershipRow, OwnerId,
+    Relation, Role, SchemaId, StorageError, UserId,
 };
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -21,28 +21,90 @@ pub(crate) enum PgAccessCeiling {
     Goal,
 }
 
-impl From<proxiima_core::AccessCeiling> for PgAccessCeiling {
-    fn from(value: proxiima_core::AccessCeiling) -> Self {
-        match value {
-            proxiima_core::AccessCeiling::None => Self::None,
-            proxiima_core::AccessCeiling::Fact => Self::Fact,
-            proxiima_core::AccessCeiling::Abstraction => Self::Abstraction,
-            proxiima_core::AccessCeiling::Perspective => Self::Perspective,
-            proxiima_core::AccessCeiling::Goal => Self::Goal,
+/// The stored role columns still carry a fourth rung above Perspective.
+/// This is the only place that reads or writes it: on a read column it is
+/// Goal access, on a write column administration.
+impl PgAccessCeiling {
+    /// The memory ceiling under the stored rung.
+    const fn memory(self) -> AccessCeiling {
+        match self {
+            Self::None => AccessCeiling::None,
+            Self::Fact => AccessCeiling::Fact,
+            Self::Abstraction => AccessCeiling::Abstraction,
+            Self::Perspective | Self::Goal => AccessCeiling::Perspective,
+        }
+    }
+
+    const fn of(ceiling: AccessCeiling) -> Self {
+        match ceiling {
+            AccessCeiling::None => Self::None,
+            AccessCeiling::Fact => Self::Fact,
+            AccessCeiling::Abstraction => Self::Abstraction,
+            AccessCeiling::Perspective => Self::Perspective,
         }
     }
 }
 
-impl From<PgAccessCeiling> for proxiima_core::AccessCeiling {
-    fn from(value: PgAccessCeiling) -> Self {
-        match value {
-            PgAccessCeiling::None => Self::None,
-            PgAccessCeiling::Fact => Self::Fact,
-            PgAccessCeiling::Abstraction => Self::Abstraction,
-            PgAccessCeiling::Perspective => Self::Perspective,
-            PgAccessCeiling::Goal => Self::Goal,
-        }
+fn stored_role(read: PgAccessCeiling, write: PgAccessCeiling) -> Result<Role, StorageError> {
+    Role::new(read.memory(), write.memory()).map_err(|error| {
+        StorageError::ConstraintViolation(format!("stored role is invalid: {error}"))
+    })
+}
+
+/// A role from its stored columns: the top read rung works the owner's Goals,
+/// the top write rung administers the owner. The group role projection and
+/// delegated ceilings share this one reading.
+pub(crate) fn member_role(
+    read: PgAccessCeiling,
+    write: PgAccessCeiling,
+    manage: bool,
+) -> Result<Role, StorageError> {
+    let mut role = stored_role(read, write)?;
+    if read == PgAccessCeiling::Goal {
+        role = role.with_goals(GoalAccess::Works);
     }
+    if write == PgAccessCeiling::Goal {
+        role = role.administering();
+    }
+    Ok(if manage { role.managing() } else { role })
+}
+
+/// The stored columns of a delegated ceiling: the inverse of
+/// [`member_role`]. The fourth rung sits above Perspective and says "works
+/// Goals" or "administers", so a ceiling that reads Goals without working
+/// them, works them below a Perspective read limit, or administers without
+/// a Perspective write limit and Goal work has no stored form. It is
+/// refused, neither widened nor narrowed.
+pub(crate) fn delegated_ceiling_columns(
+    role: Role,
+) -> Result<(PgAccessCeiling, PgAccessCeiling), StorageError> {
+    let top = AccessCeiling::Perspective;
+    let read = match role.goals() {
+        GoalAccess::None => Some(PgAccessCeiling::of(role.read_ceiling())),
+        GoalAccess::Works if role.read_ceiling() == top => Some(PgAccessCeiling::Goal),
+        GoalAccess::Reads | GoalAccess::Works => None,
+    };
+    let write = if !role.administers() {
+        Some(PgAccessCeiling::of(role.write_ceiling()))
+    } else if role.write_ceiling() == top && role.works_goals() {
+        Some(PgAccessCeiling::Goal)
+    } else {
+        None
+    };
+    read.zip(write).ok_or_else(|| {
+        StorageError::ConstraintViolation(
+            "a delegated ceiling works Goals only with a Perspective read limit, reads Goals \
+             only by working them, and administers only with a Perspective write limit and \
+             Goal work"
+                .into(),
+        )
+    })
+}
+
+/// The access kind of a memory's entity kind.
+pub(crate) fn memory_access_kind(kind: EntityKind) -> Result<AccessKind, StorageError> {
+    AccessKind::of(kind)
+        .ok_or_else(|| StorageError::ConstraintViolation("a Goal is no memory".into()))
 }
 
 use crate::error::{map_err, with_bounded_retry};
@@ -757,12 +819,7 @@ pub(crate) async fn resolve_subject_membership(
         let (Some(read), Some(write), Some(manage)) = (read, write, manage) else {
             continue;
         };
-        let role = Role::new(read.into(), write.into(), manage).map_err(|error| {
-            StorageError::ConstraintViolation(format!(
-                "group role projection contains an invalid role: {error}"
-            ))
-        })?;
-        memberships.push((GroupId::new(group), role));
+        memberships.push((GroupId::new(group), member_role(read, write, manage)?));
     }
     Ok(SubjectMemberships {
         subject_is_group,
@@ -1534,7 +1591,7 @@ pub(crate) async fn visible_home_owners(
     conn: &mut sqlx::PgConnection,
     entities: &[EntityId],
     read_owners: &[OwnerId],
-) -> Result<Vec<Option<(OwnerId, AccessKind, Option<SchemaId>)>>, StorageError> {
+) -> Result<Vec<Option<(OwnerId, EntityKind, Option<SchemaId>)>>, StorageError> {
     if read_owners.is_empty() {
         return Ok(vec![None; entities.len()]);
     }
@@ -1611,7 +1668,7 @@ pub(crate) async fn visible_home_owners(
                 .map(|(owner, kind, schema)| {
                     Ok((
                         OwnerId::new(*owner),
-                        access_kind(kind)?,
+                        entity_kind(kind)?,
                         schema.clone().map(SchemaId::new),
                     ))
                 })
@@ -1620,12 +1677,12 @@ pub(crate) async fn visible_home_owners(
         .collect()
 }
 
-fn access_kind(stored: &str) -> Result<AccessKind, StorageError> {
+fn entity_kind(stored: &str) -> Result<EntityKind, StorageError> {
     match stored {
-        "fact" => Ok(AccessKind::Fact),
-        "abstraction" => Ok(AccessKind::Abstraction),
-        "perspective" => Ok(AccessKind::Perspective),
-        "goal" => Ok(AccessKind::Goal),
+        "fact" => Ok(EntityKind::Fact),
+        "abstraction" => Ok(EntityKind::Abstraction),
+        "perspective" => Ok(EntityKind::Perspective),
+        "goal" => Ok(EntityKind::Goal),
         other => Err(StorageError::Internal(format!(
             "unknown entity kind {other}"
         ))),
@@ -3281,5 +3338,62 @@ mod tests {
             refuse_untransferable_entity(&surfaces, MEMORY_SPINE),
             StorageError::Internal(_)
         ));
+    }
+
+    const RUNGS: [PgAccessCeiling; 5] = [
+        PgAccessCeiling::None,
+        PgAccessCeiling::Fact,
+        PgAccessCeiling::Abstraction,
+        PgAccessCeiling::Perspective,
+        PgAccessCeiling::Goal,
+    ];
+
+    /// The fourth stored rung is Goal work on a read column and
+    /// administration on a write column; below it the columns are the
+    /// memory ceilings.
+    #[test]
+    fn a_stored_role_reads_the_fourth_rung_as_goal_work_and_administration() {
+        for (r, read) in RUNGS.into_iter().enumerate() {
+            for write in RUNGS.into_iter().take(r + 1) {
+                let role = member_role(read, write, true).expect("write within read is a role");
+                assert_eq!(role.read_ceiling(), read.memory());
+                assert_eq!(role.write_ceiling(), write.memory());
+                assert_eq!(role.works_goals(), read == PgAccessCeiling::Goal);
+                assert_eq!(role.reads_goals(), read == PgAccessCeiling::Goal);
+                assert_eq!(role.administers(), write == PgAccessCeiling::Goal);
+                assert!(role.manages());
+            }
+        }
+        assert!(member_role(PgAccessCeiling::Fact, PgAccessCeiling::Abstraction, false).is_err());
+    }
+
+    /// A delegated ceiling is stored exactly or not at all: every stored
+    /// pair writes back to itself, and a ceiling with no stored form is
+    /// refused rather than recorded as a different one.
+    #[test]
+    fn a_delegated_ceiling_is_stored_exactly_or_refused() {
+        for (r, read) in RUNGS.into_iter().enumerate() {
+            for write in RUNGS.into_iter().take(r + 1) {
+                let role = member_role(read, write, false).expect("write within read is a role");
+                assert_eq!(
+                    delegated_ceiling_columns(role).expect("a stored ceiling has columns"),
+                    (read, write)
+                );
+            }
+        }
+        for unstorable in [
+            Role::editor().with_goals(GoalAccess::Reads),
+            Role::ingest().with_goals(GoalAccess::Works),
+            Role::editor().with_goals(GoalAccess::None).administering(),
+            Role::viewer().administering(),
+        ] {
+            assert!(
+                matches!(
+                    delegated_ceiling_columns(unstorable),
+                    Err(StorageError::ConstraintViolation(_))
+                ),
+                "{unstorable:?} has no stored form"
+            );
+        }
     }
 }

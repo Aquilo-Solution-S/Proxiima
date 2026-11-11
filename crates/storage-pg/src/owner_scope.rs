@@ -56,14 +56,37 @@ pub(crate) async fn finish_transaction<T>(
 /// The transaction-local owner settings of `scope`, name and text value:
 /// the one list [`bind_owner_scope`] writes and [`live_memory_owners_as`]
 /// hands to `proxiima_core.live_memory_owners_as`.
-fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
+///
+/// The row policies still read four rungs: an owner in `app.read_goal` reads
+/// every memory kind there, and an owner in `app.write_goal` writes every
+/// kind. A role those two settings would widen has no settings yet and is
+/// refused here, like a grant or a ceiling with no stored form: one that
+/// reads Goals below a Perspective read limit, or administers below a
+/// Perspective write limit.
+fn owner_scope_settings(scope: &OwnerScope) -> Result<[(&'static str, String); 12], StorageError> {
     // The text form PostgreSQL gives `uuid[]::text`, which the RLS policies
     // cast back with `::uuid[]`.
     fn uuid_array(owners: Vec<OwnerId>) -> String {
         let ids: Vec<String> = owner_ids(owners).iter().map(Uuid::to_string).collect();
         format!("{{{}}}", ids.join(","))
     }
-    [
+    let top = AccessKind::Perspective;
+    let widened = scope
+        .goal_reading_owners()
+        .iter()
+        .any(|owner| !scope.may_read(owner, top))
+        || scope
+            .administered_owners()
+            .iter()
+            .any(|owner| !scope.may_write(owner, top));
+    if widened {
+        return Err(StorageError::ConstraintViolation(
+            "the row policies cannot yet hold a role that reads Goals below a Perspective \
+             read limit or administers below a Perspective write limit"
+                .into(),
+        ));
+    }
+    Ok([
         ("app.proxiima_scope", "owner".to_owned()),
         (
             "app.owner",
@@ -77,10 +100,7 @@ fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
             "app.read_perspective",
             uuid_array(scope.readable_owners(AccessKind::Perspective)),
         ),
-        (
-            "app.read_goal",
-            uuid_array(scope.readable_owners(AccessKind::Goal)),
-        ),
+        ("app.read_goal", uuid_array(scope.goal_reading_owners())),
         (
             "app.write_owner",
             uuid_array(scope.writable_owners(AccessKind::Fact)),
@@ -93,10 +113,7 @@ fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
             "app.write_perspective",
             uuid_array(scope.writable_owners(AccessKind::Perspective)),
         ),
-        (
-            "app.write_goal",
-            uuid_array(scope.writable_owners(AccessKind::Goal)),
-        ),
+        ("app.write_goal", uuid_array(scope.administered_owners())),
         ("app.manage_owner", uuid_array(scope.managed_owners())),
         ("app.subject", scope.subject().into_inner().to_string()),
         (
@@ -106,7 +123,7 @@ fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
                 .map(|principal| principal.subject().into_inner().to_string())
                 .unwrap_or_default(),
         ),
-    ]
+    ])
 }
 
 fn refuse_expired(scope: &OwnerScope) -> Result<(), StorageError> {
@@ -140,7 +157,7 @@ pub(crate) async fn live_memory_owners_as(
     let (names, values): (Vec<&str>, Vec<String>) = match reader {
         Some(reader) => {
             refuse_expired(reader)?;
-            owner_scope_settings(reader).into_iter().unzip()
+            owner_scope_settings(reader)?.into_iter().unzip()
         }
         None => (Vec::new(), Vec::new()),
     };
@@ -163,7 +180,8 @@ pub(crate) async fn bind_owner_scope(
     refuse_expired(scope)?;
     // No header, owner text, or caller-supplied role can enter this
     // function in place of the witness.
-    let (names, values): (Vec<&str>, Vec<String>) = owner_scope_settings(scope).into_iter().unzip();
+    let (names, values): (Vec<&str>, Vec<String>) =
+        owner_scope_settings(scope)?.into_iter().unzip();
     sqlx::query(
         "SELECT set_config(s.name, s.value, true)
            FROM unnest($1::text[], $2::text[]) AS s(name, value)",

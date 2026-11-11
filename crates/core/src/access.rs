@@ -8,12 +8,14 @@ use uuid::Uuid;
 
 use crate::{GoalId, GroupId, MemoryId, OwnerId, UserId};
 
+/// The three memory kinds, ranked for access. A Goal is intent, not memory,
+/// and is not on this ladder: what a role may do with Goals is
+/// [`Role::goals`] (`AccessKind` in `docs/lean/Causa/Owner.lean`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AccessKind {
     Fact,
     Abstraction,
     Perspective,
-    Goal,
 }
 
 impl<'de> serde::Deserialize<'de> for Role {
@@ -25,15 +27,24 @@ impl<'de> serde::Deserialize<'de> for Role {
         struct Raw {
             read: AccessCeiling,
             write: AccessCeiling,
+            goals: GoalAccess,
+            administers: bool,
             manage: bool,
         }
         let raw = Raw::deserialize(deserializer)?;
-        Self::new(raw.read, raw.write, raw.manage).map_err(serde::de::Error::custom)
+        let role = Self::new(raw.read, raw.write)
+            .map_err(serde::de::Error::custom)?
+            .with_goals(raw.goals);
+        Ok(Self {
+            administers: raw.administers,
+            manage: raw.manage,
+            ..role
+        })
     }
 }
 
 impl AccessKind {
-    pub const ALL: [Self; 4] = [Self::Fact, Self::Abstraction, Self::Perspective, Self::Goal];
+    pub const ALL: [Self; 3] = [Self::Fact, Self::Abstraction, Self::Perspective];
 
     #[must_use]
     pub const fn rank(self) -> u8 {
@@ -41,22 +52,34 @@ impl AccessKind {
             Self::Fact => 1,
             Self::Abstraction => 2,
             Self::Perspective => 3,
-            Self::Goal => 4,
         }
     }
 }
 
-impl From<crate::EntityKind> for AccessKind {
-    fn from(kind: crate::EntityKind) -> Self {
+impl AccessKind {
+    /// The memory kind of an entity; a Goal is no memory and has none.
+    #[must_use]
+    pub const fn of(kind: crate::EntityKind) -> Option<Self> {
         match kind {
-            crate::EntityKind::Fact => Self::Fact,
-            crate::EntityKind::Abstraction => Self::Abstraction,
-            crate::EntityKind::Perspective => Self::Perspective,
-            crate::EntityKind::Goal => Self::Goal,
+            crate::EntityKind::Fact => Some(Self::Fact),
+            crate::EntityKind::Abstraction => Some(Self::Abstraction),
+            crate::EntityKind::Perspective => Some(Self::Perspective),
+            crate::EntityKind::Goal => None,
         }
     }
 }
 
+impl From<crate::MemoryKind> for AccessKind {
+    fn from(kind: crate::MemoryKind) -> Self {
+        match kind {
+            crate::MemoryKind::Fact => Self::Fact,
+            crate::MemoryKind::Abstraction => Self::Abstraction,
+            crate::MemoryKind::Perspective => Self::Perspective,
+        }
+    }
+}
+
+/// How far up the memory ladder a role reads or writes.
 #[derive(
     Debug,
     Clone,
@@ -75,7 +98,6 @@ pub enum AccessCeiling {
     Fact,
     Abstraction,
     Perspective,
-    Goal,
 }
 
 impl AccessCeiling {
@@ -86,7 +108,6 @@ impl AccessCeiling {
             Self::Fact => 1,
             Self::Abstraction => 2,
             Self::Perspective => 3,
-            Self::Goal => 4,
         }
     }
 
@@ -103,7 +124,39 @@ impl AccessCeiling {
             Self::Fact => Some(AccessKind::Fact),
             Self::Abstraction => Some(AccessKind::Abstraction),
             Self::Perspective => Some(AccessKind::Perspective),
-            Self::Goal => Some(AccessKind::Goal),
+        }
+    }
+}
+
+/// What a role may do with the owner's Goals: nothing, read them, or work
+/// them (set, modify, transition). Its own chain beside the memory ladder
+/// (`GoalAccess` in `docs/lean/Causa/Owner.lean`).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+pub enum GoalAccess {
+    None,
+    Reads,
+    Works,
+}
+
+impl GoalAccess {
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::Reads => 1,
+            Self::Works => 2,
         }
     }
 }
@@ -120,74 +173,132 @@ pub enum AccessError {
     SubjectIsGroup(UserId),
 }
 
+/// Two ceilings over the memory ladder and three capabilities: what the role
+/// may do with the owner's Goals, whether it administers the owner, whether
+/// it manages the group. No capability follows from a ceiling (`Role` in
+/// `docs/lean/Causa/Owner.lean`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, schemars::JsonSchema)]
 pub struct Role {
     read: AccessCeiling,
     write: AccessCeiling,
+    goals: GoalAccess,
+    administers: bool,
     manage: bool,
 }
 
 impl Role {
+    /// A role over memory alone: no Goals, no administration, no management.
+    /// Add those with [`Self::with_goals`], [`Self::administering`] and
+    /// [`Self::managing`].
+    ///
     /// # Errors
     ///
     /// Returns [`AccessError::WriteExceedsRead`] when `write` is above `read`.
-    pub const fn new(
-        read: AccessCeiling,
-        write: AccessCeiling,
-        manage: bool,
-    ) -> Result<Self, AccessError> {
+    pub const fn new(read: AccessCeiling, write: AccessCeiling) -> Result<Self, AccessError> {
         if write.rank() > read.rank() {
             return Err(AccessError::WriteExceedsRead);
         }
         Ok(Self {
             read,
             write,
-            manage,
+            goals: GoalAccess::None,
+            administers: false,
+            manage: false,
         })
     }
 
     #[must_use]
-    pub const fn personal() -> Self {
+    pub const fn with_goals(self, goals: GoalAccess) -> Self {
+        Self { goals, ..self }
+    }
+
+    #[must_use]
+    pub const fn administering(self) -> Self {
         Self {
-            read: AccessCeiling::Goal,
-            write: AccessCeiling::Goal,
-            manage: false,
+            administers: true,
+            ..self
         }
     }
 
     #[must_use]
-    pub const fn viewer() -> Self {
+    pub const fn managing(self) -> Self {
         Self {
-            read: AccessCeiling::Goal,
-            write: AccessCeiling::None,
+            manage: true,
+            ..self
+        }
+    }
+
+    /// Everything over one's own scope except management: a personal owner
+    /// has no membership to manage.
+    #[must_use]
+    pub const fn personal() -> Self {
+        Self {
+            read: AccessCeiling::Perspective,
+            write: AccessCeiling::Perspective,
+            goals: GoalAccess::Works,
+            administers: true,
             manage: false,
         }
     }
 
+    /// Reads every kind, writes none, works Goals.
+    #[must_use]
+    pub const fn viewer() -> Self {
+        Self {
+            read: AccessCeiling::Perspective,
+            write: AccessCeiling::None,
+            goals: GoalAccess::Works,
+            administers: false,
+            manage: false,
+        }
+    }
+
+    /// Facts in and out only, no Goals.
     #[must_use]
     pub const fn ingest() -> Self {
         Self {
             read: AccessCeiling::Fact,
             write: AccessCeiling::Fact,
+            goals: GoalAccess::None,
+            administers: false,
             manage: false,
         }
     }
 
+    /// Writes every memory kind and works Goals, without administration.
     #[must_use]
     pub const fn editor() -> Self {
         Self {
-            read: AccessCeiling::Goal,
+            read: AccessCeiling::Perspective,
             write: AccessCeiling::Perspective,
+            goals: GoalAccess::Works,
+            administers: false,
             manage: false,
         }
     }
 
+    /// Everything, including administration and management.
     #[must_use]
     pub const fn admin() -> Self {
         Self {
-            read: AccessCeiling::Goal,
-            write: AccessCeiling::Goal,
+            read: AccessCeiling::Perspective,
+            write: AccessCeiling::Perspective,
+            goals: GoalAccess::Works,
+            administers: true,
             manage: true,
+        }
+    }
+
+    /// What no forwarded request exceeds: it reads Goals at most, and neither
+    /// administers nor manages (`Role.forwardingCap` in
+    /// `docs/lean/Causa/Authorization.lean`).
+    const fn forwarding_cap() -> Self {
+        Self {
+            read: AccessCeiling::Perspective,
+            write: AccessCeiling::Perspective,
+            goals: GoalAccess::Reads,
+            administers: false,
+            manage: false,
         }
     }
 
@@ -201,27 +312,47 @@ impl Role {
         self.write.allows(kind)
     }
 
+    /// Reading one entry of `kind`: a memory by the read limit, a Goal by
+    /// reading Goals.
+    #[must_use]
+    pub const fn may_read_entry(self, kind: crate::EntityKind) -> bool {
+        match AccessKind::of(kind) {
+            Some(kind) => self.may_read(kind),
+            None => self.reads_goals(),
+        }
+    }
+
     #[must_use]
     pub const fn manages(self) -> bool {
         self.manage
     }
 
-    /// Goal work on the owner: setting, modifying and transitioning its
-    /// Goals. Every holder who reads the owner's Goals works them; the write
-    /// ceiling bounds the owner's memory, not its work, so a viewer member
-    /// works a group's Goals and still writes none of its Facts or
-    /// Perspectives.
     #[must_use]
-    pub const fn works_goals(self) -> bool {
-        self.may_read(AccessKind::Goal)
+    pub const fn goals(self) -> GoalAccess {
+        self.goals
     }
 
-    /// Owner-level administration — membership admin, transfer, erase, the
-    /// graph overview: the full write limit. Membership changes and group
-    /// transfers also need [`Self::manages`].
+    /// Reads the owner's Goals.
+    #[must_use]
+    pub const fn reads_goals(self) -> bool {
+        self.goals.rank() >= GoalAccess::Reads.rank()
+    }
+
+    /// Goal work on the owner: setting, modifying and transitioning its
+    /// Goals. It is the role's own capability: the write ceiling bounds the
+    /// owner's memory, not its work, so a viewer member works a group's Goals
+    /// and still writes none of its Facts or Perspectives.
+    #[must_use]
+    pub const fn works_goals(self) -> bool {
+        self.goals.rank() >= GoalAccess::Works.rank()
+    }
+
+    /// Owner-level administration: transfer, erase, the graph overview, and
+    /// achieving, decomposing and sharing the owner's Goals. Membership
+    /// changes and group transfers also need [`Self::manages`].
     #[must_use]
     pub const fn administers(self) -> bool {
-        self.may_write(AccessKind::Goal)
+        self.administers
     }
 
     #[must_use]
@@ -241,25 +372,29 @@ impl Role {
     /// still to dominate the recorded ceiling, so demotion fails closed.
     #[must_use]
     pub const fn meet(self, other: Self) -> Self {
-        let read = if self.read.rank() <= other.read.rank() {
-            self.read
-        } else {
-            other.read
-        };
-        let write = if self.write.rank() <= other.write.rank() {
-            self.write
-        } else {
-            other.write
-        };
         Self {
-            read,
-            write,
+            read: if self.read.rank() <= other.read.rank() {
+                self.read
+            } else {
+                other.read
+            },
+            write: if self.write.rank() <= other.write.rank() {
+                self.write
+            } else {
+                other.write
+            },
+            goals: if self.goals.rank() <= other.goals.rank() {
+                self.goals
+            } else {
+                other.goals
+            },
+            administers: self.administers && other.administers,
             manage: self.manage && other.manage,
         }
     }
 
-    /// Least role at least as powerful as either input: the stronger read and
-    /// write ceilings, and manage when either manages.
+    /// Least role at least as powerful as either input: the stronger ceilings
+    /// and Goal access, and each capability when either has it.
     ///
     /// A member who holds two relations in one group holds both, so their role
     /// for that group is the join (`Role.join` in `docs/lean/Causa/Owner.lean`).
@@ -267,19 +402,23 @@ impl Role {
     /// monotone.
     #[must_use]
     pub const fn join(self, other: Self) -> Self {
-        let read = if self.read.rank() >= other.read.rank() {
-            self.read
-        } else {
-            other.read
-        };
-        let write = if self.write.rank() >= other.write.rank() {
-            self.write
-        } else {
-            other.write
-        };
         Self {
-            read,
-            write,
+            read: if self.read.rank() >= other.read.rank() {
+                self.read
+            } else {
+                other.read
+            },
+            write: if self.write.rank() >= other.write.rank() {
+                self.write
+            } else {
+                other.write
+            },
+            goals: if self.goals.rank() >= other.goals.rank() {
+                self.goals
+            } else {
+                other.goals
+            },
+            administers: self.administers || other.administers,
             manage: self.manage || other.manage,
         }
     }
@@ -287,8 +426,10 @@ impl Role {
     /// Whether `self` contains every capability in `required`.
     #[must_use]
     pub const fn dominates(self, required: Self) -> bool {
-        self.meet(required).read.rank() == required.read.rank()
-            && self.meet(required).write.rank() == required.write.rank()
+        self.read.rank() >= required.read.rank()
+            && self.write.rank() >= required.write.rank()
+            && self.goals.rank() >= required.goals.rank()
+            && (!required.administers || self.administers)
             && (!required.manage || self.manage)
     }
 }
@@ -393,6 +534,21 @@ impl OwnerRoles {
             .is_some_and(|role| role.may_write(kind))
     }
 
+    #[must_use]
+    pub fn reads_goals(&self, owner: &OwnerId) -> bool {
+        self.role_for(owner).is_some_and(Role::reads_goals)
+    }
+
+    #[must_use]
+    pub fn works_goals(&self, owner: &OwnerId) -> bool {
+        self.role_for(owner).is_some_and(Role::works_goals)
+    }
+
+    #[must_use]
+    pub fn administers(&self, owner: &OwnerId) -> bool {
+        self.role_for(owner).is_some_and(Role::administers)
+    }
+
     /// A personal owner never manages: the subject's own id is refused before
     /// any role is read.
     #[must_use]
@@ -411,6 +567,19 @@ impl OwnerRoles {
     #[must_use]
     pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
         self.ordered(|role| role.may_write(kind))
+    }
+
+    /// Owners whose Goals the subject reads, ordered as
+    /// [`Self::readable_owners`].
+    #[must_use]
+    pub fn goal_reading_owners(&self) -> Vec<OwnerId> {
+        self.ordered(Role::reads_goals)
+    }
+
+    /// Owners the subject administers, ordered as [`Self::readable_owners`].
+    #[must_use]
+    pub fn administered_owners(&self) -> Vec<OwnerId> {
+        self.ordered(Role::administers)
     }
 
     fn ordered(&self, keep: impl Fn(Role) -> bool) -> Vec<OwnerId> {
@@ -438,6 +607,8 @@ pub enum ForwarderRole {
 }
 
 impl ForwarderRole {
+    /// The preset under the forwarding cap: a forwarded request reads Goals
+    /// at most, and neither administers nor manages.
     #[must_use]
     pub const fn role(self) -> Role {
         match self {
@@ -445,6 +616,7 @@ impl ForwarderRole {
             Self::Ingest => Role::ingest(),
             Self::Editor => Role::editor(),
         }
+        .meet(Role::forwarding_cap())
     }
 }
 
@@ -652,8 +824,8 @@ mod tests {
 
     #[test]
     fn role_write_is_never_above_read() {
-        assert!(Role::new(AccessCeiling::Fact, AccessCeiling::Goal, false).is_err());
-        assert!(Role::new(AccessCeiling::Goal, AccessCeiling::Perspective, false).is_ok());
+        assert!(Role::new(AccessCeiling::Fact, AccessCeiling::Perspective).is_err());
+        assert!(Role::new(AccessCeiling::Perspective, AccessCeiling::Abstraction).is_ok());
     }
 
     #[test]
@@ -667,6 +839,12 @@ mod tests {
         assert!(!Role::personal().manages());
         assert!(!Role::viewer().manages());
         assert!(Role::admin().manages());
+        // No capability follows from a ceiling: a viewer works Goals and
+        // writes nothing, an ingest writes Facts and reads no Goal.
+        assert!(Role::viewer().works_goals() && !Role::viewer().administers());
+        assert!(!Role::ingest().reads_goals());
+        assert!(Role::editor().works_goals() && !Role::editor().administers());
+        assert!(Role::personal().administers() && Role::admin().administers());
     }
 
     #[test]
@@ -678,12 +856,13 @@ mod tests {
 
         let roles = OwnerRoles::for_subject(subject, [(owner, Role::editor())]).unwrap();
 
-        assert!(roles.may_write(&OwnerId::from(subject), AccessKind::Goal));
+        assert!(roles.administers(&OwnerId::from(subject)));
         assert!(!roles.may_manage(&OwnerId::from(subject)));
         assert!(!roles.may_read(&OwnerId::from(other), AccessKind::Fact));
 
         assert!(roles.may_write(&owner, AccessKind::Perspective));
-        assert!(!roles.may_write(&owner, AccessKind::Goal));
+        assert!(roles.works_goals(&owner));
+        assert!(!roles.administers(&owner));
     }
 
     #[test]
@@ -739,7 +918,7 @@ mod tests {
         assert_eq!(Role::viewer().join(Role::admin()), Role::admin());
         assert_eq!(Role::editor().join(Role::viewer()), Role::editor());
         let both = Role::viewer().join(Role::ingest());
-        assert!(both.may_read(AccessKind::Goal));
+        assert!(both.works_goals());
         assert!(both.may_write(AccessKind::Fact));
         assert!(!both.may_write(AccessKind::Abstraction));
         assert!(!both.manages());
@@ -795,22 +974,36 @@ mod tests {
     #[test]
     fn forwarded_owner_roles_use_only_their_declared_ceilings() {
         for (forwarding, role) in [
-            (ForwarderRole::Viewer, Role::viewer()),
+            (
+                ForwarderRole::Viewer,
+                Role::viewer().with_goals(GoalAccess::Reads),
+            ),
             (ForwarderRole::Ingest, Role::ingest()),
-            (ForwarderRole::Editor, Role::editor()),
+            (
+                ForwarderRole::Editor,
+                Role::editor().with_goals(GoalAccess::Reads),
+            ),
         ] {
             assert_eq!(forwarding.role(), role);
             assert!(!forwarding.role().manages());
-            assert!(!forwarding.role().may_write(AccessKind::Goal));
+            assert!(!forwarding.role().works_goals());
+            assert!(!forwarding.role().administers());
         }
     }
 
     #[test]
     fn role_deserialization_rechecks_write_ceiling() {
-        let valid = serde_json::json!({"read":"Perspective","write":"Abstraction","manage":false});
+        let valid = serde_json::json!({
+            "read": "Perspective", "write": "Abstraction", "goals": "Works",
+            "administers": false, "manage": false,
+        });
         let role: Role = serde_json::from_value(valid).expect("valid role");
         assert_eq!(role.read_ceiling(), AccessCeiling::Perspective);
-        let invalid = serde_json::json!({"read":"Fact","write":"Goal","manage":false});
+        assert!(role.works_goals());
+        let invalid = serde_json::json!({
+            "read": "Fact", "write": "Perspective", "goals": "None",
+            "administers": false, "manage": false,
+        });
         assert!(serde_json::from_value::<Role>(invalid).is_err());
     }
 

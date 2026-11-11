@@ -96,6 +96,7 @@ pub use owner_inverse::{OwnerDropProofPort, OwnerEraseAuthorityPort, OwnerInvers
 pub use proof::{
     HostStateWriteOrigin, HostStateWritePermit, MembershipEndpointAuthority,
     MembershipMemberAuthority, MembershipWritePermit, OperatorMaintenanceProof, OwnerWritePermit,
+    WriteAuthority,
 };
 pub use publication::{
     AckOutcome, ClaimToken, ClaimedPublication, PublicationOutboxPort, PublisherId,

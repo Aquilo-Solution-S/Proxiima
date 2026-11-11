@@ -1,11 +1,11 @@
 use crate::OwnerId;
-use crate::access::{AccessKind, EntityId, Role};
+use crate::access::{AccessKind, EntityId};
 use crate::authz::{
     AuthPath, AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome, EngineAuthority,
 };
 use crate::error::ProtocolError;
 use crate::storage::StorageError;
-use crate::storage_ports::OwnerWritePermit;
+use crate::storage_ports::{OwnerWritePermit, WriteAuthority};
 
 use super::Engine;
 
@@ -66,7 +66,7 @@ pub(in crate::engine) const ENTRY_NOT_FOUND_MESSAGE: &str = "entry not found";
 #[derive(Debug)]
 pub struct EntryReadPermit {
     owner: OwnerId,
-    kind: AccessKind,
+    kind: crate::EntityKind,
     schema_id: Option<crate::SchemaId>,
 }
 
@@ -76,7 +76,7 @@ impl EntryReadPermit {
         &self.owner
     }
 
-    pub(in crate::engine) const fn kind(&self) -> AccessKind {
+    pub(in crate::engine) const fn kind(&self) -> crate::EntityKind {
         self.kind
     }
 
@@ -104,7 +104,7 @@ impl Engine {
         kind: AccessKind,
     ) -> Result<OwnerWritePermit, ProtocolError> {
         Ok(self
-            .write_permit(authz, owner, AuthzOperation::Write { kind })?
+            .write_permit(authz, owner, WriteAuthority::Memory(kind))?
             .owner_write)
     }
 
@@ -122,13 +122,12 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
-        self.write_permit(authority, owner, AuthzOperation::Write { kind })
+        self.write_permit(authority, owner, WriteAuthority::Memory(kind))
     }
 
     /// Goal work gate ([`Role::works_goals`]): set, modify and transition a
-    /// Goal of `owner`. Hooks judge it as a Goal write; only the rule that
-    /// admits it differs. The permit's scope names `owner` as its Goal work
-    /// and widens none of its memory writes.
+    /// Goal of `owner`. The permit's scope names `owner` as its Goal work
+    /// and carries none of its memory writes.
     #[allow(
         clippy::unused_async,
         reason = "keeps the Goal work gate on the async Engine authorization seam"
@@ -141,17 +140,10 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
-        self.permit_admitted_by(
-            authority,
-            owner,
-            AuthzOperation::Write {
-                kind: AccessKind::Goal,
-            },
-            |authz, owner, _| authz.may_work_goals(owner),
-        )
-        .map(|permit| WritePermit {
-            owner_write: permit.owner_write.for_goal_work(),
-        })
+        self.write_permit(authority, owner, WriteAuthority::GoalWork)
+            .map(|permit| WritePermit {
+                owner_write: permit.owner_write.for_goal_work(),
+            })
     }
 
     /// Write gate for rows whose kind only storage reads (forget,
@@ -175,11 +167,12 @@ impl Engine {
             .role_for_owner(owner)
             .and_then(|role| role.write_ceiling().top())
             .unwrap_or(AccessKind::Fact);
-        self.write_permit(authority, owner, AuthzOperation::Write { kind })
+        self.write_permit(authority, owner, WriteAuthority::Memory(kind))
     }
 
     /// The owner-admin gate ([`Role::administers`]): membership admin,
-    /// transfer, erase, the graph overview.
+    /// transfer, erase, the graph overview, and achieving, decomposing and
+    /// sharing the owner's Goals.
     #[allow(
         clippy::unused_async,
         reason = "keeps the owner-admin gate on the async Engine authorization seam"
@@ -192,45 +185,35 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
-        self.write_permit(authority, owner, AuthzOperation::OwnerAdmin)
+        self.write_permit(authority, owner, WriteAuthority::Administration)
     }
 
+    /// One permit per admitted need: the gate judges the operation that
+    /// names `need`, and the permit carries that same need to storage.
     fn write_permit<A>(
         &self,
         authority: &A,
         owner: &OwnerId,
-        operation: AuthzOperation,
-    ) -> Result<WritePermit, ProtocolError>
-    where
-        A: EngineAuthority + ?Sized,
-    {
-        self.permit_admitted_by(authority, owner, operation, allows)
-    }
-
-    fn permit_admitted_by<A>(
-        &self,
-        authority: &A,
-        owner: &OwnerId,
-        operation: AuthzOperation,
-        admits: Admits,
+        need: WriteAuthority,
     ) -> Result<WritePermit, ProtocolError>
     where
         A: EngineAuthority + ?Sized,
     {
         let authority = self.operation_authority(authority)?;
         let authz = authority.authz();
-        let kind = match operation {
-            AuthzOperation::Write { kind } => kind,
-            _ => AccessKind::Goal,
+        let operation = match need {
+            WriteAuthority::Memory(kind) => AuthzOperation::Write { kind },
+            WriteAuthority::GoalWork => AuthzOperation::GoalWork,
+            WriteAuthority::Administration => AuthzOperation::OwnerAdmin,
         };
-        let resolved = self.gate(authz, owner, operation, authority.redeemed_phase(), admits)?;
+        let resolved = self.gate(authz, owner, operation, authority.redeemed_phase(), allows)?;
         let owner_write = if authority.redeemed_phase() {
             let expires_at = authz.expires_at().ok_or_else(|| {
                 ProtocolError::forbidden("delegated worker phase has no finite expiry")
             })?;
             OwnerWritePermit::new_delegated(
                 resolved,
-                kind,
+                need,
                 self.delegation_runtime_binding.clone(),
                 expires_at,
                 authz.owner_scope().cloned(),
@@ -239,7 +222,7 @@ impl Engine {
         } else {
             OwnerWritePermit::new(
                 resolved,
-                kind,
+                need,
                 authz.owner_scope().cloned(),
                 authz.bound_reads(),
             )
@@ -445,23 +428,33 @@ impl Engine {
         Ok(read)
     }
 
-    /// Run the host vetoes for a read of `kind` on one stored owner and
-    /// report the decision to the observers.
-    ///
-    /// `owner` is already a concrete, stored owner (from the read set or from
-    /// storage), so it is not re-resolved: a resolver could remap the gate
-    /// onto a different owner than the one storage filters on.
+    /// [`Self::veto_read`] for a memory read of `kind`.
     fn veto_read_owner(
         &self,
         authz: &AuthzContext,
         owner: &OwnerId,
         kind: AccessKind,
     ) -> Result<(), ProtocolError> {
+        self.veto_read(authz, owner, AuthzOperation::Read { kind })
+    }
+
+    /// Run the host vetoes for a read `operation` on one stored owner and
+    /// report the decision to the observers.
+    ///
+    /// `owner` is already a concrete, stored owner (from the read set or from
+    /// storage), so it is not re-resolved: a resolver could remap the gate
+    /// onto a different owner than the one storage filters on.
+    fn veto_read(
+        &self,
+        authz: &AuthzContext,
+        owner: &OwnerId,
+        operation: AuthzOperation,
+    ) -> Result<(), ProtocolError> {
         let input = AuthzInput {
             authz,
             requested: owner,
             resolved: owner,
-            operation: AuthzOperation::Read { kind },
+            operation,
         };
         if let Err(err) = self.registry.run_authorization_vetoes(&input) {
             self.registry
@@ -523,7 +516,7 @@ impl Engine {
                 let entry = home
                     .filter(|entry| match entry.route {
                         crate::storage_ports::EntryReadRoute::Owner => {
-                            authz.may_read(&entry.owner, entry.kind)
+                            authz.may_read_entry(&entry.owner, entry.kind)
                         }
                         crate::storage_ports::EntryReadRoute::Goal => authz
                             .owner_scope()
@@ -531,7 +524,11 @@ impl Engine {
                     })
                     .ok_or_else(|| ProtocolError::forbidden(ENTRY_NOT_FOUND_MESSAGE))?;
                 let (owner, kind) = (entry.owner, entry.kind);
-                self.veto_read_owner(authz, &owner, kind)
+                let operation = match AccessKind::of(kind) {
+                    Some(kind) => AuthzOperation::Read { kind },
+                    None => AuthzOperation::GoalRead,
+                };
+                self.veto_read(authz, &owner, operation)
                     .map_err(|_| ProtocolError::forbidden(ENTRY_NOT_FOUND_MESSAGE))?;
                 Ok(EntryReadPermit {
                     owner,
@@ -549,8 +546,10 @@ type Admits = fn(&AuthzContext, &OwnerId, &AuthzOperation) -> bool;
 fn allows(authz: &AuthzContext, owner: &OwnerId, operation: &AuthzOperation) -> bool {
     match *operation {
         AuthzOperation::Read { kind } => authz.may_read(owner, kind),
+        AuthzOperation::GoalRead => authz.may_read_goals(owner),
         AuthzOperation::Write { kind } => authz.may_write(owner, kind),
-        AuthzOperation::OwnerAdmin => authz.role_for_owner(owner).is_some_and(Role::administers),
+        AuthzOperation::GoalWork => authz.may_work_goals(owner),
+        AuthzOperation::OwnerAdmin => authz.may_administer(owner),
         AuthzOperation::Membership { .. }
         | AuthzOperation::EntityTransfer { .. }
         | AuthzOperation::GoalCollaboration { .. } => false,
@@ -560,8 +559,13 @@ fn allows(authz: &AuthzContext, owner: &OwnerId, operation: &AuthzOperation) -> 
 fn denied(operation: &AuthzOperation) -> ProtocolError {
     ProtocolError::forbidden(match operation {
         AuthzOperation::Read { kind } => format!("requires {kind:?} read on this owner"),
+        AuthzOperation::GoalRead => "requires Goal read on this owner".to_owned(),
         AuthzOperation::Write { kind } => format!("requires {kind:?} write on this owner"),
-        _ => "requires admin on this owner".to_owned(),
+        AuthzOperation::GoalWork => "requires Goal work on this owner".to_owned(),
+        AuthzOperation::OwnerAdmin
+        | AuthzOperation::Membership { .. }
+        | AuthzOperation::EntityTransfer { .. }
+        | AuthzOperation::GoalCollaboration { .. } => "requires admin on this owner".to_owned(),
     })
 }
 
@@ -742,7 +746,7 @@ mod tests {
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
 
         let resolved = engine
-            .authorize_owner_read(&authz, &owner, AccessKind::Goal)
+            .authorize_owner_read(&authz, &owner, AccessKind::Perspective)
             .await
             .expect("single-owner context should authorize");
 
@@ -750,7 +754,9 @@ mod tests {
     }
 
     /// The one rule, at the gate: a role may act on a kind when its limit for
-    /// that direction is at least the kind. Reads and writes, every preset.
+    /// that direction is at least the kind, and Goal work and administration
+    /// are capabilities no limit grants. Every preset, and two roles whose
+    /// Goal work and write limit point opposite ways.
     #[tokio::test]
     async fn every_gate_follows_the_role_limit() {
         let engine = engine();
@@ -759,13 +765,12 @@ mod tests {
             Role::ingest(),
             Role::editor(),
             Role::admin(),
-            Role::new(AccessCeiling::Goal, AccessCeiling::Abstraction, false).expect("role"),
-            Role::new(
-                AccessCeiling::Abstraction,
-                AccessCeiling::Abstraction,
-                false,
-            )
-            .expect("role"),
+            Role::new(AccessCeiling::Perspective, AccessCeiling::Abstraction).expect("role"),
+            Role::new(AccessCeiling::Abstraction, AccessCeiling::Abstraction).expect("role"),
+            Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective).expect("role"),
+            Role::new(AccessCeiling::Fact, AccessCeiling::Fact)
+                .expect("role")
+                .with_goals(crate::GoalAccess::Works),
         ];
         for role in roles {
             let subject = UserId::new(uuid::Uuid::now_v7());
@@ -782,6 +787,8 @@ mod tests {
                     "{role:?} write {kind:?}"
                 );
             }
+            let goal_work = engine.authorize_goal_work(&authz, &group).await;
+            assert_eq!(goal_work.is_ok(), role.works_goals(), "{role:?} Goal work");
             let admin = engine.authorize_owner_admin(&authz, &group).await;
             assert_eq!(admin.is_ok(), role.administers(), "{role:?} owner admin");
             let readers = engine
@@ -800,7 +807,7 @@ mod tests {
         let authz = granted_context(&p);
 
         let permit = engine
-            .authorize_write(&authz, &p, AccessKind::Goal)
+            .authorize_write(&authz, &p, AccessKind::Perspective)
             .await
             .expect("the personal owner writes every kind");
 
@@ -823,7 +830,10 @@ mod tests {
             .await
             .expect("for_system proves the host holds the witness");
         assert_eq!(permit.owner(), &owner);
-        assert_eq!(permit.access_kind(), AccessKind::Perspective);
+        assert_eq!(
+            permit.authority(),
+            crate::storage_ports::WriteAuthority::Memory(AccessKind::Perspective)
+        );
 
         let forged = AuthzContext::server_resolved(roles.clone(), AuthPath::System);
         let error = engine
@@ -1258,7 +1268,7 @@ mod tests {
             .expect("readable entity should authorize");
 
         assert_eq!(permit.owner(), &p);
-        assert_eq!(permit.kind(), AccessKind::Fact);
+        assert_eq!(permit.kind(), crate::EntityKind::Fact);
     }
 
     #[tokio::test]

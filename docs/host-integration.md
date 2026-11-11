@@ -34,9 +34,13 @@ Collaboration commands require an ordinary verified caller; restricted owner
 forwarding and background delegation do not acquire unrelated Goal rights.
 
 An existing Goal's title and progress use the existing `modify_goal`,
-`transition_goal`, and `mark_goal_achieved` methods. A Goal guest needs
-Goal-level write. Goal creation, decomposition, and motivation replacement
-still require owner authority. Omitted `space` on those MCP edit actions uses
+`transition_goal`, and `mark_goal_achieved` methods. A Goal guest needs a
+grant that works Goals (`GoalAccess::Works`); every guest reads the Goal it
+was granted on. A grant carries no owner administration, so one built from
+`Role::admin()` is refused: `Role::editor().managing()` edits the Goal and
+manages its audience. A member achieves a Goal by administering its owner,
+not by a grant that only reads it. Goal creation, decomposition, and
+motivation replacement still require owner authority. Omitted `space` on those MCP edit actions uses
 the named Goal's owner; an explicit space remains a narrowing selector.
 
 A/P authoring chooses `MemoryDestination::Owner` or

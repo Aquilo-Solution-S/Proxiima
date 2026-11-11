@@ -2,10 +2,12 @@
 Causa — Authorization (group-ownership realign; role-graded access)
 
 Access leaves the entity row entirely (spec §10). A Group maps each member to a
-`Role` (Causa.Owner): two capability ceilings over the access ladder F<A<P<G —
-how high one may READ and how high one may WRITE. Read and write are
-independent, so an `Ingest` owner role (write Facts only) never widens into a
-general editor.
+`Role` (Causa.Owner): two ceilings over the memory ladder F<A<P — how high one
+may READ and how high one may WRITE — and three capabilities: what the role
+may do with the owner's Goals, whether it administers the owner, whether it
+manages the group. Read and write are independent, so an `Ingest` owner role
+(write Facts only) never widens into a general editor, and no capability
+follows from a ceiling.
 
 Each entity has a SINGLE owning Group for the owner-scoped lane. There is no
 `is_home`/`reaches`/`entity_owner` share layer in that lane: a read-only owner
@@ -51,6 +53,21 @@ def may_read (r : User) (o : Owner) (k : AccessKind) : Prop :=
     write ceiling covers `k`. One owner group, so there is one write scope. -/
 def may_write (r : User) (o : Owner) (k : AccessKind) : Prop :=
   ∃ x : Role, o r = some x ∧ x.mayWrite k
+
+/-- A request may READ the owner's Goals iff its role there reads Goals. -/
+def may_read_goals (r : User) (o : Owner) : Prop :=
+  ∃ x : Role, o r = some x ∧ x.readsGoals
+
+/-- A request may WORK the owner's Goals — set, modify and transition them —
+    iff its role there works Goals. The write ceiling bounds the owner's
+    memory, not its work. -/
+def may_work_goals (r : User) (o : Owner) : Prop :=
+  ∃ x : Role, o r = some x ∧ x.worksGoals
+
+/-- A request may ADMINISTER the owner — transfer, erase, and achieving,
+    decomposing and sharing its Goals — iff its role there administers. -/
+def may_administer (r : User) (o : Owner) : Prop :=
+  ∃ x : Role, o r = some x ∧ x.administers
 
 /-- Server-resolved read gate: rows store `OwnerRef`; the trusted host resolves
     it through `OwnerState` before the pure kernel rule runs. -/
@@ -175,6 +192,25 @@ theorem mount_cannot_escalate
     simp only [Role.mayWrite, Role.meet] at hw h
     omega
 
+/-- The same law for the capabilities: a mount gives Goal work or
+    administration only where the cap has it. -/
+theorem mount_cannot_escalate_capabilities (g : Group) (cap : Role) (r : User) :
+    (may_work_goals r (Group.mount g cap) → cap.worksGoals) ∧
+    (may_administer r (Group.mount g cap) → cap.administers) := by
+  constructor
+  all_goals
+    rintro ⟨x, hx, hc⟩
+    simp only [Group.mount] at hx
+    cases hgr : g r with
+    | none => rw [hgr] at hx; simp at hx
+    | some x' =>
+      rw [hgr] at hx
+      simp at hx
+      subst hx
+      first
+        | exact (Role.meet_capped x' cap).1 hc
+        | exact (Role.meet_capped x' cap).2.1 hc
+
 /-- NEST-union — the union grants at least each side's access: a requester that
     may read kind `k` via either group may read it via their union (join never
     reduces a member's capability). The write case is analogous. THEOREM. -/
@@ -196,14 +232,22 @@ theorem union_grants_each (a b : Group) (r : User) (k : AccessKind) :
 -- Verified request forwarding, separate from stored membership
 -- ============================================================
 
-/-- The closed forwarding ceilings. No choice can author Goals or manage. -/
+/-- The closed forwarding ceilings. -/
 inductive ForwardingRole where
   | viewer | ingest | editor
 
-def ForwardingRole.toRole : ForwardingRole → Role
+/-- What no forwarded request exceeds: it reads Goals at most, and neither
+    administers nor manages. -/
+def Role.forwardingCap : Role := ⟨3, 3, .reads, false, false, by omega⟩
+
+def ForwardingRole.preset : ForwardingRole → Role
   | .viewer => Role.viewer
   | .ingest => Role.ingest
   | .editor => Role.editor
+
+/-- A forwarding role is its preset under the forwarding cap. -/
+def ForwardingRole.toRole (f : ForwardingRole) : Role :=
+  f.preset.meet Role.forwardingCap
 
 /-- The trusted policy and registry inputs at a request boundary. No policy
     role is a stored membership. -/
@@ -280,50 +324,80 @@ theorem forwarding_unconfigured_subject_denied (s : OwnerState) (p : ForwardingP
     ¬ request_has_role s p r (.forwarded c) o role := by
   simp [request_has_role, h]
 
+/-- A forwarded role is some role under the forwarding cap. -/
+theorem forwarding_role_capped (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
+    (h : request_has_role s p r (.forwarded c) o role) :
+    ∃ x : Role, role = x.meet Role.forwardingCap := by
+  have hrole := h.2.2.2
+  cases hp : p.roleFor r with
+  | none => simp [hp] at hrole
+  | some policyRole =>
+      rw [hp] at hrole
+      exact ⟨policyRole.preset, (Option.some.inj hrole).symm⟩
+
 theorem forwarding_role_no_management (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
     (h : request_has_role s p r (.forwarded c) o role) : ¬ role.manages := by
-  have hrole := h.2.2.2
-  cases hp : p.roleFor r with
-  | none => simp [hp] at hrole
-  | some policyRole =>
-      rw [hp] at hrole
-      have heq : policyRole.toRole = role := Option.some.inj hrole
-      rw [← heq]
-      cases policyRole <;>
-        simp [ForwardingRole.toRole, Role.manages, Role.viewer, Role.ingest, Role.editor]
+  obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
+  intro hm
+  have := (Role.meet_capped x Role.forwardingCap).2.2 hm
+  simp [Role.manages, Role.forwardingCap] at this
 
-theorem forwarding_role_no_goal_write (s : OwnerState) (p : ForwardingPolicy)
+theorem forwarding_role_no_administration (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
-    (h : request_has_role s p r (.forwarded c) o role) : ¬ role.mayWrite .goal := by
-  have hrole := h.2.2.2
-  cases hp : p.roleFor r with
-  | none => simp [hp] at hrole
-  | some policyRole =>
-      rw [hp] at hrole
-      have heq : policyRole.toRole = role := Option.some.inj hrole
-      rw [← heq]
-      cases policyRole <;>
-        simp [ForwardingRole.toRole, Role.mayWrite, AccessKind.rank,
-          Role.viewer, Role.ingest, Role.editor]
+    (h : request_has_role s p r (.forwarded c) o role) : ¬ role.administers := by
+  obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
+  intro ha
+  have := (Role.meet_capped x Role.forwardingCap).2.1 ha
+  simp [Role.administers, Role.forwardingCap] at this
+
+theorem forwarding_role_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
+    (h : request_has_role s p r (.forwarded c) o role) : ¬ role.worksGoals := by
+  obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
+  intro hw
+  have := (Role.meet_capped x Role.forwardingCap).1 hw
+  simp [Role.worksGoals, Role.forwardingCap] at this
+
+/-- Reading the owner's Goals. -/
+def request_may_read_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
+    (a : RequestAuthority) (o : OwnerRef) : Prop :=
+  ∃ role : Role, request_has_role s p r a o role ∧ role.readsGoals
 
 /-- Goal work — setting, modifying and transitioning a Goal of the owner.
-    Through ordinary membership every member whose role reads Goals works
-    them: the write ceiling bounds the owner's memory, not its work. A
-    forwarded request keeps the Goal write rule. -/
+    It is the role's own capability: the write ceiling bounds the owner's
+    memory, not its work. -/
 def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
     (a : RequestAuthority) (o : OwnerRef) : Prop :=
-  match a with
-  | .membership => request_may_read s p r .membership o .goal
-  | .forwarded c => request_may_write s p r (.forwarded c) o .goal
+  ∃ role : Role, request_has_role s p r a o role ∧ role.worksGoals
 
-/-- No forwarding role works Goals. -/
+/-- Administering the owner: transfer, erase, and achieving, decomposing and
+    sharing its Goals. -/
+def request_may_administer (s : OwnerState) (p : ForwardingPolicy) (r : User)
+    (a : RequestAuthority) (o : OwnerRef) : Prop :=
+  ∃ role : Role, request_has_role s p r a o role ∧ role.administers
+
+/-- Working Goals includes reading them. -/
+theorem request_work_goals_implies_read (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (a : RequestAuthority) (o : OwnerRef) :
+    request_may_work_goals s p r a o → request_may_read_goals s p r a o := by
+  rintro ⟨role, hrole, hw⟩
+  exact ⟨role, hrole, role.worksGoals_readsGoals hw⟩
+
+/-- No forwarded request works Goals. -/
 theorem forwarding_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) :
     ¬ request_may_work_goals s p r (.forwarded c) o := by
-  unfold request_may_work_goals request_may_write
   rintro ⟨role, hrole, hw⟩
-  exact forwarding_role_no_goal_write s p r c o role hrole hw
+  exact forwarding_role_no_goal_work s p r c o role hrole hw
+
+/-- No forwarded request administers. -/
+theorem forwarding_no_administration (s : OwnerState) (p : ForwardingPolicy)
+    (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) :
+    ¬ request_may_administer s p r (.forwarded c) o := by
+  rintro ⟨role, hrole, ha⟩
+  exact forwarding_role_no_administration s p r c o role hrole ha
 
 /-- A viewer member works the group's Goals and writes none of its kinds. -/
 theorem viewer_member_works_goals_writes_no_memory (s : OwnerState)
@@ -332,7 +406,7 @@ theorem viewer_member_works_goals_writes_no_memory (s : OwnerState)
     request_may_work_goals s p r .membership o ∧
       ∀ k, ¬ request_may_write s p r .membership o k := by
   refine ⟨⟨Role.viewer, h, ?_⟩, ?_⟩
-  · simp [Role.mayRead, Role.viewer, AccessKind.rank]
+  · simp [Role.worksGoals, Role.viewer]
   · rintro k ⟨role, hrole, hw⟩
     simp only [request_has_role, h, Option.some.injEq] at hrole
     subst hrole
@@ -352,7 +426,7 @@ theorem goal_work_writes_only_declared (s : OwnerState) (p : ForwardingPolicy)
     ¬ request_may_write_goal_work s p r a o false k := by
   simp [request_may_write_goal_work]
 
-/-- Goal work writes no Abstraction, Perspective or Goal memory. -/
+/-- Goal work writes no Abstraction or Perspective. -/
 theorem goal_work_writes_only_facts (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (a : RequestAuthority) (o : OwnerRef) (d : Bool) (k : AccessKind)
     (hk : k ≠ .fact) :

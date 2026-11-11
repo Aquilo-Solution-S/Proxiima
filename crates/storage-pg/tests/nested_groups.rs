@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use proxiima_core::owner_inverse::{EraseAuthorization, OwnerEraseTarget, OwnerSurfaces};
 use proxiima_core::storage_ports::OwnerInversePort;
-use proxiima_core::{AccessCeiling, GroupId, OwnerId, Relation, Role, StorageError, UserId};
+use proxiima_core::{
+    AccessCeiling, GoalAccess, GroupId, OwnerId, Relation, Role, StorageError, UserId,
+};
 use proxiima_pg_testkit::{DbGuard, create_db, db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{create_group, create_user};
 use proxiima_storage_pg::{
@@ -111,10 +113,7 @@ impl Harness {
         let actual: Roles = rows
             .into_iter()
             .map(|(person, group, read, write, manage)| {
-                (
-                    (person, group),
-                    Role::new(ceiling(&read), ceiling(&write), manage).expect("valid stored role"),
-                )
+                ((person, group), stored_role(&read, &write, manage))
             })
             .collect();
         assert_eq!(
@@ -132,13 +131,25 @@ impl Harness {
     }
 }
 
+/// The projection's fourth rung is Goal work on the read column and
+/// administration on the write column.
+fn stored_role(read: &str, write: &str, manage: bool) -> Role {
+    let mut role = Role::new(ceiling(read), ceiling(write)).expect("valid stored role");
+    if read == "goal" {
+        role = role.with_goals(GoalAccess::Works);
+    }
+    if write == "goal" {
+        role = role.administering();
+    }
+    if manage { role.managing() } else { role }
+}
+
 fn ceiling(text: &str) -> AccessCeiling {
     match text {
         "none" => AccessCeiling::None,
         "fact" => AccessCeiling::Fact,
         "abstraction" => AccessCeiling::Abstraction,
-        "perspective" => AccessCeiling::Perspective,
-        "goal" => AccessCeiling::Goal,
+        "perspective" | "goal" => AccessCeiling::Perspective,
         _ => panic!("unknown stored ceiling {text}"),
     }
 }
@@ -406,7 +417,7 @@ async fn roles_climb_only_and_take_weakest_path_then_strongest_alternative() -> 
     let role = group_role(&mut conn, person.as_user(), g[2])
         .await?
         .expect("ancestor role");
-    assert!(role.may_read(proxiima_core::AccessKind::Goal));
+    assert!(role.may_read(proxiima_core::AccessKind::Perspective) && role.reads_goals());
     assert!(!role.may_write(proxiima_core::AccessKind::Fact));
     drop(conn);
     h.assert_projection().await

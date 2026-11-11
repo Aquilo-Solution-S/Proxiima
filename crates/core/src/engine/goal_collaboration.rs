@@ -29,16 +29,16 @@ impl Engine {
         let source = self
             .authorize_entry_read(authz, EntityId::Memory(request.source))
             .await?;
-        let kind = source.kind();
-        if !matches!(
-            kind,
-            crate::AccessKind::Abstraction | crate::AccessKind::Perspective
-        ) {
-            return Err(ProtocolError::invalid_argument(
-                "source",
-                "only A/P versions can be forked",
-            ));
-        }
+        let kind = match source.kind() {
+            crate::EntityKind::Abstraction => crate::AccessKind::Abstraction,
+            crate::EntityKind::Perspective => crate::AccessKind::Perspective,
+            crate::EntityKind::Fact | crate::EntityKind::Goal => {
+                return Err(ProtocolError::invalid_argument(
+                    "source",
+                    "only A/P versions can be forked",
+                ));
+            }
+        };
         let destination = match request.destination {
             crate::MemoryDestination::Owner(owner) => crate::ForkDestinationPermit::Owner(
                 self.authorize_write(authz, &owner, kind)

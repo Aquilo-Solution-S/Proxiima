@@ -478,7 +478,7 @@ async fn goal_guest_revises_forked_perspective_without_hidden_ancestors() {
             "core_goal",
             serde_json::json!({
                 "action": "grant_access", "goal_handle": goal_handle,
-                "subject": guest.into_inner(), "read_ceiling": "Goal",
+                "subject": guest.into_inner(), "read_ceiling": "Perspective",
                 "write_ceiling": "Perspective", "manage": false,
             }),
         )
@@ -619,7 +619,7 @@ async fn goal_guest_revises_forked_perspective_without_hidden_ancestors() {
             "core_goal",
             serde_json::json!({
                 "action": "grant_access", "goal_handle": goal_handle,
-                "subject": bob.into_inner(), "read_ceiling": "Goal",
+                "subject": bob.into_inner(), "read_ceiling": "Perspective",
                 "write_ceiling": "Perspective", "manage": false,
             }),
         )
@@ -737,8 +737,8 @@ async fn goal_g4_guest_can_edit_exact_readable_goal_without_source_membership() 
             "core_goal",
             serde_json::json!({
                 "action": "grant_access", "goal_handle": created["goal_handle"],
-                "subject": guest.into_inner(), "read_ceiling": "Goal",
-                "write_ceiling": "Goal", "manage": false,
+                "subject": guest.into_inner(), "read_ceiling": "Perspective",
+                "write_ceiling": "Perspective", "works_goals": true, "manage": false,
             }),
         )
         .await?;
@@ -797,7 +797,7 @@ async fn goal_g4_guest_can_edit_exact_readable_goal_without_source_membership() 
             "core_goal",
             serde_json::json!({
                 "action": "grant_access", "goal_handle": created["goal_handle"],
-                "subject": viewer.into_inner(), "read_ceiling": "Goal",
+                "subject": viewer.into_inner(), "read_ceiling": "Perspective",
                 "write_ceiling": "None", "manage": false,
             }),
         )
@@ -815,7 +815,7 @@ async fn goal_g4_guest_can_edit_exact_readable_goal_without_source_membership() 
             .await
             .expect_err("Goal read-only viewer cannot edit");
         assert_eq!(viewer_err.kind(), CoreMcpErrorKind::InvalidRequest);
-        assert!(viewer_err.to_string().contains("Goal-level write required"));
+        assert!(viewer_err.to_string().contains("Goal work required"));
 
         let private_evidence_err = env
             .call_as(

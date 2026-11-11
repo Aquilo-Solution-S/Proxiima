@@ -3,8 +3,8 @@
 use proxiima_core::goal_collaboration::GoalEditPermit;
 use proxiima_core::verbs::goal_write::GoalEvidenceRef;
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerId, OwnerRoles,
-    OwnerScope, Role, StorageError,
+    EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerId, OwnerRoles, OwnerScope,
+    Role, StorageError,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -43,8 +43,8 @@ impl GoalEditFence<'_> {
         let role = current_goal_role(tx, self.command, &self.roles, generation)
             .await?
             .ok_or(StorageError::NotFound)?;
-        if !role.may_write(AccessKind::Goal) {
-            return Err(StorageError::Forbidden("Goal-level write required".into()));
+        if !role.works_goals() {
+            return Err(StorageError::Forbidden("Goal work required".into()));
         }
         self.sources
             .revalidate(
@@ -69,7 +69,7 @@ pub(crate) struct GoalWorkSources<'a> {
 }
 
 /// Begin one Goal work write on `owner` (set, modify, transition). A scope
-/// whose roles write `owner`'s Goals keeps its owner transaction. Goal work
+/// that administers `owner` keeps its owner transaction. Goal work
 /// by membership alone ([`Role::works_goals`]) writes under platform scope,
 /// as a Goal route does: every named source is first read under the
 /// caller's scope, then the owner fences of `owner` and every source owner
@@ -83,7 +83,7 @@ pub(crate) async fn begin_goal_work(
     owner: OwnerId,
     named: &GoalWorkSources<'_>,
 ) -> Result<Transaction<'static, Postgres>, StorageError> {
-    if scope.goal_work() != Some(owner) || scope.may_write(&owner, AccessKind::Goal) {
+    if scope.goal_work() != Some(owner) || scope.administers(&owner) {
         return crate::owner_scope::begin_owner_transaction(&storage.pool, scope).await;
     }
     let mut tx = storage.platform_transaction().await?;

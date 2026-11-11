@@ -230,7 +230,7 @@ impl OwnerAccessReadPort for GoalFake {
         _owner_scope: Option<&crate::OwnerScope>,
         _entity: crate::EntityId,
         _read_owners: &[OwnerId],
-    ) -> Result<Option<(OwnerId, crate::AccessKind, Option<crate::SchemaId>)>, StorageError> {
+    ) -> Result<Option<(OwnerId, crate::EntityKind, Option<crate::SchemaId>)>, StorageError> {
         Ok(None)
     }
 
@@ -282,7 +282,7 @@ async fn goal_helper_accepts_only_goal_command_handles() {
     };
     let permit = crate::storage_ports::OwnerWritePermit::new(
         req.owner,
-        crate::access::AccessKind::Goal,
+        crate::storage_ports::WriteAuthority::GoalWork,
         None,
         crate::BoundReadSet::default(),
     );

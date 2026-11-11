@@ -23,10 +23,10 @@ use proxiima_core::verbs::goal_write::{
     TransitionGoalAtomicRequest,
 };
 use proxiima_core::{
-    AccessKind, DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId,
-    GoalPayload, InputContractId, KeyField, ModelId, OperatorId, OwnerId, PayloadDisplay,
-    PayloadProjection, PendingWork, PromptVersion, SchemaId, SchemaVersion, SimpleTextGoalV1,
-    SpiiceRegistry, StorageError, ToolId, UserId,
+    DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId, GoalPayload,
+    InputContractId, KeyField, ModelId, OperatorId, OwnerId, PayloadDisplay, PayloadProjection,
+    PendingWork, PromptVersion, SchemaId, SchemaVersion, SimpleTextGoalV1, SpiiceRegistry,
+    StorageError, ToolId, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -272,7 +272,7 @@ async fn goal_replay_identity_uses_durable_body_across_wire_field_rename() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let topology = || GoalTopologyWrite::new(Vec::new(), Vec::new(), Vec::new());
 
@@ -378,7 +378,7 @@ async fn every_goal_verb_writes_one_goal_change_fact_and_a_replay_writes_none() 
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let mut listenable = SpiiceRegistry::new();
         listenable.publish_goal_changes();
         let registry = listenable.freeze_or_panic_for_tests();
@@ -560,7 +560,7 @@ async fn exact_goal_command_replays_precede_live_admission_for_every_verb() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
 
         // Create: assignment, evidence, may all disappear
@@ -1092,7 +1092,7 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let assignment = ingest_grounded_perspective(&pg, &permit).await?;
         let fact = pg
@@ -1188,7 +1188,7 @@ async fn a_goal_without_a_replay_declaration_fails_closed() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let assignment = ingest_grounded_perspective(&pg, &permit).await?;
         let first = pg
@@ -1281,7 +1281,7 @@ async fn concurrent_identical_goal_writes_replay() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+        let permit = OwnerWritePermit::admin_for_tests(owner);
         let assignment = ingest_grounded_perspective(&pg, &permit).await?.memory_id;
         let pool = pg.pool_for_tests().clone();
 
@@ -1296,7 +1296,7 @@ async fn concurrent_identical_goal_writes_replay() {
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
         let writer = |pg: PgStorage, barrier: Arc<tokio::sync::Barrier>| {
             tokio::spawn(async move {
-                let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Goal);
+                let permit = OwnerWritePermit::admin_for_tests(owner);
                 let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
                 let req = CreateGoalAtomicRequest {
                     draft: active_draft(owner, assignment, "race-create", "race", Vec::new())

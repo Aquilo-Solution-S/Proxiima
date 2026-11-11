@@ -121,8 +121,14 @@ pub struct GoalAccessArgs {
     pub goal_handle: String,
     /// Person UUID.
     pub subject: String,
+    /// The published memory the guest reads, by kind. The guest reads the
+    /// Goal itself whatever this is.
     pub read_ceiling: crate::AccessCeiling,
+    /// The Goal work memory the guest writes, by kind.
     pub write_ceiling: crate::AccessCeiling,
+    /// The guest edits this Goal: its title, text and progress.
+    #[serde(default)]
+    pub works_goals: bool,
     #[serde(default)]
     pub manage: bool,
     pub expires_at: Option<std::time::SystemTime>,
@@ -280,6 +286,7 @@ impl McpTool for CoreGoalTool {
                 "subject",
                 "read_ceiling",
                 "write_ceiling",
+                "works_goals",
                 "manage",
                 "expires_at",
             ],
@@ -475,8 +482,14 @@ fn collaboration_subject(raw: &str) -> Result<UserId, McpToolError> {
 }
 
 fn collaboration_role(a: &GoalAccessArgs) -> Result<crate::Role, McpToolError> {
-    crate::Role::new(a.read_ceiling, a.write_ceiling, a.manage)
-        .map_err(|e| McpToolError::InvalidInput(e.to_string()))
+    let role = crate::Role::new(a.read_ceiling, a.write_ceiling)
+        .map_err(|e| McpToolError::InvalidInput(e.to_string()))?
+        .with_goals(if a.works_goals {
+            crate::GoalAccess::Works
+        } else {
+            crate::GoalAccess::Reads
+        });
+    Ok(if a.manage { role.managing() } else { role })
 }
 
 async fn goal_grant_access(

@@ -377,8 +377,14 @@ mod tests {
             assert_eq!(ctx.authz.subject(), Some(subject));
             assert_eq!(ctx.authz.principal(), OwnerId::from(subject));
             assert_eq!(ctx.authz.verified_forwarded_owner(), Some(owner));
-            assert_eq!(ctx.authz.role_for_owner(&owner), Some(Role::viewer()));
-            assert_eq!(ctx.authz.readable_owners(AccessKind::Goal), vec![owner]);
+            assert_eq!(
+                ctx.authz.role_for_owner(&owner),
+                Some(ForwarderRole::Viewer.role())
+            );
+            assert_eq!(
+                ctx.authz.readable_owners(AccessKind::Perspective),
+                vec![owner]
+            );
             assert!(!ctx.authz.can_access_owner(&OwnerId::from(subject)));
             assert_eq!(ctx.authz.expires_at(), Some(expires_at));
             assert_eq!(ctx.authz.tool_scope(), &scope);

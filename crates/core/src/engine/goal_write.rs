@@ -88,7 +88,7 @@ impl GoalEditAuthority {
 enum GoalEdit {
     /// Modify and transition: Goal work ([`crate::Role::works_goals`]).
     Work,
-    /// Achieve: the owner's Goal write.
+    /// Achieve: owner administration ([`crate::Role::administers`]).
     Achieve,
 }
 
@@ -102,12 +102,12 @@ impl Engine {
     ) -> Result<GoalEditAuthority, ProtocolError> {
         let owner_route = match edit {
             GoalEdit::Work => authz.may_work_goals(&owner),
-            GoalEdit::Achieve => authz.may_write(&owner, AccessKind::Goal),
+            GoalEdit::Achieve => authz.may_administer(&owner),
         };
         if owner_route {
             let permit = match edit {
                 GoalEdit::Work => self.authorize_goal_work(authz, &owner).await,
-                GoalEdit::Achieve => self.authorize_write(authz, &owner, AccessKind::Goal).await,
+                GoalEdit::Achieve => self.authorize_owner_admin(authz, &owner).await,
             };
             return permit.map(GoalEditAuthority::Owner);
         }
@@ -305,8 +305,9 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write; `InvalidArgument` (field `goal`) when a child is
+    /// Returns `Forbidden` when `authz` neither administers the request
+    /// Owner nor holds a grant on this Goal that works it;
+    /// `InvalidArgument` (field `goal`) when a child is
     /// still open (`goal has open children: <handle>, ...`, naming each open
     /// child's current head) or every child is Abandoned; `InvalidArgument`
     /// or `NotFound` for rejected references; or `Internal` for storage
@@ -436,7 +437,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `Forbidden` when `authz` cannot access the request Owner or
-    /// lacks Goal write; `UnknownSchema`
+    /// does not administer it; `UnknownSchema`
     /// when any child payload schema is not registered as a Goal;
     /// `InvalidArgument` or `NotFound` for rejected references; or `Internal`
     /// for storage failures.
@@ -445,9 +446,7 @@ impl Engine {
         authz: &AuthzContext,
         req: &GoalDecomposeRequest,
     ) -> Result<DecomposeGoalOutcome, ProtocolError> {
-        let permit = self
-            .authorize_write(authz, &req.owner, AccessKind::Goal)
-            .await?;
+        let permit = self.authorize_owner_admin(authz, &req.owner).await?;
         let mut children = Vec::with_capacity(req.children.len());
         for child in &req.children {
             children.push(self.normalize_child_goal_draft(child)?);
@@ -1182,5 +1181,135 @@ mod tests {
             .await
             .expect_err("denied context must fail before target lookup or storage");
         assert_forbidden(&err);
+    }
+
+    /// Records the write need each gate reports to a host hook.
+    #[derive(Debug, Default)]
+    struct WriteNeeds(std::sync::Mutex<Vec<crate::authz::AuthzOperation>>);
+
+    impl WriteNeeds {
+        fn take(&self) -> Vec<crate::authz::AuthzOperation> {
+            std::mem::take(&mut *self.0.lock().expect("write need recorder lock"))
+        }
+    }
+
+    impl crate::authz::AuthorizationHook for WriteNeeds {
+        fn observe(&self, input: &crate::authz::AuthzInput<'_>, _: crate::authz::AuthzOutcome) {
+            use crate::authz::AuthzOperation;
+            if matches!(
+                input.operation,
+                AuthzOperation::Write { .. }
+                    | AuthzOperation::GoalWork
+                    | AuthzOperation::OwnerAdmin
+            ) {
+                self.0
+                    .lock()
+                    .expect("write need recorder lock")
+                    .push(input.operation.clone());
+            }
+        }
+    }
+
+    /// A host hook judges each Goal write under the need it declares: set,
+    /// modify and transition are Goal work, achieve and decompose are owner
+    /// administration, and none of them is a memory write.
+    #[tokio::test]
+    async fn a_hook_sees_each_goal_write_under_its_declared_need() {
+        use crate::authz::AuthzOperation;
+
+        let owner = owner();
+        let needs = std::sync::Arc::new(WriteNeeds::default());
+        let hook = needs.clone();
+        let engine = Engine::compose_or_panic_for_tests(
+            storage_with_memory(owner, owner, true, EntityKind::Perspective).storage_ports(),
+            |registry| {
+                registry.add_goal_schema_or_panic_for_tests::<TestGoalPayload>();
+                registry.add_authorization_hook(hook);
+            },
+        );
+        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
+
+        let _ = engine
+            .create_goal_from_payload_write(
+                &authz,
+                &GoalCreatePayloadWriteRequest {
+                    owner,
+                    topology: topology(memory_id()),
+                    payload: payload_write(),
+                    request_id: request_id("create"),
+                    authorship: tool_authorship(),
+                    author_self_perspective_id: None,
+                },
+            )
+            .await;
+        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "set");
+
+        let _ = engine
+            .modify_goal(
+                &authz,
+                &GoalModifyRequest {
+                    owner,
+                    prior_goal_id: goal_id(),
+                    replacement: payload_write(),
+                    authorship: GoalAuthorship::User,
+                    request_id: request_id("modify"),
+                    evidence: None,
+                    motivated_by: None,
+                    author_self_perspective_id: None,
+                },
+            )
+            .await;
+        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "modify");
+
+        let _ = engine
+            .transition_goal(
+                &authz,
+                &GoalTransitionRequest {
+                    owner,
+                    prior_goal_id: goal_id(),
+                    transition: GoalTransitionKind::Pause {
+                        pending: crate::PendingWork::Keep,
+                    },
+                    authorship: GoalAuthorship::User,
+                    request_id: request_id("transition"),
+                    author_self_perspective_id: None,
+                },
+            )
+            .await;
+        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "transition");
+
+        let _ = engine
+            .mark_goal_achieved(
+                &authz,
+                &GoalMarkAchievedRequest {
+                    owner,
+                    prior_goal_id: goal_id(),
+                    authorship: tool_authorship(),
+                    request_id: request_id("achieved"),
+                    evidence: vec![GoalEvidenceRef::new(memory_id())],
+                    author_self_perspective_id: None,
+                },
+            )
+            .await;
+        assert_eq!(needs.take(), [AuthzOperation::OwnerAdmin], "achieve");
+
+        let _ = engine
+            .decompose_goal(
+                &authz,
+                &GoalDecomposeRequest {
+                    owner,
+                    parent_goal_id: goal_id(),
+                    authorship: tool_authorship(),
+                    topology: topology(memory_id()),
+                    children: vec![ChildGoalDraft {
+                        payload: payload_write(),
+                        evidence: Vec::new(),
+                        request_id: request_id("decompose-child"),
+                    }],
+                    author_self_perspective_id: None,
+                },
+            )
+            .await;
+        assert_eq!(needs.take(), [AuthzOperation::OwnerAdmin], "decompose");
     }
 }

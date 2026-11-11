@@ -258,7 +258,7 @@ fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
          JOIN proxiima_core.goal_head h ON h.handle=a.goal_handle \
          JOIN proxiima_core.goal g ON g.t=h.t \
          WHERE a.subject_id=NULLIF(current_setting('app.goal_subject',true),'')::uuid \
-           AND a.controller_generation=h.authority_generation AND a.read_ceiling>=4 \
+           AND a.controller_generation=h.authority_generation \
            AND (a.expires_at IS NULL OR a.expires_at>statement_timestamp()) \
            AND g.owner_id=ANY($1::uuid[])"
     );

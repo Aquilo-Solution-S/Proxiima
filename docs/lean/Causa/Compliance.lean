@@ -83,10 +83,10 @@ inductive EraseAuthority where
   | user (u : User)
   | system
 
-/-- Admin on the owner — the Goal write ceiling, the gate a transfer takes —
-    or the host's system authority. -/
+/-- Administration of the owner, the gate a transfer takes, or the host's
+    system authority. -/
 def EraseAuthority.admits : EraseAuthority → Owner → Prop
-  | .user u, o => may_write u o .goal
+  | .user u, o => may_administer u o
   | .system, _ => True
 
 /-- One spiice-scoped erase: whole series (`handles`), one live owner, and
@@ -174,24 +174,24 @@ theorem spiice_erase_stays_in_spiice
     e.ownSchemas (e.seriesSchema h) :=
   e.ownSchema h hh
 
-/-- Below Admin, no user authorizes a spiice-scoped erase: a write ceiling
-    that stops short of Goals stops short of erasing. -/
+/-- Without administration, no user authorizes a spiice-scoped erase,
+    whatever the role's write ceiling. -/
 theorem below_admin_cannot_authorize_spiice_erase
-    (u : User) (o : Owner) (x : Role) (hx : o u = some x) (hw : x.write ≤ 3) :
+    (u : User) (o : Owner) (x : Role) (hx : o u = some x) (ha : ¬ x.administers) :
     ¬ (EraseAuthority.user u).admits o := by
-  rintro ⟨y, hy, hwy⟩
+  rintro ⟨y, hy, hay⟩
   rw [hx] at hy
   injection hy with hxy
   subst hxy
-  simp only [Role.mayWrite, AccessKind.rank] at hwy
-  omega
+  exact ha hay
 
 /-- The Ingest preset in particular: a principal that may add Facts may not
     erase them. -/
 theorem ingest_cannot_authorize_spiice_erase
     (u : User) (o : Owner) (hx : o u = some Role.ingest) :
     ¬ (EraseAuthority.user u).admits o :=
-  below_admin_cannot_authorize_spiice_erase u o Role.ingest hx (by decide)
+  below_admin_cannot_authorize_spiice_erase u o Role.ingest hx
+    (by simp [Role.administers, Role.ingest])
 
 /-- Target render: live / forgotten / unavailable. A pin to a forgotten `t`
     renders forgotten, not a missing origin. -/

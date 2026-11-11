@@ -28,7 +28,7 @@ pub trait FactIngestPort: Send + Sync {
     ) -> Result<FactIngestOutcome, StorageError> {
         let permit = OwnerWritePermit::new(
             *permit.owner(),
-            permit.access_kind(),
+            permit.authority(),
             permit.owner_scope().cloned(),
             permit.reads().clone(),
         );

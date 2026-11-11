@@ -10,6 +10,32 @@ struct DelegatedWriteGuard {
     expires_at: SystemTime,
 }
 
+/// What the engine admitted an owner write on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteAuthority {
+    /// The owner's memory of this kind and below.
+    Memory(AccessKind),
+    /// The owner's Goals ([`crate::Role::works_goals`]), and the Facts a Goal
+    /// work command declares for its Goal. No row-level memory call runs
+    /// under it.
+    GoalWork,
+    /// The owner itself ([`crate::Role::administers`]): transfer and erase
+    /// reach every row of the owner, whatever its kind.
+    Administration,
+}
+
+impl WriteAuthority {
+    /// The top memory kind a row-level call under this authority reaches.
+    #[must_use]
+    pub const fn memory_limit(self) -> Option<AccessKind> {
+        match self {
+            Self::Memory(kind) => Some(kind),
+            Self::GoalWork => None,
+            Self::Administration => Some(AccessKind::Perspective),
+        }
+    }
+}
+
 /// Sealed owner-write carrier for storage-tier writes.
 ///
 /// Engine authorization is the only constructor. Storage backends use the
@@ -17,7 +43,7 @@ struct DelegatedWriteGuard {
 /// authority.
 pub struct OwnerWritePermit {
     owner: OwnerId,
-    access_kind: AccessKind,
+    authority: WriteAuthority,
     owner_scope: Option<OwnerScope>,
     transfer_destination: Option<crate::OwnerId>,
     delegated: Option<DelegatedWriteGuard>,
@@ -262,7 +288,7 @@ impl std::fmt::Debug for OwnerWritePermit {
         let mut debug = formatter.debug_struct("OwnerWritePermit");
         debug
             .field("owner", &self.owner)
-            .field("access_kind", &self.access_kind)
+            .field("authority", &self.authority)
             .field("delegated", &self.delegated.is_some());
         if let Some(delegated) = &self.delegated {
             debug.field("expires_at", &delegated.expires_at);
@@ -272,16 +298,29 @@ impl std::fmt::Debug for OwnerWritePermit {
 }
 
 impl OwnerWritePermit {
-    /// Test-only constructor. Engine remains the production mint.
+    /// Test-only constructor for a memory write. Engine remains the
+    /// production mint.
     #[cfg(any(test, feature = "testkit"))]
     #[must_use]
     pub fn new_for_tests(owner: OwnerId, access_kind: AccessKind) -> Self {
+        Self::with_authority_for_tests(owner, WriteAuthority::Memory(access_kind))
+    }
+
+    /// Test-only constructor for owner administration.
+    #[cfg(any(test, feature = "testkit"))]
+    #[must_use]
+    pub fn admin_for_tests(owner: OwnerId) -> Self {
+        Self::with_authority_for_tests(owner, WriteAuthority::Administration)
+    }
+
+    #[cfg(any(test, feature = "testkit"))]
+    fn with_authority_for_tests(owner: OwnerId, authority: WriteAuthority) -> Self {
         let subject = uuid::Uuid::now_v7();
         let roles =
             crate::OwnerRoles::scoped_to(crate::UserId::new(subject), owner, crate::Role::admin());
         Self {
             owner,
-            access_kind,
+            authority,
             owner_scope: Some(OwnerScope::from_verified_roles(
                 roles,
                 None,
@@ -312,7 +351,7 @@ impl OwnerWritePermit {
                 .with_group_role(destination.as_group(), crate::Role::admin());
         Self {
             owner,
-            access_kind,
+            authority: WriteAuthority::Memory(access_kind),
             owner_scope: Some(OwnerScope::from_verified_roles(
                 roles,
                 None,
@@ -333,13 +372,13 @@ impl OwnerWritePermit {
     #[must_use]
     pub(crate) fn new(
         owner: OwnerId,
-        access_kind: AccessKind,
+        authority: WriteAuthority,
         owner_scope: Option<OwnerScope>,
         reads: crate::authz::BoundReadSet,
     ) -> Self {
         Self {
             owner,
-            access_kind,
+            authority,
             owner_scope,
             transfer_destination: None,
             delegated: None,
@@ -361,7 +400,7 @@ impl OwnerWritePermit {
     #[must_use]
     pub(crate) fn new_delegated(
         owner: OwnerId,
-        access_kind: AccessKind,
+        authority: WriteAuthority,
         runtime_binding: DelegationRuntimeBinding,
         expires_at: SystemTime,
         owner_scope: Option<OwnerScope>,
@@ -369,7 +408,7 @@ impl OwnerWritePermit {
     ) -> Self {
         Self {
             owner,
-            access_kind,
+            authority,
             owner_scope,
             transfer_destination: None,
             delegated: Some(DelegatedWriteGuard {
@@ -420,9 +459,10 @@ impl OwnerWritePermit {
         &self.owner
     }
 
+    /// What the engine admitted this write on.
     #[must_use]
-    pub const fn access_kind(&self) -> AccessKind {
-        self.access_kind
+    pub const fn authority(&self) -> WriteAuthority {
+        self.authority
     }
 
     pub(crate) fn authorize_transfer_to(&mut self, destination: crate::OwnerId) {

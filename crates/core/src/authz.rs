@@ -942,18 +942,40 @@ impl AuthzContext {
     }
 
     /// Whether the subject sets, modifies and transitions `owner`'s Goals:
-    /// Goal write, or ordinary membership whose role
-    /// [works Goals](crate::Role::works_goals) (`request_may_work_goals` in
-    /// `docs/lean/Causa/Authorization.lean`). A forwarded or delegated
-    /// request keeps the Goal write rule.
+    /// its role [works Goals](crate::Role::works_goals)
+    /// (`request_may_work_goals` in `docs/lean/Causa/Authorization.lean`).
+    /// A forwarded role is capped below Goal work. A delegated or system
+    /// request is no membership request: it works Goals only where it also
+    /// [administers](crate::Role::administers).
     #[must_use]
     pub fn may_work_goals(&self, owner: &OwnerId) -> bool {
-        let membership = self.auth_path == AuthPath::HostBearer && self.forwarded_owner.is_none();
-        self.may_write(owner, AccessKind::Goal)
-            || (membership
-                && self
-                    .role_for_owner(owner)
-                    .is_some_and(crate::access::Role::works_goals))
+        self.role_for_owner(owner).is_some_and(|role| {
+            role.works_goals() && (self.auth_path == AuthPath::HostBearer || role.administers())
+        })
+    }
+
+    /// Whether the subject reads `owner`'s Goals
+    /// ([`Role::reads_goals`](crate::Role::reads_goals)).
+    #[must_use]
+    pub fn may_read_goals(&self, owner: &OwnerId) -> bool {
+        self.role_for_owner(owner)
+            .is_some_and(crate::access::Role::reads_goals)
+    }
+
+    /// Whether the subject reads an entry of `kind` owned by `owner`: a
+    /// memory by the read limit, a Goal by reading the owner's Goals.
+    #[must_use]
+    pub fn may_read_entry(&self, owner: &OwnerId, kind: crate::EntityKind) -> bool {
+        self.role_for_owner(owner)
+            .is_some_and(|role| role.may_read_entry(kind))
+    }
+
+    /// Whether the subject administers `owner`
+    /// ([`Role::administers`](crate::Role::administers)).
+    #[must_use]
+    pub fn may_administer(&self, owner: &OwnerId) -> bool {
+        self.role_for_owner(owner)
+            .is_some_and(crate::access::Role::administers)
     }
 
     #[must_use]
@@ -1856,7 +1878,7 @@ mod tests {
         );
         assert!(
             !delegated.may_work_goals(&group),
-            "delegation keeps Goal write"
+            "a delegated request works Goals only where it administers"
         );
         let outsider = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
         assert!(!viewer.may_work_goals(&outsider));
@@ -2135,8 +2157,9 @@ mod tests {
         assert!(!ctx.may_read(&owner, AccessKind::Fact));
         assert!(!ctx.may_write(&owner, AccessKind::Fact));
         assert!(!ctx.may_manage(&owner));
-        assert!(ctx.readable_owners(AccessKind::Goal).is_empty());
-        assert!(ctx.writable_owners(AccessKind::Goal).is_empty());
+        assert!(ctx.readable_owners(AccessKind::Fact).is_empty());
+        assert!(ctx.writable_owners(AccessKind::Fact).is_empty());
+        assert!(!ctx.may_read_goals(&owner) && !ctx.may_administer(&owner));
     }
 
     #[test]
@@ -2148,19 +2171,17 @@ mod tests {
         let ctx = AuthzContext::server_resolved(roles, AuthPath::HostBearer);
 
         assert_eq!(ctx.subject(), Some(subject));
-        assert!(ctx.may_write(&OwnerId::from(subject), AccessKind::Goal));
+        assert!(ctx.may_administer(&OwnerId::from(subject)));
         assert!(ctx.may_write(&group, AccessKind::Perspective));
-        assert!(!ctx.may_write(&group, AccessKind::Goal));
+        assert!(ctx.may_work_goals(&group));
+        assert!(!ctx.may_administer(&group));
         assert!(!ctx.may_manage(&group));
 
-        let readable = ctx.readable_owners(AccessKind::Goal);
+        let readable = ctx.readable_owners(AccessKind::Perspective);
         assert_eq!(readable.len(), 2, "own personal owner plus the one group");
         assert!(readable.contains(&OwnerId::from(subject)));
         assert!(readable.contains(&group));
-
-        let writable = ctx.writable_owners(AccessKind::Goal);
-        assert!(writable.contains(&OwnerId::from(subject)));
-        assert!(!writable.contains(&group));
+        assert!(ctx.may_read_goals(&OwnerId::from(subject)) && ctx.may_read_goals(&group));
     }
 
     /// The forwarder shape: a subject whose resolved map carries no Group
@@ -2196,9 +2217,9 @@ mod tests {
         assert_eq!(narrowed.auth_path(), AuthPath::HostBearer);
         assert_eq!(narrowed.role_for_owner(&group), Some(Role::editor()));
         assert!(narrowed.may_write(&group, AccessKind::Perspective));
-        assert!(!narrowed.may_write(&group, AccessKind::Goal));
+        assert!(!narrowed.may_administer(&group));
         assert_eq!(
-            narrowed.readable_owners(AccessKind::Goal),
+            narrowed.readable_owners(AccessKind::Perspective),
             vec![group],
             "the narrowed set is exactly the one party"
         );

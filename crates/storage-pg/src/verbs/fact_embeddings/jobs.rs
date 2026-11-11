@@ -572,7 +572,7 @@ async fn enqueue_missing_embedding_jobs_on_connection(
     let owner_id = permit.owner().into_inner();
     // Existing jobs are already accounted for, regardless of their status.
     // Exclude them before limiting so they cannot hide later missing work.
-    let kinds = crate::verbs::forget::kinds_within(permit.access_kind());
+    let kinds = crate::verbs::forget::kinds_within(permit.authority().memory_limit());
     let ids = missing_embedding_ids(
         &mut *pool,
         owner_id,

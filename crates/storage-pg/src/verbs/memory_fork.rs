@@ -9,7 +9,7 @@ use proxiima_core::{
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
-use crate::access::owner_columns::CitedBlobUploads;
+use crate::access::owner_columns::{CitedBlobUploads, memory_access_kind};
 use crate::ports::goal_collaboration::source_reads::{SourceReads, lock_goal_footprint};
 use crate::ports::goal_collaboration::{
     current_goal_role, current_role, fenced_roles, role_for_goal, source_admin,
@@ -167,20 +167,14 @@ async fn authorize_fork(
     reads
         .revalidate(storage, tx, permit.scope(), &roles, &source.source_endpoint)
         .await?;
-    check_destination(tx, permit, &roles, AccessKind::from(source.entity_kind)).await?;
+    let access_kind = memory_access_kind(source.entity_kind)?;
+    check_destination(tx, permit, &roles, access_kind).await?;
     let same_owner_destination = matches!(permit.destination(), ForkDestinationPermit::Owner(_))
         && target_owner == source.source_owner;
     let cited_uploads =
         if !same_owner_destination && !source_admin(permit.scope(), &roles, source.source_owner) {
             CitedBlobUploads::Publication(
-                check_fork_consent(
-                    tx,
-                    permit,
-                    &roles,
-                    source.consent,
-                    AccessKind::from(source.entity_kind),
-                )
-                .await?,
+                check_fork_consent(tx, permit, &roles, source.consent, access_kind).await?,
             )
         } else {
             CitedBlobUploads::Owner
@@ -379,7 +373,7 @@ async fn fork_once(
     let roles = authority.roles;
     let same_owner_destination = authority.same_owner_destination;
     let cited_uploads = authority.cited_uploads;
-    let access_kind = AccessKind::from(entity_kind);
+    let access_kind = memory_access_kind(entity_kind)?;
     let (origins, references, external_origins, external_references) = (
         source.origins,
         source.references,

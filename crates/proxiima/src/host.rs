@@ -296,10 +296,10 @@ pub use proxiima_core::{
     DelegatedPhase, DelegationId, DelegationIssued, DelegationRevocation,
     EmbeddingAnnObservability, EmbeddingJobBacklog, EmbeddingOrphanCounts,
     EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRuntimePolicy, Engine,
-    EngineAuthority, ForwarderRole, GroupId, MemoryId, OwnerAccessPort, OwnerId, OwnerIdParseError,
-    OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError, ServedSurface,
-    SourceId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices, StorageError, ToolName,
-    ToolScope, UserId, env_value, provider_safe_tool_name,
+    EngineAuthority, ForwarderRole, GoalAccess, GroupId, MemoryId, OwnerAccessPort, OwnerId,
+    OwnerIdParseError, OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError,
+    ServedSurface, SourceId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices,
+    StorageError, ToolName, ToolScope, UserId, env_value, provider_safe_tool_name,
 };
 #[cfg(feature = "openai-compat-embed")]
 pub use proxiima_llm_openai_compat::{OpenAiCompatConfig, OpenAiCompatEmbeddingClient};
@@ -477,7 +477,7 @@ pub use proxiima_core::{
     owner_inverse::OwnerExportContext, storage_ports::EmbeddingWriteProof,
     storage_ports::MembershipEndpointAuthority, storage_ports::MembershipMemberAuthority,
     storage_ports::MembershipWritePermit, storage_ports::OperatorWriteProof,
-    storage_ports::OwnerWritePermit,
+    storage_ports::OwnerWritePermit, storage_ports::WriteAuthority,
 };
 /// The memories a session read before it writes
 /// ([`AuthzContext::with_read_set`], #677): the set, one named memory, and

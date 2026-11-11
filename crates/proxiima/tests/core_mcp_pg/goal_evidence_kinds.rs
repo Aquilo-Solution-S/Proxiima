@@ -679,7 +679,6 @@ async fn perspective_reads_hide_guiding_goals_outside_the_read_ceiling() {
             Role::new(
                 proxiima_core::AccessCeiling::Perspective,
                 proxiima_core::AccessCeiling::None,
-                false,
             )?,
         );
         let uri = format!("proxiima://memory/{guided}");
@@ -753,7 +752,7 @@ async fn guest_snapshot_labels_published_home_owner_and_reads_goal_work() {
             "core_goal",
             serde_json::json!({
                 "action": "grant_access", "goal_handle": goal_handle,
-                "subject": guest.into_inner(), "read_ceiling": "Goal",
+                "subject": guest.into_inner(), "read_ceiling": "Perspective",
                 "write_ceiling": "Perspective", "manage": false,
             }),
         )

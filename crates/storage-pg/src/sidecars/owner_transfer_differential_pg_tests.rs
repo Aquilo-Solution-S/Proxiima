@@ -974,8 +974,11 @@ async fn run_transfers(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let permit =
         OwnerWritePermit::transfer_for_tests(corpus.source, AccessKind::Fact, corpus.destination);
-    let goal_permit =
-        OwnerWritePermit::transfer_for_tests(corpus.source, AccessKind::Goal, corpus.destination);
+    let goal_permit = OwnerWritePermit::transfer_for_tests(
+        corpus.source,
+        AccessKind::Perspective,
+        corpus.destination,
+    );
     let mut out = String::new();
     for (name, memory) in [
         ("in_place", corpus.in_place),

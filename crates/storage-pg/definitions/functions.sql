@@ -2901,7 +2901,6 @@ AS $function$
         UNION ALL
         SELECT h.handle,
                CASE
-                   WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_goal', true), '')::uuid[], '{}')) THEN 4
                    WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_perspective', true), '')::uuid[], '{}')) THEN 3
                    WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_abstraction', true), '')::uuid[], '{}')) THEN 2
                    ELSE 1
@@ -3001,7 +3000,6 @@ AS $function$
            AND g.t = candidate_t
            AND a.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
            AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
-           AND a.read_ceiling >= 4
     )
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_read_admitted(uuid) FROM PUBLIC;
