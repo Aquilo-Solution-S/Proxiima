@@ -3,7 +3,9 @@
 
 use proxiima::company_owner;
 use proxiima::spiice::{
-    FactWriteCommand, IngestReceipt, StorageError, ingest_receipt, lock_scope_fence_shared_tx,
+    FactWriteCommand, IngestReceipt, StorageError, cited_objects_present, ingest_receipt,
+    lexical_languages, lock_memory_shared, lock_scope_fence_shared_tx, memories_citing,
+    memory_embeddings, memory_versions, series_versions,
 };
 use proxiima::testkit::{SplitRoleDb, scoped_authz};
 use proxiima_example::NoteV1;
@@ -100,6 +102,71 @@ async fn a_receipt_is_read_on_the_caller_transaction_and_a_unit_has_no_job_row()
             .expect("no units")
             .is_empty()
     );
+    runtime.close().await;
+    built.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_typed_owner_reads_are_spiice_names_on_the_caller_transaction() {
+    let db = SplitRoleDb::create("proxiima_example_owner_reads", &[])
+        .await
+        .expect("PG required");
+    let owner = company_owner(Uuid::now_v7());
+    let built = build_engine(db.runtime_url(), db.platform_url(), owner)
+        .await
+        .expect("the example boots");
+    let authz = scoped_authz(owner);
+    let scope = authz.owner_scope().expect("owner scope");
+    let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
+    let notebook_id = register_notebook(&runtime, scope, owner, "inbox")
+        .await
+        .expect("notebook");
+    let note = NoteV1 {
+        notebook_id,
+        key: "typed".to_owned(),
+        body: "read through the facade".to_owned(),
+        written_at: time::OffsetDateTime::now_utc(),
+    };
+    let memory_id = remember_note(built.host().engine(), &authz, owner, &note)
+        .await
+        .expect("admitted");
+
+    let mut tx = proxiima::begin_owner_transaction(&runtime, scope)
+        .await
+        .expect("caller transaction");
+    let versions = memory_versions(&mut tx, &owner, &[memory_id])
+        .await
+        .expect("versions");
+    let [version] = versions.as_slice() else {
+        panic!("one version, got {versions:?}");
+    };
+    assert_eq!(version.memory_id, memory_id);
+    assert!(version.head);
+    let series = series_versions(&mut tx, &owner, version.handle)
+        .await
+        .expect("series");
+    assert_eq!(series, versions);
+    let locked = lock_memory_shared(&mut tx, &owner, memory_id)
+        .await
+        .expect("lock");
+    assert_eq!(locked.as_ref(), Some(version));
+    let citing = memories_citing(&mut tx, &owner, Uuid::now_v7())
+        .await
+        .expect("citing");
+    assert!(citing.is_empty());
+    let present = cited_objects_present(&mut tx, &owner, &[Uuid::now_v7()])
+        .await
+        .expect("objects");
+    assert!(present.is_empty());
+    let embeddings = memory_embeddings(&mut tx, &owner, &[memory_id])
+        .await
+        .expect("embeddings");
+    assert!(
+        embeddings.is_empty(),
+        "a note that declines embedding has no vector"
+    );
+    lexical_languages(&mut tx).await.expect("languages");
+    tx.rollback().await.expect("rollback");
     runtime.close().await;
     built.shutdown().await;
 }

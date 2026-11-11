@@ -117,6 +117,10 @@ pub use verbs::ingest_receipt::ingest_receipt;
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 pub use verbs::owner_export::export_statement_sql_for_tests;
+pub use verbs::owner_reads::{
+    MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
+    memories_citing, memory_embeddings, memory_versions, series_versions,
+};
 
 /// Ledger namespace boundary between sequential core and dated spiice versions.
 pub const CORE_MIGRATION_VERSION_CEILING: i64 = 9999;

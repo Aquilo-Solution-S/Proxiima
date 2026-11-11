@@ -640,6 +640,14 @@ pub use proxiima_storage_pg::ingest_receipt;
 /// Generate a projection migration and its inverses from the spiice contract.
 /// Also available through the Spiice SDK for migration authors.
 pub use proxiima_storage_pg::projection::{Artifact, ProjectionArtifacts, projection_artifacts};
+/// Typed reads on the caller's transaction.
+///
+/// Host names for the reads in [`crate::spiice`], run under the owner scope
+/// of the transaction the caller holds.
+pub use proxiima_storage_pg::{
+    MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
+    memories_citing, memory_embeddings, memory_versions, series_versions,
+};
 /// Migration-only storage and core schema operations for a host's schema lane.
 /// [`MigrationStorage`] is the shared bound of the facade migration runners.
 pub use proxiima_storage_pg::{

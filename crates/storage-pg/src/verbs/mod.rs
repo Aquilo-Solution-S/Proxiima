@@ -23,6 +23,7 @@ pub(crate) mod memory_fork;
 pub(crate) mod memory_timeseries;
 pub(crate) mod owner_erase;
 pub(crate) mod owner_export;
+pub(crate) mod owner_reads;
 pub(crate) mod publication_outbox;
 #[cfg(any(test, feature = "testkit"))]
 pub use publication_outbox::{fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests};

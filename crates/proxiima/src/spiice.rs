@@ -262,6 +262,11 @@ pub use proxiima_storage_pg::sidecars::{
     ForkPolicy, PgGoalSidecar, PgMemoryPayload, PgMemoryPayloadFuture, PgMemorySidecar,
     PgRetiredFactSidecar, PgSidecarFuture, PgSidecarReadCtx, SidecarInsertPermit, SidecarOwnerMode,
 };
+/// Typed reads on the caller's transaction.
+pub use proxiima_storage_pg::{
+    MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
+    memories_citing, memory_embeddings, memory_versions, series_versions,
+};
 pub use proxiima_storage_pg::{PgMigrationSchemas, PgSchemaEvolution};
 pub use proxiima_storage_pg::{
     PgSidecarRegistry, PgSidecarRegistryFrozen, register_core_pg_sidecars,
