@@ -270,6 +270,10 @@ functions; the ordinary functions reject missing versions. Allowing missing vers
 dirty ledgers, changed checksums, and migration lanes that would replay or
 reorder previously applied work.
 
+The locks by which an erase excludes writers belong to a release, not to the
+database: a binary of another release may take different ones. While releases
+share a database, do not erase an owner; drain to one release first.
+
 Read-only boot and planning share the runner's migration lock so they cannot
 validate between source commits. They fail after a five-second lock wait.
 Complete the migrate step before starting servers; allowing missing versions

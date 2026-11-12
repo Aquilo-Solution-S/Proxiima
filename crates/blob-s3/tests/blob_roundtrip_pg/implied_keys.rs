@@ -629,11 +629,12 @@ async fn a_source_erase_over_an_aborted_staged_upload_leaves_nothing_unversioned
 }
 
 /// An erase of a crash-window row serializes with a stage on the canonical
-/// key the row only implies: while that key's fence is held, the erase
-/// waits.
+/// key the row only implies. A stage holds its owner's fence before the key,
+/// and that is where the erase waits: it locks no key that only its own
+/// owner's rows imply.
 #[tokio::test]
 #[ignore = "needs the S3 lane: set PROXIIMA_S3_*"]
-async fn an_erase_waits_on_the_canonical_key_a_crash_window_row_implies() {
+async fn an_erase_waits_for_a_stage_on_the_canonical_key_a_crash_window_row_implies() {
     let f = fixture(false).await;
     let (upload_id, _pending_key) = prepare_and_put_upload(
         &f.pool,
@@ -648,9 +649,10 @@ async fn an_erase_waits_on_the_canonical_key_a_crash_window_row_implies() {
     .await;
     let canonical_key = format!("objects/{upload_id}");
     let mut fence = f.pool.begin().await.expect("begin fence");
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('proxiima-object-key:' || $1, 0))")
-        .bind(&canonical_key)
-        .execute(&mut *fence)
+    proxiima_storage_pg::access::fences::lock_owner_fence_shared_tx(&mut fence, &f.owner)
+        .await
+        .expect("hold the owner fence as a stage does");
+    proxiima_storage_pg::access::fences::lock_object_keys_tx(&mut fence, &[canonical_key])
         .await
         .expect("hold the canonical key fence");
 
@@ -678,13 +680,10 @@ async fn an_erase_waits_on_the_canonical_key_a_crash_window_row_implies() {
         if waiting {
             break;
         }
-        assert!(
-            !erase.is_finished(),
-            "the erase did not wait on the derived key"
-        );
+        assert!(!erase.is_finished(), "the erase did not wait for the stage");
         assert!(
             Instant::now() < deadline,
-            "the erase never reached the key fence"
+            "the erase never reached the stage's fence"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

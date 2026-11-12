@@ -462,6 +462,83 @@ async fn series_erase_includes_hot_append_that_wins_the_handle_lock_first() {
     result.expect("hot append-before-erase linearization failed");
 }
 
+/// A transaction holding the tables the way a schema evolution does stands in
+/// for one. The erase's first step waits for the tables and holds no advisory
+/// lock meanwhile, so the stand-in takes the owner's fence without waiting.
+#[tokio::test]
+async fn a_physical_erase_waits_for_a_schema_evolutions_tables_before_it_takes_the_fence() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let mut evolution = pool.begin().await?;
+        sqlx::query(
+            "LOCK TABLE proxiima_core.memory, proxiima_core.goal_head, proxiima_core.goal, \
+             proxiima_core.blob IN SHARE ROW EXCLUSIVE MODE",
+        )
+        .execute(&mut *evolution)
+        .await?;
+        let erase_pool = pool.clone();
+        let erase = tokio::spawn(async move {
+            let mut tx = erase_pool
+                .begin()
+                .await
+                .map_err(|err| StorageError::Internal(format!("begin erase: {err}")))?;
+            erase_context(surfaces())
+                .lock_before_physical_erase(&mut tx, &owner)
+                .await?;
+            let held: i64 = sqlx::query_scalar(
+                "SELECT count(*)::bigint FROM pg_locks
+                  WHERE locktype = 'advisory' AND granted AND pid = pg_backend_pid()",
+            )
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Internal(format!("count erase locks: {err}")))?;
+            Ok::<_, StorageError>(held)
+        });
+        let mut held_while_waiting = None;
+        for _ in 0..500 {
+            let (waiting, held): (i64, i64) = sqlx::query_as(
+                "WITH here AS (SELECT * FROM pg_locks WHERE database =
+                         (SELECT oid FROM pg_database WHERE datname = current_database()))
+                 SELECT (SELECT count(*) FROM here WHERE NOT granted AND locktype = 'relation'),
+                        (SELECT count(*) FROM here waiting JOIN here held USING (pid)
+                          WHERE NOT waiting.granted AND waiting.locktype = 'relation'
+                            AND held.granted AND held.locktype = 'advisory')",
+            )
+            .fetch_one(pool)
+            .await?;
+            if waiting > 0 {
+                held_while_waiting = Some(held);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            held_while_waiting,
+            Some(0),
+            "the erase waits for the tables and holds no advisory lock"
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            crate::access::fences::lock_owner_fence_exclusive_tx(&mut evolution, &owner),
+        )
+        .await??;
+        evolution.commit().await?;
+        let held = tokio::time::timeout(std::time::Duration::from_secs(10), erase).await???;
+        assert_eq!(held, 1, "then the erase holds the owner's fence");
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("erase first locks");
+}
+
 #[tokio::test]
 async fn series_erase_wins_hot_handle_and_append_retries_then_survives() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

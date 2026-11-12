@@ -444,13 +444,21 @@ answers `out of shared memory` (SQLSTATE 53200) and the transaction rolls back
 whole; that surfaces as `StorageError::Unavailable`. Raise
 `max_locks_per_transaction` (a restart) until that product is well above twice
 the number of object keys, received published Facts, memories and Goal versions
-of the largest owner whose source-scoped erase must succeed.
+of the largest owner whose source-scoped erase must succeed. A whole-owner
+erase needs room only for the owner's mounted object keys and received
+published Facts.
 
 A whole-owner or source-scoped erase waits for a running schema evolution. Each
 attempt waits at most the fence lock timeout (5 s), and the erase retries a
 bounded number of times; if the evolution is still running after that, the
 erase fails with `StorageError::Retryable` and can be run again once the
-evolution has finished.
+evolution has finished. A series erase and the erase of a single memory wait
+for the evolution in the same way, before they take a fence; a series erase
+waits up to 5 s and then fails as retryable. A migration run that replaces
+the core definitions locks every core table, in another order: against an erase
+or any other writer of two core tables PostgreSQL can abort one of the two as a
+deadlock victim. An aborted erase is retryable; an aborted migration run is run
+again.
 
 ## Backup and restore
 

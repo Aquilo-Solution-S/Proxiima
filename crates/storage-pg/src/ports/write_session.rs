@@ -290,12 +290,14 @@ impl WriteSessionFactory for PgStorage {
             .execute(&mut *tx)
             .await
             .map_err(crate::error::map_err)?;
-        // The owner fence, exclusive, is the transaction's first lock: an
+        // The erase's first locks, the owner fence exclusive among them: an
         // ordinary unit of this owner holds it shared from its first write,
         // and a transfer takes it exclusively before it moves a series, so
         // the footprint below is one ownership snapshot. A unit of another
         // owner is not held up.
-        crate::access::fences::lock_owner_fence_exclusive_tx(&mut tx, permit.owner()).await?;
+        context
+            .lock_before_physical_erase(&mut tx, permit.owner())
+            .await?;
         Ok(Box::new(PgWriteSession {
             store_number: self.store_number,
             tx,

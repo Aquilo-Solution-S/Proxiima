@@ -5,6 +5,34 @@ use proxiima_core::scope::ScopeKind;
 use proxiima_core::{OwnerId, StorageError};
 use sqlx::{Postgres, Transaction};
 
+/// Take the tables a schema evolution locks, in its order, before an erase
+/// takes its first fence.
+///
+/// A schema evolution locks these four tables in SHARE ROW EXCLUSIVE mode
+/// before it touches a row or a fence. An erase that takes ROW EXCLUSIVE on
+/// them first waits for a running evolution while it holds nothing the
+/// evolution needs, and an evolution that starts later waits for the erase
+/// while it holds nothing either, so the two cannot wait for each other. The
+/// erase also selects its rows only after an evolution that replaces them has
+/// committed.
+///
+/// # Errors
+///
+/// Returns [`StorageError`] when the wait runs into the transaction's lock
+/// timeout (retryable) or Postgres refuses the lock.
+pub(crate) async fn lock_evolution_tables_for_erase_tx(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        "LOCK TABLE proxiima_core.memory, proxiima_core.goal_head, proxiima_core.goal, \
+         proxiima_core.blob IN ROW EXCLUSIVE MODE",
+    )
+    .execute(tx.as_mut())
+    .await
+    .map_err(map_err)?;
+    Ok(())
+}
+
 /// The owner admission fence is a distinct advisory-lock namespace from
 /// lifecycle keys and Memory series handles. Its key is the owner id alone
 /// (`proxiima-owner-fence:<uuid>`): one id is one owner. Memory and Goal admission hold

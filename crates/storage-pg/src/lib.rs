@@ -753,20 +753,22 @@ impl std::fmt::Debug for PgHostStateEraseContext {
 }
 
 impl PgHostStateEraseContext {
-    /// Acquire `owner`'s exclusive fence as the transaction's first erase
-    /// lock. Callers that perform spiice-owned queries or DML before
-    /// delegating a physical erase must call this immediately after BEGIN and
-    /// before any source/handle/target locks. Only `owner`'s writes wait; the
-    /// rows a spiice table keeps for `owner` are the ones its surface names in
-    /// `owner_column`.
+    /// Take the transaction's first erase locks: the tables a schema evolution
+    /// locks, then `owner`'s exclusive fence. Callers that perform spiice-owned
+    /// queries or DML before delegating a physical erase must call this
+    /// immediately after BEGIN and before any source/handle/target locks. The
+    /// erase waits for a running schema evolution before it holds the fence;
+    /// after that only `owner`'s writes wait. The rows a spiice table keeps
+    /// for `owner` are the ones its surface names in `owner_column`.
     ///
     /// # Errors
-    /// Returns a storage error when `PostgreSQL` cannot acquire the fence.
+    /// Returns a storage error when `PostgreSQL` cannot acquire a lock.
     pub async fn lock_before_physical_erase(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         owner: &proxiima_core::OwnerId,
     ) -> Result<(), StorageError> {
+        crate::access::fences::lock_evolution_tables_for_erase_tx(tx).await?;
         crate::access::fences::lock_owner_fence_exclusive_tx(tx, owner).await
     }
 

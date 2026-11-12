@@ -80,19 +80,9 @@ async fn begin_bulk_erase_tx(
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
-    // A schema evolution locks these four tables in this order before it
-    // touches a row or a fence. Taking ROW EXCLUSIVE on them first, in the
-    // same order, makes the erase wait for a running evolution (up to the
-    // lock timeout above) before it holds the owner fence, instead of holding
-    // the fence while the evolution waits for it, and before it selects the
-    // rows it will delete, so an evolution cannot replace them in between.
-    sqlx::query(
-        "LOCK TABLE proxiima_core.memory, proxiima_core.goal_head, proxiima_core.goal, \
-         proxiima_core.blob IN ROW EXCLUSIVE MODE",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(map_err)?;
+    // Before the owner fence and before the selection; the wait is bounded by
+    // the lock timeout above.
+    crate::access::fences::lock_evolution_tables_for_erase_tx(&mut tx).await?;
     sqlx::query("SET LOCAL statement_timeout = 0")
         .execute(&mut *tx)
         .await

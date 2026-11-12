@@ -1,6 +1,7 @@
-//! A real schema evolution and a whole-owner erase of one of the owners it
-//! migrates, in both orders. A gate trigger on `memory` parks the side that
-//! goes first inside its transaction, holding every lock it took so far.
+//! A real schema evolution and an erase of rows it migrates: a whole-owner
+//! erase in both orders, and a series erase that starts while the evolution
+//! runs. A gate trigger on `memory` parks the side that goes first inside its
+//! transaction, holding every lock it took so far.
 
 use super::*;
 use proxiima_core::owner_inverse::{
@@ -116,12 +117,17 @@ async fn install_gates(admin: &sqlx::PgPool) {
     }
 }
 
+/// Lock waits of the backends connected to this test's database. A wait for
+/// a row shows as a transaction-id lock, which names no database, so the
+/// backend's own database scopes the count: other tests share the cluster.
 async fn ungranted_waiters(admin: &sqlx::PgPool) -> i64 {
-    sqlx::query_scalar("SELECT count(*)::bigint FROM pg_locks WHERE NOT granted
-            AND (database = (SELECT oid FROM pg_database WHERE datname = current_database()) OR database IS NULL)")
-        .fetch_one(admin)
-        .await
-        .unwrap()
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+          WHERE NOT l.granted AND a.datname = current_database()",
+    )
+    .fetch_one(admin)
+    .await
+    .unwrap()
 }
 
 async fn wait_for_waiters(admin: &sqlx::PgPool, at_least: i64) {
@@ -347,4 +353,112 @@ async fn a_whole_owner_erase_in_flight_and_a_replacing_schema_evolution_both_fin
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_replacing_schema_evolution_in_flight_and_a_whole_owner_erase_both_finish() {
     evolution_and_owner_erase(false, true).await;
+}
+
+/// A series erase that starts while a schema evolution holds the tables waits
+/// for them before it takes its owner's fence or any other advisory lock, so
+/// the evolution never waits for the erase.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_series_erase_waits_for_a_schema_evolution_before_it_takes_a_fence() {
+    let seeded = seed().await;
+    let mut r2 = SpiiceRegistry::new();
+    register_v2(&mut r2).unwrap();
+    let r2 = r2.try_freeze().unwrap();
+    let f2 = sidecars_v2().freeze_against(&r2).unwrap();
+    let admin = sqlx::PgPool::connect(&seeded.db.admin_url()).await.unwrap();
+    install_gates(&admin).await;
+    let victim = seeded.victim;
+    let target: Uuid = sqlx::query_scalar(
+        "SELECT t FROM proxiima_core.memory WHERE owner_id = $1 ORDER BY t LIMIT 1",
+    )
+    .bind(victim.into_inner())
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let active = storage(
+        seeded.db.runtime_url(),
+        seeded.db.platform_url(),
+        &r2,
+        sidecars_v2(),
+    )
+    .await;
+    let (engine, authority) =
+        proxiima_core::Engine::new(r2, Arc::new(active).storage_ports()).into_system_authority();
+    let pg = Arc::new(seeded.pg);
+
+    let gate = hold(&admin, UPDATE_GATE).await;
+    let evolution = tokio::spawn(async move {
+        proxiima::run_core_and_spiice_migrations(pg.as_ref(), AppV2::migrators(), &f2).await
+    });
+    wait_for_waiters(&admin, 1).await;
+    let erase = tokio::spawn(async move {
+        let mut unit = engine.system_unit_of_work(&authority).unwrap();
+        unit.erase_own_series(
+            SPIICE,
+            victim,
+            proxiima::spiice::SeriesSelection::Ids(vec![proxiima_core::MemoryId::new(target)]),
+            proxiima::spiice::EraseMode::Erase,
+        )
+        .await
+        .expect("the series erase runs");
+        unit.commit().await.expect("the series erase commits");
+    });
+    // Advisory locks the backends of this database hold while they wait for a
+    // table: none, once the erase is the one that waits.
+    let held_by_table_waiters = tokio::time::timeout(PATIENCE, async {
+        loop {
+            let (waiting, held): (i64, i64) = sqlx::query_as(
+                "WITH here AS (SELECT * FROM pg_locks WHERE database =
+                         (SELECT oid FROM pg_database WHERE datname = current_database()))
+                 SELECT (SELECT count(*) FROM here WHERE NOT granted AND locktype = 'relation'),
+                        (SELECT count(*) FROM here waiting JOIN here held USING (pid)
+                          WHERE NOT waiting.granted AND waiting.locktype = 'relation'
+                            AND held.granted AND held.locktype = 'advisory')",
+            )
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+            if waiting > 0 {
+                break held;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the erase waits for the evolution's tables");
+    assert_eq!(
+        held_by_table_waiters, 0,
+        "the erase holds no fence while it waits"
+    );
+    release(gate, UPDATE_GATE).await;
+    evolution.await.unwrap().expect("the evolution finishes");
+    erase.await.expect("the erase finishes");
+
+    let left: Vec<(Uuid, bool)> = sqlx::query_as(
+        "SELECT owner_id, bool_and(schema_id = $1) FROM proxiima_core.memory
+          WHERE t <> $2 GROUP BY owner_id ORDER BY count(*)",
+    )
+    .bind(TARGET_ID)
+    .bind(target)
+    .fetch_all(&admin)
+    .await
+    .unwrap();
+    let erased: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM proxiima_core.memory WHERE t = $1)
+              + (SELECT count(*) FROM evolution_test.fact_v2 WHERE t = $1)",
+    )
+    .bind(target)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(erased, 0, "the erased Fact and its sidecar row are gone");
+    assert_eq!(
+        left,
+        vec![
+            (victim.into_inner(), true),
+            (seeded.bystander.into_inner(), true)
+        ],
+        "every other Fact is evolved: one of the erased series' owner, two of the other"
+    );
+    admin.close().await;
 }
