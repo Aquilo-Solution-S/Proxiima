@@ -2800,12 +2800,16 @@ async fn wait_for_owner_fence_waiters(pool: &PgPool, owner: OwnerId, expected: i
     false
 }
 
-/// Row-lock waiters: a backend parked on a row another transaction holds.
+/// Row-lock waiters of this test's database: a backend parked on a row
+/// another transaction holds. The wait shows as a transaction-id lock, which
+/// names no database, so the backend's own database scopes the count: other
+/// tests share the cluster.
 async fn wait_for_row_lock_waiters(pool: &PgPool, expected: i64) -> bool {
     for _ in 0..400 {
         let count: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM pg_locks
-              WHERE locktype = 'transactionid' AND NOT granted",
+            "SELECT count(*)::bigint FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+              WHERE l.locktype = 'transactionid' AND NOT l.granted
+                AND a.datname = current_database()",
         )
         .fetch_one(pool)
         .await
