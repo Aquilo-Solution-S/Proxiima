@@ -611,7 +611,7 @@ fn role_ddl_migrator(role_name: &str) -> Migrator {
     }
 }
 
-/// Boot-migrate one database while another session on a *different database*
+/// Migrate one database while another session on a *different database*
 /// of the same cluster holds an uncommitted write to the same role's shared
 /// catalogs, and assert the facade rides out the lost race.
 ///

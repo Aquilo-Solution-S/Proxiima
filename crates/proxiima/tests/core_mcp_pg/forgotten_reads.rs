@@ -247,7 +247,9 @@ impl proxiima::host::OtherStores for ForwardTo {
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one story: control, forget, every read path, both stores
 async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_another_store() {
-    let second_db = clone_split_core_db("proxiima_forgotten_reads_b")
+    // Store 1 is migrated by its own migrate step: a template clone holds
+    // store number 0.
+    let second_db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_forgotten_reads_b", &[])
         .await
         .expect("PG required for tests");
     let first_db = clone_split_core_db("proxiima_forgotten_reads_a")
@@ -265,9 +267,9 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
             .platform_database_url(second_db.platform_url().to_owned())
             .owner(owner)
             .served_surface(proxiima_core::ServedSurface::All)
-            .embedding_router(router.clone())
-            .build()
-            .await?;
+            .embedding_router(router.clone());
+        second.migrate().await?;
+        let second = second.build().await?;
         let tools = second.host().core_mcp_tools();
         let call = |tool: &'static str, args: serde_json::Value| {
             call_test_model_tool(&tools, authz.clone(), owner, tool, args)

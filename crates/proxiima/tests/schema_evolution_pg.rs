@@ -1003,6 +1003,14 @@ async fn fact_schema_evolution_preserves_receipt_and_replays_on_target() {
     let r2 = r2.try_freeze().unwrap();
     let s2 = sidecars_v2();
     let f2 = s2.clone().freeze_against(&r2).unwrap();
+    // The declared evolution has not run: the migrate step owes it.
+    let mut connection = admin.acquire().await.unwrap();
+    assert!(matches!(
+        f2.ensure_schema_evolutions(&mut connection).await,
+        Err(proxiima_core::StorageError::MigrationRequired { details })
+            if details.contains("is not complete")
+    ));
+    drop(connection);
     proxiima::run_core_and_spiice_migrations(&pg, AppV2::migrators(), &f2)
         .await
         .unwrap();
@@ -1378,8 +1386,13 @@ async fn fact_schema_evolution_splits_one_source_and_keeps_one_publication() {
         registry.try_freeze().unwrap()
     };
     let f1 = s1.freeze_against(&r1).unwrap();
+    // An older binary over the evolved schema: no migration it can run
+    // serves the source again.
     let mut connection = admin.acquire().await.unwrap();
-    assert!(f1.ensure_schema_evolutions(&mut connection).await.is_err());
+    assert!(matches!(
+        f1.ensure_schema_evolutions(&mut connection).await,
+        Err(proxiima_core::StorageError::ConstraintViolation(_))
+    ));
     drop(connection);
     proxiima::run_core_and_spiice_migrations(&pg, AppV2Split::migrators(), &f2)
         .await

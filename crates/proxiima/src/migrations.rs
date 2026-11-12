@@ -305,9 +305,7 @@ pub enum MigrationError {
     SidecarOwnerRls(#[source] StorageError),
     #[error("schema evolution failed: {0}")]
     SchemaEvolution(#[source] StorageError),
-    #[error(
-        "composed search definitions are not current; run the host migration command before serving: {0}"
-    )]
+    #[error("composed search definitions do not match this binary: {0}")]
     SearchDefinitions(#[source] StorageError),
     #[error("core migrations failed: {0}")]
     Core(#[source] MigrateError),
@@ -396,9 +394,7 @@ pub enum LedgerConflict {
     },
     /// Serving validation found migrations that were never applied; it issues
     /// no DDL, so the lane would serve against an older schema.
-    #[error(
-        "migrations {pending:?} are not applied, and serving validation issues no DDL: run the migration step first (docs/operate.md)"
-    )]
+    #[error("migrations {pending:?} are not applied, and serving validation issues no DDL")]
     Unapplied { pending: Vec<i64> },
 }
 
@@ -420,6 +416,7 @@ pub enum LedgerConflict {
 /// Returns `Core` or `Spiice` with [`MigrateError::VersionMissing`] before
 /// any DDL when no source on a ledger ships one of its recorded versions.
 /// Returns `Core` or `Spiice` if `SQLx` fails while applying that source.
+#[cfg(feature = "testkit")]
 pub async fn run_core_and_spiice_migrations<P: MigrationStorage>(
     pg: &P,
     spiices: impl IntoIterator<Item = NamedMigrator>,
@@ -558,17 +555,18 @@ async fn acquire_session_connection(
 /// Run the pre-boot compatibility preflight **without applying any
 /// migration DDL**.
 ///
-/// For `GitOps` / split-role deploys (see docs/operate.md): an init container or
-/// `tools/dev-migrate` applies migrations under a DDL-capable role, and the
-/// long-running app then boots under a DML-only role that cannot issue DDL.
+/// Serving boot and maintenance run this (see docs/operate.md): the host's
+/// migrate step ([`crate::Proxiima::migrate`]) applies migrations under a
+/// DDL-capable role, and the long-running app then boots under a DML-only
+/// role that cannot issue DDL.
 /// This requires every embedded core migration and the current definitions
 /// record, and rejects duplicate versions across composed sources, but never runs
 /// `run_direct` / touches schema — so it succeeds against an already-migrated
 /// database held by a narrow role.
 ///
 /// Preflight waits for the runner's whole-run advisory lock, with a five-second
-/// lock timeout. Complete the out-of-band migration job before starting the
-/// app; skipping migrations does not allow boot between source commits.
+/// lock timeout. Complete the migrate step before starting the app; a boot
+/// between source commits is refused.
 ///
 /// # Errors
 ///
@@ -627,9 +625,11 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
         .await
         .map_err(MigrationError::CorePreflight)?;
         if !core_pending.is_empty() {
-            return Err(MigrationError::CorePreflight(StorageError::Internal(
-                "core migrations or definitions are not current; run migrations before boot".into(),
-            )));
+            return Err(MigrationError::CorePreflight(
+                StorageError::MigrationRequired {
+                    details: "core migrations or definitions are not current".into(),
+                },
+            ));
         }
         for source in sources
             .iter()

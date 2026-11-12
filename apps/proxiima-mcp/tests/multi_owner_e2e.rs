@@ -495,9 +495,9 @@ async fn multi_owner_core_transfer_needs_admin_on_both_owners_through_the_http_e
     result
 }
 
-/// A pg-testkit database of the test's own, never a shared one: a build
-/// that linked a spiice migrates its schema into whatever database it boots
-/// on, and a host that links none then refuses that database at boot. Neither test silently skips.
+/// A pg-testkit database of the test's own, never a shared one: a database
+/// another build migrated with a spiice is one a host that links none
+/// refuses at boot. Neither test silently skips.
 async fn live_database_url() -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
     let name = format!("proxiima_multi_owner_e2e_{}", Uuid::now_v7().simple());
     proxiima_pg_testkit::create_db(&name)

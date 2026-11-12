@@ -126,6 +126,88 @@ fn mint(signing: &RsaKeyPair, sub: &str) -> String {
     format!("{}.{}", signing_input, URL_SAFE_NO_PAD.encode(signature))
 }
 
+/// `proxiima-mcp migrate`, end to end through the binary: a server refuses a
+/// fresh database and names the migrate step, `migrate` brings the database
+/// current, and a server then starts on it.
+#[tokio::test]
+async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::io::BufRead as _;
+
+    let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_migrate_cli", &[]).await?;
+    let (signing, _) = keypair();
+    let public = signing.public_key();
+    let jwks = json!({"keys": [{
+        "kty": "RSA",
+        "kid": KID,
+        "alg": "RS256",
+        "use": "sig",
+        "n": URL_SAFE_NO_PAD.encode(public.modulus().big_endian_without_leading_zero()),
+        "e": URL_SAFE_NO_PAD.encode(public.exponent().big_endian_without_leading_zero()),
+    }]})
+    .to_string();
+    let subject_map =
+        json!([{"iss": ISSUER, "sub": "migrate-cli", "user_id": Uuid::now_v7()}]).to_string();
+    let command = |subcommand: &str| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_proxiima-mcp"));
+        command
+            .env_clear()
+            .arg(subcommand)
+            .args(["--database-url", db.runtime_url()])
+            .envs([
+                ("PROXIIMA_PLATFORM_DATABASE_URL", db.platform_url()),
+                ("PROXIIMA_STORE_NUMBER", "0"),
+                ("PROXIIMA_OIDC_ISSUER", ISSUER),
+                ("PROXIIMA_OIDC_AUDIENCE", AUDIENCE),
+                ("PROXIIMA_OIDC_JWKS_JSON", &jwks),
+                ("PROXIIMA_OIDC_SUBJECT_MAP_JSON", &subject_map),
+                ("PROXIIMA_PUBLIC_URL", "https://proxiima.test"),
+            ]);
+        command
+    };
+
+    let refused = command("serve").args(["--bind", "127.0.0.1:0"]).output()?;
+    let stderr = String::from_utf8(refused.stderr)?;
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("run the host's `migrate` command"),
+        "{stderr}"
+    );
+
+    let migrated = command("migrate").output()?;
+    let stdout = String::from_utf8(migrated.stdout)?;
+    assert!(
+        migrated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    assert!(
+        stdout.contains("migrate: the database is current"),
+        "{stdout}"
+    );
+
+    let mut server = command("serve")
+        .args(["--bind", "127.0.0.1:0"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let output = server.stdout.take().ok_or("server stdout")?;
+    let listening = tokio::task::spawn_blocking(move || {
+        std::io::BufReader::new(output)
+            .lines()
+            .map_while(Result::ok)
+            .any(|line| line.contains("proxiima-mcp listening"))
+    });
+    let listening = tokio::time::timeout(std::time::Duration::from_mins(1), listening).await;
+    server.kill()?;
+    server.wait()?;
+    assert!(
+        matches!(listening, Ok(Ok(true))),
+        "the server starts on the migrated database: {listening:?}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn oidc_host_auth_serves_tools_list() -> Result<(), Box<dyn std::error::Error>> {
     if proxiima_pg_testkit::admin_url_or_skip().is_none() {

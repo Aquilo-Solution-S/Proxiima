@@ -1,6 +1,7 @@
-//! Boot-time runtime grants (`PROXIIMA_RUNTIME_GRANTS`): the platform role
-//! grants a FRESH runtime role — no privileges at all — what it needs to serve
-//! under owner RLS, and nothing that escalates.
+//! Runtime grants of the migrate step (`PROXIIMA_RUNTIME_GRANTS`): the
+//! platform role grants a FRESH runtime role — no privileges at all — what it
+//! needs to serve under owner RLS, and nothing that escalates. Serving never
+//! grants.
 
 use proxiima::spiice::{NamedMigrator, PgSidecarRegistry, SpiiceBundle};
 use proxiima::{
@@ -166,20 +167,35 @@ async fn cleanup(fixture: Fixture) {
     control.close().await;
 }
 
-/// Boot through the runtime facade, the path `PROXIIMA_RUNTIME_GRANTS` takes.
-async fn build(
-    fixture: &Fixture,
-    owner: OwnerId,
-    runtime_grants: bool,
-) -> Result<proxiima::BuiltProxiima, ProxiimaError> {
-    let app = Proxiima::<ExampleGrantsApp>::app()
+/// The facade app over the fixture, the path `PROXIIMA_RUNTIME_GRANTS` takes:
+/// its migrate step grants, its boot only validates.
+fn app(fixture: &Fixture, owner: OwnerId, runtime_grants: bool) -> Proxiima<ExampleGrantsApp> {
+    Proxiima::<ExampleGrantsApp>::app()
         .database_url(fixture.runtime_url.clone())
         .store_number(0)
         .platform_database_url(fixture.platform_url.clone())
         .owner(owner)
         .served_surface(ServedSurface::All)
-        .runtime_grants(runtime_grants);
-    app.build().await
+        .runtime_grants(runtime_grants)
+}
+
+/// Boot through the runtime facade.
+async fn build(
+    fixture: &Fixture,
+    owner: OwnerId,
+    runtime_grants: bool,
+) -> Result<proxiima::BuiltProxiima, ProxiimaError> {
+    app(fixture, owner, runtime_grants).build().await
+}
+
+/// The migrate step with runtime grants, then a boot that does not ask for
+/// them.
+async fn migrate_with_grants_then_build(
+    fixture: &Fixture,
+    owner: OwnerId,
+) -> Result<proxiima::BuiltProxiima, ProxiimaError> {
+    app(fixture, owner, true).migrate().await?;
+    build(fixture, owner, false).await
 }
 
 fn host_context(owner: OwnerId) -> AuthzContext {
@@ -328,7 +344,7 @@ async fn assert_default_privileges(fixture: &Fixture, platform_pool: &PgPool) {
 }
 
 #[tokio::test]
-async fn runtime_grants_boot_grants_a_fresh_runtime_role() {
+async fn runtime_grants_migrate_grants_a_fresh_runtime_role_and_serving_does_not() {
     let fixture = setup().await;
     let owner = company_owner(Uuid::now_v7());
     let platform_pool = role_pool(&fixture, &fixture.platform).await;
@@ -357,18 +373,35 @@ async fn runtime_grants_boot_grants_a_fresh_runtime_role() {
         .await
     );
 
-    // (2) With it, boot succeeds and the runtime serves an owner-scoped
-    // write and read under enforced owner RLS.
-    let booted = build(&fixture, owner, true)
+    // (2) A serving start that asks for runtime grants grants nothing: only
+    // the migrate step does.
+    let refused = build(&fixture, owner, true)
         .await
-        .expect("runtime-grants boot");
+        .expect_err("serving applies no runtime grants");
+    assert!(matches!(refused, ProxiimaError::Storage(_)), "{refused}");
+    assert!(
+        !has(
+            &fixture.admin,
+            Probe::Schema,
+            &fixture.runtime,
+            "proxiima_core",
+            "USAGE"
+        )
+        .await
+    );
+
+    // (3) After the migrate step with them, boot succeeds and the runtime
+    // serves an owner-scoped write and read under enforced owner RLS.
+    let booted = migrate_with_grants_then_build(&fixture, owner)
+        .await
+        .expect("runtime grants of the migrate step");
     assert_runtime_serves(&fixture, &booted, owner).await;
     booted.shutdown().await;
 
-    // (3) Idempotent: run the same boot path again.
-    build(&fixture, owner, true)
+    // Idempotent: run the same migrate step again.
+    migrate_with_grants_then_build(&fixture, owner)
         .await
-        .expect("second runtime-grants boot")
+        .expect("second runtime-grants migrate step")
         .shutdown()
         .await;
     // (4) What runtime holds, and what it never holds.
@@ -395,7 +428,7 @@ async fn runtime_grants_boot_grants_a_fresh_runtime_role() {
 async fn boot_refuses_unsafe_runtime_privileges_in_a_composed_spiice_schema() {
     let fixture = setup().await;
     let owner = company_owner(Uuid::now_v7());
-    build(&fixture, owner, true)
+    migrate_with_grants_then_build(&fixture, owner)
         .await
         .expect("safe composed boot")
         .shutdown()
@@ -435,11 +468,11 @@ async fn runtime_grants_refuse_without_split_roles() {
             .owner(owner)
             .served_surface(ServedSurface::All)
             .runtime_grants(true);
-        match platform_database_url {
+        let app = match platform_database_url {
             Some(url) => app.store_number(0).platform_database_url(url),
             None => app,
-        }
-        .build()
+        };
+        async move { app.migrate().await }
     };
 
     let same = boot(unreachable("rtg_same"), Some(unreachable("rtg_same")))

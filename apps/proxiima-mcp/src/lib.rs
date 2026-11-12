@@ -2,12 +2,12 @@ pub mod args;
 
 pub use args::{
     ArgsError, DEFAULT_BIND, DEFAULT_DATABASE_URL, MAINTAIN_BLOBS_USAGE, MAINTAIN_USAGE,
-    MaintainBlobsConfig, MaintainConfig, McpConfig, ReconcileScope, STORAGE_MAINTENANCE_USAGE,
-    StorageMaintenanceConfig, USAGE, parse_args, parse_maintain_args, parse_maintain_blobs_args,
-    parse_storage_maintenance_args,
+    MIGRATE_USAGE, MaintainBlobsConfig, MaintainConfig, McpConfig, MigrateConfig, ReconcileScope,
+    STORAGE_MAINTENANCE_USAGE, StorageMaintenanceConfig, USAGE, parse_args, parse_maintain_args,
+    parse_maintain_blobs_args, parse_migrate_args, parse_storage_maintenance_args,
 };
 
-use proxiima_blob_s3::{CitedBlobStore, S3RuntimeConfig};
+use proxiima_blob_s3::{BlobError, CitedBlobStore, S3RuntimeConfig};
 
 use std::collections::{BTreeSet, HashSet};
 use std::num::NonZeroU32;
@@ -17,8 +17,7 @@ use proxiima::spiice::SpiiceBundle;
 use proxiima::{
     AppContext, AppInfo, EmbeddingRuntimePolicy, Proxiima, ProxiimaError, RunningProxiima,
     RuntimeBuilder, SpiiceApp, SpiiceServiceError, SpiiceServices,
-    embedding_runtime_policy_from_lookup, missing_migration_policy_from_lookup,
-    run_core_and_spiice_migrations_with_policy,
+    embedding_runtime_policy_from_lookup,
 };
 use proxiima_core::llm::{
     BoundEmbeddingClient, QueryInstruction, QueryInstructions, QueryTask, SingleClientRouter,
@@ -141,14 +140,18 @@ impl SpiiceApp for ProxiimaMcpApp {
     }
 }
 
-/// Headless composition used by the global blob maintenance command.
+/// Headless composition used by `migrate` and the maintenance commands.
 ///
 /// It links the same compiled spiices and migrations as the serving app but
-/// deliberately contributes no MCP configuration. Booting through the facade
-/// binds the runtime-provided store and `SystemAuthority` to the same boot.
-struct BlobMaintenanceApp;
+/// deliberately contributes no MCP configuration, and [`maintenance_app`]
+/// reads only the storage settings, so these commands share the server's
+/// environment without serving. The maintenance commands' storage validates the schema
+/// as serving does and migrates nothing. `maintain-blobs` boots it through
+/// the facade, which binds the runtime-provided store and `SystemAuthority`
+/// to the same boot.
+struct MaintenanceApp;
 
-impl SpiiceBundle for BlobMaintenanceApp {
+impl SpiiceBundle for MaintenanceApp {
     fn register(registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
         <ProxiimaMcpApp as SpiiceBundle>::register(registry)
     }
@@ -162,11 +165,11 @@ impl SpiiceBundle for BlobMaintenanceApp {
     }
 }
 
-impl SpiiceApp for BlobMaintenanceApp {
+impl SpiiceApp for MaintenanceApp {
     fn app_info() -> AppInfo {
         AppInfo {
-            id: "proxiima-mcp-maintain-blobs",
-            title: "Proxiima MCP Blob Maintenance",
+            id: "proxiima-mcp-maintenance",
+            title: "Proxiima MCP Maintenance",
             version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -231,24 +234,30 @@ fn cli_error(usage: &'static str) -> impl Fn(ArgsError) -> CliError {
 /// Returns argument, facade boot, or runtime failures (including the MCP transport).
 pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError> {
     let mut args: Vec<String> = args.into_iter().collect();
+    if args.first().is_some_and(|arg| arg == "migrate") {
+        args.remove(0);
+        let config = parse_migrate_args(args).map_err(cli_error(MIGRATE_USAGE))?;
+        init_logging(LogSink::Stderr);
+        return run_migrate(config, &proxiima_core::process_env).await;
+    }
     if args.first().is_some_and(|arg| arg == "maintain-embeddings") {
         args.remove(0);
         let config = parse_maintain_args(args).map_err(cli_error(MAINTAIN_USAGE))?;
         init_logging(LogSink::Stderr);
-        return run_maintain(config).await;
+        return run_maintain(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-storage") {
         args.remove(0);
         let config =
             parse_storage_maintenance_args(args).map_err(cli_error(STORAGE_MAINTENANCE_USAGE))?;
         init_logging(LogSink::Stderr);
-        return run_maintain_storage(config).await;
+        return run_maintain_storage(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-blobs") {
         args.remove(0);
         let config = parse_maintain_blobs_args(args).map_err(cli_error(MAINTAIN_BLOBS_USAGE))?;
         init_logging(LogSink::Stderr);
-        return run_maintain_blobs(config).await;
+        return run_maintain_blobs(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "serve") {
         args.remove(0);
@@ -269,6 +278,23 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     Ok(())
 }
 
+/// Bring the database to this binary: the migrate step a deployment runs
+/// before it starts or replaces the servers. Serving and maintenance only
+/// validate the schema it leaves.
+async fn run_migrate(
+    config: MigrateConfig,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<(), CliError> {
+    maintenance_app(config.database_url, lookup)?
+        .migrate()
+        .await?;
+    println!(
+        "migrate: the database is current for proxiima-mcp {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    Ok(())
+}
+
 /// Reconcile the blob store against the rows that name it, and print what
 /// disagrees.
 ///
@@ -283,13 +309,17 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
 /// and `maintain-storage`. A non-zero exit here would mean "the pass
 /// failed", and the pass did not fail — it succeeded, and the news is bad.
 /// Alert on the `missing=` number.
-async fn run_maintain_blobs(config: MaintainBlobsConfig) -> Result<(), CliError> {
-    let s3 = S3RuntimeConfig::from_env().map_err(|err| {
+async fn run_maintain_blobs(
+    config: MaintainBlobsConfig,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<(), CliError> {
+    let s3 = required_s3(lookup).map_err(|err| {
         ProxiimaError::Config(format!(
             "maintain-blobs needs the host's PROXIIMA_S3_* block: {err}"
         ))
     })?;
-    let built = blob_maintenance_app(config.database_url, s3, &proxiima_core::process_env)?
+    let built = maintenance_app(config.database_url, lookup)?
+        .s3(s3)
         .build()
         .await?;
     let outcome = match built.blobs() {
@@ -342,10 +372,14 @@ async fn run_maintain_blobs(config: MaintainBlobsConfig) -> Result<(), CliError>
 /// health report. Serialized across processes by a
 /// maintenance lease — an overlapping pass skips with exit 0 so cron
 /// overlap is harmless by construction, not by scheduling discipline.
-async fn run_maintain(config: MaintainConfig) -> Result<(), CliError> {
-    let space = maintenance_embedding_space(config.model, proxiima_core::process_env)?;
-    let embedding_policy = embedding_runtime_policy_from_lookup(&proxiima_core::process_env)?;
-    let storage = maintenance_storage(&config.database_url, embedding_policy).await?;
+async fn run_maintain(
+    config: MaintainConfig,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<(), CliError> {
+    let space = maintenance_embedding_space(config.model, lookup)?;
+    let storage = maintenance_app(config.database_url, lookup)?
+        .connect_storage()
+        .await?;
 
     let Some(lock) = storage
         .try_embedding_maintenance_lock()
@@ -440,118 +474,22 @@ async fn run_maintain(config: MaintainConfig) -> Result<(), CliError> {
     pass
 }
 
-/// The `maintain-blobs` runtime: no listener, the platform URL, and the
-/// migration URL when one is set, so its explicit migration path matches every other
-/// entry point does.
-fn blob_maintenance_app(
+/// The runtime of `migrate` and the maintenance commands on `database_url`:
+/// configured from the storage settings of `lookup` only, so the server's
+/// own environment neither starts nor refuses anything here.
+fn maintenance_app(
     database_url: String,
-    s3: S3RuntimeConfig,
     lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<Proxiima<BlobMaintenanceApp>, CliError> {
-    let urls = maintenance_urls(lookup)?;
-    let app = Proxiima::<BlobMaintenanceApp>::app()
-        .database_url(database_url)
-        .platform_database_url(urls.platform)
-        .s3(s3);
-    Ok(match urls.migration {
-        Some(migration) => app.migration_database_url(migration),
-        None => app,
-    })
+) -> Result<Proxiima<MaintenanceApp>, CliError> {
+    Ok(Proxiima::<MaintenanceApp>::app()
+        .from_storage_lookup(lookup)?
+        .database_url(database_url))
 }
 
-async fn maintenance_storage(
-    database_url: &str,
-    embedding_policy: proxiima_core::EmbeddingRuntimePolicy,
-) -> Result<PgStorage, CliError> {
-    let missing_policy =
-        missing_migration_policy_from_lookup(&proxiima_core::process_env)?.unwrap_or_default();
-    let urls = maintenance_urls(&proxiima_core::process_env)?;
-    let store_number = proxiima::parse_store_number(
-        &proxiima_core::env_value(&proxiima_core::process_env, "PROXIIMA_STORE_NUMBER")
-            .ok_or_else(|| {
-                ProxiimaError::Config("PROXIIMA_STORE_NUMBER is required for maintenance".into())
-            })?,
-    )?;
-    let config = proxiima_storage_pg::PgPoolConfig::from_env()
-        .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    let tuning = proxiima_storage_pg::PgTuning::from_env()
-        .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    let registry = build_frozen_registry()?;
-    let schemas = proxiima::composed_schema_names(&registry);
-    let schema_refs: Vec<&str> = schemas.iter().map(String::as_str).collect();
-    let mut sidecars = proxiima::spiice::PgSidecarRegistry::new();
-    proxiima::spiice::register_core_pg_sidecars(&mut sidecars);
-    ProxiimaMcpApp::register_pg_sidecars(&mut sidecars);
-    let sidecars = sidecars
-        .freeze_against(&registry)
-        .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    // Migrations hold a session lock and session settings: they run on
-    // PROXIIMA_MIGRATION_DATABASE_URL when the platform URL goes through a
-    // transaction-mode pooler. This one-shot command keeps that connection
-    // as its platform scope too.
-    let migration_pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
-        urls.migrations(),
-        config,
-        tuning,
-    )
-    .await
-    .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    run_core_and_spiice_migrations_with_policy(
-        &migration_pg,
-        ProxiimaMcpApp::migrators(),
-        &sidecars,
-        missing_policy,
-    )
-    .await
-    .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    let platform_scope = proxiima_storage_pg::PgPlatformScope::new(
-        migration_pg.clone_pool_for_backend(),
-        &schema_refs,
-    )
-    .await
-    .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    migration_pg
-        .initialize_store_number(store_number)
-        .await
-        .map_err(|err| ProxiimaError::Storage(err.into()))?;
-    drop(migration_pg);
-    let storage =
-        PgStorage::connect_with_config(database_url, config, tuning, platform_scope, store_number)
-            .await
-            .map_err(|err| ProxiimaError::Storage(err.into()))?
-            .with_sidecars(sidecars)
-            .await
-            .map_err(|error| ProxiimaError::Storage(error.into()))?
-            .with_embedding_runtime_policy(embedding_policy);
-    Ok(storage)
-}
-
-/// The maintenance commands' platform URL and, when set, their migration
-/// URL, checked as boot checks it (same role and database, no URL echoed).
-struct MaintenanceUrls {
-    platform: String,
-    migration: Option<String>,
-}
-
-impl MaintenanceUrls {
-    /// Where the command migrates.
-    fn migrations(&self) -> &str {
-        self.migration.as_deref().unwrap_or(&self.platform)
-    }
-}
-
-fn maintenance_urls(lookup: &impl Fn(&str) -> Option<String>) -> Result<MaintenanceUrls, CliError> {
-    let platform =
-        proxiima_core::env_value(lookup, "PROXIIMA_PLATFORM_DATABASE_URL").ok_or_else(|| {
-            ProxiimaError::Config(
-                "PROXIIMA_PLATFORM_DATABASE_URL is required for maintenance".into(),
-            )
-        })?;
-    let migration = proxiima::migration_database_url_from_lookup(lookup, &platform)?;
-    Ok(MaintenanceUrls {
-        platform,
-        migration,
-    })
+/// The `PROXIIMA_S3_*` block a command that cannot run without it requires.
+fn required_s3(lookup: &impl Fn(&str) -> Option<String>) -> Result<S3RuntimeConfig, BlobError> {
+    S3RuntimeConfig::from_lookup(lookup)?
+        .ok_or_else(|| BlobError::Config("missing PROXIIMA_S3_BUCKET".to_string()))
 }
 
 /// One storage-maintenance pass: the expired-upload sweep, when
@@ -560,10 +498,13 @@ fn maintenance_urls(lookup: &impl Fn(&str) -> Option<String>) -> Result<Maintena
 /// the in-process drain of every Proxiima server on this database. Serialized across
 /// processes by its own maintenance lease — an overlapping pass skips
 /// with exit 0, like `maintain-embeddings`.
-async fn run_maintain_storage(config: StorageMaintenanceConfig) -> Result<(), CliError> {
+async fn run_maintain_storage(
+    config: StorageMaintenanceConfig,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<(), CliError> {
     let s3 = ((config.retry_cold_object_purges && !config.dry_run) || config.sweep_expired_uploads)
         .then(|| {
-            S3RuntimeConfig::from_env().map_err(|err| {
+            required_s3(lookup).map_err(|err| {
                 ProxiimaError::Config(format!(
                     "storage maintenance object-store actions need the host's \
                      PROXIIMA_S3_* block: {err}"
@@ -572,11 +513,9 @@ async fn run_maintain_storage(config: StorageMaintenanceConfig) -> Result<(), Cl
         })
         .transpose()?;
 
-    let storage = maintenance_storage(
-        &config.database_url,
-        embedding_runtime_policy_from_lookup(&proxiima_core::process_env)?,
-    )
-    .await?;
+    let storage = maintenance_app(config.database_url.clone(), lookup)?
+        .connect_storage()
+        .await?;
 
     let (storage, sweeper) = if let Some(s3) = s3 {
         let registry = build_frozen_registry()?;
@@ -743,7 +682,8 @@ fn reconcile_scope(scope: ReconcileScope) -> EmbeddingReconcileScope {
 
 /// # Errors
 ///
-/// Returns facade config, storage, migration, engine, bind, or transport failures.
+/// Returns facade config, storage, schema validation, engine, bind, or
+/// transport failures.
 pub async fn run_with_handle(config: McpConfig) -> Result<RunningProxiima, CliError> {
     let app = build_app(config, proxiima_core::process_env)?;
     app.run().await.map_err(Into::into)
@@ -1332,117 +1272,411 @@ mod tests {
         }
     }
 
-    /// The maintenance commands migrate on the platform URL unless
-    /// `PROXIIMA_MIGRATION_DATABASE_URL` is set, and refuse one naming
-    /// another role or database without echoing it.
-    #[test]
-    fn maintenance_urls_take_a_checked_migration_url() {
-        let platform = "postgres://platform@pooler:6432/proxiima".to_owned();
-        let unset = [("PROXIIMA_PLATFORM_DATABASE_URL", platform.clone())];
-        let urls = maintenance_urls(&pairs(&unset)).expect("platform only");
-        assert_eq!(urls.migrations(), platform);
+    /// The environment `migrate` and the maintenance commands read on a
+    /// split-role database: its platform URL, store number 0, and an S3 block
+    /// whose endpoint nothing serves (`maintain-blobs` requires one).
+    fn command_env(platform_url: &str) -> Vec<(&'static str, String)> {
+        vec![
+            ("PROXIIMA_PLATFORM_DATABASE_URL", platform_url.to_owned()),
+            ("PROXIIMA_STORE_NUMBER", "0".to_owned()),
+            ("PROXIIMA_S3_BUCKET", "unused".to_owned()),
+            ("PROXIIMA_S3_REGION", "us-east-1".to_owned()),
+            ("PROXIIMA_S3_ACCESS_KEY_ID", "unused".to_owned()),
+            ("PROXIIMA_S3_SECRET_ACCESS_KEY", "unused".to_owned()),
+            ("PROXIIMA_S3_ENDPOINT_URL", "http://127.0.0.1:1".to_owned()),
+        ]
+    }
 
-        let direct = [
-            ("PROXIIMA_PLATFORM_DATABASE_URL", platform.clone()),
+    /// [`command_env`] plus the server's own settings, as a migrate job or a
+    /// maintenance cron sharing the server's environment sees them: a
+    /// listener, an OIDC issuer nothing answers, a tool profile, the embedding
+    /// block, and runtime grants. Serving refuses this environment before
+    /// storage — an exposed listener with no allowed origin, and a zero body
+    /// limit — so a command that applied it would fail too.
+    fn serving_env(platform_url: &str) -> Vec<(&'static str, String)> {
+        let mut env = command_env(platform_url);
+        env.extend([
+            ("PROXIIMA_MCP_BIND", "0.0.0.0:0".to_owned()),
+            ("PROXIIMA_EXPOSE_NETWORK", "true".to_owned()),
+            ("PROXIIMA_MAX_REQUEST_BODY_BYTES", "0".to_owned()),
             (
-                "PROXIIMA_MIGRATION_DATABASE_URL",
-                "postgres://platform@db:5432/proxiima".to_owned(),
+                "PROXIIMA_OIDC_ISSUER",
+                "http://127.0.0.1:1/issuer".to_owned(),
+            ),
+            ("PROXIIMA_OIDC_AUDIENCE", "proxiima".to_owned()),
+            (
+                "PROXIIMA_PUBLIC_URL",
+                "https://proxiima.invalid/".to_owned(),
+            ),
+            ("PROXIIMA_TOOL_PROFILE", "full".to_owned()),
+            (
+                "PROXIIMA_EMBED_BASE_URL",
+                "http://127.0.0.1:1/v1".to_owned(),
+            ),
+            ("PROXIIMA_EMBED_MODEL", "maintenance-model".to_owned()),
+            ("PROXIIMA_EMBED_API_KEY", "unused".to_owned()),
+            ("PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS", "5".to_owned()),
+            ("PROXIIMA_RUNTIME_GRANTS", "true".to_owned()),
+        ]);
+        env
+    }
+
+    /// The core migration ledger, empty while it does not exist.
+    async fn core_ledger(admin: &sqlx::PgPool) -> Vec<(i64, Vec<u8>)> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
+                .fetch_one(admin)
+                .await
+                .expect("catalog read");
+        if !exists {
+            return Vec::new();
+        }
+        sqlx::query_as("SELECT version, checksum FROM public._sqlx_migrations ORDER BY version")
+            .fetch_all(admin)
+            .await
+            .expect("ledger read")
+    }
+
+    /// Run every maintenance command on `runtime_url` under `env` and assert
+    /// each refuses with [`ProxiimaError::MigrationRequired`].
+    async fn assert_each_maintenance_command_requires_migrate(
+        runtime_url: &str,
+        env: &[(&str, String)],
+    ) {
+        let lookup = pairs(env);
+        let refusals = [
+            (
+                "maintain-embeddings",
+                run_maintain(
+                    MaintainConfig {
+                        database_url: runtime_url.to_owned(),
+                        model: Some("maintenance-model".to_owned()),
+                        scope: ReconcileScope::MissingOnly,
+                        limit: None,
+                    },
+                    &lookup,
+                )
+                .await,
+            ),
+            (
+                "maintain-storage",
+                run_maintain_storage(
+                    StorageMaintenanceConfig {
+                        database_url: runtime_url.to_owned(),
+                        retry_cold_object_purges: true,
+                        sweep_expired_uploads: false,
+                        batch_size: NonZeroU32::MIN,
+                        dry_run: true,
+                    },
+                    &lookup,
+                )
+                .await,
+            ),
+            (
+                "maintain-blobs",
+                run_maintain_blobs(
+                    MaintainBlobsConfig {
+                        database_url: runtime_url.to_owned(),
+                    },
+                    &lookup,
+                )
+                .await,
             ),
         ];
-        let urls = maintenance_urls(&pairs(&direct)).expect("same role and database");
-        assert_eq!(urls.migrations(), "postgres://platform@db:5432/proxiima");
-        assert_eq!(urls.platform, platform);
-
-        for wrong in [
-            "postgres://admin@db:5432/proxiima",
-            "postgres://platform@db:5432/other",
-        ] {
-            let env = [
-                ("PROXIIMA_PLATFORM_DATABASE_URL", platform.clone()),
-                ("PROXIIMA_MIGRATION_DATABASE_URL", wrong.to_owned()),
-            ];
-            let Err(error) = maintenance_urls(&pairs(&env)) else {
-                panic!("{wrong} is refused");
-            };
-            let message = error.to_string();
+        for (command, refusal) in refusals {
             assert!(
-                message.contains("PROXIIMA_MIGRATION_DATABASE_URL") && !message.contains("db:5432"),
-                "{message}"
+                matches!(
+                    refusal,
+                    Err(CliError::Runtime(ProxiimaError::MigrationRequired { .. }))
+                ),
+                "{command}: {refusal:?}"
             );
         }
     }
 
-    /// `maintain-blobs` boots through the facade: with the migration URL on
-    /// a port nothing listens on, its boot fails and nothing is migrated,
-    /// though the platform URL works.
+    /// Maintenance validates and never migrates: against a database that was
+    /// never migrated, and against one whose core lane is a migration behind,
+    /// each command refuses with the typed variant and leaves the ledger as
+    /// it was. After `migrate`, they run from the environment alone.
     #[tokio::test]
-    async fn maintain_blobs_migrates_on_the_migration_url() {
-        let database = proxiima_pg_testkit::unique_db_name("proxiima_mcp_blobs_migration_url");
-        proxiima_pg_testkit::create_db(&database)
+    async fn maintenance_commands_refuse_a_database_migrate_has_not_brought_current() {
+        let db =
+            proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_maintenance_validates", &[])
+                .await
+                .expect("PG required for tests");
+        let admin = sqlx::PgPool::connect(&db.admin_url())
+            .await
+            .expect("admin pool");
+        let env = command_env(db.platform_url());
+
+        assert_each_maintenance_command_requires_migrate(db.runtime_url(), &env).await;
+        assert_eq!(
+            core_ledger(&admin).await,
+            Vec::new(),
+            "nothing was migrated"
+        );
+
+        run_migrate(
+            MigrateConfig {
+                database_url: db.runtime_url().to_owned(),
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("migrate");
+        // The store number and every other setting come from the
+        // environment: no command sets one in code.
+        run_maintain(
+            MaintainConfig {
+                database_url: db.runtime_url().to_owned(),
+                model: Some("maintenance-model".to_owned()),
+                scope: ReconcileScope::MissingOnly,
+                limit: None,
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("maintain-embeddings on a migrated database");
+        run_maintain_storage(
+            StorageMaintenanceConfig {
+                database_url: db.runtime_url().to_owned(),
+                retry_cold_object_purges: true,
+                sweep_expired_uploads: false,
+                batch_size: NonZeroU32::MIN,
+                dry_run: true,
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("maintain-storage on a migrated database");
+        maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
+            .expect("maintenance app")
+            .build()
+            .await
+            .expect("maintain-blobs boots from the environment")
+            .shutdown()
+            .await;
+
+        sqlx::query(
+            "DELETE FROM public._sqlx_migrations \
+             WHERE version = (SELECT max(version) FROM public._sqlx_migrations)",
+        )
+        .execute(&admin)
+        .await
+        .expect("an older release's ledger");
+        let older = core_ledger(&admin).await;
+        assert_each_maintenance_command_requires_migrate(db.runtime_url(), &env).await;
+        assert_eq!(
+            core_ledger(&admin).await,
+            older,
+            "maintenance migrated nothing"
+        );
+        admin.close().await;
+    }
+
+    /// The maintenance commands validate on `PROXIIMA_MIGRATION_DATABASE_URL`
+    /// when it is set: with it on a port nothing listens on, they fail though
+    /// the platform URL reaches a migrated database.
+    #[tokio::test]
+    async fn maintenance_validates_on_the_migration_url() {
+        let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_maintenance_url", &[])
             .await
             .expect("PG required for tests");
-        let (runtime_url, platform_url) = proxiima_pg_testkit::split_role_urls(&database)
-            .await
-            .expect("split roles");
-        let mut unreachable = reqwest::Url::parse(&platform_url).expect("fixture URL");
+        let mut env = command_env(db.platform_url());
+        run_migrate(
+            MigrateConfig {
+                database_url: db.runtime_url().to_owned(),
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("migrate");
+        let mut unreachable = reqwest::Url::parse(db.platform_url()).expect("fixture URL");
         unreachable
             .set_host(Some("127.0.0.1"))
             .expect("a postgres URL takes a host");
         unreachable
             .set_port(Some(1))
             .expect("a postgres URL takes a port");
-        let env = [
-            ("PROXIIMA_PLATFORM_DATABASE_URL", platform_url),
+        env.extend([
             ("PROXIIMA_MIGRATION_DATABASE_URL", unreachable.to_string()),
-        ];
-        let s3 = S3RuntimeConfig::from_lookup(&pairs(&[
-            ("PROXIIMA_S3_BUCKET", "unused".to_owned()),
-            ("PROXIIMA_S3_REGION", "us-east-1".to_owned()),
-            ("PROXIIMA_S3_ACCESS_KEY_ID", "unused".to_owned()),
-            ("PROXIIMA_S3_SECRET_ACCESS_KEY", "unused".to_owned()),
-            ("PROXIIMA_S3_ENDPOINT_URL", "http://127.0.0.1:1".to_owned()),
-        ]))
-        .expect("S3 settings parse")
-        .expect("a bucket is set");
-        let booted = blob_maintenance_app(runtime_url, s3, &pairs(&env))
+            ("PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS", "1".to_owned()),
+        ]);
+        let refused = maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
             .expect("the URLs pass the check")
-            .store_number(0)
-            .pg_pool_config(proxiima::PgPoolConfig {
-                acquire_timeout: std::time::Duration::from_millis(300),
-                ..proxiima::PgPoolConfig::default()
-            })
-            .build()
-            .await;
-        let admin = sqlx::PgPool::connect(&proxiima_pg_testkit::db_url(&database))
+            .connect_storage()
             .await
-            .expect("admin pool");
-        let migrated: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'proxiima_core')",
-        )
-        .fetch_one(&admin)
-        .await
-        .expect("catalog read");
-        admin.close().await;
-        if let Ok(built) = booted {
-            built.shutdown().await;
-            panic!("boot must connect its migrations to the migration URL");
-        }
-        proxiima_pg_testkit::drop_db(&database)
-            .await
-            .expect("drop db");
-        assert!(!migrated, "nothing migrated over the platform URL");
+            .expect_err("validation connects to the migration URL");
+        assert!(matches!(refused, ProxiimaError::Storage(_)), "{refused}");
     }
 
-    /// `maintain-blobs` resolves with no environment: its app names the
-    /// required tool scope, empty, and starts no listener.
+    /// `migrate` in the server's environment applies only its storage
+    /// settings: the serving settings that refuse a server neither fail nor
+    /// reach it, and `PROXIIMA_RUNTIME_GRANTS` is honoured — read, it refuses
+    /// a runtime URL that connects as the platform role.
+    #[tokio::test]
+    async fn migrate_in_the_serving_environment_applies_only_storage_settings() {
+        let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_migrate_serving_env", &[])
+            .await
+            .expect("PG required for tests");
+        let env = serving_env(db.platform_url());
+        let serving = build_app(
+            McpConfig {
+                database_url: db.runtime_url().to_owned(),
+                bind: None,
+            },
+            pairs(&env),
+        )
+        .expect("the serving app reads the environment")
+        .build()
+        .await;
+        assert!(
+            matches!(
+                serving,
+                Err(ProxiimaError::Config(_) | ProxiimaError::Security(_))
+            ),
+            "serving refuses this environment before storage"
+        );
+
+        run_migrate(
+            MigrateConfig {
+                database_url: db.runtime_url().to_owned(),
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("migrate ignores the serving settings");
+        let one_role = run_migrate(
+            MigrateConfig {
+                database_url: db.platform_url().to_owned(),
+            },
+            &pairs(&env),
+        )
+        .await;
+        assert!(
+            matches!(
+                &one_role,
+                Err(CliError::Runtime(ProxiimaError::Config(message)))
+                    if message.contains("runtime grants require split roles")
+            ),
+            "{one_role:?}"
+        );
+    }
+
+    /// `maintain-embeddings` and `maintain-storage` in the server's
+    /// environment run on its storage settings alone.
+    #[tokio::test]
+    async fn storage_maintenance_in_the_serving_environment_applies_only_storage_settings() {
+        let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_storage_serving_env", &[])
+            .await
+            .expect("PG required for tests");
+        let env = serving_env(db.platform_url());
+        run_migrate(
+            MigrateConfig {
+                database_url: db.runtime_url().to_owned(),
+            },
+            &pairs(&command_env(db.platform_url())),
+        )
+        .await
+        .expect("migrate");
+        run_maintain(
+            MaintainConfig {
+                database_url: db.runtime_url().to_owned(),
+                model: None,
+                scope: ReconcileScope::MissingOnly,
+                limit: None,
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("maintain-embeddings takes its model from PROXIIMA_EMBED_MODEL");
+        run_maintain_storage(
+            StorageMaintenanceConfig {
+                database_url: db.runtime_url().to_owned(),
+                retry_cold_object_purges: true,
+                sweep_expired_uploads: false,
+                batch_size: NonZeroU32::MIN,
+                dry_run: true,
+            },
+            &pairs(&env),
+        )
+        .await
+        .expect("maintain-storage ignores the serving settings");
+
+        // The embedding runtime policy is a storage setting: the storage
+        // maintenance reconciles and reports by carries it.
+        let mut with_policy = env.clone();
+        with_policy.push((
+            "PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS",
+            "1800".to_owned(),
+        ));
+        let storage = maintenance_app(db.runtime_url().to_owned(), &pairs(&with_policy))
+            .expect("maintenance app")
+            .connect_storage()
+            .await
+            .expect("validated storage");
+        assert_eq!(
+            storage.embedding_runtime_policy().stale_claim_timeout(),
+            std::time::Duration::from_mins(30)
+        );
+        let mut malformed_policy = env;
+        malformed_policy.push((
+            "PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS",
+            "soon".to_owned(),
+        ));
+        let malformed = run_maintain(
+            MaintainConfig {
+                database_url: db.runtime_url().to_owned(),
+                model: None,
+                scope: ReconcileScope::MissingOnly,
+                limit: None,
+            },
+            &pairs(&malformed_policy),
+        )
+        .await;
+        assert!(
+            matches!(malformed, Err(CliError::Runtime(ProxiimaError::Config(_)))),
+            "{malformed:?}"
+        );
+    }
+
+    /// `maintain-blobs` boots the runtime in the server's environment without
+    /// serving: no MCP router is assembled, and no authenticator.
+    #[tokio::test]
+    async fn maintain_blobs_in_the_serving_environment_boots_without_serving() {
+        let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_blobs_serving_env", &[])
+            .await
+            .expect("PG required for tests");
+        let env = serving_env(db.platform_url());
+        run_migrate(
+            MigrateConfig {
+                database_url: db.runtime_url().to_owned(),
+            },
+            &pairs(&command_env(db.platform_url())),
+        )
+        .await
+        .expect("migrate");
+        let built = maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
+            .expect("maintenance app")
+            .s3(required_s3(&pairs(&env)).expect("the S3 block"))
+            .build()
+            .await
+            .expect("maintain-blobs boots in the serving environment");
+        assert!(built.service().is_none(), "no MCP router");
+        assert!(built.mcp_edge().is_none(), "no MCP edge");
+        built.shutdown().await;
+    }
+
+    /// The maintenance runtime resolves with no environment: its app names
+    /// the required tool scope, empty, and starts no listener.
     #[test]
-    fn blob_maintenance_resolves_without_env_and_serves_nothing() {
-        let (config, _) = BlobMaintenanceApp::configure(RuntimeBuilder::default())
+    fn maintenance_app_resolves_without_env_and_serves_nothing() {
+        let (config, _) = MaintenanceApp::configure(RuntimeBuilder::default())
             .database_url(DEFAULT_DATABASE_URL)
             .store_number(0)
             .platform_database_url(DEFAULT_DATABASE_URL)
             .resolve()
-            .expect("maintain-blobs resolves");
+            .expect("the maintenance app resolves");
         assert_eq!(config.served_surface, ServedSurface::Palette(Vec::new()));
         assert!(config.mcp.is_none());
     }

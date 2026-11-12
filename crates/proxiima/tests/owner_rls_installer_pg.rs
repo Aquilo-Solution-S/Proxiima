@@ -895,8 +895,29 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
             proxiima::preflight_without_migrations(&pg, ExampleSpiice::migrators(), &sidecars)
                 .await;
         assert!(
-            matches!(refused, Err(MigrationError::SidecarOwnerRls(_))),
+            matches!(
+                refused,
+                Err(MigrationError::SidecarOwnerRls(
+                    proxiima_core::StorageError::MigrationRequired { .. }
+                ))
+            ),
             "preflight refuses mismatched deployment: {refused:?}"
+        );
+        let serving = proxiima::Proxiima::<ExampleSpiice>::app()
+            .database_url(db.runtime_url())
+            .store_number(0)
+            .platform_database_url(db.platform_url())
+            .served_surface(proxiima::ServedSurface::All)
+            .connect_storage()
+            .await;
+        assert!(
+            matches!(
+                &serving,
+                Err(proxiima::ProxiimaError::MigrationRequired { details })
+                    if details.contains("owner_follows")
+            ),
+            "serving validation names the migrate step: {:?}",
+            serving.as_ref().err()
         );
         let pending = proxiima::pending_migrations(
             &pg.clone_pool_for_backend(),
@@ -918,6 +939,65 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
             .expect("read-only preflight sees platform-owned Follows marks");
     }
     pg.clone_pool_for_backend().close().await;
+}
+
+/// A registered Follows table the database does not have is not something
+/// the migrate step re-creates: the preflight refuses it untyped, and serving
+/// does not send the operator to migrate.
+#[tokio::test]
+async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() {
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima::{MigrationError, PgMigrationStorage, PgPoolConfig, PgTuning};
+    use proxiima_example::ExampleSpiice;
+
+    let db = example_engine::migrated_db("proxiima_follows_absent").await;
+    let pg = PgMigrationStorage::connect_with_config(
+        db.platform_url(),
+        PgPoolConfig::default(),
+        PgTuning::default(),
+    )
+    .await
+    .expect("migration storage");
+    let pool = pg.clone_pool_for_backend();
+    let mut connection = pool.acquire().await.expect("connection");
+    let mut transaction = proxiima::begin_migration_transaction(&mut connection)
+        .await
+        .expect("platform transaction");
+    sqlx::query("DROP TABLE proxiima_example.stamp_v1 CASCADE")
+        .execute(&mut *transaction)
+        .await
+        .expect("drop a registered Follows table");
+    transaction.commit().await.expect("commit");
+    drop(connection);
+
+    let refused = proxiima::preflight_without_migrations(
+        &pg,
+        ExampleSpiice::migrators(),
+        &example_engine::frozen_sidecars(),
+    )
+    .await;
+    assert!(
+        matches!(
+            &refused,
+            Err(MigrationError::SidecarOwnerRls(
+                proxiima_core::StorageError::Internal(message)
+            )) if message.contains("do not exist")
+        ),
+        "{refused:?}"
+    );
+    let serving = proxiima::Proxiima::<ExampleSpiice>::app()
+        .database_url(db.runtime_url())
+        .store_number(0)
+        .platform_database_url(db.platform_url())
+        .served_surface(proxiima::ServedSurface::All)
+        .connect_storage()
+        .await;
+    assert!(
+        matches!(&serving, Err(proxiima::ProxiimaError::Storage(_))),
+        "{:?}",
+        serving.as_ref().err()
+    );
+    pool.close().await;
 }
 
 /// Upgrade (the r3 leak): a database migrated before the host marked

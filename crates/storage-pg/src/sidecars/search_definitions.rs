@@ -81,10 +81,12 @@ impl SearchDefinitions {
             .await
             .map_err(catalog_error)?;
             let Some(row) = row else {
-                return Err(StorageError::ConstraintViolation(format!(
-                    "generated candidate function {} is missing",
-                    definition.signature
-                )));
+                return Err(StorageError::MigrationRequired {
+                    details: format!(
+                        "generated candidate function {} is missing",
+                        definition.signature
+                    ),
+                });
             };
             let body: String = row.try_get("prosrc").map_err(catalog_error)?;
             let definer: bool = row.try_get("prosecdef").map_err(catalog_error)?;
@@ -113,10 +115,12 @@ impl SearchDefinitions {
                 )));
             }
             if body != definition.body {
-                return Err(StorageError::ConstraintViolation(format!(
-                    "generated candidate function {} has a stale body",
-                    definition.signature
-                )));
+                return Err(StorageError::MigrationRequired {
+                    details: format!(
+                        "generated candidate function {} has a stale body",
+                        definition.signature
+                    ),
+                });
             }
         }
         Ok(())
@@ -194,7 +198,9 @@ impl PgSidecarRegistryFrozen {
     /// Validate the current composed search program without changing the database.
     ///
     /// # Errors
-    /// Refuses missing, stale or incompatible function definitions and privileges.
+    /// `MigrationRequired` for a missing or stale function, which the next
+    /// migration run regenerates; `ConstraintViolation` for an unexpected
+    /// overload or security configuration, which it does not.
     pub async fn ensure_search_definitions(
         &self,
         connection: &mut PgConnection,

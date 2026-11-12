@@ -418,7 +418,7 @@ pub async fn split_role_urls(database: &str) -> Result<(String, String), sqlx::E
 /// platform role, with read-only access for the runtime role.
 ///
 /// Only the first call on a database prepares it; a schema the platform
-/// role creates later (the usual case: boot migrates as platform) is
+/// role creates later (the usual case: the migrate step runs as platform) is
 /// covered by the platform role's default privileges instead.
 ///
 /// # Errors

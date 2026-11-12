@@ -94,6 +94,26 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         Ok(self)
     }
 
+    /// [`Self::from_lookup`] for a command that migrates or maintains
+    /// storage and serves nothing: only the storage settings
+    /// ([`RuntimeBuilder::apply_storage_lookup`]) are read, so such a command
+    /// shares the server's environment without starting a listener, building
+    /// an authenticator or delivering the outbox, and without being refused
+    /// by a setting only serving checks. The object store is not read: a
+    /// command that needs it sets it with [`Self::s3`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProxiimaError::Config`] when a storage value is malformed.
+    pub fn from_storage_lookup(
+        mut self,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ProxiimaError> {
+        self.injected_env = Some(RuntimeBuilder::default().apply_storage_lookup(lookup)?);
+        self.use_env = false;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn database_url(mut self, database_url: impl Into<String>) -> Self {
         self.overlay = self.overlay.database_url(database_url);
@@ -238,8 +258,8 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         self
     }
 
-    /// Grant the runtime role its DML privileges at boot. Env equivalent:
-    /// `PROXIIMA_RUNTIME_GRANTS`.
+    /// Grant the runtime role its DML privileges in [`Self::migrate`]. Env
+    /// equivalent: `PROXIIMA_RUNTIME_GRANTS`.
     #[must_use]
     pub fn runtime_grants(mut self, runtime_grants: bool) -> Self {
         self.overlay = self.overlay.runtime_grants(runtime_grants);
@@ -406,6 +426,43 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     ) -> Self {
         self.overlay = self.overlay.outbox_consumer(name, intake);
         self
+    }
+
+    /// Bring the database to this binary: the host's migrate step.
+    ///
+    /// Resolves the configuration as [`Self::build`] does, then, on
+    /// [`crate::RuntimeConfig::migrations_url`], applies every pending core and
+    /// spiice migration under the configured missing-migration policy,
+    /// initializes the store number, and applies the runtime grants when
+    /// [`Self::runtime_grants`] or `PROXIIMA_RUNTIME_GRANTS` asks for them.
+    /// Serving ([`Self::build`], [`Self::run`]) and [`Self::connect_storage`]
+    /// only validate, and refuse a database this step has not brought
+    /// current with [`ProxiimaError::MigrationRequired`].
+    ///
+    /// # Errors
+    ///
+    /// Returns config errors, [`ProxiimaError::SchemaResetRequired`] for a
+    /// database off the current baseline, and storage errors for a failed
+    /// connection, migration, store number or grant.
+    pub async fn migrate(&self) -> Result<(), ProxiimaError> {
+        let (config, parts) = self.resolve()?;
+        crate::boot::migrate::<A>(&config, &parts).await
+    }
+
+    /// Resolve the configuration as [`Self::build`] does, validate the
+    /// schema, and connect the serving storage, without composing an engine
+    /// or starting anything: for a one-shot maintenance command.
+    ///
+    /// # Errors
+    ///
+    /// Returns config errors, [`ProxiimaError::MigrationRequired`] for a
+    /// database [`Self::migrate`] has not brought to this binary,
+    /// [`ProxiimaError::SchemaResetRequired`], and storage errors.
+    pub async fn connect_storage(&self) -> Result<proxiima_storage_pg::PgStorage, ProxiimaError> {
+        let (config, parts) = self.resolve()?;
+        Ok(crate::boot::connect_storage::<A>(&config, &parts)
+            .await?
+            .storage)
     }
 
     /// Resolve, validate, boot, and start every configured feature, without
@@ -598,16 +655,16 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         })
     }
 
-    fn resolve(self) -> Result<(crate::RuntimeConfig, crate::RuntimeParts), ProxiimaError> {
+    fn resolve(&self) -> Result<(crate::RuntimeConfig, crate::RuntimeParts), ProxiimaError> {
         let base = A::configure(RuntimeBuilder::default());
-        let env_layer = if let Some(injected) = self.injected_env {
-            injected
+        let env_layer = if let Some(injected) = &self.injected_env {
+            injected.clone()
         } else if self.use_env {
             RuntimeBuilder::default().apply_env()?
         } else {
             RuntimeBuilder::default()
         };
-        let merged = self.overlay.merge_over(env_layer.merge_over(base));
+        let merged = self.overlay.clone().merge_over(env_layer.merge_over(base));
         merged.resolve()
     }
 }

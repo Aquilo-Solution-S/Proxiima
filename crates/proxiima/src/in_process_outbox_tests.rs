@@ -20,9 +20,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::in_process_outbox::{AfterAccept, Drain, Proceed, Settings, spawn};
-use crate::outbox_test_fixture::{
-    OutboxProbeApp, PROBE_SOURCE, capture, migrate_probe_database, wait_for_outbox,
-};
+use crate::outbox_test_fixture::{OutboxProbeApp, PROBE_SOURCE, capture, wait_for_outbox};
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
     GoalId, GoalTransitionRequest, MemoryTarget, PendingWork, SeriesHandle, SimpleTextGoalV1,
@@ -188,7 +186,6 @@ impl World {
         let (db_url, platform_url) = proxiima_pg_testkit::split_role_urls(&db_name)
             .await
             .expect("split fixture roles");
-        migrate_probe_database(&platform_url).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .connect(&platform_url)
@@ -209,7 +206,9 @@ impl World {
             .publication(PublicationConfig::new(
                 PublicationSource::new(PROBE_SOURCE).expect("publication source"),
             ));
-        let built = configure(app).build().await.expect("Proxiima builds");
+        let app = configure(app);
+        app.migrate().await.expect("Proxiima migrates");
+        let built = app.build().await.expect("Proxiima builds");
         Some(Self {
             db_name,
             built,
@@ -550,17 +549,16 @@ async fn an_intake_without_a_publication_source_fails_boot_naming_the_goal_chang
     let (db_url, platform_url) = proxiima_pg_testkit::split_role_urls(&db_name)
         .await
         .expect("split fixture roles");
-    migrate_probe_database(&platform_url).await;
-    let refused = crate::Proxiima::<OutboxProbeApp>::app()
+    let app = crate::Proxiima::<OutboxProbeApp>::app()
         .database_url(db_url)
         .store_number(0)
         .platform_database_url(platform_url)
         .owner(crate::company_owner(Uuid::now_v7()))
         .served_surface(crate::ServedSurface::All)
         .allow_insecure_single_owner()
-        .outbox_intake(Arc::new(TestIntake::default()))
-        .build()
-        .await;
+        .outbox_intake(Arc::new(TestIntake::default()));
+    app.migrate().await.expect("Proxiima migrates");
+    let refused = app.build().await;
     let _ = proxiima_pg_testkit::drop_db(&db_name).await;
     let message = refused.expect_err("boot is refused").to_string();
     assert!(message.contains("core/goal-change-v1"), "{message}");

@@ -66,10 +66,33 @@ impl PgSidecarRegistryFrozen {
     ///
     /// # Errors
     ///
-    /// Returns `Internal` for a marker mismatch or an expected sidecar without a
-    /// valid btree index leading with `owner_id`, and propagates database errors.
+    /// Returns `Internal` for a registered sidecar the database does not
+    /// have, `MigrationRequired` for a marker mismatch or an existing sidecar
+    /// without a valid btree index leading with `owner_id`, and propagates
+    /// database errors.
     pub async fn ensure_owner_follows(&self, conn: &mut PgConnection) -> Result<(), StorageError> {
         let expected = self.owner_follows_memory_sidecar_tables();
+        // A registered table the database does not have is not generated
+        // state: synchronizing skips it, and no migration run re-creates it.
+        let absent: Vec<String> = sqlx::query_scalar(
+            "SELECT expected.table_name FROM unnest($1::text[]) AS expected(table_name)
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM pg_catalog.pg_class AS c
+                  JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                  WHERE n.nspname = split_part(expected.table_name, '.', 1)
+                    AND c.relname = split_part(expected.table_name, '.', 2)
+                    AND c.relkind IN ('r', 'p')
+              ) ORDER BY expected.table_name",
+        )
+        .bind(&expected)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_err)?;
+        if !absent.is_empty() {
+            return Err(StorageError::Internal(format!(
+                "registered owner_follows sidecars do not exist: {absent:?}"
+            )));
+        }
         let mut actual: Vec<String> = sqlx::query_scalar(
             "SELECT table_name FROM proxiima_core.owner_follows
               WHERE split_part(table_name, '.', 1) = ANY($1)",
@@ -80,10 +103,12 @@ impl PgSidecarRegistryFrozen {
         .map_err(map_err)?;
         actual.sort_unstable();
         if actual != expected {
-            return Err(StorageError::Internal(format!(
-                "owner_follows markers differ from the frozen sidecars: expected {expected:?}, \
-                 found {actual:?}; run migrations"
-            )));
+            return Err(StorageError::MigrationRequired {
+                details: format!(
+                    "owner_follows markers differ from the frozen sidecars: expected {expected:?}, \
+                 found {actual:?}"
+                ),
+            });
         }
         let unindexed: Vec<String> = sqlx::query_scalar(
             "SELECT expected.table_name FROM unnest($1::text[]) AS expected(table_name)
@@ -106,10 +131,12 @@ impl PgSidecarRegistryFrozen {
         .await
         .map_err(map_err)?;
         if !unindexed.is_empty() {
-            return Err(StorageError::Internal(format!(
-                "owner_follows sidecars lack a valid btree index leading with owner_id: \
-                 {unindexed:?}; run migrations"
-            )));
+            return Err(StorageError::MigrationRequired {
+                details: format!(
+                    "owner_follows sidecars lack a valid btree index leading with owner_id: \
+                 {unindexed:?}"
+                ),
+            });
         }
         Ok(())
     }

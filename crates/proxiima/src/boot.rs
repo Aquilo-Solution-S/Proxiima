@@ -18,10 +18,11 @@ use proxiima_storage_pg::{
 use sqlx::PgPool;
 
 use crate::bundle::SpiiceBundle;
+use crate::migrations::run_core_and_spiice_migrations_with_policy;
 use crate::runtime_grants::{self, RuntimeGrants};
 use crate::{
-    CitedBlobStore, MigrationError, NamedMigrator, ProxiimaError, RuntimeConfig, RuntimeParts,
-    preflight_without_migrations_with_policy,
+    CitedBlobStore, LedgerConflict, MigrationError, NamedMigrator, ProxiimaError, RuntimeConfig,
+    RuntimeParts, preflight_without_migrations_with_policy,
 };
 
 /// A composed engine, ready for host services and retirement before startup.
@@ -77,23 +78,24 @@ impl std::fmt::Debug for Booted {
     }
 }
 
-/// Connect, migrate, and compose the engine for bundle `A`.
+/// Bring the database of bundle `A` to this binary: apply every pending core
+/// and spiice migration, initialize the store number and, when configured,
+/// apply the runtime grants. The one write path to the schema; serving boot
+/// and maintenance only validate it.
 ///
 /// Everything that can be refused without a connection is refused first:
-/// the registry freeze, the runtime-grant plan and the embedding width.
+/// the registry freeze and the runtime-grant plan.
 ///
 /// # Errors
 ///
 /// [`ProxiimaError::Storage`] for connection, migration or runtime-grant
-/// failures, [`ProxiimaError::Config`] for a refused grant plan or embedding
-/// client, [`ProxiimaError::SchemaResetRequired`] when the target database does
-/// not match the current core baseline and definitions (see
-/// `docs/contributing.md#migrations`), and
-/// [`ProxiimaError::Engine`] when binding runtime authorities fails.
-pub(crate) async fn boot<A: SpiiceBundle>(
+/// failures, [`ProxiimaError::Config`] for a refused grant plan, and
+/// [`ProxiimaError::SchemaResetRequired`] when the target database does not
+/// match the current core baseline (see `docs/contributing.md#migrations`).
+pub(crate) async fn migrate<A: SpiiceBundle>(
     config: &RuntimeConfig,
     parts: &RuntimeParts,
-) -> Result<Booted, ProxiimaError> {
+) -> Result<(), ProxiimaError> {
     let migrators = A::migrators();
     let registry = compose_registry::<A>(config)?;
     let pg_sidecars = compose_pg_sidecars::<A>(&registry)?;
@@ -108,14 +110,47 @@ pub(crate) async fn boot<A: SpiiceBundle>(
             )
         })
         .transpose()?;
-    let embedding_router =
-        embedding_router_for(parts.embed_client.clone(), parts.embedding_router.clone())?;
+    connect_schema(
+        config,
+        migrators,
+        &pg_sidecars,
+        vector_storage(parts),
+        SchemaStep::Migrate { grants },
+    )
+    .await
+}
 
-    let vectors = match parts.vector_index {
-        Some(_) => VectorStorage::HostIndex,
-        None => VectorStorage::Local,
-    };
-    drop(connect_and_migrate(config, migrators, &pg_sidecars, grants.as_ref(), vectors).await?);
+/// Serving storage over a validated schema, before any engine is composed.
+pub(crate) struct ValidatedStorage {
+    pub(crate) registry: proxiima_core::SpiiceRegistryFrozen,
+    pub(crate) pg_sidecars: Arc<PgSidecarRegistryFrozen>,
+    pub(crate) storage: PgStorage,
+}
+
+/// Validate the schema of bundle `A` and connect its serving storage, with
+/// its sidecars and spiices wired. Issues no DDL and writes nothing: a
+/// database the migrate step has not brought to this binary is refused.
+///
+/// # Errors
+///
+/// [`ProxiimaError::MigrationRequired`] for a database behind this binary or
+/// without a store number, [`ProxiimaError::SchemaResetRequired`] for one off
+/// the current baseline, and [`ProxiimaError::Storage`] for connection and
+/// other validation failures.
+pub(crate) async fn connect_storage<A: SpiiceBundle>(
+    config: &RuntimeConfig,
+    parts: &RuntimeParts,
+) -> Result<ValidatedStorage, ProxiimaError> {
+    let registry = compose_registry::<A>(config)?;
+    let pg_sidecars = compose_pg_sidecars::<A>(&registry)?;
+    connect_schema(
+        config,
+        A::migrators(),
+        &pg_sidecars,
+        vector_storage(parts),
+        SchemaStep::Validate,
+    )
+    .await?;
     let pg = connect_serving_storage(config, &registry, parts.vector_index.clone()).await?;
     let pg = if let Some(participant) = parts.host_state_participant.clone() {
         pg.with_host_state_participant(participant)
@@ -123,13 +158,41 @@ pub(crate) async fn boot<A: SpiiceBundle>(
         pg
     };
     ensure_pg_sidecars(&pg, &registry, &pg_sidecars).await?;
-    let pg = pg
+    let storage = pg
         .with_sidecars(pg_sidecars.as_ref().clone())
         .await
         .map_err(|error| ProxiimaError::Storage(error.into()))?
         .try_with_spiices(&registry)
         .map_err(|error| ProxiimaError::Storage(error.into()))?
         .with_embedding_runtime_policy(config.embedding_runtime_policy);
+    Ok(ValidatedStorage {
+        registry,
+        pg_sidecars,
+        storage,
+    })
+}
+
+/// Validate, connect, and compose the engine for bundle `A`.
+///
+/// Everything that can be refused without a connection is refused first:
+/// the embedding width and the registry freeze.
+///
+/// # Errors
+///
+/// The errors of [`connect_storage`], [`ProxiimaError::Config`] for a
+/// refused embedding client, and [`ProxiimaError::Engine`] when binding
+/// runtime authorities fails.
+pub(crate) async fn boot<A: SpiiceBundle>(
+    config: &RuntimeConfig,
+    parts: &RuntimeParts,
+) -> Result<Booted, ProxiimaError> {
+    let embedding_router =
+        embedding_router_for(parts.embed_client.clone(), parts.embedding_router.clone())?;
+    let ValidatedStorage {
+        registry,
+        pg_sidecars,
+        storage: pg,
+    } = connect_storage::<A>(config, parts).await?;
     let erase_context = pg
         .host_state_erase_context()
         .map_err(|error| ProxiimaError::Storage(error.into()))?;
@@ -198,7 +261,7 @@ pub(crate) async fn boot<A: SpiiceBundle>(
     })
 }
 
-/// Serving authority is constructed only after all migrations have completed.
+/// Serving authority is constructed only after the schema validated.
 async fn connect_serving_storage(
     config: &RuntimeConfig,
     registry: &proxiima_core::SpiiceRegistryFrozen,
@@ -294,24 +357,41 @@ async fn publication_origin_ports(
     Ok((Arc::new(pg.clone()), scope))
 }
 
-/// Connect the Postgres storage backend and bring its schema to this
-/// binary's expectation.
+/// What [`connect_schema`] does with the schema on the migration connection.
+enum SchemaStep {
+    /// Apply pending migrations, initialize the store number, then apply the
+    /// planned runtime grants. Only [`migrate`] chooses it.
+    Migrate { grants: Option<RuntimeGrants> },
+    /// Refuse a schema that is not current, issuing no DDL and writing
+    /// nothing. Serving boot and maintenance choose it.
+    Validate,
+}
+
+/// Where a store of these parts keeps its vectors: in a host index when one
+/// is configured, else in Postgres.
+fn vector_storage(parts: &RuntimeParts) -> VectorStorage {
+    match parts.vector_index {
+        Some(_) => VectorStorage::HostIndex,
+        None => VectorStorage::Local,
+    }
+}
+
+/// Connect the migration storage and run `step` on its schema.
 ///
 /// The migration pool connects to [`RuntimeConfig::migrations_url`]: the
 /// platform role, reached directly when the serving platform pool goes
-/// through a transaction-mode pooler. Migrations and the preflight hold a
-/// session advisory lock and session settings for the whole run.
+/// through a transaction-mode pooler. The migration run and the preflight
+/// hold a session advisory lock and session settings for the whole run.
 ///
-/// `runtime_grants` runs on the migration (platform) pool after migrating
-/// and before the runtime pool connects: that connect already asserts the
-/// runtime role under owner RLS.
-async fn connect_and_migrate(
+/// The runtime grants run on the migration (platform) pool after migrating;
+/// a serving connect then asserts the runtime role under owner RLS.
+async fn connect_schema(
     config: &RuntimeConfig,
     migrators: Vec<NamedMigrator>,
     pg_sidecars: &PgSidecarRegistryFrozen,
-    runtime_grants: Option<&RuntimeGrants>,
     vectors: VectorStorage,
-) -> Result<PgMigrationStorage, ProxiimaError> {
+    step: SchemaStep,
+) -> Result<(), ProxiimaError> {
     let migration_pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         config.migrations_url(),
         config.pg_pool_config,
@@ -320,8 +400,41 @@ async fn connect_and_migrate(
     .await
     .map_err(storage_error)?
     .with_vector_storage(vectors);
-    preflight_without_migrations_with_policy(
-        &migration_pg,
+    let stepped = match step {
+        SchemaStep::Migrate { grants } => {
+            migrate_schema(
+                config,
+                &migration_pg,
+                migrators,
+                pg_sidecars,
+                grants.as_ref(),
+            )
+            .await
+        }
+        SchemaStep::Validate => preflight_without_migrations_with_policy(
+            &migration_pg,
+            migrators,
+            pg_sidecars,
+            config.missing_migration_policy,
+        )
+        .await
+        .map(drop)
+        .map_err(validation_error),
+    };
+    migration_pg.clone_pool_for_backend().close().await;
+    stepped
+}
+
+/// [`SchemaStep::Migrate`] on a connected migration storage.
+async fn migrate_schema(
+    config: &RuntimeConfig,
+    migration_pg: &PgMigrationStorage,
+    migrators: Vec<NamedMigrator>,
+    pg_sidecars: &PgSidecarRegistryFrozen,
+    grants: Option<&RuntimeGrants>,
+) -> Result<(), ProxiimaError> {
+    run_core_and_spiice_migrations_with_policy(
+        migration_pg,
         migrators,
         pg_sidecars,
         config.missing_migration_policy,
@@ -332,10 +445,10 @@ async fn connect_and_migrate(
         .initialize_store_number(config.store_number)
         .await
         .map_err(storage_error)?;
-    if let Some(grants) = runtime_grants {
+    if let Some(grants) = grants {
         grants.apply(&migration_pg.clone_pool_for_backend()).await?;
     }
-    Ok(migration_pg)
+    Ok(())
 }
 
 /// Run every linked spiice's registration callback and freeze the result.
@@ -356,7 +469,7 @@ fn compose_registry<A: SpiiceBundle>(
     Ok(registry.try_freeze()?)
 }
 
-/// Freeze the PG sidecar registry before connecting or applying migrations.
+/// Freeze the PG sidecar registry before connecting.
 fn compose_pg_sidecars<A: SpiiceBundle>(
     registry: &proxiima_core::SpiiceRegistryFrozen,
 ) -> Result<Arc<PgSidecarRegistryFrozen>, ProxiimaError> {
@@ -499,23 +612,51 @@ fn embedding_router_for(
 }
 
 /// Map a storage error onto [`ProxiimaError`], preserving the typed
-/// [`StorageError::SchemaResetRequired`] signal instead of collapsing it
-/// into the generic [`ProxiimaError::Storage`] string.
+/// [`StorageError::SchemaResetRequired`] and [`StorageError::MigrationRequired`]
+/// signals instead of collapsing them into the generic
+/// [`ProxiimaError::Storage`] string.
 pub(crate) fn storage_error(err: StorageError) -> ProxiimaError {
     match err {
         StorageError::SchemaResetRequired { details } => {
             ProxiimaError::SchemaResetRequired { details }
         }
+        StorageError::MigrationRequired { details } => ProxiimaError::MigrationRequired { details },
         other => ProxiimaError::Storage(other.into()),
     }
 }
 
 /// Map a migration-facade error onto [`ProxiimaError`], unwrapping the core
 /// preflight check so a stale pre-lane database still surfaces as
-/// [`ProxiimaError::SchemaResetRequired`] rather than a generic storage string.
+/// [`ProxiimaError::SchemaResetRequired`], and a core or spiice lane behind
+/// this binary as [`ProxiimaError::MigrationRequired`], rather than a generic
+/// storage string.
 fn migration_error(err: MigrationError) -> ProxiimaError {
     match err {
         MigrationError::CorePreflight(storage_err) => storage_error(storage_err),
+        unapplied @ MigrationError::Ledger {
+            conflict: LedgerConflict::Unapplied { .. },
+            ..
+        } => ProxiimaError::MigrationRequired {
+            details: unapplied.to_string(),
+        },
         other => ProxiimaError::Storage(other.into()),
+    }
+}
+
+/// [`migration_error`] for the validating preflight, where generated sidecar
+/// state the migrate step regenerates — owner-follows marks and indexes,
+/// search definitions, a declared schema evolution — reports
+/// [`StorageError::MigrationRequired`]: that surfaces as
+/// [`ProxiimaError::MigrationRequired`] with the preflight's own message.
+fn validation_error(err: MigrationError) -> ProxiimaError {
+    match err {
+        MigrationError::SidecarOwnerRls(StorageError::MigrationRequired { .. })
+        | MigrationError::SearchDefinitions(StorageError::MigrationRequired { .. })
+        | MigrationError::SchemaEvolution(StorageError::MigrationRequired { .. }) => {
+            ProxiimaError::MigrationRequired {
+                details: err.to_string(),
+            }
+        }
+        other => migration_error(other),
     }
 }

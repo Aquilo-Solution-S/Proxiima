@@ -117,20 +117,6 @@ static HEALTH_CONTRACT: SpiiceContract = SpiiceContract {
     },
 };
 
-pub(crate) fn probe_sidecars() -> crate::PgSidecarRegistryFrozen {
-    use crate::spiice::SpiiceBundle;
-
-    let mut registry = crate::spiice::SpiiceRegistry::new();
-    OutboxProbeApp::register(&mut registry).expect("publisher fixture registers");
-    let registry = registry.try_freeze().expect("publisher fixture freezes");
-    let mut sidecars = crate::spiice::PgSidecarRegistry::new();
-    proxiima_storage_pg::register_core_pg_sidecars(&mut sidecars);
-    OutboxProbeApp::register_pg_sidecars(&mut sidecars);
-    sidecars
-        .freeze_against(&registry)
-        .expect("publisher fixture PG sidecar matches its contract")
-}
-
 fn probe_migrator() -> Migrator {
     let statements = [
         "CREATE SCHEMA publisher_supervision",
@@ -152,23 +138,6 @@ fn probe_migrator() -> Migrator {
         )]),
         ..Migrator::DEFAULT
     }
-}
-
-pub(crate) async fn migrate_probe_database(platform_url: &str) {
-    let migration_pg = crate::PgMigrationStorage::connect_with_config(
-        platform_url,
-        crate::PgPoolConfig::default(),
-        crate::PgTuning::default(),
-    )
-    .await
-    .expect("migration pool");
-    crate::run_core_and_spiice_migrations(
-        &migration_pg,
-        <OutboxProbeApp as crate::spiice::SpiiceBundle>::migrators(),
-        &probe_sidecars(),
-    )
-    .await
-    .expect("Proxiima migrations");
 }
 
 #[derive(Debug)]

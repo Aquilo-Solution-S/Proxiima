@@ -359,7 +359,8 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
         | StorageError::Unavailable(_)
         | StorageError::Internal(_)
         | StorageError::MemoryIdCollision
-        | StorageError::SchemaResetRequired { .. } => (
+        | StorageError::SchemaResetRequired { .. }
+        | StorageError::MigrationRequired { .. } => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "Internal error",
@@ -526,6 +527,12 @@ mod tests {
             ),
             (
                 StorageError::SchemaResetRequired {
+                    details: "x".into(),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                StorageError::MigrationRequired {
                     details: "x".into(),
                 },
                 StatusCode::INTERNAL_SERVER_ERROR,

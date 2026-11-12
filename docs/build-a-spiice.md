@@ -176,8 +176,9 @@ On an existing database the first such run supersedes the class your
 migration chose for a Follows table and may build its owner index under a
 write lock; see [host integration](host-integration.md#boot-a-composed-host)
 for the upgrade effects.
-Standalone migration jobs and test templates must supply the same frozen
-sidecars; see [host integration](host-integration.md#boot-a-composed-host).
+The host's migrate step (`Proxiima::migrate`) freezes them from the bundle;
+test templates must supply the same frozen sidecars; see
+[host integration](host-integration.md#boot-a-composed-host).
 
 Use `PgMemorySidecar` directly for computed or multi-row sidecars. Authorized
 helpers and private permits bind reads/writes to admitted rows; do not query

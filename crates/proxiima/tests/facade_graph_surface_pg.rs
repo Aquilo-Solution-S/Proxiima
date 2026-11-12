@@ -1665,7 +1665,9 @@ async fn serving_boot_refuses_stale_search_definitions_until_explicit_migration(
     assert!(
         matches!(
             preflight,
-            Err(proxiima::MigrationError::SearchDefinitions(_))
+            Err(proxiima::MigrationError::SearchDefinitions(
+                proxiima_core::StorageError::MigrationRequired { .. }
+            ))
         ),
         "stale generated body must fail read-only preflight: {preflight:?}"
     );
@@ -1680,8 +1682,12 @@ async fn serving_boot_refuses_stale_search_definitions_until_explicit_migration(
         .build()
         .await;
     assert!(
-        stale_boot.is_err(),
-        "serving boot must validate generated definitions rather than repair them"
+        matches!(
+            &stale_boot,
+            Err(proxiima::ProxiimaError::MigrationRequired { details }) if details.contains("stale body")
+        ),
+        "serving boot must validate generated definitions rather than repair them: {:?}",
+        stale_boot.as_ref().err()
     );
 
     migrate_facade(&split_db).await;
@@ -1720,11 +1726,14 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
     .expect("create unexpected candidate overload");
     platform.close().await;
 
+    // Not a migration the migrate step owes: it refuses the overload too.
     let preflight = facade_preflight(&split_db).await;
     assert!(
         matches!(
             preflight,
-            Err(proxiima::MigrationError::SearchDefinitions(_))
+            Err(proxiima::MigrationError::SearchDefinitions(
+                proxiima_core::StorageError::ConstraintViolation(_)
+            ))
         ),
         "unexpected candidate overload must fail preflight: {preflight:?}"
     );
@@ -1755,6 +1764,31 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
             Err(proxiima::MigrationError::SearchDefinitions(_))
         ),
         "explicit migration must refuse the overload: {migration:?}"
+    );
+
+    // The migrate step's refusal states the fact; it does not send the
+    // operator to the step that just failed.
+    let migrate = Proxiima::<FacadeSurfaceApp>::app()
+        .database_url(split_db.runtime_url().to_owned())
+        .store_number(0)
+        .platform_database_url(split_db.platform_url().to_owned())
+        .owner(company_owner(Uuid::now_v7()))
+        .served_surface(ServedSurface::All)
+        .migrate()
+        .await
+        .expect_err("the migrate step refuses the overload");
+    assert!(
+        matches!(migrate, proxiima::ProxiimaError::Storage(_)),
+        "{migrate}"
+    );
+    let message = migrate.to_string();
+    assert!(
+        message.contains("unexpected generated candidate overload"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("migrate") && !message.contains("run the"),
+        "{message}"
     );
 }
 

@@ -266,25 +266,13 @@ async fn exercise_full_registry_erase(
         .clear();
 
     let (runtime_url, platform_url) = common::split_roles(database_url).await?;
-    let migration_storage = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
-        &platform_url,
-        proxiima_storage_pg::PgPoolConfig::from_env()?,
-        proxiima_storage_pg::PgTuning::from_env()?,
-    )
-    .await?;
-    let mut registry = proxiima::SpiiceRegistry::new();
-    FullRegistryApp::register(&mut registry)?;
-    let registry = registry.try_freeze()?;
-    let mut sidecars = proxiima::PgSidecarRegistry::new();
-    proxiima::spiice::register_core_pg_sidecars(&mut sidecars);
-    FullRegistryApp::register_pg_sidecars(&mut sidecars);
-    let sidecars = sidecars.freeze_against(&registry)?;
-    proxiima::run_core_and_spiice_migrations(
-        &migration_storage,
-        <FullRegistryApp as SpiiceBundle>::migrators(),
-        &sidecars,
-    )
-    .await?;
+    Proxiima::<FullRegistryApp>::app()
+        .database_url(&runtime_url)
+        .store_number(0)
+        .platform_database_url(&platform_url)
+        .served_surface(proxiima::ServedSurface::All)
+        .migrate()
+        .await?;
     let platform_pool = sqlx::PgPool::connect(&platform_url).await?;
     sqlx::query(
         "CREATE TABLE proxiima_core.test_scope_host_copy (

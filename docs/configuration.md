@@ -6,16 +6,16 @@ is the serving connection; `PROXIIMA_PLATFORM_DATABASE_URL` is the required
 migration and maintenance connection (`PROXIIMA_MIGRATION_DATABASE_URL`, when
 set, takes over the migrations). Both roles use owner RLS. A serving host
 holds two pools of `PROXIIMA_PG_MAX_CONNECTIONS` each (runtime and platform),
-plus a migration pool of the same size during boot; size the server's
+plus a migration pool of the same size during boot and the migrate step; size the server's
 `max_connections` for every host on it plus operator connections
 ([behind a connection pooler](operate.md#behind-a-connection-pooler)). The settings gate checks every `PROXIIMA_*` row.
 
 | Setting | Purpose | When needed | Reader |
 |---|---|---|---|
 | DATABASE_URL | serving database connection | required for the canonical host | [MCP args](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/args.rs) |
-| PROXIIMA_PLATFORM_DATABASE_URL | platform database connection | required for boot and maintenance | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_MIGRATION_DATABASE_URL | direct/session-mode connection for explicit migration commands; same role and database as `PROXIIMA_PLATFORM_DATABASE_URL`, which it defaults to | platform URL behind a transaction-mode pooler ([behind a connection pooler](operate.md#behind-a-connection-pooler)) | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_STORE_NUMBER | immutable host-assigned store number | required on every boot | `RuntimeBuilder::store_number` |
+| PROXIIMA_PLATFORM_DATABASE_URL | platform database connection | required for migrate, boot and maintenance | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
+| PROXIIMA_MIGRATION_DATABASE_URL | direct/session-mode connection of the migrate step and of schema validation at boot and maintenance; same role and database as `PROXIIMA_PLATFORM_DATABASE_URL`, which it defaults to | platform URL behind a transaction-mode pooler ([behind a connection pooler](operate.md#behind-a-connection-pooler)) | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
+| PROXIIMA_STORE_NUMBER | immutable host-assigned store number, persisted by the migrate step and checked by every boot | required for migrate, boot and maintenance | `RuntimeBuilder::store_number` |
 | PROXIIMA_MCP_BIND | MCP listener address | serving MCP | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_EXPOSE_NETWORK | non-loopback exposure gate | public listener | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
 | PROXIIMA_ALLOWED_ORIGINS | CORS origin allowlist (no port = any port; an explicit port also matches a browser Origin that omits it when it is the scheme default, HTTP 80 or HTTPS 443) | browser clients | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
@@ -57,8 +57,8 @@ plus a migration pool of the same size during boot; size the server's
 | PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS | first idle wait of the embedding worker; doubles while drains find nothing, up to 60 s or this value if longer; a write committed in the process wakes it at once | embedding worker tuning | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
 | PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS | stale claim timeout | embedding worker recovery | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
 | PROXIIMA_MISSING_MIGRATION_POLICY | missing-version policy (`reject` or `allow`) | releases intentionally share a database | `missing_migration_policy_from_lookup` |
-| PROXIIMA_RUNTIME_GRANTS | runtime grant boot switch | owner-RLS deployment | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_PG_MAX_CONNECTIONS | size of each pool: runtime, platform, and the boot-time migration pool | pool tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
+| PROXIIMA_RUNTIME_GRANTS | runtime grants of the migrate step; serving never grants | owner-RLS deployment | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
+| PROXIIMA_PG_MAX_CONNECTIONS | size of each pool: runtime, platform, and the migration pool of boot and the migrate step | pool tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
 | PROXIIMA_PG_STATEMENT_TIMEOUT_MS | statement timeout of every pool, sent as a startup option | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
 | PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS | pool acquire timeout | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
 | PROXIIMA_PG_IDLE_TIMEOUT_SECS | idle connection timeout | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |

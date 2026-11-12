@@ -972,9 +972,9 @@ async fn oidc_e2e_group_auth_host_resolved_editor_role_permits_tool_call()
     Ok(())
 }
 
-/// A pg-testkit database of the test's own, never a shared one: a build
-/// that linked a spiice migrates its schema into whatever database it boots
-/// on, and a host that links none then refuses that database at boot.
+/// A pg-testkit database of the test's own, never a shared one: a database
+/// another build migrated with a spiice is one a host that links none
+/// refuses at boot.
 async fn live_database_url() -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
     let name = format!("proxiima_oidc_e2e_{}", Uuid::now_v7().simple());
     proxiima_pg_testkit::create_db(&name)

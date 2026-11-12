@@ -18,9 +18,7 @@ use proxiima_core::mcp::{
 };
 use proxiima_core::protocol::resource as protocol_resource;
 use proxiima_core::spiice::spiice0::resource as core_resource;
-use proxiima_core::{
-    Engine, SpiiceRegistry, SpiiceRegistryFrozen, SpiiceServices, composed_schema_names,
-};
+use proxiima_core::{Engine, SpiiceRegistryFrozen, SpiiceServices};
 use serde::Serialize;
 
 use crate::auth::McpAuthContext;
@@ -163,60 +161,6 @@ impl McpToolHost {
         extensions: &http::Extensions,
     ) -> Result<SpiiceServices, McpToolError> {
         crate::request_scope::request_services(&self.request_headers, headers, extensions)
-    }
-
-    /// Connect a runtime role and a separately authorized migration/platform
-    /// role. A single DSN cannot serve both purposes once owner RLS is active.
-    ///
-    /// Validates the already-migrated core schema on `platform_url` before it
-    /// opens the platform pool on the same URL. So
-    /// `platform_url` must reach Postgres directly or through a session-mode
-    /// pool, never a transaction-mode pooler; `runtime_url` may go through
-    /// one. This constructor does not read `PROXIIMA_MIGRATION_DATABASE_URL`:
-    /// to put the platform pool behind a transaction-mode pooler, boot
-    /// through the `proxiima` facade with its migration URL
-    /// (docs/operate.md, "Behind a connection pooler").
-    ///
-    /// # Errors
-    ///
-    /// Returns storage, migration, registry, or platform-admission failures.
-    pub async fn from_database_urls(
-        runtime_url: &str,
-        platform_url: &str,
-        registry: SpiiceRegistry,
-        store_number: u16,
-    ) -> Result<Self, crate::McpServerError> {
-        let pool_config = proxiima_storage_pg::PgPoolConfig::from_env()?;
-        let tuning = proxiima_storage_pg::PgTuning::from_env()?;
-        let migration = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
-            platform_url,
-            pool_config,
-            tuning,
-        )
-        .await?;
-        proxiima_storage_pg::ensure_core_schema_current(
-            &migration.clone_pool_for_backend(),
-            proxiima_storage_pg::MissingMigrationPolicy::Reject,
-            migration.vector_storage(),
-        )
-        .await?;
-        migration.initialize_store_number(store_number).await?;
-        let frozen = registry.try_freeze()?;
-        let schema_names = composed_schema_names(&frozen);
-        let schema_refs: Vec<&str> = schema_names.iter().map(String::as_str).collect();
-        let platform_pool = pool_config.connect_lazy(platform_url)?;
-        let platform =
-            proxiima_storage_pg::PgPlatformScope::new(platform_pool, &schema_refs).await?;
-        let pg = proxiima_storage_pg::PgStorage::connect_with_config(
-            runtime_url,
-            pool_config,
-            tuning,
-            platform,
-            store_number,
-        )
-        .await?;
-        let engine = Arc::new(Engine::new(frozen.clone(), Arc::new(pg).storage_ports()));
-        Ok(Self::from_engine(engine, SpiiceServices::default()))
     }
 
     #[must_use]

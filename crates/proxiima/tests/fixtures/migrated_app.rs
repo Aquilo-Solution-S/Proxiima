@@ -19,6 +19,7 @@ pub async fn migrate<A: SpiiceBundle>(
     A::register_pg_sidecars(&mut sidecars);
     let sidecars = sidecars.freeze_against(&registry)?;
     run_core_and_spiice_migrations(&pg, A::migrators(), &sidecars).await?;
+    pg.initialize_store_number(0).await?;
     pg.clone_pool_for_backend().close().await;
     Ok(())
 }

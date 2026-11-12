@@ -176,6 +176,54 @@ pub async fn create_core_db() -> Result<String, Box<dyn std::error::Error>> {
     create_db().await
 }
 
+/// A host over a migrated core schema on split roles: initializes the store
+/// number, validates the core schema on `platform_url`, then connects the
+/// serving storage on `runtime_url`.
+#[allow(dead_code)]
+pub async fn host_from_database_urls(
+    runtime_url: &str,
+    platform_url: &str,
+    registry: proxiima_core::SpiiceRegistry,
+    store_number: u16,
+) -> Result<proxiima_mcp_server::McpToolHost, Box<dyn std::error::Error>> {
+    let pool_config = proxiima_storage_pg::PgPoolConfig::from_env()?;
+    let tuning = proxiima_storage_pg::PgTuning::from_env()?;
+    let migration = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
+        platform_url,
+        pool_config,
+        tuning,
+    )
+    .await?;
+    proxiima_storage_pg::ensure_core_schema_current(
+        &migration.clone_pool_for_backend(),
+        proxiima_storage_pg::MissingMigrationPolicy::Reject,
+        migration.vector_storage(),
+    )
+    .await?;
+    migration.initialize_store_number(store_number).await?;
+    let frozen = registry.try_freeze()?;
+    let schema_names = proxiima_core::composed_schema_names(&frozen);
+    let schema_refs: Vec<&str> = schema_names.iter().map(String::as_str).collect();
+    let platform_pool = pool_config.connect_lazy(platform_url)?;
+    let platform = proxiima_storage_pg::PgPlatformScope::new(platform_pool, &schema_refs).await?;
+    let pg = proxiima_storage_pg::PgStorage::connect_with_config(
+        runtime_url,
+        pool_config,
+        tuning,
+        platform,
+        store_number,
+    )
+    .await?;
+    let engine = std::sync::Arc::new(proxiima_core::Engine::new(
+        frozen,
+        std::sync::Arc::new(pg).storage_ports(),
+    ));
+    Ok(proxiima_mcp_server::McpToolHost::from_engine(
+        engine,
+        proxiima_core::SpiiceServices::default(),
+    ))
+}
+
 /// The serve task returned by [`start_server`].
 #[allow(dead_code)]
 pub type ServeHandle = tokio::task::JoinHandle<Result<(), proxiima_mcp_server::McpServerError>>;
@@ -228,7 +276,7 @@ pub async fn start_server(
 ) -> Result<(ServeHandle, std::net::SocketAddr, String), Box<dyn std::error::Error>> {
     let db_name = create_db().await?;
     let (runtime_url, platform_url) = split_role_urls(&db_name).await?;
-    let server = proxiima_mcp_server::McpToolHost::from_database_urls(
+    let server = host_from_database_urls(
         &runtime_url,
         &platform_url,
         proxiima_core::SpiiceRegistry::new(),

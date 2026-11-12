@@ -174,10 +174,26 @@ impl SpiiceApp for MyApp {
 
 #[tokio::main]
 async fn main() -> Result<(), proxiima::ProxiimaError> {
+    if std::env::args().nth(1).as_deref() == Some("migrate") {
+        return proxiima::Proxiima::<MyApp>::app().from_env().migrate().await;
+    }
     proxiima::run::<MyApp>().await?;
     Ok(())
 }
 ```
+
+`Proxiima::migrate` is the host's migrate step and the only path that changes
+the schema: it resolves the configuration as `build()` does, applies every
+pending core and spiice migration, initializes the store number, and applies
+the runtime grants when they are configured. `build()`, `run()` and
+`Proxiima::connect_storage`, the storage of a one-shot maintenance command,
+only validate and refuse a database the step has not brought current with
+`ProxiimaError::MigrationRequired`. Expose the step as `<host> migrate` and run
+it before starting or replacing servers ([operate](operate.md#postgresql-and-migrations)).
+`from_env()` makes the step read the serving settings too. A step that shares
+the server's environment without them reads it with `from_storage_lookup`, as
+`proxiima-mcp migrate` does. Settings set in code still apply, so that step
+runs through an app whose `configure` binds no listener.
 
 The host normally implements `SpiiceBundle` and links one or more spiices;
 the tuple `SpiiceApp` implementation folds configuration, services, and HTTP
@@ -230,28 +246,29 @@ require a reset; there is no copy-cutover compatibility path.
 
 A host that deliberately shares a database between releases can explicitly set
 `RuntimeBuilder::missing_migration_policy(MissingMigrationPolicy::Allow)`.
-The deployable host and its maintenance commands read the same choice from
-`PROXIIMA_MISSING_MIGRATION_POLICY`, as does `tools/dev-migrate`. The same
-policy applies during serving validation. Standalone migration and
-planning callers use the corresponding `_with_policy` functions; the ordinary
-functions reject missing versions. Allowing missing versions still rejects
+The deployable host's migrate step, its serving validation and its
+maintenance commands read the same choice from
+`PROXIIMA_MISSING_MIGRATION_POLICY`, as does `tools/dev-migrate`. Standalone
+planning and preflight callers use the corresponding `_with_policy`
+functions; the ordinary functions reject missing versions. Allowing missing versions still rejects
 dirty ledgers, changed checksums, and migration lanes that would replay or
 reorder previously applied work.
 
 Read-only boot and planning share the runner's migration lock so they cannot
 validate between source commits. They fail after a five-second lock wait.
-Complete the out-of-band migration job before starting pods that skip
-migrations; allowing missing versions does not bypass this serialization.
+Complete the migrate step before starting servers; allowing missing versions
+does not bypass this serialization.
 
-Standalone migration and preflight callers freeze the same core/spiice PG
-sidecars as boot. Register core sidecars and the bundle's sidecars in a
-`PgSidecarRegistry`, then call `freeze_against(&registry)` with the frozen
-spiice registry. Pass `&sidecars` as the third argument to
-`run_core_and_spiice_migrations` and `preflight_without_migrations`; their
-`_with_policy` forms take it before the policy. `HostTemplate::new` takes the
+`Proxiima::migrate` and boot freeze the core/spiice PG sidecars of the bundle
+themselves. A standalone preflight caller freezes the same: register core
+sidecars and the bundle's sidecars in a `PgSidecarRegistry`, then call
+`freeze_against(&registry)` with the frozen spiice registry, and pass
+`&sidecars` as the third argument to `preflight_without_migrations` (its
+`_with_policy` form takes it before the policy). `HostTemplate::new` takes the
 owned frozen sidecars as its fourth argument and includes the composition in
-its template identity. These types and migration operations are available
-through `proxiima`; test templates use `proxiima::testkit`.
+its template identity. The runner itself, `run_core_and_spiice_migrations`,
+is test support, exported only with the `testkit` feature; test templates use
+`proxiima::testkit`.
 
 The runner derives Follows owner RLS from this registry before and after the
 spiice migration lanes, including runs with no pending SQL. Serving
@@ -260,15 +277,15 @@ Normal boot supplies this registry automatically. See
 [sidecar owner modes](build-a-spiice.md#2-persist-the-typed-payload).
 
 For searchable spiices, the same frozen registry also carries the generated
-candidate definitions. `run_core_and_spiice_migrations` installs them after
-the spiice lanes, in the final migration transaction under the whole-run lock.
+candidate definitions. The migrate step installs them after the spiice lanes,
+in the final migration transaction under the whole-run lock.
 The definitions and their privilege envelope roll back together on failure.
 No new migration is required for a generated function-body update, and
 already released migrations remain unchanged.
 
 Serving boot validates the installed bodies, signatures and security settings;
-it does not replace candidate definitions. Run the composed host's explicit
-migration command before first serving or upgrading its search definitions. Serving validation
+it does not replace candidate definitions. Run the composed host's migrate
+step before first serving or upgrading its search definitions. Serving validation
 checks the same live catalog without DDL. `MissingMigrationPolicy::Allow`
 does not waive this match: a binary whose generated definitions differ from
 the installed ones cannot start serving. This startup check does not terminate
@@ -283,11 +300,10 @@ memory) whatever class the spiice's SQL gave it, so owner reads stop
 returning rows of forgotten memories. A Follows table without an index
 leading with `owner_id` gets `<table>_owner_follows_idx`, built inside the
 migration transaction with a plain (non-concurrent) `CREATE INDEX`, which
-blocks writes to that table while it builds. Serving boot and
-`preflight_without_migrations` refuse with `MigrationError::SidecarOwnerRls`
-until one migration run with the composition's frozen sidecars has written
-the marks and indexes. Standalone migration jobs must pass that registry,
-not `PgSidecarRegistryFrozen::default()`.
+blocks writes to that table while it builds. Until one migrate step with the
+composition's frozen sidecars has written the marks and indexes, serving boot
+refuses with `ProxiimaError::MigrationRequired`, and
+`preflight_without_migrations` with `MigrationError::SidecarOwnerRls`.
 
 ## Authentication and owner scope
 

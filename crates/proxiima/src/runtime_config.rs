@@ -51,7 +51,7 @@ pub type PlatformAuthenticatorFactory =
 pub(crate) const DUPLICATE_HOST_STATE_PARTICIPANT: &str = "a host-state participant is already registered and a unit of work dispatches to exactly one; register one participant that serves every command type (docs/host-integration.md)";
 
 /// Runtime configuration builder for host applications.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct RuntimeBuilder {
     database_url: Option<String>,
     store_number: Option<u16>,
@@ -261,7 +261,7 @@ impl RuntimeBuilder {
     }
 
     /// Set the direct/session-mode connection used for schema validation and
-    /// explicit migrations, when it must differ from
+    /// the migrate step, when it must differ from
     /// [`Self::platform_database_url`]: the platform URL goes through a
     /// transaction-mode pooler, this one reaches Postgres directly or
     /// through a session-mode pool. Migrations hold a session advisory lock
@@ -493,9 +493,9 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Grant the runtime role its DML privileges at boot, after migrating
-    /// and before the runtime pool connects. Opt-in; off by default. Env
-    /// equivalent: `PROXIIMA_RUNTIME_GRANTS`.
+    /// Grant the runtime role its DML privileges in the migrate step
+    /// ([`crate::Proxiima::migrate`]), after migrating. Serving never grants.
+    /// Opt-in; off by default. Env equivalent: `PROXIIMA_RUNTIME_GRANTS`.
     #[must_use]
     pub const fn runtime_grants(mut self, runtime_grants: bool) -> Self {
         self.runtime_grants = Some(runtime_grants);
@@ -720,7 +720,8 @@ impl RuntimeBuilder {
         self.apply_lookup(proxiima_core::process_env)
     }
 
-    /// Apply injected environment values to unset fields.
+    /// Apply injected environment values to unset fields: the storage
+    /// block of [`Self::apply_storage_lookup`] and the serving block beside it.
     ///
     /// Empty or whitespace-only is unset; values are trimmed.
     /// `PROXIIMA_ALLOWED_ORIGINS=` therefore does not override a
@@ -730,6 +731,28 @@ impl RuntimeBuilder {
     ///
     /// Returns `ProxiimaError::Config` when a supplied value is malformed.
     pub fn apply_lookup(
+        self,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ProxiimaError> {
+        let lookup = |key: &str| proxiima_core::env_value(&lookup, key);
+        let mut builder = self.apply_storage_lookup(lookup)?;
+        builder.apply_serving_lookup(&lookup)?;
+        Ok(builder)
+    }
+
+    /// Apply only the storage settings of the environment to unset fields:
+    /// the database URLs, store number, missing-migration policy, runtime
+    /// grants, the `PROXIIMA_PG_*` pool and tuning, and the embedding runtime
+    /// policy the storage applies. A command that migrates or maintains
+    /// storage reads these and leaves every serving setting — listener,
+    /// authentication, transport, object store, publication and outbox
+    /// delivery — unread, so a server's environment neither configures nor
+    /// refuses it. A command that needs the object store sets it itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxiimaError::Config` when a supplied value is malformed.
+    pub fn apply_storage_lookup(
         mut self,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ProxiimaError> {
@@ -748,8 +771,36 @@ impl RuntimeBuilder {
         if self.migration_database_url.is_none() {
             self.migration_database_url = lookup("PROXIIMA_MIGRATION_DATABASE_URL");
         }
+        if self.missing_migration_policy.is_none() {
+            self.missing_migration_policy = missing_migration_policy_from_lookup(&lookup)?;
+        }
+        if self.runtime_grants.is_none() {
+            self.runtime_grants = lookup("PROXIIMA_RUNTIME_GRANTS")
+                .map(|raw| parse_bool_value("PROXIIMA_RUNTIME_GRANTS", &raw))
+                .transpose()?;
+        }
+        if self.pg_pool_config.is_none() {
+            self.pg_pool_config = pg_pool_config_from_lookup(&lookup)?;
+        }
+        if self.pg_tuning.is_none() {
+            self.pg_tuning = pg_tuning_from_lookup(&lookup)?;
+        }
+        // The storage applies this policy to its reclaim and stale-claim
+        // reads, which maintenance reports too.
+        if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(&lookup) {
+            self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(&lookup)?);
+        }
+        Ok(self)
+    }
+
+    /// The serving block of [`Self::apply_lookup`]: everything
+    /// [`Self::apply_storage_lookup`] leaves unread.
+    fn apply_serving_lookup(
+        &mut self,
+        lookup: &impl Fn(&str) -> Option<String>,
+    ) -> Result<(), ProxiimaError> {
         if self.s3.is_none() {
-            self.s3 = s3_from_lookup(&lookup)?;
+            self.s3 = s3_from_lookup(lookup)?;
         }
         if self.mcp_bind.is_none()
             && let Some(raw) = lookup("PROXIIMA_MCP_BIND")
@@ -770,21 +821,7 @@ impl RuntimeBuilder {
                 .map(|raw| parse_bool_value("PROXIIMA_REST_ENABLED", &raw))
                 .transpose()?;
         }
-        if self.missing_migration_policy.is_none() {
-            self.missing_migration_policy = missing_migration_policy_from_lookup(&lookup)?;
-        }
-        if self.runtime_grants.is_none() {
-            self.runtime_grants = lookup("PROXIIMA_RUNTIME_GRANTS")
-                .map(|raw| parse_bool_value("PROXIIMA_RUNTIME_GRANTS", &raw))
-                .transpose()?;
-        }
-        self.apply_served_path_lookup(&lookup)?;
-        if self.pg_pool_config.is_none() {
-            self.pg_pool_config = pg_pool_config_from_lookup(&lookup)?;
-        }
-        if self.pg_tuning.is_none() {
-            self.pg_tuning = pg_tuning_from_lookup(&lookup)?;
-        }
+        self.apply_served_path_lookup(lookup)?;
         if self.allowed_origins.is_none() {
             self.allowed_origins =
                 lookup("PROXIIMA_ALLOWED_ORIGINS").map(|raw| parse_allowed_origins(&raw));
@@ -798,27 +835,24 @@ impl RuntimeBuilder {
                 .map(|raw| parse_duration_seconds("PROXIIMA_STREAM_MAX_LIFETIME", &raw))
                 .transpose()?;
         }
-        if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(&lookup) {
-            self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(&lookup)?);
-        }
         // Unconditional: the block is read (and validated) on every boot.
         if self.publication.is_none() {
-            self.publication = Some(publication_config_from_lookup(&lookup)?);
+            self.publication = Some(publication_config_from_lookup(lookup)?);
         }
         // Read outside the `publication` guard on purpose: retention is a
         // host-only housekeeping horizon, not part of the engine's
         // publication configuration, so a host that bound the engine block
         // programmatically has said nothing about it.
         if self.published_retention.is_none() {
-            self.published_retention = crate::config::published_retention_from_lookup(&lookup)?;
+            self.published_retention = crate::config::published_retention_from_lookup(lookup)?;
         }
         if self.object_purge_interval.is_none() {
-            self.object_purge_interval = crate::config::object_purge_interval_from_lookup(&lookup)?;
+            self.object_purge_interval = crate::config::object_purge_interval_from_lookup(lookup)?;
         }
         if self.outbox_http.is_none() {
-            self.outbox_http = crate::outbox_http::HttpIntake::from_lookup(&lookup)?.map(Arc::new);
+            self.outbox_http = crate::outbox_http::HttpIntake::from_lookup(lookup)?.map(Arc::new);
         }
-        Ok(self)
+        Ok(())
     }
 
     /// The served-path block of [`Self::apply_lookup`]: request headers,
@@ -1138,11 +1172,12 @@ struct ServedPath {
 #[derive(Clone)]
 pub struct RuntimeConfig {
     pub database_url: String,
-    /// Host-assigned immutable store identity, persisted on first boot.
+    /// Host-assigned immutable store identity, persisted by the first
+    /// migrate step and checked by every boot.
     pub store_number: u16,
     pub platform_database_url: String,
-    /// The connection boot validates the migrated schema on
-    /// (`PROXIIMA_MIGRATION_DATABASE_URL`); `None` uses
+    /// The connection the migrate step migrates and boot validates the
+    /// schema on (`PROXIIMA_MIGRATION_DATABASE_URL`); `None` uses
     /// [`Self::platform_database_url`]. See [`Self::migrations_url`].
     pub migration_database_url: Option<String>,
     pub s3: Option<S3RuntimeConfig>,
@@ -1169,10 +1204,9 @@ pub struct RuntimeConfig {
     pub rest_enabled: bool,
     /// Missing-version handling for normal boot and read-only preflight.
     pub missing_migration_policy: MissingMigrationPolicy,
-    /// Grant the runtime role its DML privileges at boot
-    /// (`PROXIIMA_RUNTIME_GRANTS`), after migrating and before the runtime
-    /// pool connects. Off by default: a DBA-managed deployment grants
-    /// out-of-band (docs/operate.md).
+    /// Grant the runtime role its DML privileges in the migrate step
+    /// (`PROXIIMA_RUNTIME_GRANTS`), after migrating. Off by default: a
+    /// DBA-managed deployment grants out-of-band (docs/operate.md).
     pub runtime_grants: bool,
     /// Inbound headers copied to tools as `RequestHeaders`
     /// (`PROXIIMA_REQUEST_HEADERS`). Empty publishes nothing.
@@ -1306,7 +1340,7 @@ impl std::fmt::Debug for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// The URL boot validates the migrated schema on:
+    /// The URL the migrate step migrates and boot validates the schema on:
     /// [`Self::migration_database_url`] when set, otherwise
     /// [`Self::platform_database_url`].
     #[must_use]
@@ -1531,6 +1565,14 @@ pub enum ProxiimaError {
         "database schema does not match this binary; reset required (see docs/contributing.md#migrations): {details}"
     )]
     SchemaResetRequired { details: String },
+    /// The target database is behind this binary: a migration is not
+    /// applied, or the store number was never initialized. Serving and
+    /// maintenance only validate; the host's `migrate` step brings the
+    /// database current ([`crate::Proxiima::migrate`]).
+    #[error(
+        "database is not migrated for this binary; run the host's `migrate` command first (docs/operate.md#postgresql-and-migrations): {details}"
+    )]
+    MigrationRequired { details: String },
 }
 
 fn parse_allowed_origins(raw: &str) -> Vec<String> {
@@ -1547,28 +1589,6 @@ fn parse_allowed_hosts(raw: &str) -> Vec<String> {
         .filter(|host| !host.is_empty())
         .map(str::to_ascii_lowercase)
         .collect()
-}
-
-/// Read `PROXIIMA_MIGRATION_DATABASE_URL` through `lookup` and check it
-/// against `platform_database_url` the way boot does: same role, same
-/// database. `None` when unset; the caller then migrates on the platform URL.
-/// For entry points that migrate without the facade (a maintenance command
-/// that opens its own migration pool).
-///
-/// # Errors
-///
-/// [`ProxiimaError::Config`] when either URL does not parse or the migration
-/// URL names another role or database. Neither URL is echoed.
-pub fn migration_database_url_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
-    platform_database_url: &str,
-) -> Result<Option<String>, ProxiimaError> {
-    let Some(migration) = proxiima_core::env_value(lookup, "PROXIIMA_MIGRATION_DATABASE_URL")
-    else {
-        return Ok(None);
-    };
-    check_migration_database_url(&migration, platform_database_url)?;
-    Ok(Some(migration))
 }
 
 /// Parse an explicitly configured missing-version policy.
@@ -2162,6 +2182,76 @@ mod tests {
         assert_eq!(
             code.mcp.map(|mcp| mcp.bind),
             Some(addr_port([127, 0, 0, 1], 7))
+        );
+    }
+
+    /// The storage block reads the storage settings and leaves every serving
+    /// setting unread: serving values that are malformed, or that serving
+    /// refuses (an issuer without its block, or in a build without
+    /// `auth-oidc`), neither fail nor configure it.
+    #[test]
+    fn the_storage_lookup_reads_storage_settings_and_no_serving_setting() {
+        let env = lookup(&[
+            ("DATABASE_URL", "postgres://runtime@localhost/db"),
+            (
+                "PROXIIMA_PLATFORM_DATABASE_URL",
+                "postgres://platform@localhost/db",
+            ),
+            ("PROXIIMA_STORE_NUMBER", "7"),
+            ("PROXIIMA_RUNTIME_GRANTS", "true"),
+            ("PROXIIMA_PG_MAX_CONNECTIONS", "3"),
+            ("PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS", "1800"),
+            ("PROXIIMA_MCP_BIND", "not-a-socket"),
+            ("PROXIIMA_EXPOSE_NETWORK", "maybe"),
+            ("PROXIIMA_OIDC_ISSUER", "http://127.0.0.1:1/issuer"),
+            ("PROXIIMA_MAX_REQUEST_BODY_BYTES", "many"),
+            ("PROXIIMA_S3_BUCKET", "a-bucket-without-its-block"),
+            ("PROXIIMA_OUTBOX_HTTP_URL", "not a url"),
+        ]);
+        assert!(
+            RuntimeBuilder::default().apply_lookup(&env).is_err(),
+            "the full lookup reads the serving settings"
+        );
+        let (config, parts) = RuntimeBuilder::default()
+            .served_surface(ServedSurface::Palette(Vec::new()))
+            .apply_storage_lookup(&env)
+            .expect("the storage block parses")
+            .resolve()
+            .expect("nothing serving is configured");
+        assert_eq!(config.store_number, 7);
+        assert!(config.runtime_grants);
+        assert_eq!(config.pg_pool_config.max_connections, 3);
+        assert_eq!(
+            config.embedding_runtime_policy.stale_claim_timeout(),
+            Duration::from_mins(30)
+        );
+        assert!(config.s3.is_none());
+        assert!(config.mcp.is_none());
+        assert!(!config.expose_network);
+        assert!(!parts.has_authenticator());
+        assert!(config.outbox_consumers.is_empty());
+    }
+
+    /// The storage block parses what it reads: a malformed embedding policy
+    /// is refused there, and the object store it leaves unread is malformed
+    /// for the full lookup.
+    #[test]
+    fn the_storage_lookup_refuses_a_malformed_embedding_policy() {
+        assert!(matches!(
+            RuntimeBuilder::default().apply_storage_lookup(lookup(&[(
+                "PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS",
+                "soon"
+            )])),
+            Err(ProxiimaError::Config(_))
+        ));
+        assert!(
+            RuntimeBuilder::default()
+                .apply_lookup(lookup(&[(
+                    "PROXIIMA_S3_BUCKET",
+                    "a-bucket-without-its-block"
+                )]))
+                .is_err(),
+            "a bucket alone is a malformed object-store block"
         );
     }
 

@@ -43,7 +43,7 @@ async fn store_identity_is_required_persisted_and_immutable()
     migration.run_migrations().await?;
     let platform_pool = sqlx::PgPool::connect(&platform_url).await?;
     let scope = PgPlatformScope::new(platform_pool, &["proxiima_core"]).await?;
-    assert!(
+    assert!(matches!(
         PgStorage::connect_with_config(
             &runtime_url,
             PgPoolConfig::default(),
@@ -51,11 +51,10 @@ async fn store_identity_is_required_persisted_and_immutable()
             scope.clone(),
             3,
         )
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("no persisted number")
-    );
+        .await,
+        Err(proxiima_core::StorageError::MigrationRequired { details })
+            if details.contains("no persisted number")
+    ));
     migration.initialize_store_number(3).await?;
     migration.initialize_store_number(3).await?;
     assert!(

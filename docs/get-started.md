@@ -62,11 +62,17 @@ it. Use `--ephemeral` for a disposable issuer with an in-memory signing key.
 
 ## 3. Start Proxiima
 
-In the shell containing the database and issuer exports:
+In the shell containing the database and issuer exports, migrate the fresh
+database, then start the server:
 
 ```sh
+cargo run -p proxiima-mcp -- migrate
 cargo run -p proxiima-mcp
 ```
+
+The server only validates the schema: it refuses a database `migrate` has not
+brought to its release. Run `migrate` again after updating to a release that
+ships migrations.
 
 The host serves `http://127.0.0.1:31415/mcp`. A successful MCP
 `initialize` response carries `Mcp-Session-Id`. Both authentication headers

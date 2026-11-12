@@ -17,9 +17,14 @@ pub use crate::migrations::{
     LedgerConflict, MigrationError, MigrationRunReport, MigrationStorage, MissingMigrationPolicy,
     NamedMigrator, PendingMigration, VectorStorage, is_spiice_ledger_id, pending_migrations,
     pending_migrations_with_lock_timeout, pending_migrations_with_policy,
-    preflight_without_migrations, preflight_without_migrations_with_policy,
+    preflight_without_migrations, preflight_without_migrations_with_policy, spiice_ledger_table,
+};
+/// The migration runner itself, for tests that drive it with their own
+/// lineups. A host migrates through [`Proxiima::migrate`], the one step that
+/// also initializes the store number and applies runtime grants.
+#[cfg(feature = "testkit")]
+pub use crate::migrations::{
     run_core_and_spiice_migrations, run_core_and_spiice_migrations_with_policy,
-    spiice_ledger_table,
 };
 pub use crate::owner_access::{ForwarderPolicy, OwnerRegistry};
 pub use crate::proxiima_host::ProxiimaHost;
@@ -35,7 +40,7 @@ pub use crate::runtime_config::RuntimeAuthState;
 pub use crate::runtime_config::{
     Cause, McpSettings, PlatformAuthContext, PlatformAuthenticatorFactory, ProxiimaError,
     RuntimeBuilder, RuntimeConfig, RuntimeParts, cause_with, embedding_runtime_policy_from_lookup,
-    migration_database_url_from_lookup, missing_migration_policy_from_lookup, parse_store_number,
+    missing_migration_policy_from_lookup, parse_store_number,
 };
 /// The S3-backed cited-blob lane.
 ///
@@ -577,8 +582,7 @@ pub use proxiima_core::{
 /// [`rmcp::ServerHandler`] around it, with the `rmcp` re-exported below.
 pub use proxiima_mcp_server::DynamicHandler;
 /// What parsing the allowlists ([`OriginAllowlist::parse`],
-/// [`RequestHeaderAllowlist::parse`]) and [`McpToolHost::from_database_urls`]
-/// return on failure.
+/// [`RequestHeaderAllowlist::parse`]) return on failure.
 pub use proxiima_mcp_server::McpServerError;
 /// Which protected-resource document [`ResourceServerMetadata`] renders.
 pub use proxiima_mcp_server::ProtectedResource;
@@ -609,9 +613,8 @@ pub use proxiima_mcp_server::{ScopeToken, ScopeTokenError};
 /// What [`ProxiimaHost::host_state_erase_context_for_host`] returns. Opaque and
 /// authority-free: it grants no erase by itself.
 pub use proxiima_storage_pg::PgHostStateEraseContext;
-/// The storage handle [`run_core_and_spiice_migrations`] and
-/// [`preflight_without_migrations`] take. Host API only: the Spiice SDK has
-/// no storage handle.
+/// The serving storage [`Proxiima::connect_storage`] returns. Host API only:
+/// the Spiice SDK has no storage handle.
 pub use proxiima_storage_pg::PgStorage;
 /// Trusted host owner registration on its platform transaction. This performs
 /// no authorization or transaction control; the host vouches for the write.

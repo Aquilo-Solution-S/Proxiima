@@ -136,7 +136,8 @@ impl McpToolError {
                 | crate::StorageError::Unavailable(_)
                 | crate::StorageError::Internal(_)
                 | crate::StorageError::MemoryIdCollision
-                | crate::StorageError::SchemaResetRequired { .. } => McpToolErrorKind::Internal,
+                | crate::StorageError::SchemaResetRequired { .. }
+                | crate::StorageError::MigrationRequired { .. } => McpToolErrorKind::Internal,
             },
             Self::StoreUnavailable { .. } => McpToolErrorKind::StoreUnavailable,
             Self::Failure(_) => McpToolErrorKind::InvalidRequest,

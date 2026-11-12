@@ -204,21 +204,25 @@ impl SpiiceApp for ExampleApp {
     }
 }
 
-async fn boot(
-    runtime_url: String,
-    platform_url: Option<String>,
-    owner: OwnerId,
-) -> Result<proxiima::BuiltProxiima, proxiima::ProxiimaError> {
-    let mut app = Proxiima::<ExampleApp>::app()
+fn app(runtime_url: String, platform_url: Option<String>, owner: OwnerId) -> Proxiima<ExampleApp> {
+    let app = Proxiima::<ExampleApp>::app()
         .store_number(0)
         .database_url(runtime_url)
         .owner(owner)
         .served_surface(ServedSurface::All)
         .pg_pool_config(PgPoolConfig::default());
-    if let Some(platform_url) = platform_url {
-        app = app.platform_database_url(platform_url);
+    match platform_url {
+        Some(platform_url) => app.platform_database_url(platform_url),
+        None => app,
     }
-    app.build().await
+}
+
+async fn boot(
+    runtime_url: String,
+    platform_url: Option<String>,
+    owner: OwnerId,
+) -> Result<proxiima::BuiltProxiima, proxiima::ProxiimaError> {
+    app(runtime_url, platform_url, owner).build().await
 }
 
 #[tokio::test]
@@ -304,8 +308,17 @@ async fn fresh_split_role_boot_serves_after_explicit_core_and_example_migration(
     let error = boot(runtime_url.clone(), Some(platform_url.clone()), owner)
         .await
         .expect_err("serving does not install a fresh database");
-    assert!(error.to_string().contains("run migrations before boot"));
-    migrated_app::migrate_app::<ExampleApp>(&platform_url).await;
+    assert!(
+        matches!(error, proxiima::ProxiimaError::MigrationRequired { .. }),
+        "{error}"
+    );
+    expect_described(
+        "the migrate step on a fresh database",
+        app(runtime_url.clone(), Some(platform_url.clone()), owner)
+            .migrate()
+            .await,
+    )
+    .await;
     let first = expect_described(
         "fresh core+example explicit migration",
         boot(runtime_url.clone(), Some(platform_url.clone()), owner).await,

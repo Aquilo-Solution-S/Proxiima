@@ -82,7 +82,8 @@ pub(crate) fn map_write_storage_error(
         StorageError::Retryable(message)
         | StorageError::Unavailable(message)
         | StorageError::Internal(message) => ProtocolError::internal(message),
-        StorageError::SchemaResetRequired { details } => ProtocolError::internal(details),
+        StorageError::SchemaResetRequired { details }
+        | StorageError::MigrationRequired { details } => ProtocolError::internal(details),
         StorageError::MemoryIdCollision => ProtocolError::internal("memory UUID collision"),
     }
 }

@@ -60,6 +60,11 @@ pub enum StorageError {
         "database schema does not match this release lane; export/reset is required: {details}"
     )]
     SchemaResetRequired { details: String },
+    /// The database is behind this binary: a migration is not applied or
+    /// the store number was never initialized. The host's migrate step
+    /// brings it current; serving and maintenance only validate.
+    #[error("database is not migrated for this release: {details}")]
+    MigrationRequired { details: String },
     #[error("not found")]
     NotFound,
     /// A write named a spiice-owned lifecycle scope whose registry row is

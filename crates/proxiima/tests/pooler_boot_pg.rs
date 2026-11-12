@@ -1,17 +1,15 @@
-//! Boot migrates on `PROXIIMA_MIGRATION_DATABASE_URL` and serves on the
-//! platform and runtime URLs (#493).
+//! The migrate step migrates and boot validates on
+//! `PROXIIMA_MIGRATION_DATABASE_URL`; boot serves on the platform and runtime
+//! URLs.
 //!
 //! With `PROXIIMA_TEST_PGBOUNCER_URL` set (the `PgBouncer` CI lane), the
 //! serving URLs go through that transaction-mode pooler and the migration
 //! URL reaches Postgres directly, the deployment docs/operate.md describes.
-//! Without it every URL is direct and the test still pins which URL boot
-//! migrates on.
+//! Without it every URL is direct and the test still pins which URL the
+//! migrate step and boot's validation use.
 
 use std::error::Error;
 use std::time::Duration;
-
-#[path = "fixtures/migrated_app.rs"]
-mod migrated_app;
 
 use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegistryError};
 use proxiima::{
@@ -65,15 +63,18 @@ struct Urls {
     migration: String,
 }
 
-async fn boot(urls: &Urls, owner: OwnerId) -> TestResult<BuiltProxiima> {
-    let app = Proxiima::<CoreApp>::app()
+fn app(urls: &Urls, owner: OwnerId) -> Proxiima<CoreApp> {
+    Proxiima::<CoreApp>::app()
         .database_url(&urls.runtime)
         .store_number(0)
         .platform_database_url(&urls.platform)
         .migration_database_url(&urls.migration)
         .owner(owner)
-        .served_surface(ServedSurface::All);
-    Ok(app.build().await?)
+        .served_surface(ServedSurface::All)
+}
+
+async fn boot(urls: &Urls, owner: OwnerId) -> TestResult<BuiltProxiima> {
+    Ok(app(urls, owner).build().await?)
 }
 
 async fn write_one(runtime: &BuiltProxiima, owner: OwnerId, text: &str) -> TestResult<()> {
@@ -102,7 +103,7 @@ async fn stop(runtime: BuiltProxiima) {
 }
 
 #[tokio::test]
-async fn boot_migrates_direct_and_serves_through_the_pooler() -> TestResult<()> {
+async fn migrate_runs_direct_and_boot_serves_through_the_pooler() -> TestResult<()> {
     let database = unique_db_name("proxiima_pooler_boot");
     create_db(&database).await?;
     let result = tokio::time::timeout(
@@ -129,8 +130,8 @@ async fn migrate_direct_serve_pooled(database: &str) -> TestResult<()> {
     }
     let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
 
-    // The dedicated migration uses the direct URL; serving then uses the pooler.
-    migrated_app::migrate_app::<CoreApp>(&urls.migration).await;
+    // The migrate step uses the direct URL; serving then uses the pooler.
+    app(&urls, owner).migrate().await?;
     let first = boot(&urls, owner).await?;
     write_one(&first, owner, "migrated direct").await?;
     stop(first).await;
@@ -160,11 +161,11 @@ async fn migrate_direct_serve_pooled(database: &str) -> TestResult<()> {
     Ok(())
 }
 
-/// Boot migrates on the migration URL, not the platform URL: pointed at a
-/// port nothing listens on, boot fails before any schema exists, though the
-/// platform URL works.
+/// The migrate step and boot use the migration URL, not the platform URL:
+/// pointed at a port nothing listens on, both fail and no schema exists,
+/// though the platform URL works.
 #[tokio::test]
-async fn boot_migrates_on_the_migration_url_not_the_platform_url() -> TestResult<()> {
+async fn migrate_and_boot_use_the_migration_url_not_the_platform_url() -> TestResult<()> {
     let database = unique_db_name("proxiima_migration_url");
     create_db(&database).await?;
     let result = tokio::time::timeout(
@@ -191,22 +192,20 @@ async fn migration_url_is_the_one_used(database: &str) -> TestResult<()> {
         migration: unreachable.to_string(),
     };
     let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
-    let booted = Proxiima::<CoreApp>::app()
-        .database_url(&urls.runtime)
-        .store_number(0)
-        .platform_database_url(&urls.platform)
-        .migration_database_url(&urls.migration)
-        .pg_pool_config(PgPoolConfig {
+    let unreachable_migration = || {
+        app(&urls, owner).pg_pool_config(PgPoolConfig {
             acquire_timeout: Duration::from_millis(300),
             ..PgPoolConfig::default()
         })
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .build()
-        .await;
+    };
+    assert!(
+        unreachable_migration().migrate().await.is_err(),
+        "the migrate step connects to the migration URL"
+    );
+    let booted = unreachable_migration().build().await;
     assert!(
         booted.is_err(),
-        "boot connects its migrations to the migration URL"
+        "boot validates the schema on the migration URL"
     );
     drop(booted);
     let admin = sqlx::PgPool::connect(&db_url(database)).await?;

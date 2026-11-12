@@ -3,9 +3,10 @@
 //!
 //! `sqlx migrate run` cannot do this: it records every source into one
 //! `_sqlx_migrations` table, while core and each spiice keep their own ledger
-//! (`public._sqlx_migrations_<spiice>` for a spiice). This bin delegates to the same
-//! framework facade used by embedded hosts: core first, then spiices in
-//! composition order, with duplicate migration versions rejected up front.
+//! (`public._sqlx_migrations_<spiice>` for a spiice). This bin runs the migrate
+//! step of the facade (`Proxiima::migrate`) for the compiled spiices: core
+//! first, then spiices in composition order, with duplicate migration versions
+//! rejected up front, then the store number.
 //!
 //! Usage:
 //!
@@ -34,8 +35,11 @@
 //!   accepts the loss and also deletes the shared-ledger rows no Proxiima lane
 //!   owns, so the consumer's lane re-runs instead of trusting stale rows.
 
+use std::sync::Arc;
+
 use proxiima::spiice::SpiiceBundle;
-use proxiima::{missing_migration_policy_from_lookup, run_core_and_spiice_migrations_with_policy};
+use proxiima::{Proxiima, missing_migration_policy_from_lookup};
+use proxiima_example::ExampleSpiice;
 use proxiima_storage_pg::{
     CORE_MIGRATION_VERSION_CEILING, PgMigrationStorage, PgPoolConfig, PgTuning, VectorStorage,
 };
@@ -57,45 +61,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = resolve_database_url(&args, &proxiima_core::process_env)?;
     let store_number = store_number(&proxiima_core::process_env)?;
     print_target(&url)?;
+    let pool_config = PgPoolConfig::from_env()?;
+    let tuning = PgTuning::from_env()?;
 
-    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
-        &url,
-        PgPoolConfig::from_env()?,
-        PgTuning::from_env()?,
-    )
-    .await?
-    .with_vector_storage(if args.host_vector_index {
-        VectorStorage::HostIndex
-    } else {
-        VectorStorage::Local
-    });
     let dependent_lanes = if args.reset_dependent_lanes {
         DependentLanes::Reset
     } else {
         DependentLanes::Refuse
     };
     if args.reset {
+        let pg = PgMigrationStorage::connect_with_config(&url, pool_config, tuning)
+            .await?
+            .with_vector_storage(if args.host_vector_index {
+                VectorStorage::HostIndex
+            } else {
+                VectorStorage::Local
+            });
         reset_local_dev_database(&pg, &url, dependent_lanes, &proxiima_core::process_env).await?;
     } else if dependent_lanes == DependentLanes::Reset {
         return Err(format!("{RESET_DEPENDENT_LANES_FLAG} only qualifies {RESET_FLAG}").into());
     }
-    let report = run_core_and_spiice_migrations_with_policy(
-        &pg,
-        compiled_spiice_migrators(),
-        &compiled_pg_sidecars()?,
-        missing_policy,
-    )
-    .await?;
-    pg.initialize_store_number(store_number).await?;
-    for source in report.sources {
-        println!("{source} migrations applied");
-    }
+    compiled_app(&url, store_number, args.host_vector_index)
+        .missing_migration_policy(missing_policy)
+        .pg_pool_config(pool_config)
+        .pg_tuning(tuning)
+        .migrate()
+        .await?;
+    println!("migrations applied; store number {store_number}");
     Ok(())
+}
+
+/// The compiled spiices as a facade app on `url`, the migration role's
+/// connection, serving nothing: what [`Proxiima::migrate`] runs for this tool.
+/// A host vector index is only the kind of store here; migrating never calls
+/// it.
+fn compiled_app(url: &str, store_number: u16, host_vector_index: bool) -> Proxiima<ExampleSpiice> {
+    let app = Proxiima::<ExampleSpiice>::app()
+        .database_url(url)
+        .platform_database_url(url)
+        .store_number(store_number)
+        .served_surface(proxiima::ServedSurface::Palette(Vec::new()));
+    if host_vector_index {
+        app.vector_index(Arc::new(
+            proxiima_core::storage_ports::InMemoryVectorIndex::default(),
+        ))
+    } else {
+        app
+    }
 }
 
 /// The migrators of the spiices this binary is built with.
 fn compiled_spiice_migrators() -> Vec<proxiima::spiice::NamedMigrator> {
-    <proxiima_example::ExampleSpiice as SpiiceBundle>::migrators()
+    <ExampleSpiice as SpiiceBundle>::migrators()
 }
 
 /// The schemas the compiled spiices own: core's plus one per spiice, from
@@ -106,18 +123,8 @@ fn compiled_schema_names() -> Result<Vec<String>, Box<dyn std::error::Error>> {
 
 fn compiled_registry() -> Result<proxiima::SpiiceRegistryFrozen, Box<dyn std::error::Error>> {
     let mut registry = proxiima::spiice::SpiiceRegistry::new();
-    <proxiima_example::ExampleSpiice as SpiiceBundle>::register(&mut registry)?;
+    <ExampleSpiice as SpiiceBundle>::register(&mut registry)?;
     Ok(registry.try_freeze()?)
-}
-
-/// The same core/spiice sidecars the migration runner installs at boot.
-fn compiled_pg_sidecars()
--> Result<proxiima::spiice::PgSidecarRegistryFrozen, Box<dyn std::error::Error>> {
-    let registry = compiled_registry()?;
-    let mut sidecars = proxiima::spiice::PgSidecarRegistry::new();
-    proxiima::spiice::register_core_pg_sidecars(&mut sidecars);
-    <proxiima_example::ExampleSpiice as SpiiceBundle>::register_pg_sidecars(&mut sidecars);
-    Ok(sidecars.freeze_against(&registry)?)
 }
 
 /// The one predicate for "a Proxiima schema": every `proxiima_*` namespace, the same set the core
@@ -576,10 +583,11 @@ async fn delete_dependent_lane_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proxiima::run_core_and_spiice_migrations;
+    use proxiima::MigrationError;
     use proxiima_core::env_from_pairs as env;
     use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls, unique_db_name};
     use sqlx::migrate::MigrateError;
+    use std::error::Error as _;
 
     fn parsed(argv: &[&str]) -> Result<Args, String> {
         parse_args(argv.iter().map(|arg| (*arg).to_string()))
@@ -656,11 +664,17 @@ mod tests {
         assert!(parsed(&["--database-url", "--reset"]).is_err());
     }
 
-    async fn run_compiled_migrations(
-        pg: &PgMigrationStorage,
-    ) -> Result<proxiima::MigrationRunReport, Box<dyn std::error::Error>> {
-        let sidecars = compiled_pg_sidecars()?;
-        Ok(run_core_and_spiice_migrations(pg, compiled_spiice_migrators(), &sidecars).await?)
+    /// The migration error a refused migrate step carries.
+    fn migration_cause(refused: &proxiima::ProxiimaError) -> Option<&MigrationError> {
+        refused.source()?.downcast_ref()
+    }
+
+    /// The tool's migrate step on `platform_url`, store number 0.
+    async fn run_compiled_migrations(platform_url: &str) -> Result<(), proxiima::ProxiimaError> {
+        compiled_app(platform_url, 0, false)
+            .missing_migration_policy(proxiima::MissingMigrationPolicy::Reject)
+            .migrate()
+            .await
     }
 
     // A date-shaped ledger row no compiled migrator recognizes — e.g. a
@@ -782,15 +796,15 @@ mod tests {
                  unattributable leftover"
             );
 
-            let refused = run_compiled_migrations(&pg)
+            let refused = run_compiled_migrations(&platform_url)
                 .await
                 .expect_err("unattributable versions block migration after reset");
             assert!(
                 matches!(
-                    refused.downcast_ref::<proxiima::MigrationError>(),
-                    Some(proxiima::MigrationError::Core(
-                        MigrateError::VersionMissing(UNATTRIBUTABLE_TIMESTAMP_MIGRATION_VERSION)
-                    ))
+                    migration_cause(&refused),
+                    Some(MigrationError::Core(MigrateError::VersionMissing(
+                        UNATTRIBUTABLE_TIMESTAMP_MIGRATION_VERSION
+                    )))
                 ),
                 "{refused:?}"
             );
@@ -810,7 +824,7 @@ mod tests {
                 remaining, 0,
                 "explicit lane reset clears unowned versions even without foreign dependents"
             );
-            run_compiled_migrations(&pg).await?;
+            run_compiled_migrations(&platform_url).await?;
             Ok(())
         }
         .await;
@@ -880,7 +894,7 @@ mod tests {
                 PgTuning::from_env()?,
             )
             .await?;
-            run_compiled_migrations(&pg).await?;
+            run_compiled_migrations(&platform_url).await?;
             let admin = sqlx::PgPool::connect(&url).await?;
             build_consumer_lanes(&pg, &admin).await?;
 
@@ -967,14 +981,14 @@ mod tests {
             // Proxiima's own lane is not a dependent of itself, nor is a
             // default ACL scoped to one of its schemas: a freshly migrated
             // database resets without the opt-in.
-            run_compiled_migrations(&pg).await?;
+            run_compiled_migrations(&platform_url).await?;
             sqlx::query(
                 "ALTER DEFAULT PRIVILEGES IN SCHEMA proxiima_core GRANT SELECT ON TABLES TO PUBLIC",
             )
             .execute(&admin)
             .await?;
             reset_local_dev_database_confirmed(&pg, &url, DependentLanes::Refuse).await?;
-            run_compiled_migrations(&pg).await?;
+            run_compiled_migrations(&platform_url).await?;
             Ok(())
         }
         .await;

@@ -10,7 +10,7 @@ use proxiima_core::{
     AuthError, AuthPath, Authenticator, AuthzContext, Credentials, OwnerId, RevalidationConfig,
     Role, SpiiceRegistry, UserId,
 };
-use proxiima_mcp_server::{McpEdgeAuth, McpToolHost};
+use proxiima_mcp_server::McpEdgeAuth;
 use serde_json::json;
 use tokio::task::JoinHandle;
 
@@ -273,7 +273,7 @@ async fn start_host_auth_server(
     let db_name = create_db().await?;
     let (runtime_url, platform_url) = split_role_urls(&db_name).await?;
     let registry = SpiiceRegistry::new();
-    let server = McpToolHost::from_database_urls(&runtime_url, &platform_url, registry, 0).await?;
+    let server = common::host_from_database_urls(&runtime_url, &platform_url, registry, 0).await?;
     let auth_store = Arc::new(McpEdgeAuth::headless().with_host(authenticator));
     let (handle, addr) = common::serve_loopback(server, auth_store, revalidation).await?;
     Ok((handle, addr, db_name))
@@ -291,7 +291,7 @@ async fn start_host_auth_server_on_db(
 > {
     let (runtime_url, platform_url) = split_role_urls(db_name).await?;
     let server =
-        McpToolHost::from_database_urls(&runtime_url, &platform_url, SpiiceRegistry::new(), 0)
+        common::host_from_database_urls(&runtime_url, &platform_url, SpiiceRegistry::new(), 0)
             .await?;
     let auth_store = Arc::new(McpEdgeAuth::headless().with_host(authenticator));
     let (handle, addr) =

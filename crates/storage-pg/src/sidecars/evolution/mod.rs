@@ -202,7 +202,9 @@ impl PgSidecarRegistryFrozen {
     ///
     /// # Errors
     ///
-    /// Returns a storage error when the completion graph is missing or stale.
+    /// `MigrationRequired` while a declared step is not yet complete, which
+    /// the next migration run completes; another storage error when the
+    /// recorded graph is stale or inconsistent.
     pub async fn ensure_schema_evolutions(
         &self,
         connection: &mut PgConnection,

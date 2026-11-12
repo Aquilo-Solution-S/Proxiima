@@ -19,11 +19,13 @@ fn database_url_from_env() -> String {
 pub const USAGE: &str = "\
 Usage:
   proxiima-mcp [serve] [OPTIONS]
+  proxiima-mcp migrate [OPTIONS]
   proxiima-mcp maintain-embeddings [OPTIONS]
   proxiima-mcp maintain-storage [OPTIONS]
   proxiima-mcp maintain-blobs [OPTIONS]
 
-Proxiima Streamable HTTP MCP server.
+Proxiima Streamable HTTP MCP server. It validates the database schema and
+refuses one that `migrate` has not brought to this release.
 
 Auth:
   (OIDC)                   Set PROXIIMA_OIDC_ISSUER + PROXIIMA_OIDC_AUDIENCE
@@ -82,6 +84,12 @@ Environment:
                                 Template every search query is embedded in;
                                 holds {query}, \n is a newline (default: none)
 
+Migration:
+  migrate                  Apply pending migrations, initialize the store
+                           number and, with PROXIIMA_RUNTIME_GRANTS, grant
+                           the runtime role. Run it before starting or
+                           replacing servers
+
 Maintenance:
   maintain-embeddings      One self-healing pass: orphan sweep, reconcile
                            enqueue, health report.
@@ -117,6 +125,22 @@ Tools:
   core_membership
   core_transfer
   core_upload
+";
+
+pub const MIGRATE_USAGE: &str = "\
+Usage: proxiima-mcp migrate [OPTIONS]
+
+Bring the database to this release: apply every pending core migration under
+PROXIIMA_MISSING_MIGRATION_POLICY, initialize PROXIIMA_STORE_NUMBER, and, with
+PROXIIMA_RUNTIME_GRANTS=true, grant the runtime role (DATABASE_URL) its
+privileges. Runs on PROXIIMA_MIGRATION_DATABASE_URL, else on
+PROXIIMA_PLATFORM_DATABASE_URL, which must reach Postgres directly or through
+a session-mode pool. Serving and the maintain-* commands only validate the
+schema and refuse a database this step has not brought current.
+
+Optional:
+  --database-url <URL>     Runtime Postgres URL (defaults to DATABASE_URL or proxiima_dev)
+  -h, --help               Print this message
 ";
 
 pub const MAINTAIN_USAGE: &str = "\
@@ -222,6 +246,20 @@ impl std::fmt::Debug for McpConfig {
         f.debug_struct("McpConfig")
             .field("database_url", &"<redacted>")
             .field("bind", &self.bind)
+            .finish()
+    }
+}
+
+/// What `migrate` needs: the runtime URL, which the runtime-grant plan
+/// names. The schema is migrated on the platform or migration URL.
+pub struct MigrateConfig {
+    pub database_url: String,
+}
+
+impl std::fmt::Debug for MigrateConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MigrateConfig")
+            .field("database_url", &"<redacted>")
             .finish()
     }
 }
@@ -355,6 +393,24 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<McpConfig, 
     let database_url = database_url.unwrap_or_else(database_url_from_env);
 
     Ok(McpConfig { database_url, bind })
+}
+
+/// # Errors
+///
+/// Returns `ArgsError` for help, unknown flags, or a missing value.
+pub fn parse_migrate_args<I: IntoIterator<Item = String>>(
+    args: I,
+) -> Result<MigrateConfig, ArgsError> {
+    let mut database_url: Option<String> = None;
+    let mut flags = Flags::new(args);
+    while let Some(flag) = flags.next_flag()? {
+        match flag.as_str() {
+            "--database-url" => database_url = Some(flags.value("--database-url")?),
+            other => return Err(unknown_flag(other)),
+        }
+    }
+    let database_url = database_url.unwrap_or_else(database_url_from_env);
+    Ok(MigrateConfig { database_url })
 }
 
 /// # Errors
@@ -530,6 +586,7 @@ mod tests {
         for flags in [unknown(&["--nonsense"]), unknown(&["--nonsense", "x"])] {
             for error in [
                 parse_args(flags.clone()).expect_err("serve"),
+                parse_migrate_args(flags.clone()).expect_err("migrate"),
                 parse_maintain_args(flags.clone()).expect_err("maintain-embeddings"),
                 parse_maintain_blobs_args(flags.clone()).expect_err("maintain-blobs"),
                 parse_storage_maintenance_args(flags.clone()).expect_err("maintain-storage"),
@@ -557,6 +614,7 @@ mod tests {
     #[test]
     fn the_top_usage_lists_each_subcommand_with_its_own_usage() {
         for usage in [
+            MIGRATE_USAGE,
             MAINTAIN_USAGE,
             MAINTAIN_BLOBS_USAGE,
             STORAGE_MAINTENANCE_USAGE,

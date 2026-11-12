@@ -24,8 +24,8 @@ The serving role holds `SELECT`, and nothing more, on every view of
 `memory_including_forgotten`, and the runtime guard refuses a core view the
 role may write. An operator who grants on all
 tables of `proxiima_core` after a migration runs
-`SELECT proxiima_core.restrict_view_grants()` as the platform role, or enables
-`PROXIIMA_RUNTIME_GRANTS`, which does it.
+`SELECT proxiima_core.restrict_view_grants()` as the platform role, or runs
+the migrate step with `PROXIIMA_RUNTIME_GRANTS`, which does it.
 
 `DATABASE_URL`, `PROXIIMA_PLATFORM_DATABASE_URL`, and the host-assigned
 `PROXIIMA_STORE_NUMBER` are required for the canonical host. Provision the
@@ -33,6 +33,48 @@ platform role as the schema/migration owner and
 the runtime role for serving grants. Development provisioning is executable in
 [`scripts/pg-init.sql`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/scripts/pg-init.sql).
 Stop older hosts before changing their role/schema contract.
+
+Only the migrate step changes the schema: `Proxiima::migrate`, which the
+canonical host runs as `proxiima-mcp migrate` and a composed host exposes as
+its own `<host> migrate`. On the migration connection it applies every pending
+core and spiice migration, initializes `PROXIIMA_STORE_NUMBER`, and, with
+`PROXIIMA_RUNTIME_GRANTS=true`, grants the runtime role. Serving and every
+`maintain-*` command only validate: a database that was never migrated, is
+older than the binary, has no store number, or lacks generated state the step
+regenerates (owner-follows marks and indexes, search functions, a declared
+schema evolution) is refused with `ProxiimaError::MigrationRequired`, whose
+message names the migrate step. The step and the maintenance commands read
+only the storage settings (database URLs, store number, `PROXIIMA_PG_*`,
+missing-migration policy, runtime grants, and the embedding runtime policy
+block of `PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS`), so they share the
+server's environment. `maintain-blobs`, and `maintain-storage` when it touches
+objects, also read `PROXIIMA_S3_*`.
+
+Run the migrate step before the first start and before every release that
+ships migrations, for example as a job that completes before the rollout
+starts:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: proxiima-migrate
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: proxiima-mcp:<version>
+          args: ["migrate"]
+          envFrom:
+            - secretRef:
+                name: proxiima-env
+```
+
+Old instances keep running against the new schema until the rollout replaces
+them. A migration therefore stays compatible with the previous release, or the
+deployment stops the old instances before it migrates.
 
 Before migrating, an administrator provisions the fixed read-only function
 owners and grants the platform role permission to switch to them. Replace
@@ -77,8 +119,8 @@ applies (`RuntimeBuilder::vector_index`, or `--host-vector-index` for
 boot refuses it with `SchemaResetRequired`, and the store is installed fresh
 (export what you keep first). A database migrated by a newer release refuses an older
 binary unless the host [allows missing migration versions](configuration.md);
-then the older binary leaves newer core definitions in place. Existing
-supported databases append pending migrations; a migration checksum mismatch
+then the older binary leaves newer core definitions in place. The migrate step
+appends pending migrations to an existing supported database; a migration checksum mismatch
 requires restoring the expected migration and database history, not editing
 the ledger. Do not repair a failed boot with ad hoc SQL. See the
 [migration procedure](contributing.md#migrations).
@@ -113,8 +155,8 @@ the storage suites that depend on this through PgBouncer.
   `options` to `ignore_startup_parameters`: the timeout would be dropped
   without an error. `extra_float_digits` needs no entry; Proxiima does not
   send it.
-- Migrations need a direct or session-mode connection. Boot validates the
-  schema under a
+- Migrations need a direct or session-mode connection. The migrate step, and
+  the schema validation of boot and of every `maintain-*` command, hold a
   session lock and session settings, on `PROXIIMA_MIGRATION_DATABASE_URL` if
   set and on `PROXIIMA_PLATFORM_DATABASE_URL` otherwise. To put the serving
   platform pool behind the transaction pooler too, point
@@ -123,15 +165,11 @@ the storage suites that depend on this through PgBouncer.
   pool: with PgBouncer, a second database entry with `pool_mode = session`),
   as the same role and database; boot refuses another role or database.
   Without `PROXIIMA_MIGRATION_DATABASE_URL`, keep the platform URL direct or
-  session-mode. The `maintain-*` commands migrate on the same URL and check
-  it the same way. `McpToolHost::from_database_urls` (the lower-level
-  `proxiima-mcp-server` entry point) takes no migration URL: it validates on
-  its platform URL, which must then be direct or session-mode. An
-  out-of-band migration job (`tools/dev-migrate`) also needs a direct or
-  session-mode connection.
+  session-mode.
 - Budget connections by where they are held. Each host holds a runtime and
   a platform pool of up to `PROXIIMA_PG_MAX_CONNECTIONS` client connections
-  each (default 5), and a migration pool of the same size during boot.
+  each (default 5), and a migration pool of the same size during boot and
+  the migrate step.
   Behind a transaction pooler the runtime pools of every host share the
   pooler's server pool (`default_pool_size` per database and role), so the
   server's `max_connections` must cover the pooler's server pools, every

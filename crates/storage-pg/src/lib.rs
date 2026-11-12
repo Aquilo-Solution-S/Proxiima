@@ -396,14 +396,14 @@ pub async fn ensure_core_schema_current(
             .map(|migration| migration.version)
             .collect();
         if !pending.is_empty() {
-            return Err(StorageError::Internal(format!(
-                "core migrations {pending:?} are not applied; run migrations before boot"
-            )));
+            return Err(StorageError::MigrationRequired {
+                details: format!("core migrations {pending:?} are not applied"),
+            });
         }
         if !definitions::current_matches_with_policy(&mut transaction, policy, vectors).await? {
-            return Err(StorageError::Internal(
-                "database core definitions are not current; run migrations before boot".to_owned(),
-            ));
+            return Err(StorageError::MigrationRequired {
+                details: "database core definitions are not current".to_owned(),
+            });
         }
         Ok(())
     }
@@ -611,9 +611,9 @@ fn validate_store_number(persisted: Option<i32>, configured: u16) -> Result<(), 
         Some(number) => Err(StorageError::Unavailable(format!(
             "configured store number {configured} differs from persisted store number {number}"
         ))),
-        None => Err(StorageError::Unavailable(
-            "store has no persisted number; initialize it before serving".into(),
-        )),
+        None => Err(StorageError::MigrationRequired {
+            details: "store has no persisted number".into(),
+        }),
     }
 }
 
@@ -661,7 +661,7 @@ impl PgMigrationStorage {
         self
     }
 
-    /// Write this store's number on its first boot, or verify the number
+    /// Write this store's number on its first migration, or verify the number
     /// already persisted. Call after migrations and before serving connects.
     ///
     /// # Errors
@@ -1408,6 +1408,12 @@ impl PgStorage {
     ) -> Self {
         self.embedding_runtime_policy = policy;
         self
+    }
+
+    /// The embedding runtime policy this storage reclaims and reports by.
+    #[must_use]
+    pub const fn embedding_runtime_policy(&self) -> proxiima_core::EmbeddingRuntimePolicy {
+        self.embedding_runtime_policy
     }
 
     #[must_use]

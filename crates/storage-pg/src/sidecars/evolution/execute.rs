@@ -197,10 +197,9 @@ pub(super) async fn ensure(
     let completed = completions(connection).await?;
     let pending = pending_steps(registry, &completed)?;
     if let Some(step) = pending.first() {
-        return Err(refused(format!(
-            "schema evolution {} is not complete; run migrations before serving",
-            step.id
-        )));
+        return Err(StorageError::MigrationRequired {
+            details: format!("schema evolution {} is not complete", step.id),
+        });
     }
     let consumed: HashSet<_> = completed.iter().map(|row| &row.source).collect();
     for target in completed.iter().flat_map(|row| &row.targets) {

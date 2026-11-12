@@ -22,14 +22,19 @@ use sqlx::PgPool;
 use crate::bundle::SpiiceBundle;
 use crate::migrations::{MigrationError, NamedMigrator, check_lineup, lineup, run_lineup};
 
+/// The store number a [`HostTemplate`] initializes, as the migrate step does:
+/// a test boots its clone with `.store_number(TEMPLATE_STORE_NUMBER)`.
+pub const TEMPLATE_STORE_NUMBER: u16 = 0;
+
 /// A migrated, split-role template database a host suite clones once per
 /// test.
 ///
-/// The template holds the split roles and everything a boot would migrate:
-/// core, the spiices and the host's own migrators, applied as the platform
-/// role. [`Self::clone_split_role`] hands each test a [`SplitRoleDb`] cloned
-/// from it, so a boot over the clone finds every migration applied and
-/// applies none, and the roles are the ones every [`SplitRoleDb`] has: the
+/// The template holds the split roles and everything the migrate step
+/// writes: core, the spiices and the host's own migrators, applied as the
+/// platform role, and the store number [`TEMPLATE_STORE_NUMBER`].
+/// [`Self::clone_split_role`] hands each test a [`SplitRoleDb`] cloned from
+/// it, so a boot over the clone with that store number validates and
+/// applies nothing, and the roles are the ones every [`SplitRoleDb`] has: the
 /// runtime role is `NOSUPERUSER NOBYPASSRLS`, owns nothing and cannot write a
 /// migration ledger, so owner RLS is enforced in the clone as in production.
 ///
@@ -200,15 +205,20 @@ impl HostTemplate {
         .await
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?
         .with_vector_storage(self.vectors);
-        let migrated = run_lineup(&pg, &self.sources, &self.sidecars).await;
+        let migrated = match run_lineup(&pg, &self.sources, &self.sidecars).await {
+            Ok(_) => pg
+                .initialize_store_number(TEMPLATE_STORE_NUMBER)
+                .await
+                .map_err(|error| sqlx::Error::Protocol(error.to_string())),
+            Err(error) => Err(sqlx::Error::Protocol(error.to_string())),
+        };
         pg.clone_pool_for_backend().close().await;
         migrated
-            .map(|_| ())
-            .map_err(|error| sqlx::Error::Protocol(error.to_string()))
     }
 }
 
-/// The template hash: `fingerprint`, then each source's id, ledger and
+/// The template hash: `fingerprint`, the definitions, release and store
+/// number the template holds, then each source's id, ledger and
 /// `(version, checksum)` pairs in run order, from the enumeration the ledger
 /// checks and the migration plan use ([`NamedMigrator::lane`]), followed by
 /// sorted spiice schema and Follows table sets. Every field is length-prefixed
@@ -231,6 +241,7 @@ fn fingerprint_hash(
         &proxiima_storage_pg::definitions::checksum_bytes(vectors),
     );
     hash = feed(hash, proxiima_core::RELEASE_VERSION.as_bytes());
+    hash = feed(hash, &TEMPLATE_STORE_NUMBER.to_be_bytes());
     hash = feed(hash, &sidecars.search_definitions_fingerprint());
     for source in sources {
         hash = feed(hash, source.source().as_bytes());

@@ -50,6 +50,7 @@ pub async fn owner_access(
     )
     .await?;
     migration.run_migrations().await?;
+    migration.initialize_store_number(0).await?;
     let scope = proxiima_storage_pg::PgPlatformScope::new(
         sqlx::PgPool::connect(platform_url).await?,
         schemas(),

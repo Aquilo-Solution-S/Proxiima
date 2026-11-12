@@ -1,11 +1,11 @@
 //! Split-role test databases whose core lane is already migrated.
 //!
-//! `create_db` + `split_role_urls` + boot runs the whole core lane in every
-//! test. [`clone_split_core_db`] clones a [`HostTemplate`] that holds exactly
-//! what that produces — split roles provisioned, then the core lane applied as
-//! the platform role through boot's own migration runner — so boot finds every
-//! core migration applied and runs only the spiice lanes the test composes.
-//! Tests that exercise a fresh migration keep `create_db`.
+//! `create_db` + `split_role_urls` + the migrate step runs the whole core lane
+//! in every test. [`clone_split_core_db`] clones a [`HostTemplate`] that holds
+//! exactly what that produces — split roles provisioned, then the core lane
+//! applied as the platform role through the facade's migration runner, and
+//! store number 0 — so a boot with store number 0 finds every core migration
+//! applied. Tests that exercise a fresh migration keep `create_db`.
 //!
 //! The clone is a [`SplitRoleDb`]: it carries both URLs and drops the database
 //! with the test (and keeps it, with a redacted `psql` URL, on a panic), so a

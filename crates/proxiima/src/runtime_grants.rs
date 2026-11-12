@@ -1,14 +1,13 @@
-//! Opt-in boot step (`PROXIIMA_RUNTIME_GRANTS`, [`crate::RuntimeBuilder::runtime_grants`]):
+//! Opt-in migrate step (`PROXIIMA_RUNTIME_GRANTS`, [`crate::RuntimeBuilder::runtime_grants`]):
 //! the platform role grants the runtime role its privileges — the runtime
 //! grant phase described in docs/operate.md.
 //!
-//! Runs once per boot, after migration validation
-//! and before the runtime pool connects, on the platform (migration) pool, in
-//! one transaction:
+//! Runs once per [`crate::Proxiima::migrate`], after the migrations and the
+//! store number, on the platform (migration) pool, in one transaction:
 //!
 //! | # | Statement | Scope |
 //! |---|---|---|
-//! | 1 | `SELECT pg_advisory_xact_lock(RUNTIME_GRANTS_LOCK_KEY)` | serializes pods booting together (`pg_default_acl` "tuple concurrently updated") |
+//! | 1 | `SELECT pg_advisory_xact_lock(RUNTIME_GRANTS_LOCK_KEY)` | serializes migrate steps running together (`pg_default_acl` "tuple concurrently updated") |
 //! | 2 | `GRANT USAGE ON SCHEMA s` | each composed schema that exists |
 //! | 3 | `REVOKE CREATE ON SCHEMA s FROM PUBLIC` / `FROM runtime` | " |
 //! | 4 | `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA s` | " |
