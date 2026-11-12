@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use async_trait::async_trait;
 use proxiima_core::env_from_pairs as lookup;
 use proxiima_core::{AuthError, AuthzContext, Credentials, GroupId, OwnerId};
-use proxiima_mcp_server::AuthorizationServers;
+use proxiima_server::AuthorizationServers;
 
 use super::*;
 
@@ -1268,7 +1268,7 @@ fn session_idle_env_sets_the_timeout_and_zero_disables_it() {
     assert_eq!(never.session_idle_timeout, None);
     assert_eq!(
         never.progress_heartbeat(),
-        proxiima_mcp_server::DEFAULT_PROGRESS_HEARTBEAT
+        proxiima_server::DEFAULT_PROGRESS_HEARTBEAT
     );
     assert!(
         transport("soon").is_err(),

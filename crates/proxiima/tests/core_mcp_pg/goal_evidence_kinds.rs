@@ -105,7 +105,7 @@ impl Env {
                 tool,
                 args,
                 author,
-                Some(proxiima::McpAuthContext {
+                Some(proxiima::AuthContext {
                     owner: self.owner,
                     authz: self.authz.clone(),
                 }),

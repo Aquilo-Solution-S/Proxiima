@@ -871,7 +871,7 @@ async fn oidc_e2e_rest_openapi_matches_the_mcp_scope_on_the_mounted_runtime()
 /// the validated `(iss, sub)` maps through an `OidcSubjectMap` to a
 /// `UserId`, `PgOwnerAccessResolver` resolves its current
 /// `proxiima_core.group_memberships` row into `OwnerRoles`, and
-/// `McpEdgeAuth::with_host` narrows that to the deployment-configured Group
+/// `EdgeAuth::with_host` narrows that to the deployment-configured Group
 /// owner — proving a real Editor row (seeded after boot, matching a
 /// production membership grant) permits a scoped tool call.
 #[tokio::test]

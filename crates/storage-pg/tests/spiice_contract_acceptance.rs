@@ -755,7 +755,7 @@ async fn every_dedupe_key_is_a_uniqueness_the_schema_enforces() {
 /// three embedding tables as `Unreachable`, the value that is supposed to be a
 /// freeze error and never a runtime state.
 ///
-/// `surfaces()` is public and `mcp-server` connects without `with_spiices`, so
+/// `surfaces()` is public and `proxiima-server` connects without `with_spiices`, so
 /// "nothing consumes it" is a property of the current call graph rather than of
 /// the design.
 ///

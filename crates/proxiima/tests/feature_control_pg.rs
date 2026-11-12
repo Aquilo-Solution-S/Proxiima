@@ -299,7 +299,7 @@ async fn serving(
         .post(format!("{base}/mcp"))
         .header("Origin", "http://localhost")
         .header("Authorization", "Bearer any")
-        .header("X-Proxiima-Owner", proxiima_mcp_server::owner_key(owner))
+        .header("X-Proxiima-Owner", proxiima_server::owner_key(owner))
         .header("MCP-Protocol-Version", "2025-03-26")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")

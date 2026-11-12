@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use http::request::Parts;
 use proxiima_core::AuthzContext;
 use proxiima_core::{Setting, SpiiceServiceError, SpiiceServices};
-use proxiima_mcp_server::McpAuthContext;
+use proxiima_server::AuthContext;
 
 use crate::bundle::SpiiceBundle;
 use crate::{ProxiimaHost, RuntimeBuilder};
@@ -122,7 +122,7 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
-            .get::<McpAuthContext>()
+            .get::<AuthContext>()
             .map(|ctx| Self(ctx.authz.clone()))
             .ok_or(StatusCode::UNAUTHORIZED)
     }

@@ -2154,8 +2154,8 @@ dependencies = [
  "proxiima-core",
  "proxiima-example",
  "proxiima-llm-openai-compat",
- "proxiima-mcp-server",
  "proxiima-pg-testkit",
+ "proxiima-server",
  "proxiima-storage-pg",
  "rcgen",
  "reqwest",
@@ -2330,7 +2330,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "proxiima-mcp-server"
+name = "proxiima-pg-testkit"
+version = "0.0.72"
+dependencies = [
+ "proxiima-core",
+ "sqlx",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "proxiima-server"
 version = "0.0.72"
 dependencies = [
  "async-trait",
@@ -2353,19 +2366,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "proxiima-pg-testkit"
-version = "0.0.72"
-dependencies = [
- "proxiima-core",
- "sqlx",
- "time",
- "tokio",
  "tracing",
  "url",
  "uuid",

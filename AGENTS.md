@@ -32,7 +32,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 | `crates/core` | Domain types, engine, typed ports, registry |
 | `crates/proxiima` | Host facade and spiice SDK |
 | `crates/storage-pg`, `crates/blob-s3` | PostgreSQL and object backends |
-| `crates/mcp-server`, `crates/auth-oidc` | Transports and bearer authentication |
+| `crates/proxiima-server`, `crates/auth-oidc` | Transports and bearer authentication |
 | `crates/llm-openai-compat` | Host-injected embedding adapter |
 | `crates/pg-testkit` | Owned-server test databases/templates |
 | `spiices/example` | Test and tutorial spiice (`publish = false`) |

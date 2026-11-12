@@ -96,7 +96,7 @@ pub trait RequestBehavior: Send + Sync + std::fmt::Debug {
 pub enum ToolSource {
     /// The frozen spiice registry (substrate and spiice tools).
     Registry,
-    /// A host's `McpHostTools`.
+    /// A host's `HostTools`.
     Host,
 }
 

@@ -19,7 +19,7 @@ use axum::{Extension, Router};
 use proxiima_core::authz::SystemAuthority;
 use proxiima_core::verbs::own_erase::{EraseMode, SeriesEraseError, SeriesSelection};
 use proxiima_core::{AuthzContext, Engine, ErrorCode, OwnerId, SchemaId};
-use proxiima_mcp_server::McpAuthContext;
+use proxiima_server::AuthContext;
 use serde::{Deserialize, Serialize};
 
 /// The route the home's retention tick calls.
@@ -135,7 +135,7 @@ pub(crate) fn router(engine: Arc<Engine>, authority: Arc<SystemAuthority>) -> Ro
 
 async fn erase(
     State(host): State<RetentionErase>,
-    Extension(auth): Extension<McpAuthContext>,
+    Extension(auth): Extension<AuthContext>,
     body: Bytes,
 ) -> Result<Response, Refusal> {
     let owner = vouched_owner(&auth)?;
@@ -190,7 +190,7 @@ async fn erase(
 
 /// The owner a vouched forwarded credential names, which the auth layer has
 /// already bound the request to.
-fn vouched_owner(auth: &McpAuthContext) -> Result<OwnerId, Refusal> {
+fn vouched_owner(auth: &AuthContext) -> Result<OwnerId, Refusal> {
     let owner = auth
         .authz
         .verified_forwarded_owner()

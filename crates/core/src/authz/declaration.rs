@@ -5,7 +5,7 @@ use crate::OwnerAccess;
 /// THE behaviour declaration: a flat tool declares one
 /// ([`crate::Tool::EFFECT`]), a dispatcher one per action
 /// (`ActionArgSpec::effect`, `ArgvActionSpec::effect`), a host tool one
-/// (`McpHostTool::effect`). Every other answer is derived from it:
+/// (`HostTool::effect`). Every other answer is derived from it:
 ///
 /// | Reader | Derived answer |
 /// |---|---|

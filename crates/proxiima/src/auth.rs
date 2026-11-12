@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use proxiima_core::{Authenticator, Setting};
-use proxiima_mcp_server::{AuthorizationServers, ResourceServerMetadata};
+use proxiima_server::{AuthorizationServers, ResourceServerMetadata};
 
 use crate::OwnerAccessPort;
 use crate::config::parse_bool_value;

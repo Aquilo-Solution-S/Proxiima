@@ -7,10 +7,9 @@ use std::sync::Arc;
 
 use axum::Router;
 use proxiima_core::RevalidationConfig;
-use proxiima_mcp_server::{
-    HostAllowlist, McpEdgeAuth, McpStreamableService, McpToolHost, McpTransportConfig,
-    OriginAllowlist, ResourceServerMetadata, guard_listener,
-    streamable_http_service_with_transport,
+use proxiima_server::{
+    EdgeAuth, HostAllowlist, McpStreamableService, McpTransportConfig, OriginAllowlist,
+    ResourceServerMetadata, ToolHost, guard_listener, streamable_http_service_with_transport,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -22,8 +21,8 @@ use tokio_util::sync::CancellationToken;
 /// second time to learn them.
 #[derive(Clone)]
 pub struct McpEdge {
-    pub(crate) tool_host: McpToolHost,
-    pub(crate) edge_auth: Arc<McpEdgeAuth>,
+    pub(crate) tool_host: ToolHost,
+    pub(crate) edge_auth: Arc<EdgeAuth>,
     pub(crate) origin_allowlist: OriginAllowlist,
     pub(crate) host_allowlist: HostAllowlist,
     pub(crate) revalidation: RevalidationConfig,
@@ -50,13 +49,13 @@ impl std::fmt::Debug for McpEdge {
 impl McpEdge {
     /// The tool host `/mcp` serves: registry tools, host tools, recording.
     #[must_use]
-    pub fn tool_host(&self) -> &McpToolHost {
+    pub fn tool_host(&self) -> &ToolHost {
         &self.tool_host
     }
 
     /// The bearer authentication `/mcp` runs behind.
     #[must_use]
-    pub fn edge_auth(&self) -> &Arc<McpEdgeAuth> {
+    pub fn edge_auth(&self) -> &Arc<EdgeAuth> {
         &self.edge_auth
     }
 
@@ -96,7 +95,7 @@ impl McpEdge {
     /// A fresh rmcp service for `/mcp` over [`Self::tool_host`], with this
     /// edge's allowlists and transport, cancelled with the runtime. It owns
     /// its sessions: derive the auth layer from this value with
-    /// [`mcp_auth_layer_with_metadata`](proxiima_mcp_server::mcp_auth_layer_with_metadata).
+    /// [`auth_layer_with_metadata`](proxiima_server::auth_layer_with_metadata).
     #[must_use]
     pub fn mcp_service(&self) -> McpStreamableService {
         streamable_http_service_with_transport(
@@ -114,19 +113,19 @@ impl McpEdge {
     /// metadata routes are public. `app_router` authenticates its own routes.
     pub fn router(&self, app_router: Router) -> Router {
         let service = self.mcp_service();
-        let auth_layer = proxiima_mcp_server::mcp_auth_layer_with_metadata(
+        let auth_layer = proxiima_server::auth_layer_with_metadata(
             &service,
             Arc::clone(&self.edge_auth),
             self.revalidation,
             self.resource_metadata.as_ref(),
         );
         let protected = Router::new()
-            .nest_service(proxiima_mcp_server::MCP_PATH, service)
+            .nest_service(proxiima_server::MCP_PATH, service)
             .merge(self.rest_router.clone())
             .layer(auth_layer);
         let mut router = protected.merge(app_router);
         if let Some(metadata) = &self.resource_metadata {
-            router = router.merge(proxiima_mcp_server::public_discovery_router(metadata));
+            router = router.merge(proxiima_server::public_discovery_router(metadata));
         }
         guard_listener(
             router,
@@ -141,29 +140,28 @@ impl McpEdge {
 /// only: `app_router` is served beside it under the listener-wide body
 /// limit, Host guard and CORS, and authenticates its own routes (or none).
 /// Unlike [`McpEdge::router`] it mounts no resource-metadata routes and caps
-/// bodies at the default [`MAX_REQUEST_BODY_BYTES`](proxiima_mcp_server::MAX_REQUEST_BODY_BYTES).
+/// bodies at the default [`MAX_REQUEST_BODY_BYTES`](proxiima_server::MAX_REQUEST_BODY_BYTES).
 ///
 /// `host_allowlist` must also be passed to
-/// [`streamable_http_service`](proxiima_mcp_server::streamable_http_service).
+/// [`streamable_http_service`](proxiima_server::streamable_http_service).
 pub fn layered_router_mcp_only(
     mcp_service: McpStreamableService,
     app_router: Router,
-    edge_auth: Arc<McpEdgeAuth>,
+    edge_auth: Arc<EdgeAuth>,
     allowlist: OriginAllowlist,
     host_allowlist: HostAllowlist,
     revalidation: RevalidationConfig,
 ) -> Router {
-    let auth_layer =
-        proxiima_mcp_server::mcp_auth_layer_with_config(&mcp_service, edge_auth, revalidation);
+    let auth_layer = proxiima_server::auth_layer_with_config(&mcp_service, edge_auth, revalidation);
     let router = Router::new()
-        .nest_service(proxiima_mcp_server::MCP_PATH, mcp_service)
+        .nest_service(proxiima_server::MCP_PATH, mcp_service)
         .layer(auth_layer)
         .merge(app_router);
     guard_listener(
         router,
         allowlist,
         host_allowlist,
-        proxiima_mcp_server::MAX_REQUEST_BODY_BYTES,
+        proxiima_server::MAX_REQUEST_BODY_BYTES,
     )
 }
 
@@ -183,8 +181,8 @@ mod tests {
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let metadata = ResourceServerMetadata {
             public_url: "https://proxiima.example.com".to_string(),
-            authorization_servers: proxiima_mcp_server::AuthorizationServers::PublicClient(
-                proxiima_mcp_server::PublicClientFacade::try_new(
+            authorization_servers: proxiima_server::AuthorizationServers::PublicClient(
+                proxiima_server::PublicClientFacade::try_new(
                     "public-client",
                     "https://idp.example.com/authorize",
                     "https://idp.example.com/token",
@@ -194,8 +192,8 @@ mod tests {
             additional_scopes: Vec::new(),
         };
         let edge = McpEdge {
-            tool_host: McpToolHost::from_parts(Arc::new(registry), SpiiceServices::default()),
-            edge_auth: Arc::new(McpEdgeAuth::headless()),
+            tool_host: ToolHost::from_parts(Arc::new(registry), SpiiceServices::default()),
+            edge_auth: Arc::new(EdgeAuth::headless()),
             origin_allowlist: OriginAllowlist::parse(["https://proxiima.example.com"]).unwrap(),
             host_allowlist: HostAllowlist::parse(["proxiima.example.com"]).unwrap(),
             revalidation: RevalidationConfig::default(),
@@ -247,7 +245,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri(proxiima_mcp_server::MCP_PATH)
+                    .uri(proxiima_server::MCP_PATH)
                     .header("host", "proxiima.example.com")
                     .body(Body::empty())
                     .unwrap(),

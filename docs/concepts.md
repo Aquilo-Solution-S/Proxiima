@@ -99,7 +99,7 @@ called admin.
 
 Goal work follows the Goals field, not the write ceiling. A call declares Goal
 work in the catalog (`OwnerNeed::GoalWork` on an action spec,
-`McpHostTool::with_goal_work` on a host tool); the owner-role gate and every
+`HostTool::with_goal_work` on a host tool); the owner-role gate and every
 listing read that declaration. This widens no memory write, with one bounded
 exception: a host-state command declared Goal work (`GoalWorkCommand`) commits
 on a `GoalWorkUnitOfWork` together with the Facts it declares, and those Facts

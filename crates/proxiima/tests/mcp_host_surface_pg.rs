@@ -11,7 +11,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegistryError};
 use proxiima::{
-    AppInfo, AuthzContext, McpHostTool, McpHostTools, Proxiima, ServedSurface, SpiiceApp, ToolCall,
+    AppInfo, AuthzContext, HostTool, HostTools, Proxiima, ServedSurface, SpiiceApp, ToolCall,
     ToolEffect, ToolReply,
 };
 use proxiima_core::{AuthError, AuthPath, Authenticator, Credentials, ToolError, UserId};
@@ -68,10 +68,10 @@ impl GateTools {
 }
 
 #[async_trait]
-impl McpHostTools for GateTools {
-    async fn list(&self, _auth: &proxiima::McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
+impl HostTools for GateTools {
+    async fn list(&self, _auth: &proxiima::AuthContext) -> Result<Vec<HostTool>, ToolError> {
         Ok(vec![
-            McpHostTool::new(
+            HostTool::new(
                 GATE_TOOL,
                 "Run until released, then answer.",
                 json!({"type": "object"}),
@@ -116,7 +116,7 @@ fn mcp_post(client: &reqwest::Client, base: &str, subject: UserId) -> reqwest::R
         .header("Authorization", format!("Bearer {TOKEN}"))
         .header(
             "X-Proxiima-Owner",
-            proxiima_mcp_server::owner_key(proxiima_core::OwnerId::from(subject)),
+            proxiima_server::owner_key(proxiima_core::OwnerId::from(subject)),
         )
         .header("MCP-Protocol-Version", "2025-03-26")
         .header("Content-Type", "application/json")
@@ -230,9 +230,9 @@ async fn a_tool_call_outlives_the_session_idle_timeout_on_a_heartbeat_or_without
                     .mcp_bind(SocketAddr::from(([127, 0, 0, 1], 0)))
                     .served_surface(ServedSurface::All)
                     .host_tools(gate)
-                    .mcp_transport(proxiima_mcp_server::McpTransportConfig {
+                    .mcp_transport(proxiima_server::McpTransportConfig {
                         session_idle_timeout: idle,
-                        ..proxiima_mcp_server::McpTransportConfig::default()
+                        ..proxiima_server::McpTransportConfig::default()
                     })
                     .authenticator(Arc::new(StubAuth { subject }))
             })

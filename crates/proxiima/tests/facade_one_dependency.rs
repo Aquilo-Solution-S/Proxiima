@@ -165,9 +165,8 @@ fn both_tiers_name_the_tool_declaration_consts() {
 
 #[test]
 fn host_tier_names_the_mcp_edge() {
-    let _edge: Arc<proxiima::McpEdgeAuth> = Arc::new(
-        proxiima::McpEdgeAuth::headless().with_served_surface(proxiima::ServedSurface::All),
-    );
+    let _edge: Arc<proxiima::EdgeAuth> =
+        Arc::new(proxiima::EdgeAuth::headless().with_served_surface(proxiima::ServedSurface::All));
     let origins = proxiima::OriginAllowlist::parse(["https://proxiima.example.com"])
         .expect("concrete origin");
     assert!(!origins.origins().is_empty());
@@ -315,7 +314,7 @@ fn host_tier_implements_the_rmcp_server_handler_around_the_dynamic_handler() {
             .try_freeze()
             .expect("empty registry freezes"),
     );
-    let host = proxiima::McpToolHost::from_parts(registry, proxiima::SpiiceServices::default());
+    let host = proxiima::ToolHost::from_parts(registry, proxiima::SpiiceServices::default());
     let wrapped = HostHandler {
         inner: proxiima::DynamicHandler::new(host),
     };
@@ -361,7 +360,7 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
         .expect("concrete origin");
 
     let service = proxiima::streamable_http_service(
-        proxiima::McpToolHost::from_parts(
+        proxiima::ToolHost::from_parts(
             Arc::new(
                 proxiima::spiice::SpiiceRegistry::new()
                     .try_freeze()
@@ -373,9 +372,9 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
         &hosts,
         &tokio_util::sync::CancellationToken::new(),
     );
-    let auth: proxiima::McpAuthLayer = proxiima::mcp_auth_layer_with_metadata(
+    let auth: proxiima::AuthLayer = proxiima::auth_layer_with_metadata(
         &service,
-        Arc::new(proxiima::McpEdgeAuth::headless()),
+        Arc::new(proxiima::EdgeAuth::headless()),
         revalidation,
         Some(&metadata),
     );
@@ -437,9 +436,9 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
 /// The in-process whole-reply observation needs only the facade dependency.
 #[allow(dead_code)]
 async fn observed_host_reply(
-    host: &proxiima::McpToolHost,
+    host: &proxiima::ToolHost,
     author: proxiima::ToolCaller,
-    auth: proxiima::McpAuthContext,
+    auth: proxiima::AuthContext,
 ) -> Result<proxiima::ToolReply, proxiima::ToolInvocationError> {
     let (judged, reply) = host
         .call_tool_reply_observed_in_request(

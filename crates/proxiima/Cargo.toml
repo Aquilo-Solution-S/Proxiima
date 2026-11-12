@@ -22,7 +22,7 @@ proxiima-auth-oidc = { path = "../auth-oidc", optional = true }
 proxiima-storage-pg = { path = "../storage-pg", features = ["backend-api"] }
 proxiima-blob-s3 = { path = "../blob-s3" }
 proxiima-llm-openai-compat = { path = "../llm-openai-compat", optional = true }
-proxiima-mcp-server = { path = "../mcp-server" }
+proxiima-server = { path = "../proxiima-server" }
 proxiima-pg-testkit = { path = "../pg-testkit", optional = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
@@ -30,7 +30,7 @@ futures = { workspace = true }
 http = { workspace = true }
 # Re-exported as `proxiima::rmcp` so a host implementing `ServerHandler` around
 # `DynamicHandler` builds against the version and feature set Proxiima pins.
-# Already linked through `proxiima-mcp-server`; declaring it adds no code.
+# Already linked through `proxiima-server`; declaring it adds no code.
 rmcp = { workspace = true }
 # The built-in HTTP outbox sink (docs/18 §Built-in HTTP sink) and the vector
 # index client.
@@ -55,7 +55,7 @@ openai-compat-embed = ["dep:proxiima-llm-openai-compat"]
 # Compile the `/v1` REST rendering of the tool manifest (docs/protocol.md,
 # REST projection). Compiling it is not enabling it: the surface still needs
 # `PROXIIMA_REST_ENABLED`.
-rest = ["proxiima-mcp-server/rest"]
+rest = ["proxiima-server/rest"]
 # Test support for spiice crates (`proxiima::testkit`): PG fixtures, a verified
 # owner-scoped AuthzContext (core `testkit`), split-role databases and
 # the trigger drift assertion.

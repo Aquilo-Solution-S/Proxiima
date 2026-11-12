@@ -205,7 +205,7 @@ pub fn tool_ctx(
     )
 }
 
-/// The one test constructor of [`ToolCtx`], built as `McpToolHost::ctx_for`
+/// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`
 /// builds one: through [`ToolCtx::new`], with no engine (chain
 /// [`ToolCtx::with_engine`]).
 #[must_use]

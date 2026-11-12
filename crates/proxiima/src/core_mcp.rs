@@ -5,15 +5,15 @@ use proxiima_core::{
     SpiiceServices, ToolCaller, ToolDescriptor, ToolEffect, ToolErrorKind, ToolScope,
     provider_safe_tool_name, resolve_operator_label, tool_name_matches,
 };
-use proxiima_mcp_server::{
-    DynamicHandler, McpAuthContext, McpToolHost, ToolInvocationError, ToolListNotifier,
+use proxiima_server::{
+    AuthContext, DynamicHandler, ToolHost, ToolInvocationError, ToolListNotifier,
 };
 
 /// Facade handle for listing and dispatching the composed engine MCP tools
 /// from an embedding host's own authenticated endpoint.
 #[derive(Clone, Debug)]
 pub struct CoreMcpTools {
-    host: McpToolHost,
+    host: ToolHost,
 }
 
 /// MCP tool descriptor projected without rmcp transport types.
@@ -106,7 +106,7 @@ impl CoreMcpTools {
         services: SpiiceServices,
     ) -> Self {
         Self {
-            host: McpToolHost::from_parts(registry, services).with_engine(engine),
+            host: ToolHost::from_parts(registry, services).with_engine(engine),
         }
     }
 
@@ -115,7 +115,7 @@ impl CoreMcpTools {
     /// session and `subscriptions/listen` stream under its owner, and the
     /// host calls [`ToolListNotifier::notify`] on its clone of `notifier`
     /// whenever that owner's tools change. See
-    /// [`McpToolHost::with_tool_list_notifier`].
+    /// [`ToolHost::with_tool_list_notifier`].
     #[must_use]
     pub fn with_tool_list_notifier(mut self, notifier: ToolListNotifier) -> Self {
         self.host = self.host.with_tool_list_notifier(notifier);
@@ -199,7 +199,7 @@ impl CoreMcpTools {
         let canonical_name = descriptor.name;
 
         let author = host_author(&authz, model_id.as_deref())?;
-        let auth = McpAuthContext { owner, authz };
+        let auth = AuthContext { owner, authz };
 
         self.host
             .call_tool(canonical_name, args, author, Some(auth))
@@ -222,7 +222,7 @@ impl CoreMcpTools {
         uri: &str,
     ) -> Result<serde_json::Value, CoreMcpError> {
         let author = host_author(&authz, model_id.as_deref())?;
-        let auth = McpAuthContext { owner, authz };
+        let auth = AuthContext { owner, authz };
 
         self.host
             .read_resource(uri, author, Some(auth))
@@ -352,10 +352,10 @@ mod tests {
         }
     }
 
-    fn marker_auth() -> McpAuthContext {
+    fn marker_auth() -> AuthContext {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
         let authz = proxiima_core::AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-        McpAuthContext { owner, authz }
+        AuthContext { owner, authz }
     }
 
     fn trusted_authz(owner: OwnerId) -> AuthzContext {

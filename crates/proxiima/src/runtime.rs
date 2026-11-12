@@ -15,9 +15,9 @@ use proxiima_core::{
     Authenticator, AuthzContext, DelegationRuntimeAuthority, OwnerAccessPort, RevalidationConfig,
     ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
 };
-use proxiima_mcp_server::{
-    HostAllowlist, McpEdgeAuth, McpStreamableService, McpToolHost, OriginAllowlist,
-    assert_loopback, default_allowlist, guard_listener,
+use proxiima_server::{
+    EdgeAuth, HostAllowlist, McpStreamableService, OriginAllowlist, ToolHost, assert_loopback,
+    default_allowlist, guard_listener,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -854,12 +854,12 @@ async fn shutdown_signal() -> Result<(), ProxiimaError> {
 /// Compose rmcp and host-mounted routes behind one body, Host, and auth policy.
 ///
 /// `host_allowlist` must also be passed to
-/// [`streamable_http_service`](proxiima_mcp_server::streamable_http_service) so the
+/// [`streamable_http_service`](proxiima_server::streamable_http_service) so the
 /// listener guard and rmcp's inner `/mcp` guard enforce the same authorities.
 pub fn layered_router(
     mcp_service: McpStreamableService,
     app_router: Router,
-    edge_auth: Arc<McpEdgeAuth>,
+    edge_auth: Arc<EdgeAuth>,
     allowlist: OriginAllowlist,
     host_allowlist: HostAllowlist,
 ) -> Router {
@@ -880,22 +880,21 @@ pub fn layered_router(
 pub fn layered_router_with_revalidation(
     mcp_service: McpStreamableService,
     app_router: Router,
-    edge_auth: Arc<McpEdgeAuth>,
+    edge_auth: Arc<EdgeAuth>,
     allowlist: OriginAllowlist,
     host_allowlist: HostAllowlist,
     revalidation: RevalidationConfig,
 ) -> Router {
-    let auth_layer =
-        proxiima_mcp_server::mcp_auth_layer_with_config(&mcp_service, edge_auth, revalidation);
+    let auth_layer = proxiima_server::auth_layer_with_config(&mcp_service, edge_auth, revalidation);
     let router = Router::new()
-        .nest_service(proxiima_mcp_server::MCP_PATH, mcp_service)
+        .nest_service(proxiima_server::MCP_PATH, mcp_service)
         .merge(app_router)
         .layer(auth_layer);
     guard_listener(
         router,
         allowlist,
         host_allowlist,
-        proxiima_mcp_server::MAX_REQUEST_BODY_BYTES,
+        proxiima_server::MAX_REQUEST_BODY_BYTES,
     )
 }
 
@@ -1089,7 +1088,7 @@ fn resolve_mcp_edge(
 ) -> crate::McpEdge {
     let engine = app_ctx.host().engine.clone();
     let services = app_ctx.host().services.clone();
-    let mut edge_auth = McpEdgeAuth::headless().with_served_surface(config.served_surface.clone());
+    let mut edge_auth = EdgeAuth::headless().with_served_surface(config.served_surface.clone());
     if let Some(authenticator) = parts.authenticator.clone() {
         // The runtime's one owner-access port resolves ordinary memberships
         // and a forwarder's verified owner claim. Registration comes from
@@ -1098,7 +1097,7 @@ fn resolve_mcp_edge(
             .with_host(authenticator)
             .with_owner_access(owner_access);
     }
-    let mut tool_host = McpToolHost::from_parts(Arc::new(engine.registry().clone()), services)
+    let mut tool_host = ToolHost::from_parts(Arc::new(engine.registry().clone()), services)
         .with_engine(engine)
         .with_request_headers(config.request_headers.clone());
     if let Some(host_tools) = parts.host_tools.clone() {
@@ -1141,14 +1140,14 @@ fn build_router<A: SpiiceApp>(
     let app_router = A::mount_http(Router::new(), app_ctx.clone());
     let public_router = A::mount_public_http(Router::new(), app_ctx);
     let mcp_service = edge.mcp_service();
-    let auth_layer = proxiima_mcp_server::mcp_auth_layer_with_metadata(
+    let auth_layer = proxiima_server::auth_layer_with_metadata(
         &mcp_service,
         Arc::clone(&edge.edge_auth),
         edge.revalidation,
         edge.resource_metadata.as_ref(),
     );
     let protected_router = Router::new()
-        .nest_service(proxiima_mcp_server::MCP_PATH, mcp_service)
+        .nest_service(proxiima_server::MCP_PATH, mcp_service)
         .merge(edge.rest_router.clone())
         .merge(retention_router)
         .merge(app_router)
@@ -1158,7 +1157,7 @@ fn build_router<A: SpiiceApp>(
     // anything listens.
     let mut router = protected_router.merge(public_router);
     if let Some(md) = &edge.resource_metadata {
-        router = router.merge(proxiima_mcp_server::public_discovery_router(md));
+        router = router.merge(proxiima_server::public_discovery_router(md));
     }
     // Apply listener-wide guards only after anonymous OAuth metadata has been
     // merged, so CORS covers public metadata and preflights. Health probes sit
@@ -1181,11 +1180,11 @@ fn build_router<A: SpiiceApp>(
 /// a `nest`: nesting would rewrite the inner request URI and strip the prefix
 /// off every problem document's `instance`.
 #[cfg(feature = "rest")]
-fn rest_router(host: &McpToolHost, config: &crate::RuntimeConfig) -> Router {
+fn rest_router(host: &ToolHost, config: &crate::RuntimeConfig) -> Router {
     if !config.rest_enabled {
         return Router::new();
     }
-    proxiima_mcp_server::rest::router(
+    proxiima_server::rest::router(
         host.clone(),
         config
             .resource_metadata
@@ -1199,7 +1198,7 @@ fn rest_router(host: &McpToolHost, config: &crate::RuntimeConfig) -> Router {
 /// build; say so once at boot rather than serving 404s that look like a
 /// routing bug.
 #[cfg(not(feature = "rest"))]
-fn rest_router(host: &McpToolHost, config: &crate::RuntimeConfig) -> Router {
+fn rest_router(host: &ToolHost, config: &crate::RuntimeConfig) -> Router {
     let _ = host;
     if config.rest_enabled {
         tracing::warn!(

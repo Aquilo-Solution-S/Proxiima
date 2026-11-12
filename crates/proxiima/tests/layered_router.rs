@@ -11,8 +11,8 @@ use proxiima_core::{
     AuthError, AuthPath, Authenticator, AuthzContext, Credentials, OwnerId, SpiiceRegistry,
     SpiiceServices, UserId,
 };
-use proxiima_mcp_server::{
-    HostAllowlist, McpEdgeAuth, McpToolHost, default_allowlist, owner_key, streamable_http_service,
+use proxiima_server::{
+    EdgeAuth, HostAllowlist, ToolHost, default_allowlist, owner_key, streamable_http_service,
 };
 use tokio_util::sync::CancellationToken;
 use tower::util::ServiceExt;
@@ -55,16 +55,16 @@ impl Authenticator for CountingHostAuth {
     }
 }
 
-fn edge_auth() -> McpEdgeAuth {
-    McpEdgeAuth::headless()
+fn edge_auth() -> EdgeAuth {
+    EdgeAuth::headless()
 }
 
-fn router(auth: Arc<McpEdgeAuth>, owner: OwnerId) -> Router {
+fn router(auth: Arc<EdgeAuth>, owner: OwnerId) -> Router {
     router_with_hosts(auth, owner, &[])
 }
 
-fn router_with_hosts(auth: Arc<McpEdgeAuth>, _owner: OwnerId, allowed_hosts: &[String]) -> Router {
-    let host = McpToolHost::from_parts(
+fn router_with_hosts(auth: Arc<EdgeAuth>, _owner: OwnerId, allowed_hosts: &[String]) -> Router {
+    let host = ToolHost::from_parts(
         Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
         SpiiceServices::default(),
     );
@@ -125,7 +125,7 @@ async fn status_with_host(
 async fn mcp_only_router_leaves_host_routes_to_the_host() {
     let owner = owner();
     let auth = Arc::new(edge_auth().with_host(Arc::new(StubHostAuth { owner })));
-    let host = McpToolHost::from_parts(
+    let host = ToolHost::from_parts(
         Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
         SpiiceServices::default(),
     );

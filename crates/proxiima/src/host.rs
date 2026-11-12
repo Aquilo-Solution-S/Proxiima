@@ -304,11 +304,10 @@ pub use proxiima_core::{
 };
 #[cfg(feature = "openai-compat-embed")]
 pub use proxiima_llm_openai_compat::{OpenAiCompatConfig, OpenAiCompatEmbeddingClient};
-pub use proxiima_mcp_server::selfdoc::{build_instructions, how_to_markdown};
-pub use proxiima_mcp_server::{
-    AuthorizationServers, HostAllowlist, MAX_REQUEST_BODY_BYTES, McpAuthContext,
-    McpTransportConfig, PublicClientFacade, PublicClientFacadeError, RequestHeaderAllowlist,
-    ResourceServerMetadata,
+pub use proxiima_server::selfdoc::{build_instructions, how_to_markdown};
+pub use proxiima_server::{
+    AuthContext, AuthorizationServers, HostAllowlist, MAX_REQUEST_BODY_BYTES, McpTransportConfig,
+    PublicClientFacade, PublicClientFacadeError, RequestHeaderAllowlist, ResourceServerMetadata,
 };
 /// Stable exported Postgres `OwnerAccessPort` adapter for embedding hosts
 /// (see [`proxiima_storage_pg::PgOwnerAccessResolver`]).
@@ -396,11 +395,11 @@ pub use proxiima_core::HostToolCall;
 /// Stream revalidation cadence: the type of [`McpEdge::revalidation`] and of
 /// [`RuntimeConfig::stream_revalidation`], and the parameter of
 /// [`layered_router_with_revalidation`], [`layered_router_mcp_only`] and
-/// [`mcp_auth_layer_with_metadata`].
+/// [`auth_layer_with_metadata`].
 pub use proxiima_core::authz::RevalidationConfig;
 /// Field types of [`ToolDescriptor`] and consts of [`Tool`]; a host
 /// partitioning tool surfaces by audience reads them. [`ToolEffect`] is also
-/// what an [`McpHostTool`] declares, and [`ToolAnnotations`] the MCP hints
+/// what an [`HostTool`] declares, and [`ToolAnnotations`] the MCP hints
 /// it projects to.
 pub use proxiima_core::catalog::{
     ArgvActionSpec, KeyDeclaration, OwnerNeed, Replay, ToolAnnotations, ToolAudience, ToolEffect,
@@ -417,13 +416,13 @@ pub use proxiima_core::catalog::{
 /// [`ToolError`]; spiices register one through `proxiima::spiice`.
 pub use proxiima_core::catalog::{Next, RequestBehavior, ToolCall};
 /// The host-built behavior chain: [`Next::new`] and
-/// [`McpToolHost::dispatch_through_behaviors`] take a [`TerminalDispatch`],
+/// [`ToolHost::dispatch_through_behaviors`] take a [`TerminalDispatch`],
 /// and [`ScopeGateBehavior`] is the tool-scope gate a host that assembles its
 /// own chain names. Host API only; spiices register behaviors, they do not
 /// build the chain.
 pub use proxiima_core::catalog::{ScopeGateBehavior, TerminalDispatch};
 /// What a tool call answers ([`ToolReply`] of [`ToolContent`] blocks, which
-/// [`McpHostTools::call`] returns and every behavior passes on) and the
+/// [`HostTools::call`] returns and every behavior passes on) and the
 /// borrowed view of one tool a behavior's [`RequestBehavior::visible`] reads.
 pub use proxiima_core::catalog::{ToolContent, ToolDescriptorView, ToolReply, ToolSource};
 /// Host-bound `CloudEvents` extension attributes
@@ -575,36 +574,36 @@ pub use proxiima_core::{
 /// The native MCP handler: what [`CoreMcpTools::into_dynamic_handler`]
 /// returns and what [`McpStreamableService`] serves. A host implements
 /// [`rmcp::ServerHandler`] around it, with the `rmcp` re-exported below.
-pub use proxiima_mcp_server::DynamicHandler;
+pub use proxiima_server::DynamicHandler;
+/// Which protected-resource document [`ResourceServerMetadata`] renders.
+pub use proxiima_server::ProtectedResource;
 /// What parsing the allowlists ([`OriginAllowlist::parse`],
 /// [`RequestHeaderAllowlist::parse`]) return on failure.
-pub use proxiima_mcp_server::McpServerError;
-/// Which protected-resource document [`ResourceServerMetadata`] renders.
-pub use proxiima_mcp_server::ProtectedResource;
-/// What [`McpToolHost`]'s dispatch methods return on failure.
-pub use proxiima_mcp_server::ToolInvocationError;
-/// The state [`McpAuthLayer`] authenticates against.
-pub use proxiima_mcp_server::security::McpAuthLayerState;
+pub use proxiima_server::ServerError;
+/// What [`ToolHost`]'s dispatch methods return on failure.
+pub use proxiima_server::ToolInvocationError;
+/// The state [`AuthLayer`] authenticates against.
+pub use proxiima_server::security::AuthLayerState;
 /// The layers [`McpEdge::router`] and [`layered_router_mcp_only`] apply, for
 /// a host that builds its own router: the body cap
 /// ([`enforce_body_limit`] at the default, [`body_limit_layer`] at a given
 /// size), the listener-wide Host guard, and bearer authentication with
 /// protected-resource metadata. [`BodyLimitLayer`], [`HostGuardLayer`],
-/// [`McpAuthLayer`] (over its [`McpAuthLayerState`]) and [`CorsLayer`] are the
+/// [`AuthLayer`] (over its [`AuthLayerState`]) and [`CorsLayer`] are the
 /// types they and [`cors_layer`] return.
-pub use proxiima_mcp_server::{
-    BodyLimitLayer, CorsLayer, HostGuardLayer, McpAuthLayer, body_limit_layer, enforce_body_limit,
-    host_guard_layer, mcp_auth_layer_with_metadata, streamable_http_service,
-};
-pub use proxiima_mcp_server::{
-    MAX_HOST_INSTRUCTIONS_CHARS, McpHostTool, McpHostTools, McpStreamableService, McpToolHost,
-    ToolListNotifier, auth_context, mcp_tool_error_to_error_data,
+pub use proxiima_server::{
+    AuthLayer, BodyLimitLayer, CorsLayer, HostGuardLayer, auth_layer_with_metadata,
+    body_limit_layer, enforce_body_limit, host_guard_layer, streamable_http_service,
 };
 /// MCP edge wiring [`layered_router`] takes, and the listener CORS layer.
-pub use proxiima_mcp_server::{McpEdgeAuth, OriginAllowlist, cors_layer};
+pub use proxiima_server::{EdgeAuth, OriginAllowlist, cors_layer};
+pub use proxiima_server::{
+    HostTool, HostTools, MAX_HOST_INSTRUCTIONS_CHARS, McpStreamableService, ToolHost,
+    ToolListNotifier, auth_context, mcp_tool_error_to_error_data,
+};
 /// One scope in [`ResourceServerMetadata::additional_scopes`], and why
 /// [`ScopeToken::parse`] refused one.
-pub use proxiima_mcp_server::{ScopeToken, ScopeTokenError};
+pub use proxiima_server::{ScopeToken, ScopeTokenError};
 /// What [`ProxiimaHost::host_state_erase_context_for_host`] returns. Opaque and
 /// authority-free: it grants no erase by itself.
 pub use proxiima_storage_pg::PgHostStateEraseContext;

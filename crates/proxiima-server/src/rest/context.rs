@@ -1,0 +1,337 @@
+//! Call context for the REST surface: who is calling, from what client,
+//! as which model — and the refusal that keeps those answers out of the
+//! request body.
+//!
+//! MCP sources context partly from the JSON-RPC peer identity and partly
+//! from reserved argument fields that `strip_call_context_args` removes
+//! before validation. REST has no peer identity and no client-compatibility
+//! debt, so context is header-borne and a reserved body field is an error
+//! rather than a silently ignored duplicate.
+
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, header};
+use proxiima_core::catalog::resolve_operator_label;
+use proxiima_core::{MemoryId, RELEASE_VERSION, ToolCaller};
+
+use crate::auth::AuthContext;
+use crate::mcp::handler::{MODEL_ID_ARG, SELF_PERSPECTIVE_ARGS};
+use crate::rest::error::Problem;
+
+/// Model label for the write's provenance.
+pub const MODEL_ID_HEADER: &str = "X-Proxiima-Model-Id";
+/// The caller's own Self Perspective, as a bare UUID.
+pub const SELF_PERSPECTIVE_HEADER: &str = "X-Proxiima-Self-Perspective";
+
+/// Recorded as `client_name` when the caller sends no `User-Agent`.
+const ADAPTER_CLIENT_NAME: &str = "proxiima-rest";
+
+/// Argument names that are call context on this surface, paired with the
+/// header that carries them.
+///
+/// Rejecting is not pedantry: these fields carry provenance into an
+/// append-only store. A client that copies an MCP payload to REST and has
+/// its `model_id` silently stripped gets `200 OK` on every call while every
+/// Fact it writes is attributed to `unknown` — and append-only means that
+/// attribution cannot be corrected in place afterward, only superseded or
+/// rebuilt. The failure is invisible at write time and expensive at read
+/// time. One failed request during integration, carrying the exact fix, is
+/// the cheaper trade.
+///
+/// They stay reserved even where REST reads nothing from them, so a future
+/// move of a field between header and body cannot be mistaken for a schema
+/// change.
+pub const RESERVED_ARGUMENTS: &[(&str, &str)] = &[
+    (MODEL_ID_ARG, MODEL_ID_HEADER),
+    (SELF_PERSPECTIVE_ARGS[1], SELF_PERSPECTIVE_HEADER),
+    (SELF_PERSPECTIVE_ARGS[0], SELF_PERSPECTIVE_HEADER),
+    (SELF_PERSPECTIVE_ARGS[2], SELF_PERSPECTIVE_HEADER),
+];
+
+/// The full [`AuthContext`] — owner and authz — as injected by the
+/// shared `mcp_auth` layer.
+///
+/// Deliberately the whole context rather than `proxiima::app::Authz`'s
+/// `AuthzContext` alone: the dispatch seam needs the bound `Owner` to build
+/// an `ToolCtx`. Nothing here authenticates — the layer already did, and
+/// re-implementing authentication here is forbidden.
+#[derive(Debug, Clone)]
+pub struct RestAuth(pub AuthContext);
+
+impl<S> FromRequestParts<S> for RestAuth
+where
+    S: Send + Sync,
+{
+    type Rejection = Problem;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthContext>()
+            .cloned()
+            .map(Self)
+            .ok_or_else(|| Problem::auth_required(parts.uri.path()))
+    }
+}
+
+/// Build the caller of one REST call from its headers.
+///
+/// `X-Proxiima-Model-Id` is a caller *claim*. When the bearer token binds a
+/// model identity, that identity is the persisted label and a differing
+/// header is refused. The precedence itself lives in
+/// [`resolve_operator_label`], shared with the MCP surface so the two
+/// transports cannot drift.
+///
+/// # Errors
+///
+/// Returns a `400` problem when `X-Proxiima-Model-Id` names a model other
+/// than the one the token binds, or when `X-Proxiima-Self-Perspective` is
+/// not a bare UUID.
+pub fn author_from_headers(
+    headers: &HeaderMap,
+    auth: &AuthContext,
+    instance: &str,
+) -> Result<ToolCaller, Problem> {
+    let (client_name, client_version) = client_implementation(headers);
+    let trusted = auth.authz.trusted_model_id();
+    let model_id = resolve_operator_label(trusted, header_str(headers, MODEL_ID_HEADER)).map_err(
+        |conflict| {
+            Problem::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "model-id-conflict",
+                "Model id conflicts with the authenticated token",
+                conflict.detail(MODEL_ID_HEADER),
+                instance,
+            )
+        },
+    )?;
+    Ok(ToolCaller::new(model_id, client_name, client_version)
+        .with_self_perspective(self_perspective(headers, instance)?))
+}
+
+fn self_perspective(headers: &HeaderMap, instance: &str) -> Result<Option<MemoryId>, Problem> {
+    let Some(raw) = header_str(headers, SELF_PERSPECTIVE_HEADER) else {
+        return Ok(None);
+    };
+    proxiima_core::catalog::parse_wire_uuid(raw)
+        .map(|id| Some(MemoryId::new(id)))
+        .map_err(|err| {
+            Problem::invalid_input(
+                format!("{SELF_PERSPECTIVE_HEADER} must be a bare UUID: {err}"),
+                instance,
+            )
+        })
+}
+
+/// Reject any reserved argument name in a request body.
+///
+/// # Errors
+///
+/// Returns a `400` problem whose `detail` names the header to use instead.
+pub fn reject_reserved_arguments(args: &serde_json::Value, instance: &str) -> Result<(), Problem> {
+    let Some(object) = args.as_object() else {
+        return Ok(());
+    };
+    for (field, header_name) in RESERVED_ARGUMENTS {
+        if object.contains_key(*field) {
+            return Err(Problem::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "reserved-argument",
+                "Reserved argument in request body",
+                format!(
+                    "`{field}` is call context on this surface; send it as the {header_name} header"
+                ),
+                instance,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `(name, version)` from `User-Agent`, recorded as operator provenance.
+///
+/// An unattributed call records the adapter's own name rather than
+/// `"unknown"`: the write really was made through this surface, and that is
+/// the honest attribution available.
+fn client_implementation(headers: &HeaderMap) -> (String, String) {
+    let Some(agent) = header_str(headers, header::USER_AGENT.as_str()) else {
+        return (ADAPTER_CLIENT_NAME.to_string(), RELEASE_VERSION.to_string());
+    };
+    // `Name/1.2.3 (comment) other/4` — the leading product token is the
+    // client; trailing products are transport middleware and are dropped.
+    let product = agent.split_whitespace().next().unwrap_or(agent);
+    product.split_once('/').map_or_else(
+        || (product.to_string(), "0".to_string()),
+        |(name, version)| (name.to_string(), version.to_string()),
+    )
+}
+
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proxiima_core::{AuthPath, AuthzContext, OwnerId, UserId};
+
+    fn auth(trusted_model_id: Option<&str>) -> AuthContext {
+        let owner: OwnerId = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
+        AuthContext {
+            owner,
+            authz: trusted_model_id.map_or_else(
+                || AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+                |id| {
+                    AuthzContext::single_owner(&owner, AuthPath::HostBearer)
+                        .with_trusted_model_id(id)
+                        .expect("a well-formed runner id binds")
+                },
+            ),
+        }
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                axum::http::HeaderName::from_bytes(name.as_bytes()).expect("header name"),
+                value.parse().expect("header value"),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn the_bound_model_identity_outranks_the_header_and_absence_is_unknown() {
+        let from_token = author_from_headers(
+            &headers(&[]),
+            &auth(Some("runner/pinned")),
+            "/v1/tools/core_remember",
+        )
+        .expect("author");
+        assert_eq!(from_token.model_id, "runner/pinned");
+
+        let agreeing = author_from_headers(
+            &headers(&[(MODEL_ID_HEADER, "runner/pinned")]),
+            &auth(Some("runner/pinned")),
+            "/v1/tools/core_remember",
+        )
+        .expect("an agreeing header is not a conflict");
+        assert_eq!(agreeing.model_id, "runner/pinned");
+
+        let header_only = author_from_headers(
+            &headers(&[(MODEL_ID_HEADER, "example-model")]),
+            &auth(None),
+            "/v1/tools/core_remember",
+        )
+        .expect("author");
+        assert_eq!(header_only.model_id, "example-model");
+
+        let unattributed =
+            author_from_headers(&headers(&[]), &auth(None), "/v1/tools/core_remember")
+                .expect("author");
+        assert_eq!(unattributed.model_id, "unknown");
+    }
+
+    /// Blank is absent on both transports — this side already dropped an
+    /// empty header, and MCP now drops an empty argument the same way.
+    #[test]
+    fn a_blank_model_id_header_is_absent_on_both_paths() {
+        for blank in ["", "   "] {
+            let unbound = author_from_headers(
+                &headers(&[(MODEL_ID_HEADER, blank)]),
+                &auth(None),
+                "/v1/tools/core_remember",
+            )
+            .expect("a blank header is absent, not an empty label");
+            assert_eq!(unbound.model_id, "unknown", "blank {blank:?}");
+
+            let bound = author_from_headers(
+                &headers(&[(MODEL_ID_HEADER, blank)]),
+                &auth(Some("runner/pinned")),
+                "/v1/tools/core_remember",
+            )
+            .expect("a blank header cannot conflict");
+            assert_eq!(bound.model_id, "runner/pinned", "blank {blank:?}");
+        }
+    }
+
+    #[test]
+    fn a_header_naming_another_model_than_the_token_is_a_400() {
+        let err = author_from_headers(
+            &headers(&[(MODEL_ID_HEADER, "claimed/model")]),
+            &auth(Some("runner/pinned")),
+            "/v1/tools/core_remember",
+        )
+        .expect_err("a caller may not relabel an authenticated runner");
+
+        let json = err.to_json();
+        assert_eq!(json["status"], 400);
+        assert_eq!(
+            json["type"],
+            "https://proxiima.dev/errors/model-id-conflict"
+        );
+        let detail = json["detail"].as_str().expect("detail");
+        assert!(detail.contains(MODEL_ID_HEADER), "{detail}");
+        assert!(detail.contains("claimed/model"), "{detail}");
+        assert!(detail.contains("runner/pinned"), "{detail}");
+        assert!(
+            detail.contains("authenticated token already binds"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn self_perspective_accepts_bare_uuids_and_refuses_prefixes() {
+        let id = uuid::Uuid::now_v7();
+        let author = author_from_headers(
+            &headers(&[(SELF_PERSPECTIVE_HEADER, &format!("{id}"))]),
+            &auth(None),
+            "/v1/tools/core_remember",
+        )
+        .expect("author");
+        assert_eq!(
+            author.caller_self_perspective.map(MemoryId::into_inner),
+            Some(id)
+        );
+
+        let err = author_from_headers(
+            &headers(&[(SELF_PERSPECTIVE_HEADER, &format!("P:{id}"))]),
+            &auth(None),
+            "/v1/tools/core_remember",
+        )
+        .expect_err("malformed reference");
+        assert_eq!(
+            err.to_json()["status"],
+            u64::from(axum::http::StatusCode::BAD_REQUEST.as_u16())
+        );
+    }
+
+    #[test]
+    fn every_reserved_name_is_refused_and_names_its_header() {
+        for (field, header_name) in RESERVED_ARGUMENTS {
+            let args = serde_json::json!({ "text": "x", *field: "y" });
+            let err = reject_reserved_arguments(&args, "/v1/tools/core_remember")
+                .expect_err("reserved argument must be refused");
+            let json = err.to_json();
+            assert_eq!(json["status"], 400);
+            assert_eq!(
+                json["type"],
+                "https://proxiima.dev/errors/reserved-argument"
+            );
+            let detail = json["detail"].as_str().expect("detail");
+            assert!(detail.contains(field), "{detail}");
+            assert!(detail.contains(header_name), "{detail}");
+        }
+
+        reject_reserved_arguments(
+            &serde_json::json!({ "text": "x" }),
+            "/v1/tools/core_remember",
+        )
+        .expect("an ordinary body passes");
+    }
+}

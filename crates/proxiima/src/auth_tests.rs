@@ -271,7 +271,7 @@ mod pinned_jwks {
     use proxiima_core::{
         AccessError, AuthError, Authenticator, Credentials, OwnerAccessPort, OwnerRoles, UserId,
     };
-    use proxiima_mcp_server::AuthorizationServers;
+    use proxiima_server::AuthorizationServers;
     use uuid::Uuid;
 
     use super::env;

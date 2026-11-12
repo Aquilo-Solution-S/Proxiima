@@ -12,8 +12,8 @@ use proxiima_core::{
     OwnerId, RequestHeaders, RevalidationConfig, ServedSurface, Setting, SpiiceServiceError,
     SpiiceServices, is_loopback_host,
 };
-use proxiima_mcp_server::{
-    McpHostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
+use proxiima_server::{
+    HostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
 };
 use proxiima_storage_pg::{PgHostStateParticipant, PgPlatformScope, PgPoolConfig, PgTuning};
 
@@ -73,7 +73,7 @@ pub struct RuntimeBuilder {
     pg_tuning: Option<PgTuning>,
     authenticator: Option<Arc<dyn Authenticator>>,
     platform_authenticator: Option<PlatformAuthenticatorFactory>,
-    host_tools: Option<Arc<dyn McpHostTools>>,
+    host_tools: Option<Arc<dyn HostTools>>,
     vector_index: Option<Arc<dyn proxiima_core::storage_ports::VectorIndex>>,
     resource_metadata: Option<ResourceServerMetadata>,
     embed_client: Option<Arc<dyn EmbeddingClient>>,
@@ -699,9 +699,9 @@ impl RuntimeBuilder {
     }
 
     /// Serve `tools` on `/mcp` beside the registry's tools, through the same
-    /// scope gate and request behaviors ([`McpHostTools`]).
+    /// scope gate and request behaviors ([`HostTools`]).
     #[must_use]
-    pub fn host_tools(mut self, tools: Arc<dyn McpHostTools>) -> Self {
+    pub fn host_tools(mut self, tools: Arc<dyn HostTools>) -> Self {
         self.host_tools = Some(tools);
         self
     }
@@ -1599,7 +1599,7 @@ pub struct RuntimeParts {
     /// Builds [`Self::authenticator`] at boot from the platform scope.
     pub platform_authenticator: Option<PlatformAuthenticatorFactory>,
     /// Host tools served on `/mcp` ([`RuntimeBuilder::host_tools`]).
-    pub host_tools: Option<Arc<dyn McpHostTools>>,
+    pub host_tools: Option<Arc<dyn HostTools>>,
     /// The parts storage boot reads.
     pub storage: StorageParts,
     pub embed_client: Option<Arc<dyn EmbeddingClient>>,

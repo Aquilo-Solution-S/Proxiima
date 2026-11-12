@@ -1,0 +1,891 @@
+//! `OpenAPI` 3.2 document generated from the frozen tool manifest.
+//!
+//! REST is a rendering of the tool manifest, not a second API (docs/protocol.md,
+//! REST projection), so nothing here is authored per tool: every path,
+//! operation, and request schema is derived from `ToolDescriptor` and
+//! `ResourceContract`. A tool added to a spiice crate appears in this document
+//! with no edit here.
+//!
+//! Both version floors are forced rather than preferred. Below 3.1 the
+//! schemars-generated draft 2020-12 `args_schema` would need a
+//! down-converter, which is new code that can be wrong. Below 3.2 the Path
+//! Item Object has no `query` field, so the `QUERY` operation a read-only
+//! tool exposes could only be smuggled through `additionalOperations`.
+//! 3.2 keeps the 2020-12 dialect, so the newer floor costs no schema
+//! fidelity.
+//!
+//! The generator is a pure function of the descriptor lists, so it is
+//! unit-testable without a database, a transport, or a router.
+
+use std::collections::BTreeMap;
+
+use proxiima_core::SpiiceRegistryFrozen;
+use proxiima_core::catalog::{ToolAnnotations, ToolDescriptor, ToolEffect, all_core_resources};
+use proxiima_core::spiice::ResourceContract;
+use serde_json::{Map, Value, json};
+
+use crate::AuthContext;
+use crate::mcp::handler::{
+    Caller, action_allowed_for_auth, annotations_for_auth, how_to_allowed_for_auth,
+    project_dispatcher_actions_for_auth, resource_allowed_for_auth, tool_allowed_for_auth,
+};
+use crate::rest::context::{MODEL_ID_HEADER, SELF_PERSPECTIVE_HEADER};
+use crate::security::PROXIIMA_OWNER_HEADER;
+
+/// The `query` Path Item fixed field arrives in 3.2; the 2020-12 dialect is
+/// unchanged from 3.1, so `args_schema` embeds verbatim.
+const OPENAPI_VERSION: &str = "3.2.0";
+
+/// Dialect of every embedded schema — what schemars emits for `T::Args`.
+const JSON_SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
+
+/// Name of the single security scheme; every operation requires it.
+const BEARER_SCHEME: &str = "bearerAuth";
+
+/// Call context is header-borne on REST: there is no JSON-RPC peer identity
+/// to author it from, and the reserved body names MCP silently strips are a
+/// `400` here instead. Tuples are
+/// `(header, required, description)`.
+const CONTEXT_HEADERS: &[(&str, bool, &str)] = &[
+    (
+        PROXIIMA_OWNER_HEADER,
+        true,
+        "Selects the owner for this call. REST is stateless: send it on every \
+         request rather than relying on a bound session id.",
+    ),
+    (
+        MODEL_ID_HEADER,
+        false,
+        "Authoring model id recorded on writes. Falls back to the token's \
+         model id, then `unknown`. Sending it in the request body is a `400`.",
+    ),
+    (
+        SELF_PERSPECTIVE_HEADER,
+        false,
+        "Bare UUID for the caller's self perspective. Sending it in the \
+         request body is a `400`.",
+    ),
+];
+
+/// The REST statuses, each rendered as RFC 9457
+/// `application/problem+json`. The mapping itself belongs to the routing
+/// module; this list only has to advertise the same set.
+const PROBLEM_STATUSES: &[(u16, &str)] = &[
+    (
+        400,
+        "Invalid input, a reserved call-context argument in the request body, \
+         an unknown schema, or a body `action` conflicting with the route.",
+    ),
+    (401, "Bearer token missing or invalid."),
+    (403, "Not authorized for this tool or action."),
+    (404, "No such tool, action, resource, or memory."),
+    (
+        409,
+        "Idempotency conflict, duplicate ingest, trigger conflict, or a \
+         suppressed subject.",
+    ),
+    (
+        422,
+        "The write would violate F/A/P layering, or the tool ran and failed \
+         (`tool-failure`, the tool's text as detail).",
+    ),
+    (500, "Internal error. The detail is deliberately generic."),
+    (
+        503,
+        "A caller-actionable precondition is unavailable; retry is meaningful.",
+    ),
+];
+
+/// Build the `OpenAPI` document directly from a frozen registry.
+///
+/// `auth = Some(_)` projects the caller-scoped tool and resource set of the
+/// served `/v1/openapi.json` route, by palette and owner role. The route also
+/// drops what a request behavior's `visible` hides, which needs the caller's
+/// tool context; this function has none. `auth = None` emits the complete
+/// registry and core-resource surface for offline conformance checks.
+#[must_use]
+pub fn document_from_registry(
+    registry: &SpiiceRegistryFrozen,
+    public_url: Option<&str>,
+    auth: Option<&AuthContext>,
+) -> Value {
+    document_for_caller(registry, public_url, Caller::new(auth))
+}
+
+/// [`document_from_registry`] for a caller whose listing request behaviors
+/// may narrow.
+pub(crate) fn document_for_caller(
+    registry: &SpiiceRegistryFrozen,
+    public_url: Option<&str>,
+    caller: Caller<'_>,
+) -> Value {
+    let auth = caller.auth();
+    let tools: Vec<&ToolDescriptor> = registry
+        .list_mcp_tools()
+        .iter()
+        .filter(|descriptor| auth.is_none() || tool_allowed_for_auth(caller, descriptor))
+        .collect();
+    let resources: Vec<&ResourceContract> = all_core_resources()
+        .filter(|resource| auth.is_none() || resource_allowed_for_auth(auth, resource))
+        .collect();
+    document_with(&tools, &resources, public_url, caller)
+}
+
+/// Build the `OpenAPI` 3.2 document for one caller's scope-filtered surface.
+///
+/// `tools` and `resources` are already filtered by both capability policies,
+/// exactly as `tools/list` filters — this function applies no gate of its
+/// own. `public_url` becomes the single `servers` entry when the deployment
+/// knows its externally reachable origin.
+#[must_use]
+pub fn document(
+    tools: &[&ToolDescriptor],
+    resources: &[&ResourceContract],
+    public_url: Option<&str>,
+    auth: Option<&AuthContext>,
+) -> Value {
+    document_with(tools, resources, public_url, Caller::new(auth))
+}
+
+fn document_with(
+    tools: &[&ToolDescriptor],
+    resources: &[&ResourceContract],
+    public_url: Option<&str>,
+    caller: Caller<'_>,
+) -> Value {
+    // Sorted so two calls with the same surface produce byte-identical
+    // documents; serde_json preserves insertion order in this workspace.
+    let mut paths: BTreeMap<String, Value> = BTreeMap::new();
+    for tool in tools {
+        collect_tool_paths(tool, caller, &mut paths);
+    }
+    for resource in resources {
+        collect_resource_path(resource, &mut paths);
+    }
+    if caller.auth().is_none() || how_to_allowed_for_auth(caller.auth()) {
+        collect_how_to_path(&mut paths);
+    }
+
+    let mut root = Map::new();
+    root.insert("openapi".to_string(), json!(OPENAPI_VERSION));
+    root.insert("jsonSchemaDialect".to_string(), json!(JSON_SCHEMA_DIALECT));
+    root.insert(
+        "info".to_string(),
+        json!({
+            "title": "Proxiima REST surface",
+            "version": proxiima_core::RELEASE_VERSION,
+            "description":
+                "Generated from the frozen tool manifest. Every operation \
+                 terminates in the same dispatch seam MCP uses, so this \
+                 surface grants no authority MCP does not already grant. When \
+                 served, the document reflects the presenting token's scope \
+                 and uses `Cache-Control: private, no-store`.",
+        }),
+    );
+    if let Some(url) = public_url {
+        root.insert("servers".to_string(), json!([{ "url": url }]));
+    }
+    root.insert(
+        "paths".to_string(),
+        Value::Object(paths.into_iter().collect()),
+    );
+    root.insert("components".to_string(), components());
+    Value::Object(root)
+}
+
+fn collect_how_to_path(paths: &mut BTreeMap<String, Value>) {
+    let mut operation = Operation {
+        target: OperationTarget::Resource(crate::selfdoc::HOW_TO_NAME),
+        summary: crate::selfdoc::HOW_TO_TITLE.to_string(),
+        description: crate::selfdoc::HOW_TO_DESCRIPTION,
+        parameters: context_parameter_refs(),
+        request_schema: None,
+        produces_schema_ids: &[],
+        output_schema: None,
+        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+    }
+    .render("get");
+    operation["responses"]["200"]["content"] = json!({
+        "text/markdown": { "schema": { "type": "string" } },
+    });
+    paths.insert("/v1/how-to".into(), json!({ "get": operation }));
+}
+
+/// One generated operation. The only thing that differs between the two
+/// methods on a read-only path is the method itself, so the body is built
+/// once and rendered twice.
+#[derive(Debug)]
+struct Operation<'a> {
+    target: OperationTarget<'a>,
+    summary: String,
+    description: &'a str,
+    parameters: Vec<Value>,
+    request_schema: Option<Value>,
+    produces_schema_ids: &'a [&'a str],
+    /// The reply schema derived from the tool's `Output` or the resource's
+    /// answer type. `None` for the guide, whose body is markdown.
+    output_schema: Option<&'a Value>,
+    annotations: ToolAnnotations,
+}
+
+/// The structural identity of an operation before its HTTP method is added.
+///
+/// Tool and action names may themselves contain repeated underscores, so a
+/// delimiter-only encoding is ambiguous (`a__b` + `c` versus `a` + `b__c`).
+/// Distinct target tags plus byte-length-prefixed components keep every valid
+/// registry tuple injective without imposing a new naming restriction.
+#[derive(Debug, Clone, Copy)]
+enum OperationTarget<'a> {
+    Tool(&'a str),
+    Action { tool: &'a str, action: &'a str },
+    Resource(&'a str),
+}
+
+impl OperationTarget<'_> {
+    fn id(self, method: &str) -> String {
+        match self {
+            Self::Tool(tool) => {
+                format!("tool__{}_{tool}__method__{method}", tool.len())
+            }
+            Self::Action { tool, action } => format!(
+                "action__{}_{tool}__{}_{action}__method__{method}",
+                tool.len(),
+                action.len(),
+            ),
+            Self::Resource(resource) => {
+                format!("resource__{}_{resource}__method__{method}", resource.len())
+            }
+        }
+    }
+}
+
+impl Operation<'_> {
+    /// Render this operation under `method`. The target encoding distinguishes
+    /// whole tools, dispatcher actions, and resources; the method tag keeps the
+    /// `post` and `query` operations of one read-only path distinct.
+    fn render(&self, method: &str) -> Value {
+        let mut operation = Map::new();
+        operation.insert("operationId".to_string(), json!(self.target.id(method)));
+        operation.insert("summary".to_string(), json!(self.summary));
+        if !self.description.is_empty() {
+            operation.insert("description".to_string(), json!(self.description));
+        }
+        // Silence means write, matching `ToolDescriptor::is_read_only` —
+        // so read-only is always stated. The other two hints carry no such
+        // default, and inventing one would misreport a tool that said nothing.
+        operation.insert(
+            "x-proxiima-read-only".to_string(),
+            json!(self.annotations.read_only.unwrap_or(false)),
+        );
+        if let Some(destructive) = self.annotations.destructive {
+            operation.insert("x-proxiima-destructive".to_string(), json!(destructive));
+        }
+        if let Some(idempotent) = self.annotations.idempotent {
+            operation.insert("x-proxiima-idempotent".to_string(), json!(idempotent));
+        }
+        if !self.parameters.is_empty() {
+            operation.insert("parameters".to_string(), json!(self.parameters));
+        }
+        if let Some(schema) = &self.request_schema {
+            operation.insert(
+                "requestBody".to_string(),
+                json!({
+                    "required": true,
+                    "content": { "application/json": { "schema": schema } },
+                }),
+            );
+        }
+        operation.insert(
+            "responses".to_string(),
+            responses(self.produces_schema_ids, self.output_schema),
+        );
+        // Stated per operation rather than once at the root: this document is
+        // generated per caller and routinely sliced by client generators, and
+        // a root default does not survive that.
+        let mut requirement = Map::new();
+        requirement.insert(BEARER_SCHEME.to_string(), json!([]));
+        operation.insert(
+            "security".to_string(),
+            Value::Array(vec![Value::Object(requirement)]),
+        );
+        Value::Object(operation)
+    }
+}
+
+/// Whole-tool path plus one path per dispatcher action.
+fn collect_tool_paths(
+    tool: &ToolDescriptor,
+    caller: Caller<'_>,
+    paths: &mut BTreeMap<String, Value>,
+) {
+    let annotations = annotations_for_auth(caller, tool).unwrap_or_default();
+    let projected_schema = project_dispatcher_actions_for_auth(caller, tool);
+    let whole = Operation {
+        target: OperationTarget::Tool(tool.name),
+        summary: format!("Invoke {}", tool.name),
+        description: tool.description,
+        parameters: context_parameter_refs(),
+        request_schema: Some(embeddable_schema(&projected_schema)),
+        produces_schema_ids: tool.produces_schema_ids,
+        output_schema: Some(&tool.output_schema),
+        annotations,
+    };
+    paths.insert(format!("/v1/tools/{}", tool.name), tool_path_item(&whole));
+
+    // Action routes come from `action_arg_specs`, which is what the router
+    // enumerates; each route's body is that action's derived argument
+    // schema. `try_freeze` refuses a registry where the two disagree, so
+    // every spec has one.
+    for spec in tool.action_arg_specs.iter().filter(|spec| {
+        caller.auth().is_none() || action_allowed_for_auth(caller, tool, spec.action)
+    }) {
+        let action = spec.action;
+        let action_schema = tool.action_argument_schema(action).unwrap_or_else(|| {
+            panic!(
+                "frozen dispatcher {} action {} has no argument schema",
+                tool.name, action
+            )
+        });
+        // Per-action, not tool-level: the spec's effect is the same
+        // authority the owner-role gate and router read.
+        let action_annotations = ToolAnnotations::registered(spec.effect);
+        let action_description = tool.action_description(action).unwrap_or(tool.description);
+        let narrowed = Operation {
+            target: OperationTarget::Action {
+                tool: tool.name,
+                action,
+            },
+            summary: format!("Invoke {} action `{action}`", tool.name),
+            description: action_description,
+            parameters: context_parameter_refs(),
+            request_schema: Some(embeddable_schema(action_schema)),
+            produces_schema_ids: tool.produces_schema_ids,
+            output_schema: Some(&tool.output_schema),
+            annotations: action_annotations,
+        };
+        paths.insert(
+            format!("/v1/tools/{}/{action}", tool.name),
+            tool_path_item(&narrowed),
+        );
+    }
+}
+
+/// `POST` always; `QUERY` as well when the tool declared itself read-only.
+///
+/// `POST` is kept alongside `QUERY` rather than replaced because middleboxes
+/// routinely reject unrecognized methods, and a read unreachable through a
+/// customer proxy is worse than a read with imprecise semantics.
+fn tool_path_item(operation: &Operation<'_>) -> Value {
+    let mut item = Map::new();
+    item.insert("post".to_string(), operation.render("post"));
+    if operation.annotations.read_only.unwrap_or(false) {
+        // A real Path Item fixed field in 3.2 — not `additionalOperations`.
+        item.insert("query".to_string(), operation.render("query"));
+    }
+    Value::Object(item)
+}
+
+/// `GET /v1/resources/{path}`, reconstructed from the resource's own
+/// `proxiima://` template. The mapping is total and mechanical, and REST adds
+/// no URI parser of its own.
+fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<String, Value>) {
+    let Some((path, query_variables)) = resource_route(resource.uri_template) else {
+        return;
+    };
+    let mut parameters = context_parameter_refs();
+    parameters.extend(path_template_variables(&path).into_iter().map(|name| {
+        json!({
+            "name": name,
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+        })
+    }));
+    parameters.extend(query_variables.into_iter().map(|name| {
+        json!({
+            "name": name,
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+        })
+    }));
+    let answer = resource.answer.schema();
+    let operation = Operation {
+        target: OperationTarget::Resource(resource.name),
+        summary: resource.title.to_string(),
+        description: resource.description,
+        parameters,
+        request_schema: None,
+        // Resources are the browsable read surface; every one of them is a
+        // read, which is why they exist as a separate concept from tools.
+        produces_schema_ids: &[],
+        output_schema: Some(&answer),
+        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+    };
+    let mut item = Map::new();
+    item.insert("get".to_string(), operation.render("get"));
+    paths.insert(path, Value::Object(item));
+}
+
+/// Split a `proxiima://` URI template into a REST path and its RFC 6570 query
+/// variable names: `proxiima://memory/{id}{?expand_neighbors}` becomes
+/// `/v1/resources/memory/{id}` and `["expand_neighbors"]`.
+fn resource_route(uri_template: &str) -> Option<(String, Vec<String>)> {
+    let rest = uri_template.strip_prefix("proxiima://")?;
+    let (path, query) = match rest.split_once("{?") {
+        Some((path, query)) => (path, query.trim_end_matches('}')),
+        None => (rest, ""),
+    };
+    let variables = query
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some((format!("/v1/resources/{path}"), variables))
+}
+
+/// The `{name}` placeholders of a path template, in order of appearance.
+fn path_template_variables(path: &str) -> Vec<String> {
+    let mut variables = Vec::new();
+    let mut rest = path;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else { break };
+        variables.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    variables
+}
+
+/// The document declares the dialect once through jsonSchemaDialect, so the
+/// root $schema schemars emits is redundant in every operation body.
+fn embeddable_schema(args_schema: &Value) -> Value {
+    let mut schema = args_schema.clone();
+    if let Some(map) = schema.as_object_mut() {
+        map.shift_remove("$schema");
+    }
+    schema
+}
+
+#[cfg(test)]
+fn string_list(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn responses(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Value {
+    let mut responses = Map::new();
+    responses.insert(
+        "200".to_string(),
+        success_response(produces_schema_ids, output_schema),
+    );
+    for (status, _) in PROBLEM_STATUSES {
+        responses.insert(
+            status.to_string(),
+            json!({ "$ref": format!("#/components/responses/Problem{status}") }),
+        );
+    }
+    Value::Object(responses)
+}
+
+/// The success body of an operation.
+///
+/// The reply a client validates, taken from the tool's own `Output` type.
+///
+/// `produces_schema_ids` names the *registry* payloads a tool writes and is
+/// kept alongside as an annotation — it answers a different question, and a
+/// tool can write payloads without echoing them. Resources have no
+/// descriptor; theirs is the schema of the answer type their contract names.
+fn success_response(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Value {
+    let mut schema = if let Some(Value::Object(map)) = output_schema {
+        map.clone()
+    } else {
+        let mut map = Map::new();
+        map.insert("type".to_string(), json!("object"));
+        map
+    };
+    if !produces_schema_ids.is_empty() {
+        schema.insert(
+            "x-proxiima-produces-schema-ids".to_string(),
+            json!(produces_schema_ids),
+        );
+    }
+    json!({
+        "description": "Tool or resource result.",
+        "content": { "application/json": { "schema": Value::Object(schema) } },
+    })
+}
+
+fn components() -> Value {
+    let mut parameters = Map::new();
+    for (header, required, description) in CONTEXT_HEADERS {
+        parameters.insert(
+            parameter_component_name(header),
+            json!({
+                "name": header,
+                "in": "header",
+                "required": required,
+                "description": description,
+                "schema": { "type": "string" },
+            }),
+        );
+    }
+
+    let mut error_responses = Map::new();
+    for (status, description) in PROBLEM_STATUSES {
+        error_responses.insert(
+            format!("Problem{status}"),
+            json!({
+                "description": description,
+                "content": {
+                    "application/problem+json": {
+                        "schema": { "$ref": "#/components/schemas/ProblemDetails" },
+                    },
+                },
+            }),
+        );
+    }
+
+    json!({
+        "securitySchemes": {
+            BEARER_SCHEME: {
+                "type": "http",
+                "scheme": "bearer",
+                "description":
+                    "The same bearer token the MCP surface accepts. REST grants \
+                     no authority MCP does not already grant.",
+            },
+        },
+        "parameters": Value::Object(parameters),
+        "responses": Value::Object(error_responses),
+        "schemas": {
+            "ProblemDetails": {
+                "type": "object",
+                "description":
+                    "RFC 9457 problem detail. `detail` is the error's \
+                     client-facing message, never a formatted source chain.",
+                "properties": {
+                    "type": { "type": "string", "format": "uri" },
+                    "title": { "type": "string" },
+                    "status": { "type": "integer" },
+                    "detail": { "type": "string" },
+                    "instance": { "type": "string" },
+                    "request_id": { "type": "string" },
+                    "existing": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description":
+                            "Handle the idempotency_key already names, when type is idempotency-conflict.",
+                    },
+                },
+                "required": ["type", "title", "status"],
+            },
+        },
+    })
+}
+
+fn context_parameter_refs() -> Vec<Value> {
+    CONTEXT_HEADERS
+        .iter()
+        .map(|(header, _, _)| {
+            json!({
+                "$ref": format!(
+                    "#/components/parameters/{}",
+                    parameter_component_name(header),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn parameter_component_name(header: &str) -> String {
+    header.replace('-', "")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use proxiima_core::protocol::tool as protocol_tool;
+    use proxiima_core::{SpiiceRegistry, SpiiceRegistryFrozen};
+
+    use super::{ResourceContract, ToolDescriptor, Value, all_core_resources, document};
+
+    fn frozen_registry() -> SpiiceRegistryFrozen {
+        SpiiceRegistry::default()
+            .try_freeze()
+            .expect("the built-in core registry freezes")
+    }
+
+    /// Generated from the real frozen registry, so the tests exercise the
+    /// descriptors the server actually serves rather than hand-made ones.
+    fn core_document(registry: &SpiiceRegistryFrozen) -> Value {
+        let tools: Vec<&ToolDescriptor> = registry.list_mcp_tools().iter().collect();
+        let resources: Vec<&ResourceContract> = all_core_resources().collect();
+        document(&tools, &resources, Some("https://proxiima.example"), None)
+    }
+
+    fn path_item<'a>(document: &'a Value, path: &str) -> &'a Value {
+        document
+            .pointer(&format!(
+                "/paths/{}",
+                path.replace('~', "~0").replace('/', "~1")
+            ))
+            .unwrap_or_else(|| panic!("path {path} present: {document:#}"))
+    }
+
+    #[test]
+    fn public_url_is_the_only_source_of_servers() {
+        let registry = frozen_registry();
+        let tools: Vec<&ToolDescriptor> = registry.list_mcp_tools().iter().collect();
+        let document = document(&tools, &[], None, None);
+        assert!(
+            document.get("servers").is_none(),
+            "without a public url the document must declare no server: {document:#}",
+        );
+    }
+
+    #[test]
+    fn a_read_only_tool_exposes_both_post_and_query() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let item = path_item(
+            &document,
+            &format!("/v1/tools/{}", protocol_tool::CORE_SEARCH_MEMORIES),
+        );
+        assert!(
+            item.get("post").is_some() && item.get("query").is_some(),
+            "a read-only tool is reachable by both methods: {item:#}",
+        );
+        assert!(
+            item.get("additionalOperations").is_none(),
+            "`query` is a 3.2 fixed field, not an additional operation: {item:#}",
+        );
+        assert_eq!(
+            item.pointer("/post/x-proxiima-read-only")
+                .and_then(Value::as_bool),
+            Some(true),
+        );
+        assert_ne!(
+            item.pointer("/post/operationId"),
+            item.pointer("/query/operationId"),
+            "the two operations on one path must not collide: {item:#}",
+        );
+    }
+
+    #[test]
+    fn a_write_tool_exposes_post_only() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let item = path_item(
+            &document,
+            &format!("/v1/tools/{}", protocol_tool::CORE_REMEMBER),
+        );
+        assert!(item.get("post").is_some(), "{item:#}");
+        assert!(
+            item.get("query").is_none(),
+            "a write tool must not advertise QUERY: {item:#}",
+        );
+        assert_eq!(
+            item.pointer("/post/x-proxiima-read-only")
+                .and_then(Value::as_bool),
+            Some(false),
+        );
+    }
+
+    /// Method selection is per-action, not per-tool. `core_membership` mixes
+    /// read and write actions, while retired blob downloads are absent.
+    #[test]
+    fn action_paths_gate_methods_per_action_not_per_tool() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let parent = path_item(
+            &document,
+            &format!("/v1/tools/{}", protocol_tool::CORE_UPLOAD),
+        );
+        assert!(
+            parent.get("query").is_none(),
+            "the parent dispatcher is a write tool: {parent:#}",
+        );
+
+        let prepare = path_item(
+            &document,
+            &format!("/v1/tools/{}/prepare", protocol_tool::CORE_UPLOAD),
+        );
+        assert!(
+            prepare.get("query").is_none(),
+            "a write action must not advertise QUERY: {prepare:#}",
+        );
+
+        let membership_read = path_item(
+            &document,
+            &format!("/v1/tools/{}/list_members", protocol_tool::CORE_MEMBERSHIP),
+        );
+        assert!(
+            membership_read.get("query").is_some(),
+            "a read action must advertise QUERY under a write parent: {membership_read:#}",
+        );
+        assert!(
+            document
+                .pointer("/paths/~1v1~1tools~1core_upload~1read_url")
+                .is_none(),
+            "retired blob download route must not be advertised: {document:#}"
+        );
+    }
+
+    /// The narrowing is the reason this generator exists, so it is checked
+    /// against every real dispatcher action rather than one sampled case.
+    #[test]
+    fn dispatcher_action_schemas_are_narrowed_to_that_action() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let mut checked = 0usize;
+        for tool in registry.list_mcp_tools() {
+            let Some(dispatcher) = &tool.dispatcher_schema else {
+                continue;
+            };
+            let discriminator = dispatcher.discriminator.as_str();
+            for derived in &dispatcher.actions {
+                let action = derived.action.as_str();
+                let item = path_item(&document, &format!("/v1/tools/{}/{action}", tool.name));
+                let schema = item
+                    .pointer("/post/requestBody/content/application~1json/schema")
+                    .unwrap_or_else(|| panic!("narrowed request schema present: {item:#}"));
+
+                let advertised: BTreeSet<String> = schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .expect("narrowed schema has properties")
+                    .keys()
+                    .cloned()
+                    .collect();
+                let expected: BTreeSet<String> = derived
+                    .allowed_fields()
+                    .into_iter()
+                    .filter(|field| field != discriminator)
+                    .collect();
+                assert_eq!(
+                    advertised, expected,
+                    "{}/{action} must advertise exactly its allowed fields: {schema:#}",
+                    tool.name,
+                );
+                assert!(
+                    schema
+                        .pointer(&format!("/properties/{discriminator}"))
+                        .is_none(),
+                    "{}/{action} must drop the `{discriminator}` property; the route supplies it: {schema:#}",
+                    tool.name,
+                );
+                assert_eq!(
+                    super::string_list(schema, "required"),
+                    derived.required_fields(),
+                    "{}/{action} must carry the action's own required set: {schema:#}",
+                    tool.name,
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "the core registry must contribute at least one dispatcher action",
+        );
+    }
+
+    #[test]
+    fn every_operation_requires_the_bearer_scheme() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let paths = document
+            .get("paths")
+            .and_then(Value::as_object)
+            .expect("paths object");
+        for (path, item) in paths {
+            for (method, operation) in item.as_object().expect("path item object") {
+                assert!(
+                    operation.pointer("/security/0/bearerAuth").is_some(),
+                    "{method} {path} must require the bearer scheme: {operation:#}",
+                );
+            }
+        }
+        assert!(
+            document
+                .pointer("/components/securitySchemes/bearerAuth/scheme")
+                .and_then(Value::as_str)
+                == Some("bearer"),
+            "{document:#}",
+        );
+    }
+
+    #[test]
+    fn error_statuses_reference_the_shared_problem_component() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        let item = path_item(
+            &document,
+            &format!("/v1/tools/{}", protocol_tool::CORE_REMEMBER),
+        );
+        for status in ["400", "401", "403", "404", "409", "422", "500", "503"] {
+            assert_eq!(
+                item.pointer(&format!("/post/responses/{status}/$ref"))
+                    .and_then(Value::as_str),
+                Some(format!("#/components/responses/Problem{status}").as_str()),
+                "{item:#}",
+            );
+            assert_eq!(
+                document
+                    .pointer(&format!(
+                        "/components/responses/Problem{status}/content/application~1problem+json/schema/$ref"
+                    ))
+                    .and_then(Value::as_str),
+                Some("#/components/schemas/ProblemDetails"),
+                "{document:#}",
+            );
+        }
+    }
+
+    /// #676: a resource operation answers with the schema of the type its
+    /// contract names, not an unconstrained object.
+    #[test]
+    fn every_resource_operation_publishes_its_answer_schema() {
+        let registry = frozen_registry();
+        let document = core_document(&registry);
+        for resource in all_core_resources() {
+            let (path, _) = super::resource_route(resource.uri_template).expect("a resource route");
+            let schema = document
+                .pointer(&format!(
+                    "/paths/{}/get/responses/200/content/application~1json/schema",
+                    path.replace('~', "~0").replace('/', "~1")
+                ))
+                .unwrap_or_else(|| panic!("{path} publishes a 200 schema: {document:#}"));
+            assert_eq!(*schema, resource.answer.schema(), "{path}");
+            assert!(
+                schema.get("properties").is_some(),
+                "{path} is constrained to its answer's fields: {schema:#}",
+            );
+        }
+        let lineage = document
+            .pointer(
+                "/paths/~1v1~1resources~1memory~1{id}~1lineage/get/responses/200/content/application~1json/schema/properties/nodes/items",
+            )
+            .expect("the lineage answer lists its nodes");
+        assert_eq!(
+            lineage["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"]),
+        );
+        assert!(
+            lineage["required"]
+                .as_array()
+                .is_some_and(|required| required.contains(&serde_json::json!("space"))),
+            "{lineage:#}",
+        );
+    }
+}

@@ -228,7 +228,7 @@ REST answers a tool failure as `422` with type `tool-failure` and the text as
 
 REST returns `application/problem+json`: machine-readable `type`, `title`,
 `status`, safe `detail`, and request `instance`. Its exhaustive variant map is
-[`rest/error.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/mcp-server/src/rest/error.rs).
+[`rest/error.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima-server/src/rest/error.rs).
 
 | Failure class | HTTP status |
 |---|---|

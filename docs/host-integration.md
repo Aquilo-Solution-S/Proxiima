@@ -474,7 +474,7 @@ let (judged, reply) = handler.call_tool_observed(request, &context).await;
 ```
 
 An in-process host keeps the whole `ToolReply` and the same observation with
-`McpToolHost::call_tool_reply_observed_in_request`:
+`ToolHost::call_tool_reply_observed_in_request`:
 
 ```rust
 let (judged, reply) = host

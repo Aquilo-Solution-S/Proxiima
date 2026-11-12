@@ -1,0 +1,742 @@
+//! The `/v1` REST surface: a rendering of the frozen tool manifest.
+//!
+//! Not a second API. Every route is derived at startup from
+//! `SpiiceRegistryFrozen`; no route is hand-written per tool; every route
+//! terminates in [`ToolHost::call_tool`] or
+//! [`ToolHost::read_resource`], which is what keeps `ScopeGateBehavior`
+//! and the shared edge auth layer the only gates. A tool added to a spiice
+//! crate appears here with no edit in this module, and cannot appear here
+//! without appearing on MCP.
+//!
+//! REST grants no authority MCP does not already grant. A token that
+//! cannot call `core_transfer` over MCP cannot call it over REST, because
+//! the gate runs below the seam — not beside it.
+//!
+//! See `docs/protocol.md`.
+
+pub mod context;
+pub mod error;
+pub mod openapi;
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Bytes;
+use axum::extract::{Path, State};
+use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{any, get};
+use proxiima_core::SpiiceServices;
+use proxiima_core::catalog::{ToolDescriptor, ToolOrigin, all_core_resources, tool_name_matches};
+use proxiima_core::spiice::ResourceContract;
+use proxiima_core::{ToolCaller, ToolCtx};
+
+use crate::mcp::handler::{
+    Caller, action_allowed_for_auth, advertised_resource_scope_keys, advertised_tool_ids,
+    annotations_for_auth, how_to_allowed_for_auth, project_dispatcher_actions_for_auth,
+    resource_allowed_for_auth, tool_allowed_for_auth,
+};
+use crate::rest::context::{RestAuth, author_from_headers, reject_reserved_arguments};
+use crate::rest::error::{Problem, problem_for};
+use crate::selfdoc;
+use crate::server::ToolHost;
+
+/// Every answer is owner- and token-scoped, so nothing on this surface is
+/// shared-cacheable — including `QUERY` reads, whose cacheability is
+/// deliberately unused. What `QUERY` buys here is retry safety and correct
+/// modelling, not caching.
+pub const NO_STORE: &str = "private, no-store";
+
+/// Path prefix of the whole surface. Baked into the route strings rather
+/// than applied with `Router::nest`, because `nest` rewrites the inner
+/// request URI and every problem document's `instance` would then be
+/// missing its prefix.
+pub const PREFIX: &str = "/v1";
+
+/// Scheme of the engine's resource URIs. `/v1/resources/{*path}?{query}`
+/// reconstructs `proxiima://{path}?{query}` verbatim; all parsing,
+/// validation, clamping and cursor handling stay in `server.rs`, which
+/// already does every bit of it.
+const RESOURCE_SCHEME: &str = "proxiima://";
+
+#[derive(Clone, Debug)]
+struct RestState {
+    host: ToolHost,
+    public_url: Option<Arc<str>>,
+}
+
+/// Build the `/v1` router.
+///
+/// Merge it into the listener *inside* the shared auth and body-limit
+/// layers: it reads the [`crate::AuthContext`] those layers inject and
+/// authenticates nothing itself.
+#[must_use = "merge the returned router into the MCP HTTP surface"]
+pub fn router(host: ToolHost, public_url: Option<String>) -> Router {
+    Router::new()
+        .route("/v1/tools", get(list_tools))
+        .route("/v1/tools/{tool}", any(tool_route))
+        .route("/v1/tools/{tool}/{action}", any(action_route))
+        .route("/v1/resources", get(list_resources))
+        .route("/v1/resources/{*path}", get(read_resource))
+        .route("/v1/how-to", get(how_to))
+        .route("/v1/openapi.json", get(openapi))
+        .with_state(RestState {
+            host,
+            public_url: public_url.map(Arc::from),
+        })
+}
+
+// ---------------------------------------------------------------- catalog
+
+/// Scope-filtered manifest. Same filter `tools/list` applies — literally
+/// the same function — so the two surfaces cannot drift by omission. Host
+/// tools are not on this surface.
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn list_tools(
+    State(state): State<RestState>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+) -> Response {
+    let instance = format!("{PREFIX}/tools");
+    let ctx = match listing_ctx(&state, &auth, (&headers, &extensions), &instance) {
+        Ok(ctx) => ctx,
+        Err(problem) => return problem.into_response(),
+    };
+    let caller = Caller::listing(Some(&auth), Some(&ctx));
+    let tools: Vec<serde_json::Value> = state
+        .host
+        .registry()
+        .list_mcp_tools()
+        .iter()
+        .filter(|descriptor| tool_allowed_for_auth(caller, descriptor))
+        .map(|descriptor| tool_json(descriptor, caller))
+        .collect();
+    json_ok(&serde_json::json!({ "tools": tools }))
+}
+
+/// Single descriptor. `404` — not `403` — when the tool is outside the
+/// caller's scope: this route answers "what is in your catalog", and a tool
+/// that is not in it is absent rather than refused. Invocation is where
+/// denial is `403` (see [`dispatch`]), because there the caller has asserted
+/// the tool exists and is owed the reason.
+fn tool_descriptor(state: &RestState, caller: Caller<'_>, tool: &str) -> Response {
+    match find_descriptor(state, tool).filter(|d| tool_allowed_for_auth(caller, d)) {
+        Some(descriptor) => json_ok(&tool_json(descriptor, caller)),
+        None => Problem::not_found(format!("tool {tool} not found"), &tool_instance(tool))
+            .into_response(),
+    }
+}
+
+/// The tool context request behaviors judge a catalog with: the caller's
+/// own, built as [`read_resource`] builds its.
+fn listing_ctx(
+    state: &RestState,
+    auth: &crate::AuthContext,
+    (headers, extensions): (&axum::http::HeaderMap, &axum::http::Extensions),
+    instance: &str,
+) -> Result<ToolCtx, Problem> {
+    let (author, request) = request_parts(state, auth, (headers, extensions), instance)?;
+    state
+        .host
+        .ctx_for_request(author, auth, request)
+        .map_err(|err| problem_for(&err.into(), instance))
+}
+
+/// Who is calling and what services this request brings: the two steps every REST path starts
+/// with, each failing as the `Problem` for `instance`.
+fn request_parts(
+    state: &RestState,
+    auth: &crate::AuthContext,
+    (headers, extensions): (&axum::http::HeaderMap, &axum::http::Extensions),
+    instance: &str,
+) -> Result<(ToolCaller, SpiiceServices), Problem> {
+    let author = author_from_headers(headers, auth, instance)?;
+    let request = state
+        .host
+        .request_services(headers, extensions)
+        .map_err(|err| problem_for(&err.into(), instance))?;
+    Ok((author, request))
+}
+
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn list_resources(RestAuth(auth): RestAuth) -> Response {
+    let resources: Vec<serde_json::Value> = all_core_resources()
+        .filter(|resource| resource_allowed_for_auth(Some(&auth), resource))
+        .map(resource_json)
+        .collect();
+    json_ok(&serde_json::json!({ "resources": resources }))
+}
+
+/// `proxiima://how-to` is the one resource not reachable through the
+/// dispatch seam: it is synthesized per request from the caller's advertised
+/// surface, so it gets its own route and `/v1/resources/how-to` stays a
+/// `404`.
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn how_to(
+    State(state): State<RestState>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+) -> Response {
+    if !how_to_allowed_for_auth(Some(&auth)) {
+        return problem_for(
+            &proxiima_core::ToolError::NotAuthorized(
+                proxiima_core::protocol::resource::HOW_TO.into(),
+            )
+            .into(),
+            &format!("{PREFIX}/how-to"),
+        )
+        .into_response();
+    }
+    let ctx = match listing_ctx(
+        &state,
+        &auth,
+        (&headers, &extensions),
+        &format!("{PREFIX}/how-to"),
+    ) {
+        Ok(ctx) => ctx,
+        Err(problem) => return problem.into_response(),
+    };
+    let advertised_tools = advertised_tool_ids(
+        state.host.registry(),
+        Caller::listing(Some(&auth), Some(&ctx)),
+    );
+    let advertised_resources = advertised_resource_scope_keys(Some(&auth));
+    let body = selfdoc::how_to_markdown(&advertised_tools, &advertised_resources);
+    let mut response = body.into_response();
+    set_headers(&mut response, "text/markdown; charset=utf-8");
+    response
+}
+
+/// The document reflects both caller and deployment policy, as `tools/list`
+/// does, which is why it is token-specific and never shared-cacheable.
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn openapi(
+    State(state): State<RestState>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+) -> Response {
+    let ctx = match listing_ctx(
+        &state,
+        &auth,
+        (&headers, &extensions),
+        &format!("{PREFIX}/openapi.json"),
+    ) {
+        Ok(ctx) => ctx,
+        Err(problem) => return problem.into_response(),
+    };
+    json_ok(&openapi::document_for_caller(
+        state.host.registry(),
+        state.public_url.as_deref(),
+        Caller::listing(Some(&auth), Some(&ctx)),
+    ))
+}
+
+// ------------------------------------------------------------ invocation
+
+/// `/v1/tools/{tool}` for every method.
+///
+/// `axum` 0.8.9's `MethodFilter` is closed over the nine classic methods and
+/// its `TryFrom<Method>` rejects `QUERY`, so generated routes cannot use
+/// `on(MethodFilter::…)`. This one catch-all matches on [`Method`] directly
+/// and emits `Allow` by hand, since `any()` calls `skip_allow_header()` and
+/// suppresses axum's own. Scaffolding with a known removal condition: when a
+/// later 0.8.x adds `MethodFilter::QUERY`, the caret pin picks it up and this
+/// collapses into ordinary routing.
+async fn tool_route(
+    State(state): State<RestState>,
+    method: Method,
+    Path(tool): Path<String>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+    body: Bytes,
+) -> Response {
+    let instance = tool_instance(&tool);
+    let Some(descriptor) = find_descriptor(&state, &tool) else {
+        return Problem::not_found(format!("tool {tool} not found"), &instance).into_response();
+    };
+    if method == Method::GET {
+        let ctx = match listing_ctx(&state, &auth, (&headers, &extensions), &instance) {
+            Ok(ctx) => ctx,
+            Err(problem) => return problem.into_response(),
+        };
+        return tool_descriptor(&state, Caller::listing(Some(&auth), Some(&ctx)), &tool);
+    }
+    // Both dispatcher vocabularies name their action inside the body, so
+    // both defer the method gate until the body is parsed.
+    let dispatches_actions =
+        !descriptor.action_arg_specs.is_empty() || !descriptor.argv_action_specs.is_empty();
+    if method != Method::POST && method != Method::QUERY {
+        let admits_query = if dispatches_actions {
+            descriptor
+                .action_arg_specs
+                .iter()
+                .map(|spec| spec.action)
+                .chain(descriptor.argv_action_specs.iter().map(|spec| spec.action))
+                .any(|action| {
+                    descriptor.action_is_read_only(action)
+                        && action_allowed_for_auth(Caller::new(Some(&auth)), descriptor, action)
+                })
+        } else {
+            descriptor.is_read_only()
+        };
+        return gate_method(&method, Allow::tool(admits_query), &instance)
+            .expect_err("non-invocation method is rejected")
+            .into_response();
+    }
+    if !dispatches_actions
+        && let Err(problem) =
+            gate_method(&method, Allow::tool(descriptor.is_read_only()), &instance)
+    {
+        return problem.into_response();
+    }
+    let args = match request_arguments(&body, &instance) {
+        Ok(args) => args,
+        Err(problem) => return problem.into_response(),
+    };
+    // A whole-dispatcher invocation still names its action in the body — as
+    // `action`, or as the `argv` prefix an argv-keyed tool derives its key
+    // from — so method safety resolves from that action just like the
+    // narrowed route. Missing/unknown actions are writes here and are
+    // classified by the shared dispatch validator after POST reaches it.
+    if dispatches_actions {
+        let action = if descriptor.action_arg_specs.is_empty() {
+            descriptor.argv_action(&args)
+        } else {
+            args.get("action").and_then(serde_json::Value::as_str)
+        };
+        let read_only = action.is_some_and(|action| descriptor.action_is_read_only(action));
+        if let Err(problem) = gate_method(&method, Allow::tool(read_only), &instance) {
+            return problem.into_response();
+        }
+    }
+    dispatch(
+        &state,
+        &auth,
+        (&headers, &extensions),
+        descriptor.name,
+        args,
+        &instance,
+    )
+    .await
+}
+
+/// `/v1/tools/{tool}/{action}` — the narrowed dispatcher form.
+async fn action_route(
+    State(state): State<RestState>,
+    method: Method,
+    Path((tool, action)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+    body: Bytes,
+) -> Response {
+    let instance = format!("{PREFIX}/tools/{tool}/{action}");
+    let Some(descriptor) = find_descriptor(&state, &tool) else {
+        return Problem::not_found(format!("tool {tool} not found"), &instance).into_response();
+    };
+    // Unknown action is a route-layer `404`, before dispatch, so it reads as
+    // "no such route" rather than as an argument error. Checked against the
+    // registry's FULL action set, never the scope-narrowed one: an action the
+    // caller may not invoke exists, and hiding it here would turn the gate's
+    // `403` into a `404`.
+    if !descriptor
+        .action_arg_specs
+        .iter()
+        .any(|spec| spec.action == action)
+    {
+        return Problem::not_found(format!("tool {tool} has no action {action}"), &instance)
+            .into_response();
+    }
+    let allow = Allow::action(descriptor.action_is_read_only(&action));
+    if let Err(problem) = gate_method(&method, allow, &instance) {
+        return problem.into_response();
+    }
+    let args = match request_arguments(&body, &instance) {
+        Ok(args) => args,
+        Err(problem) => return problem.into_response(),
+    };
+    let args = match inject_action(args, &action, &instance) {
+        Ok(args) => args,
+        Err(problem) => return problem.into_response(),
+    };
+    dispatch(
+        &state,
+        &auth,
+        (&headers, &extensions),
+        descriptor.name,
+        args,
+        &instance,
+    )
+    .await
+}
+
+/// The one place a REST request becomes a tool call: no route reaches
+/// `Engine` or storage directly.
+async fn dispatch(
+    state: &RestState,
+    auth: &crate::AuthContext,
+    (headers, extensions): (&axum::http::HeaderMap, &axum::http::Extensions),
+    tool: &str,
+    args: serde_json::Value,
+    instance: &str,
+) -> Response {
+    let (author, request) = match request_parts(state, auth, (headers, extensions), instance) {
+        Ok(parts) => parts,
+        Err(problem) => return problem.into_response(),
+    };
+    match state
+        .host
+        .call_tool_in_request(tool, args, author, Some(auth.clone()), request)
+        .await
+    {
+        Ok(value) => json_ok(&value),
+        Err(err) => problem_for(&err, instance).into_response(),
+    }
+}
+
+// -------------------------------------------------------------- resources
+
+/// Total and mechanical: the wildcard path and the raw query string are
+/// pasted back onto `proxiima://` and handed to the seam. REST adds no
+/// parser, so a malformed parameter fails in exactly the place — and with
+/// exactly the class — an MCP resource read fails.
+async fn read_resource(
+    State(state): State<RestState>,
+    uri: Uri,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+    RestAuth(auth): RestAuth,
+) -> Response {
+    // Both Path and RawPathParams percent-decode captures. Read the URI
+    // instead so encoded '?' or '/' cannot become resource structure here.
+    let path = uri
+        .path()
+        .strip_prefix("/v1/resources/")
+        .unwrap_or_default();
+    let instance = format!("{PREFIX}/resources/{path}");
+    let mut target = format!("{RESOURCE_SCHEME}{path}");
+    if let Some(query) = uri.query().filter(|query| !query.is_empty()) {
+        target.push('?');
+        target.push_str(query);
+    }
+    let (author, request) = match request_parts(&state, &auth, (&headers, &extensions), &instance) {
+        Ok(parts) => parts,
+        Err(problem) => return problem.into_response(),
+    };
+    match state
+        .host
+        .read_resource_in_request(&target, author, Some(auth), request)
+        .await
+    {
+        Ok(value) => json_ok(&value),
+        Err(err) => problem_for(&err, &instance).into_response(),
+    }
+}
+
+// ---------------------------------------------------------------- helpers
+
+fn find_descriptor<'a>(state: &'a RestState, tool: &str) -> Option<&'a ToolDescriptor> {
+    state
+        .host
+        .registry()
+        .list_mcp_tools()
+        .iter()
+        .find(|descriptor| tool_name_matches(descriptor.name, tool))
+}
+
+/// Read-only tools are reachable by both `QUERY` and `POST`; write tools
+/// accept `POST` only.
+///
+/// `POST` is retained alongside `QUERY` rather than replaced: middleboxes
+/// routinely reject unrecognized methods, and a read that is unreachable
+/// through a customer proxy is worse than a read with imprecise semantics.
+fn gate_method(method: &Method, allow: Allow, instance: &str) -> Result<(), Problem> {
+    if *method == Method::POST || (allow.admits_query() && *method == Method::QUERY) {
+        return Ok(());
+    }
+    let allow = allow.header();
+    Err(Problem::new(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "method-not-allowed",
+        "Method not allowed",
+        format!("{method} is not allowed here; allowed: {allow}"),
+        instance,
+    )
+    .with_allow(allow))
+}
+
+/// The methods one route answers. The `Allow` header and the `QUERY` gate both read it, so the
+/// header cannot say what the gate refuses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Allow {
+    /// `/v1/tools/{tool}/{action}` for a write.
+    Post,
+    /// `/v1/tools/{tool}/{action}` for a read.
+    PostQuery,
+    /// `/v1/tools/{tool}` for a write.
+    GetPost,
+    /// `/v1/tools/{tool}` for a read.
+    GetPostQuery,
+}
+
+impl Allow {
+    const fn tool(read_only: bool) -> Self {
+        if read_only {
+            Self::GetPostQuery
+        } else {
+            Self::GetPost
+        }
+    }
+
+    const fn action(read_only: bool) -> Self {
+        if read_only {
+            Self::PostQuery
+        } else {
+            Self::Post
+        }
+    }
+
+    const fn admits_query(self) -> bool {
+        matches!(self, Self::PostQuery | Self::GetPostQuery)
+    }
+
+    const fn header(self) -> &'static str {
+        match self {
+            Self::Post => "POST",
+            Self::PostQuery => "POST, QUERY",
+            Self::GetPost => "GET, POST",
+            Self::GetPostQuery => "GET, POST, QUERY",
+        }
+    }
+}
+
+/// Parse the request body into the tool's arguments object.
+fn request_arguments(body: &Bytes, instance: &str) -> Result<serde_json::Value, Problem> {
+    let args = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_slice::<serde_json::Value>(body).map_err(|err| {
+            Problem::invalid_input(format!("request body is not JSON: {err}"), instance)
+        })?
+    };
+    if !args.is_object() {
+        return Err(Problem::invalid_input(
+            "request body must be a JSON object of the tool's arguments",
+            instance,
+        ));
+    }
+    reject_reserved_arguments(&args, instance)?;
+    Ok(args)
+}
+
+/// Inject the route's action into the body.
+///
+/// A body that also carries `action` is rejected even when the values agree.
+/// Silent agreement invites a client that sets only the body field and
+/// breaks when the route changes.
+fn inject_action(
+    mut args: serde_json::Value,
+    action: &str,
+    instance: &str,
+) -> Result<serde_json::Value, Problem> {
+    let Some(object) = args.as_object_mut() else {
+        return Err(Problem::invalid_input(
+            "request body must be a JSON object of the tool's arguments",
+            instance,
+        ));
+    };
+    if object.contains_key("action") {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "action-conflict",
+            "Action in request body",
+            "`action` is carried by the route on this surface; remove it from the request body",
+            instance,
+        ));
+    }
+    object.insert("action".to_string(), serde_json::json!(action));
+    Ok(args)
+}
+
+fn tool_json(descriptor: &ToolDescriptor, caller: Caller<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "id": descriptor.name,
+        "description": descriptor.description,
+        "origin": match &descriptor.origin {
+            ToolOrigin::Substrate => serde_json::json!("substrate"),
+            ToolOrigin::Spiice(spiice) => serde_json::json!({ "spiice": spiice }),
+        },
+        "annotations": annotations_for_auth(caller, descriptor),
+        // Narrowed per action by the same projection `tools/list` applies, so
+        // a palette that permits one leaf of a dispatcher advertises one leaf
+        // on both surfaces.
+        "args_schema": project_dispatcher_actions_for_auth(caller, descriptor),
+    })
+}
+
+fn resource_json(meta: &ResourceContract) -> serde_json::Value {
+    serde_json::json!({
+        "name": meta.name,
+        "title": meta.title,
+        "description": meta.description,
+        "uri_template": meta.uri_template,
+        "scope_key": meta.scope_key,
+        "is_template": meta.is_template,
+        "path": meta
+            .uri_template
+            .strip_prefix(RESOURCE_SCHEME)
+            .map(|rest| format!("{PREFIX}/resources/{rest}")),
+    })
+}
+
+fn tool_instance(tool: &str) -> String {
+    format!("{PREFIX}/tools/{tool}")
+}
+
+fn json_ok(value: &serde_json::Value) -> Response {
+    let mut response = value.to_string().into_response();
+    set_headers(&mut response, "application/json");
+    response
+}
+
+fn set_headers(response: &mut Response, content_type: &'static str) {
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proxiima_core::protocol::tool as protocol_tool;
+
+    #[test]
+    fn method_gate_admits_query_only_for_reads() {
+        assert!(gate_method(&Method::POST, Allow::tool(false), "/v1/tools/x").is_ok());
+        assert!(gate_method(&Method::POST, Allow::tool(true), "/v1/tools/x").is_ok());
+        assert!(gate_method(&Method::QUERY, Allow::tool(true), "/v1/tools/x").is_ok());
+
+        let denied = gate_method(&Method::QUERY, Allow::action(false), "/v1/tools/x/y")
+            .expect_err("QUERY on a write must be refused");
+        let json = denied.to_json();
+        assert_eq!(json["status"], 405);
+        assert_eq!(
+            json["type"],
+            "https://proxiima.dev/errors/method-not-allowed"
+        );
+
+        assert!(gate_method(&Method::DELETE, Allow::tool(true), "/v1/tools/x").is_err());
+    }
+
+    /// The header says `QUERY` exactly when the gate admits it.
+    #[test]
+    fn allow_names_query_exactly_when_the_gate_admits_it() {
+        for allow in [
+            Allow::Post,
+            Allow::PostQuery,
+            Allow::GetPost,
+            Allow::GetPostQuery,
+        ] {
+            assert_eq!(allow.header().contains("QUERY"), allow.admits_query());
+            assert_eq!(
+                gate_method(&Method::QUERY, allow, "/v1/tools/x").is_ok(),
+                allow.admits_query()
+            );
+        }
+    }
+
+    #[test]
+    fn action_injection_refuses_a_body_that_agrees() {
+        let injected = inject_action(
+            serde_json::json!({ "title": "t" }),
+            "set",
+            "/v1/tools/core_goal/set",
+        )
+        .expect("clean body");
+        assert_eq!(injected["action"], "set");
+
+        for body in [
+            serde_json::json!({ "action": "set" }),
+            serde_json::json!({ "action": "transition" }),
+        ] {
+            let err = inject_action(body, "set", "/v1/tools/core_goal/set")
+                .expect_err("a body action must be refused, agreeing or not");
+            assert_eq!(err.to_json()["status"], 400);
+            assert_eq!(
+                err.to_json()["type"],
+                "https://proxiima.dev/errors/action-conflict"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_body_is_an_empty_argument_object() {
+        let args = request_arguments(&Bytes::new(), "/v1/tools/core_memory_spaces")
+            .expect("empty body is legal");
+        assert_eq!(args, serde_json::json!({}));
+
+        assert!(request_arguments(&Bytes::from_static(b"[1,2]"), "/v1/tools/x").is_err());
+        assert!(request_arguments(&Bytes::from_static(b"{oops"), "/v1/tools/x").is_err());
+    }
+
+    /// Read/write for an action route is resolved per action, never from the
+    /// parent tool. `core_membership` and `core_upload` are write-annotated
+    /// parents with a read-only leaf each; `core_fact` is the mirror case, a
+    /// read-only parent whose leaves must be re-checked rather than assumed.
+    #[test]
+    fn action_read_only_is_resolved_per_action_not_per_tool() {
+        let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+        let descriptor = |name: &str| {
+            registry
+                .list_mcp_tools()
+                .iter()
+                .find(|descriptor| descriptor.name == name)
+                .unwrap_or_else(|| panic!("{name} is registered"))
+        };
+
+        let membership = descriptor(protocol_tool::CORE_MEMBERSHIP);
+        assert!(!membership.is_read_only(), "parent is a write tool");
+        assert!(
+            membership.action_is_read_only("list_members"),
+            "a read-only leaf must keep QUERY under a write parent"
+        );
+        assert!(!membership.action_is_read_only("add_member"));
+        assert!(!membership.action_is_read_only("remove_member"));
+
+        let upload = descriptor(protocol_tool::CORE_UPLOAD);
+        assert!(!upload.is_read_only(), "parent is a write tool");
+        assert!(!upload.action_is_read_only("prepare"));
+
+        // The direction that matters for safety: every leaf of a read-only
+        // parent is checked on its own, so adding a write action here cannot
+        // inherit `QUERY` from the tool's effect.
+        let fact = descriptor(protocol_tool::CORE_FACT);
+        assert!(fact.is_read_only());
+        for spec in fact.action_arg_specs {
+            assert_eq!(
+                fact.action_is_read_only(spec.action),
+                spec.effect.is_read_only(),
+                "{} must answer from its own descriptor spec",
+                spec.action
+            );
+        }
+    }
+
+    /// Every resource in the catalog maps onto a `/v1/resources/…` path;
+    /// the mapping is total, so a `None` here would be a resource REST
+    /// cannot reach.
+    #[test]
+    fn every_core_resource_has_a_rest_path() {
+        for meta in all_core_resources() {
+            let json = resource_json(meta);
+            let path = json["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{} has no REST path: {}", meta.name, meta.uri_template));
+            assert!(path.starts_with("/v1/resources/"), "{path}");
+        }
+    }
+}

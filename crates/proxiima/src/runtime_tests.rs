@@ -290,9 +290,9 @@ fn listener_hosts_derives_public_hosts_on_loopback_bind() {
         .served_surface(ServedSurface::All)
         .mcp_bind("127.0.0.1:31415".parse().unwrap())
         .allowed_origins(vec!["https://app.example.com".to_string()])
-        .resource_metadata(proxiima_mcp_server::ResourceServerMetadata {
+        .resource_metadata(proxiima_server::ResourceServerMetadata {
             public_url: "https://proxy.example.com".to_string(),
-            authorization_servers: proxiima_mcp_server::AuthorizationServers::Issuers(vec![
+            authorization_servers: proxiima_server::AuthorizationServers::Issuers(vec![
                 "https://idp.test".to_string(),
             ]),
             additional_scopes: Vec::new(),
@@ -361,9 +361,9 @@ fn listener_hosts_includes_public_url_host_distinct_from_origins() {
         .mcp_bind("0.0.0.0:8080".parse().unwrap())
         .expose_network(true)
         .allowed_origins(vec!["https://app.example.com".to_string()])
-        .resource_metadata(proxiima_mcp_server::ResourceServerMetadata {
+        .resource_metadata(proxiima_server::ResourceServerMetadata {
             public_url: "https://proxiima.example.com".to_string(),
-            authorization_servers: proxiima_mcp_server::AuthorizationServers::Issuers(vec![
+            authorization_servers: proxiima_server::AuthorizationServers::Issuers(vec![
                 "https://idp.test".to_string(),
             ]),
             additional_scopes: Vec::new(),
