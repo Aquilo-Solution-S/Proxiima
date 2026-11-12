@@ -788,8 +788,9 @@ async fn automatic_follows_installation_precedes_spiice_lanes_and_serves_skip_bo
     use std::borrow::Cow;
 
     use proxiima::spiice::SpiiceBundle;
-    use proxiima::{NamedMigrator, PgMigrationStorage, PgPoolConfig, PgTuning, Proxiima};
+    use proxiima::{NamedMigrator, PgPoolConfig, PgTuning, Proxiima};
     use proxiima_example::ExampleSpiice;
+    use proxiima_storage_pg::PgMigrationStorage;
     use sqlx::migrate::{Migration, MigrationType, Migrator};
 
     let db = split_core_db::clone_split_core_db("proxiima_follows_order")
@@ -829,7 +830,7 @@ async fn automatic_follows_installation_precedes_spiice_lanes_and_serves_skip_bo
         .expect("runner registers Follows before spiice lanes and installs it afterwards");
     let pool = pg.clone_pool_for_backend();
     let mut connection = pool.acquire().await.expect("connection");
-    let mut transaction = proxiima::begin_migration_transaction(&mut connection)
+    let mut transaction = proxiima_storage_pg::begin_migration_transaction(&mut connection)
         .await
         .expect("platform transaction");
     sidecars
@@ -859,8 +860,9 @@ async fn automatic_follows_installation_precedes_spiice_lanes_and_serves_skip_bo
 #[tokio::test]
 async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() {
     use proxiima::spiice::SpiiceBundle;
-    use proxiima::{MigrationError, PgMigrationStorage, PgPoolConfig, PgTuning};
+    use proxiima::{MigrationError, PgPoolConfig, PgTuning};
     use proxiima_example::ExampleSpiice;
+    use proxiima_storage_pg::PgMigrationStorage;
 
     let db = example_engine::migrated_db("proxiima_follows_preflight").await;
     let pg = PgMigrationStorage::connect_with_config(
@@ -881,7 +883,7 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
     ] {
         let pool = pg.clone_pool_for_backend();
         let mut connection = pool.acquire().await.expect("connection");
-        let mut transaction = proxiima::begin_migration_transaction(&mut connection)
+        let mut transaction = proxiima_storage_pg::begin_migration_transaction(&mut connection)
             .await
             .expect("platform transaction");
         mutation
@@ -948,8 +950,9 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
 #[tokio::test]
 async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() {
     use proxiima::spiice::SpiiceBundle;
-    use proxiima::{MigrationError, PgMigrationStorage, PgPoolConfig, PgTuning};
+    use proxiima::{MigrationError, PgPoolConfig, PgTuning};
     use proxiima_example::ExampleSpiice;
+    use proxiima_storage_pg::PgMigrationStorage;
 
     let db = example_engine::migrated_db("proxiima_follows_absent").await;
     let pg = PgMigrationStorage::connect_with_config(
@@ -961,7 +964,7 @@ async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() 
     .expect("migration storage");
     let pool = pg.clone_pool_for_backend();
     let mut connection = pool.acquire().await.expect("connection");
-    let mut transaction = proxiima::begin_migration_transaction(&mut connection)
+    let mut transaction = proxiima_storage_pg::begin_migration_transaction(&mut connection)
         .await
         .expect("platform transaction");
     sqlx::query("DROP TABLE proxiima_example.stamp_v1 CASCADE")
@@ -1010,8 +1013,9 @@ async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() 
 #[tokio::test]
 async fn empty_sql_run_replaces_an_owner_only_follows_policy() {
     use proxiima::spiice::SpiiceBundle;
-    use proxiima::{MigrationError, PgMigrationStorage, PgPoolConfig, PgTuning};
+    use proxiima::{MigrationError, PgPoolConfig, PgTuning};
     use proxiima_example::ExampleSpiice;
+    use proxiima_storage_pg::PgMigrationStorage;
 
     let db = example_engine::migrated_db("proxiima_follows_owner_only_upgrade").await;
     let pg = PgMigrationStorage::connect_with_config(
@@ -1026,7 +1030,7 @@ async fn empty_sql_run_replaces_an_owner_only_follows_policy() {
     // Recreate the pre-200fe438 state: no mark, spiice-installed owner_id class.
     let pool = pg.clone_pool_for_backend();
     let mut connection = pool.acquire().await.expect("connection");
-    let mut transaction = proxiima::begin_migration_transaction(&mut connection)
+    let mut transaction = proxiima_storage_pg::begin_migration_transaction(&mut connection)
         .await
         .expect("platform transaction");
     sqlx::query(
@@ -1100,7 +1104,7 @@ async fn a_registered_follows_table_missing_after_migrations_refuses_the_run() {
     let db = split_core_db::clone_split_core_db("proxiima_follows_missing")
         .await
         .expect("owned test database");
-    let pg = proxiima::PgMigrationStorage::connect_with_config(
+    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),
@@ -1130,8 +1134,10 @@ fn sqlstate(error: &sqlx::Error) -> Option<String> {
         .map(std::borrow::Cow::into_owned)
 }
 
-async fn migration_storage(db: &proxiima::testkit::SplitRoleDb) -> proxiima::PgMigrationStorage {
-    proxiima::PgMigrationStorage::connect_with_config(
+async fn migration_storage(
+    db: &proxiima::testkit::SplitRoleDb,
+) -> proxiima_storage_pg::PgMigrationStorage {
+    proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),
@@ -1351,7 +1357,7 @@ async fn a_recreated_recorded_table_gets_the_generated_policies_back() {
     pg.clone_pool_for_backend().close().await;
 }
 
-async fn migrate_example(pg: &proxiima::PgMigrationStorage) {
+async fn migrate_example(pg: &proxiima_storage_pg::PgMigrationStorage) {
     use proxiima::spiice::SpiiceBundle;
     use proxiima_example::ExampleSpiice;
 
@@ -1366,7 +1372,7 @@ async fn migrate_example(pg: &proxiima::PgMigrationStorage) {
 
 /// The refusal of owner policies other than the ones core installed, as
 /// serving boot reports it: the tables it names.
-async fn altered_policy_refusal(pg: &proxiima::PgMigrationStorage) -> Option<String> {
+async fn altered_policy_refusal(pg: &proxiima_storage_pg::PgMigrationStorage) -> Option<String> {
     use proxiima::MigrationError;
     use proxiima::spiice::SpiiceBundle;
     use proxiima_example::ExampleSpiice;

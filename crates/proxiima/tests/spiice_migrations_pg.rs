@@ -90,7 +90,7 @@ async fn failing_late_historical_lane_rolls_back_catalog_and_ledgers() {
     let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_late_history_rollback", &[])
         .await
         .expect("owned test database");
-    let pg = proxiima::PgMigrationStorage::connect_with_config(
+    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),
@@ -287,7 +287,7 @@ async fn installed_historical_example_upgrades_in_place_with_its_real_ledger() {
     let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_installed_history", &[])
         .await
         .expect("owned test database");
-    let pg = proxiima::PgMigrationStorage::connect_with_config(
+    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),

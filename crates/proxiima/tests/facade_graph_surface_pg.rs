@@ -1550,7 +1550,7 @@ fn facade_sidecars() -> proxiima::PgSidecarRegistryFrozen {
 
 async fn migrate_facade(db: &proxiima_pg_testkit::SplitRoleDb) {
     let sidecars = facade_sidecars();
-    let pg = proxiima::PgMigrationStorage::connect_with_config(
+    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),
@@ -1626,7 +1626,7 @@ async fn corrupt_lexical_body(pool: &sqlx::PgPool) {
 async fn facade_preflight(
     db: &proxiima_pg_testkit::SplitRoleDb,
 ) -> Result<(), proxiima::MigrationError> {
-    let pg = proxiima::PgMigrationStorage::connect_with_config(
+    let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         db.platform_url(),
         proxiima::PgPoolConfig::default(),
         proxiima::PgTuning::default(),
@@ -1745,7 +1745,7 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
     );
 
     let migration = {
-        let pg = proxiima::PgMigrationStorage::connect_with_config(
+        let pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
             split_db.platform_url(),
             proxiima::PgPoolConfig::default(),
             proxiima::PgTuning::default(),

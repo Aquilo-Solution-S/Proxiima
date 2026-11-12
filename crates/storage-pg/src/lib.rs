@@ -308,6 +308,9 @@ pub async fn pending_core_schema(
 /// Run the core `SQLx` migrations a store of this kind applies, then its
 /// definitions. The transaction holds the migration lock until commit.
 ///
+/// This is test support: a deployment migrates through the facade's migrate
+/// step.
+///
 /// ```compile_fail,E0308
 /// fn migrate(connection: &mut sqlx::PgConnection) {
 ///     let _ = proxiima_storage_pg::run_core_schema(
@@ -318,12 +321,10 @@ pub async fn pending_core_schema(
 /// }
 /// ```
 ///
-/// The `policy` argument is `Allow` from the facade after composed host-ledger
-/// and definitions validation, and `Reject` for direct storage runs.
-///
 /// # Errors
 ///
 /// Refuses incompatible ledgers or definitions and propagates SQL failures.
+#[cfg(any(test, feature = "testkit"))]
 pub async fn run_core_schema(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     policy: MissingMigrationPolicy,
@@ -368,15 +369,15 @@ pub async fn ensure_core_ledger_compatible_on_connection_with_policy(
 }
 
 /// Require every embedded core version and the current definitions checksum.
-/// This read-only preflight is used by hosts that skip migrations.
 ///
-/// The `policy` argument is `Allow` from the facade after composed host-ledger
-/// and definitions validation, and `Reject` for direct storage runs.
+/// This is test support: a deployment validates through the facade, which
+/// refuses a database its migrate step has not brought current.
 ///
 /// # Errors
 ///
 /// Refuses incompatible ledgers, missing migrations or definitions, and newer
 /// releases without issuing migration DDL.
+#[cfg(any(test, feature = "testkit"))]
 pub async fn ensure_core_schema_current(
     pool: &PgPool,
     policy: MissingMigrationPolicy,
@@ -577,6 +578,7 @@ pub struct PgMigrationStorage {
     vectors: VectorStorage,
 }
 
+#[cfg(any(test, feature = "testkit"))]
 async fn run_migrations_on_pool(
     pool: &PgPool,
     tuning: &PgTuning,
@@ -618,7 +620,7 @@ impl PgMigrationStorage {
     ///
     /// # Errors
     /// Returns pool configuration or database connection errors. Migration
-    /// authority is validated when [`Self::run_migrations`] starts its transaction.
+    /// authority is validated when the migration transaction starts.
     pub async fn connect_with_config(
         url: &str,
         pool_config: PgPoolConfig,
@@ -691,9 +693,13 @@ impl PgMigrationStorage {
         self.pool.clone()
     }
 
+    /// Run the core schema on this lane. This is test support: a deployment
+    /// migrates through the facade's migrate step.
+    ///
     /// # Errors
     ///
     /// Returns migration or database compatibility errors.
+    #[cfg(any(test, feature = "testkit"))]
     pub async fn run_migrations(&self) -> Result<(), StorageError> {
         run_migrations_on_pool(&self.pool, &self.tuning, self.vectors).await
     }

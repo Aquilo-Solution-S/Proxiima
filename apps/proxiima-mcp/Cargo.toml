@@ -37,6 +37,7 @@ base64 = { workspace = true }
 proxiima-auth-oidc = { path = "../../crates/auth-oidc" }
 proxiima-core = { path = "../../crates/core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../../crates/pg-testkit" }
+proxiima-storage-pg = { path = "../../crates/storage-pg", features = ["testkit"] }
 proxiima-example = { path = "../../spiices/example", features = ["testkit"] }
 jsonwebtoken = { workspace = true }
 uuid = { workspace = true }

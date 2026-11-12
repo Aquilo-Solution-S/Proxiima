@@ -650,12 +650,6 @@ pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
     memories_citing, memory_embeddings, memory_versions, series_versions,
 };
-/// Migration-only storage and core schema operations for a host's schema lane.
-/// [`MigrationStorage`] is the shared bound of the facade migration runners.
-pub use proxiima_storage_pg::{
-    PgMigrationStorage, begin_migration_transaction, core_migrator, core_migrator_for,
-    ensure_core_schema_current, run_core_schema,
-};
 /// Owner-RLS boot: the runtime-role guard, the platform scope
 /// [`ProxiimaHost::platform_scope_for_host`] returns, and the sqlx →
 /// [`StorageError`] classifier for host-state SQL.
