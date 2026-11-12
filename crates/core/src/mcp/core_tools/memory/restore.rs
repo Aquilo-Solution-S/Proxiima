@@ -1,6 +1,6 @@
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ pub struct RestoreOutput {
 #[derive(Debug)]
 pub struct RestoreTool;
 
-impl McpTool for RestoreTool {
+impl Tool for RestoreTool {
     const NAME: &'static str = protocol_tool::CORE_RESTORE;
     const TITLE: &'static str = "Restore a memory";
     const DESCRIPTION: &'static str = "Bring back a forgotten memory; a live one is unchanged.";
@@ -34,9 +34,9 @@ impl McpTool for RestoreTool {
     type Output = RestoreOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: RestoreArgs,
-    ) -> futures::future::BoxFuture<'static, Result<RestoreOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<RestoreOutput, ToolError>> {
         Box::pin(async move {
             let memory_id = ctx.resolve_memory(&args.memory)?;
             let (space, authz) =

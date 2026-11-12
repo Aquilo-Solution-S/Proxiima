@@ -1,49 +1,7 @@
 use crate::ToolError;
 
-#[derive(Debug, thiserror::Error)]
-pub enum McpToolError {
-    #[error("invalid input: {0}")]
-    InvalidInput(String),
-    /// A well-formed reference to an entity that does not exist or is not
-    /// visible to the caller (deliberately indistinguishable). Resource
-    /// reads surface this as JSON-RPC `resource_not_found`; tool calls as
-    /// `invalid_params`. The message names the wire handle, e.g.
-    /// `memory <uuid> not found`.
-    #[error("{0}")]
-    NotFound(String),
-    #[error("tool not authorized: {0}")]
-    NotAuthorized(String),
-    #[error("{0}")]
-    Protocol(#[from] crate::error::ProtocolError),
-    #[error("layering violation: {0}")]
-    LayeringViolation(String),
-    #[error("storage: {0}")]
-    Storage(#[from] crate::StorageError),
-    /// A required capability (e.g. a semantic-search embedding client) is not
-    /// configured for this host. Unlike [`Self::Other`], its message is a
-    /// caller-actionable precondition and is passed through verbatim rather
-    /// than redacted to a generic internal-server-error.
-    #[error("{0}")]
-    Unavailable(String),
-    /// Another store did not answer (timed out, failed, or answered for a
-    /// different memory). Says nothing about whether the memory exists, and
-    /// is retryable. The message names the store number only: the port's
-    /// own error text may carry the remote store's internals.
-    #[error("store {store} unavailable")]
-    StoreUnavailable { store: u16 },
-    /// The tool ran and failed, in its own words
-    /// ([`ToolError::Failure`]). A tool call answers it as
-    /// [`ToolReply::Failure`](crate::ToolReply::Failure), `isError: true`
-    /// with this text unchanged; it is a protocol error only on a path
-    /// that is not a tool call, and its text stays verbatim there too.
-    #[error("{0}")]
-    Failure(String),
-    #[error("{0}")]
-    Other(String),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpToolErrorKind {
+pub enum ToolErrorKind {
     InvalidInput,
     /// Well-formed reference to a missing (or invisible) entity.
     NotFound,
@@ -54,33 +12,33 @@ pub enum McpToolErrorKind {
     /// policy can tell "the outbox is full" from "the substrate is broken";
     /// [`Self::Internal`] would page an operator for a queue depth.
     ///
-    /// NOT the class of [`McpToolError::Unavailable`], which is a
+    /// NOT the class of [`ToolError::Unavailable`], which is a
     /// PERMANENT missing-capability precondition (no embedding client is
     /// configured) that retrying will never resolve — that stays
     /// [`Self::InvalidRequest`].
     CapacityExhausted,
     /// Another store did not answer. Retryable, like
     /// [`Self::CapacityExhausted`], and never "not found": the memory may
-    /// well exist. NOT the class of [`McpToolError::Unavailable`], which is
+    /// well exist. NOT the class of [`ToolError::Unavailable`], which is
     /// permanent.
     StoreUnavailable,
     Internal,
 }
 
-impl McpToolError {
+impl ToolError {
     #[must_use]
-    pub fn kind(&self) -> McpToolErrorKind {
+    pub fn kind(&self) -> ToolErrorKind {
         match self {
-            Self::InvalidInput(_) => McpToolErrorKind::InvalidInput,
-            Self::NotFound(_) => McpToolErrorKind::NotFound,
+            Self::InvalidInput(_) => ToolErrorKind::InvalidInput,
+            Self::NotFound(_) => ToolErrorKind::NotFound,
             Self::NotAuthorized(_) | Self::LayeringViolation(_) | Self::Unavailable(_) => {
-                McpToolErrorKind::InvalidRequest
+                ToolErrorKind::InvalidRequest
             }
             Self::Protocol(e) => match e.code {
-                crate::error::ErrorCode::InvalidArgument => McpToolErrorKind::InvalidInput,
-                crate::error::ErrorCode::NotFound => McpToolErrorKind::NotFound,
-                crate::error::ErrorCode::Internal => McpToolErrorKind::Internal,
-                crate::error::ErrorCode::CapacityExhausted => McpToolErrorKind::CapacityExhausted,
+                crate::error::ErrorCode::InvalidArgument => ToolErrorKind::InvalidInput,
+                crate::error::ErrorCode::NotFound => ToolErrorKind::NotFound,
+                crate::error::ErrorCode::Internal => ToolErrorKind::Internal,
+                crate::error::ErrorCode::CapacityExhausted => ToolErrorKind::CapacityExhausted,
                 crate::error::ErrorCode::AuthRequired
                 | crate::error::ErrorCode::Forbidden
                 | crate::error::ErrorCode::UnknownSchema
@@ -89,28 +47,28 @@ impl McpToolError {
                 | crate::error::ErrorCode::ToolNotRegistered
                 | crate::error::ErrorCode::TriggerConflict
                 | crate::error::ErrorCode::DuplicateTriggerInRequest
-                | crate::error::ErrorCode::Suppressed => McpToolErrorKind::InvalidRequest,
+                | crate::error::ErrorCode::Suppressed => ToolErrorKind::InvalidRequest,
             },
             Self::Storage(storage) => match storage {
                 crate::StorageError::ConstraintViolation(_)
                 | crate::StorageError::GoalChildrenOpen { .. }
-                | crate::StorageError::GoalChildrenAllAbandoned => McpToolErrorKind::InvalidInput,
+                | crate::StorageError::GoalChildrenAllAbandoned => ToolErrorKind::InvalidInput,
                 crate::StorageError::Refused { rule, .. } => match rule.class() {
-                    crate::RuleClass::Invalid => McpToolErrorKind::InvalidInput,
+                    crate::RuleClass::Invalid => ToolErrorKind::InvalidInput,
                     crate::RuleClass::Conflict | crate::RuleClass::Forbidden => {
-                        McpToolErrorKind::InvalidRequest
+                        ToolErrorKind::InvalidRequest
                     }
-                    crate::RuleClass::Deployment => McpToolErrorKind::Internal,
+                    crate::RuleClass::Deployment => ToolErrorKind::Internal,
                 },
                 crate::StorageError::NotFound | crate::StorageError::ScopeMissing { .. } => {
-                    McpToolErrorKind::NotFound
+                    ToolErrorKind::NotFound
                 }
                 crate::StorageError::Forbidden(_)
                 | crate::StorageError::UnreadableRead { .. }
                 | crate::StorageError::Conflict(_)
                 | crate::StorageError::Suppressed(_)
                 | crate::StorageError::IdempotencyConflict { .. }
-                | crate::StorageError::ReplayChanged(_) => McpToolErrorKind::InvalidRequest,
+                | crate::StorageError::ReplayChanged(_) => ToolErrorKind::InvalidRequest,
                 // A refused publication capture keeps the split the write
                 // path already draws: an oversized or unexportable payload
                 // and a listenable write on the receipt-only route are the
@@ -120,16 +78,16 @@ impl McpToolError {
                     crate::publication::PublicationError::PayloadTooLarge { .. }
                     | crate::publication::PublicationError::ExportFailed(_)
                     | crate::publication::PublicationError::UntypedListenableWrite { .. } => {
-                        McpToolErrorKind::InvalidInput
+                        ToolErrorKind::InvalidInput
                     }
                     crate::publication::PublicationError::SourceUnbound { .. } => {
-                        McpToolErrorKind::Internal
+                        ToolErrorKind::Internal
                     }
                     // Backpressure, not a fault: the write was legal and the
                     // publisher is behind. A caller told "internal server
                     // error" learns nothing and retries immediately.
                     crate::publication::PublicationError::CapacityExhausted { .. } => {
-                        McpToolErrorKind::CapacityExhausted
+                        ToolErrorKind::CapacityExhausted
                     }
                 },
                 crate::StorageError::Retryable(_)
@@ -137,11 +95,11 @@ impl McpToolError {
                 | crate::StorageError::Internal(_)
                 | crate::StorageError::MemoryIdCollision
                 | crate::StorageError::SchemaResetRequired { .. }
-                | crate::StorageError::MigrationRequired { .. } => McpToolErrorKind::Internal,
+                | crate::StorageError::MigrationRequired { .. } => ToolErrorKind::Internal,
             },
-            Self::StoreUnavailable { .. } => McpToolErrorKind::StoreUnavailable,
-            Self::Failure(_) => McpToolErrorKind::InvalidRequest,
-            Self::Other(_) => McpToolErrorKind::Internal,
+            Self::StoreUnavailable { .. } => ToolErrorKind::StoreUnavailable,
+            Self::Failure(_) => ToolErrorKind::InvalidRequest,
+            Self::Other(_) => ToolErrorKind::Internal,
         }
     }
 
@@ -151,48 +109,32 @@ impl McpToolError {
             return format!("tool {name} not authorized for this MCP token");
         }
         match self.kind() {
-            McpToolErrorKind::InvalidInput
-            | McpToolErrorKind::NotFound
-            | McpToolErrorKind::InvalidRequest
+            ToolErrorKind::InvalidInput
+            | ToolErrorKind::NotFound
+            | ToolErrorKind::InvalidRequest
             // Verbatim: the message carries the backlog depth and the
             // configured bound, which is exactly what a caller needs to
             // decide how long to wait.
-            | McpToolErrorKind::CapacityExhausted
+            | ToolErrorKind::CapacityExhausted
             // Verbatim: names the store number and nothing from the port.
-            | McpToolErrorKind::StoreUnavailable => self.to_string(),
-            McpToolErrorKind::Internal => "internal server error".to_string(),
-        }
-    }
-}
-
-impl From<ToolError> for McpToolError {
-    fn from(err: ToolError) -> Self {
-        match err {
-            ToolError::InvalidInput(message) => Self::InvalidInput(message),
-            ToolError::NotFound(message) => Self::NotFound(message),
-            ToolError::NotAuthorized(tool) => Self::NotAuthorized(tool),
-            ToolError::Protocol(err) => Self::Protocol(err),
-            ToolError::LayeringViolation(message) => Self::LayeringViolation(message),
-            ToolError::Storage(err) => Self::Storage(err),
-            ToolError::Unavailable(message) => Self::Unavailable(message),
-            ToolError::Failure(text) => Self::Failure(text),
-            ToolError::Other(message) => Self::Other(message),
+            | ToolErrorKind::StoreUnavailable => self.to_string(),
+            ToolErrorKind::Internal => "internal server error".to_string(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{McpToolError, McpToolErrorKind};
+    use super::{ToolError, ToolErrorKind};
 
     #[test]
     fn unavailable_message_reaches_caller_verbatim() {
-        let err = McpToolError::Unavailable(
+        let err = ToolError::Unavailable(
             "semantic search unavailable: no embedding client is configured for this host".into(),
         );
         // Precondition faults classify as a well-formed-but-illegal request,
         // NOT an internal fault (which would redact the message).
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidRequest);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidRequest);
         assert_eq!(
             err.client_message(),
             "semantic search unavailable: no embedding client is configured for this host"
@@ -209,54 +151,47 @@ mod tests {
         for (refusal, expected) in [
             (
                 PublicationError::PayloadTooLarge { bytes: 9, max: 8 },
-                McpToolErrorKind::InvalidInput,
+                ToolErrorKind::InvalidInput,
             ),
             (
                 PublicationError::ExportFailed("nope".into()),
-                McpToolErrorKind::InvalidInput,
+                ToolErrorKind::InvalidInput,
             ),
             (
                 PublicationError::UntypedListenableWrite {
                     schema_id: "x/y-v1".into(),
                 },
-                McpToolErrorKind::InvalidInput,
+                ToolErrorKind::InvalidInput,
             ),
             (
                 PublicationError::SourceUnbound {
                     schema_id: "x/y-v1".into(),
                 },
-                McpToolErrorKind::Internal,
+                ToolErrorKind::Internal,
             ),
         ] {
-            let err = McpToolError::Storage(crate::StorageError::PublicationRefused(refusal));
+            let err = ToolError::Storage(crate::StorageError::PublicationRefused(refusal));
             assert_eq!(err.kind(), expected, "for {err}");
         }
     }
 
-    /// #480: another store that did not answer is its own retryable kind,
+    /// Another store that did not answer is its own retryable kind,
     /// distinct from `NotFound` (an answer) and `Unavailable` (permanent).
     #[test]
     fn an_unanswered_store_is_store_unavailable_and_verbatim() {
-        let err = McpToolError::StoreUnavailable { store: 7 };
-        assert_eq!(err.kind(), McpToolErrorKind::StoreUnavailable);
+        let err = ToolError::StoreUnavailable { store: 7 };
+        assert_eq!(err.kind(), ToolErrorKind::StoreUnavailable);
         assert_eq!(err.client_message(), "store 7 unavailable");
     }
 
     #[test]
-    fn tool_error_not_found_and_unavailable_map_losslessly() {
-        let not_found = McpToolError::from(crate::ToolError::NotFound("repo not found".into()));
-        assert!(matches!(not_found, McpToolError::NotFound(ref m) if m == "repo not found"));
-        assert_eq!(not_found.kind(), McpToolErrorKind::NotFound);
+    fn not_found_and_unavailable_reach_the_caller_verbatim() {
+        let not_found = ToolError::NotFound("repo not found".into());
+        assert_eq!(not_found.kind(), ToolErrorKind::NotFound);
         assert_eq!(not_found.client_message(), "repo not found");
 
-        let unavailable = McpToolError::from(crate::ToolError::Unavailable(
-            "semantic search unavailable".into(),
-        ));
-        assert!(matches!(
-            unavailable,
-            McpToolError::Unavailable(ref m) if m == "semantic search unavailable"
-        ));
-        assert_eq!(unavailable.kind(), McpToolErrorKind::InvalidRequest);
+        let unavailable = ToolError::Unavailable("semantic search unavailable".into());
+        assert_eq!(unavailable.kind(), ToolErrorKind::InvalidRequest);
         assert_eq!(unavailable.client_message(), "semantic search unavailable");
         assert_ne!(unavailable.client_message(), "internal server error");
     }

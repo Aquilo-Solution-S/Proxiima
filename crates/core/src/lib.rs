@@ -80,15 +80,14 @@ pub use goal::{SimpleTextGoalV1, TaskGoalV1, TaskPriority};
 pub use ids::*;
 pub use llm::*;
 pub use mcp::{
-    CoreActionMeta, JudgedKey, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS, McpAuthorContext,
-    McpCallFn, McpHostToolCall, McpTool, McpToolAnnotations, McpToolAudience, McpToolCtx,
-    McpToolDescriptor, McpToolError, McpToolErrorKind, McpToolOrigin, McpUnknownFieldPolicy,
+    CoreActionMeta, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS, McpCallFn, McpHostToolCall,
+    McpToolAnnotations, McpToolAudience, McpToolDescriptor, McpToolOrigin, McpUnknownFieldPolicy,
     MemoryHandleClass, Next, OperatorLabelConflict, OwnerNeed, Replay, RequestBehavior,
-    ScopeGateBehavior, TerminalDispatch, ToolContent, ToolDescriptorView, ToolEffect, ToolReply,
-    ToolSource, UNKNOWN_OPERATOR_LABEL, all_core_actions, all_core_resources, canonical_scope_keys,
-    canonical_scope_keys_excluding, canonical_served_read_keys, core_action_meta,
-    how_to_resource_declaration, how_to_resource_key, operator_label, provider_safe_tool_name,
-    resolve_operator_label, tool_name_matches,
+    ScopeGateBehavior, TerminalDispatch, ToolContent, ToolDescriptorView, ToolEffect,
+    ToolErrorKind, ToolReply, ToolSource, UNKNOWN_OPERATOR_LABEL, all_core_actions,
+    all_core_resources, canonical_scope_keys, canonical_scope_keys_excluding,
+    canonical_served_read_keys, core_action_meta, how_to_resource_declaration, how_to_resource_key,
+    provider_safe_tool_name, resolve_operator_label, tool_name_matches,
 };
 pub use memory::*;
 pub use memory_uuid::{memory_store_number, new_memory_uuid, new_memory_uuid_after};
@@ -368,14 +367,14 @@ macro_rules! proxiima_spiice {
                     // (asserted elsewhere) still require "<spiice>/".
                     const _: () = ::std::assert!(
                         $crate::schema_id_has_prefix(
-                            <$tool as $crate::McpTool>::NAME,
+                            <$tool as $crate::Tool>::NAME,
                             ::std::concat!($name, "/"),
                         ) || $crate::schema_id_has_prefix(
-                            <$tool as $crate::McpTool>::NAME,
+                            <$tool as $crate::Tool>::NAME,
                             ::std::concat!($name, "_"),
                         ),
                         ::std::concat!(
-                            "McpTool::NAME for ", ::std::stringify!($tool),
+                            "Tool::NAME for ", ::std::stringify!($tool),
                             " must start with \"", $name, "/\" or \"", $name, "_\"",
                         ),
                     );

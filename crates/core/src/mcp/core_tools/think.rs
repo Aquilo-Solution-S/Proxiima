@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::ancestry::{AncestorTarget, Unread};
 use crate::mcp::cursor as wire_cursor;
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::protocol::tool as protocol_tool;
 use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::{EdgeKind, InboundPinQuery, MemoryId};
+use crate::{Tool, ToolCtx, ToolError};
 
 const MAX_SEEDS: usize = 8;
 const MAX_DEPTH: u32 = 8;
@@ -110,7 +110,7 @@ pub struct ThinkVisit {
     pub unavailable_reason: Option<UnavailableReason>,
 }
 
-impl McpTool for ThinkTool {
+impl Tool for ThinkTool {
     const NAME: &'static str = protocol_tool::CORE_THINK;
     const TITLE: &'static str = "Think";
     const DESCRIPTION: &'static str = "Walk provenance links from seed memories and return sketches, page by page. Not a search. Read full bodies via proxiima://memory/{id}.";
@@ -118,15 +118,12 @@ impl McpTool for ThinkTool {
     type Args = ThinkArgs;
     type Output = ThinkOutput;
 
-    fn call(
-        ctx: McpToolCtx,
-        args: ThinkArgs,
-    ) -> BoxFuture<'static, Result<ThinkOutput, McpToolError>> {
+    fn call(ctx: ToolCtx, args: ThinkArgs) -> BoxFuture<'static, Result<ThinkOutput, ToolError>> {
         Box::pin(async move { think(ctx, args).await })
     }
 }
 
-async fn think(ctx: McpToolCtx, args: ThinkArgs) -> Result<ThinkOutput, McpToolError> {
+async fn think(ctx: ToolCtx, args: ThinkArgs) -> Result<ThinkOutput, ToolError> {
     require_seeds(&args.seeds)?;
     let limit = super::resolve_page_limit(Some(args.limit))?;
     let seeds: Vec<MemoryId> = args
@@ -205,18 +202,18 @@ impl Visit {
 }
 
 async fn pin_bfs(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     walk: WalkInput<'_>,
-) -> Result<ThinkOutput, McpToolError> {
+) -> Result<ThinkOutput, ToolError> {
     let fingerprint = think_fingerprint(walk.raw_seeds, walk.direction, Some(walk.depth));
     let after = walk
         .cursor
         .map(|raw| THINK_CURSOR.decode::<ThinkPageCursor>(&fingerprint, raw))
         .transpose()?;
-    let seed_pins = engine.pin_nodes(&ctx.authz, walk.seeds).await?;
+    let seed_pins = engine.pin_nodes(ctx.authz(), walk.seeds).await?;
     if seed_pins.is_empty() {
-        return Err(McpToolError::NotFound(format!(
+        return Err(ToolError::NotFound(format!(
             "memory {} not found",
             walk.raw_seeds[0]
         )));
@@ -255,7 +252,7 @@ async fn pin_bfs(
         let pins = if local.is_empty() {
             Vec::new()
         } else {
-            engine.pin_nodes(&ctx.authz, &local).await?
+            engine.pin_nodes(ctx.authz(), &local).await?
         };
         let kinds: std::collections::HashMap<MemoryId, crate::EntityKind> =
             pins.into_iter().map(|node| (node.id, node.kind)).collect();
@@ -303,9 +300,9 @@ async fn pin_bfs(
 /// read through the port in one bounded batch.
 async fn hydrate_visits(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     page: &[Visit],
-) -> Result<Vec<ThinkVisit>, McpToolError> {
+) -> Result<Vec<ThinkVisit>, ToolError> {
     let local_ids: Vec<MemoryId> = page
         .iter()
         .filter(|row| !row.is_remote())
@@ -364,13 +361,13 @@ fn cursor_index(ordered: &[Visit], cursor: &ThinkPageCursor) -> Option<usize> {
         .position(|visit| visit.depth == cursor.depth && visit.id == cursor.t)
 }
 
-fn walk_start(ordered: &[Visit], after: Option<&ThinkPageCursor>) -> Result<usize, McpToolError> {
+fn walk_start(ordered: &[Visit], after: Option<&ThinkPageCursor>) -> Result<usize, ToolError> {
     match after {
         None => Ok(0),
         Some(cursor) => cursor_index(ordered, cursor)
             .map(|idx| idx + 1)
             .ok_or_else(|| {
-                McpToolError::from(crate::mcp::cursor::cursor_query_mismatch(
+                ToolError::from(crate::mcp::cursor::cursor_query_mismatch(
                     THINK_CURSOR.rebind_hint,
                 ))
             }),
@@ -411,10 +408,10 @@ fn page_complete(ordered_len: usize, start: usize, limit: u32) -> bool {
 /// pinned you as an origin or a read, not what named you.
 async fn next_hop(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     direction: ThinkDirection,
     frontier: &[MemoryId],
-) -> Result<Vec<(MemoryId, bool, EdgeKind)>, McpToolError> {
+) -> Result<Vec<(MemoryId, bool, EdgeKind)>, ToolError> {
     match direction {
         ThinkDirection::Ancestors => Ok(super::ancestry::ancestor_edges(engine, ctx, frontier)
             .await?
@@ -429,7 +426,7 @@ async fn next_hop(
             for kind in [EdgeKind::Origin, EdgeKind::Read] {
                 let inbound = engine
                     .inbound_pin_nodes(
-                        &ctx.authz,
+                        ctx.authz(),
                         InboundPinQuery {
                             targets: frontier,
                             target_kind: PinTargetKind::Memory,
@@ -450,28 +447,28 @@ async fn next_hop(
 
 async fn hydrate_sketches(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     ids: &[MemoryId],
-) -> Result<Vec<crate::read_models::MemorySketch>, McpToolError> {
+) -> Result<Vec<crate::read_models::MemorySketch>, ToolError> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(engine.load_sketches(&ctx.authz, ids).await?)
+    Ok(engine.load_sketches(ctx.authz(), ids).await?)
 }
 
 async fn episode_siblings(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     raw_seeds: &[String],
     seeds: &[MemoryId],
     cursor: Option<&str>,
     limit: u32,
-) -> Result<ThinkOutput, McpToolError> {
+) -> Result<ThinkOutput, ToolError> {
     let fingerprint = think_fingerprint(raw_seeds, ThinkDirection::EpisodeSiblings, None);
     let after = cursor
         .map(|raw| THINK_CURSOR.decode::<MemoryId>(&fingerprint, raw))
         .transpose()?;
-    let pins = engine.pin_nodes(&ctx.authz, seeds).await?;
+    let pins = engine.pin_nodes(ctx.authz(), seeds).await?;
     let mut targets: Vec<MemoryId> = Vec::new();
     for node in &pins {
         targets.extend(node.refs.iter().copied());
@@ -488,7 +485,7 @@ async fn episode_siblings(
     }
     let inbound = engine
         .inbound_pin_nodes(
-            &ctx.authz,
+            ctx.authz(),
             InboundPinQuery {
                 targets: &targets,
                 target_kind: PinTargetKind::Memory,
@@ -543,14 +540,14 @@ fn think_fingerprint(seeds: &[String], direction: ThinkDirection, depth: Option<
     wire_cursor::fingerprint(&canon)
 }
 
-fn require_seeds(seeds: &[String]) -> Result<(), McpToolError> {
+fn require_seeds(seeds: &[String]) -> Result<(), ToolError> {
     if seeds.is_empty() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "think requires at least one seed".into(),
         ));
     }
     if seeds.len() > MAX_SEEDS {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SEEDS} seeds; got {}",
             seeds.len()
         )));

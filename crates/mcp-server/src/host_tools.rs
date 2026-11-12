@@ -2,7 +2,8 @@
 //! spiice registry, through the same scope gate and request behaviors.
 
 use async_trait::async_trait;
-use proxiima_core::mcp::{McpToolError, ToolCall, ToolEffect, ToolReply};
+use proxiima_core::ToolError;
+use proxiima_core::mcp::{ToolCall, ToolEffect, ToolReply};
 use proxiima_core::{McpHostToolCall, OwnerNeed, SpiiceServices};
 
 use crate::auth::McpAuthContext;
@@ -162,11 +163,11 @@ pub trait McpHostTools: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Any [`McpToolError`]; it fails the `tools/list`, or the `tools/call`
+    /// Any [`ToolError`]; it fails the `tools/list`, or the `tools/call`
     /// that needed the catalog, with the JSON-RPC error a registry tool's
     /// would map to. Proxiima never degrades to an empty list: a host that
     /// wants one on a failed read returns `Ok(Vec::new())`.
-    async fn list(&self, auth: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError>;
+    async fn list(&self, auth: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError>;
 
     /// The tool named `name` that [`Self::list`] returns for `auth`, if any.
     /// Called once per `tools/call` of a name the registry does not serve. A
@@ -176,13 +177,13 @@ pub trait McpHostTools: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Any [`McpToolError`]; it fails the `tools/call`, as a failed
+    /// Any [`ToolError`]; it fails the `tools/call`, as a failed
     /// [`Self::list`] does.
     async fn resolve(
         &self,
         auth: &McpAuthContext,
         name: &str,
-    ) -> Result<Option<McpHostTool>, McpToolError> {
+    ) -> Result<Option<McpHostTool>, ToolError> {
         Ok(self
             .list(auth)
             .await?
@@ -199,18 +200,18 @@ pub trait McpHostTools: Send + Sync + std::fmt::Debug {
     /// [`ToolReply::StructuredFailure`] when the failure also carries an
     /// object a program reads. The `Err` side is for a call that cannot be
     /// answered at all, and maps to a JSON-RPC error. The one exception is
-    /// [`McpToolError::Failure`], answered as a [`ToolReply::Failure`] of its
+    /// [`ToolError::Failure`], answered as a [`ToolReply::Failure`] of its
     /// text, as a registry tool's is.
     ///
     /// # Errors
     ///
-    /// Any [`McpToolError`]; it maps to the same JSON-RPC error a registry
+    /// Any [`ToolError`]; it maps to the same JSON-RPC error a registry
     /// tool's would. A [`ToolReply::Structured`] value must be a JSON
     /// object, and a [`ToolReply::Content`] or
     /// [`ToolReply::StructuredFailure`] reply is refused from a tool that
     /// declared an output schema; either is logged and returned as a
     /// redacted internal error.
-    async fn call(&self, call: ToolCall) -> Result<ToolReply, McpToolError>;
+    async fn call(&self, call: ToolCall) -> Result<ToolReply, ToolError>;
 
     /// Text this host adds to the server `instructions` `initialize` and
     /// `server/discover` return for `auth`, after Proxiima's generated text

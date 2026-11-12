@@ -4,9 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::mcp::{
-    McpToolAnnotations, McpToolCtx, McpToolDescriptor, McpToolError, McpToolOrigin,
-    ToolDescriptorView, core_action_meta,
+    McpToolAnnotations, McpToolDescriptor, McpToolOrigin, ToolDescriptorView, core_action_meta,
 };
+use crate::{ToolCtx, ToolError};
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListSubstrateToolsArgs {}
@@ -52,18 +52,18 @@ pub(super) fn substrate_tool_source(desc: &McpToolDescriptor) -> String {
 /// This projection is infallible; the `Result` shape matches the tool
 /// dispatch contract.
 pub async fn list_substrate_tools(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     _args: ListSubstrateToolsArgs,
-) -> Result<ListSubstrateToolsOutput, McpToolError> {
+) -> Result<ListSubstrateToolsOutput, ToolError> {
     Ok(ListSubstrateToolsOutput {
         tools: scoped_substrate_tools(&ctx),
     })
 }
 
 /// One caller-visible inventory for both catalog and graph reads.
-pub(super) fn scoped_substrate_tools(ctx: &McpToolCtx) -> Vec<SubstrateToolItem> {
+pub(super) fn scoped_substrate_tools(ctx: &ToolCtx) -> Vec<SubstrateToolItem> {
     let mut tools = Vec::new();
-    for desc in ctx.registry.list_mcp_tools() {
+    for desc in ctx.registry().list_mcp_tools() {
         if !tool_visible(ctx, desc) {
             continue;
         }
@@ -84,7 +84,7 @@ pub(super) fn scoped_substrate_tools(ctx: &McpToolCtx) -> Vec<SubstrateToolItem>
 /// envelope and prose, with no per-command field declarations. Core action
 /// metadata decorates known actions rather than defining the enumeration.
 pub(super) fn substrate_tool_actions(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     desc: &McpToolDescriptor,
 ) -> Vec<SubstrateToolActionItem> {
     desc.actions()
@@ -132,11 +132,11 @@ pub(super) fn substrate_tool_actions(
 
 /// Palette, owner role, then every request behavior's `visible`, which only
 /// narrows.
-fn action_visible(ctx: &McpToolCtx, tool: &McpToolDescriptor, action: &str) -> bool {
-    tool.action_advertised_by(ctx.authz.capabilities(), action)
+fn action_visible(ctx: &ToolCtx, tool: &McpToolDescriptor, action: &str) -> bool {
+    tool.action_advertised_by(ctx.authz().capabilities(), action)
         && ctx
-            .authz
-            .may_run_tool(&ctx.owner, tool.declaration(Some(action)).owner_access())
+            .authz()
+            .may_run_tool(&ctx.owner(), tool.declaration(Some(action)).owner_access())
         && ctx.behaviors_show(&ToolDescriptorView::registry(tool, Some(action)))
 }
 
@@ -145,8 +145,8 @@ fn action_visible(ctx: &McpToolCtx, tool: &McpToolDescriptor, action: &str) -> b
 /// exactly like an `action`-tagged one, so classifying it whole would hide a
 /// mostly-read CLI tool from a read-capable-only owner because one of its
 /// commands writes. Same rule the MCP server's `tools/list` applies.
-fn tool_visible(ctx: &McpToolCtx, tool: &McpToolDescriptor) -> bool {
-    if !tool.advertised_by(ctx.authz.capabilities()) {
+fn tool_visible(ctx: &ToolCtx, tool: &McpToolDescriptor) -> bool {
+    if !tool.advertised_by(ctx.authz().capabilities()) {
         return false;
     }
     if !tool.action_arg_specs.is_empty() {
@@ -158,8 +158,8 @@ fn tool_visible(ctx: &McpToolCtx, tool: &McpToolDescriptor) -> bool {
             .iter()
             .any(|spec| action_visible(ctx, tool, spec.action))
     } else {
-        ctx.authz
-            .may_run_tool(&ctx.owner, tool.declaration(None).owner_access())
+        ctx.authz()
+            .may_run_tool(&ctx.owner(), tool.declaration(None).owner_access())
             && ctx.behaviors_show(&ToolDescriptorView::registry(tool, None))
     }
 }
@@ -167,31 +167,19 @@ fn tool_visible(ctx: &McpToolCtx, tool: &McpToolDescriptor) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::McpAuthorContext;
     use crate::protocol::{action as protocol_action, tool as protocol_tool};
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceServices, UserId};
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
     use std::sync::Arc;
 
     #[tokio::test]
     async fn an_expired_context_lists_no_tool() {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let ctx = McpToolCtx {
+        let ctx = crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer)
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer)
                 .with_expires_at(Some(std::time::SystemTime::UNIX_EPOCH)),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        );
         let output = list_substrate_tools(ctx, ListSubstrateToolsArgs::default())
             .await
             .expect("catalog lists");
@@ -201,24 +189,13 @@ mod tests {
     #[tokio::test]
     async fn tool_catalog_exposes_action_level_metadata() {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let ctx = McpToolCtx {
+        let ctx = crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        );
 
-        let registry = ctx.registry.clone();
+        let registry = ctx.registry().clone();
         let output = list_substrate_tools(ctx, ListSubstrateToolsArgs::default())
             .await
             .expect("catalog lists");

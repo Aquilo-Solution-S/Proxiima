@@ -4,11 +4,11 @@
 //! §The Model). Connections to the subjects are index rows derived from
 //! the Perspective payload — nobody writes them except by writing the node.
 
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
 use crate::tool::validate_trimmed_len;
 use crate::{DerivedMemory, InterpretationSubjectKind, InterpretationV1, MemoryId, SeriesHandle};
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +81,7 @@ pub struct InterpretOutput {
 #[derive(Debug)]
 pub struct InterpretTool;
 
-impl McpTool for InterpretTool {
+impl Tool for InterpretTool {
     const NAME: &'static str = protocol_tool::CORE_INTERPRET;
     const TITLE: &'static str = "Interpret memories";
     const DESCRIPTION: &'static str = "Author a Perspective that interprets memories of any \
@@ -94,9 +94,9 @@ impl McpTool for InterpretTool {
     type Output = InterpretOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: InterpretArgs,
-    ) -> futures::future::BoxFuture<'static, Result<InterpretOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<InterpretOutput, ToolError>> {
         Box::pin(async move {
             let prepared = prepare_interpretation(&ctx, args).await?;
             let memory_id = MemoryId::new(fold_external_subjects(
@@ -110,13 +110,13 @@ impl McpTool for InterpretTool {
                 subject_memory_ids: prepared.subject_memory_ids,
                 subject_kinds: prepared.subject_kinds,
                 model_id: prepared.model_id.clone(),
-                client_name: ctx.author.client_name.clone(),
-                client_version: ctx.author.client_version.clone(),
+                client_name: ctx.caller().client_name.clone(),
+                client_version: ctx.caller().client_version.clone(),
             };
             let outcome = ctx
                 .require_engine()?
                 .derive_memory(
-                    &ctx.authz,
+                    ctx.authz(),
                     DerivedMemory::guided_interpretation(
                         prepared.supersedes.map_or(
                             crate::MemoryTarget::Series(SeriesHandle::new(memory_id.into_inner())),
@@ -157,26 +157,24 @@ struct PreparedInterpretation {
 }
 
 async fn prepare_interpretation(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     args: InterpretArgs,
-) -> Result<PreparedInterpretation, McpToolError> {
+) -> Result<PreparedInterpretation, ToolError> {
     let claim = validate_trimmed_len("claim", &args.claim, MAX_CLAIM_CHARS)?.to_string();
     if args.confidence > 100 {
-        return Err(McpToolError::InvalidInput(
-            "confidence must be 0..=100".into(),
-        ));
+        return Err(ToolError::InvalidInput("confidence must be 0..=100".into()));
     }
     if args.subjects.is_empty() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "an interpretation must be about at least one memory".into(),
         ));
     }
     if args.subjects.len() > MAX_SUBJECTS {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "subjects must contain at most {MAX_SUBJECTS} handles"
         )));
     }
-    let model_id = super::util::operator_label(ctx, args.model_id.as_deref())?;
+    let model_id = ctx.operator_label(args.model_id.as_deref())?;
     let guided_by = resolve_guided_goals(ctx, &args.guided_by)?;
     let supersedes = if let Some(raw) = args.supersedes.as_deref() {
         Some(MemoryId::new(crate::mcp::ids::parse_wire_uuid(raw)?))
@@ -189,7 +187,7 @@ async fn prepare_interpretation(
         Some(prior) => ctx
             .require_engine()?
             .retained_revision_sources(
-                &ctx.authz,
+                ctx.authz(),
                 destination,
                 prior,
                 crate::EntityKind::Perspective,
@@ -222,7 +220,7 @@ async fn prepare_interpretation(
         }
     }
     if local_subjects.is_empty() {
-        return Err(McpToolError::InvalidInput("subjects must include at least one memory of this store; memories of other stores only join local ones".into()));
+        return Err(ToolError::InvalidInput("subjects must include at least one memory of this store; memories of other stores only join local ones".into()));
     }
     let external = read_subjects
         .iter()
@@ -261,9 +259,9 @@ async fn prepare_interpretation(
 }
 
 fn resolve_guided_goals(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handles: &[String],
-) -> Result<Vec<crate::GoalId>, McpToolError> {
+) -> Result<Vec<crate::GoalId>, ToolError> {
     handles
         .iter()
         .map(|handle| ctx.resolve_goal(handle))
@@ -280,9 +278,9 @@ fn resolve_guided_goals(
 pub(crate) fn reject_self_subject(
     memory_id: MemoryId,
     subjects: &[uuid::Uuid],
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     if subjects.contains(&memory_id.into_inner()) {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "an interpretation cannot take itself as a subject".into(),
         ));
     }
@@ -290,9 +288,9 @@ pub(crate) fn reject_self_subject(
 }
 
 pub(crate) async fn resolve_subject(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handle: &str,
-) -> Result<(MemoryId, InterpretationSubjectKind), McpToolError> {
+) -> Result<(MemoryId, InterpretationSubjectKind), ToolError> {
     let (id, class) = ctx.resolve_memory_with_kind(handle).await?;
     Ok((id, subject_kind(class)))
 }
@@ -350,27 +348,18 @@ pub(crate) fn interpretation_memory_id(
 #[cfg(test)]
 mod tests {
     use super::{InterpretArgs, InterpretTool, default_confidence, reject_self_subject};
-    use crate::mcp::{McpAuthorContext, McpTool, McpToolCtx, McpToolError};
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceServices, UserId};
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
+    use crate::{Tool, ToolCtx, ToolError};
     use std::sync::Arc;
 
-    fn ctx(owner: OwnerId) -> McpToolCtx {
-        McpToolCtx {
+    fn ctx(owner: OwnerId) -> ToolCtx {
+        crate::test_fixtures::tool_ctx_with(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test-model".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+            crate::SpiiceServices::default(),
+            crate::ToolCaller::new("test-model", "test", "0"),
+        )
     }
 
     fn args(subjects: Vec<String>, confidence: u8) -> InterpretArgs {
@@ -399,7 +388,7 @@ mod tests {
             .await
             .expect_err("140 is not a confidence");
         assert!(
-            matches!(&err, McpToolError::InvalidInput(message) if message.contains("0..=100")),
+            matches!(&err, ToolError::InvalidInput(message) if message.contains("0..=100")),
             "unexpected error: {err:?}"
         );
 
@@ -409,7 +398,7 @@ mod tests {
                 .await
                 .expect_err("no engine is wired, so the write cannot land");
             assert!(
-                !matches!(&err, McpToolError::InvalidInput(message) if message.contains("0..=100")),
+                !matches!(&err, ToolError::InvalidInput(message) if message.contains("0..=100")),
                 "confidence {confidence} must be inside the scale: {err:?}"
             );
         }
@@ -426,7 +415,7 @@ mod tests {
         let err = reject_self_subject(memory_id, &[other, memory_id.into_inner()])
             .expect_err("a self-subject must be refused");
         assert!(
-            matches!(&err, McpToolError::InvalidInput(message)
+            matches!(&err, ToolError::InvalidInput(message)
                 if message.contains("cannot take itself")),
             "unexpected error: {err:?}"
         );
@@ -439,7 +428,7 @@ mod tests {
             .await
             .expect_err("an empty subject list is refused");
         assert!(
-            matches!(&err, McpToolError::InvalidInput(message)
+            matches!(&err, ToolError::InvalidInput(message)
                 if message.contains("at least one memory")),
             "unexpected error: {err:?}"
         );

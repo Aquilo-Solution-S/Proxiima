@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
-use crate::mcp::McpToolError;
+use crate::ToolError;
 
 /// One produced-node key on the episode wire: `remember:N`, `derive`,
 /// `stance:N`, or `goal:N`.
@@ -79,7 +79,7 @@ pub(super) fn parse_bind(
     has_derive: bool,
     stance_len: usize,
     goal_len: usize,
-) -> Result<BindSet, McpToolError> {
+) -> Result<BindSet, ToolError> {
     let mut out = BindSet::default();
     for key in raw {
         match EpisodeKey::parse(key) {
@@ -89,7 +89,7 @@ pub(super) fn parse_bind(
             }
             Ok(EpisodeKey::Derive) => {
                 if !has_derive {
-                    return Err(McpToolError::InvalidInput(
+                    return Err(ToolError::InvalidInput(
                         "bind key derive is out of range".into(),
                     ));
                 }
@@ -104,12 +104,12 @@ pub(super) fn parse_bind(
                 out.goal.insert(idx);
             }
             Err(EpisodeKeyParseError::NotIndex) => {
-                return Err(McpToolError::InvalidInput(format!(
+                return Err(ToolError::InvalidInput(format!(
                     "bind key {key} is not a produced-node index"
                 )));
             }
             Err(EpisodeKeyParseError::Unknown) => {
-                return Err(McpToolError::InvalidInput(format!(
+                return Err(ToolError::InvalidInput(format!(
                     "bind key {key} is not a produced node; use remember:<index>, derive, stance:<index>, or goal:<index>"
                 )));
             }
@@ -118,9 +118,9 @@ pub(super) fn parse_bind(
     Ok(out)
 }
 
-fn ensure_in_range(key: &str, idx: usize, len: usize) -> Result<(), McpToolError> {
+fn ensure_in_range(key: &str, idx: usize, len: usize) -> Result<(), ToolError> {
     if idx >= len {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "bind key {key} is out of range"
         )));
     }
@@ -130,11 +130,11 @@ fn ensure_in_range(key: &str, idx: usize, len: usize) -> Result<(), McpToolError
 pub(super) fn reject_duplicate_keys(
     keys: impl IntoIterator<Item = Option<String>>,
     label: &str,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     let mut seen = HashSet::new();
     for key in keys.into_iter().flatten() {
         if !seen.insert(key.clone()) {
-            return Err(McpToolError::InvalidInput(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "duplicate idempotency_key in one episode {label}: {key}"
             )));
         }

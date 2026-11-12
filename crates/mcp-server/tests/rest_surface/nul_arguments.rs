@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode, header};
-use proxiima_core::mcp::{McpTool, McpToolCtx, McpToolError, ToolEffect};
+use proxiima_core::mcp::ToolEffect;
 use proxiima_core::{AuthError, AuthPath, Authenticator, AuthzContext, Credentials};
+use proxiima_core::{Tool, ToolCtx, ToolError};
 use proxiima_mcp_server::{McpEdgeAuth, McpToolHost};
 use serde_json::{Value, json};
 
@@ -33,7 +34,7 @@ struct EchoOutput {
     payload: Value,
 }
 
-impl McpTool for EchoTool {
+impl Tool for EchoTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = TOOL;
     const DESCRIPTION: &'static str = "Return the fixture argument without storage access.";
@@ -42,9 +43,9 @@ impl McpTool for EchoTool {
     type Output = EchoOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         args: EchoArgs,
-    ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async move {
             INVOCATIONS.fetch_add(1, Ordering::SeqCst);
             Ok(EchoOutput {
@@ -96,7 +97,7 @@ struct Observation {
 
 async fn observe_transports() -> TestResult<Vec<Observation>> {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<EchoTool>("proxiima-nul");
+    registry.add_tool_or_panic_for_tests::<EchoTool>("proxiima-nul");
     let host = McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
         SpiiceServices::default(),

@@ -122,66 +122,6 @@ impl SpiiceServices {
     {
         service(&self.values)
     }
-
-    #[must_use]
-    pub(crate) fn into_tool_services(self) -> ToolServices {
-        ToolServices {
-            values: self.values,
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct ToolServices {
-    values: ServiceValues,
-}
-
-impl std::fmt::Debug for ToolServices {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolServices")
-            .field("len", &self.values.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl ToolServices {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[must_use]
-    pub fn with<T>(value: T) -> Self
-    where
-        T: Send + Sync + 'static,
-    {
-        let mut services = Self::default();
-        services.insert(value);
-        services
-    }
-
-    pub fn insert<T>(&mut self, value: T) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        Arc::make_mut(&mut self.values)
-            .insert(
-                TypeId::of::<T>(),
-                ServiceEntry {
-                    type_name: std::any::type_name::<T>(),
-                    value: Arc::new(value),
-                },
-            )
-            .and_then(|old| old.value.downcast::<T>().ok())
-    }
-
-    #[must_use]
-    pub fn get<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        service(&self.values)
-    }
 }
 
 fn service<T>(values: &ServiceValues) -> Option<Arc<T>>
@@ -262,32 +202,25 @@ impl RequestHeaders {
     }
 }
 
-/// Transport-neutral identity of the client invoking a generic tool.
+/// Transport-neutral identity of the client invoking a tool.
 ///
-/// Transport adapters populate this from their authenticated call context.
-/// Direct hosts may omit it when caller provenance is unavailable.
-///
-/// Two model fields, deliberately: `model_id` is the operator *label* that
-/// reaches append-only provenance and may be caller-supplied, while
-/// `trusted_model_id` is what the authenticated edge certifies. Build
-/// policy on the latter.
+/// Transport adapters populate this from their call context. `model_id` is
+/// the operator *label* that reaches append-only provenance; when the
+/// authenticated credential binds a model identity, [`ToolCtx::new`] makes
+/// `model_id` that identity. Build policy on
+/// [`AuthzContext::trusted_model_id`], the one source of the authenticated
+/// model identity, never on this struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCaller {
     pub model_id: String,
-    /// Model/runner identity bound by the authenticating credential, if the
-    /// deployment binds one. Never populated from tool arguments, request
-    /// headers, or MCP `clientInfo`.
-    pub trusted_model_id: Option<String>,
     pub client_name: String,
     pub client_version: String,
+    /// The caller's own Self Perspective, when it named one.
+    pub caller_self_perspective: Option<MemoryId>,
 }
 
 impl ToolCaller {
-    /// Caller provenance with no authenticated model identity.
-    ///
-    /// The three-argument shape is load-bearing: out-of-tree spiices and
-    /// direct hosts call it. Authenticated provenance is layered on with
-    /// [`Self::with_trusted_model_id`].
+    /// Caller provenance with no Self Perspective.
     #[must_use]
     pub fn new(
         model_id: impl Into<String>,
@@ -296,50 +229,42 @@ impl ToolCaller {
     ) -> Self {
         Self {
             model_id: model_id.into(),
-            trusted_model_id: None,
             client_name: client_name.into(),
             client_version: client_version.into(),
+            caller_self_perspective: None,
         }
     }
 
-    /// Attach the model identity the authenticated edge certified.
-    ///
-    /// **For transport adapters only** — the value must originate in the
-    /// credential (`AuthzContext::trusted_model_id`), never in a payload.
-    ///
-    /// Same shape as
-    /// [`AuthzContext::with_trusted_model_id`](crate::AuthzContext::with_trusted_model_id)
-    /// and for the same reasons: a `String` rather than an `Option` so no
-    /// later builder step can clear provenance, trimmed once so every
-    /// comparison is on the same string, and bounded so a value that a
-    /// tool would later refuse cannot reach a spiice's policy check
-    /// looking legitimate. The only in-tree caller already holds a value
-    /// that passed those checks at the authenticating edge; validating
-    /// again here costs a trim and buys the same guarantee for
-    /// out-of-tree adapters.
-    ///
-    /// # Errors
-    ///
-    /// [`TrustedModelIdError`] when the value is blank after trimming or
-    /// longer than [`MAX_OPERATOR_LABEL_CHARS`](crate::MAX_OPERATOR_LABEL_CHARS).
-    pub fn with_trusted_model_id(
-        mut self,
-        trusted_model_id: impl Into<String>,
-    ) -> Result<Self, TrustedModelIdError> {
-        self.trusted_model_id = Some(validate_trusted_model_id(trusted_model_id)?);
-        Ok(self)
+    /// Name the caller's own Self Perspective.
+    #[must_use]
+    pub fn with_self_perspective(mut self, memory_id: Option<MemoryId>) -> Self {
+        self.caller_self_perspective = memory_id;
+        self
     }
 }
 
+/// Everything one tool call runs with: the owner it acts for, the caller's
+/// authorization, the frozen registry, the caller, the composed services
+/// and the engine.
+///
+/// [`Self::new`] is the only way in; a field changes only through a
+/// `with_*` method, so the invariants `new` establishes hold for the whole
+/// call.
+///
+/// ```compile_fail,E0616
+/// fn relabel(mut ctx: proxiima_core::ToolCtx, other: proxiima_core::AuthzContext) {
+///     ctx.authz = other;
+/// }
+/// ```
 #[derive(Clone)]
 pub struct ToolCtx {
     owner: OwnerId,
     authz: AuthzContext,
     registry: Arc<SpiiceRegistryFrozen>,
-    caller: Option<ToolCaller>,
-    caller_self_perspective: Option<MemoryId>,
-    services: ToolServices,
+    caller: ToolCaller,
+    services: SpiiceServices,
     engine: Option<Arc<Engine>>,
+    judged: crate::mcp::JudgedKey,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -347,7 +272,6 @@ impl std::fmt::Debug for ToolCtx {
         f.debug_struct("ToolCtx")
             .field("owner", &self.owner)
             .field("caller", &self.caller)
-            .field("caller_self_perspective", &self.caller_self_perspective)
             .field("services", &self.services)
             .field("has_engine", &self.engine.is_some())
             .finish_non_exhaustive()
@@ -355,35 +279,51 @@ impl std::fmt::Debug for ToolCtx {
 }
 
 impl ToolCtx {
+    /// A context with no engine and an empty judged key.
+    ///
+    /// When `authz` binds a model identity, the caller's `model_id` becomes
+    /// that identity: a host assembles `caller` by hand, and `model_id` is
+    /// the label a tool records.
     #[must_use]
     pub fn new(
         owner: OwnerId,
         authz: AuthzContext,
         registry: Arc<SpiiceRegistryFrozen>,
-        services: ToolServices,
+        services: SpiiceServices,
+        caller: ToolCaller,
     ) -> Self {
         Self {
             owner,
             authz,
             registry,
-            caller: None,
-            caller_self_perspective: None,
+            caller,
             services,
             engine: None,
+            judged: crate::mcp::JudgedKey::default(),
         }
+        .with_bound_model_id()
     }
 
-    /// Attach transport-neutral caller provenance.
-    #[must_use]
-    pub fn with_caller(mut self, caller: Option<ToolCaller>) -> Self {
-        self.caller = caller;
+    fn with_bound_model_id(mut self) -> Self {
+        if let Some(trusted) = self.authz.trusted_model_id() {
+            trusted.clone_into(&mut self.caller.model_id);
+        }
         self
     }
 
+    /// The same call, acting for `owner`.
     #[must_use]
-    pub fn with_caller_self_perspective(mut self, memory_id: Option<MemoryId>) -> Self {
-        self.caller_self_perspective = memory_id;
+    pub fn with_owner(mut self, owner: OwnerId) -> Self {
+        self.owner = owner;
         self
+    }
+
+    /// The same call under `authz`; a model identity it binds becomes the
+    /// caller's `model_id`, as in [`Self::new`].
+    #[must_use]
+    pub fn with_authz(mut self, authz: AuthzContext) -> Self {
+        self.authz = authz;
+        self.with_bound_model_id()
     }
 
     #[must_use]
@@ -392,25 +332,18 @@ impl ToolCtx {
         self
     }
 
-    #[must_use]
-    pub(crate) fn from_parts(
-        owner: OwnerId,
-        authz: AuthzContext,
-        registry: Arc<SpiiceRegistryFrozen>,
-        caller: Option<ToolCaller>,
-        caller_self_perspective: Option<MemoryId>,
-        services: ToolServices,
-        engine: Option<Arc<Engine>>,
-    ) -> Self {
-        Self {
-            owner,
-            authz,
-            registry,
-            caller,
-            caller_self_perspective,
-            services,
-            engine,
-        }
+    /// Add one service to this call's set without replacing one of the same
+    /// concrete type.
+    ///
+    /// # Errors
+    ///
+    /// [`SpiiceServiceError::DuplicateService`] when the type is already
+    /// present; the set is unchanged.
+    pub fn try_insert_service<T>(&mut self, value: T) -> Result<(), SpiiceServiceError>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.services.try_insert(value)
     }
 
     #[must_use]
@@ -419,6 +352,7 @@ impl ToolCtx {
     }
 
     /// This request's authenticated authority and immutable verified claims.
+    /// Tools pass this to engine verbs, never a substituted identity.
     ///
     /// [`AuthzContext::verified_claims`] exposes application claims when the
     /// authenticator retained them, without exposing the bearer credential.
@@ -428,23 +362,50 @@ impl ToolCtx {
     }
 
     #[must_use]
-    pub fn registry(&self) -> &SpiiceRegistryFrozen {
+    pub fn registry(&self) -> &Arc<SpiiceRegistryFrozen> {
         &self.registry
     }
 
     #[must_use]
-    pub fn caller(&self) -> Option<&ToolCaller> {
-        self.caller.as_ref()
+    pub fn caller(&self) -> &ToolCaller {
+        &self.caller
     }
 
+    /// The caller's own Self Perspective ([`ToolCaller::caller_self_perspective`]).
     #[must_use]
     pub fn caller_self_perspective(&self) -> Option<MemoryId> {
-        self.caller_self_perspective
+        self.caller.caller_self_perspective
     }
 
+    /// `None` when the host wired no engine.
     #[must_use]
-    pub fn engine(&self) -> Option<Arc<Engine>> {
-        self.engine.clone()
+    pub fn engine(&self) -> Option<&Arc<Engine>> {
+        self.engine.as_ref()
+    }
+
+    /// The wired engine, or the one canonical "engine unavailable" error.
+    /// Every tool that needs storage goes through this so a missing
+    /// engine reads identically everywhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::Other`] when no engine is wired.
+    pub fn require_engine(&self) -> Result<&Engine, ToolError> {
+        self.engine
+            .as_deref()
+            .ok_or_else(|| ToolError::Other("engine unavailable".into()))
+    }
+
+    /// The key the scope gate judged this call by, if it derived one. Clones
+    /// of a context share it, so a behavior that wraps the gate reads it from
+    /// its own clone once the call returns.
+    #[must_use]
+    pub fn judged(&self) -> Option<crate::ScopeKey> {
+        self.judged.get()
+    }
+
+    pub(crate) fn judged_cell(&self) -> &crate::mcp::JudgedKey {
+        &self.judged
     }
 
     /// Authorize this tool context for a storage-tier owner write.
@@ -477,17 +438,23 @@ impl ToolCtx {
 
     /// Resolve the operator label this call's writes are recorded under.
     ///
-    /// The transport-neutral entry point, and the one a spiice [`Tool`]
-    /// that accepts its own `model_id` argument must use instead of
-    /// reading [`ToolCaller::model_id`]. A transport edge only ever
-    /// inspects a *top-level* `model_id`, so a nested or per-item one —
-    /// and every argument arriving through the embedded host API, which
-    /// passes no edge at all — reaches the tool untouched. This is where
-    /// a bound model identity wins over a caller's claim.
+    /// The one entry point for a tool that accepts its own `model_id`
+    /// argument, instead of reading [`ToolCaller::model_id`]. A transport
+    /// edge only ever inspects a *top-level* `model_id`, so a nested or
+    /// per-item one (`core_episode_commit`'s per-item `derive.model_id` /
+    /// `stance[].model_id`), and every argument arriving through the
+    /// embedded host API, reaches the tool untouched. This is where a bound
+    /// model identity wins over a caller's claim.
     ///
-    /// Reads the bound identity from the authorization context rather
-    /// than from [`ToolCaller`]: the caller struct is a copy handed to the
-    /// tool, and only the credential decides provenance.
+    /// Precedence: a bound identity wins, a differing `explicit` is refused,
+    /// a blank one is no claim at all, and an absent one falls back to
+    /// [`ToolCaller::model_id`], the label the edge resolved for this call.
+    /// The bound identity is read from the authorization context, the carrier
+    /// the authenticator hardened.
+    ///
+    /// The label is trimmed before it is *used*, not just before it is
+    /// checked: the stored label and any idempotency key derived from it
+    /// must be the same string.
     ///
     /// # Errors
     ///
@@ -498,7 +465,7 @@ impl ToolCtx {
     pub fn operator_label(&self, explicit: Option<&str>) -> Result<String, ToolError> {
         resolve_recorded_operator_label(
             self.authz.trusted_model_id(),
-            self.caller.as_ref().map(|caller| caller.model_id.as_str()),
+            Some(self.caller.model_id.as_str()),
             explicit,
         )
     }
@@ -509,9 +476,8 @@ pub(crate) const OPERATOR_LABEL_FIELD: &str = "model_id";
 
 /// Trim and bound a model identity an authenticated edge wants to bind.
 ///
-/// Shared by [`AuthzContext::with_trusted_model_id`](crate::AuthzContext::with_trusted_model_id)
-/// and [`ToolCaller::with_trusted_model_id`] so the carrier and the copy
-/// handed to tools cannot disagree about what is bindable.
+/// Used by [`AuthzContext::with_trusted_model_id`](crate::AuthzContext::with_trusted_model_id),
+/// the one carrier of the authenticated model identity.
 ///
 /// # Errors
 ///
@@ -536,10 +502,7 @@ pub(crate) fn validate_trusted_model_id(
 
 /// The one implementation of "which operator label does this write carry".
 ///
-/// Both tool traits reach it — [`ToolCtx::operator_label`] for a
-/// transport-neutral [`Tool`], `proxiima_core::operator_label` for an
-/// [`McpTool`](crate::mcp::McpTool) — so a tool cannot pick a different
-/// answer by picking a different trait.
+/// Reached through [`ToolCtx::operator_label`].
 ///
 /// `explicit` is normalised before anything else looks at it: blank is no
 /// claim, so it can neither conflict with a bound identity nor be stored
@@ -588,16 +551,13 @@ pub(crate) fn resolve_recorded_operator_label(
 /// apart from "nothing matched", or — worse — a clamped page of one, which
 /// answers a question that was not asked.
 ///
-/// This lives on `ToolError` rather than `McpToolError` so one
-/// implementation serves both tool traits: `From<ToolError> for
-/// McpToolError` maps `InvalidInput` straight through, so an
-/// `McpTool` body can `?` this directly. It is `pub` because every spiice
-/// with a paged read needs the same rule, and a rule an out-of-tree spiice
-/// cannot reach is a rule it will reimplement differently.
+/// It is `pub` because every spiice with a paged read needs the same rule,
+/// and a rule an out-of-tree spiice cannot reach is a rule it will
+/// reimplement differently.
 ///
-/// The engine has enforced this from the start (`engine::query`,
-/// `engine::read_verbs`); this is the tool layer agreeing with it instead
-/// of clamping first and hiding it.
+/// The engine applies the same rule (`engine::query`,
+/// `engine::read_verbs`), so the tool layer refuses what the engine would
+/// refuse instead of clamping first.
 ///
 /// # Errors
 ///
@@ -678,8 +638,11 @@ pub fn validate_search_query(query: &str) -> Result<&str, ToolError> {
 pub enum ToolError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    /// Well-formed reference to an entity that does not exist or is not
-    /// visible. Maps to [`crate::mcp::McpToolError::NotFound`] (REST 404).
+    /// A well-formed reference to an entity that does not exist or is not
+    /// visible to the caller (deliberately indistinguishable). Resource
+    /// reads surface this as JSON-RPC `resource_not_found`; tool calls as
+    /// `invalid_params`; REST as 404. The message names the wire handle,
+    /// e.g. `memory <uuid> not found`.
     #[error("{0}")]
     NotFound(String),
     #[error("tool not authorized: {0}")]
@@ -690,15 +653,23 @@ pub enum ToolError {
     LayeringViolation(String),
     #[error("storage: {0}")]
     Storage(#[from] crate::StorageError),
-    /// A required capability is not configured (embedding client, blob
-    /// lane, engine). Maps to [`crate::mcp::McpToolError::Unavailable`]
-    /// (REST 503), not a redacted 500.
+    /// A required capability (embedding client, blob lane, engine) is not
+    /// configured for this host. Unlike [`Self::Other`], its message is a
+    /// caller-actionable precondition and is passed through verbatim rather
+    /// than redacted to a generic internal-server-error (REST 503).
     #[error("{0}")]
     Unavailable(String),
-    /// The tool ran and failed, and says why in its own words. Answered as
-    /// MCP's tool-execution error, a result with `isError: true` and this
-    /// text as its one content block, never as a protocol error. Proxiima
-    /// neither redacts nor rewords it; the tool owns the text.
+    /// Another store did not answer (timed out, failed, or answered for a
+    /// different memory). Says nothing about whether the memory exists, and
+    /// is retryable. The message names the store number only: the port's
+    /// own error text may carry the remote store's internals.
+    #[error("store {store} unavailable")]
+    StoreUnavailable { store: u16 },
+    /// The tool ran and failed, and says why in its own words. A tool call
+    /// answers it as [`ToolReply::Failure`](crate::ToolReply::Failure),
+    /// `isError: true` with this text as its one content block; it is a
+    /// protocol error only on a path that is not a tool call, and its text
+    /// stays verbatim there too. Proxiima neither redacts nor rewords it.
     #[error("{0}")]
     Failure(String),
     #[error("{0}")]
@@ -709,8 +680,7 @@ pub enum ToolError {
 /// concepts in its signature.
 ///
 /// There is deliberately no transport-neutral descriptor beside this trait.
-/// The blanket `impl<T: Tool> McpTool for T` adapts the context, and
-/// registration mints exactly one
+/// Registration mints exactly one
 /// [`McpToolDescriptor`](crate::mcp::McpToolDescriptor) per tool — which is
 /// what the scope gate, the tool catalog, the REST action routes and the
 /// `OpenAPI` document all read. A second descriptor type would be a second
@@ -787,6 +757,11 @@ pub trait Tool: Send + Sync + 'static {
     /// [`Self::ARGV_ACTION_SPECS`]) validate per action and ignore this.
     const UNKNOWN_FIELD_POLICY: crate::mcp::McpUnknownFieldPolicy =
         crate::mcp::McpUnknownFieldPolicy::Refuse;
+    /// Top-level argument keys a *flat* tool accepts beyond its static
+    /// schema, because the schema renders them per caller (and leaves them
+    /// out where nothing can be rendered). The unknown-field guard admits
+    /// them; every other undeclared key is still refused.
+    const CALLER_RENDERED_FIELDS: &'static [&'static str] = &[];
 
     type Args: serde::de::DeserializeOwned + schemars::JsonSchema + Send + 'static;
     /// What the tool answers with. `JsonSchema` is required for the same
@@ -957,20 +932,20 @@ mod shared_arg_rule_tests {
 mod operator_label_tests {
     use std::sync::Arc;
 
-    use super::{ToolCaller, ToolCtx, ToolError, ToolServices};
-    use crate::authz::TrustedModelIdError;
+    use super::{ToolCaller, ToolCtx, ToolError};
+    use crate::test_fixtures::tool_ctx_with;
     use crate::{
-        AuthPath, AuthzContext, MAX_OPERATOR_LABEL_CHARS, OwnerId, SpiiceRegistry, UserId,
+        AuthPath, AuthzContext, MAX_OPERATOR_LABEL_CHARS, OwnerId, SpiiceRegistry, SpiiceServices,
+        UserId,
     };
 
     fn owner() -> OwnerId {
         OwnerId::from(UserId::new(uuid::Uuid::now_v7()))
     }
 
-    /// A transport-neutral context shaped the way the MCP blanket impl
-    /// builds one: the caller carries the label the edge resolved, the
-    /// binding lives on the authorization context.
-    fn ctx(trusted: Option<&str>, caller_label: Option<&str>) -> ToolCtx {
+    /// The caller carries the label the edge resolved, the binding lives on
+    /// the authorization context.
+    fn ctx(trusted: Option<&str>, caller_label: &str) -> ToolCtx {
         let owner = owner();
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
         let authz = match trusted {
@@ -979,18 +954,18 @@ mod operator_label_tests {
                 .with_trusted_model_id(trusted)
                 .expect("a well-formed runner id binds"),
         };
-        ToolCtx::new(
+        tool_ctx_with(
             owner,
             authz,
             Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            ToolServices::default(),
+            SpiiceServices::default(),
+            ToolCaller::new(caller_label, "test-client", "0"),
         )
-        .with_caller(caller_label.map(|label| ToolCaller::new(label, "test-client", "0")))
     }
 
     #[test]
     fn a_spiice_tool_cannot_relabel_a_bound_identity() {
-        let err = ctx(Some("acme/runner-v3"), Some("acme/runner-v3"))
+        let err = ctx(Some("acme/runner-v3"), "acme/runner-v3")
             .operator_label(Some("openai/gpt-9"))
             .expect_err("a spiice argument may not relabel an authenticated runner");
 
@@ -1005,11 +980,11 @@ mod operator_label_tests {
     }
 
     /// Reads the binding from the authorization context, not from the
-    /// caller struct: `ToolCaller` is a copy handed to the tool, and a
-    /// spiice that mutated its own copy must not change what is recorded.
+    /// caller struct: a host assembles `ToolCaller` by hand, and only the
+    /// credential decides provenance.
     #[test]
     fn the_binding_is_read_from_the_credential_not_the_caller_copy() {
-        let ctx = ctx(Some("acme/runner-v3"), Some("stale/label"));
+        let ctx = ctx(Some("acme/runner-v3"), "stale/label");
 
         assert_eq!(
             ctx.operator_label(None).expect("bound identity wins"),
@@ -1020,44 +995,9 @@ mod operator_label_tests {
     #[test]
     fn an_over_long_spiice_argument_is_refused() {
         assert!(
-            ctx(None, Some("caller/model"))
+            ctx(None, "caller/model")
                 .operator_label(Some(&"m".repeat(MAX_OPERATOR_LABEL_CHARS + 1)))
                 .is_err()
-        );
-    }
-
-    /// The caller copy is bound by the same rule as the credential, so an
-    /// out-of-tree adapter cannot hand a spiice a value that
-    /// `AuthzContext` would have refused.
-    #[test]
-    fn the_caller_builder_validates_what_it_binds() {
-        let caller = || ToolCaller::new("caller/model", "test-client", "0");
-
-        assert_eq!(
-            caller()
-                .with_trusted_model_id("  acme/runner-v3  ")
-                .expect("trims")
-                .trusted_model_id
-                .as_deref(),
-            Some("acme/runner-v3")
-        );
-        assert_eq!(
-            caller().with_trusted_model_id("   ").unwrap_err(),
-            TrustedModelIdError::Blank
-        );
-        assert_eq!(
-            caller()
-                .with_trusted_model_id("m".repeat(MAX_OPERATOR_LABEL_CHARS + 1))
-                .unwrap_err(),
-            TrustedModelIdError::TooLong {
-                chars: MAX_OPERATOR_LABEL_CHARS + 1,
-                max: MAX_OPERATOR_LABEL_CHARS,
-            }
-        );
-        assert_eq!(
-            caller().trusted_model_id,
-            None,
-            "the three-argument shape still binds nothing"
         );
     }
 }

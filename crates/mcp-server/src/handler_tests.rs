@@ -272,7 +272,7 @@ fn author_from_args_extracts_caller_self_perspective() {
         "_proxiima_caller_self_perspective": self_id.to_string(),
     });
 
-    let author = author_from_args(&args, None, "unknown", "0").expect("author context");
+    let author = author_from_args(&args, None, "unknown", "0").expect("caller");
 
     assert_eq!(author.model_id, "test-model");
     assert_eq!(
@@ -300,7 +300,7 @@ fn strip_call_context_args_removes_reserved_metadata() {
 
 #[test]
 fn strip_call_context_args_removes_reserved_model_id() {
-    // `model_id` is captured into the author context before stripping, then
+    // `model_id` is captured into the caller before stripping, then
     // removed so a dispatcher tool that does not list it as an action field
     // is not tripped by an unexpected-field rejection.
     let args = serde_json::json!({ "action": "set", "model_id": "example-model" });
@@ -345,8 +345,6 @@ fn a_bound_model_identity_becomes_the_persisted_label() {
     let auth = trusted_auth("runner/pinned");
     let author = author_from_args(&serde_json::json!({}), Some(&auth), "unknown", "0")
         .expect("no caller claim, no conflict");
-
-    assert_eq!(author.trusted_model_id.as_deref(), Some("runner/pinned"));
     assert_eq!(
         author.model_id, "runner/pinned",
         "the persisted label is the bound identity, not `unknown`"
@@ -365,7 +363,6 @@ fn a_matching_model_id_argument_is_accepted() {
     .expect("an agreeing claim is not a conflict");
 
     assert_eq!(author.model_id, "runner/pinned");
-    assert_eq!(author.trusted_model_id.as_deref(), Some("runner/pinned"));
 }
 
 #[test]
@@ -403,15 +400,10 @@ fn an_unmapped_caller_keeps_its_own_label_and_gains_no_trusted_status() {
     .expect("no bound identity, no conflict");
 
     assert_eq!(author.model_id, "runner/pinned");
-    assert_eq!(
-        author.trusted_model_id, None,
-        "claiming the string is not being bound to it"
-    );
 
-    let unattributed = author_from_args(&serde_json::json!({}), Some(&auth), "unknown", "0")
-        .expect("author context");
+    let unattributed =
+        author_from_args(&serde_json::json!({}), Some(&auth), "unknown", "0").expect("caller");
     assert_eq!(unattributed.model_id, "unknown");
-    assert_eq!(unattributed.trusted_model_id, None);
 }
 
 /// A blank argument is no claim, matching REST — where an empty header
@@ -451,10 +443,9 @@ fn client_info_never_becomes_the_trusted_model_id() {
         "runner/pinned",
         "1.0.0",
     )
-    .expect("author context");
+    .expect("caller");
 
     assert_eq!(author.client_name, "runner/pinned");
-    assert_eq!(author.trusted_model_id, None);
     assert_eq!(author.model_id, "unknown");
 }
 
@@ -464,14 +455,12 @@ fn client_info_never_becomes_the_trusted_model_id() {
 fn resource_author_context_carries_the_bound_identity() {
     let bound = author_from_ctx(Some(&trusted_auth("runner/pinned")), "unknown", "0");
     assert_eq!(bound.model_id, "runner/pinned");
-    assert_eq!(bound.trusted_model_id.as_deref(), Some("runner/pinned"));
 
     let unbound = author_from_ctx(Some(&full_auth(ToolScope::All)), "unknown", "0");
     assert_eq!(unbound.model_id, "unknown");
-    assert_eq!(unbound.trusted_model_id, None);
 }
 
-/// A bound identity is captured into the author context and the argument
+/// A bound identity is captured into the caller and the argument
 /// is still stripped, so a dispatcher tool never sees it as an
 /// unexpected field.
 #[test]
@@ -570,7 +559,7 @@ fn not_authorized_message_lists_allowed_actions() {
     let auth = full_auth(scope);
     let err = tool_invocation_error_to_error_data(
         &registry,
-        McpToolError::NotAuthorized(protocol_action::CORE_GOAL_TRANSITION.into()).into(),
+        ToolError::NotAuthorized(protocol_action::CORE_GOAL_TRANSITION.into()).into(),
         Some(&auth),
     );
     assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_REQUEST);
@@ -591,7 +580,8 @@ fn not_authorized_message_lists_allowed_actions() {
 #[test]
 fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
     use futures_util::future::BoxFuture;
-    use proxiima_core::mcp::{McpActionArgSpec, McpTool, McpToolCtx, McpToolError};
+    use proxiima_core::mcp::McpActionArgSpec;
+    use proxiima_core::{Tool, ToolCtx, ToolError};
 
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(tag = "action", rename_all = "snake_case")]
@@ -613,7 +603,7 @@ fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
     #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
     struct StubOutput {}
 
-    impl McpTool for StubDispatchTool {
+    impl Tool for StubDispatchTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_dispatch";
         const DESCRIPTION: &'static str = "A spiice dispatcher.";
@@ -639,23 +629,20 @@ fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
         ];
         type Args = StubArgs;
         type Output = StubOutput;
-        fn call(
-            _: McpToolCtx,
-            _: Self::Args,
-        ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async { Ok(StubOutput {}) })
         }
     }
 
     let mut registry = proxiima_core::SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
     let registry = registry.freeze_or_panic_for_tests();
 
     let scope = palette(&["proxiima-stub_dispatch:look"]);
     let auth = full_auth(scope);
     let err = tool_invocation_error_to_error_data(
         &registry,
-        McpToolError::NotAuthorized("proxiima-stub_dispatch:touch".into()).into(),
+        ToolError::NotAuthorized("proxiima-stub_dispatch:touch".into()).into(),
         Some(&auth),
     );
     assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_REQUEST);
@@ -669,7 +656,7 @@ fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
 
 #[test]
 fn unavailable_error_reaches_caller_as_invalid_request() {
-    let err = mcp_tool_error_to_error_data(&McpToolError::Unavailable(
+    let err = mcp_tool_error_to_error_data(&ToolError::Unavailable(
         "semantic search unavailable: no embedding client is configured for this host".into(),
     ));
     assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_REQUEST);
@@ -684,7 +671,7 @@ fn unavailable_error_reaches_caller_as_invalid_request() {
 /// a client reads as "no such memory") or -32600.
 #[test]
 fn an_unanswered_store_is_a_server_error_naming_the_store() {
-    let err = mcp_tool_error_to_error_data(&McpToolError::StoreUnavailable { store: 1 });
+    let err = mcp_tool_error_to_error_data(&ToolError::StoreUnavailable { store: 1 });
     assert_eq!(err.code, SERVER_ERROR);
     assert_ne!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     assert_ne!(err.code, rmcp::model::ErrorCode::INVALID_REQUEST);
@@ -723,7 +710,7 @@ fn caller_self_perspective_metadata_errors_are_invalid_params() {
 
 #[test]
 fn tool_output_serialization_errors_are_internal_and_redacted() {
-    let err = mcp_tool_error_to_error_data(&McpToolError::Other(
+    let err = mcp_tool_error_to_error_data(&ToolError::Other(
         "serialize tool output: fixture secret from output serializer".into(),
     ));
     assert_eq!(err.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
@@ -732,11 +719,11 @@ fn tool_output_serialization_errors_are_internal_and_redacted() {
 }
 
 /// A missing entity is a `resource_not_found` on the resource path but
-/// an argument fault on the tool path — the same `McpToolError` maps
+/// an argument fault on the tool path — the same `ToolError` maps
 /// to different JSON-RPC codes by surface.
 #[test]
 fn not_found_maps_by_surface() {
-    let not_found = || McpToolError::NotFound("memory F:018f not found".into());
+    let not_found = || ToolError::NotFound("memory F:018f not found".into());
 
     let resource = resource_invocation_error_to_error_data(
         crate::server::ToolInvocationError::Tool(not_found()),
@@ -756,7 +743,7 @@ fn tool_scope_denials_remain_invalid_request() {
     let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
     let err = tool_invocation_error_to_error_data(
         &registry,
-        McpToolError::NotAuthorized(protocol_action::CORE_GOAL_SET.into()).into(),
+        ToolError::NotAuthorized(protocol_action::CORE_GOAL_SET.into()).into(),
         None,
     );
 
@@ -1106,7 +1093,7 @@ fn denial_hints_exclude_actions_forbidden_by_the_owner_role() {
     };
     let err = tool_invocation_error_to_error_data(
         &registry,
-        McpToolError::NotAuthorized(protocol_action::CORE_MEMBERSHIP_ADD_MEMBER.into()).into(),
+        ToolError::NotAuthorized(protocol_action::CORE_MEMBERSHIP_ADD_MEMBER.into()).into(),
         Some(&viewer),
     );
 

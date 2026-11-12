@@ -20,7 +20,7 @@ use super::memory::remember::{self, NoteWriteInput};
 use super::memory::util::dedup_resolved;
 use crate::engine::GoalCreatePayloadWriteRequest;
 use crate::error::ErrorCode;
-use crate::mcp::{McpTool, McpToolCtx, McpToolError, MemoryHandleClass};
+use crate::mcp::MemoryHandleClass;
 use crate::memory::payloads::write_act::WriteActV1;
 use crate::protocol::tool as protocol_tool;
 use crate::tool::validate_trimmed_len;
@@ -31,6 +31,7 @@ use crate::{
     DerivationIdentity, DerivedMemory, FactWrite, InterpretationSubjectKind, InterpretationV1,
     MemoryId, SeriesHandle, UnitOfWork,
 };
+use crate::{Tool, ToolCtx, ToolError};
 
 use bind::{BindSet, EpisodeKey, EpisodeKeyParseError, parse_bind, reject_duplicate_keys};
 
@@ -202,7 +203,7 @@ struct EpisodeSlots {
 /// transaction, the handles minted so far, and the ordered ledger of
 /// handles that pinned the write-act.
 struct EpisodeWrite<'a> {
-    ctx: &'a McpToolCtx,
+    ctx: &'a ToolCtx,
     uow: UnitOfWork<'a>,
     bind: &'a BindSet,
     owner: crate::OwnerId,
@@ -213,7 +214,7 @@ struct EpisodeWrite<'a> {
     bound: Vec<String>,
 }
 
-impl McpTool for EpisodeCommitTool {
+impl Tool for EpisodeCommitTool {
     const NAME: &'static str = protocol_tool::CORE_EPISODE_COMMIT;
     const TITLE: &'static str = "Commit an episode";
     const DESCRIPTION: &'static str = "Write several items in one transaction, in this order: Facts (remember), one Abstraction (derive), interpretation Perspectives (stance), Active Goals (goal); at least one item. Later items can name earlier ones by 0-based key (`remember:N`, `derive`, `stance:N`). Also writes a write-act Fact; items listed in bind reference it.";
@@ -222,17 +223,17 @@ impl McpTool for EpisodeCommitTool {
     type Output = EpisodeCommitOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: EpisodeCommitArgs,
-    ) -> BoxFuture<'static, Result<EpisodeCommitOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<EpisodeCommitOutput, ToolError>> {
         Box::pin(async move { episode_commit(ctx, args).await })
     }
 }
 
 async fn episode_commit(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: EpisodeCommitArgs,
-) -> Result<EpisodeCommitOutput, McpToolError> {
+) -> Result<EpisodeCommitOutput, ToolError> {
     validate_episode_shape(&args)?;
     let bind = parse_bind(
         &args.bind,
@@ -284,33 +285,33 @@ async fn episode_commit(
     })
 }
 
-fn validate_episode_shape(args: &EpisodeCommitArgs) -> Result<(), McpToolError> {
+fn validate_episode_shape(args: &EpisodeCommitArgs) -> Result<(), ToolError> {
     if args.remember.is_empty()
         && args.derive.is_none()
         && args.stance.is_empty()
         && args.goal.is_empty()
     {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "episode_commit requires at least one remember, derive, stance, or goal item".into(),
         ));
     }
     if args.remember.len() > MAX_REMEMBER {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_REMEMBER} remember items"
         )));
     }
     if args.stance.len() > MAX_STANCE {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_STANCE} stance items"
         )));
     }
     if args.goal.len() > MAX_GOAL {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_GOAL} goal items"
         )));
     }
     if args.bind.len() > MAX_BIND {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_BIND} bind keys"
         )));
     }
@@ -328,10 +329,7 @@ fn validate_episode_shape(args: &EpisodeCommitArgs) -> Result<(), McpToolError> 
 }
 
 impl EpisodeWrite<'_> {
-    async fn write_remembered(
-        &mut self,
-        items: &[EpisodeRememberItem],
-    ) -> Result<(), McpToolError> {
+    async fn write_remembered(&mut self, items: &[EpisodeRememberItem]) -> Result<(), ToolError> {
         let bind = self.bind;
         let act_id = self.act_id;
         let ctx = self.ctx;
@@ -388,7 +386,7 @@ impl EpisodeWrite<'_> {
         Ok(())
     }
 
-    async fn write_derive(&mut self, item: &EpisodeDeriveItem) -> Result<String, McpToolError> {
+    async fn write_derive(&mut self, item: &EpisodeDeriveItem) -> Result<String, ToolError> {
         let ctx = self.ctx;
         let owner = self.owner;
         let act_id = self.act_id;
@@ -404,7 +402,7 @@ impl EpisodeWrite<'_> {
             },
         )?;
         if item.source_handles.len() > MAX_SOURCE_HANDLES {
-            return Err(McpToolError::InvalidInput(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "source_handles must contain at most {MAX_SOURCE_HANDLES} handles"
             )));
         }
@@ -420,7 +418,7 @@ impl EpisodeWrite<'_> {
             item.language.as_deref(),
             &format!("{}\n{}", authored.title, authored.body),
         )
-        .map_err(|err| McpToolError::InvalidInput(err.to_string()))?;
+        .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
         let kind = DerivedKind::Abstraction;
         let origins = sources.iter().map(|(id, _class)| *id).collect::<Vec<_>>();
         let supersedes = derive::resolve_supersedes(
@@ -485,7 +483,7 @@ impl EpisodeWrite<'_> {
         Ok(handle)
     }
 
-    async fn write_stances(&mut self, items: &[EpisodeStanceItem]) -> Result<(), McpToolError> {
+    async fn write_stances(&mut self, items: &[EpisodeStanceItem]) -> Result<(), ToolError> {
         let ctx = self.ctx;
         let owner = self.owner;
         let bind = self.bind;
@@ -493,21 +491,19 @@ impl EpisodeWrite<'_> {
         for (idx, item) in items.iter().enumerate() {
             let claim = validate_trimmed_len("claim", &item.claim, MAX_CLAIM_CHARS)?.to_string();
             if item.confidence > 100 {
-                return Err(McpToolError::InvalidInput(
-                    "confidence must be 0..=100".into(),
-                ));
+                return Err(ToolError::InvalidInput("confidence must be 0..=100".into()));
             }
             if item.subjects.is_empty() {
-                return Err(McpToolError::InvalidInput(
+                return Err(ToolError::InvalidInput(
                     "an interpretation must be about at least one memory".into(),
                 ));
             }
             if item.subjects.len() > MAX_SUBJECTS {
-                return Err(McpToolError::InvalidInput(format!(
+                return Err(ToolError::InvalidInput(format!(
                     "subjects must contain at most {MAX_SUBJECTS} handles"
                 )));
             }
-            let model_id = super::memory::util::operator_label(ctx, item.model_id.as_deref())?;
+            let model_id = ctx.operator_label(item.model_id.as_deref())?;
             let (subject_memory_ids, subject_kinds): (Vec<uuid::Uuid>, Vec<_>) = dedup_resolved(
                 &item.subjects,
                 MAX_SUBJECTS,
@@ -538,8 +534,8 @@ impl EpisodeWrite<'_> {
                 subject_memory_ids,
                 subject_kinds,
                 model_id: model_id.clone(),
-                client_name: ctx.author.client_name.clone(),
-                client_version: ctx.author.client_version.clone(),
+                client_name: ctx.caller().client_name.clone(),
+                client_version: ctx.caller().client_version.clone(),
             };
             let pin = bind.stance.contains(&idx);
             let extra_refs = pin.then_some(act_id).into_iter().collect::<Vec<_>>();
@@ -574,10 +570,7 @@ impl EpisodeWrite<'_> {
         Ok(())
     }
 
-    async fn write_goals(
-        &mut self,
-        items: &[EpisodeGoalItem],
-    ) -> Result<Vec<String>, McpToolError> {
+    async fn write_goals(&mut self, items: &[EpisodeGoalItem]) -> Result<Vec<String>, ToolError> {
         let ctx = self.ctx;
         let owner = self.owner;
         let bind = self.bind;
@@ -588,10 +581,10 @@ impl EpisodeWrite<'_> {
             let evidence = resolve_goal_evidence(ctx, &self.slots, &item.evidence).await?;
             let motivated_by = resolve_goal_motivations(ctx, &self.slots, &item.motivated_by)?;
             let topology = GoalTopologyWrite::new(motivated_by, Vec::new(), evidence)
-                .map_err(McpToolError::Protocol)?;
+                .map_err(ToolError::Protocol)?;
             let request_id =
                 IdempotencyKey::optional_or_generated("episode_goal", item.idempotency_key.clone())
-                    .map_err(McpToolError::InvalidInput)?;
+                    .map_err(ToolError::InvalidInput)?;
             let pin = bind.goal.contains(&idx);
             let outcome = self
                 .uow
@@ -602,7 +595,7 @@ impl EpisodeWrite<'_> {
                         payload,
                         request_id,
                         authorship: system_operator_authorship(ctx, "episode_commit"),
-                        author_self_perspective_id: ctx.caller_self_perspective,
+                        author_self_perspective_id: ctx.caller_self_perspective(),
                     },
                     pin.then_some(act_id),
                 )
@@ -620,7 +613,7 @@ impl EpisodeWrite<'_> {
 
     /// Commit the transaction and hand back the minted slots and the
     /// bound-handle ledger, in write order.
-    async fn commit(self) -> Result<(EpisodeSlots, Vec<String>), McpToolError> {
+    async fn commit(self) -> Result<(EpisodeSlots, Vec<String>), ToolError> {
         self.uow.commit().await?;
         Ok((self.slots, self.bound))
     }
@@ -628,31 +621,27 @@ impl EpisodeWrite<'_> {
 
 /// The refusal for a bound write that came back as a replay of an existing
 /// `noun` (row or memory): a replay cannot pin this write-act.
-fn bound_replay_refusal(kind: &str, noun: &str) -> McpToolError {
-    McpToolError::InvalidInput(format!(
+fn bound_replay_refusal(kind: &str, noun: &str) -> ToolError {
+    ToolError::InvalidInput(format!(
         "bound {kind} replayed an existing {noun}; bind requires a new admission that pins this write-act"
     ))
 }
 
-fn reject_bound_replay(pin: bool, replay: bool, kind: &str) -> Result<(), McpToolError> {
+fn reject_bound_replay(pin: bool, replay: bool, kind: &str) -> Result<(), ToolError> {
     if pin && replay {
         return Err(bound_replay_refusal(kind, "row"));
     }
     Ok(())
 }
 
-fn map_bound_fact_error(err: crate::error::ProtocolError, kind: &str, pin: bool) -> McpToolError {
+fn map_bound_fact_error(err: crate::error::ProtocolError, kind: &str, pin: bool) -> ToolError {
     if pin && err.code == ErrorCode::IdempotencyConflict {
         return bound_replay_refusal(kind, "row");
     }
-    McpToolError::Protocol(err)
+    ToolError::Protocol(err)
 }
 
-fn map_bound_derived_error(
-    err: crate::error::ProtocolError,
-    kind: &str,
-    pin: bool,
-) -> McpToolError {
+fn map_bound_derived_error(err: crate::error::ProtocolError, kind: &str, pin: bool) -> ToolError {
     if pin && err.code == ErrorCode::IdempotencyConflict {
         return bound_replay_refusal(kind, "memory");
     }
@@ -660,10 +649,10 @@ fn map_bound_derived_error(
 }
 
 async fn resolve_memory_source(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     slots: &EpisodeSlots,
     handle: &str,
-) -> Result<(MemoryId, MemoryHandleClass), McpToolError> {
+) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
     if let Some(slot) = resolve_local_slot(slots, handle)? {
         return Ok((slot.id, slot.class));
     }
@@ -671,10 +660,10 @@ async fn resolve_memory_source(
 }
 
 async fn resolve_stance_subject(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     slots: &EpisodeSlots,
     handle: &str,
-) -> Result<(MemoryId, InterpretationSubjectKind), McpToolError> {
+) -> Result<(MemoryId, InterpretationSubjectKind), ToolError> {
     if let Some(slot) = resolve_local_slot(slots, handle)? {
         let kind = match slot.class {
             MemoryHandleClass::Fact => InterpretationSubjectKind::Fact,
@@ -687,10 +676,10 @@ async fn resolve_stance_subject(
 }
 
 async fn resolve_goal_evidence(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     slots: &EpisodeSlots,
     evidence: &[String],
-) -> Result<Vec<GoalEvidenceRef>, McpToolError> {
+) -> Result<Vec<GoalEvidenceRef>, ToolError> {
     let mut resolved = Vec::with_capacity(evidence.len());
     for handle in evidence {
         if let Some(slot) = resolve_local_slot(slots, handle)? {
@@ -701,7 +690,7 @@ async fn resolve_goal_evidence(
                     resolved.push(GoalEvidenceRef::new(slot.id));
                 }
                 MemoryHandleClass::Perspective => {
-                    return Err(McpToolError::InvalidInput(
+                    return Err(ToolError::InvalidInput(
                         "Goal evidence must reference a Fact or Abstraction".into(),
                     ));
                 }
@@ -717,16 +706,16 @@ async fn resolve_goal_evidence(
 }
 
 fn resolve_goal_motivations(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     slots: &EpisodeSlots,
     handles: &[String],
-) -> Result<Vec<GoalMotivationRef>, McpToolError> {
+) -> Result<Vec<GoalMotivationRef>, ToolError> {
     handles
         .iter()
         .map(|handle| {
             if let Some(slot) = resolve_local_slot(slots, handle)? {
                 if slot.class != MemoryHandleClass::Perspective {
-                    return Err(McpToolError::InvalidInput(
+                    return Err(ToolError::InvalidInput(
                         "motivated_by must name a Perspective".into(),
                     ));
                 }
@@ -741,33 +730,37 @@ fn resolve_goal_motivations(
 fn resolve_local_slot<'a>(
     slots: &'a EpisodeSlots,
     handle: &str,
-) -> Result<Option<&'a Slot>, McpToolError> {
+) -> Result<Option<&'a Slot>, ToolError> {
     match EpisodeKey::parse(handle) {
-        Ok(EpisodeKey::Remember(idx)) => slots.remember.get(idx).map(Some).ok_or_else(|| {
-            McpToolError::InvalidInput(format!("local key {handle} is out of range"))
-        }),
-        Ok(EpisodeKey::Derive) => {
-            slots.derive.as_ref().map(Some).ok_or_else(|| {
-                McpToolError::InvalidInput("local key derive is out of range".into())
+        Ok(EpisodeKey::Remember(idx)) => {
+            slots.remember.get(idx).map(Some).ok_or_else(|| {
+                ToolError::InvalidInput(format!("local key {handle} is out of range"))
             })
         }
-        Ok(EpisodeKey::Stance(idx)) => slots.stance.get(idx).map(Some).ok_or_else(|| {
-            McpToolError::InvalidInput(format!("local key {handle} is out of range"))
-        }),
-        Ok(EpisodeKey::Goal(_)) => Err(McpToolError::InvalidInput(
+        Ok(EpisodeKey::Derive) => slots
+            .derive
+            .as_ref()
+            .map(Some)
+            .ok_or_else(|| ToolError::InvalidInput("local key derive is out of range".into())),
+        Ok(EpisodeKey::Stance(idx)) => {
+            slots.stance.get(idx).map(Some).ok_or_else(|| {
+                ToolError::InvalidInput(format!("local key {handle} is out of range"))
+            })
+        }
+        Ok(EpisodeKey::Goal(_)) => Err(ToolError::InvalidInput(
             "goal:<index> is not a memory handle".into(),
         )),
         Err(EpisodeKeyParseError::NotIndex) => {
             if handle.starts_with("goal:") {
-                Err(McpToolError::InvalidInput(
+                Err(ToolError::InvalidInput(
                     "goal:<index> is not a memory handle".into(),
                 ))
             } else if handle.starts_with("remember:") {
-                Err(McpToolError::InvalidInput(format!(
+                Err(ToolError::InvalidInput(format!(
                     "local key {handle} is not remember:<index>"
                 )))
             } else {
-                Err(McpToolError::InvalidInput(format!(
+                Err(ToolError::InvalidInput(format!(
                     "local key {handle} is not stance:<index>"
                 )))
             }
@@ -780,8 +773,8 @@ fn resolve_local_slot<'a>(
 mod tests {
     use super::{map_bound_derived_error, map_bound_fact_error};
     use crate::ReplayDrift;
+    use crate::ToolError;
     use crate::error::ProtocolError;
-    use crate::mcp::McpToolError;
 
     /// Every drift a replay can show is, for a bound write, the refusal to
     /// replay; unbound, the idempotency conflict passes through.
@@ -796,15 +789,15 @@ mod tests {
             let err = ProtocolError::replay_changed(drift);
             assert!(matches!(
                 map_bound_fact_error(err.clone(), "remember", true),
-                McpToolError::InvalidInput(_)
+                ToolError::InvalidInput(_)
             ));
             assert!(matches!(
                 map_bound_derived_error(err.clone(), "derive", true),
-                McpToolError::InvalidInput(_)
+                ToolError::InvalidInput(_)
             ));
             assert!(matches!(
                 map_bound_fact_error(err, "remember", false),
-                McpToolError::Protocol(_)
+                ToolError::Protocol(_)
             ));
         }
     }

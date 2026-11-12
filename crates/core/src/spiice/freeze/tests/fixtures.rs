@@ -319,8 +319,8 @@ pub(super) fn register_fixture_tool(
     // Registrations live for the process; a leaked closure gives the
     // descriptor the `'static` call handle its field type demands.
     let call: crate::mcp::McpCallFn = Box::leak(Box::new(
-        |_ctx: crate::mcp::McpToolCtx, _args: serde_json::Value| {
-            Box::pin(async { Err(crate::mcp::McpToolError::Other("a fixture".to_owned())) })
+        |_ctx: crate::ToolCtx, _args: serde_json::Value| {
+            Box::pin(async { Err(crate::ToolError::Other("a fixture".to_owned())) })
                 as futures::future::BoxFuture<'static, _>
         },
     ));

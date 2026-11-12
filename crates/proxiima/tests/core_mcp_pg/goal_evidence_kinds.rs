@@ -94,13 +94,8 @@ impl Env {
         args: serde_json::Value,
         perspective: proxiima_core::MemoryId,
     ) -> TestResult<serde_json::Value> {
-        let author = proxiima_core::mcp::McpAuthorContext {
-            model_id: "test-model".into(),
-            trusted_model_id: None,
-            client_name: "goal-test".into(),
-            client_version: "1".into(),
-            caller_self_perspective: Some(perspective),
-        };
+        let author = proxiima_core::ToolCaller::new("test-model", "goal-test", "1")
+            .with_self_perspective(Some(perspective));
         Ok(self
             .tools
             .clone()

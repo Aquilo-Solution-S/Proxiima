@@ -4,21 +4,18 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 
 use super::core_tools::memory_spaces::{ResolvedMemorySpace, SpaceDefault, resolve_space_owner};
-use super::{
-    KeyDeclaration, McpToolCtx, McpToolDescriptor, McpToolError, OwnerNeed, Replay, ToolEffect,
-    ToolReply,
-};
-use crate::{ActionName, OwnerAccess, ScopeKey};
+use super::{KeyDeclaration, McpToolDescriptor, OwnerNeed, Replay, ToolEffect, ToolReply};
+use crate::{ActionName, OwnerAccess, ScopeKey, ToolCtx, ToolError};
 
 #[derive(Debug)]
 pub struct ToolCall {
     pub name: String,
     pub args: serde_json::Value,
-    pub ctx: McpToolCtx,
+    pub ctx: ToolCtx,
 }
 
 pub type TerminalDispatch<'a> =
-    Box<dyn FnOnce(ToolCall) -> BoxFuture<'a, Result<ToolReply, McpToolError>> + Send + 'a>;
+    Box<dyn FnOnce(ToolCall) -> BoxFuture<'a, Result<ToolReply, ToolError>> + Send + 'a>;
 
 pub struct Next<'a> {
     rest: &'a [Arc<dyn RequestBehavior>],
@@ -46,7 +43,7 @@ impl<'a> Next<'a> {
     /// # Errors
     ///
     /// Returns a behavior or terminal tool error.
-    pub async fn run(mut self, call: ToolCall) -> Result<ToolReply, McpToolError> {
+    pub async fn run(mut self, call: ToolCall) -> Result<ToolReply, ToolError> {
         if let Some((head, tail)) = self.rest.split_first() {
             head.handle(
                 call,
@@ -58,7 +55,7 @@ impl<'a> Next<'a> {
             .await
         } else {
             let Some(terminal) = self.terminal.take() else {
-                return Err(McpToolError::Other("terminal dispatch missing".into()));
+                return Err(ToolError::Other("terminal dispatch missing".into()));
             };
             terminal(call).await
         }
@@ -77,7 +74,7 @@ pub trait RequestBehavior: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// The behavior's own refusal, or the error `next` returned.
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError>;
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError>;
 
     /// Whether `ctx`'s caller may see `tool` in a listing: `tools/list`, the
     /// REST catalog and `OpenAPI` document, the generated instructions and
@@ -89,7 +86,7 @@ pub trait RequestBehavior: Send + Sync + std::fmt::Debug {
     /// visible. Only a listing asks: the call path never does, so a
     /// behavior that hides a tool still refuses its call in [`Self::handle`],
     /// where the arguments are known.
-    fn visible(&self, _ctx: &McpToolCtx, _tool: &ToolDescriptorView<'_>) -> bool {
+    fn visible(&self, _ctx: &ToolCtx, _tool: &ToolDescriptorView<'_>) -> bool {
         true
     }
 }
@@ -186,12 +183,12 @@ impl<'a> ToolDescriptorView<'a> {
     }
 }
 
-impl McpToolCtx {
+impl ToolCtx {
     /// Whether every request behavior of this context's registry lets the
     /// caller see `tool` ([`RequestBehavior::visible`]).
     #[must_use]
     pub fn behaviors_show(&self, tool: &ToolDescriptorView<'_>) -> bool {
-        self.registry
+        self.registry()
             .request_behaviors()
             .iter()
             .all(|behavior| behavior.visible(self, tool))
@@ -202,7 +199,7 @@ impl McpToolCtx {
 /// carries what the host declared about it.
 ///
 /// The MCP tool host places it in the call's request services
-/// ([`McpToolCtx::services`]) when it dispatches a host tool, so every
+/// ([`ToolCtx::service`]) when it dispatches a host tool, so every
 /// behavior sees which kind of call it wraps and the scope gate classifies
 /// the call from the host's declaration instead of treating the unknown
 /// name as a write. It names the tool it describes; the gate reads it only
@@ -267,10 +264,10 @@ impl ScopeGateBehavior {
     fn enforce_scope(
         tool: &str,
         args: &serde_json::Value,
-        ctx: &McpToolCtx,
-    ) -> Result<OwnerAccess, McpToolError> {
-        ctx.judged.clear();
-        let capabilities = ctx.authz.capabilities();
+        ctx: &ToolCtx,
+    ) -> Result<OwnerAccess, ToolError> {
+        ctx.judged_cell().clear();
+        let capabilities = ctx.authz().capabilities();
         // The request name is parsed once, here. A name that is no key is in
         // no palette (`All` holds everything, as ever), and every comparison
         // below is between keys.
@@ -281,13 +278,13 @@ impl ScopeGateBehavior {
         // whole-tool branch below — a palette holding only
         // `spiice_tool:action` would deny the tool outright, and an unknown
         // action would sail past this gate into the tool.
-        let descriptor = ctx.registry.mcp_tool(tool);
+        let descriptor = ctx.registry().mcp_tool(tool);
         if descriptor.is_some_and(|descriptor| !descriptor.advertised_by(capabilities)) {
             // Refused as a whole, so the key it was judged by is the tool's.
             if let Ok(key) = key {
-                ctx.judged.record(key);
+                ctx.judged_cell().record(key);
             }
-            return Err(McpToolError::NotAuthorized(tool.to_string()));
+            return Err(ToolError::NotAuthorized(tool.to_string()));
         }
         // Every branch ends with the declaration of exactly the key it judged
         // — a dispatcher's action, a flat tool's, a host tool's, a core
@@ -298,12 +295,12 @@ impl ScopeGateBehavior {
             Some(descriptor) if !descriptor.action_arg_specs.is_empty() => {
                 // A registered tool's name is a `ToolName`: `try_freeze` checked.
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
-                    return Err(McpToolError::NotAuthorized(tool.to_string()));
+                    return Err(ToolError::NotAuthorized(tool.to_string()));
                 };
                 let requested = args.get("action").and_then(serde_json::Value::as_str);
                 let declared = descriptor.declaration(requested);
                 let Some(action) = requested else {
-                    return Err(McpToolError::InvalidInput(format!(
+                    return Err(ToolError::InvalidInput(format!(
                         "tool {tool} requires string action"
                     )));
                 };
@@ -316,19 +313,19 @@ impl ScopeGateBehavior {
                         .any(|spec| spec.action == name.as_str())
                 });
                 let Some(action) = known else {
-                    return Err(McpToolError::InvalidInput(format!(
+                    return Err(ToolError::InvalidInput(format!(
                         "unknown action {action:?} for tool {tool}"
                     )));
                 };
                 Self::record_action(tool_name, &action, ctx)?;
                 if !capabilities.admits_action(tool_name, &action, declared) {
-                    return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
+                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
                 declared.owner_access()
             }
             Some(descriptor) if !descriptor.argv_action_specs.is_empty() => {
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
-                    return Err(McpToolError::NotAuthorized(tool.to_string()));
+                    return Err(ToolError::NotAuthorized(tool.to_string()));
                 };
                 // The same resolution the terminal dispatch runs, once, so
                 // the gate and the call share one vocabulary: argv matching
@@ -338,18 +335,18 @@ impl ScopeGateBehavior {
                 let declared = descriptor.declaration(resolved.as_ref().ok().copied());
                 let action = resolved?;
                 let Ok(action_name) = ActionName::parse(action) else {
-                    return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
+                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
                 };
                 Self::record_action(tool_name, &action_name, ctx)?;
                 if !capabilities.admits_action(tool_name, &action_name, declared) {
-                    return Err(McpToolError::NotAuthorized(format!("{tool}:{action}")));
+                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
                 declared.owner_access()
             }
             _ => {
                 let declared = Self::flat_declaration(tool, key.as_ref().ok(), descriptor, ctx);
                 if let Ok(key) = &key {
-                    ctx.judged.record(key.clone());
+                    ctx.judged_cell().record(key.clone());
                 }
                 let allowed = match &key {
                     Ok(key) => capabilities.admits(key, declared),
@@ -359,7 +356,7 @@ impl ScopeGateBehavior {
                     }
                 };
                 if !allowed {
-                    return Err(McpToolError::NotAuthorized(tool.to_string()));
+                    return Err(ToolError::NotAuthorized(tool.to_string()));
                 }
                 declared.owner_access()
             }
@@ -378,14 +375,15 @@ impl ScopeGateBehavior {
     async fn read_other_store_reads(
         mut call: ToolCall,
         access: OwnerAccess,
-    ) -> Result<ToolCall, McpToolError> {
-        let unread = call.ctx.authz.unread_other_store_reads();
+    ) -> Result<ToolCall, ToolError> {
+        let unread = call.ctx.authz().unread_other_store_reads();
         if access == OwnerAccess::Read || unread.is_empty() {
             return Ok(call);
         }
         let read =
             super::core_tools::other_stores::resolve_remote_origins(&call.ctx, &unread).await?;
-        call.ctx.authz = call.ctx.authz.with_other_store_reads(read);
+        let authz = call.ctx.authz().clone().with_other_store_reads(read);
+        call.ctx = call.ctx.with_authz(authz);
         Ok(call)
     }
 
@@ -393,11 +391,11 @@ impl ScopeGateBehavior {
     fn record_action(
         tool: &crate::ToolName,
         action: &ActionName,
-        ctx: &McpToolCtx,
-    ) -> Result<(), McpToolError> {
+        ctx: &ToolCtx,
+    ) -> Result<(), ToolError> {
         let key = ScopeKey::action(tool.clone(), action.clone())
-            .map_err(|_| McpToolError::NotAuthorized(format!("{tool}:{action}")))?;
-        ctx.judged.record(key);
+            .map_err(|_| ToolError::NotAuthorized(format!("{tool}:{action}")))?;
+        ctx.judged_cell().record(key);
         Ok(())
     }
 
@@ -408,32 +406,33 @@ impl ScopeGateBehavior {
     fn resolve_scope_owner(
         tool: &str,
         args: &serde_json::Value,
-        ctx: &McpToolCtx,
-    ) -> Result<ResolvedMemorySpace, McpToolError> {
+        ctx: &ToolCtx,
+    ) -> Result<ResolvedMemorySpace, ToolError> {
         let Some(properties) = Self::space_properties(tool, args, ctx) else {
             return Ok(ResolvedMemorySpace {
                 key: "current".into(),
                 label: "Current owner".into(),
-                owner: ctx.owner,
+                owner: ctx.owner(),
             });
         };
         let mut normalized = args.clone();
         super::tool::coerce_space_aliases(tool, &mut normalized, &properties)?;
-        let raw = match normalized.get("space") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(value) => Some(value.as_str().ok_or_else(|| {
-                McpToolError::InvalidInput("space must be a string or null".into())
-            })?),
-        };
+        let raw =
+            match normalized.get("space") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(value.as_str().ok_or_else(|| {
+                    ToolError::InvalidInput("space must be a string or null".into())
+                })?),
+            };
         resolve_space_owner(ctx, raw, SpaceDefault::Current)
     }
 
     fn space_properties(
         tool: &str,
         args: &serde_json::Value,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
     ) -> Option<Vec<String>> {
-        let descriptor = ctx.registry.mcp_tool(tool)?;
+        let descriptor = ctx.registry().mcp_tool(tool)?;
         let schema = descriptor
             .action_arg_specs
             .is_empty()
@@ -459,7 +458,7 @@ impl ScopeGateBehavior {
         tool: &str,
         key: Option<&ScopeKey>,
         descriptor: Option<&McpToolDescriptor>,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
     ) -> KeyDeclaration {
         match (key, descriptor) {
             (Some(ScopeKey::Resource(resource)), _)
@@ -483,13 +482,12 @@ impl ScopeGateBehavior {
     fn host_call(
         tool: &str,
         descriptor: Option<&McpToolDescriptor>,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
     ) -> Option<Arc<McpHostToolCall>> {
         if descriptor.is_some() {
             return None;
         }
-        ctx.services
-            .get::<McpHostToolCall>()
+        ctx.service::<McpHostToolCall>()
             .filter(|host| host.name == tool)
     }
 
@@ -501,19 +499,19 @@ impl ScopeGateBehavior {
         tool: &str,
         access: OwnerAccess,
         owner: crate::OwnerId,
-        ctx: &McpToolCtx,
-    ) -> Result<(), McpToolError> {
-        if ctx.authz.may_run_tool(&owner, access) {
+        ctx: &ToolCtx,
+    ) -> Result<(), ToolError> {
+        if ctx.authz().may_run_tool(&owner, access) {
             Ok(())
         } else {
-            Err(McpToolError::NotAuthorized(tool.to_string()))
+            Err(ToolError::NotAuthorized(tool.to_string()))
         }
     }
 }
 
 #[async_trait]
 impl RequestBehavior for ScopeGateBehavior {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
         let access = Self::enforce_scope(&call.name, &call.args, &call.ctx)?;
         next.run(Self::read_other_store_reads(call, access).await?)
             .await
@@ -536,8 +534,9 @@ mod argv_scope_tests;
 mod owner_role_tests {
     use super::ScopeGateBehavior;
     use crate::access::Role;
-    use crate::mcp::{McpAuthorContext, McpTool, McpToolCtx, McpToolError, ToolEffect};
-    use crate::{AuthPath, AuthzContext, GroupId, OwnerId, SpiiceRegistry, SpiiceServices, UserId};
+    use crate::mcp::ToolEffect;
+    use crate::{AuthPath, AuthzContext, GroupId, OwnerId, SpiiceRegistry, UserId};
+    use crate::{Tool, ToolCtx, ToolError};
     use futures::future::BoxFuture;
     use std::sync::Arc;
 
@@ -551,17 +550,14 @@ mod owner_role_tests {
     #[derive(Debug)]
     struct DeclaredReadTool;
 
-    impl McpTool for DeclaredReadTool {
+    impl Tool for DeclaredReadTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_search";
         const DESCRIPTION: &'static str = "A spiice read tool that declares itself read-only.";
         const EFFECT: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
         type Args = StubArgs;
         type Output = super::StubOutput;
-        fn call(
-            _: McpToolCtx,
-            _: Self::Args,
-        ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async { Ok(super::StubOutput {}) })
         }
     }
@@ -572,45 +568,31 @@ mod owner_role_tests {
     #[derive(Debug)]
     struct SilentTool;
 
-    impl McpTool for SilentTool {
+    impl Tool for SilentTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_silent";
         const DESCRIPTION: &'static str = "A spiice tool that declares no annotations.";
         type Args = StubArgs;
         type Output = super::StubOutput;
-        fn call(
-            _: McpToolCtx,
-            _: Self::Args,
-        ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async { Ok(super::StubOutput {}) })
         }
     }
 
     /// A group viewer: read on everything, write on nothing.
-    fn viewer_ctx(tool_owner: OwnerId) -> McpToolCtx {
+    fn viewer_ctx(tool_owner: OwnerId) -> ToolCtx {
         let subject = UserId::new(uuid::Uuid::now_v7());
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<DeclaredReadTool>("proxiima-stub");
-        McpToolCtx {
-            owner: tool_owner,
-            authz: AuthzContext::for_subject_with_role(
+        registry.add_tool_or_panic_for_tests::<DeclaredReadTool>("proxiima-stub");
+        crate::test_fixtures::tool_ctx(
+            tool_owner,
+            AuthzContext::for_subject_with_role(
                 subject,
                 [(tool_owner, Role::viewer())],
                 AuthPath::HostBearer,
             ),
-            registry: Arc::new(registry.freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "t".into(),
-                trusted_model_id: None,
-                client_name: "t".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            Arc::new(registry.freeze_or_panic_for_tests()),
+        )
     }
 
     /// A read-only role can call a spiice tool that declares itself read-only.
@@ -640,8 +622,8 @@ mod owner_role_tests {
     #[test]
     fn a_spiice_tool_that_declares_nothing_cannot_be_frozen() {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<DeclaredReadTool>("proxiima-stub");
-        registry.add_mcp_tool_or_panic_for_tests::<SilentTool>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<DeclaredReadTool>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<SilentTool>("proxiima-stub");
         let err = registry.try_freeze().expect_err("silence must not seal");
         assert!(
             matches!(
@@ -692,22 +674,11 @@ mod owner_role_tests {
             AuthPath::HostBearer,
         )
         .with_tool_scope(crate::ToolScope::All);
-        let ctx = McpToolCtx {
-            owner: bound_owner,
+        let ctx = crate::test_fixtures::tool_ctx(
+            bound_owner,
             authz,
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "t".into(),
-                trusted_model_id: None,
-                client_name: "t".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        );
 
         let err = ScopeGateBehavior::enforce_scope(
             crate::protocol::tool::CORE_REMEMBER,
@@ -719,7 +690,7 @@ mod owner_role_tests {
             &ctx,
         )
         .expect_err("viewer on selected space cannot write there");
-        assert!(matches!(err, McpToolError::NotAuthorized(_)), "got {err:?}");
+        assert!(matches!(err, ToolError::NotAuthorized(_)), "got {err:?}");
     }
 
     #[test]
@@ -736,22 +707,11 @@ mod owner_role_tests {
             AuthPath::HostBearer,
         )
         .with_tool_scope(crate::ToolScope::All);
-        let ctx = McpToolCtx {
-            owner: bound_owner,
+        let ctx = crate::test_fixtures::tool_ctx(
+            bound_owner,
             authz,
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "t".into(),
-                trusted_model_id: None,
-                client_name: "t".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        );
 
         ScopeGateBehavior::enforce_scope(
             crate::protocol::tool::CORE_REMEMBER,
@@ -772,10 +732,7 @@ mod visibility_tests {
 
     use super::*;
     use crate::protocol::tool as protocol_tool;
-    use crate::{
-        AuthPath, AuthzContext, McpAuthorContext, OwnerId, SpiiceRegistry, SpiiceServices,
-        ToolScope, UserId,
-    };
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, ToolScope, UserId};
 
     type Asked = Arc<Mutex<Vec<(String, Option<String>, ToolSource, ToolEffect)>>>;
 
@@ -788,11 +745,11 @@ mod visibility_tests {
 
     #[async_trait]
     impl RequestBehavior for Hides {
-        async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+        async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
             next.run(call).await
         }
 
-        fn visible(&self, _ctx: &McpToolCtx, tool: &ToolDescriptorView<'_>) -> bool {
+        fn visible(&self, _ctx: &ToolCtx, tool: &ToolDescriptorView<'_>) -> bool {
             self.asked.lock().expect("asked").push((
                 tool.name().to_string(),
                 tool.action().map(ToString::to_string),
@@ -809,30 +766,19 @@ mod visibility_tests {
 
     #[async_trait]
     impl RequestBehavior for PassThrough {
-        async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+        async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
             next.run(call).await
         }
     }
 
-    fn ctx_over(registry: SpiiceRegistry) -> McpToolCtx {
+    fn ctx_over(registry: SpiiceRegistry) -> ToolCtx {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer)
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer)
                 .with_tool_scope(ToolScope::All),
-            registry: Arc::new(registry.freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            Arc::new(registry.freeze_or_panic_for_tests()),
+        )
     }
 
     #[test]
@@ -840,7 +786,7 @@ mod visibility_tests {
         let mut registry = SpiiceRegistry::new();
         registry.add_request_behavior(PassThrough);
         let ctx = ctx_over(registry);
-        for descriptor in ctx.registry.list_mcp_tools() {
+        for descriptor in ctx.registry().list_mcp_tools() {
             assert!(
                 ctx.behaviors_show(&ToolDescriptorView::registry(descriptor, None)),
                 "{} hidden by the default",
@@ -881,7 +827,7 @@ mod visibility_tests {
         // A dispatcher whose actions differ in effect: the view must carry the
         // action's own, not the join the tool as a whole declares.
         let (goal, action, effect) = ctx
-            .registry
+            .registry()
             .list_mcp_tools()
             .iter()
             .find_map(|tool| {
@@ -893,7 +839,7 @@ mod visibility_tests {
             .expect("a registered dispatcher mixes effects");
         assert!(ctx.behaviors_show(&ToolDescriptorView::registry(goal, Some(action))));
         let search = ctx
-            .registry
+            .registry()
             .mcp_tool(protocol_tool::CORE_SEARCH_MEMORIES)
             .expect("core_search_memories is registered");
         assert!(ctx.behaviors_show(&ToolDescriptorView::registry(search, None)));

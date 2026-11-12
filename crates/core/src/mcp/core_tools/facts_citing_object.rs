@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::MemoryId;
 use crate::engine::FactsCitingObjectReadRequest;
 use crate::mcp::cursor as wire_cursor;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::verbs::query::FactCitationCursor;
+use crate::{ToolCtx, ToolError};
 
 use super::get_memory::{GetMemoryOutput, project_memory_snapshot};
 
@@ -57,9 +57,9 @@ fn citation_fingerprint(cited_object_id: uuid::Uuid) -> String {
 }
 
 pub(super) async fn facts_citing_object(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: FactsCitingObjectArgs,
-) -> Result<FactsCitingObjectOutput, McpToolError> {
+) -> Result<FactsCitingObjectOutput, ToolError> {
     let cited_object_id = parse_cited_object_id(&args.cited_object_id)?;
     let limit = super::resolve_page_limit(args.limit)?;
     let fingerprint = citation_fingerprint(cited_object_id);
@@ -70,7 +70,7 @@ pub(super) async fn facts_citing_object(
             let pos: CitationCursorPos = CITATION_CURSOR.decode(&fingerprint, raw)?;
             let created_at = time::OffsetDateTime::from_unix_timestamp_nanos(pos.created_at_nanos)
                 .map_err(|_| wire_cursor::malformed_cursor(CITATION_CURSOR.source))?;
-            Ok::<_, McpToolError>(FactCitationCursor {
+            Ok::<_, ToolError>(FactCitationCursor {
                 created_at,
                 memory_id: MemoryId::new(pos.memory_id),
             })
@@ -79,7 +79,7 @@ pub(super) async fn facts_citing_object(
     let engine = ctx.require_engine()?;
     let page = engine
         .facts_citing_object(
-            &ctx.authz,
+            ctx.authz(),
             &FactsCitingObjectReadRequest {
                 cited_object_id,
                 limit,
@@ -100,7 +100,7 @@ pub(super) async fn facts_citing_object(
         .facts
         .into_iter()
         .map(|snapshot| project_memory_snapshot(&ctx, snapshot, None))
-        .collect::<Result<Vec<_>, McpToolError>>()?;
+        .collect::<Result<Vec<_>, ToolError>>()?;
     Ok(FactsCitingObjectOutput {
         cited_object_id: cited_object_id.to_string(),
         facts,
@@ -109,6 +109,6 @@ pub(super) async fn facts_citing_object(
     })
 }
 
-pub(super) fn parse_cited_object_id(raw: &str) -> Result<uuid::Uuid, McpToolError> {
+pub(super) fn parse_cited_object_id(raw: &str) -> Result<uuid::Uuid, ToolError> {
     crate::mcp::parse_wire_uuid(raw)
 }

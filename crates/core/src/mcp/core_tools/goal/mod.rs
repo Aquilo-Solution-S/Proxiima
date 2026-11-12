@@ -2,9 +2,7 @@ use crate::engine::{
     GoalCreatePayloadWriteRequest, GoalDecomposeRequest, GoalMarkAchievedRequest,
     GoalModifyRequest, GoalTransitionRequest,
 };
-use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use crate::mcp::{CoreActionMeta, McpActionArgSpec, McpToolAudience, OwnerNeed};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::tool::validate_trimmed_len;
@@ -18,6 +16,7 @@ use crate::{
     GoalHandle, InputContractId, ModelId, OperatorId, PendingWork, PromptVersion, SchemaId,
     SchemaVersion, ToolId,
 };
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -254,7 +253,7 @@ pub enum CoreGoalOutput {
     Collaboration(GoalCollaborationOutput),
 }
 
-impl McpTool for CoreGoalTool {
+impl Tool for CoreGoalTool {
     const NAME: &'static str = protocol_tool::CORE_GOAL;
     const TITLE: &'static str = "Goals";
     const DESCRIPTION: &'static str = "Write Goals: create, decompose, transition, edit, achieve, share, publish, or bind work. Use the latest head handle. Motivations and evidence are optional; pause needs pending=keep or discard.";
@@ -401,9 +400,9 @@ impl McpTool for CoreGoalTool {
     type Output = CoreGoalOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: CoreGoalArgs,
-    ) -> futures::future::BoxFuture<'static, Result<CoreGoalOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<CoreGoalOutput, ToolError>> {
         Box::pin(async move {
             match args {
                 CoreGoalArgs::Set(args) => goal_set(ctx, args).await.map(CoreGoalOutput::Write),
@@ -442,7 +441,7 @@ impl McpTool for CoreGoalTool {
     }
 }
 
-async fn goal_set(ctx: McpToolCtx, args: GoalSetArgs) -> Result<GoalWriteOutput, McpToolError> {
+async fn goal_set(ctx: ToolCtx, args: GoalSetArgs) -> Result<GoalWriteOutput, ToolError> {
     let space = super::memory_spaces::resolve_space_owner(
         &ctx,
         args.space.as_deref(),
@@ -451,40 +450,40 @@ async fn goal_set(ctx: McpToolCtx, args: GoalSetArgs) -> Result<GoalWriteOutput,
     let payload = encode_goal_payload(&ctx, args.payload)?;
     let evidence = resolve_goal_evidence_handles(&ctx, &args.evidence).await?;
     let motivated_by = resolve_goal_motivations(&ctx, &args.motivated_by)?;
-    let topology = GoalTopologyWrite::new(motivated_by, Vec::new(), evidence)
-        .map_err(McpToolError::Protocol)?;
+    let topology =
+        GoalTopologyWrite::new(motivated_by, Vec::new(), evidence).map_err(ToolError::Protocol)?;
     let request_id = IdempotencyKey::optional_or_generated("goal_set", args.idempotency_key)
-        .map_err(McpToolError::InvalidInput)?;
+        .map_err(ToolError::InvalidInput)?;
     let authorship = system_operator_authorship(&ctx, "goal_set");
     let engine = ctx.require_engine()?;
     let outcome = engine
         .create_goal_from_payload_write(
-            &ctx.authz,
+            ctx.authz(),
             &GoalCreatePayloadWriteRequest {
                 owner: space.owner,
                 topology,
                 payload,
                 request_id,
                 authorship,
-                author_self_perspective_id: ctx.caller_self_perspective,
+                author_self_perspective_id: ctx.caller_self_perspective(),
             },
         )
         .await
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     Ok(format_goal_write_output(&ctx, &outcome))
 }
 
-fn collaboration_goal(raw: &str) -> Result<GoalHandle, McpToolError> {
+fn collaboration_goal(raw: &str) -> Result<GoalHandle, ToolError> {
     Ok(GoalHandle::new(crate::mcp::ids::parse_wire_uuid(raw)?))
 }
 
-fn collaboration_subject(raw: &str) -> Result<crate::OwnerId, McpToolError> {
+fn collaboration_subject(raw: &str) -> Result<crate::OwnerId, ToolError> {
     Ok(crate::OwnerId::new(crate::mcp::ids::parse_wire_uuid(raw)?))
 }
 
-fn collaboration_role(a: &GoalAccessArgs) -> Result<crate::Role, McpToolError> {
+fn collaboration_role(a: &GoalAccessArgs) -> Result<crate::Role, ToolError> {
     let role = crate::Role::new(a.read_ceiling, a.write_ceiling)
-        .map_err(|e| McpToolError::InvalidInput(e.to_string()))?
+        .map_err(|e| ToolError::InvalidInput(e.to_string()))?
         .with_goals(if a.works_goals {
             crate::GoalAccess::Works
         } else {
@@ -494,13 +493,13 @@ fn collaboration_role(a: &GoalAccessArgs) -> Result<crate::Role, McpToolError> {
 }
 
 async fn goal_grant_access(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalAccessArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     let role = collaboration_role(&a)?;
     ctx.require_engine()?
         .grant_goal_access(
-            &ctx.authz,
+            ctx.authz(),
             &crate::GoalAudienceGrantInput {
                 goal: collaboration_goal(&a.goal_handle)?,
                 subject: collaboration_subject(&a.subject)?,
@@ -516,16 +515,16 @@ async fn goal_grant_access(
             memory_id: None,
             series: None,
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 async fn goal_revoke_access(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalSubjectArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     ctx.require_engine()?
         .revoke_goal_access(
-            &ctx.authz,
+            ctx.authz(),
             collaboration_goal(&a.goal_handle)?,
             collaboration_subject(&a.subject)?,
         )
@@ -537,17 +536,17 @@ async fn goal_revoke_access(
             memory_id: None,
             series: None,
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 async fn goal_publish(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalPublicationArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     let memory = ctx.resolve_memory(&a.memory_id)?;
     ctx.require_engine()?
         .publish_to_goal(
-            &ctx.authz,
+            ctx.authz(),
             &crate::GoalPublicationInput {
                 goal: collaboration_goal(&a.goal_handle)?,
                 memory,
@@ -562,7 +561,7 @@ async fn goal_publish(
             memory_id: Some(a.memory_id),
             series: None,
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -572,12 +571,12 @@ pub struct GoalUnpublishArgs {
 }
 
 async fn goal_unpublish(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalUnpublishArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     let memory = ctx.resolve_memory(&a.memory_id)?;
     ctx.require_engine()?
-        .unpublish_from_goal(&ctx.authz, collaboration_goal(&a.goal_handle)?, memory)
+        .unpublish_from_goal(ctx.authz(), collaboration_goal(&a.goal_handle)?, memory)
         .await
         .map(|()| GoalCollaborationOutput {
             action: "unpublish".into(),
@@ -586,17 +585,17 @@ async fn goal_unpublish(
             memory_id: Some(a.memory_id),
             series: None,
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 async fn goal_bind_work(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalWorkArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     let series = crate::engine::SeriesHandle::new(crate::mcp::ids::parse_wire_uuid(&a.series)?);
     ctx.require_engine()?
         .bind_goal_work(
-            &ctx.authz,
+            ctx.authz(),
             &crate::GoalWorkBindingInput {
                 goal: collaboration_goal(&a.goal_handle)?,
                 series,
@@ -610,17 +609,17 @@ async fn goal_bind_work(
             memory_id: None,
             series: Some(a.series),
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 async fn goal_unbind_work(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     a: GoalWorkArgs,
-) -> Result<GoalCollaborationOutput, McpToolError> {
+) -> Result<GoalCollaborationOutput, ToolError> {
     let series = crate::engine::SeriesHandle::new(crate::mcp::ids::parse_wire_uuid(&a.series)?);
     ctx.require_engine()?
         .unbind_goal_work(
-            &ctx.authz,
+            ctx.authz(),
             &crate::GoalWorkBindingInput {
                 goal: collaboration_goal(&a.goal_handle)?,
                 series,
@@ -634,7 +633,7 @@ async fn goal_unbind_work(
             memory_id: None,
             series: Some(a.series),
         })
-        .map_err(McpToolError::Protocol)
+        .map_err(ToolError::Protocol)
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -671,10 +670,10 @@ impl GoalTransitionArgs {
     /// The one place `transition` and `pending` meet: what the caller wrote
     /// becomes a [`GoalTransitionKind`], in which `pending` exists only on a
     /// pause.
-    fn transition_kind(&self) -> Result<GoalTransitionKind, McpToolError> {
+    fn transition_kind(&self) -> Result<GoalTransitionKind, ToolError> {
         match (&self.transition, self.pending) {
             (GoalTransition::Pause, Some(pending)) => Ok(GoalTransitionKind::Pause { pending }),
-            (GoalTransition::Pause, None) => Err(McpToolError::InvalidInput(
+            (GoalTransition::Pause, None) => Err(ToolError::InvalidInput(
                 "pending is required when transition is pause: \"keep\" (the scheduler holds the \
                  queued work and runs it after a resume) or \"discard\" (it drops the queued work)"
                     .into(),
@@ -682,7 +681,7 @@ impl GoalTransitionArgs {
             (GoalTransition::Resume, None) => Ok(GoalTransitionKind::Resume),
             (GoalTransition::Abandon, None) => Ok(GoalTransitionKind::Abandon),
             (GoalTransition::Resume | GoalTransition::Abandon, Some(_)) => Err(
-                McpToolError::InvalidInput("pending applies only when transition is pause".into()),
+                ToolError::InvalidInput("pending applies only when transition is pause".into()),
             ),
         }
     }
@@ -691,10 +690,10 @@ impl GoalTransitionArgs {
 /// The named Goal selects its existing owner. An explicit space remains a
 /// narrowing selector; it cannot route an edit to another owner.
 async fn existing_goal_owner(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     prior: crate::GoalId,
     space: Option<&str>,
-) -> Result<crate::OwnerId, McpToolError> {
+) -> Result<crate::OwnerId, ToolError> {
     let selected = space
         .map(|raw| {
             super::memory_spaces::resolve_space_owner(
@@ -712,42 +711,42 @@ async fn existing_goal_owner(
     request.limit = 1;
     let row = ctx
         .require_engine()?
-        .query(&ctx.authz, &request)
+        .query(ctx.authz(), &request)
         .await?
         .goals
         .into_iter()
         .next()
-        .ok_or_else(|| McpToolError::NotFound("Goal not found".into()))?;
+        .ok_or_else(|| ToolError::NotFound("Goal not found".into()))?;
     if selected.is_some_and(|space| space.owner != row.owner) {
-        return Err(McpToolError::NotFound("Goal not found".into()));
+        return Err(ToolError::NotFound("Goal not found".into()));
     }
     Ok(row.owner)
 }
 
 async fn goal_transition(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: GoalTransitionArgs,
-) -> Result<GoalWriteOutput, McpToolError> {
+) -> Result<GoalWriteOutput, ToolError> {
     let transition = args.transition_kind()?;
     let prior = ctx.resolve_goal(&args.goal)?;
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
     let request_id = IdempotencyKey::optional_or_generated("goal_transition", args.idempotency_key)
-        .map_err(McpToolError::InvalidInput)?;
+        .map_err(ToolError::InvalidInput)?;
     let engine = ctx.require_engine()?;
     let outcome = engine
         .transition_goal(
-            &ctx.authz,
+            ctx.authz(),
             &GoalTransitionRequest {
                 owner,
                 prior_goal_id: prior,
                 transition,
                 authorship: GoalAuthorship::User,
                 request_id,
-                author_self_perspective_id: ctx.caller_self_perspective,
+                author_self_perspective_id: ctx.caller_self_perspective(),
             },
         )
         .await
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     Ok(format_goal_write_output(&ctx, &outcome))
 }
 
@@ -770,19 +769,19 @@ pub struct GoalMarkAchievedArgs {
 }
 
 async fn goal_mark_achieved(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: GoalMarkAchievedArgs,
-) -> Result<GoalWriteOutput, McpToolError> {
+) -> Result<GoalWriteOutput, ToolError> {
     let prior = ctx.resolve_goal(&args.goal)?;
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
     let evidence = resolve_goal_evidence_handles(&ctx, &args.evidence).await?;
     let request_id =
         IdempotencyKey::optional_or_generated("goal_mark_achieved", args.idempotency_key)
-            .map_err(McpToolError::InvalidInput)?;
+            .map_err(ToolError::InvalidInput)?;
     let engine = ctx.require_engine()?;
     let outcome = engine
         .mark_goal_achieved(
-            &ctx.authz,
+            ctx.authz(),
             &GoalMarkAchievedRequest {
                 owner,
                 prior_goal_id: prior,
@@ -791,11 +790,11 @@ async fn goal_mark_achieved(
                 }),
                 request_id,
                 evidence,
-                author_self_perspective_id: ctx.caller_self_perspective,
+                author_self_perspective_id: ctx.caller_self_perspective(),
             },
         )
         .await
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     Ok(format_goal_write_output(&ctx, &outcome))
 }
 
@@ -821,10 +820,7 @@ pub struct GoalModifyArgs {
     pub idempotency_key: Option<String>,
 }
 
-async fn goal_modify(
-    ctx: McpToolCtx,
-    args: GoalModifyArgs,
-) -> Result<GoalWriteOutput, McpToolError> {
+async fn goal_modify(ctx: ToolCtx, args: GoalModifyArgs) -> Result<GoalWriteOutput, ToolError> {
     let prior = ctx.resolve_goal(&args.goal)?;
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
     let payload = encode_goal_payload(&ctx, args.payload)?;
@@ -837,11 +833,11 @@ async fn goal_modify(
         None => None,
     };
     let request_id = IdempotencyKey::optional_or_generated("goal_modify", args.idempotency_key)
-        .map_err(McpToolError::InvalidInput)?;
+        .map_err(ToolError::InvalidInput)?;
     let engine = ctx.require_engine()?;
     let outcome = engine
         .modify_goal(
-            &ctx.authz,
+            ctx.authz(),
             &GoalModifyRequest {
                 owner,
                 prior_goal_id: prior,
@@ -850,11 +846,11 @@ async fn goal_modify(
                 request_id,
                 evidence,
                 motivated_by,
-                author_self_perspective_id: ctx.caller_self_perspective,
+                author_self_perspective_id: ctx.caller_self_perspective(),
             },
         )
         .await
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     Ok(format_goal_write_output(&ctx, &outcome))
 }
 
@@ -896,9 +892,9 @@ pub struct GoalDecomposeOutput {
 }
 
 async fn goal_decompose(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: GoalDecomposeArgs,
-) -> Result<GoalDecomposeOutput, McpToolError> {
+) -> Result<GoalDecomposeOutput, ToolError> {
     // The root key is checked first, against the bound its child keys need,
     // so an over-long key is a root-key error before anything is resolved
     // or any child is built.
@@ -907,14 +903,14 @@ async fn goal_decompose(
         DECOMPOSE_ROOT_KEY_MAX,
         "(child keys append \":<index>\")",
     )
-    .map_err(McpToolError::InvalidInput)?;
+    .map_err(ToolError::InvalidInput)?;
     if args.children.is_empty() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "children must contain at least one child goal".into(),
         ));
     }
     if args.children.len() > MAX_CHILD_GOALS {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "children must contain at most {MAX_CHILD_GOALS} child goals"
         )));
     }
@@ -926,7 +922,7 @@ async fn goal_decompose(
     let parent = ctx.resolve_goal(&args.parent_goal)?;
     let motivated_by = resolve_goal_motivations(&ctx, &args.motivated_by)?;
     let topology = GoalTopologyWrite::new(motivated_by, Vec::new(), Vec::new())
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     let mut children = Vec::with_capacity(args.children.len());
     for (index, child) in args.children.into_iter().enumerate() {
         children.push(ChildGoalDraft {
@@ -936,25 +932,25 @@ async fn goal_decompose(
             request_id: root_key
                 .child(DECOMPOSE_CHILD_PREFIX, index)
                 .map_err(|reason| {
-                    McpToolError::Other(format!("decompose child key invariant: {reason}"))
+                    ToolError::Other(format!("decompose child key invariant: {reason}"))
                 })?,
         });
     }
     let engine = ctx.require_engine()?;
     let outcome = engine
         .decompose_goal(
-            &ctx.authz,
+            ctx.authz(),
             &GoalDecomposeRequest {
                 owner: space.owner,
                 parent_goal_id: parent,
                 authorship: system_operator_authorship(&ctx, "goal_decompose"),
                 topology,
                 children,
-                author_self_perspective_id: ctx.caller_self_perspective,
+                author_self_perspective_id: ctx.caller_self_perspective(),
             },
         )
         .await
-        .map_err(McpToolError::Protocol)?;
+        .map_err(ToolError::Protocol)?;
     Ok(GoalDecomposeOutput {
         parent_goal: parent.into_inner().to_string(),
         children: outcome
@@ -967,40 +963,40 @@ async fn goal_decompose(
 }
 
 pub(crate) fn encode_goal_payload(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     args: GoalPayloadArgs,
-) -> Result<GoalPayloadWrite, McpToolError> {
+) -> Result<GoalPayloadWrite, ToolError> {
     let title = validate_trimmed_len("goal title", &args.title, 240)?;
     let text = validate_trimmed_len("goal text", &args.text, 20_000)?;
     let schema_id = SchemaId::new(args.schema_id);
     let schema_version = SchemaVersion::new(args.schema_version.unwrap_or(1));
     let schema = ctx
-        .registry
+        .registry()
         .lookup_payload(&schema_id, schema_version, PayloadKind::Goal)
         .ok_or_else(|| {
-            McpToolError::InvalidInput(format!(
+            ToolError::InvalidInput(format!(
                 "unregistered GoalPayload schema {} v{}",
                 schema_id.as_str(),
                 schema_version.into_inner(),
             ))
         })?;
     if !args.body.is_object() {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "body for GoalPayload schema {} v{} must be a JSON object",
             schema_id.as_str(),
             schema_version.into_inner(),
         )));
     }
     let protocol_payload = ctx
-        .registry
+        .registry()
         .ingest_protocol_payload(&schema_id, schema_version, PayloadKind::Goal, &args.body)
-        .map_err(McpToolError::InvalidInput)?;
+        .map_err(ToolError::InvalidInput)?;
     let sidecar_payload = schema
         .sidecar_table
         .is_some()
         .then_some(protocol_payload.sidecar_payload);
     let payload_bytes = protocol_payload.key_bytes.ok_or_else(|| {
-        McpToolError::InvalidInput(format!(
+        ToolError::InvalidInput(format!(
             "GoalPayload schema {} v{} did not produce key bytes",
             schema_id.as_str(),
             schema_version.into_inner(),
@@ -1021,9 +1017,9 @@ pub(crate) fn encode_goal_payload(
 /// issued by another store is read there as the caller, refused when the store
 /// is unavailable or the caller may not read it, and named by the read.
 pub(crate) async fn resolve_goal_evidence_handles(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     evidence: &[String],
-) -> Result<Vec<GoalEvidenceRef>, McpToolError> {
+) -> Result<Vec<GoalEvidenceRef>, ToolError> {
     let ids = evidence
         .iter()
         .map(|handle| ctx.resolve_memory(handle))
@@ -1052,9 +1048,9 @@ pub(crate) async fn resolve_goal_evidence_handles(
 }
 
 fn resolve_goal_motivations(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handles: &[String],
-) -> Result<Vec<GoalMotivationRef>, McpToolError> {
+) -> Result<Vec<GoalMotivationRef>, ToolError> {
     handles
         .iter()
         .map(|raw| ctx.resolve_memory(raw).map(GoalMotivationRef::perspective))
@@ -1073,17 +1069,20 @@ fn resolve_goal_motivations(
 /// refused `goal_set` — a caller told its intent was rejected over a field
 /// the goal never keeps.
 ///
-/// The bound identity already reaches this: the edge resolves
-/// `ctx.author.model_id` to the trusted id when the token binds one.
+/// The bound identity already reaches this: `ctx.caller().model_id` is the
+/// trusted id when the token binds one.
 ///
 /// The input-contract label (`fact-or-abstraction-evidence-v1`, #513) feeds
 /// only that hash: no stored column carries it, so renaming it changes no
 /// replay.
-pub(crate) fn system_operator_authorship(ctx: &McpToolCtx, prompt_version: &str) -> GoalAuthorship {
-    let model_id = &ctx.author.model_id;
+pub(crate) fn system_operator_authorship(ctx: &ToolCtx, prompt_version: &str) -> GoalAuthorship {
+    let model_id = &ctx.caller().model_id;
     let operator_key = format!(
         "{}\0{}\0{}\0{}",
-        ctx.author.client_name, ctx.author.client_version, model_id, prompt_version
+        ctx.caller().client_name,
+        ctx.caller().client_version,
+        model_id,
+        prompt_version
     );
     let operator_id = uuid::Uuid::new_v5(&MCP_OPERATOR_NAMESPACE, operator_key.as_bytes());
     let input_contract_id = uuid::Uuid::new_v5(
@@ -1103,7 +1102,7 @@ pub(crate) fn system_operator_authorship(ctx: &McpToolCtx, prompt_version: &str)
     })
 }
 
-fn format_goal_write_output(_ctx: &McpToolCtx, outcome: &GoalWriteOutcome) -> GoalWriteOutput {
+fn format_goal_write_output(_ctx: &ToolCtx, outcome: &GoalWriteOutcome) -> GoalWriteOutput {
     GoalWriteOutput {
         handle: outcome.goal_id.into_inner().to_string(),
         goal_handle: outcome.goal_handle.into_inner().to_string(),
@@ -1115,30 +1114,18 @@ fn format_goal_write_output(_ctx: &McpToolCtx, outcome: &GoalWriteOutcome) -> Go
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::McpAuthorContext;
-    use crate::{
-        AuthPath, AuthzContext, MemoryId, OwnerId, SpiiceRegistry, SpiiceServices, UserId,
-    };
+    use crate::{AuthPath, AuthzContext, MemoryId, OwnerId, SpiiceRegistry, UserId};
     use std::sync::Arc;
 
-    fn test_ctx() -> McpToolCtx {
+    fn test_ctx() -> ToolCtx {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx_with(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "m".into(),
-                trusted_model_id: None,
-                client_name: "c".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+            crate::SpiiceServices::default(),
+            crate::ToolCaller::new("m", "c", "0"),
+        )
     }
 
     fn valid_goal_payload_args() -> GoalPayloadArgs {
@@ -1193,7 +1180,7 @@ mod tests {
             .await
             .expect_err("an over-long root key is refused");
             assert!(
-                matches!(err, McpToolError::InvalidInput(ref message)
+                matches!(err, ToolError::InvalidInput(ref message)
                     if message.starts_with("idempotency_key must be at most 162 chars")),
                 "{children} children, bad first evidence {bad_first}: {err:?}"
             );
@@ -1225,7 +1212,7 @@ mod tests {
             let err = resolve_goal_evidence_handles(&ctx, &[raw])
                 .await
                 .expect_err("bare UUID required");
-            assert!(matches!(err, McpToolError::InvalidInput(_)), "{err}");
+            assert!(matches!(err, ToolError::InvalidInput(_)), "{err}");
         }
     }
 
@@ -1247,7 +1234,7 @@ mod tests {
                 panic!("{prompt}: expected operator authorship");
             };
             assert_eq!(prompt_version.as_str(), prompt);
-            assert_eq!(model_id.as_str(), ctx.author.model_id);
+            assert_eq!(model_id.as_str(), ctx.caller().model_id);
             assert!(operators.insert(operator_id), "{prompt}: operator reused");
         }
     }

@@ -3,7 +3,7 @@ use super::{
     SearchMemoriesMode, SearchMemoriesSupersession, cursor_positions, decode_cursor, encode_cursor,
     truncate_body, validate_body_max_chars, validate_list_caps, validate_score_args,
 };
-use crate::mcp::McpToolError;
+use crate::ToolError;
 use crate::verbs::query::{
     SearchCursor, SearchMode, SearchOrder, TagMatch,
     hybrid_degraded_to_lexical as degraded_to_lexical,
@@ -231,7 +231,7 @@ fn score_args_reject_out_of_range_and_non_hybrid_weight() {
     floor_too_high.min_score = Some(1.01);
     assert!(matches!(
         validate_score_args(&floor_too_high),
-        Err(McpToolError::InvalidInput(message)) if message.contains("min_score")
+        Err(ToolError::InvalidInput(message)) if message.contains("min_score")
     ));
 
     let mut nan_floor = args(SearchMemoriesMode::Hybrid);
@@ -242,7 +242,7 @@ fn score_args_reject_out_of_range_and_non_hybrid_weight() {
     weight_out_of_range.semantic_weight = Some(-0.1);
     assert!(matches!(
         validate_score_args(&weight_out_of_range),
-        Err(McpToolError::InvalidInput(message)) if message.contains("semantic_weight")
+        Err(ToolError::InvalidInput(message)) if message.contains("semantic_weight")
     ));
 
     // An explicit weight outside hybrid mode is a contradiction, not a
@@ -251,7 +251,7 @@ fn score_args_reject_out_of_range_and_non_hybrid_weight() {
     lexical_weight.semantic_weight = Some(0.5);
     assert!(matches!(
         validate_score_args(&lexical_weight),
-        Err(McpToolError::InvalidInput(message)) if message.contains("mode=hybrid")
+        Err(ToolError::InvalidInput(message)) if message.contains("mode=hybrid")
     ));
 
     let mut valid = args(SearchMemoriesMode::Hybrid);
@@ -275,7 +275,7 @@ fn cursor_round_trips_and_rejects_foreign_or_garbled_tokens() {
 
     // Same token replayed against a different query shape.
     match decode_cursor(&token, "fp-bbbb") {
-        Err(McpToolError::InvalidInput(message)) => {
+        Err(ToolError::InvalidInput(message)) => {
             assert!(message.contains("does not match this query"), "{message}");
         }
         other => panic!("expected fingerprint mismatch, got {other:?}"),
@@ -284,7 +284,7 @@ fn cursor_round_trips_and_rejects_foreign_or_garbled_tokens() {
     // Not base64 / not our envelope.
     for garbage in ["%%%", "bm90LWpzb24"] {
         match decode_cursor(garbage, "fp-aaaa") {
-            Err(McpToolError::InvalidInput(message)) => {
+            Err(ToolError::InvalidInput(message)) => {
                 assert!(message.contains("malformed cursor"), "{message}");
             }
             other => panic!("expected malformed cursor error, got {other:?}"),
@@ -362,7 +362,7 @@ fn a_cursor_of_the_other_merge_kind_is_rejected() {
     });
     assert!(matches!(
         cursor_positions(Some(&keyset), MergeKind::Rank, &lanes),
-        Err(McpToolError::InvalidInput(message)) if message.contains("malformed cursor")
+        Err(ToolError::InvalidInput(message)) if message.contains("malformed cursor")
     ));
     assert_eq!(
         cursor_positions(Some(&keyset), MergeKind::Keyset, &lanes)
@@ -404,14 +404,14 @@ fn oversized_space_and_tag_lists_are_rejected() {
         .collect();
     assert!(matches!(
         validate_list_caps(&too_many_spaces),
-        Err(McpToolError::InvalidInput(message)) if message.contains("16 spaces")
+        Err(ToolError::InvalidInput(message)) if message.contains("16 spaces")
     ));
 
     let mut too_many_tags = args(SearchMemoriesMode::Lexical);
     too_many_tags.tags = (0..17).map(|i| format!("tag-{i}")).collect();
     assert!(matches!(
         validate_list_caps(&too_many_tags),
-        Err(McpToolError::InvalidInput(message)) if message.contains("16 tags")
+        Err(ToolError::InvalidInput(message)) if message.contains("16 tags")
     ));
 
     // Exactly at the cap passes; the caps bound work, they are not
@@ -466,7 +466,7 @@ mod other_stores {
         SearchMemoriesTool, SearchMemoryOutput, SearchRanking, UnansweredStore,
         caller_input_schema, merge_store_hits,
     };
-    use crate::McpTool;
+    use crate::Tool;
     use crate::storage_ports::other_stores::{
         OtherStores, OtherStoresError, OtherStoresService, RemoteHit, RemoteRead, RemoteSearch,
         RemoteSearchResult, StoreCaller, StoreInfo,
@@ -697,16 +697,18 @@ mod other_stores {
         }
     }
 
-    fn remote_ctx(port: &Arc<CapturingStore>) -> crate::mcp::McpToolCtx {
+    fn remote_ctx(port: &Arc<CapturingStore>) -> crate::ToolCtx {
         let mut ctx = super::super::super::memory_spaces::test_ctx::ctx_for(
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        ctx.engine = Some(Arc::new(crate::Engine::new(
-            ctx.registry.as_ref().clone(),
+        let engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry().as_ref().clone(),
             crate::StoragePorts::rejecting_for_tests(),
         )));
-        ctx.services = crate::SpiiceServices::with(OtherStoresService::new(port.clone()));
+        ctx = ctx.with_engine(engine);
+        ctx.try_insert_service(OtherStoresService::new(port.clone()))
+            .expect("the fixture context holds no service");
         ctx
     }
 
@@ -785,7 +787,7 @@ mod other_stores {
             request.until = until;
             let result = SearchMemoriesTool::call(remote_ctx(&port), request).await;
             assert!(
-                matches!(result, Err(crate::mcp::McpToolError::InvalidInput(message)) if message.contains(field))
+                matches!(result, Err(crate::ToolError::InvalidInput(message)) if message.contains(field))
             );
             assert_eq!(port.listings.load(std::sync::atomic::Ordering::SeqCst), 0);
             assert!(port.requests.lock().unwrap().is_empty());
@@ -916,11 +918,13 @@ mod other_stores {
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        ctx.engine = Some(Arc::new(crate::Engine::new(
-            ctx.registry.as_ref().clone(),
+        let engine = Some(Arc::new(crate::Engine::new(
+            ctx.registry().as_ref().clone(),
             crate::StoragePorts::rejecting_for_tests(),
         )));
-        ctx.services = crate::SpiiceServices::with(OtherStoresService::new(Arc::new(TwoStores)));
+        ctx = ctx.with_engine(engine);
+        ctx.try_insert_service(OtherStoresService::new(Arc::new(TwoStores)))
+            .expect("the fixture context holds no service");
         let schema = caller_input_schema(&ctx, static_schema())
             .await
             .expect("valid inventory");

@@ -529,8 +529,9 @@ fn invalid_dispatcher_refs_fail_registration() {
 
 #[test]
 fn core_goal_modify_nullable_evidence_is_safe_on_the_flat_root() {
+    use crate::Tool;
     use crate::mcp::core_tools::goal::{CoreGoalArgs, CoreGoalTool};
-    use crate::mcp::{McpTool, validate_action_args};
+    use crate::mcp::validate_action_args;
 
     let registry = crate::SpiiceRegistry::default().freeze_or_panic_for_tests();
     let descriptor = registry

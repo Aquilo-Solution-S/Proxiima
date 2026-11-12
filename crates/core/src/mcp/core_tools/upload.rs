@@ -15,12 +15,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ProtocolError;
-use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use crate::mcp::{CoreActionMeta, McpActionArgSpec, McpToolAudience, OwnerNeed};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::storage_ports::CitedBlobService;
 use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{Tool, ToolCtx, ToolError};
 
 use super::memory_spaces::resolve_space_for_write;
 
@@ -163,7 +162,7 @@ pub enum CoreUploadOutput {
     Abort(UploadAbortOutput),
 }
 
-impl McpTool for CoreUploadTool {
+impl Tool for CoreUploadTool {
     const NAME: &'static str = protocol_tool::CORE_UPLOAD;
     const TITLE: &'static str = "Uploads";
     const DESCRIPTION: &'static str = "Upload an artefact (document, image, transcript) \
@@ -205,9 +204,9 @@ impl McpTool for CoreUploadTool {
     type Output = CoreUploadOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: CoreUploadArgs,
-    ) -> BoxFuture<'static, Result<CoreUploadOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<CoreUploadOutput, ToolError>> {
         Box::pin(async move {
             match args {
                 CoreUploadArgs::Prepare(args) => {
@@ -282,23 +281,23 @@ impl McpTool for CoreUploadTool {
 /// but its storage taxonomy would misreport the denial as caller-fixable
 /// invalid input.
 fn narrowed_space(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     space: Option<&str>,
-) -> Result<(AuthzContext, OwnerId), McpToolError> {
+) -> Result<(AuthzContext, OwnerId), ToolError> {
     let (space, authz) = resolve_space_for_write(ctx, space)?;
     let (allowed, denied) = (
         authz.may_write(&space.owner, AccessKind::Fact),
         "requires Fact write on this owner",
     );
     if !allowed {
-        return Err(McpToolError::Protocol(ProtocolError::forbidden(denied)));
+        return Err(ToolError::Protocol(ProtocolError::forbidden(denied)));
     }
     Ok((authz, space.owner))
 }
 
-fn blob_service(ctx: &McpToolCtx) -> Result<Arc<CitedBlobService>, McpToolError> {
+fn blob_service(ctx: &ToolCtx) -> Result<Arc<CitedBlobService>, ToolError> {
     ctx.service::<CitedBlobService>().ok_or_else(|| {
-        McpToolError::Unavailable(
+        ToolError::Unavailable(
             "blob storage is not configured for this host: set PROXIIMA_S3_BUCKET / \
              PROXIIMA_S3_REGION / PROXIIMA_S3_ACCESS_KEY_ID / PROXIIMA_S3_SECRET_ACCESS_KEY \
              (see PROXIIMA_S3_* in docs/configuration.md) to enable \
@@ -313,12 +312,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use crate::access::Role;
-    use crate::mcp::{McpToolErrorKind, validate_action_args};
+    use crate::mcp::{ToolErrorKind, validate_action_args};
     use crate::storage_ports::{
         CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
         CitedBlobUploadPrepared,
     };
-    use crate::{AuthzContext, GroupId, OwnerId, SpiiceServices, StorageError, UserId};
+    use crate::{AuthzContext, GroupId, OwnerId, StorageError, UserId};
 
     use super::super::memory_spaces::test_ctx::ctx_for;
     use super::*;
@@ -424,11 +423,11 @@ mod tests {
     fn ctx_with_port(
         subject: UserId,
         group_roles: Vec<(OwnerId, Role)>,
-    ) -> (McpToolCtx, Arc<RecordingBlobPort>) {
+    ) -> (ToolCtx, Arc<RecordingBlobPort>) {
         let mut ctx = ctx_for(subject, group_roles);
         let port = Arc::new(RecordingBlobPort::default());
-        ctx.services =
-            SpiiceServices::with(CitedBlobService::new(port.clone() as Arc<dyn CitedBlobPort>));
+        ctx.try_insert_service(CitedBlobService::new(port.clone() as Arc<dyn CitedBlobPort>))
+            .expect("the fixture context holds no service");
         (ctx, port)
     }
 
@@ -451,7 +450,7 @@ mod tests {
             .expect_err("no CitedBlobService wired");
         // A precondition fault, not an internal error: the message must
         // reach the caller verbatim and name the enabling configuration.
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidRequest);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidRequest);
         assert!(
             err.client_message().contains("PROXIIMA_S3_"),
             "message must name the enabling env: {err}"
@@ -504,7 +503,7 @@ mod tests {
         let err = CoreUploadTool::call(ctx, prepare_args(Some(&foreign)))
             .await
             .expect_err("inaccessible space rejected");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         assert!(err.to_string().contains("unknown memory space"));
         assert!(port.calls.lock().expect("lock").is_empty());
     }
@@ -524,7 +523,7 @@ mod tests {
         let err = CoreUploadTool::call(ctx, prepare_args(Some(&space_key)))
             .await
             .expect_err("viewer cannot prepare an upload in the group space");
-        let remember_denial = McpToolError::Protocol(ProtocolError::forbidden(
+        let remember_denial = ToolError::Protocol(ProtocolError::forbidden(
             "requires Fact write on this owner",
         ));
         assert_eq!(err.kind(), remember_denial.kind());

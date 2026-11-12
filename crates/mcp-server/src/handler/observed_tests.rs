@@ -1,10 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
-use proxiima_core::mcp::{
-    JudgedKey, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use proxiima_core::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed};
 use proxiima_core::{AuthPath, AuthzContext, ScopeKey, SpiiceRegistry, SpiiceServices, ToolScope};
+use proxiima_core::{Tool, ToolCtx, ToolError};
 use rmcp::service::{RunningService, serve_directly};
 use serde_json::{Value, json};
 
@@ -14,7 +13,7 @@ const FLAT: &str = "observed_ping";
 const DISPATCH: &str = "observed_dispatch";
 
 #[derive(Clone, Debug, Default)]
-struct Seen(Arc<Mutex<Vec<JudgedKey>>>);
+struct Seen(Arc<Mutex<Vec<ToolCtx>>>);
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct FlatArgs {}
@@ -25,23 +24,22 @@ struct Output {}
 #[derive(Debug)]
 struct Flat;
 
-impl McpTool for Flat {
+impl Tool for Flat {
     const TITLE: &'static str = "Observed flat tool";
     const NAME: &'static str = FLAT;
-    const DESCRIPTION: &'static str = "Retains the context's judged cell.";
+    const DESCRIPTION: &'static str = "Retains its context.";
     const EFFECT: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
     type Args = FlatArgs;
     type Output = Output;
 
-    fn call(ctx: McpToolCtx, _: FlatArgs) -> BoxFuture<'static, Result<Output, McpToolError>> {
+    fn call(ctx: ToolCtx, _: FlatArgs) -> BoxFuture<'static, Result<Output, ToolError>> {
         Box::pin(async move {
-            ctx.services
-                .get::<Seen>()
+            ctx.service::<Seen>()
                 .expect("fixture service")
                 .0
                 .lock()
                 .expect("seen")
-                .push(ctx.judged);
+                .push(ctx.clone());
             Ok(Output {})
         })
     }
@@ -59,7 +57,7 @@ enum DispatchArgs {
 #[derive(Debug)]
 struct Dispatch;
 
-impl McpTool for Dispatch {
+impl Tool for Dispatch {
     const TITLE: &'static str = "Observed dispatcher";
     const NAME: &'static str = DISPATCH;
     const DESCRIPTION: &'static str = "Exercises action scope decisions.";
@@ -86,7 +84,7 @@ impl McpTool for Dispatch {
     type Args = DispatchArgs;
     type Output = Output;
 
-    fn call(_: McpToolCtx, _: DispatchArgs) -> BoxFuture<'static, Result<Output, McpToolError>> {
+    fn call(_: ToolCtx, _: DispatchArgs) -> BoxFuture<'static, Result<Output, ToolError>> {
         Box::pin(async { Ok(Output {}) })
     }
 }
@@ -101,8 +99,8 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<Flat>("observed");
-        registry.add_mcp_tool_or_panic_for_tests::<Dispatch>("observed");
+        registry.add_tool_or_panic_for_tests::<Flat>("observed");
+        registry.add_tool_or_panic_for_tests::<Dispatch>("observed");
         let seen = Seen::default();
         let mut services = SpiiceServices::default();
         services.try_insert(seen.clone()).expect("unique service");
@@ -158,15 +156,15 @@ async fn observed_flat_and_action_calls_report_the_gate_key() {
             "observed_dispatch:look",
         ),
     ] {
-        let (judged, call) = fixture
+        let (judged, reply) = fixture
             .handler
-            .call_tool_observed(request(name, &args), &fixture.context(Some(ToolScope::All)));
-        assert_eq!(judged.get(), None);
-        assert!(call.await.is_ok());
-        assert_eq!(judged.get(), Some(key(expected)));
+            .call_tool_observed(request(name, &args), &fixture.context(Some(ToolScope::All)))
+            .await;
+        assert!(reply.is_ok());
+        assert_eq!(judged, Some(key(expected)));
     }
     assert_eq!(
-        fixture.seen.0.lock().expect("seen")[0].get(),
+        fixture.seen.0.lock().expect("seen")[0].judged(),
         Some(key(FLAT))
     );
 }
@@ -174,15 +172,18 @@ async fn observed_flat_and_action_calls_report_the_gate_key() {
 #[tokio::test]
 async fn observed_scope_denial_retains_the_denied_action() {
     let fixture = Fixture::new();
-    let (judged, call) = fixture.handler.call_tool_observed(
-        request(DISPATCH, &json!({"action": "touch"})),
-        &fixture.context(Some(ToolScope::Palette(vec![key(
-            "observed_dispatch:look",
-        )]))),
-    );
-    let error = call.await.expect_err("touch is outside the palette");
+    let (judged, reply) = fixture
+        .handler
+        .call_tool_observed(
+            request(DISPATCH, &json!({"action": "touch"})),
+            &fixture.context(Some(ToolScope::Palette(vec![key(
+                "observed_dispatch:look",
+            )]))),
+        )
+        .await;
+    let error = reply.expect_err("touch is outside the palette");
     assert!(error.message.contains("not authorized"), "{error:?}");
-    assert_eq!(judged.get(), Some(key("observed_dispatch:touch")));
+    assert_eq!(judged, Some(key("observed_dispatch:touch")));
 }
 
 #[tokio::test]
@@ -193,12 +194,15 @@ async fn observed_invalid_actions_have_no_judged_key() {
         json!({"action": 7}),
         json!({"action": "unknown"}),
     ] {
-        let (judged, call) = fixture.handler.call_tool_observed(
-            request(DISPATCH, &args),
-            &fixture.context(Some(ToolScope::All)),
-        );
-        assert!(call.await.is_err());
-        assert_eq!(judged.get(), None);
+        let (judged, reply) = fixture
+            .handler
+            .call_tool_observed(
+                request(DISPATCH, &args),
+                &fixture.context(Some(ToolScope::All)),
+            )
+            .await;
+        assert!(reply.is_err());
+        assert_eq!(judged, None);
     }
 }
 
@@ -210,40 +214,45 @@ async fn observed_early_refusals_have_no_judged_key() {
         (FLAT, json!({}), None),
         (FLAT, json!({"bad": "\u{0}"}), Some(ToolScope::All)),
     ] {
-        let (judged, call) = fixture
+        let (judged, reply) = fixture
             .handler
-            .call_tool_observed(request(name, &args), &fixture.context(scope));
-        assert!(call.await.is_err());
-        assert_eq!(judged.get(), None);
+            .call_tool_observed(request(name, &args), &fixture.context(scope))
+            .await;
+        assert!(reply.is_err());
+        assert_eq!(judged, None);
     }
 }
 
 #[tokio::test]
 async fn observations_are_isolated_even_when_another_call_is_pending() {
     let fixture = Fixture::new();
-    let (flat_key, flat_call) = fixture.handler.call_tool_observed(
+    let flat_call = fixture.handler.call_tool_observed(
         request(FLAT, &json!({})),
         &fixture.context(Some(ToolScope::All)),
     );
-    let (action_key, action_call) = fixture.handler.call_tool_observed(
+    let action_call = fixture.handler.call_tool_observed(
         request(DISPATCH, &json!({"action": "look"})),
         &fixture.context(Some(ToolScope::All)),
     );
-    assert!(flat_call.await.is_ok());
-    assert_eq!(flat_key.get(), Some(key(FLAT)));
-    assert_eq!(action_key.get(), None);
+    let (flat_key, flat_reply) = flat_call.await;
+    assert!(flat_reply.is_ok());
+    assert_eq!(flat_key, Some(key(FLAT)));
     let retained = fixture.seen.0.lock().expect("seen")[0].clone();
-    assert!(action_call.await.is_ok());
-    assert_eq!(action_key.get(), Some(key("observed_dispatch:look")));
-    assert_eq!(flat_key.get(), Some(key(FLAT)));
-    assert_eq!(retained.get(), flat_key.get());
-    let (invalid_key, invalid_call) = fixture.handler.call_tool_observed(
-        request(DISPATCH, &json!({})),
-        &fixture.context(Some(ToolScope::All)),
-    );
-    assert!(invalid_call.await.is_err());
-    assert_eq!(invalid_key.get(), None);
-    assert_eq!(retained.get(), Some(key(FLAT)));
+    let (action_key, action_reply) = action_call.await;
+    assert!(action_reply.is_ok());
+    assert_eq!(action_key, Some(key("observed_dispatch:look")));
+    assert_eq!(flat_key, Some(key(FLAT)));
+    assert_eq!(retained.judged(), flat_key);
+    let (invalid_key, invalid_reply) = fixture
+        .handler
+        .call_tool_observed(
+            request(DISPATCH, &json!({})),
+            &fixture.context(Some(ToolScope::All)),
+        )
+        .await;
+    assert!(invalid_reply.is_err());
+    assert_eq!(invalid_key, None);
+    assert_eq!(retained.judged(), Some(key(FLAT)));
 }
 
 impl Fixture {
@@ -252,10 +261,12 @@ impl Fixture {
         name: &'a str,
         args: Value,
         scope: Option<ToolScope>,
-    ) -> (
-        JudgedKey,
-        impl Future<Output = Result<ToolReply, crate::ToolInvocationError>> + use<'a>,
-    ) {
+    ) -> impl Future<
+        Output = (
+            Option<ScopeKey>,
+            Result<ToolReply, crate::ToolInvocationError>,
+        ),
+    > + use<'a> {
         let owner = proxiima_core::test_fixtures::owner_fixture();
         let auth = scope.map(|scope| McpAuthContext {
             owner,
@@ -264,13 +275,7 @@ impl Fixture {
         self.handler.server.call_tool_reply_observed_in_request(
             name,
             args,
-            proxiima_core::mcp::McpAuthorContext {
-                model_id: "fixture-model".into(),
-                trusted_model_id: None,
-                client_name: "fixture".into(),
-                client_version: "1".into(),
-                caller_self_perspective: None,
-            },
+            proxiima_core::ToolCaller::new("fixture-model", "fixture", "1"),
             auth,
             SpiiceServices::default(),
         )
@@ -288,16 +293,15 @@ async fn observed_host_calls_retain_the_flat_and_action_gate_keys() {
             "observed_dispatch:look",
         ),
     ] {
-        let (judged, call) = fixture.host_call(name, args, Some(ToolScope::All));
-        assert_eq!(judged.get(), None);
+        let (judged, reply) = fixture.host_call(name, args, Some(ToolScope::All)).await;
         assert_eq!(
-            call.await.expect("admitted reply"),
+            reply.expect("admitted reply"),
             ToolReply::Structured(json!({}))
         );
-        assert_eq!(judged.get(), Some(key(expected)));
+        assert_eq!(judged, Some(key(expected)));
     }
     assert_eq!(
-        fixture.seen.0.lock().expect("seen")[0].get(),
+        fixture.seen.0.lock().expect("seen")[0].judged(),
         Some(key(FLAT))
     );
 }
@@ -305,20 +309,22 @@ async fn observed_host_calls_retain_the_flat_and_action_gate_keys() {
 #[tokio::test]
 async fn observed_host_scope_refusal_retains_the_denied_action() {
     let fixture = Fixture::new();
-    let (judged, call) = fixture.host_call(
-        DISPATCH,
-        json!({"action": "touch"}),
-        Some(ToolScope::Palette(vec![key("observed_dispatch:look")])),
-    );
+    let (judged, reply) = fixture
+        .host_call(
+            DISPATCH,
+            json!({"action": "touch"}),
+            Some(ToolScope::Palette(vec![key("observed_dispatch:look")])),
+        )
+        .await;
     assert!(matches!(
-        call.await,
+        reply,
         Err(crate::ToolInvocationError::NotAuthorized(_))
     ));
-    assert_eq!(judged.get(), Some(key("observed_dispatch:touch")));
+    assert_eq!(judged, Some(key("observed_dispatch:touch")));
 }
 
 #[tokio::test]
-async fn observed_host_pre_gate_refusals_leave_the_cell_empty() {
+async fn observed_host_pre_gate_refusals_leave_the_key_empty() {
     let fixture = Fixture::new();
     for (name, args, scope) in [
         (DISPATCH, json!({}), Some(ToolScope::All)),
@@ -328,27 +334,29 @@ async fn observed_host_pre_gate_refusals_leave_the_cell_empty() {
         (FLAT, json!({}), None),
         (FLAT, json!({"bad": "\u{0}"}), Some(ToolScope::All)),
     ] {
-        let (judged, call) = fixture.host_call(name, args, scope);
-        assert!(call.await.is_err());
-        assert_eq!(judged.get(), None);
+        let (judged, reply) = fixture.host_call(name, args, scope).await;
+        assert!(reply.is_err());
+        assert_eq!(judged, None);
     }
 }
 
 #[tokio::test]
-async fn observed_host_cells_are_isolated_while_another_call_is_pending() {
+async fn observed_host_keys_are_isolated_while_another_call_is_pending() {
     let fixture = Fixture::new();
-    let (first, first_call) = fixture.host_call(FLAT, json!({}), Some(ToolScope::All));
-    let (second, second_call) =
-        fixture.host_call(DISPATCH, json!({"action": "look"}), Some(ToolScope::All));
-    assert!(first_call.await.is_ok());
-    assert_eq!(first.get(), Some(key(FLAT)));
-    assert_eq!(second.get(), None);
+    let first_call = fixture.host_call(FLAT, json!({}), Some(ToolScope::All));
+    let second_call = fixture.host_call(DISPATCH, json!({"action": "look"}), Some(ToolScope::All));
+    let (first, first_reply) = first_call.await;
+    assert!(first_reply.is_ok());
+    assert_eq!(first, Some(key(FLAT)));
     let retained = fixture.seen.0.lock().expect("seen")[0].clone();
-    assert!(second_call.await.is_ok());
-    assert_eq!(second.get(), Some(key("observed_dispatch:look")));
-    let (invalid, invalid_call) = fixture.host_call(DISPATCH, json!({}), Some(ToolScope::All));
-    assert!(invalid_call.await.is_err());
-    assert_eq!(invalid.get(), None);
-    assert_eq!(first.get(), Some(key(FLAT)));
-    assert_eq!(retained.get(), Some(key(FLAT)));
+    let (second, second_reply) = second_call.await;
+    assert!(second_reply.is_ok());
+    assert_eq!(second, Some(key("observed_dispatch:look")));
+    let (invalid, invalid_reply) = fixture
+        .host_call(DISPATCH, json!({}), Some(ToolScope::All))
+        .await;
+    assert!(invalid_reply.is_err());
+    assert_eq!(invalid, None);
+    assert_eq!(first, Some(key(FLAT)));
+    assert_eq!(retained.judged(), Some(key(FLAT)));
 }

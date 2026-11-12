@@ -12,7 +12,6 @@ use uuid::Uuid;
 use super::{GetMemoriesArgs, GetMemoriesOutput, MAX_BATCH_GET_MEMORIES, get_memories};
 use crate::mcp::core_tools::get_memory::GetMemoryOutput;
 use crate::mcp::core_tools::memory_spaces::test_ctx::ctx_for;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::read_models::{MemorySchemaSpec, MemorySnapshot};
 use crate::storage_ports::other_stores::{
     DEFAULT_REMOTE_BATCH_DEADLINE, MAX_REMOTE_READS_PER_STORE, OtherStores, OtherStoresError,
@@ -20,6 +19,7 @@ use crate::storage_ports::other_stores::{
     StoreInfo,
 };
 use crate::{EntityKind, MemoryId, MemoryInspectPort, OwnerId, OwnerScope, StorageError, UserId};
+use crate::{ToolCtx, ToolError};
 
 const PROGRESS_BOUND: Duration = Duration::from_secs(30);
 const REMOTE_WRITER: crate::WriterAttribution = crate::WriterAttribution {
@@ -133,7 +133,7 @@ impl MemoryInspectPort for LocalStore {
 }
 
 struct Fixture {
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     port: Arc<ControlledStore>,
     receiver: mpsc::UnboundedReceiver<StartedRead>,
     local: Arc<LocalStore>,
@@ -141,7 +141,8 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let mut ctx = ctx_for(UserId::new(Uuid::now_v7()), Vec::new());
-    ctx.authz = crate::test_fixtures::authenticated_context(ctx.authz);
+    let authz = crate::test_fixtures::authenticated_context(ctx.authz().clone());
+    ctx = ctx.with_authz(authz);
     let local = Arc::new(LocalStore {
         memory: MemorySnapshot {
             memory_id: MemoryId::new(crate::new_memory_uuid(0)),
@@ -149,7 +150,7 @@ fn fixture() -> Fixture {
             kind: EntityKind::Fact,
             schema_id: crate::SchemaId::new("test/local-note".into()),
             schema_version: crate::SchemaVersion::new(1),
-            owner: ctx.owner,
+            owner: ctx.owner(),
             writer: crate::WriterAttribution {
                 by: Uuid::from_u128(2),
                 via: None,
@@ -162,13 +163,14 @@ fn fixture() -> Fixture {
         },
         requested: Mutex::new(Vec::new()),
     });
-    ctx.engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry.as_ref().clone(),
+    let engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry().as_ref().clone(),
         crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
     )));
+    ctx = ctx.with_engine(engine);
     let (started, receiver) = mpsc::unbounded_channel();
     let port = Arc::new(ControlledStore {
-        owner: ctx.owner,
+        owner: ctx.owner(),
         started,
         active: AtomicUsize::new(0),
         peak: AtomicUsize::new(0),
@@ -176,7 +178,8 @@ fn fixture() -> Fixture {
     // Keep the individual timeout beyond the call-wide deadline so only the batch bound can win.
     let service =
         OtherStoresService::new(port.clone()).with_timeout(DEFAULT_REMOTE_BATCH_DEADLINE * 2);
-    ctx.services = crate::SpiiceServices::with(service);
+    ctx.try_insert_service(service)
+        .expect("the fixture context holds no service");
     Fixture {
         ctx,
         port,
@@ -186,7 +189,7 @@ fn fixture() -> Fixture {
 }
 
 async fn started_reads(
-    call: &mut (impl Future<Output = Result<GetMemoriesOutput, McpToolError>> + Unpin),
+    call: &mut (impl Future<Output = Result<GetMemoriesOutput, ToolError>> + Unpin),
     receiver: &mut mpsc::UnboundedReceiver<StartedRead>,
     count: usize,
 ) -> Vec<StartedRead> {

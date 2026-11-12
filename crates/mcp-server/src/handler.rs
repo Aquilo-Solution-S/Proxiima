@@ -11,14 +11,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use proxiima_core::mcp::{
-    McpToolAnnotations, McpToolCtx, McpToolDescriptor, McpToolError, McpToolErrorKind, ToolContent,
-    ToolDescriptorView, ToolEffect, ToolReply, all_core_resources, mcp_wire_output_schema,
+    McpToolAnnotations, McpToolDescriptor, ToolContent, ToolDescriptorView, ToolEffect,
+    ToolErrorKind, ToolReply, all_core_resources, mcp_wire_output_schema,
     normalize_mcp_output_schema, provider_safe_tool_name, tool_name_matches,
 };
 use proxiima_core::{
-    McpAuthorContext, MemoryId, SpiiceRegistryFrozen, UNKNOWN_OPERATOR_LABEL,
-    resolve_operator_label,
+    MemoryId, SpiiceRegistryFrozen, UNKNOWN_OPERATOR_LABEL, resolve_operator_label,
 };
+use proxiima_core::{ToolCaller, ToolCtx, ToolError};
 use rmcp::ServerHandler;
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
@@ -85,27 +85,21 @@ impl DynamicHandler {
         self
     }
 
-    /// Start the ordinary tool call with a fresh observation of the scope gate.
-    ///
-    /// The returned cell is the exact [`JudgedKey`](proxiima_core::mcp::JudgedKey)
-    /// installed in the call's context. Retain it, await the future, then read
-    /// it after either success or refusal. It stays empty if the request fails
-    /// before the gate derives a key. Each invocation allocates its own cell;
-    /// callers cannot supply a cell shared with another request.
+    /// The ordinary tool call, answering also the key the scope gate judged
+    /// it by ([`ToolCtx::judged`](proxiima_core::ToolCtx::judged)), after
+    /// success or refusal. `None` when the request failed before its context
+    /// existed or the gate derived no key.
     ///
     /// # Errors
     ///
-    /// The future returns the same errors as [`ServerHandler::call_tool`].
+    /// The result holds the same errors as [`ServerHandler::call_tool`].
     pub fn call_tool_observed(
         &self,
         request: CallToolRequestParams,
         context: &RequestContext<RoleServer>,
-    ) -> (
-        proxiima_core::mcp::JudgedKey,
-        impl Future<Output = Result<CallToolResponse, ErrorData>> + MaybeSendFuture + use<>,
-    ) {
-        let judged = proxiima_core::mcp::JudgedKey::default();
-        let observation = judged.clone();
+    ) -> impl Future<Output = (Option<ScopeKey>, Result<CallToolResponse, ErrorData>)>
+    + MaybeSendFuture
+    + use<> {
         let server = self.server.clone();
         let auth = auth_context(context);
         let (client_name, client_version) = peer_implementation(context);
@@ -114,38 +108,45 @@ impl DynamicHandler {
             .meta
             .get_progress_token()
             .map(|token| (token, context.peer.clone(), self.progress_heartbeat));
-        let call = async move {
-            let request_services = request_services?;
+        Box::pin(async move {
+            let request_services = match request_services {
+                Ok(services) => services,
+                Err(err) => return (None, Err(err)),
+            };
             let request_name = request.name.to_string();
             let mut args = request
                 .arguments
                 .map_or_else(|| serde_json::json!({}), serde_json::Value::Object);
-            let author = author_from_args(&args, auth.as_ref(), &client_name, &client_version)?;
+            let caller = match author_from_args(&args, auth.as_ref(), &client_name, &client_version)
+            {
+                Ok(caller) => caller,
+                Err(err) => return (None, Err(err)),
+            };
             strip_call_context_args(&mut args);
             let error_auth = auth.clone();
             let call = async {
                 let Some(auth) = auth else {
                     let name = canonical_tool_name(&server, &request_name)
                         .unwrap_or_else(|| request_name.clone());
-                    return Err(ToolInvocationError::NotAuthorized(name));
+                    return (None, Err(ToolInvocationError::NotAuthorized(name)));
                 };
                 let target = match server.resolve_tool(&auth, &request_name).await {
                     Ok(target) => target,
-                    Err(err) => return Err(err),
+                    Err(err) => return (None, Err(err)),
                 };
                 server
-                    .call_resolved(target, args, author, auth, request_services, judged)
+                    .call_resolved(target, args, caller, auth, request_services)
                     .await
             };
-            let reply = with_progress_heartbeat(Box::pin(call), heartbeat).await;
+            let (judged, reply) = with_progress_heartbeat(Box::pin(call), heartbeat).await;
             let outcome = reply
                 .map_err(|err| {
                     tool_invocation_error_to_error_data(server.registry(), err, error_auth.as_ref())
                 })
-                .and_then(|reply| wire_reply(&request_name, reply));
-            Ok(outcome?.into())
-        };
-        (observation, Box::pin(call))
+                .and_then(|reply| wire_reply(&request_name, reply))
+                .map(Into::into);
+            (judged, outcome)
+        })
     }
 
     /// [`ServerHandler::get_info`] plus `instructions` generated from the
@@ -203,7 +204,7 @@ fn listing_ctx(
     server: &McpToolHost,
     auth: Option<&McpAuthContext>,
     context: &RequestContext<RoleServer>,
-) -> Result<Option<McpToolCtx>, ErrorData> {
+) -> Result<Option<ToolCtx>, ErrorData> {
     let Some(auth) = auth else {
         return Ok(None);
     };
@@ -387,7 +388,7 @@ impl ServerHandler for DynamicHandler {
         async move {
             if uri == selfdoc::HOW_TO_URI {
                 if !how_to_allowed_for_auth(auth.as_ref()) {
-                    return Err(mcp_tool_error_to_error_data(&McpToolError::NotAuthorized(
+                    return Err(mcp_tool_error_to_error_data(&ToolError::NotAuthorized(
                         proxiima_core::protocol::resource::HOW_TO.into(),
                     )));
                 }
@@ -543,7 +544,8 @@ impl ServerHandler for DynamicHandler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<CallToolResponse, ErrorData>> + MaybeSendFuture + '_ {
-        self.call_tool_observed(request, &context).1
+        let call = self.call_tool_observed(request, &context);
+        async move { call.await.1 }
     }
 }
 
@@ -652,7 +654,7 @@ fn resource_invocation_error_to_error_data(err: ToolInvocationError) -> ErrorDat
         // A missing entity behind a well-formed resource URI is a
         // `resource_not_found` (-32002), unlike the tool path where the
         // same fault is an argument problem.
-        ToolInvocationError::Tool(inner) if inner.kind() == McpToolErrorKind::NotFound => {
+        ToolInvocationError::Tool(inner) if inner.kind() == ToolErrorKind::NotFound => {
             ErrorData::resource_not_found(inner.client_message(), None)
         }
         ToolInvocationError::Tool(inner) => mcp_tool_error_to_error_data(&inner),
@@ -677,7 +679,7 @@ const CAPACITY_EXHAUSTED_CODE: &str = "capacity_exhausted";
 const STORE_UNAVAILABLE_CODE: &str = "store_unavailable";
 const IDEMPOTENCY_CONFLICT_CODE: &str = "idempotency_conflict";
 
-/// Classify an [`McpToolError`] by JSON-RPC code: caller-input faults —
+/// Classify an [`ToolError`] by JSON-RPC code: caller-input faults —
 /// including references to missing entities — → `invalid_params` (-32602);
 /// well-formed-but-illegal requests → `invalid_request` (-32600); declared
 /// backpressure → server error (-32000) with `data.code`
@@ -687,26 +689,26 @@ const IDEMPOTENCY_CONFLICT_CODE: &str = "idempotency_conflict";
 /// `internal_error` (-32603). Resource reads remap `NotFound` before
 /// reaching here (resources map a missing entity to `resource_not_found`).
 #[must_use]
-pub fn mcp_tool_error_to_error_data(err: &McpToolError) -> ErrorData {
+pub fn mcp_tool_error_to_error_data(err: &ToolError) -> ErrorData {
     match err.kind() {
-        McpToolErrorKind::InvalidInput | McpToolErrorKind::NotFound => {
+        ToolErrorKind::InvalidInput | ToolErrorKind::NotFound => {
             ErrorData::invalid_params(err.client_message(), None)
         }
-        McpToolErrorKind::InvalidRequest => {
+        ToolErrorKind::InvalidRequest => {
             if let Some(data) = idempotency_conflict_data(err) {
                 ErrorData::invalid_request(err.client_message(), Some(data))
             } else {
                 ErrorData::invalid_request(err.client_message(), None)
             }
         }
-        McpToolErrorKind::CapacityExhausted => ErrorData::new(
+        ToolErrorKind::CapacityExhausted => ErrorData::new(
             SERVER_ERROR,
             err.client_message(),
             Some(serde_json::json!({ "code": CAPACITY_EXHAUSTED_CODE })),
         ),
-        McpToolErrorKind::StoreUnavailable => {
+        ToolErrorKind::StoreUnavailable => {
             let store = match err {
-                McpToolError::StoreUnavailable { store } => Some(*store),
+                ToolError::StoreUnavailable { store } => Some(*store),
                 _ => None,
             };
             ErrorData::new(
@@ -715,20 +717,19 @@ pub fn mcp_tool_error_to_error_data(err: &McpToolError) -> ErrorData {
                 Some(serde_json::json!({ "code": STORE_UNAVAILABLE_CODE, "store": store })),
             )
         }
-        McpToolErrorKind::Internal => generic_internal_error(err),
+        ToolErrorKind::Internal => generic_internal_error(err),
     }
 }
 
-fn idempotency_conflict_data(err: &McpToolError) -> Option<serde_json::Value> {
+fn idempotency_conflict_data(err: &ToolError) -> Option<serde_json::Value> {
     let existing = match err {
-        McpToolError::Protocol(inner)
+        ToolError::Protocol(inner)
             if inner.code == proxiima_core::error::ErrorCode::IdempotencyConflict =>
         {
             inner.existing
         }
-        McpToolError::Storage(proxiima_core::StorageError::IdempotencyConflict {
-            existing,
-            ..
+        ToolError::Storage(proxiima_core::StorageError::IdempotencyConflict {
+            existing, ..
         }) => *existing,
         _ => return None,
     };
@@ -861,7 +862,7 @@ pub(crate) fn project_dispatcher_actions_for_auth(
 }
 
 async fn caller_search_input_schema(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     schema: serde_json::Value,
 ) -> Result<serde_json::Value, ErrorData> {
     proxiima_core::mcp::core_tools::search_memories::caller_input_schema(ctx, schema)
@@ -956,17 +957,12 @@ fn author_from_ctx(
     auth: Option<&McpAuthContext>,
     client_name: &str,
     client_version: &str,
-) -> McpAuthorContext {
-    let trusted = trusted_model_id(auth);
-    McpAuthorContext {
-        model_id: trusted
-            .clone()
-            .unwrap_or_else(|| UNKNOWN_OPERATOR_LABEL.to_string()),
-        trusted_model_id: trusted,
-        client_name: client_name.to_string(),
-        client_version: client_version.to_string(),
-        caller_self_perspective: None,
-    }
+) -> ToolCaller {
+    ToolCaller::new(
+        trusted_model_id(auth).unwrap_or_else(|| UNKNOWN_OPERATOR_LABEL.to_string()),
+        client_name,
+        client_version,
+    )
 }
 
 /// The only source of trusted model provenance on this transport: the
@@ -1068,7 +1064,7 @@ fn scope_allows(capabilities: Option<&CapabilitySet>, descriptor: &McpToolDescri
 #[derive(Clone, Copy)]
 pub(crate) struct Caller<'a> {
     auth: Option<&'a McpAuthContext>,
-    behaviors: Option<&'a McpToolCtx>,
+    behaviors: Option<&'a ToolCtx>,
 }
 
 impl<'a> Caller<'a> {
@@ -1081,12 +1077,12 @@ impl<'a> Caller<'a> {
     }
 
     /// Both policies, owner role and every request behavior's `visible`, judged
-    /// with `ctx` (see [`McpToolCtx::behaviors_show`]). `ctx` is `None` only
+    /// with `ctx` (see [`ToolCtx::behaviors_show`]). `ctx` is `None` only
     /// without an authenticated caller, which nothing is listed to outside
     /// tests.
     pub(crate) const fn listing(
         auth: Option<&'a McpAuthContext>,
-        ctx: Option<&'a McpToolCtx>,
+        ctx: Option<&'a ToolCtx>,
     ) -> Self {
         Self {
             auth,
@@ -1218,7 +1214,7 @@ pub const SELF_PERSPECTIVE_ARGS: [&str; 3] = [
     "current_root_perspective_memory_id",
 ];
 
-/// Author context for one `tools/call`.
+/// The caller of one `tools/call`.
 ///
 /// The reserved `model_id` argument is a caller *claim*. When the token
 /// binds a model identity, that identity wins and a differing claim is
@@ -1236,7 +1232,7 @@ pub fn author_from_args(
     auth: Option<&McpAuthContext>,
     client_name: &str,
     client_version: &str,
-) -> Result<McpAuthorContext, ErrorData> {
+) -> Result<ToolCaller, ErrorData> {
     let trusted = trusted_model_id(auth);
     let claimed = match args.get(MODEL_ID_ARG) {
         None | Some(serde_json::Value::Null) => None,
@@ -1251,13 +1247,8 @@ pub fn author_from_args(
     let model_id = resolve_operator_label(trusted.as_deref(), claimed)
         .map_err(|conflict| ErrorData::invalid_params(conflict.detail("model_id"), None))?;
     let caller_self_perspective = caller_self_perspective_from_args(args)?;
-    Ok(McpAuthorContext {
-        model_id,
-        trusted_model_id: trusted,
-        client_name: client_name.to_string(),
-        client_version: client_version.to_string(),
-        caller_self_perspective,
-    })
+    Ok(ToolCaller::new(model_id, client_name, client_version)
+        .with_self_perspective(caller_self_perspective))
 }
 
 fn caller_self_perspective_from_args(
@@ -1295,7 +1286,7 @@ pub fn strip_call_context_args(args: &mut serde_json::Value) {
     // captured it into the author context, so strip it as a context field. This
     // lets any dispatcher tool (whose per-action specs do not list `model_id`)
     // accept it without a spurious unexpected-field rejection; flat tools that
-    // want it (e.g. core_derive) read it from `ctx.author.model_id`.
+    // want it (e.g. core_derive) read it from `ctx.caller().model_id`.
     obj.remove(MODEL_ID_ARG);
 }
 

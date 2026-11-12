@@ -9,8 +9,8 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::read_models::MemoryCounts;
+use crate::{ToolCtx, ToolError};
 
 #[derive(Debug, Serialize, serde::Deserialize, JsonSchema)]
 pub struct MemoryCountsOutput {
@@ -22,8 +22,8 @@ pub struct MemoryCountsOutput {
 ///
 /// Returns authorization (`Forbidden` for a context that reads nothing) or
 /// storage failures.
-pub async fn memory_counts(ctx: McpToolCtx) -> Result<MemoryCountsOutput, McpToolError> {
+pub async fn memory_counts(ctx: ToolCtx) -> Result<MemoryCountsOutput, ToolError> {
     let engine = ctx.require_engine()?;
-    let counts = engine.memory_counts(&ctx.authz).await?;
+    let counts = engine.memory_counts(ctx.authz()).await?;
     Ok(MemoryCountsOutput { counts })
 }

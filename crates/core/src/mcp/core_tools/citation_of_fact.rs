@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::FactCitationReadRequest;
-use crate::mcp::{McpToolCtx, McpToolError};
+use crate::{ToolCtx, ToolError};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CitationOfFactArgs {
@@ -26,13 +26,13 @@ pub struct FactCitationOutput {
 }
 
 pub(super) async fn citation_of_fact(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: CitationOfFactArgs,
-) -> Result<CitationOfFactOutput, McpToolError> {
+) -> Result<CitationOfFactOutput, ToolError> {
     let fact_memory_id = ctx.resolve_memory(&args.fact)?;
     let engine = ctx.require_engine()?;
     let citation = engine
-        .read_fact_citation(&ctx.authz, &FactCitationReadRequest { fact_memory_id })
+        .read_fact_citation(ctx.authz(), &FactCitationReadRequest { fact_memory_id })
         .await?
         .map(|row| fact_citation_output(&row));
     Ok(CitationOfFactOutput {

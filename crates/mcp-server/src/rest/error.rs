@@ -3,13 +3,13 @@
 //!
 //! Two rules carry the whole module and neither is negotiable:
 //!
-//! - `detail` is [`McpToolError::client_message`], never `Display` and never
+//! - `detail` is [`ToolError::client_message`], never `Display` and never
 //!   a formatted source chain. That single call is what keeps an
 //!   internal-kind error redacted to `internal server error` before the HTTP
 //!   layer can see the storage DSN inside it, and what lets `Unavailable`
 //!   through verbatim because it is a caller-actionable precondition.
 //! - The status map matches on **variants**, exhaustively, with no wildcard
-//!   arm. `McpToolErrorKind` is too coarse for HTTP — its `InvalidRequest`
+//!   arm. `ToolErrorKind` is too coarse for HTTP — its `InvalidRequest`
 //!   bucket holds authorization, conflict and capability failures that must
 //!   not share a status — and [`ToolInvocationError::kind`] maps
 //!   `ToolNotFound` to `InvalidInput`, a `400` where HTTP wants `404`.
@@ -18,8 +18,8 @@
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use proxiima_core::ToolError;
 use proxiima_core::error::ErrorCode;
-use proxiima_core::mcp::McpToolError;
 use proxiima_core::{RuleClass, StorageError};
 
 use crate::server::ToolInvocationError;
@@ -156,7 +156,7 @@ impl IntoResponse for Problem {
 /// non-`Tool` variants are produced by this crate from a name the caller
 /// supplied, so there is no internal detail to redact. The `Tool` arm — the
 /// only one that can carry a storage or protocol fault — goes through
-/// [`McpToolError::client_message`].
+/// [`ToolError::client_message`].
 #[must_use]
 pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
     match err {
@@ -164,7 +164,7 @@ pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
             StatusCode::FORBIDDEN,
             "not-authorized",
             "Not authorized",
-            McpToolError::NotAuthorized(name.clone()).client_message(),
+            ToolError::NotAuthorized(name.clone()).client_message(),
             instance,
         ),
         ToolInvocationError::ToolNotFound(name) => Problem::new(
@@ -178,38 +178,34 @@ pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
     }
 }
 
-fn tool_problem(err: &McpToolError, instance: &str) -> Problem {
+fn tool_problem(err: &ToolError, instance: &str) -> Problem {
     let (status, slug, title) = match err {
-        McpToolError::InvalidInput(_) => {
-            (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input")
-        }
-        McpToolError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found", "Not found"),
-        McpToolError::NotAuthorized(_) => {
-            (StatusCode::FORBIDDEN, "not-authorized", "Not authorized")
-        }
-        McpToolError::LayeringViolation(_) => (
+        ToolError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input"),
+        ToolError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found", "Not found"),
+        ToolError::NotAuthorized(_) => (StatusCode::FORBIDDEN, "not-authorized", "Not authorized"),
+        ToolError::LayeringViolation(_) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "layering-violation",
             "Layering violation",
         ),
-        McpToolError::Unavailable(_) => (
+        ToolError::Unavailable(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "unavailable",
             "Capability unavailable",
         ),
-        McpToolError::StoreUnavailable { .. } => (
+        ToolError::StoreUnavailable { .. } => (
             StatusCode::SERVICE_UNAVAILABLE,
             "store-unavailable",
             "Store unavailable",
         ),
-        McpToolError::Failure(_) => (
+        ToolError::Failure(_) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "tool-failure",
             "Tool failed",
         ),
-        McpToolError::Protocol(inner) => protocol_status(inner.code),
-        McpToolError::Storage(inner) => storage_status(inner),
-        McpToolError::Other(_) => (
+        ToolError::Protocol(inner) => protocol_status(inner.code),
+        ToolError::Storage(inner) => storage_status(inner),
+        ToolError::Other(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "Internal error",
@@ -225,10 +221,10 @@ fn tool_problem(err: &McpToolError, instance: &str) -> Problem {
     problem
 }
 
-fn idempotency_existing(err: &McpToolError) -> Option<uuid::Uuid> {
+fn idempotency_existing(err: &ToolError) -> Option<uuid::Uuid> {
     match err {
-        McpToolError::Protocol(inner) => inner.existing,
-        McpToolError::Storage(StorageError::IdempotencyConflict { existing, .. }) => *existing,
+        ToolError::Protocol(inner) => inner.existing,
+        ToolError::Storage(StorageError::IdempotencyConflict { existing, .. }) => *existing,
         _ => None,
     }
 }
@@ -343,7 +339,7 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
             // and what `500` does not. Distinct `type` slug so a client
             // switches on the code rather than on the status alone, and
             // `detail` keeps the backlog depth because `CapacityExhausted`
-            // is its own `McpToolErrorKind` and is therefore not redacted.
+            // is its own `ToolErrorKind` and is therefore not redacted.
             proxiima_core::publication::PublicationError::CapacityExhausted { .. } => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "capacity-exhausted",
@@ -386,7 +382,7 @@ mod tests {
     }
 
     fn protocol(code: ErrorCode) -> ToolInvocationError {
-        ToolInvocationError::Tool(McpToolError::Protocol(ProtocolError {
+        ToolInvocationError::Tool(ToolError::Protocol(ProtocolError {
             code,
             message: "boom".into(),
             request_id: None,
@@ -436,7 +432,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                status_of(&ToolInvocationError::Tool(McpToolError::Storage(err))),
+                status_of(&ToolInvocationError::Tool(ToolError::Storage(err))),
                 expected
             );
         }
@@ -453,37 +449,28 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         for (err, expected) in [
+            (ToolError::InvalidInput("x".into()), StatusCode::BAD_REQUEST),
+            (ToolError::NotFound("x".into()), StatusCode::NOT_FOUND),
+            (ToolError::NotAuthorized("x".into()), StatusCode::FORBIDDEN),
             (
-                McpToolError::InvalidInput("x".into()),
-                StatusCode::BAD_REQUEST,
-            ),
-            (McpToolError::NotFound("x".into()), StatusCode::NOT_FOUND),
-            (
-                McpToolError::NotAuthorized("x".into()),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                McpToolError::LayeringViolation("x".into()),
+                ToolError::LayeringViolation("x".into()),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (
-                McpToolError::Unavailable("x".into()),
+                ToolError::Unavailable("x".into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (ToolError::NotFound("x".into()), StatusCode::NOT_FOUND),
+            (
+                ToolError::Unavailable("x".into()),
                 StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
-                McpToolError::from(proxiima_core::ToolError::NotFound("x".into())),
-                StatusCode::NOT_FOUND,
-            ),
-            (
-                McpToolError::from(proxiima_core::ToolError::Unavailable("x".into())),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-            (
-                McpToolError::from(proxiima_core::ToolError::Failure("x".into())),
+                ToolError::Failure("x".into()),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (
-                McpToolError::Other("x".into()),
+                ToolError::Other("x".into()),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
         ] {
@@ -539,7 +526,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                status_of(&ToolInvocationError::Tool(McpToolError::Storage(err))),
+                status_of(&ToolInvocationError::Tool(ToolError::Storage(err))),
                 expected
             );
         }
@@ -553,7 +540,7 @@ mod tests {
     /// own type, not a 404.
     #[test]
     fn an_unanswered_store_is_a_503_with_its_own_type() {
-        let err = ToolInvocationError::Tool(McpToolError::StoreUnavailable { store: 1 });
+        let err = ToolInvocationError::Tool(ToolError::StoreUnavailable { store: 1 });
         let problem = problem_for(&err, "/v1/tools/core_get_memory");
         assert_eq!(problem.status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(problem.slug, "store-unavailable");
@@ -565,13 +552,12 @@ mod tests {
 
     #[test]
     fn an_exhausted_outbox_is_a_503_with_its_own_type() {
-        let err =
-            ToolInvocationError::Tool(McpToolError::Storage(StorageError::PublicationRefused(
-                proxiima_core::publication::PublicationError::CapacityExhausted {
-                    pending: 100_000,
-                    max: 100_000,
-                },
-            )));
+        let err = ToolInvocationError::Tool(ToolError::Storage(StorageError::PublicationRefused(
+            proxiima_core::publication::PublicationError::CapacityExhausted {
+                pending: 100_000,
+                max: 100_000,
+            },
+        )));
         let problem = problem_for(&err, "/v1/tools/core_remember");
         assert_eq!(problem.status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(problem.slug, "capacity-exhausted");
@@ -605,7 +591,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                status_of(&ToolInvocationError::Tool(McpToolError::Storage(
+                status_of(&ToolInvocationError::Tool(ToolError::Storage(
                     StorageError::PublicationRefused(refusal)
                 ))),
                 expected

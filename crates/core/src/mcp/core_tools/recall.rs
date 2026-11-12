@@ -10,13 +10,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::MemoryId;
 use crate::engine::SearchReadRequest;
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::protocol::tool as protocol_tool;
 use crate::verbs::goal_write::GoalState;
 use crate::verbs::query::{
     EntityKind, GoalMotivationFilter, MemorySearchRequest, QueryRequest, SearchMode, SearchOrder,
     SupersessionStatus, TagMatch,
 };
+use crate::{Tool, ToolCtx, ToolError};
 use uuid::Uuid;
 
 const DEFAULT_LIMIT: u32 = 16;
@@ -114,7 +114,7 @@ pub enum RecallReason {
     UnassignedGoal,
 }
 
-impl McpTool for RecallTool {
+impl Tool for RecallTool {
     const NAME: &'static str = protocol_tool::CORE_RECALL;
     const TITLE: &'static str = "Recall a memory";
     const DESCRIPTION: &'static str = "Recall what is known about a question and/or subject handles: short sketches of the subjects, Perspectives about them, question matches, Active Goals assigned to recalled Perspectives, and the selected owner's unassigned Active Goals. No bodies; use core_search_memories for filtered search.";
@@ -122,19 +122,16 @@ impl McpTool for RecallTool {
     type Args = RecallArgs;
     type Output = RecallOutput;
 
-    fn call(
-        ctx: McpToolCtx,
-        args: RecallArgs,
-    ) -> BoxFuture<'static, Result<RecallOutput, McpToolError>> {
+    fn call(ctx: ToolCtx, args: RecallArgs) -> BoxFuture<'static, Result<RecallOutput, ToolError>> {
         Box::pin(async move { recall(ctx, args).await })
     }
 }
 
-async fn recall(ctx: McpToolCtx, args: RecallArgs) -> Result<RecallOutput, McpToolError> {
+async fn recall(ctx: ToolCtx, args: RecallArgs) -> Result<RecallOutput, ToolError> {
     crate::reject_zero_limit(Some(args.limit))?;
     require_cue(args.question.as_deref(), &args.subjects)?;
     if args.subjects.len() > MAX_SUBJECTS {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SUBJECTS} subjects; got {}",
             args.subjects.len()
         )));
@@ -185,15 +182,15 @@ async fn recall(ctx: McpToolCtx, args: RecallArgs) -> Result<RecallOutput, McpTo
 }
 
 async fn collect_subjects(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     subjects: &[MemoryId],
     packet: &mut Packet,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     if subjects.is_empty() {
         return Ok(());
     }
-    let sketches = engine.load_sketches(&ctx.authz, subjects).await?;
+    let sketches = engine.load_sketches(ctx.authz(), subjects).await?;
     for sketch in sketches {
         packet.insert(ctx, &sketch, RecallReason::Subject);
         packet.set_head(sketch.id, sketch.kind != EntityKind::Perspective);
@@ -202,18 +199,18 @@ async fn collect_subjects(
 }
 
 async fn collect_cue_touch(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     owner: crate::OwnerId,
     subjects: &[MemoryId],
     packet: &mut Packet,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     if subjects.is_empty() {
         return Ok(());
     }
     let inbound = engine
         .inbound_pin_nodes(
-            &ctx.authz,
+            ctx.authz(),
             crate::InboundPinQuery {
                 targets: subjects,
                 target_kind: PinTargetKind::Memory,
@@ -232,7 +229,7 @@ async fn collect_cue_touch(
     if touch_ids.is_empty() {
         return Ok(());
     }
-    let sketches = engine.load_sketches(&ctx.authz, &touch_ids).await?;
+    let sketches = engine.load_sketches(ctx.authz(), &touch_ids).await?;
     for sketch in sketches {
         if sketch.owner != owner {
             continue;
@@ -244,14 +241,14 @@ async fn collect_cue_touch(
 }
 
 async fn collect_question(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     owner: crate::OwnerId,
     query: &str,
     kind: Option<RecallKind>,
     limit: u32,
     packet: &mut Packet,
-) -> Result<bool, McpToolError> {
+) -> Result<bool, ToolError> {
     let query = crate::validate_search_query(query)?;
     let kind = match kind {
         Some(RecallKind::Fact) => Some(EntityKind::Fact),
@@ -283,7 +280,7 @@ async fn collect_question(
     };
     let page = engine
         .search(
-            &ctx.authz,
+            ctx.authz(),
             &SearchReadRequest {
                 search: MemorySearchRequest {
                     // Keep question matches in the selected memory space.
@@ -311,7 +308,7 @@ async fn collect_question(
         )
         .await?;
     let ids: Vec<MemoryId> = page.memories.iter().map(|row| row.memory_id).collect();
-    let sketches = engine.load_sketches(&ctx.authz, &ids).await?;
+    let sketches = engine.load_sketches(ctx.authz(), &ids).await?;
     for sketch in sketches {
         packet.insert(ctx, &sketch, RecallReason::Question);
         packet.set_head(sketch.id, true);
@@ -321,9 +318,9 @@ async fn collect_question(
 
 async fn mark_perspective_heads(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     packet: &mut Packet,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     let candidates = packet.unverified_perspective_ids();
     if candidates.is_empty() {
         return Ok(());
@@ -333,7 +330,7 @@ async fn mark_perspective_heads(
     req.memory_ids.clone_from(&candidates);
     req.include_payloads = false;
     req.limit = u32::try_from(candidates.len()).unwrap_or(u32::MAX).max(1);
-    let page = engine.query(&ctx.authz, &req).await?;
+    let page = engine.query(ctx.authz(), &req).await?;
     let heads: std::collections::HashSet<Uuid> = page
         .memories
         .into_iter()
@@ -346,12 +343,12 @@ async fn mark_perspective_heads(
 /// The Active Goals assigned to the packet's head Perspectives of `owner`, in
 /// one query and one sketch load whatever their number.
 async fn collect_assigned_goals(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     owner: crate::OwnerId,
     limit: u32,
     packet: &mut Packet,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     let perspectives = packet.head_perspective_ids(owner);
     if perspectives.is_empty() {
         return Ok(());
@@ -362,13 +359,13 @@ async fn collect_assigned_goals(
     req.motivated_by = GoalMotivationFilter::MotivatedBy(perspectives);
     req.include_payloads = false;
     req.limit = limit;
-    let page = engine.query(&ctx.authz, &req).await?;
+    let page = engine.query(ctx.authz(), &req).await?;
     let goal_ids: Vec<MemoryId> = page
         .goals
         .iter()
         .map(|goal| MemoryId::new(goal.id.into_inner()))
         .collect();
-    let sketches = engine.load_sketches(&ctx.authz, &goal_ids).await?;
+    let sketches = engine.load_sketches(ctx.authz(), &goal_ids).await?;
     for sketch in sketches {
         packet.insert_goal(ctx, &sketch, RecallReason::AssignedGoal);
     }
@@ -376,17 +373,17 @@ async fn collect_assigned_goals(
 }
 
 async fn collect_unassigned_goals(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     owner: crate::OwnerId,
     limit: u32,
     packet: &mut Packet,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     let authz = ctx
-        .authz
+        .authz()
         .clone()
         .narrowed_to_owner(owner)
-        .ok_or_else(|| McpToolError::NotAuthorized("memory space read".into()))?;
+        .ok_or_else(|| ToolError::NotAuthorized("memory space read".into()))?;
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
     req.goal_states.insert(GoalState::Active);
@@ -446,7 +443,7 @@ impl Packet {
 
     fn insert(
         &mut self,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
         sketch: &crate::read_models::MemorySketch,
         reason: RecallReason,
     ) {
@@ -455,7 +452,7 @@ impl Packet {
 
     fn insert_goal(
         &mut self,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
         sketch: &crate::read_models::MemorySketch,
         reason: RecallReason,
     ) {
@@ -464,7 +461,7 @@ impl Packet {
 
     fn add(
         &mut self,
-        ctx: &McpToolCtx,
+        ctx: &ToolCtx,
         sketch: &crate::read_models::MemorySketch,
         kind: EntityKind,
         reason: RecallReason,
@@ -569,10 +566,10 @@ fn truncate_sketch(text: &str) -> String {
     trimmed.chars().take(SKETCH_CHARS).collect()
 }
 
-fn require_cue(question: Option<&str>, subjects: &[String]) -> Result<(), McpToolError> {
+fn require_cue(question: Option<&str>, subjects: &[String]) -> Result<(), ToolError> {
     let question = question.map(str::trim).filter(|q| !q.is_empty());
     if question.is_none() && subjects.is_empty() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "recall requires a question and/or subjects; Self is not parameterless".into(),
         ));
     }

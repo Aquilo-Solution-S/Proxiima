@@ -7,10 +7,7 @@ use serde::Deserialize;
 
 use crate::access::AccessKind;
 use crate::error::ErrorCode;
-use crate::mcp::{
-    McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed, Replay,
-    ToolEffect,
-};
+use crate::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect};
 use crate::query::QueryRequest;
 use crate::storage_ports::delegated_authority::MAX_TOOL_ID_CHARS;
 use crate::storage_ports::{
@@ -23,6 +20,7 @@ use crate::{
     WriterAttribution,
 };
 use crate::{FactPayload, GroupId, PayloadKeyBuilder, SpiiceRegistry};
+use crate::{Tool, ToolCtx, ToolError};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -39,7 +37,7 @@ struct WorkerOutput {}
 
 struct WorkerTool;
 
-impl McpTool for WorkerTool {
+impl Tool for WorkerTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = TOOL_NAME;
     const DESCRIPTION: &'static str = "delegation test worker";
@@ -48,9 +46,9 @@ impl McpTool for WorkerTool {
     type Output = WorkerOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: WorkerArgs,
-    ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(WorkerOutput {}) })
     }
 }
@@ -64,7 +62,7 @@ enum DispatcherArgs {
 
 struct DispatcherTool;
 
-impl McpTool for DispatcherTool {
+impl Tool for DispatcherTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = DISPATCHER_TOOL_NAME;
     const DESCRIPTION: &'static str = "delegation dispatcher test worker";
@@ -92,9 +90,9 @@ impl McpTool for DispatcherTool {
     type Output = WorkerOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: DispatcherArgs,
-    ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(WorkerOutput {}) })
     }
 }
@@ -202,14 +200,14 @@ fn registry(with_tool: bool) -> SpiiceRegistryFrozen {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
     if with_tool {
-        registry.add_mcp_tool_or_panic_for_tests::<WorkerTool>("test-delegation");
+        registry.add_tool_or_panic_for_tests::<WorkerTool>("test-delegation");
     }
     registry.freeze_or_panic_for_tests()
 }
 
 fn dispatcher_registry() -> SpiiceRegistryFrozen {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<DispatcherTool>("test-delegation");
+    registry.add_tool_or_panic_for_tests::<DispatcherTool>("test-delegation");
     registry.freeze_or_panic_for_tests()
 }
 

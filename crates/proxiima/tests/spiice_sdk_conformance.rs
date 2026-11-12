@@ -46,9 +46,7 @@ fn duplicate_schema_tool_and_spiice_return_typed_errors() {
     assert!(matches!(err, SpiiceRegistryError::DuplicateSchema { .. }));
 
     let mut registry = SpiiceRegistry::new();
-    registry
-        .try_add_mcp_tool::<SearchMemoriesTool>("core")
-        .unwrap();
+    registry.try_add_tool::<SearchMemoriesTool>("core").unwrap();
     let err = registry.try_freeze().unwrap_err();
     assert!(matches!(err, SpiiceRegistryError::DuplicateTool { .. }));
 
@@ -124,11 +122,10 @@ mod mcp_tool_authoring {
     }
 }
 
-/// Zero-page-bound is reachable from the SDK: one `ToolError` helper, `?`
-/// into `McpToolError` via `From`.
+/// Zero-page-bound is reachable from the SDK: one `ToolError` helper, the
+/// same error at the spiice and the host tier.
 #[test]
 fn the_zero_page_bound_rule_is_reachable_from_the_sdk() {
-    use proxiima::host::McpToolError;
     use proxiima::spiice::{ToolError, reject_zero_limit};
 
     fn spiice_tool_body(limit: Option<u32>) -> Result<u32, ToolError> {
@@ -136,7 +133,7 @@ fn the_zero_page_bound_rule_is_reachable_from_the_sdk() {
         Ok(limit.unwrap_or(10).min(50))
     }
 
-    fn mcp_tool_body(limit: Option<u32>) -> Result<u32, McpToolError> {
+    fn mcp_tool_body(limit: Option<u32>) -> Result<u32, proxiima::host::ToolError> {
         reject_zero_limit(limit)?;
         Ok(limit.unwrap_or(10).min(50))
     }
@@ -147,7 +144,7 @@ fn the_zero_page_bound_rule_is_reachable_from_the_sdk() {
     ));
     assert!(matches!(
         mcp_tool_body(Some(0)),
-        Err(McpToolError::InvalidInput(_))
+        Err(ToolError::InvalidInput(_))
     ));
     assert_eq!(spiice_tool_body(None).unwrap(), 10);
     assert_eq!(mcp_tool_body(Some(500)).unwrap(), 50);
@@ -158,40 +155,30 @@ fn the_zero_page_bound_rule_is_reachable_from_the_sdk() {
 #[test]
 fn wire_references_round_trip_through_a_transport_neutral_tool_ctx() {
     use proxiima::host::{AuthPath, AuthzContext, MemoryId, OwnerId, UserId, parse_wire_uuid};
-    use proxiima::spiice::{ToolCaller, ToolCtx, ToolServices};
+    use proxiima::spiice::{SpiiceServices, ToolCaller, ToolCtx};
 
     let registry = std::sync::Arc::new(SpiiceRegistry::new().try_freeze().unwrap());
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let ctx = ToolCtx::new(
         owner,
-        AuthzContext::single_owner(&owner, AuthPath::System),
-        registry,
-        ToolServices::new(),
-    )
-    .with_caller(Some(
-        ToolCaller::new("test/model", "test-client", "1.0")
+        AuthzContext::single_owner(&owner, AuthPath::System)
             .with_trusted_model_id("acme/runner-v3")
             .expect("a well-formed runner id binds"),
-    ));
-
-    assert_eq!(
-        ctx.caller(),
-        Some(
-            &ToolCaller::new("test/model", "test-client", "1.0")
-                .with_trusted_model_id("acme/runner-v3")
-                .expect("a well-formed runner id binds")
-        )
+        registry,
+        SpiiceServices::new(),
+        ToolCaller::new("test/model", "test-client", "1.0"),
     );
 
-    // Trusted model provenance is visible to an out-of-tree spiice as a
-    // field on the caller it already reads. `ToolCaller::new` keeps its
-    // three-argument shape and binds nothing, so a spiice that never asks
-    // for authenticated provenance is unaffected.
-    let caller = ctx.caller().expect("caller attached");
-    assert_eq!(caller.trusted_model_id.as_deref(), Some("acme/runner-v3"));
+    // Trusted model provenance is visible to an out-of-tree spiice on the
+    // authorization context, its one source, and the caller's label is the
+    // bound identity. `ToolCaller::new` keeps its three-argument shape.
+    assert_eq!(ctx.authz().trusted_model_id(), Some("acme/runner-v3"));
     assert_eq!(
-        ToolCaller::new("test/model", "test-client", "1.0").trusted_model_id,
-        None
+        ctx.caller(),
+        &ToolCaller {
+            model_id: "acme/runner-v3".into(),
+            ..ToolCaller::new("test/model", "test-client", "1.0")
+        }
     );
 
     let fact = MemoryId::new(Uuid::now_v7());
@@ -200,7 +187,7 @@ fn wire_references_round_trip_through_a_transport_neutral_tool_ctx() {
     for raw in [format!("F:{handle}"), format!("remote:{handle}")] {
         assert!(matches!(
             parse_wire_uuid(&raw),
-            Err(proxiima::host::McpToolError::InvalidInput(_))
+            Err(proxiima::host::ToolError::InvalidInput(_))
         ));
     }
 }

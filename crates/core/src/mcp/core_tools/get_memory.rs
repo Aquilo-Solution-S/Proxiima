@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::MemoryHandleClass;
 use crate::engine::GetMemoryReadRequest;
-use crate::mcp::{McpToolCtx, McpToolError};
+use crate::{ToolCtx, ToolError};
 
 use super::memory::search::{NeighborEdge, neighbor_edges_from_rows};
 
@@ -88,10 +88,7 @@ pub struct GetMemoryOutput {
 /// # Errors
 ///
 /// Returns invalid-reference, storage, or projection failures.
-pub async fn get_memory(
-    ctx: McpToolCtx,
-    args: GetMemoryArgs,
-) -> Result<GetMemoryOutput, McpToolError> {
+pub async fn get_memory(ctx: ToolCtx, args: GetMemoryArgs) -> Result<GetMemoryOutput, ToolError> {
     let memory_id = ctx.resolve_memory(&args.memory)?;
     let engine = ctx.require_engine()?;
     if crate::memory_store_number(memory_id.into_inner()) != engine.store_number() {
@@ -111,7 +108,7 @@ pub async fn get_memory(
     )?;
     let response = engine
         .get_memory(
-            &ctx.authz,
+            ctx.authz(),
             &GetMemoryReadRequest {
                 memory_id,
                 include_neighbor_edges: args.expand_neighbors,
@@ -122,16 +119,16 @@ pub async fn get_memory(
         .map_err(|err| {
             // Re-word the engine's handle-less not-found with the wire
             // handle the caller actually passed.
-            let err = McpToolError::from(err);
-            if err.kind() == crate::mcp::McpToolErrorKind::NotFound {
-                McpToolError::NotFound(format!("memory {} not found", args.memory))
+            let err = ToolError::from(err);
+            if err.kind() == crate::mcp::ToolErrorKind::NotFound {
+                ToolError::NotFound(format!("memory {} not found", args.memory))
             } else {
                 err
             }
         })?;
     let snapshot = response
         .memory
-        .ok_or_else(|| McpToolError::NotFound(format!("memory {} not found", args.memory)))?;
+        .ok_or_else(|| ToolError::NotFound(format!("memory {} not found", args.memory)))?;
     let neighbor_edges = if args.expand_neighbors {
         Some(neighbor_edges_from_rows(&ctx, response.neighbor_edges))
     } else {
@@ -144,11 +141,11 @@ pub async fn get_memory(
 /// The port supplies the memory's owner, payload and occurrence time, and
 /// with `expand_neighbors` the returned version's one-hop edges.
 pub(super) async fn remote_memory_output(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     origin: uuid::Uuid,
     version: VersionSelector,
     expand_neighbors: bool,
-) -> Result<GetMemoryOutput, McpToolError> {
+) -> Result<GetMemoryOutput, ToolError> {
     let memory = match version {
         VersionSelector::Exact => super::other_stores::read_origin(ctx, origin).await?.1,
         VersionSelector::Head => super::other_stores::read_head(ctx, origin).await?,
@@ -210,10 +207,10 @@ pub(super) fn project_remote_memory(
 /// depends on which space the caller named, so a follow-up write to the
 /// reported space lands with the memory's owner.
 pub(super) fn project_memory_snapshot(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     snapshot: crate::read_models::MemorySnapshot,
     neighbor_edges: Option<Vec<NeighborEdge>>,
-) -> Result<GetMemoryOutput, McpToolError> {
+) -> Result<GetMemoryOutput, ToolError> {
     let space = super::memory_spaces::space_key_for_owner(ctx, snapshot.owner);
     let handle = snapshot.memory_id.into_inner().to_string();
     let payload = snapshot_payload_value(snapshot.payload.as_ref())?;
@@ -253,18 +250,18 @@ pub(super) fn project_memory_snapshot(
 
 pub(super) fn snapshot_payload_value(
     payload: Option<&crate::SidecarPayload>,
-) -> Result<serde_json::Value, McpToolError> {
+) -> Result<serde_json::Value, ToolError> {
     let Some(payload) = payload else {
         return Ok(serde_json::Value::Null);
     };
     payload
         .to_protocol_json()
-        .map_err(|err| McpToolError::Other(format!("serialize typed payload: {err}")))
+        .map_err(|err| ToolError::Other(format!("serialize typed payload: {err}")))
 }
 
-pub(super) fn memory_class(kind: crate::EntityKind) -> Result<MemoryHandleClass, McpToolError> {
+pub(super) fn memory_class(kind: crate::EntityKind) -> Result<MemoryHandleClass, ToolError> {
     MemoryHandleClass::from_entity_kind(kind)
-        .ok_or_else(|| McpToolError::Other(format!("unknown memory kind: {}", kind.as_str())))
+        .ok_or_else(|| ToolError::Other(format!("unknown memory kind: {}", kind.as_str())))
 }
 
 #[cfg(test)]
@@ -292,7 +289,7 @@ mod tests {
                     kind: EntityKind::Fact,
                     schema_id: SchemaId::new("core/agent-note-v1".into()),
                     schema_version: SchemaVersion::new(1),
-                    owner: ctx.owner,
+                    owner: ctx.owner(),
                     writer,
                     occurred_at: Some(time::OffsetDateTime::UNIX_EPOCH),
                     text: Some("stored note".into()),
@@ -311,7 +308,7 @@ mod tests {
                 ..RemoteMemory::fixture(origin)
             };
             let remote = project_remote_memory(remote_memory.clone());
-            assert_eq!(local.owner, ctx.owner.into_inner());
+            assert_eq!(local.owner, ctx.owner().into_inner());
             assert_eq!(local.space, "current");
             assert_eq!(remote.owner, remote_memory.owner.into_inner());
             assert_eq!(remote.space, remote_memory.owner.to_string());

@@ -2,9 +2,9 @@ use crate::mcp::ToolEffect;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::protocol::tool as protocol_tool;
 use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{Tool, ToolCtx, ToolError};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemorySpacesArgs {}
@@ -32,7 +32,7 @@ pub struct MemorySpaceAccessOutput {
 #[derive(Debug)]
 pub struct MemorySpacesTool;
 
-impl McpTool for MemorySpacesTool {
+impl Tool for MemorySpacesTool {
     const NAME: &'static str = protocol_tool::CORE_MEMORY_SPACES;
     const TITLE: &'static str = "Memory spaces";
     const DESCRIPTION: &'static str = "List the memory spaces you can use and their keys (`current` or an owner's `<uuid>`) for other tools' space/spaces arguments.";
@@ -41,9 +41,9 @@ impl McpTool for MemorySpacesTool {
     type Output = MemorySpacesOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         _args: MemorySpacesArgs,
-    ) -> futures::future::BoxFuture<'static, Result<MemorySpacesOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<MemorySpacesOutput, ToolError>> {
         Box::pin(async move {
             Ok(MemorySpacesOutput {
                 spaces: list_memory_spaces(&ctx),
@@ -53,7 +53,7 @@ impl McpTool for MemorySpacesTool {
 }
 
 #[must_use]
-pub fn list_memory_spaces(ctx: &McpToolCtx) -> Vec<MemorySpaceOutput> {
+pub fn list_memory_spaces(ctx: &ToolCtx) -> Vec<MemorySpaceOutput> {
     sorted_accessible_principals(ctx)
         .into_iter()
         .map(|owner| {
@@ -62,7 +62,7 @@ pub fn list_memory_spaces(ctx: &McpToolCtx) -> Vec<MemorySpaceOutput> {
                 key,
                 label,
                 access: MemorySpaceAccessOutput {
-                    writable: ctx.authz.may_write(&owner, AccessKind::Fact),
+                    writable: ctx.authz().may_write(&owner, AccessKind::Fact),
                 },
             }
         })
@@ -91,15 +91,15 @@ pub struct ResolvedMemorySpace {
 /// accessible, and `NotAuthorized` when the caller holds no role on the
 /// resolved Owner.
 pub fn resolve_space_for_write(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     raw: Option<&str>,
-) -> Result<(ResolvedMemorySpace, AuthzContext), McpToolError> {
+) -> Result<(ResolvedMemorySpace, AuthzContext), ToolError> {
     let space = resolve_space_owner(ctx, raw, SpaceDefault::Current)?;
     let authz = ctx
-        .authz
+        .authz()
         .clone()
         .narrowed_to_owner(space.owner)
-        .ok_or_else(|| McpToolError::NotAuthorized("memory space write".into()))?;
+        .ok_or_else(|| ToolError::NotAuthorized("memory space write".into()))?;
     Ok((space, authz))
 }
 
@@ -118,26 +118,29 @@ pub enum SpaceDefault {
 /// Returns `InvalidInput` when a provided key is unknown, or when omitted
 /// default resolution has no accessible default Owner.
 pub fn resolve_space_owner(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     raw: Option<&str>,
     default: SpaceDefault,
-) -> Result<ResolvedMemorySpace, McpToolError> {
+) -> Result<ResolvedMemorySpace, ToolError> {
     let default_owner = match default {
-        SpaceDefault::Current => ctx.owner,
-        SpaceDefault::Identity => ctx.authz.principal(),
+        SpaceDefault::Current => ctx.owner(),
+        SpaceDefault::Identity => ctx.authz().principal(),
     };
     let owner = match raw {
         Some(key) => MemorySpaceKey::parse(key).and_then(|parsed| match parsed {
-            MemorySpaceKey::Current => ctx.authz.can_access_owner(&ctx.owner).then_some(ctx.owner),
-            MemorySpaceKey::Owner(owner) => ctx.authz.can_access_owner(&owner).then_some(owner),
+            MemorySpaceKey::Current => ctx
+                .authz()
+                .can_access_owner(&ctx.owner())
+                .then_some(ctx.owner()),
+            MemorySpaceKey::Owner(owner) => ctx.authz().can_access_owner(&owner).then_some(owner),
         }),
         None => ctx
-            .authz
+            .authz()
             .can_access_owner(&default_owner)
             .then_some(default_owner),
     };
     owner.map(|owner| space_for(ctx, owner)).ok_or_else(|| {
-        McpToolError::InvalidInput(raw.map_or_else(
+        ToolError::InvalidInput(raw.map_or_else(
             || "current memory space is not accessible".to_string(),
             |key| format!("unknown memory space: {key}"),
         ))
@@ -147,8 +150,8 @@ pub fn resolve_space_owner(
 /// The one key builder: `current` for the session's own owner, otherwise
 /// the owner's bare id. `core_memory_spaces`, space resolution and the
 /// memory reads all report keys through here, so they cannot disagree.
-fn space_for(ctx: &McpToolCtx, owner: OwnerId) -> ResolvedMemorySpace {
-    let current = owner == ctx.owner;
+fn space_for(ctx: &ToolCtx, owner: OwnerId) -> ResolvedMemorySpace {
+    let current = owner == ctx.owner();
     ResolvedMemorySpace {
         key: if current {
             MemorySpaceKey::Current.to_wire()
@@ -171,7 +174,7 @@ fn space_for(ctx: &McpToolCtx, owner: OwnerId) -> ResolvedMemorySpace {
 /// A memory has exactly one home owner at read time (storage fails closed
 /// on a second candidate), so the label is total and deterministic.
 #[must_use]
-pub fn space_key_for_owner(ctx: &McpToolCtx, owner: OwnerId) -> String {
+pub fn space_key_for_owner(ctx: &ToolCtx, owner: OwnerId) -> String {
     space_for(ctx, owner).key
 }
 
@@ -183,25 +186,25 @@ pub fn space_key_for_owner(ctx: &McpToolCtx, owner: OwnerId) -> String {
 ///
 /// Returns storage failures of the sketch read.
 pub(super) async fn local_space_keys(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     ids: &[crate::MemoryId],
-) -> Result<std::collections::HashMap<crate::MemoryId, String>, McpToolError> {
+) -> Result<std::collections::HashMap<crate::MemoryId, String>, ToolError> {
     if ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
     Ok(engine
-        .load_sketches(&ctx.authz, ids)
+        .load_sketches(ctx.authz(), ids)
         .await?
         .into_iter()
         .map(|sketch| (sketch.id, space_key_for_owner(ctx, sketch.owner)))
         .collect())
 }
 
-fn sorted_accessible_principals(ctx: &McpToolCtx) -> Vec<OwnerId> {
-    let mut owners = ctx.authz.accessible_owners().collect::<Vec<_>>();
-    let own = ctx.authz.principal();
-    owners.sort_by_key(|owner| (*owner != ctx.owner, *owner != own, *owner));
+fn sorted_accessible_principals(ctx: &ToolCtx) -> Vec<OwnerId> {
+    let mut owners = ctx.authz().accessible_owners().collect::<Vec<_>>();
+    let own = ctx.authz().principal();
+    owners.sort_by_key(|owner| (*owner != ctx.owner(), *owner != own, *owner));
     owners
 }
 
@@ -243,49 +246,38 @@ pub(crate) fn space_label(owner: &OwnerId) -> String {
     format!("Owner {owner}")
 }
 
-/// Engine-free `McpToolCtx` builders shared by unit tests across the core
+/// Engine-free `ToolCtx` builders shared by unit tests across the core
 /// tools (space resolution has no storage dependency).
 #[cfg(test)]
 pub(crate) mod test_ctx {
     use std::sync::Arc;
 
+    use crate::ToolCtx;
     use crate::access::Role;
-    use crate::mcp::{McpAuthorContext, McpToolCtx};
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceServices, UserId};
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
 
     /// Build a server-resolved caller context: personal role on `subject`'s own
     /// owner plus the given per-group roles.
-    pub(crate) fn ctx_for(subject: UserId, group_roles: Vec<(OwnerId, Role)>) -> McpToolCtx {
+    pub(crate) fn ctx_for(subject: UserId, group_roles: Vec<(OwnerId, Role)>) -> ToolCtx {
         make_ctx(
             OwnerId::from(subject),
             AuthzContext::for_subject_with_role(subject, group_roles, AuthPath::HostBearer),
         )
     }
 
-    pub(crate) fn make_ctx(owner: OwnerId, authz: AuthzContext) -> McpToolCtx {
-        McpToolCtx {
+    pub(crate) fn make_ctx(owner: OwnerId, authz: AuthzContext) -> ToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
             authz,
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::Tool;
     use crate::access::Role;
-    use crate::mcp::McpTool;
     use crate::{GroupId, OwnerId, UserId};
 
     use super::test_ctx::ctx_for;

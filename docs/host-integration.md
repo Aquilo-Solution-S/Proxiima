@@ -464,33 +464,28 @@ into the other. Replace deployment `.tool_scope(...)` calls with
 `served_surface_excluding`; retain `ToolScope` for caller scopes.
 
 A host that records what a call did reads the key the gate decided on from
-`McpToolCtx::judged`, set by the gate before it decides, so a refused call
-carries its key too. A host wrapping `DynamicHandler` retains that exact cell
-through the observed adapter entrypoint:
+`ToolCtx::judged`, set by the gate before it decides, so a refused call
+carries its key too. A host wrapping `DynamicHandler` receives it with the
+reply from the observed adapter entrypoint:
 
 ```rust
-let (judged, call) = handler.call_tool_observed(request, &context);
-let reply = call.await;
-let key = judged.get(); // Also available when reply is Err.
+let (judged, reply) = handler.call_tool_observed(request, &context).await;
+// `judged: Option<ScopeKey>`, also when `reply` is `Err`.
 ```
 
 An in-process host keeps the whole `ToolReply` and the same observation with
 `McpToolHost::call_tool_reply_observed_in_request`:
 
 ```rust
-let (judged, call) = host.call_tool_reply_observed_in_request(
-    name, args, author, Some(auth), request_services,
-);
-let reply = call.await;
-let key = judged.get(); // Also available when reply is Err.
+let (judged, reply) = host
+    .call_tool_reply_observed_in_request(name, args, caller, Some(auth), request_services)
+    .await;
 ```
 
-`call_tool_reply_in_request` awaits this same path without retaining the cell.
-
-Each invocation creates a fresh cell; a failure before the gate derives a key
-leaves it empty. Ordinary `ServerHandler::call_tool` uses the same path without
-retaining the observation. A behavior wrapping the gate can also read the cell
-from its own clone of the context once the call returns.
+`call_tool_reply_in_request` and `ServerHandler::call_tool` run this same
+path and drop the key. It is `None` when the call failed before the gate
+derived one. A behavior wrapping the gate reads `ctx.judged()` from its own
+clone of the context once the call returns.
 It names the key from the descriptor:
 `McpToolDescriptor::title_of(&key)` returns the tool's `Tool::TITLE` for a bare
 key and the action's `McpActionArgSpec::title` (`McpArgvActionSpec::title` for

@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::MemoryId;
 use crate::engine::GetMemoriesReadRequest;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::read_models::MemorySnapshot;
 use crate::storage_ports::other_stores::{OtherStoresError, RemoteMemory, RemoteRead};
+use crate::{ToolCtx, ToolError};
 
 use super::get_memory::{GetMemoryOutput, project_memory_snapshot, project_remote_memory};
 
@@ -51,16 +51,16 @@ pub struct GetMemoriesOutput {
 /// they land in [`GetMemoriesOutput::missing`]; neither are other stores that
 /// did not answer — those land in [`GetMemoriesOutput::unanswered`].
 pub async fn get_memories(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: GetMemoriesArgs,
-) -> Result<GetMemoriesOutput, McpToolError> {
+) -> Result<GetMemoriesOutput, ToolError> {
     if args.memories.is_empty() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "provide at least one memory id".into(),
         ));
     }
     if args.memories.len() > MAX_BATCH_GET_MEMORIES {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_BATCH_GET_MEMORIES} memory ids per call; got {}",
             args.memories.len()
         )));
@@ -78,7 +78,7 @@ pub async fn get_memories(
     let engine = ctx.require_engine()?;
     let response = engine
         .get_memories(
-            &ctx.authz,
+            ctx.authz(),
             &GetMemoriesReadRequest {
                 memory_ids: requested
                     .iter()
@@ -135,7 +135,7 @@ enum RemoteAnswer {
 /// One bounded remote batch. Not-found, erased and unknown-store ids are
 /// absent (missing); every other failure is [`RemoteAnswer::Unanswered`].
 async fn read_remote_memories(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     requested: &[(MemoryId, &str)],
     local_number: u16,
 ) -> HashMap<MemoryId, RemoteAnswer> {

@@ -2,26 +2,27 @@
 
 use std::sync::Arc;
 
-use crate::mcp::{McpToolCtx, McpToolError, MemoryHandleClass};
+use crate::mcp::MemoryHandleClass;
 use crate::storage_ports::other_stores::{
     OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors, RemoteAncestorsPage,
     RemoteEdge, RemoteGraphRead, RemoteMemory, RemoteOriginRead, RemoteRead, RemoteSearch,
     RemoteSearchResult, StoreCaller, StoreInventory, StoreRoute, route_stores,
 };
+use crate::{ToolCtx, ToolError};
 
-pub(crate) fn service(ctx: &McpToolCtx) -> Option<Arc<OtherStoresService>> {
+pub(crate) fn service(ctx: &ToolCtx) -> Option<Arc<OtherStoresService>> {
     ctx.service::<OtherStoresService>()
 }
 
-pub(crate) fn caller(ctx: &McpToolCtx) -> StoreCaller<'_> {
+pub(crate) fn caller(ctx: &ToolCtx) -> StoreCaller<'_> {
     StoreCaller {
-        owner: ctx.owner,
-        authz: &ctx.authz,
+        owner: ctx.owner(),
+        authz: ctx.authz(),
     }
 }
 
-fn not_found(id: uuid::Uuid) -> McpToolError {
-    McpToolError::NotFound(format!("memory {id} not found"))
+fn not_found(id: uuid::Uuid) -> ToolError {
+    ToolError::NotFound(format!("memory {id} not found"))
 }
 
 /// THE mapping of a failed remote read onto the wire (#480).
@@ -30,9 +31,9 @@ fn not_found(id: uuid::Uuid) -> McpToolError {
 /// "no other store wired"). Every other failure (unavailable, past the
 /// deadline, an answer for a different memory, or anything else) says
 /// nothing about whether the memory exists, so it is a retryable
-/// [`McpToolError::StoreUnavailable`] naming the store, never "not found".
+/// [`ToolError::StoreUnavailable`] naming the store, never "not found".
 /// An answer of "not found" or "erased" is not an error and never gets here.
-pub(crate) fn remote_read_error(id: uuid::Uuid, error: &OtherStoresError) -> McpToolError {
+pub(crate) fn remote_read_error(id: uuid::Uuid, error: &OtherStoresError) -> ToolError {
     match error {
         OtherStoresError::UnknownStore(_) => not_found(id),
         OtherStoresError::Unavailable(_)
@@ -40,16 +41,16 @@ pub(crate) fn remote_read_error(id: uuid::Uuid, error: &OtherStoresError) -> Mcp
         | OtherStoresError::MismatchedMemory { .. }
         | OtherStoresError::LocalStoreInInventory(_)
         | OtherStoresError::DuplicateStoreInInventory(_)
-        | OtherStoresError::UnsupportedSearch(_) => McpToolError::StoreUnavailable {
+        | OtherStoresError::UnsupportedSearch(_) => ToolError::StoreUnavailable {
             store: crate::memory_store_number(id),
         },
     }
 }
 
 pub(crate) async fn read_origin(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     id: uuid::Uuid,
-) -> Result<(ReadOrigin, RemoteMemory), McpToolError> {
+) -> Result<(ReadOrigin, RemoteMemory), ToolError> {
     let service = service(ctx).ok_or_else(|| not_found(id))?;
     match service.read_origin(caller(ctx), id).await {
         Ok(Some(read)) => Ok(read),
@@ -61,10 +62,7 @@ pub(crate) async fn read_origin(
 /// The newest version of the series `id` belongs to, read through its issuing
 /// store as the caller. A memory the caller cannot read, or an erased one, is
 /// not found; an unavailable store is refused as such.
-pub(crate) async fn read_head(
-    ctx: &McpToolCtx,
-    id: uuid::Uuid,
-) -> Result<RemoteMemory, McpToolError> {
+pub(crate) async fn read_head(ctx: &ToolCtx, id: uuid::Uuid) -> Result<RemoteMemory, ToolError> {
     let service = service(ctx).ok_or_else(|| not_found(id))?;
     match service
         .read_bounded(caller(ctx), id, ReadAt::SeriesHead)
@@ -79,9 +77,9 @@ pub(crate) async fn read_head(
 /// The one-hop edges of a remote memory, read through its store as the
 /// caller. Unreadable or erased is not found, as for the memory itself.
 pub(crate) async fn read_neighbor_edges(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     id: uuid::Uuid,
-) -> Result<Vec<RemoteEdge>, McpToolError> {
+) -> Result<Vec<RemoteEdge>, ToolError> {
     let service = service(ctx).ok_or_else(|| not_found(id))?;
     match service.neighbor_edges_bounded(caller(ctx), id).await {
         Ok(RemoteGraphRead::Found(edges)) => Ok(edges),
@@ -93,10 +91,10 @@ pub(crate) async fn read_neighbor_edges(
 /// One ancestors page from a remote start, read through its store as the
 /// caller. Unreadable or erased is not found, as for the memory itself.
 pub(crate) async fn read_ancestors(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     id: uuid::Uuid,
     page: &RemoteAncestorsPage,
-) -> Result<RemoteAncestors, McpToolError> {
+) -> Result<RemoteAncestors, ToolError> {
     let service = service(ctx).ok_or_else(|| not_found(id))?;
     match service.ancestors_bounded(caller(ctx), id, page).await {
         Ok(RemoteGraphRead::Found(ancestors)) => Ok(ancestors),
@@ -113,7 +111,7 @@ pub(crate) enum ResolvedMemory {
 }
 
 impl ResolvedMemory {
-    pub(crate) fn classified(&self) -> Result<(crate::MemoryId, MemoryHandleClass), McpToolError> {
+    pub(crate) fn classified(&self) -> Result<(crate::MemoryId, MemoryHandleClass), ToolError> {
         match self {
             Self::Local(id, kind) => Ok((*id, *kind)),
             Self::Remote(origin) => Ok((
@@ -127,9 +125,9 @@ impl ResolvedMemory {
 /// Read each unique UUID through its issuing store as the caller.
 #[cfg(test)]
 pub(crate) async fn resolve_references(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handles: &[String],
-) -> Result<Vec<ResolvedMemory>, McpToolError> {
+) -> Result<Vec<ResolvedMemory>, ToolError> {
     resolve_references_with_retained(ctx, handles, &[]).await
 }
 
@@ -137,10 +135,10 @@ pub(crate) async fn resolve_references(
 /// sealed from a forked prior revision. All other handles use the caller's
 /// normal local or remote read scope.
 pub(crate) async fn resolve_references_with_retained(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handles: &[String],
     retained: &[(crate::MemoryId, MemoryHandleClass)],
-) -> Result<Vec<ResolvedMemory>, McpToolError> {
+) -> Result<Vec<ResolvedMemory>, ToolError> {
     let local_number = ctx.require_engine()?.store_number();
     let retained = retained
         .iter()
@@ -195,9 +193,9 @@ pub(crate) async fn resolve_references_with_retained(
 }
 
 pub(crate) async fn resolve_remote_origins(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     ids: &[uuid::Uuid],
-) -> Result<Vec<ReadOrigin>, McpToolError> {
+) -> Result<Vec<ReadOrigin>, ToolError> {
     let Some(first) = ids.first() else {
         return Ok(Vec::new());
     };
@@ -229,10 +227,10 @@ pub(crate) struct SearchStores {
 /// first one named), one that names only this store runs as asked, and
 /// one that names none runs locally and reports `inventory_unanswered`.
 pub(crate) async fn route_search(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     requested: Option<&[u16]>,
     schema_id: Option<&str>,
-) -> Result<SearchStores, McpToolError> {
+) -> Result<SearchStores, ToolError> {
     let local_number = ctx.require_engine()?.store_number();
     let service = service(ctx);
     let answered = match &service {
@@ -240,7 +238,7 @@ pub(crate) async fn route_search(
             service
                 .stores_bounded(caller(ctx), local_number)
                 .await
-                .map_err(|error| McpToolError::Other(error.to_string()))?,
+                .map_err(|error| ToolError::Other(error.to_string()))?,
         ),
         None => None,
     };
@@ -252,7 +250,7 @@ pub(crate) async fn route_search(
             .copied()
             .find(|number| *number != local_number)
         {
-            return Err(McpToolError::StoreUnavailable { store });
+            return Err(ToolError::StoreUnavailable { store });
         }
         inventory_unanswered = requested.is_none();
     }
@@ -269,7 +267,7 @@ pub(crate) async fn route_search(
         })
     };
     let route = route_stores(requested, schema_id, local_declares, &readable)
-        .map_err(McpToolError::InvalidInput)?;
+        .map_err(ToolError::InvalidInput)?;
     Ok(SearchStores {
         route,
         service,
@@ -278,7 +276,7 @@ pub(crate) async fn route_search(
 }
 
 pub(crate) async fn search_remotes(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     service: &OtherStoresService,
     stores: &[u16],
     args: &RemoteSearch,

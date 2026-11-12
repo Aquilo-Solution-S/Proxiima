@@ -19,8 +19,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// A cursor decode failure carrying its caller-facing message. Always a
-/// caller-input fault: converts to `InvalidInput` for both the core MCP
-/// error and the spiice-facing tool error.
+/// caller-input fault: converts to [`ToolError::InvalidInput`](crate::ToolError::InvalidInput).
 #[derive(Debug)]
 pub struct CursorError(String);
 
@@ -28,12 +27,6 @@ impl CursorError {
     #[must_use]
     pub fn into_message(self) -> String {
         self.0
-    }
-}
-
-impl From<CursorError> for crate::mcp::McpToolError {
-    fn from(err: CursorError) -> Self {
-        Self::InvalidInput(err.0)
     }
 }
 

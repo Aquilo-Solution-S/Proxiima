@@ -69,16 +69,16 @@ impl ToolContent {
 ///
 /// A tool that ran answers with a variant; a call that could not run (the
 /// scope gate's refusal, authentication, an unknown tool, invalid input, a
-/// host's [`McpToolError`](super::McpToolError)) answers with that error,
+/// host's [`ToolError`](crate::ToolError)) answers with that error,
 /// which the transport reports as a protocol error. The one error that
 /// becomes a reply is the tool's own failure,
-/// [`McpToolError::Failure`](super::McpToolError::Failure) (a registry
+/// [`ToolError::Failure`](crate::ToolError::Failure) (a registry
 /// tool's [`ToolError::Failure`](crate::ToolError::Failure)): its text,
 /// unchanged, is the one block of a [`Self::Failure`]. A surface that
 /// carries only JSON turns such a failure back into that error.
 ///
 /// ```compile_fail,E0277
-/// let error = proxiima_core::McpToolError::NotAuthorized("tool".into());
+/// let error = proxiima_core::ToolError::NotAuthorized("tool".into());
 /// let _reply: proxiima_core::ToolReply = error.into();
 /// ```
 ///

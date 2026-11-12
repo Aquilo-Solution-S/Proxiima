@@ -1,4 +1,5 @@
 use super::*;
+use crate::{ToolCtx, ToolError};
 
 mod delegated_authority;
 mod engine_errors;
@@ -10,9 +11,7 @@ mod manifest_tests {
     use super::*;
     use crate::protocol::resource as protocol_resource;
     use crate::protocol::tool as protocol_tool;
-    use crate::{
-        AuthPath, AuthzContext, GoalId, MemoryId, OwnerId, SpiiceRegistry, SpiiceServices, UserId,
-    };
+    use crate::{AuthPath, AuthzContext, GoalId, MemoryId, OwnerId, SpiiceRegistry, UserId};
 
     #[test]
     fn resource_constants_match_manifest_scope_keys() {
@@ -37,20 +36,20 @@ mod manifest_tests {
 
     #[test]
     fn protocol_errors_map_to_json_rpc_error_classes() {
-        let forbidden = McpToolError::from(crate::error::ProtocolError::forbidden(
+        let forbidden = ToolError::from(crate::error::ProtocolError::forbidden(
             "source ingest denied",
         ));
-        assert_eq!(forbidden.kind(), McpToolErrorKind::InvalidRequest);
+        assert_eq!(forbidden.kind(), ToolErrorKind::InvalidRequest);
         assert!(
             forbidden.to_string().contains("source ingest denied"),
             "message: {forbidden}"
         );
 
-        let invalid = McpToolError::from(crate::error::ProtocolError::invalid_argument(
+        let invalid = ToolError::from(crate::error::ProtocolError::invalid_argument(
             "fact",
             "expected Fact id",
         ));
-        assert_eq!(invalid.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(invalid.kind(), ToolErrorKind::InvalidInput);
         assert!(
             invalid.to_string().contains("expected Fact id"),
             "message: {invalid}"
@@ -62,7 +61,7 @@ mod manifest_tests {
         let ctx = wire_ctx();
         let goal = (GoalId::new(uuid::Uuid::now_v7())).into_inner().to_string();
         let desc = ctx
-            .registry
+            .registry()
             .list_mcp_tools()
             .iter()
             .find(|tool| tool.name == protocol_tool::CORE_GOAL)
@@ -79,7 +78,7 @@ mod manifest_tests {
         )
         .await
         .expect_err("foreign action field must be rejected before execution");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         let message = err.to_string();
         assert!(message.contains("title"), "message: {message}");
         assert!(message.contains("transition"), "message: {message}");
@@ -89,7 +88,7 @@ mod manifest_tests {
     async fn dispatcher_refuses_a_pending_that_does_not_fit_the_transition() {
         let desc_ctx = wire_ctx();
         let desc = desc_ctx
-            .registry
+            .registry()
             .list_mcp_tools()
             .iter()
             .find(|tool| tool.name == protocol_tool::CORE_GOAL)
@@ -123,7 +122,7 @@ mod manifest_tests {
             let err = (desc.call)(ctx, args)
                 .await
                 .expect_err("a pending that does not fit the transition is refused");
-            assert_eq!(err.kind(), McpToolErrorKind::InvalidInput, "{transition}");
+            assert_eq!(err.kind(), ToolErrorKind::InvalidInput, "{transition}");
             let message = err.to_string();
             for name in named {
                 assert!(message.contains(name), "{transition}: {message}");
@@ -138,7 +137,7 @@ mod manifest_tests {
             .into_inner()
             .to_string();
         let desc = ctx
-            .registry
+            .registry()
             .list_mcp_tools()
             .iter()
             .find(|tool| tool.name == protocol_tool::CORE_FACT)
@@ -155,7 +154,7 @@ mod manifest_tests {
         )
         .await
         .expect_err("foreign action fields must be rejected before execution");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         let message = err.to_string();
         assert!(message.contains("confirm"), "message: {message}");
         assert!(message.contains("expect_handle"), "message: {message}");
@@ -179,23 +178,12 @@ mod manifest_tests {
         );
     }
 
-    fn wire_ctx() -> McpToolCtx {
+    fn wire_ctx() -> ToolCtx {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "t".into(),
-                trusted_model_id: None,
-                client_name: "t".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        )
     }
 }

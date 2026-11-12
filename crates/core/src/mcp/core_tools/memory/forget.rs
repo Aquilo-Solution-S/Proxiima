@@ -1,6 +1,6 @@
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ pub struct ForgetOutput {
 #[derive(Debug)]
 pub struct ForgetTool;
 
-impl McpTool for ForgetTool {
+impl Tool for ForgetTool {
     const NAME: &'static str = protocol_tool::CORE_FORGET;
     const TITLE: &'static str = "Forget a memory";
     const DESCRIPTION: &'static str = "Hide a memory from search, recall, walks and other stores until core_restore; erase removes it.";
@@ -31,9 +31,9 @@ impl McpTool for ForgetTool {
     type Output = ForgetOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: ForgetArgs,
-    ) -> futures::future::BoxFuture<'static, Result<ForgetOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<ForgetOutput, ToolError>> {
         Box::pin(async move {
             let memory_id = ctx.resolve_memory(&args.memory)?;
             let (space, authz) =

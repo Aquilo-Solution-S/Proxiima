@@ -1,18 +1,18 @@
-use super::error::McpToolError;
+use crate::ToolError;
 
 /// Parse the wire form: one hyphenated UUID, without a class or store prefix.
 ///
 /// # Errors
 ///
 /// Returns invalid input for any other spelling.
-pub fn parse_wire_uuid(raw: &str) -> Result<uuid::Uuid, McpToolError> {
+pub fn parse_wire_uuid(raw: &str) -> Result<uuid::Uuid, ToolError> {
     if raw.len() != 36 {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "id must be a hyphenated UUID".into(),
         ));
     }
     uuid::Uuid::parse_str(raw)
-        .map_err(|_| McpToolError::InvalidInput("id must be a hyphenated UUID".into()))
+        .map_err(|_| ToolError::InvalidInput("id must be a hyphenated UUID".into()))
 }
 
 #[cfg(test)]

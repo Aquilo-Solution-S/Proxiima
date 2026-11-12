@@ -32,8 +32,7 @@ pub use crate::authz::{
     KeyDeclaration, McpToolAudience, OwnerNeed, Replay, ToolEffect, provider_safe_tool_name,
     tool_name_matches,
 };
-pub use core_tools::memory::util::operator_label;
-pub use error::{McpToolError, McpToolErrorKind};
+pub use error::ToolErrorKind;
 pub use handles::MemoryHandleClass;
 pub use ids::parse_wire_uuid;
 pub use manifest::{
@@ -46,13 +45,13 @@ pub use schema::{
     McpActionSchema, McpDispatcherSchema, mcp_wire_output_schema, normalize_mcp_output_schema,
 };
 pub use tool::{
-    MAX_TITLE_CHARS, McpActionArgSpec, McpArgvActionSpec, McpCallFn, McpTool, McpToolDescriptor,
+    MAX_TITLE_CHARS, McpActionArgSpec, McpArgvActionSpec, McpCallFn, McpToolDescriptor,
     McpToolOrigin, McpUnknownFieldPolicy,
 };
 pub(crate) use tool::{
     prepare_flat_tool_args, resolve_argv_action, title_problem, validate_action_args,
 };
+pub(crate) use types::JudgedKey;
 pub use types::{
-    JudgedKey, MAX_OPERATOR_LABEL_CHARS, McpAuthorContext, McpToolCtx, OperatorLabelConflict,
-    UNKNOWN_OPERATOR_LABEL, resolve_operator_label,
+    MAX_OPERATOR_LABEL_CHARS, OperatorLabelConflict, UNKNOWN_OPERATOR_LABEL, resolve_operator_label,
 };

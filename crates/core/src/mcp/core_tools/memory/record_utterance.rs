@@ -1,8 +1,8 @@
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
 use crate::tool::validate_trimmed_len;
 use crate::verbs::fact_ingest::FactWriteCommand;
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -60,7 +60,7 @@ pub struct RecordUtteranceOutput {
 #[derive(Debug)]
 pub struct RecordUtteranceTool;
 
-impl McpTool for RecordUtteranceTool {
+impl Tool for RecordUtteranceTool {
     const NAME: &'static str = protocol_tool::CORE_RECORD_UTTERANCE;
     const TITLE: &'static str = "Record an utterance";
     const DESCRIPTION: &'static str = "Append one raw conversation turn (utterance) as a Fact. Use `core_remember` for distilled observations rather than verbatim transcript.";
@@ -69,13 +69,13 @@ impl McpTool for RecordUtteranceTool {
     type Output = RecordUtteranceOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: RecordUtteranceArgs,
-    ) -> futures::future::BoxFuture<'static, Result<RecordUtteranceOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<RecordUtteranceOutput, ToolError>> {
         Box::pin(async move {
             let conversation_id = args.conversation_id.trim();
             if conversation_id.is_empty() {
-                return Err(McpToolError::InvalidInput(
+                return Err(ToolError::InvalidInput(
                     "conversation_id must be non-empty".into(),
                 ));
             }
@@ -100,15 +100,15 @@ impl McpTool for RecordUtteranceTool {
             let occurred_at = super::util::parse_observed_at(args.observed_at.as_deref())?;
             let lexical_language =
                 crate::lexical_language::resolve_lexical_language(args.language.as_deref(), text)
-                    .map_err(|err| McpToolError::InvalidInput(err.to_string()))?;
+                    .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
             let mut draft = FactWriteCommand {
                 occurred_at,
                 ..FactWriteCommand::from_payload(source_id, &payload)
             }
             .with_lexical_language(Some(lexical_language));
             if let Some(key_str) = &idempotency_key {
-                let key = crate::IdempotencyKey::new(key_str.clone())
-                    .map_err(McpToolError::InvalidInput)?;
+                let key =
+                    crate::IdempotencyKey::new(key_str.clone()).map_err(ToolError::InvalidInput)?;
                 let fp = crate::ContentFingerprint::builder(crate::KeyScope::Utterance)
                     .text("body", text)
                     .bytes("speaker", payload.speaker.as_str().as_bytes())

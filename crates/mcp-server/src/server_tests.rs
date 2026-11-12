@@ -5,12 +5,12 @@ use crate::auth::McpAuthContext;
 use proxiima_core::mcp::core_tools::get_memory::VersionSelector;
 use proxiima_core::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageDirectionArg;
 use proxiima_core::mcp::{
-    McpActionArgSpec, McpAuthorContext, McpHostToolCall, McpTool, McpToolAudience, McpToolCtx,
-    OwnerNeed, ToolContent,
+    McpActionArgSpec, McpHostToolCall, McpToolAudience, OwnerNeed, ToolContent,
 };
 use proxiima_core::{
     AuthzContext, OwnerId, ScopeKey, ServedSurface, SpiiceRegistry, ToolScope, UserId,
 };
+use proxiima_core::{Tool, ToolCtx};
 
 fn fake_owner() -> OwnerId {
     OwnerId::from(UserId::new(uuid::Uuid::now_v7()))
@@ -21,7 +21,7 @@ struct RecordingBehavior(Arc<std::sync::Mutex<Vec<String>>>);
 
 #[async_trait::async_trait]
 impl proxiima_core::RequestBehavior for RecordingBehavior {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
         self.0.lock().expect("lock").push(call.name.clone());
         next.run(call).await
     }
@@ -35,11 +35,11 @@ struct OutputHostTools(serde_json::Value);
 
 #[async_trait::async_trait]
 impl McpHostTools for OutputHostTools {
-    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         Ok(vec![host_tool("host_output", READ)])
     }
 
-    async fn call(&self, _: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, _: ToolCall) -> Result<ToolReply, ToolError> {
         Ok(ToolReply::Structured(self.0.clone()))
     }
 }
@@ -74,8 +74,8 @@ async fn direct_host_tool_calls_require_object_outputs() {
             let Err(ToolInvocationError::Tool(error)) = result else {
                 panic!("non-object output must return a tool error: {result:?}");
             };
-            assert!(matches!(&error, McpToolError::Other(_)));
-            assert_eq!(error.kind(), McpToolErrorKind::Internal);
+            assert!(matches!(&error, ToolError::Other(_)));
+            assert_eq!(error.kind(), ToolErrorKind::Internal);
             assert_eq!(error.client_message(), "internal server error");
             assert!(!error.to_string().contains("private-output"));
         }
@@ -98,7 +98,7 @@ fn host_tool(name: &str, effect: proxiima_core::ToolEffect) -> McpHostTool {
 
 #[async_trait::async_trait]
 impl McpHostTools for EchoHostTools {
-    async fn list(&self, _auth: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _auth: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         Ok(vec![
             host_tool("host_echo", READ),
             host_tool("host_write", WRITE),
@@ -114,12 +114,11 @@ impl McpHostTools for EchoHostTools {
         ])
     }
 
-    async fn call(&self, call: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, call: ToolCall) -> Result<ToolReply, ToolError> {
         let marker = call
             .ctx
-            .services
-            .get::<McpHostToolCall>()
-            .ok_or_else(|| McpToolError::Other("no host-call marker".into()))?;
+            .service::<McpHostToolCall>()
+            .ok_or_else(|| ToolError::Other("no host-call marker".into()))?;
         Ok(ToolReply::Structured(serde_json::json!({
             "tool": call.name,
             "marker": marker.name(),
@@ -128,14 +127,8 @@ impl McpHostTools for EchoHostTools {
     }
 }
 
-fn author() -> McpAuthorContext {
-    McpAuthorContext {
-        model_id: "test".into(),
-        trusted_model_id: None,
-        client_name: "test".into(),
-        client_version: "0".into(),
-        caller_self_perspective: None,
-    }
+fn author() -> ToolCaller {
+    ToolCaller::new("test", "test", "0")
 }
 
 /// A host tool is flat, so its palette key is `ScopeKey::Tool(name)`. The
@@ -278,7 +271,7 @@ async fn a_host_tool_dispatches_through_the_request_behaviors() {
                 Some(auth)
             )
             .await,
-        Err(ToolInvocationError::Tool(McpToolError::InvalidInput(_)))
+        Err(ToolInvocationError::Tool(ToolError::InvalidInput(_)))
     ));
 }
 
@@ -297,13 +290,7 @@ async fn nul_validation_preserves_host_auth_and_unknown_tool_priority() {
         owner,
         authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
     };
-    let author = McpAuthorContext {
-        model_id: "test".into(),
-        trusted_model_id: None,
-        client_name: "test".into(),
-        client_version: "0".into(),
-        caller_self_perspective: None,
-    };
+    let author = ToolCaller::new("test", "test", "0");
     let args = serde_json::json!({"value": "bad\0input"});
     assert!(matches!(
         server
@@ -324,19 +311,17 @@ async fn nul_validation_preserves_host_auth_and_unknown_tool_priority() {
     ));
     assert!(matches!(
         server.call_tool("core_memory_spaces", args, author, Some(auth)).await,
-        Err(ToolInvocationError::Tool(McpToolError::InvalidInput(message)))
+        Err(ToolInvocationError::Tool(ToolError::InvalidInput(message)))
             if message == "arguments must not contain NUL (U+0000)"
     ));
 }
 
-/// The author context is a per-call struct an out-of-tree host builds
-/// by hand, and `ToolCaller::model_id` — the label a spiice tool
-/// records — is copied straight out of it. Restoring only
-/// `trusted_model_id` would leave the documented invariant ("when
-/// present, `model_id` equals it") false for exactly the callers that
-/// did not go through a transport edge.
+/// The caller is a per-call struct an out-of-tree host builds by hand, and
+/// `ToolCaller::model_id` is the label a spiice tool records: under a
+/// binding it is the bound identity, and a differing one is refused, also
+/// for callers that did not go through a transport edge.
 #[test]
-fn ctx_for_reconciles_both_model_fields_against_the_credential() {
+fn ctx_for_reconciles_the_model_label_against_the_credential() {
     let server = make_server();
     let owner = fake_owner();
     let auth = McpAuthContext {
@@ -345,34 +330,22 @@ fn ctx_for_reconciles_both_model_fields_against_the_credential() {
             .with_trusted_model_id("acme/runner-v3")
             .expect("a well-formed runner id binds"),
     };
-    let author = |model_id: &str| McpAuthorContext {
-        model_id: model_id.into(),
-        trusted_model_id: None,
-        client_name: "test".into(),
-        client_version: "0".into(),
-        caller_self_perspective: None,
-    };
+    let author = |model_id: &str| ToolCaller::new(model_id, "test", "0");
 
     let ctx = server
         .ctx_for(author("acme/runner-v3"), &auth)
         .expect("an agreeing author is accepted");
-    assert_eq!(ctx.author.model_id, "acme/runner-v3");
-    assert_eq!(
-        ctx.author.trusted_model_id.as_deref(),
-        Some("acme/runner-v3"),
-        "the binding is restored even though the author omitted it"
-    );
+    assert_eq!(ctx.caller().model_id, "acme/runner-v3");
 
     let err = server
         .ctx_for(author("openai/gpt-9"), &auth)
         .expect_err("a stale label may not reach a spiice as the one to record");
-    assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+    assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
 }
 
-/// Without a binding the author's own label stands, and an author that
-/// invented a trusted id does not keep it.
+/// Without a binding the caller's own label stands.
 #[test]
-fn ctx_for_strips_a_binding_the_credential_does_not_carry() {
+fn ctx_for_keeps_the_callers_label_without_a_binding() {
     let server = make_server();
     let owner = fake_owner();
     let auth = McpAuthContext {
@@ -381,20 +354,10 @@ fn ctx_for_strips_a_binding_the_credential_does_not_carry() {
     };
 
     let ctx = server
-        .ctx_for(
-            McpAuthorContext {
-                model_id: "caller/model".into(),
-                trusted_model_id: Some("acme/runner-v3".into()),
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            &auth,
-        )
+        .ctx_for(ToolCaller::new("caller/model", "test", "0"), &auth)
         .expect("no binding, no conflict");
 
-    assert_eq!(ctx.author.model_id, "caller/model");
-    assert_eq!(ctx.author.trusted_model_id, None);
+    assert_eq!(ctx.caller().model_id, "caller/model");
 }
 
 #[test]
@@ -627,13 +590,7 @@ fn parse_resource_uri_distinguishes_error_classes() {
 async fn read_resource_admitted_under_empty_served_palette() {
     let server = make_server();
     let owner = fake_owner();
-    let author = McpAuthorContext {
-        model_id: "test-model".into(),
-        trusted_model_id: None,
-        client_name: "test-client".into(),
-        client_version: "0.1.0".into(),
-        caller_self_perspective: None,
-    };
+    let author = ToolCaller::new("test-model", "test-client", "0.1.0");
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer)
         .with_served_surface(ServedSurface::Palette(Vec::new()));
     let auth = McpAuthContext { owner, authz };
@@ -652,13 +609,7 @@ async fn read_resource_admitted_under_empty_served_palette() {
 #[tokio::test]
 async fn ctx_for_speaks_bare_uuids() {
     let server = make_server();
-    let author = McpAuthorContext {
-        model_id: "test-model".into(),
-        trusted_model_id: None,
-        client_name: "test-client".into(),
-        client_version: "0.1.0".into(),
-        caller_self_perspective: None,
-    };
+    let author = ToolCaller::new("test-model", "test-client", "0.1.0");
     let owner = fake_owner();
     let auth = McpAuthContext {
         owner,
@@ -692,14 +643,14 @@ struct ScriptedHostTools {
 
 #[async_trait::async_trait]
 impl McpHostTools for ScriptedHostTools {
-    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.catalog
             .clone()
-            .map_err(|message| McpToolError::Unavailable(message.into()))
+            .map_err(|message| ToolError::Unavailable(message.into()))
     }
 
-    async fn call(&self, _: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, _: ToolCall) -> Result<ToolReply, ToolError> {
         Ok(self.reply.clone())
     }
 }
@@ -774,22 +725,18 @@ struct ResolvingHostTools {
 
 #[async_trait::async_trait]
 impl McpHostTools for ResolvingHostTools {
-    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(vec![host_tool(self.answer, READ)])
     }
 
-    async fn resolve(
-        &self,
-        _: &McpAuthContext,
-        _: &str,
-    ) -> Result<Option<McpHostTool>, McpToolError> {
+    async fn resolve(&self, _: &McpAuthContext, _: &str) -> Result<Option<McpHostTool>, ToolError> {
         self.resolves
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(Some(host_tool(self.answer, READ)))
     }
 
-    async fn call(&self, _: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, _: ToolCall) -> Result<ToolReply, ToolError> {
         Ok(ToolReply::Structured(serde_json::json!({"ok": true})))
     }
 }
@@ -841,7 +788,7 @@ async fn a_failing_catalog_fails_the_call_that_needed_it() {
         assert!(
             matches!(
                 &result,
-                Err(ToolInvocationError::Tool(McpToolError::Unavailable(message)))
+                Err(ToolInvocationError::Tool(ToolError::Unavailable(message)))
                     if message == "catalog down"
             ),
             "{name}: {result:?}"
@@ -849,7 +796,7 @@ async fn a_failing_catalog_fails_the_call_that_needed_it() {
     }
     assert!(matches!(
         server.host_tools_for(&auth).await,
-        Err(McpToolError::Unavailable(message)) if message == "catalog down"
+        Err(ToolError::Unavailable(message)) if message == "catalog down"
     ));
     assert_eq!(lists(&counter), 3);
 }
@@ -865,19 +812,18 @@ struct MovingHostTools(std::sync::atomic::AtomicU64);
 
 #[async_trait::async_trait]
 impl McpHostTools for MovingHostTools {
-    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _: &McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         let listed = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(vec![
             host_tool("host_rev", READ).with_services(SpiiceServices::with(Revision(listed))),
         ])
     }
 
-    async fn call(&self, call: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, call: ToolCall) -> Result<ToolReply, ToolError> {
         let resolved = call
             .ctx
-            .services
-            .get::<Revision>()
-            .ok_or_else(|| McpToolError::Other("no revision".into()))?;
+            .service::<Revision>()
+            .ok_or_else(|| ToolError::Other("no revision".into()))?;
         Ok(ToolReply::Structured(serde_json::json!({
             "resolved": resolved.0,
             "catalog": self.0.load(std::sync::atomic::Ordering::SeqCst),
@@ -890,8 +836,8 @@ struct RevisionBehavior(Arc<std::sync::Mutex<Vec<u64>>>);
 
 #[async_trait::async_trait]
 impl proxiima_core::RequestBehavior for RevisionBehavior {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
-        if let Some(revision) = call.ctx.services.get::<Revision>() {
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
+        if let Some(revision) = call.ctx.service::<Revision>() {
             self.0.lock().expect("lock").push(revision.0);
         }
         next.run(call).await
@@ -1004,7 +950,7 @@ struct BoardOutput {}
 #[derive(Debug)]
 struct Board;
 
-impl McpTool for Board {
+impl Tool for Board {
     const TITLE: &'static str = "Board";
     const NAME: &'static str = "plan_board";
     const DESCRIPTION: &'static str = "Two writes, one of them Goal work.";
@@ -1032,9 +978,9 @@ impl McpTool for Board {
     type Output = BoardOutput;
 
     fn call(
-        _: McpToolCtx,
+        _: ToolCtx,
         _: BoardArgs,
-    ) -> futures_util::future::BoxFuture<'static, Result<BoardOutput, McpToolError>> {
+    ) -> futures_util::future::BoxFuture<'static, Result<BoardOutput, ToolError>> {
         Box::pin(async { Ok(BoardOutput {}) })
     }
 }
@@ -1047,7 +993,7 @@ impl McpTool for Board {
 async fn a_declared_goal_work_action_runs_for_every_member_who_works_goals() {
     use proxiima_core::Role;
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<Board>("plan");
+    registry.add_tool_or_panic_for_tests::<Board>("plan");
     let server = McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
         SpiiceServices::default(),
@@ -1141,10 +1087,10 @@ async fn a_listed_entry_cannot_replace_a_call_service() {
             Some(owner_auth()),
         )
         .await;
-    let Err(ToolInvocationError::Tool(error @ McpToolError::Other(_))) = result else {
+    let Err(ToolInvocationError::Tool(error @ ToolError::Other(_))) = result else {
         panic!("a colliding entry service must be an internal error: {result:?}");
     };
-    assert_eq!(error.kind(), McpToolErrorKind::Internal);
+    assert_eq!(error.kind(), ToolErrorKind::Internal);
     assert_eq!(error.client_message(), "internal server error");
 }
 
@@ -1187,10 +1133,7 @@ async fn replies_are_checked_where_they_leave_the_behaviors() {
         )
         .await;
     assert!(
-        matches!(
-            &json,
-            Err(ToolInvocationError::Tool(McpToolError::Other(_)))
-        ),
+        matches!(&json, Err(ToolInvocationError::Tool(ToolError::Other(_)))),
         "{json:?}"
     );
 
@@ -1209,7 +1152,7 @@ async fn replies_are_checked_where_they_leave_the_behaviors() {
     let ToolInvocationError::Tool(error) = error else {
         panic!("expected an internal tool error, got {error:?}");
     };
-    assert_eq!(error.kind(), McpToolErrorKind::Internal);
+    assert_eq!(error.kind(), ToolErrorKind::Internal);
     assert_eq!(error.client_message(), "internal server error");
 
     // A failure is the host's own content: delivered as built, schema or no.
@@ -1264,10 +1207,7 @@ async fn a_structured_failure_is_refused_from_a_tool_with_an_output_schema() {
         )
         .await;
     assert!(
-        matches!(
-            &json,
-            Err(ToolInvocationError::Tool(McpToolError::Other(_)))
-        ),
+        matches!(&json, Err(ToolInvocationError::Tool(ToolError::Other(_)))),
         "{json:?}"
     );
     let (server, _) = scripted(Ok(vec![host_tool("host_out", READ)]), structured_failure);
@@ -1284,7 +1224,7 @@ async fn a_structured_failure_is_refused_from_a_tool_with_an_output_schema() {
     let ToolInvocationError::Tool(error) = error else {
         panic!("expected an internal tool error, got {error:?}");
     };
-    assert_eq!(error.kind(), McpToolErrorKind::Internal);
+    assert_eq!(error.kind(), ToolErrorKind::Internal);
     assert_eq!(error.client_message(), "internal server error");
 }
 
@@ -1294,7 +1234,7 @@ struct ContentBehavior;
 
 #[async_trait::async_trait]
 impl proxiima_core::RequestBehavior for ContentBehavior {
-    async fn handle(&self, _: ToolCall, _: Next<'_>) -> Result<ToolReply, McpToolError> {
+    async fn handle(&self, _: ToolCall, _: Next<'_>) -> Result<ToolReply, ToolError> {
         Ok(ToolReply::Content(vec![ToolContent::text("replaced")]))
     }
 }
@@ -1321,10 +1261,7 @@ async fn a_behavior_cannot_turn_a_registry_tool_or_a_resource_into_content() {
         )
         .await;
     assert!(
-        matches!(
-            &tool,
-            Err(ToolInvocationError::Tool(McpToolError::Other(_)))
-        ),
+        matches!(&tool, Err(ToolInvocationError::Tool(ToolError::Other(_)))),
         "{tool:?}"
     );
     let resource = server
@@ -1333,7 +1270,7 @@ async fn a_behavior_cannot_turn_a_registry_tool_or_a_resource_into_content() {
     assert!(
         matches!(
             &resource,
-            Err(ToolInvocationError::Tool(McpToolError::Other(_)))
+            Err(ToolInvocationError::Tool(ToolError::Other(_)))
         ),
         "{resource:?}"
     );
@@ -1342,13 +1279,7 @@ async fn a_behavior_cannot_turn_a_registry_tool_or_a_resource_into_content() {
 #[tokio::test]
 async fn call_tool_without_bound_auth_is_denied() {
     let server = make_server();
-    let author = McpAuthorContext {
-        model_id: "test-model".into(),
-        trusted_model_id: None,
-        client_name: "test-client".into(),
-        client_version: "0.1.0".into(),
-        caller_self_perspective: None,
-    };
+    let author = ToolCaller::new("test-model", "test-client", "0.1.0");
 
     let err = server
         .call_tool("core_search_memories", serde_json::json!({}), author, None)

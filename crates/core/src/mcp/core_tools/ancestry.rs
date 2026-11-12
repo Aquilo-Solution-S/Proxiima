@@ -20,12 +20,12 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::spiice::Provenance;
 use crate::storage_ports::other_stores::{
     MAX_LINEAGE_REMOTE_ORIGINS, NodeStatus, OtherStoresError, RemoteOriginRead, UnavailableReason,
 };
 use crate::{EdgeKind, GetMemoriesReadRequest, MemoryId};
+use crate::{ToolCtx, ToolError};
 
 /// Where an ancestor edge lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,13 +81,13 @@ pub(crate) struct AncestorEdge {
 /// Storage failures of the pin, payload, or external-edge reads.
 pub(crate) async fn ancestor_edges(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     frontier: &[MemoryId],
-) -> Result<Vec<AncestorEdge>, McpToolError> {
+) -> Result<Vec<AncestorEdge>, ToolError> {
     if frontier.is_empty() {
         return Ok(Vec::new());
     }
-    let pins = engine.pin_nodes(&ctx.authz, frontier).await?;
+    let pins = engine.pin_nodes(ctx.authz(), frontier).await?;
     let mut edges = Vec::new();
     let mut grounded: Vec<(MemoryId, &'static [&'static str])> = Vec::new();
     let mut visible = Vec::with_capacity(pins.len());
@@ -99,7 +99,7 @@ pub(crate) async fn ancestor_edges(
             target: AncestorTarget::Local(*read),
             kind: EdgeKind::Read,
         }));
-        match ctx.registry.provenance_of(&node.schema_id, node.kind) {
+        match ctx.registry().provenance_of(&node.schema_id, node.kind) {
             None | Some(Provenance::OriginEdges) => {
                 edges.extend(node.origins.into_iter().map(|origin| AncestorEdge {
                     source: node.id,
@@ -116,7 +116,7 @@ pub(crate) async fn ancestor_edges(
     edges.extend(payload_subjects(engine, ctx, &grounded).await?);
     edges.extend(
         engine
-            .external_edges(&ctx.authz, &visible)
+            .external_edges(ctx.authz(), &visible)
             .await?
             .into_iter()
             .map(|(source, target, kind)| AncestorEdge {
@@ -142,15 +142,15 @@ pub(crate) async fn ancestor_edges(
 /// does not reach it — the ordinary shape of an absent node, not a redaction.
 async fn payload_subjects(
     engine: &crate::Engine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     grounded: &[(MemoryId, &'static [&'static str])],
-) -> Result<Vec<AncestorEdge>, McpToolError> {
+) -> Result<Vec<AncestorEdge>, ToolError> {
     if grounded.is_empty() {
         return Ok(Vec::new());
     }
     let response = engine
         .get_memories(
-            &ctx.authz,
+            ctx.authz(),
             &GetMemoriesReadRequest {
                 memory_ids: grounded.iter().map(|(id, _)| *id).collect(),
             },
@@ -219,7 +219,7 @@ pub(crate) struct RemoteProjection {
 /// at most [`MAX_LINEAGE_REMOTE_ORIGINS`] of them under one call-wide
 /// deadline; the rest render as `origin limit exceeded`.
 pub(crate) async fn read_remote_targets(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     handles: &[Uuid],
 ) -> HashMap<Uuid, RemoteProjection> {
     let service = super::other_stores::service(ctx);

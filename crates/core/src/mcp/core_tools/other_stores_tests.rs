@@ -99,24 +99,26 @@ impl OtherStores for InventoryPort {
     }
 }
 
-fn inventory_ctx(reply: InventoryReply) -> (McpToolCtx, Arc<InventoryPort>) {
+fn inventory_ctx(reply: InventoryReply) -> (ToolCtx, Arc<InventoryPort>) {
     let port = Arc::new(InventoryPort {
         reply,
         listings: std::sync::atomic::AtomicUsize::new(0),
         searches: std::sync::Mutex::new(Vec::new()),
     });
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-    ctx.engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry.as_ref().clone(),
+    let engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry().as_ref().clone(),
         crate::StoragePorts::rejecting_for_tests(),
     )));
-    ctx.services = crate::SpiiceServices::with(OtherStoresService::new(port.clone()));
+    ctx = ctx.with_engine(engine);
+    ctx.try_insert_service(OtherStoresService::new(port.clone()))
+        .expect("the fixture context holds no service");
     (ctx, port)
 }
 
 #[tokio::test]
 async fn invalid_inventories_refuse_search_and_metadata_without_fanout() {
-    use crate::mcp::McpTool;
+    use crate::Tool;
     use crate::mcp::core_tools::search_memories::{
         SearchMemoriesArgs, SearchMemoriesTool, caller_input_schema,
     };
@@ -154,7 +156,7 @@ async fn invalid_inventories_refuse_search_and_metadata_without_fanout() {
                 .await
                 .expect_err("an invalid inventory must refuse before searching");
             assert!(
-                matches!(error, McpToolError::Other(ref message) if message == &expected.to_string()),
+                matches!(error, ToolError::Other(ref message) if message == &expected.to_string()),
                 "{error:?}"
             );
         }
@@ -273,7 +275,7 @@ async fn unavailable_inventory_is_reported_and_refuses_named_stores() {
             .err()
             .expect("a named remote store");
         assert!(
-            matches!(error, McpToolError::StoreUnavailable { store: 2 }),
+            matches!(error, ToolError::StoreUnavailable { store: 2 }),
             "{error:?}"
         );
         let local_only = route_search(&ctx, Some(&[0]), None)
@@ -332,11 +334,13 @@ impl OtherStores for SlowOriginStore {
 #[tokio::test(start_paused = true)]
 async fn derive_origin_admission_refuses_255_slow_origins_before_writing() {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-    ctx.services = crate::SpiiceServices::with(OtherStoresService::new(Arc::new(SlowOriginStore)));
-    ctx.engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry.as_ref().clone(),
+    ctx.try_insert_service(OtherStoresService::new(Arc::new(SlowOriginStore)))
+        .expect("the fixture context holds no service");
+    let engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry().as_ref().clone(),
         crate::StoragePorts::rejecting_for_tests(),
     )));
+    ctx = ctx.with_engine(engine);
     let origins = (0..MAX_SOURCE_HANDLES - 1)
         .map(|_| crate::new_memory_uuid(1).to_string())
         .collect::<Vec<_>>();
@@ -351,7 +355,7 @@ async fn derive_origin_admission_refuses_255_slow_origins_before_writing() {
     .expect_err("deadline must refuse derivation");
     assert!(started.elapsed() <= deadline);
     assert!(
-        matches!(error, McpToolError::StoreUnavailable { store: 1 }),
+        matches!(error, ToolError::StoreUnavailable { store: 1 }),
         "{error:?}"
     );
 }
@@ -412,14 +416,15 @@ impl OtherStores for ReadReplyStore {
     }
 }
 
-fn read_reply_ctx(reply: ReadReply) -> McpToolCtx {
+fn read_reply_ctx(reply: ReadReply) -> ToolCtx {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-    ctx.services =
-        crate::SpiiceServices::with(OtherStoresService::new(Arc::new(ReadReplyStore(reply))));
-    ctx.engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry.as_ref().clone(),
+    ctx.try_insert_service(OtherStoresService::new(Arc::new(ReadReplyStore(reply))))
+        .expect("the fixture context holds no service");
+    let engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry().as_ref().clone(),
         crate::StoragePorts::rejecting_for_tests(),
     )));
+    ctx = ctx.with_engine(engine);
     ctx
 }
 
@@ -448,13 +453,13 @@ async fn an_unanswered_remote_read_is_store_unavailable_and_an_answer_is_not_fou
         for error in [batch, single] {
             if unavailable {
                 assert!(
-                    matches!(error, McpToolError::StoreUnavailable { store: 1 }),
+                    matches!(error, ToolError::StoreUnavailable { store: 1 }),
                     "{error:?}"
                 );
-                assert_eq!(error.kind(), crate::mcp::McpToolErrorKind::StoreUnavailable);
+                assert_eq!(error.kind(), crate::mcp::ToolErrorKind::StoreUnavailable);
                 assert!(!error.client_message().contains("internals"));
             } else {
-                assert!(matches!(error, McpToolError::NotFound(_)), "{error:?}");
+                assert!(matches!(error, ToolError::NotFound(_)), "{error:?}");
             }
         }
     }
@@ -579,18 +584,20 @@ impl OtherStores for GraphStore {
     }
 }
 
-fn graph_ctx(store: &Arc<GraphStore>) -> McpToolCtx {
+fn graph_ctx(store: &Arc<GraphStore>) -> ToolCtx {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-    ctx.services = crate::SpiiceServices::with(OtherStoresService::new(store.clone()));
-    ctx.engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry.as_ref().clone(),
+    ctx.try_insert_service(OtherStoresService::new(store.clone()))
+        .expect("the fixture context holds no service");
+    let engine = Some(Arc::new(crate::Engine::new(
+        ctx.registry().as_ref().clone(),
         crate::StoragePorts::rejecting_for_tests(),
     )));
+    ctx = ctx.with_engine(engine);
     ctx
 }
 
 async fn read_graph(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     memory: uuid::Uuid,
     cursor: Option<String>,
 ) -> Result<
@@ -598,7 +605,7 @@ async fn read_graph(
         super::super::get_memory::GetMemoryOutput,
         super::super::walk_memory_lineage::WalkMemoryLineageOutput,
     ),
-    McpToolError,
+    ToolError,
 > {
     use super::super::{get_memory, walk_memory_lineage};
     let read = get_memory::get_memory(
@@ -675,11 +682,11 @@ async fn a_remote_memory_serves_its_neighbor_edges_and_ancestors_through_its_sto
             .expect_err("no graph crosses");
         if unavailable {
             assert!(
-                matches!(error, McpToolError::StoreUnavailable { store: 1 }),
+                matches!(error, ToolError::StoreUnavailable { store: 1 }),
                 "{error:?}"
             );
         } else {
-            assert!(matches!(error, McpToolError::NotFound(_)), "{error:?}");
+            assert!(matches!(error, ToolError::NotFound(_)), "{error:?}");
         }
         let walk = super::super::walk_memory_lineage::walk_memory_lineage(
             ctx.clone(),
@@ -697,9 +704,9 @@ async fn a_remote_memory_serves_its_neighbor_edges_and_ancestors_through_its_sto
         assert_eq!(
             walk.kind(),
             if unavailable {
-                crate::mcp::McpToolErrorKind::StoreUnavailable
+                crate::mcp::ToolErrorKind::StoreUnavailable
             } else {
-                crate::mcp::McpToolErrorKind::NotFound
+                crate::mcp::ToolErrorKind::NotFound
             }
         );
     }

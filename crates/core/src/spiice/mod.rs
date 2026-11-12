@@ -14,8 +14,8 @@ use crate::verbs::schema::{
 };
 use crate::{
     AbstractionPayload, CapabilityTag, CitedObjectPayload, FactPayload, GoalPayload, McpCallFn,
-    McpTool, McpToolDescriptor, McpToolError, McpToolOrigin, PerspectivePayload, RequestBehavior,
-    SchemaId, SchemaVersion, ScopeGateBehavior, SidecarPayload, Tool,
+    McpToolDescriptor, McpToolOrigin, PerspectivePayload, RequestBehavior, SchemaId, SchemaVersion,
+    ScopeGateBehavior, SidecarPayload, Tool,
 };
 
 use std::collections::BTreeSet;

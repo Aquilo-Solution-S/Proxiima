@@ -4,15 +4,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::future::BoxFuture;
 
 use crate::engine::unit_of_work::tests::BeginSpyFactory;
-use crate::mcp::{
-    McpActionArgSpec, McpAuthorContext, McpToolAudience, McpToolCtx, OwnerNeed, Replay, ToolEffect,
-};
+use crate::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect};
 use crate::spiice::contract::{ProjectionDecl, SpiiceContract, ToolContract};
 use crate::storage_ports::StoragePorts;
 use crate::verbs::own_erase::{EraseMode, SeriesEraseError, SeriesSelection};
-use crate::{
-    AuthPath, AuthzContext, Engine, OwnerId, SpiiceServices, Tool, ToolCtx, ToolError, UserId,
-};
+use crate::{AuthPath, AuthzContext, Engine, OwnerId, Tool, ToolCtx, ToolError, UserId};
 
 const GATE_SPIICE: &str = "gate_fixture";
 
@@ -209,22 +205,14 @@ async fn call_with(
         .registry()
         .mcp_tool(tool)
         .expect("the fixture tool is registered");
-    let ctx = McpToolCtx {
+    let ctx = crate::test_fixtures::tool_ctx_with(
         owner,
-        authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-        registry: Arc::new(engine.registry().clone()),
-        author: McpAuthorContext {
-            model_id: "gate/model".into(),
-            trusted_model_id: None,
-            client_name: "gate".into(),
-            client_version: "1".into(),
-            caller_self_perspective: None,
-        },
-        caller_self_perspective: None,
-        services: SpiiceServices::default(),
-        engine: Some(Arc::clone(engine)),
-        judged: proxiima_core::mcp::JudgedKey::default(),
-    };
+        AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+        Arc::new(engine.registry().clone()),
+        crate::SpiiceServices::default(),
+        crate::ToolCaller::new("gate/model", "gate", "1"),
+    )
+    .with_engine(Some(Arc::clone(engine)));
     (descriptor.call)(ctx, args)
         .await
         .map_err(|err| err.to_string())

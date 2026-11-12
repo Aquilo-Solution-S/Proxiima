@@ -27,11 +27,9 @@ use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use proxiima_core::SpiiceServices;
-use proxiima_core::mcp::{
-    McpAuthorContext, McpToolCtx, McpToolDescriptor, McpToolOrigin, all_core_resources,
-    tool_name_matches,
-};
+use proxiima_core::mcp::{McpToolDescriptor, McpToolOrigin, all_core_resources, tool_name_matches};
 use proxiima_core::spiice::ResourceContract;
+use proxiima_core::{ToolCaller, ToolCtx};
 
 use crate::handler::{
     Caller, action_allowed_for_auth, advertised_resource_scope_keys, advertised_tool_ids,
@@ -137,7 +135,7 @@ fn listing_ctx(
     auth: &crate::McpAuthContext,
     (headers, extensions): (&axum::http::HeaderMap, &axum::http::Extensions),
     instance: &str,
-) -> Result<McpToolCtx, Problem> {
+) -> Result<ToolCtx, Problem> {
     let (author, request) = request_parts(state, auth, (headers, extensions), instance)?;
     state
         .host
@@ -152,7 +150,7 @@ fn request_parts(
     auth: &crate::McpAuthContext,
     (headers, extensions): (&axum::http::HeaderMap, &axum::http::Extensions),
     instance: &str,
-) -> Result<(McpAuthorContext, SpiiceServices), Problem> {
+) -> Result<(ToolCaller, SpiiceServices), Problem> {
     let author = author_from_headers(headers, auth, instance)?;
     let request = state
         .host
@@ -183,7 +181,7 @@ async fn how_to(
 ) -> Response {
     if !how_to_allowed_for_auth(Some(&auth)) {
         return problem_for(
-            &proxiima_core::McpToolError::NotAuthorized(
+            &proxiima_core::ToolError::NotAuthorized(
                 proxiima_core::protocol::resource::HOW_TO.into(),
             )
             .into(),

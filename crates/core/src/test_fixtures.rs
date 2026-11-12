@@ -2,7 +2,12 @@
 
 use async_trait::async_trait;
 use proxiima_core::llm::{EmbeddingClient, EmbeddingDim, LlmError};
-use proxiima_core::{AuthPath, AuthzContext, OwnerId, OwnerScope, Role, UserId};
+use std::sync::Arc;
+
+use proxiima_core::{
+    AuthPath, AuthzContext, OwnerId, OwnerScope, Role, SpiiceRegistryFrozen, SpiiceServices,
+    ToolCaller, ToolCtx, UserId,
+};
 
 /// Fixture embeddings sit on the default 1024-wide lane.
 const EMBEDDING_DIM: usize = EmbeddingDim::D1024.width();
@@ -181,6 +186,37 @@ impl proxiima_core::llm::EmbeddingRouter for TestEmbeddingRouter {
                 )),
         }
     }
+}
+
+/// A tool context for `owner` under `authz`, with an empty service set and
+/// no engine, called by a `test` client. See [`tool_ctx_with`].
+#[must_use]
+pub fn tool_ctx(
+    owner: OwnerId,
+    authz: AuthzContext,
+    registry: Arc<SpiiceRegistryFrozen>,
+) -> ToolCtx {
+    tool_ctx_with(
+        owner,
+        authz,
+        registry,
+        SpiiceServices::default(),
+        ToolCaller::new("test", "test", "0"),
+    )
+}
+
+/// The one test constructor of [`ToolCtx`], built as `McpToolHost::ctx_for`
+/// builds one: through [`ToolCtx::new`], with no engine (chain
+/// [`ToolCtx::with_engine`]).
+#[must_use]
+pub fn tool_ctx_with(
+    owner: OwnerId,
+    authz: AuthzContext,
+    registry: Arc<SpiiceRegistryFrozen>,
+    services: SpiiceServices,
+    caller: ToolCaller,
+) -> ToolCtx {
+    ToolCtx::new(owner, authz, registry, services, caller)
 }
 
 #[must_use]

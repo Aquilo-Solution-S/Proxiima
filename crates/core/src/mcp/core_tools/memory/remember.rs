@@ -1,9 +1,9 @@
-use crate::mcp::{McpTool, McpToolCtx, McpToolError};
 use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
 use crate::tool::validate_trimmed_len;
 use crate::verbs::fact_ingest::{FactWriteCommand, InlineCitedObjectDraft};
 use crate::{SchemaId, SchemaVersion, canonical_json_bytes};
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +100,7 @@ pub struct RememberOutput {
 #[derive(Debug)]
 pub struct RememberTool;
 
-impl McpTool for RememberTool {
+impl Tool for RememberTool {
     const NAME: &'static str = protocol_tool::CORE_REMEMBER;
     const TITLE: &'static str = "Remember a fact";
     const DESCRIPTION: &'static str =
@@ -110,9 +110,9 @@ impl McpTool for RememberTool {
     type Output = RememberOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: RememberArgs,
-    ) -> futures::future::BoxFuture<'static, Result<RememberOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<RememberOutput, ToolError>> {
         Box::pin(async move {
             let prepared = prepare_note_write(
                 &ctx,
@@ -161,9 +161,9 @@ pub(crate) struct PreparedNoteWrite {
 
 /// Validate and assemble one agent-note write for remember or episode.
 pub(crate) async fn prepare_note_write(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     input: NoteWriteInput<'_>,
-) -> Result<PreparedNoteWrite, McpToolError> {
+) -> Result<PreparedNoteWrite, ToolError> {
     let title = validate_trimmed_len("title", input.title, 240)?;
     let body = validate_trimmed_len("body", input.body, 20_000)?;
     let idempotency_key = normalize_idempotency_key(input.idempotency_key)?;
@@ -191,7 +191,7 @@ pub(crate) async fn prepare_note_write(
         input.language,
         &format!("{title}\n{body}"),
     )
-    .map_err(|err| McpToolError::InvalidInput(err.to_string()))?;
+    .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
 
     let mut draft = FactWriteCommand {
         occurred_at,
@@ -204,7 +204,7 @@ pub(crate) async fn prepare_note_write(
 
     if let Some(key_str) = idempotency_key.as_deref() {
         let key =
-            crate::IdempotencyKey::new(key_str.to_string()).map_err(McpToolError::InvalidInput)?;
+            crate::IdempotencyKey::new(key_str.to_string()).map_err(ToolError::InvalidInput)?;
         let mut fp = crate::ContentFingerprint::builder(crate::KeyScope::Note)
             .text("title", title)
             .text("body", body)
@@ -223,7 +223,7 @@ pub(crate) async fn prepare_note_write(
             fp.build(),
         ));
     } else if input.supersedes.is_some() {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "supersedes requires a new idempotency_key".into(),
         ));
     }
@@ -237,12 +237,12 @@ pub(crate) async fn prepare_note_write(
 }
 
 async fn resolve_note_identity(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     authz: &crate::AuthzContext,
     write_owner: crate::OwnerId,
     idempotency_key: Option<&str>,
     supersedes: Option<&str>,
-) -> Result<(uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>), McpToolError> {
+) -> Result<(uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>), ToolError> {
     let Some(raw) = supersedes else {
         let note_id = idempotency_key.map_or_else(uuid::Uuid::now_v7, |key| {
             uuid::Uuid::new_v5(&NOTE_NAMESPACE, key.as_bytes())
@@ -262,25 +262,25 @@ async fn resolve_note_identity(
         )
         .await?;
     let snapshot = response.memory.ok_or_else(|| {
-        McpToolError::InvalidInput(format!(
+        ToolError::InvalidInput(format!(
             "supersedes must name a live core/agent-note-v1 Fact; {raw} was not found"
         ))
     })?;
     if snapshot.kind != crate::EntityKind::Fact
         || snapshot.schema_id.as_str() != AgentNoteV1::SCHEMA_ID
     {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "supersedes must name a live core/agent-note-v1 Fact".into(),
         ));
     }
     if snapshot.owner != write_owner {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "supersedes must name a Fact in the same memory space".into(),
         ));
     }
     let payload_json = super::super::get_memory::snapshot_payload_value(snapshot.payload.as_ref())?;
     let note: AgentNoteV1 = serde_json::from_value(payload_json).map_err(|err| {
-        McpToolError::InvalidInput(format!("supersedes target is not an agent note: {err}"))
+        ToolError::InvalidInput(format!("supersedes target is not an agent note: {err}"))
     })?;
     let schema_id = AgentNoteV1::schema_id();
     let series = engine
@@ -296,7 +296,7 @@ async fn resolve_note_identity(
         )
         .await?
         .ok_or_else(|| {
-            McpToolError::InvalidInput("supersedes must name a live core/agent-note-v1 Fact".into())
+            ToolError::InvalidInput("supersedes must name a live core/agent-note-v1 Fact".into())
         })?;
     Ok((note.note_id, Some(series), Some(prior_id.into_inner())))
 }
@@ -304,7 +304,7 @@ async fn resolve_note_identity(
 fn fingerprint_citation(
     fp: crate::verbs::idempotency::ContentFingerprintBuilder,
     citation: &RememberCitation,
-) -> Result<crate::verbs::idempotency::ContentFingerprintBuilder, McpToolError> {
+) -> Result<crate::verbs::idempotency::ContentFingerprintBuilder, ToolError> {
     if let Some(ref id) = citation.cited_object_id {
         let uuid = super::super::facts_citing_object::parse_cited_object_id(id)?;
         return Ok(fp.bytes("citation", uuid.as_bytes()));
@@ -319,9 +319,9 @@ fn fingerprint_citation(
 }
 
 pub(crate) async fn execute_note_write(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     prepared: PreparedNoteWrite,
-) -> Result<crate::FactIngestOutcome, McpToolError> {
+) -> Result<crate::FactIngestOutcome, ToolError> {
     let engine = ctx.require_engine()?;
     let PreparedNoteWrite {
         authz,
@@ -355,7 +355,7 @@ async fn ingest_cited_fact(
     draft: FactWriteCommand,
     drafts: RememberCitationDrafts,
     sidecars: &[SidecarPayload],
-) -> Result<crate::FactIngestOutcome, McpToolError> {
+) -> Result<crate::FactIngestOutcome, ToolError> {
     match drafts {
         RememberCitationDrafts::Inline { cited_object } => {
             let authorized = engine
@@ -393,7 +393,7 @@ enum RememberCitationDrafts {
 /// `object_payload`).
 fn remember_citation_drafts(
     citation: RememberCitation,
-) -> Result<RememberCitationDrafts, McpToolError> {
+) -> Result<RememberCitationDrafts, ToolError> {
     let has_inline_field = citation.object_schema_id.is_some()
         || citation.object_schema_version.is_some()
         || citation.object_payload.is_some();
@@ -409,7 +409,7 @@ fn remember_citation_drafts(
                 citation.object_schema_version,
                 citation.object_payload,
             ) else {
-                return Err(McpToolError::InvalidInput(
+                return Err(ToolError::InvalidInput(
                     "an inline citation requires object_schema_id, object_schema_version, \
                      and object_payload together"
                         .into(),
@@ -423,11 +423,11 @@ fn remember_citation_drafts(
                 },
             })
         }
-        (Some(_), true) => Err(McpToolError::InvalidInput(
+        (Some(_), true) => Err(ToolError::InvalidInput(
             "citation accepts either cited_object_id or the inline object_* fields, not both"
                 .into(),
         )),
-        (None, false) => Err(McpToolError::InvalidInput(
+        (None, false) => Err(ToolError::InvalidInput(
             "citation requires cited_object_id or the inline object_* fields \
              (object_schema_id, object_schema_version, object_payload)"
                 .into(),

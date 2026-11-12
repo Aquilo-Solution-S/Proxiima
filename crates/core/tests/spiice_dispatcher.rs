@@ -12,15 +12,14 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use proxiima_core::mcp::{
-    McpActionArgSpec, McpAuthorContext, McpToolAudience, McpToolCtx, McpToolError, McpToolOrigin,
-    Next, OwnerNeed, Replay, RequestBehavior, ScopeGateBehavior, TerminalDispatch, ToolCall,
-    ToolEffect, ToolReply,
+    McpActionArgSpec, McpToolAudience, McpToolOrigin, Next, OwnerNeed, Replay, RequestBehavior,
+    ScopeGateBehavior, TerminalDispatch, ToolCall, ToolEffect, ToolReply,
 };
 use proxiima_core::spiice::{ProjectionDecl, SpiiceContract, ToolContract};
 use proxiima_core::{
     AuthPath, AuthzContext, GroupId, OwnerId, ScopeKey, ServedSurface, SpiiceRegistry,
-    SpiiceRegistryFrozen, SpiiceServices, Tool, ToolCtx, ToolError, ToolScope, UserId,
-    access::Role, proxiima_spiice,
+    SpiiceRegistryFrozen, Tool, ToolCtx, ToolError, ToolScope, UserId, access::Role,
+    proxiima_spiice,
 };
 
 /// `CARGO_PKG_NAME` is `proxiima-core` inside core's own `tests/`, so the
@@ -131,52 +130,30 @@ fn frozen() -> Arc<SpiiceRegistryFrozen> {
     Arc::new(registry.freeze_or_panic_for_tests())
 }
 
-fn ctx(registry: &Arc<SpiiceRegistryFrozen>, scope: ToolScope) -> McpToolCtx {
+fn ctx(registry: &Arc<SpiiceRegistryFrozen>, scope: ToolScope) -> ToolCtx {
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    McpToolCtx {
+    proxiima_core::test_fixtures::tool_ctx(
         owner,
-        authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer).with_tool_scope(scope),
-        registry: registry.clone(),
-        author: McpAuthorContext {
-            model_id: "test".into(),
-            trusted_model_id: None,
-            client_name: "test".into(),
-            client_version: "0".into(),
-            caller_self_perspective: None,
-        },
-        caller_self_perspective: None,
-        services: SpiiceServices::default(),
-        engine: None,
-        judged: proxiima_core::mcp::JudgedKey::default(),
-    }
+        AuthzContext::single_owner(&owner, AuthPath::HostBearer).with_tool_scope(scope),
+        registry.clone(),
+    )
 }
 
-fn viewer_ctx(registry: &Arc<SpiiceRegistryFrozen>, scope: ToolScope) -> McpToolCtx {
+fn viewer_ctx(registry: &Arc<SpiiceRegistryFrozen>, scope: ToolScope) -> ToolCtx {
     let owner = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
-    McpToolCtx {
+    proxiima_core::test_fixtures::tool_ctx(
         owner,
-        authz: AuthzContext::for_subject_with_role(
+        AuthzContext::for_subject_with_role(
             UserId::new(uuid::Uuid::now_v7()),
             [(owner, Role::viewer())],
             AuthPath::HostBearer,
         )
         .with_tool_scope(scope),
-        registry: registry.clone(),
-        author: McpAuthorContext {
-            model_id: "test".into(),
-            trusted_model_id: None,
-            client_name: "test".into(),
-            client_version: "0".into(),
-            caller_self_perspective: None,
-        },
-        caller_self_perspective: None,
-        services: SpiiceServices::default(),
-        engine: None,
-        judged: proxiima_core::mcp::JudgedKey::default(),
-    }
+        registry.clone(),
+    )
 }
 
-async fn run_gate(ctx: McpToolCtx, args: serde_json::Value) -> Result<ToolReply, McpToolError> {
+async fn run_gate(ctx: ToolCtx, args: serde_json::Value) -> Result<ToolReply, ToolError> {
     let behaviors: Vec<Arc<dyn RequestBehavior>> = vec![Arc::new(ScopeGateBehavior)];
     let terminal: TerminalDispatch<'_> = Box::new(|_call| {
         Box::pin(async {
@@ -200,7 +177,7 @@ async fn through_the_gate(
     registry: &Arc<SpiiceRegistryFrozen>,
     scope: ToolScope,
     args: serde_json::Value,
-) -> Result<ToolReply, McpToolError> {
+) -> Result<ToolReply, ToolError> {
     run_gate(ctx(registry, scope), args).await
 }
 
@@ -271,7 +248,7 @@ async fn a_spiice_dispatcher_is_gated_per_action() {
     .await
     .expect_err("an ungranted leaf is refused");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref key) if key == &format!("{DISPATCH}:touch")),
+        matches!(err, ToolError::NotAuthorized(ref key) if key == &format!("{DISPATCH}:touch")),
         "the denial names the leaf, not the tool: {err:?}",
     );
 }
@@ -296,7 +273,7 @@ async fn a_viewer_reaches_only_the_read_action_of_a_mixed_spiice_dispatcher() {
     .await
     .expect_err("the write action still requires a writer");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref key) if key == DISPATCH),
+        matches!(err, ToolError::NotAuthorized(ref key) if key == DISPATCH),
         "got {err:?}",
     );
 }
@@ -315,7 +292,7 @@ async fn an_unknown_action_on_a_spiice_dispatcher_is_refused_at_the_gate() {
     .await
     .expect_err("an action the tool does not declare is refused");
     assert!(
-        matches!(err, McpToolError::InvalidInput(ref message)
+        matches!(err, ToolError::InvalidInput(ref message)
             if message.contains(r#"unknown action "vanish""#)),
         "got {err:?}",
     );
@@ -335,7 +312,7 @@ async fn a_spiice_dispatcher_validates_arguments_per_action_before_decode() {
     .await
     .expect_err("`note` belongs to `touch`, not to `look`");
     assert!(
-        matches!(err, McpToolError::InvalidInput(ref message) if message.contains("note")),
+        matches!(err, ToolError::InvalidInput(ref message) if message.contains("note")),
         "got {err:?}",
     );
 
@@ -346,7 +323,7 @@ async fn a_spiice_dispatcher_validates_arguments_per_action_before_decode() {
     .await
     .expect_err("`touch` requires `id`");
     assert!(
-        matches!(err, McpToolError::InvalidInput(ref message) if message.contains("id")),
+        matches!(err, ToolError::InvalidInput(ref message) if message.contains("id")),
         "got {err:?}",
     );
 }
@@ -374,18 +351,19 @@ async fn deployment_reads_do_not_expand_the_callers_dispatcher_scope() {
         ),
         (ToolScope::Palette(Vec::new()), false, false),
     ] {
-        let mut context = ctx(&registry, scope);
-        context.authz = context.authz.with_served_surface(surface.clone());
+        let context = ctx(&registry, scope);
+        let authz = context.authz().clone().with_served_surface(surface.clone());
+        let context = context.with_authz(authz);
         assert_eq!(
-            descriptor.advertised_by(context.authz.capabilities()),
+            descriptor.advertised_by(context.authz().capabilities()),
             advertised
         );
         assert_eq!(
-            descriptor.action_advertised_by(context.authz.capabilities(), "look"),
+            descriptor.action_advertised_by(context.authz().capabilities(), "look"),
             advertised
         );
-        assert!(!descriptor.action_advertised_by(context.authz.capabilities(), "touch"));
-        assert!(!descriptor.action_advertised_by(context.authz.capabilities(), "unknown"));
+        assert!(!descriptor.action_advertised_by(context.authz().capabilities(), "touch"));
+        assert!(!descriptor.action_advertised_by(context.authz().capabilities(), "unknown"));
         let result = run_gate(context, serde_json::json!({"action":"look", "id":"x"})).await;
         assert_eq!(result.is_ok(), permitted, "{result:?}");
     }

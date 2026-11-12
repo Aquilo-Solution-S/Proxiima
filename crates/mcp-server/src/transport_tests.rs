@@ -189,7 +189,7 @@ fn mcp_service_for(host: crate::server::McpToolHost) -> super::McpStreamableServ
 /// A host serving the core tools plus [`StubTool`].
 fn stub_host() -> crate::server::McpToolHost {
     let mut registry = proxiima_core::SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
     crate::server::McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
         proxiima_core::SpiiceServices::default(),
@@ -530,7 +530,7 @@ struct StubOutput {
     client_name: String,
 }
 
-impl proxiima_core::mcp::McpTool for StubTool {
+impl proxiima_core::Tool for StubTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-stub_ping";
     const DESCRIPTION: &'static str = "Answers with the calling client's name.";
@@ -538,15 +538,13 @@ impl proxiima_core::mcp::McpTool for StubTool {
     type Args = StubArgs;
     type Output = StubOutput;
     fn call(
-        ctx: proxiima_core::mcp::McpToolCtx,
+        ctx: proxiima_core::ToolCtx,
         _: Self::Args,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Self::Output, proxiima_core::mcp::McpToolError>,
-    > {
+    ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, proxiima_core::ToolError>>
+    {
         Box::pin(async move {
             Ok(StubOutput {
-                client_name: ctx.author.client_name,
+                client_name: ctx.caller().client_name.clone(),
             })
         })
     }
@@ -622,20 +620,20 @@ impl crate::McpHostTools for HostFixture {
     async fn list(
         &self,
         _: &crate::McpAuthContext,
-    ) -> Result<Vec<crate::McpHostTool>, proxiima_core::mcp::McpToolError> {
+    ) -> Result<Vec<crate::McpHostTool>, proxiima_core::ToolError> {
         self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.catalog
             .clone()
-            .map_err(|message| proxiima_core::mcp::McpToolError::Unavailable(message.into()))
+            .map_err(|message| proxiima_core::ToolError::Unavailable(message.into()))
     }
 
     async fn call(
         &self,
         _: proxiima_core::mcp::ToolCall,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.reply
             .clone()
-            .ok_or_else(|| proxiima_core::mcp::McpToolError::InvalidInput("bad host input".into()))
+            .ok_or_else(|| proxiima_core::ToolError::InvalidInput("bad host input".into()))
     }
 
     async fn instructions(&self, _: &crate::McpAuthContext) -> Option<String> {
@@ -983,19 +981,12 @@ async fn a_typed_tool_failure_goes_out_as_is_error_with_its_text() {
         .call_tool(
             SEND_TOOL,
             serde_json::json!({"outcome": "failed"}),
-            proxiima_core::mcp::McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
+            proxiima_core::ToolCaller::new("test", "test", "0"),
             Some(auth_for(owner)),
         )
         .await;
-    let Err(crate::server::ToolInvocationError::Tool(
-        error @ proxiima_core::mcp::McpToolError::Failure(_),
-    )) = json
+    let Err(crate::server::ToolInvocationError::Tool(error @ proxiima_core::ToolError::Failure(_))) =
+        json
     else {
         panic!("a JSON-only surface answers the tool's failure: {json:?}");
     };
@@ -1095,7 +1086,7 @@ impl proxiima_core::RequestBehavior for Hiding {
         &self,
         call: proxiima_core::mcp::ToolCall,
         next: proxiima_core::mcp::Next<'_>,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.handled
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         next.run(call).await
@@ -1103,7 +1094,7 @@ impl proxiima_core::RequestBehavior for Hiding {
 
     fn visible(
         &self,
-        _: &proxiima_core::mcp::McpToolCtx,
+        _: &proxiima_core::ToolCtx,
         tool: &proxiima_core::ToolDescriptorView<'_>,
     ) -> bool {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1116,7 +1107,7 @@ fn stub_host_behaving(
     behavior: impl proxiima_core::RequestBehavior + 'static,
 ) -> crate::server::McpToolHost {
     let mut registry = proxiima_core::SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
     registry.add_request_behavior(behavior);
     crate::server::McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
@@ -1758,7 +1749,7 @@ async fn standalone_2026_07_28_tools_call_is_answered() {
 }
 
 /// A per-request caller has no handshake to take its name from; the
-/// author context reads it from the request's own `_meta`.
+/// caller reads it from the request's own `_meta`.
 #[tokio::test]
 async fn a_per_request_callers_client_info_reaches_the_author_context() {
     let mut request = per_request_rpc(

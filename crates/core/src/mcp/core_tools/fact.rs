@@ -1,8 +1,7 @@
 use crate::mcp::ToolEffect;
-use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use crate::mcp::{CoreActionMeta, McpActionArgSpec, McpToolAudience, OwnerNeed};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
+use crate::{Tool, ToolCtx, ToolError};
 use futures::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,7 +45,7 @@ pub enum CoreFactOutput {
     FactsCitingObject(FactsCitingObjectOutput),
 }
 
-impl McpTool for CoreFactTool {
+impl Tool for CoreFactTool {
     const NAME: &'static str = protocol_tool::CORE_FACT;
     const TITLE: &'static str = "Facts";
     const DESCRIPTION: &'static str = "Read citations: the cited object behind one Fact, or \
@@ -75,9 +74,9 @@ impl McpTool for CoreFactTool {
     type Output = CoreFactOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: CoreFactArgs,
-    ) -> BoxFuture<'static, Result<CoreFactOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<CoreFactOutput, ToolError>> {
         Box::pin(async move {
             match args {
                 CoreFactArgs::CitationOfFact(args) => citation_of_fact(ctx, args)

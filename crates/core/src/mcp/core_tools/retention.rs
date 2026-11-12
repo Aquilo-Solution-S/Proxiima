@@ -6,9 +6,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::memory_spaces::MemorySpaceKey;
-use crate::mcp::{McpTool, McpToolAudience, McpToolCtx, McpToolError, Replay, ToolEffect};
+use crate::mcp::{McpToolAudience, Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
 use crate::{KeepDays, OwnerId, SchemaId};
+use crate::{Tool, ToolCtx, ToolError};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RetentionArgs {}
@@ -29,7 +30,7 @@ pub struct RetentionRow {
 #[derive(Debug)]
 pub struct RetentionTool;
 
-impl McpTool for RetentionTool {
+impl Tool for RetentionTool {
     const NAME: &'static str = protocol_tool::CORE_RETENTION;
     const TITLE: &'static str = "Retention";
     const DESCRIPTION: &'static str =
@@ -40,12 +41,12 @@ impl McpTool for RetentionTool {
     type Output = RetentionOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         _args: RetentionArgs,
-    ) -> BoxFuture<'static, Result<RetentionOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<RetentionOutput, ToolError>> {
         Box::pin(async move {
             let engine = ctx.require_engine()?;
-            let rows = engine.read_retention(&ctx.authz).await?;
+            let rows = engine.read_retention(ctx.authz()).await?;
             Ok(RetentionOutput {
                 retention: rows
                     .into_iter()
@@ -81,7 +82,7 @@ pub struct SetRetentionOutput {
 #[derive(Debug)]
 pub struct SetRetentionTool;
 
-impl McpTool for SetRetentionTool {
+impl Tool for SetRetentionTool {
     const NAME: &'static str = protocol_tool::CORE_SET_RETENTION;
     const TITLE: &'static str = "Set retention";
     const DESCRIPTION: &'static str =
@@ -92,23 +93,23 @@ impl McpTool for SetRetentionTool {
     type Output = SetRetentionOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: SetRetentionArgs,
-    ) -> BoxFuture<'static, Result<SetRetentionOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<SetRetentionOutput, ToolError>> {
         Box::pin(async move {
             let owner = resolve_space(&ctx, args.space.as_deref())?;
             let keep_days = args
                 .keep_days
                 .map(KeepDays::new)
                 .transpose()
-                .map_err(|err| McpToolError::InvalidInput(err.to_string()))?;
+                .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
             if args.schema_id.is_empty() {
-                return Err(McpToolError::InvalidInput("schema_id is empty".into()));
+                return Err(ToolError::InvalidInput("schema_id is empty".into()));
             }
             let engine = ctx.require_engine()?;
             engine
                 .set_retention(
-                    &ctx.authz,
+                    ctx.authz(),
                     &owner,
                     &SchemaId::new(args.schema_id),
                     keep_days,
@@ -121,11 +122,11 @@ impl McpTool for SetRetentionTool {
 
 /// The named space, structurally: whether the caller administers it is the
 /// engine's owner-admin gate to say, as a `Forbidden`.
-fn resolve_space(ctx: &McpToolCtx, raw: Option<&str>) -> Result<OwnerId, McpToolError> {
+fn resolve_space(ctx: &ToolCtx, raw: Option<&str>) -> Result<OwnerId, ToolError> {
     match MemorySpaceKey::parse(raw.unwrap_or("current")) {
-        Some(MemorySpaceKey::Current) => Ok(ctx.owner),
+        Some(MemorySpaceKey::Current) => Ok(ctx.owner()),
         Some(MemorySpaceKey::Owner(owner)) => Ok(owner),
-        None => Err(McpToolError::InvalidInput(format!(
+        None => Err(ToolError::InvalidInput(format!(
             "unknown memory space: {}",
             raw.unwrap_or_default()
         ))),

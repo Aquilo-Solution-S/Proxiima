@@ -1,7 +1,8 @@
 use super::{
-    McpCallFn, McpTool, McpToolDescriptor, McpToolError, McpToolOrigin, SpiiceRegistry,
-    SpiiceRegistryError, Tool, mcp_output_schema, mcp_tool_schema, validate_action_args,
+    McpCallFn, McpToolDescriptor, McpToolOrigin, SpiiceRegistry, SpiiceRegistryError, Tool,
+    mcp_output_schema, mcp_tool_schema, validate_action_args,
 };
+use crate::ToolError;
 use crate::mcp::prepare_flat_tool_args;
 use crate::mcp::schema::undescribed_property_names;
 use futures::future::BoxFuture;
@@ -29,13 +30,11 @@ fn warn_undescribed_properties(tool_name: &str, args_schema: &serde_json::Value)
     }
 }
 
-fn serialize_tool_output<T: serde::Serialize>(
-    output: T,
-) -> Result<serde_json::Value, McpToolError> {
+fn serialize_tool_output<T: serde::Serialize>(output: T) -> Result<serde_json::Value, ToolError> {
     let value = serde_json::to_value(output)
-        .map_err(|err| McpToolError::Other(format!("serialize tool output: {err}")))?;
+        .map_err(|err| ToolError::Other(format!("serialize tool output: {err}")))?;
     if !value.is_object() {
-        return Err(McpToolError::Other(
+        return Err(ToolError::Other(
             "tool output must serialize to a JSON object".to_owned(),
         ));
     }
@@ -63,25 +62,16 @@ fn report_ignored_fields(result: &mut serde_json::Value, ignored: Vec<String>) {
 }
 
 impl SpiiceRegistry {
-    /// Register a spiice-shipped [`Tool`] under `expected_prefix`.
-    /// Same path as [`Self::try_add_mcp_tool`] (blanket `impl<T: Tool> McpTool
-    /// for T`). A second body would let a spiice dispatcher land with empty
-    /// `action_arg_specs` and validate as flat.
+    /// Register a substrate or spiice-shipped [`Tool`] under
+    /// `expected_prefix`: the one registration path.
     ///
     /// # Errors
     ///
-    /// Returns `InvalidToolName` for invalid names, or `InvalidToolOutputSchema`
-    /// when the output type does not describe an object root.
+    /// Returns `InvalidToolName` for invalid names, `ConflictingActionVocabularies`
+    /// for a tool declaring both action vocabularies, or
+    /// `InvalidToolOutputSchema` when the output type does not describe an
+    /// object root.
     pub fn try_add_tool<T: Tool>(
-        &mut self,
-        expected_prefix: &str,
-    ) -> Result<(), SpiiceRegistryError> {
-        self.try_add_mcp_tool::<T>(expected_prefix)
-    }
-
-    /// Register a spiice-shipped MCP tool under `expected_prefix`.
-    #[doc(hidden)]
-    pub fn try_add_mcp_tool<T: McpTool>(
         &mut self,
         expected_prefix: &str,
     ) -> Result<(), SpiiceRegistryError> {
@@ -111,7 +101,7 @@ impl SpiiceRegistry {
             .iter()
             .cloned()
             .chain(
-                <T as McpTool>::CALLER_RENDERED_FIELDS
+                <T as Tool>::CALLER_RENDERED_FIELDS
                     .iter()
                     .map(ToString::to_string),
             )
@@ -124,7 +114,7 @@ impl SpiiceRegistry {
                 // Dispatcher tools (non-empty specs) run per-action validation;
                 // argv-keyed tools resolve the action key (closed set — argv
                 // matching no declared prefix is refused here) and leave flag
-                // validation to their own dispatch; flat McpTools run the flat
+                // validation to their own dispatch; flat tools run the flat
                 // unknown-field + space-alias guard instead of silently
                 // accepting unknown fields.
                 let mut ignored = Vec::new();
@@ -147,21 +137,22 @@ impl SpiiceRegistry {
                         T::NAME,
                         &properties,
                         &mut args,
-                        <T as McpTool>::UNKNOWN_FIELD_POLICY,
+                        <T as Tool>::UNKNOWN_FIELD_POLICY,
                     )?;
-                    <T as McpTool>::EFFECT
+                    <T as Tool>::EFFECT
                 };
                 // Every transport reaches the handler through this closure,
                 // so stamping here is what lets a verb ask which tool — and
                 // which action's effect — is calling without trusting
                 // anything the call carried.
-                let mut ctx: crate::mcp::McpToolCtx = ctx;
-                ctx.authz = ctx.authz.invoked_by_tool(crate::InvokingTool {
+                let ctx: crate::ToolCtx = ctx;
+                let authz = ctx.authz().clone().invoked_by_tool(crate::InvokingTool {
                     name: T::NAME,
                     effect,
                 });
+                let ctx = ctx.with_authz(authz);
                 let typed: T::Args = serde_json::from_value(args)
-                    .map_err(|e| McpToolError::InvalidInput(e.to_string()))?;
+                    .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
                 let output = T::call(ctx, typed).await?;
                 let mut result = serialize_tool_output(output)?;
                 // Only a flat IgnoreAndReport tool can have dropped anything;
@@ -186,8 +177,8 @@ impl SpiiceRegistry {
             output_schema,
             action_arg_specs: T::ACTION_ARG_SPECS,
             argv_action_specs: T::ARGV_ACTION_SPECS,
-            effect: <T as McpTool>::EFFECT,
-            audience: <T as McpTool>::AUDIENCE,
+            effect: <T as Tool>::EFFECT,
+            audience: <T as Tool>::AUDIENCE,
             call,
         });
         Ok(())
@@ -227,12 +218,6 @@ impl SpiiceRegistry {
         self.try_add_tool::<T>(expected_prefix)
             .expect("tool registration must be valid");
     }
-
-    #[doc(hidden)]
-    pub fn add_mcp_tool_or_panic_for_tests<T: McpTool>(&mut self, expected_prefix: &str) {
-        self.try_add_mcp_tool::<T>(expected_prefix)
-            .expect("MCP tool registration must be valid");
-    }
 }
 
 #[cfg(test)]
@@ -240,7 +225,8 @@ mod tests {
     use serde::Serializer;
 
     use super::serialize_tool_output;
-    use crate::mcp::{McpToolError, McpToolErrorKind};
+    use crate::ToolError;
+    use crate::mcp::ToolErrorKind;
 
     struct FailingOutput;
 
@@ -262,12 +248,12 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                McpToolError::Other(message)
+                ToolError::Other(message)
                     if message == "serialize tool output: fixture secret from output serializer"
             ),
             "the internal diagnostic must retain enough context for server logs: {err:?}",
         );
-        assert_eq!(err.kind(), McpToolErrorKind::Internal);
+        assert_eq!(err.kind(), ToolErrorKind::Internal);
         assert_eq!(err.client_message(), "internal server error");
     }
 
@@ -280,9 +266,9 @@ mod tests {
         ] {
             let error = serialize_tool_output(output)
                 .expect_err("a typed output cannot emit a nonobject structured result");
-            assert_eq!(error.kind(), McpToolErrorKind::Internal);
+            assert_eq!(error.kind(), ToolErrorKind::Internal);
             assert_eq!(error.client_message(), "internal server error");
-            assert!(matches!(error, McpToolError::Other(ref message)
+            assert!(matches!(error, ToolError::Other(ref message)
                 if message == "tool output must serialize to a JSON object"));
         }
     }
@@ -295,13 +281,11 @@ mod action_vocabulary_tests {
     use futures::future::BoxFuture;
 
     use crate::mcp::{
-        McpActionArgSpec, McpArgvActionSpec, McpAuthorContext, McpTool, McpToolAudience,
-        McpToolCtx, McpToolError, McpToolErrorKind, OwnerNeed, Replay, ToolEffect,
+        McpActionArgSpec, McpArgvActionSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect,
+        ToolErrorKind,
     };
-    use crate::{
-        AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceRegistryError, SpiiceServices,
-        UserId,
-    };
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceRegistryError, UserId};
+    use crate::{Tool, ToolCtx, ToolError};
 
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     struct ArgvArgs {
@@ -340,7 +324,7 @@ mod action_vocabulary_tests {
     /// `argv` by longest-prefix match.
     struct ArgvTool;
 
-    impl McpTool for ArgvTool {
+    impl Tool for ArgvTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_cli";
         const DESCRIPTION: &'static str = "An argv-keyed fixture dispatcher.";
@@ -348,9 +332,9 @@ mod action_vocabulary_tests {
         type Args = ArgvArgs;
         type Output = ArgvOutput;
         fn call(
-            _ctx: McpToolCtx,
+            _ctx: ToolCtx,
             args: Self::Args,
-        ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        ) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async move { Ok(ArgvOutput { argv: args.argv }) })
         }
     }
@@ -358,7 +342,7 @@ mod action_vocabulary_tests {
     /// A tool claiming both vocabularies at once.
     struct BothVocabularies;
 
-    impl McpTool for BothVocabularies {
+    impl Tool for BothVocabularies {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_both";
         const DESCRIPTION: &'static str = "A fixture declaring both spec kinds.";
@@ -381,18 +365,12 @@ mod action_vocabulary_tests {
         }];
         type Args = ArgvArgs;
         type Output = EmptyOutput;
-        fn call(
-            _: McpToolCtx,
-            _: Self::Args,
-        ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async { Ok(EmptyOutput {}) })
         }
     }
 
-    /// A flat tool declaring the tool-level owner-only class. Written
-    /// against `Tool`, not `McpTool`, so the round-trip below also proves
-    /// the blanket impl forwards the new consts the way it forwards
-    /// `ACTION_ARG_SPECS`.
+    /// A flat tool declaring the tool-level owner-only class.
     struct OwnerOnlyFlatTool;
 
     impl crate::Tool for OwnerOnlyFlatTool {
@@ -418,7 +396,7 @@ mod action_vocabulary_tests {
     fn registration_rejects_a_tool_declaring_both_spec_kinds() {
         let mut registry = SpiiceRegistry::new();
         let err = registry
-            .try_add_mcp_tool::<BothVocabularies>("proxiima-stub")
+            .try_add_tool::<BothVocabularies>("proxiima-stub")
             .expect_err("both vocabularies must not register");
         assert!(
             matches!(
@@ -431,7 +409,7 @@ mod action_vocabulary_tests {
         );
         // Positive control: the same grammar under one vocabulary registers.
         registry
-            .try_add_mcp_tool::<ArgvTool>("proxiima-stub")
+            .try_add_tool::<ArgvTool>("proxiima-stub")
             .expect("an argv-only tool registers");
     }
 
@@ -441,8 +419,8 @@ mod action_vocabulary_tests {
     #[test]
     fn palette_keys_cover_argv_actions_and_owner_only_keys_follow_the_audience() {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
-        registry.add_mcp_tool_or_panic_for_tests::<OwnerOnlyFlatTool>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<OwnerOnlyFlatTool>("proxiima-stub");
         let frozen = registry.freeze_or_panic_for_tests();
 
         // The canonical external spelling of a key is the string it parsed
@@ -494,24 +472,13 @@ mod action_vocabulary_tests {
         assert_eq!(membership.audience, McpToolAudience::Owner);
     }
 
-    pub(super) fn test_ctx() -> McpToolCtx {
+    pub(super) fn test_ctx() -> ToolCtx {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        )
     }
 
     /// The registered call handle runs the same closed-set resolution the
@@ -520,7 +487,7 @@ mod action_vocabulary_tests {
     #[tokio::test]
     async fn dispatch_validates_argv_against_the_declared_commands() {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
         let frozen = registry.freeze_or_panic_for_tests();
         let descriptor = frozen.mcp_tool(ArgvTool::NAME).expect("registered");
 
@@ -538,7 +505,7 @@ mod action_vocabulary_tests {
         let err = (descriptor.call)(test_ctx(), serde_json::json!({ "argv": ["unknown"] }))
             .await
             .expect_err("unmatched argv is refused before the tool runs");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
     }
 }
 
@@ -547,7 +514,7 @@ mod unknown_field_policy_tests {
     use futures::future::BoxFuture;
 
     use super::action_vocabulary_tests::test_ctx;
-    use crate::mcp::{McpToolError, McpToolErrorKind, McpUnknownFieldPolicy, ToolEffect};
+    use crate::mcp::{McpUnknownFieldPolicy, ToolEffect, ToolErrorKind};
     use crate::{SpiiceRegistry, Tool, ToolCtx, ToolError};
 
     const READ_ONLY: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
@@ -623,7 +590,7 @@ mod unknown_field_policy_tests {
     async fn call(
         tool: &'static str,
         args: serde_json::Value,
-    ) -> Result<serde_json::Value, McpToolError> {
+    ) -> Result<serde_json::Value, ToolError> {
         let frozen = registry();
         let descriptor = frozen.mcp_tool(tool).expect("fixture registered");
         (descriptor.call)(test_ctx(), args).await
@@ -678,9 +645,9 @@ mod unknown_field_policy_tests {
         )
         .await
         .expect_err("the default guard refuses an undeclared field");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         assert!(
-            matches!(err, McpToolError::InvalidInput(ref message)
+            matches!(err, ToolError::InvalidInput(ref message)
                 if message.contains("does not accept field(s): has_more")),
             "got {err:?}",
         );

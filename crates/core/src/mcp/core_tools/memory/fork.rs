@@ -1,7 +1,8 @@
 use crate::goal_collaboration::{ForkMemoryRequest, MemoryDestination};
-use crate::mcp::{McpTool, McpToolCtx, McpToolError, Replay, ToolEffect};
+use crate::mcp::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
 use crate::verbs::idempotency::IdempotencyKey;
+use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +27,7 @@ pub struct ForkOutput {
 #[derive(Debug)]
 pub struct ForkTool;
 
-impl McpTool for ForkTool {
+impl Tool for ForkTool {
     const NAME: &'static str = protocol_tool::CORE_FORK;
     const TITLE: &'static str = "Fork a memory version";
     const DESCRIPTION: &'static str = "Create an independently owned Abstraction or Perspective series from one exact version. A typed schema must opt in; source fork permission and destination write permission are both required.";
@@ -35,9 +36,9 @@ impl McpTool for ForkTool {
     type Output = ForkOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: ForkArgs,
-    ) -> futures::future::BoxFuture<'static, Result<ForkOutput, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<ForkOutput, ToolError>> {
         Box::pin(async move {
             let source = ctx.resolve_memory(&args.source)?;
             let destination = match (args.owner, args.working_goal) {
@@ -48,18 +49,18 @@ impl McpTool for ForkTool {
                     crate::mcp::ids::parse_wire_uuid(&goal)?,
                 )),
                 (None, None) | (Some(_), Some(_)) => {
-                    return Err(McpToolError::InvalidInput(
+                    return Err(ToolError::InvalidInput(
                         "provide exactly one of owner or working_goal".into(),
                     ));
                 }
             };
             let request_id =
                 IdempotencyKey::optional_or_generated("memory_fork", args.idempotency_key)
-                    .map_err(McpToolError::InvalidInput)?;
+                    .map_err(ToolError::InvalidInput)?;
             let outcome = ctx
                 .require_engine()?
                 .fork_memory(
-                    &ctx.authz,
+                    ctx.authz(),
                     &ForkMemoryRequest {
                         source,
                         destination,
@@ -67,7 +68,7 @@ impl McpTool for ForkTool {
                     },
                 )
                 .await
-                .map_err(McpToolError::Protocol)?;
+                .map_err(ToolError::Protocol)?;
             Ok(ForkOutput {
                 memory: outcome.memory_id.into_inner().to_string(),
                 series: outcome.handle.into_inner().to_string(),

@@ -64,7 +64,7 @@ impl proxiima::spiice::RequestBehavior for PassThrough {
         &self,
         call: proxiima::spiice::ToolCall,
         next: proxiima::spiice::Next<'_>,
-    ) -> Result<proxiima::spiice::ToolReply, proxiima::McpToolError> {
+    ) -> Result<proxiima::spiice::ToolReply, proxiima::ToolError> {
         next.run(call).await
     }
 }
@@ -303,9 +303,8 @@ impl proxiima::rmcp::ServerHandler for HostHandler {
         request: proxiima::rmcp::model::CallToolRequestParams,
         context: proxiima::rmcp::service::RequestContext<proxiima::rmcp::service::RoleServer>,
     ) -> Result<proxiima::rmcp::model::CallToolResponse, proxiima::rmcp::model::ErrorData> {
-        let (judged, call) = self.inner.call_tool_observed(request, &context);
-        let reply = call.await;
-        let _key = judged.get();
+        let (_judged, reply): (Option<proxiima::ScopeKey>, _) =
+            self.inner.call_tool_observed(request, &context).await;
         reply
     }
 }
@@ -442,17 +441,18 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
 #[allow(dead_code)]
 async fn observed_host_reply(
     host: &proxiima::McpToolHost,
-    author: proxiima::McpAuthorContext,
+    author: proxiima::ToolCaller,
     auth: proxiima::McpAuthContext,
 ) -> Result<proxiima::ToolReply, proxiima::ToolInvocationError> {
-    let (judged, call) = host.call_tool_reply_observed_in_request(
-        "core_memory_spaces",
-        serde_json::json!({}),
-        author,
-        Some(auth),
-        proxiima::SpiiceServices::default(),
-    );
-    let reply = call.await;
-    let _: Option<proxiima::ScopeKey> = judged.get();
+    let (judged, reply) = host
+        .call_tool_reply_observed_in_request(
+            "core_memory_spaces",
+            serde_json::json!({}),
+            author,
+            Some(auth),
+            proxiima::SpiiceServices::default(),
+        )
+        .await;
+    let _: Option<proxiima::ScopeKey> = judged;
     reply
 }

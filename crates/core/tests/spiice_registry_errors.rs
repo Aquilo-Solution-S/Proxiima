@@ -2,22 +2,20 @@ use std::sync::Arc;
 
 use proxiima_core::authz::OwnerResolver;
 use proxiima_core::error::ProtocolError;
-use proxiima_core::mcp::{
-    McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed, Replay,
-    ToolEffect,
-};
+use proxiima_core::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect};
 use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{
     AuthzContext, OwnerId, SchemaId, SchemaVersion, ScopeKeyError, ScopeKeyPart, SpiiceDescriptor,
     SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError,
 };
+use proxiima_core::{Tool, ToolCtx, ToolError};
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 struct EmptyOutput {}
 
 struct OutputFixture<T>(std::marker::PhantomData<fn() -> T>);
 
-impl<T> McpTool for OutputFixture<T>
+impl<T> Tool for OutputFixture<T>
 where
     T: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
@@ -29,10 +27,10 @@ where
     type Output = T;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: Self::Args,
-    ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
-        Box::pin(async { Err(McpToolError::Other("schema-only fixture".to_owned())) })
+    ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
+        Box::pin(async { Err(ToolError::Other("schema-only fixture".to_owned())) })
     }
 }
 
@@ -58,7 +56,7 @@ where
 {
     let mut registry = SpiiceRegistry::new();
     let error = registry
-        .try_add_mcp_tool::<OutputFixture<T>>("proxiima-test")
+        .try_add_tool::<OutputFixture<T>>("proxiima-test")
         .expect_err("nonobject output types cannot register");
     assert!(matches!(
         error,
@@ -89,7 +87,7 @@ fn registration_refuses_unit_sequence_scalar_mixed_and_unconstrained_outputs() {
 fn registration_accepts_empty_objects_and_preserves_object_union_branches() {
     let mut registry = SpiiceRegistry::new();
     registry
-        .try_add_mcp_tool::<OutputFixture<EmptyOutput>>("proxiima-test")
+        .try_add_tool::<OutputFixture<EmptyOutput>>("proxiima-test")
         .unwrap();
     let frozen = registry.freeze_or_panic_for_tests();
     assert_eq!(
@@ -101,7 +99,7 @@ fn registration_accepts_empty_objects_and_preserves_object_union_branches() {
     );
     let mut registry = SpiiceRegistry::new();
     registry
-        .try_add_mcp_tool::<OutputFixture<ObjectUnionOutput>>("proxiima-test")
+        .try_add_tool::<OutputFixture<ObjectUnionOutput>>("proxiima-test")
         .unwrap();
     let frozen = registry.freeze_or_panic_for_tests();
     let schema = &frozen
@@ -118,7 +116,7 @@ struct EmptyArgs {}
 
 struct DemoTool;
 
-impl McpTool for DemoTool {
+impl Tool for DemoTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test_demo";
     const DESCRIPTION: &'static str = "test";
@@ -126,16 +124,16 @@ impl McpTool for DemoTool {
     type Output = EmptyOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: EmptyArgs,
-    ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(EmptyOutput {}) })
     }
 }
 
 struct WrongPrefixTool;
 
-impl McpTool for WrongPrefixTool {
+impl Tool for WrongPrefixTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "wrong_demo";
     const DESCRIPTION: &'static str = "test";
@@ -143,16 +141,16 @@ impl McpTool for WrongPrefixTool {
     type Output = EmptyOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: EmptyArgs,
-    ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(EmptyOutput {}) })
     }
 }
 
 struct ProviderUnsafeTool;
 
-impl McpTool for ProviderUnsafeTool {
+impl Tool for ProviderUnsafeTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test/demo";
     const DESCRIPTION: &'static str = "test";
@@ -160,9 +158,9 @@ impl McpTool for ProviderUnsafeTool {
     type Output = EmptyOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: EmptyArgs,
-    ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(EmptyOutput {}) })
     }
 }
@@ -262,7 +260,7 @@ macro_rules! stub_tool {
     ($tool:ident, $name:literal, $args:ty, $specs:expr) => {
         struct $tool;
 
-        impl McpTool for $tool {
+        impl Tool for $tool {
             const TITLE: &'static str = "Test tool";
             const NAME: &'static str = $name;
             const DESCRIPTION: &'static str = "test";
@@ -272,9 +270,9 @@ macro_rules! stub_tool {
             type Output = EmptyOutput;
 
             fn call(
-                _ctx: McpToolCtx,
+                _ctx: ToolCtx,
                 _args: Self::Args,
-            ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+            ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
                 Box::pin(async { Ok(EmptyOutput {}) })
             }
         }
@@ -497,12 +495,8 @@ fn duplicate_schema_is_typed_freeze_error() {
 #[test]
 fn duplicate_tool_is_typed_freeze_error() {
     let mut registry = SpiiceRegistry::new();
-    registry
-        .try_add_mcp_tool::<DemoTool>("proxiima-test")
-        .unwrap();
-    registry
-        .try_add_mcp_tool::<DemoTool>("proxiima-test")
-        .unwrap();
+    registry.try_add_tool::<DemoTool>("proxiima-test").unwrap();
+    registry.try_add_tool::<DemoTool>("proxiima-test").unwrap();
 
     let err = registry.try_freeze().unwrap_err();
     assert!(matches!(
@@ -575,7 +569,7 @@ fn invalid_capability_tag_is_typed_add_error() {
 fn invalid_tool_names_are_typed_add_errors() {
     let mut registry = SpiiceRegistry::new();
     let err = registry
-        .try_add_mcp_tool::<WrongPrefixTool>("proxiima-test")
+        .try_add_tool::<WrongPrefixTool>("proxiima-test")
         .unwrap_err();
     assert!(matches!(
         err,
@@ -586,7 +580,7 @@ fn invalid_tool_names_are_typed_add_errors() {
     ));
 
     let err = registry
-        .try_add_mcp_tool::<ProviderUnsafeTool>("proxiima-test")
+        .try_add_tool::<ProviderUnsafeTool>("proxiima-test")
         .unwrap_err();
     assert!(matches!(
         err,
@@ -635,17 +629,17 @@ mod bad_opaque_prefix_spiice {
 }
 
 /// Register one stub and try to seal.
-fn freeze_error<T: McpTool>() -> SpiiceRegistryError {
+fn freeze_error<T: Tool>() -> SpiiceRegistryError {
     let mut registry = SpiiceRegistry::new();
     registry
-        .try_add_mcp_tool::<T>("proxiima-test")
+        .try_add_tool::<T>("proxiima-test")
         .expect("stub registration is valid");
     registry
         .try_freeze()
         .expect_err("an inconsistent dispatcher must not seal")
 }
 
-fn assert_invalid_argument_schema<T: McpTool>(needle: &str) {
+fn assert_invalid_argument_schema<T: Tool>(needle: &str) {
     let err = freeze_error::<T>();
     assert!(
         matches!(err, SpiiceRegistryError::InvalidActionSpecs { .. }),
@@ -804,7 +798,7 @@ fn a_dispatcher_action_outside_the_key_grammar_cannot_be_frozen() {
 #[test]
 fn a_read_only_spiice_dispatcher_with_per_action_effects_freezes() {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<ReadOnlyDispatcherTool>("proxiima-test");
+    registry.add_tool_or_panic_for_tests::<ReadOnlyDispatcherTool>("proxiima-test");
     let frozen = registry.try_freeze().expect("per-action behavior seals");
     let descriptor = frozen
         .mcp_tool("proxiima-test_readonlydispatch")

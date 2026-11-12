@@ -1,11 +1,8 @@
 //! Host-facing facade exports.
 
+/// How a [`ToolError`] answers on the wire ([`ToolError::kind`]).
+pub use proxiima_core::ToolErrorKind;
 pub use proxiima_core::mcp::parse_wire_uuid;
-/// Transport adapters for hosts; spiice implementations use `spiice::Tool`.
-/// [`JudgedKey`] is the key the scope gate judged a call by, read from
-/// [`McpToolCtx::judged`] by a behavior after the gate, or by one that wraps it.
-pub use proxiima_core::mcp::{JudgedKey, McpTool, McpToolCtx, McpToolError, McpToolErrorKind};
-pub use proxiima_core::operator_label;
 pub use proxiima_core::{memory_store_number, new_memory_uuid};
 
 pub use crate::app::{AppContext, AppInfo, Authz, SpiiceApp};
@@ -409,7 +406,7 @@ pub use proxiima_core::authz::RevalidationConfig;
 pub use proxiima_core::mcp::{
     CoreActionMeta, all_core_resources, core_action_meta, tool_name_matches,
 };
-/// Field types of [`McpToolDescriptor`] and consts of [`McpTool`]; a host
+/// Field types of [`McpToolDescriptor`] and consts of [`Tool`]; a host
 /// partitioning tool surfaces by audience reads them. [`ToolEffect`] is also
 /// what an [`McpHostTool`] declares, and [`McpToolAnnotations`] the MCP hints
 /// it projects to.
@@ -417,8 +414,8 @@ pub use proxiima_core::mcp::{
     KeyDeclaration, McpArgvActionSpec, McpToolAnnotations, McpToolAudience, OwnerNeed, Replay,
     ToolEffect,
 };
-/// The request-behavior onion. A behavior wraps [`McpToolCtx`] /
-/// [`McpToolError`]; spiices register one through `proxiima::spiice`.
+/// The request-behavior onion. A behavior wraps [`ToolCtx`] /
+/// [`ToolError`]; spiices register one through `proxiima::spiice`.
 pub use proxiima_core::mcp::{Next, RequestBehavior, ToolCall};
 /// The host-built behavior chain: [`Next::new`] and
 /// [`McpToolHost::dispatch_through_behaviors`] take a [`TerminalDispatch`],
@@ -539,12 +536,12 @@ pub use proxiima_core::{
 /// [`AuthzContext::with_trusted_model_id`] gives.
 pub use proxiima_core::{Identity, InvokingTool, TrustedModelIdError};
 /// The tool-descriptor and handle vocabulary of [`McpToolDescriptor`],
-/// [`McpTool`], [`McpToolError`],
+/// [`ToolError`],
 /// [`RequestHeaderAllowlist::extract`]: a
 /// host that registers or presents its own tools names them.
 pub use proxiima_core::{
-    McpAuthorContext, McpCallFn, McpUnknownFieldPolicy, MemoryHandleClass, RequestHeaders,
-    ToolError, mcp::McpActionArgSpec, mcp::McpActionSchema, mcp::McpDispatcherSchema,
+    McpCallFn, McpUnknownFieldPolicy, MemoryHandleClass, RequestHeaders, ToolError,
+    mcp::McpActionArgSpec, mcp::McpActionSchema, mcp::McpDispatcherSchema,
 };
 /// The publication extension set and plan the Fact write path carries
 /// ([`PublicationExtensions::iter`], [`AuthorizedFactWrite`]'s `publication`):
@@ -553,10 +550,10 @@ pub use proxiima_core::{
 pub use proxiima_core::{
     PublicationDraft, PublicationPlan, publication::ExtensionEntries, publication::ExtensionEntry,
 };
-/// What [`ToolCtx`] carries into a [`Tool`] call: the caller provenance
-/// ([`ToolCaller`], from [`ToolCtx::caller`]) and the service bag ([`ToolServices`])
-/// a host fills when it runs a tool directly.
-pub use proxiima_core::{ToolCaller, ToolCtx, ToolServices};
+/// What [`ToolCtx`] carries into a [`Tool`] call: the
+/// caller provenance ([`ToolCaller`], from [`ToolCtx::caller`]) beside the
+/// service bag ([`SpiiceServices`]) a host fills when it runs a tool directly.
+pub use proxiima_core::{ToolCaller, ToolCtx};
 /// The cited-blob service port's types: [`CitedBlobService`]'s `new`,
 /// `prepare_upload` and `abort_upload`, the staged and held blobs
 /// [`CitedBlobStore`] returns, and what [`Engine::complete_upload_as_fact`]
@@ -711,7 +708,7 @@ mod tests {
         ToolScope, served_surface_excluding,
     };
     use proxiima_core::SpiiceRegistry;
-    use proxiima_core::mcp::McpTool;
+    use proxiima_core::Tool;
     use proxiima_core::mcp::core_tools::{CoreGoalTool, SearchMemoriesTool};
     use proxiima_core::protocol::resource as protocol_resource;
 

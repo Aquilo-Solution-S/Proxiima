@@ -8,13 +8,13 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::engine::SearchReadRequest;
 use crate::llm::BoundEmbeddingClient;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::protocol::tool as protocol_tool;
 use crate::verbs::query::{
     EntityKind, MemorySearchRequest, SearchCursor, SearchMode, SearchOrder, SupersessionStatus,
     TagMatch,
 };
-use crate::{EmbeddingSpace, McpTool, MemoryId, SchemaId};
+use crate::{EmbeddingSpace, MemoryId, SchemaId, Tool};
+use crate::{ToolCtx, ToolError};
 
 use super::citation_of_fact::{FactCitationOutput, fact_citation_output};
 use super::memory::search::{NeighborEdge, neighbor_edges_from_rows};
@@ -297,7 +297,7 @@ pub struct SearchMemoryOutput {
     pub citation: Option<FactCitationOutput>,
 }
 
-impl McpTool for SearchMemoriesTool {
+impl Tool for SearchMemoriesTool {
     const NAME: &'static str = protocol_tool::CORE_SEARCH_MEMORIES;
     const TITLE: &'static str = "Search memories";
     const DESCRIPTION: &'static str = "Search memories by text, with kind/schema/tag/time/space filters. Latest versions only unless supersession=all; pages of at most 50. Hybrid score uses weighted RRF (k=60) over fixed candidate windows, comparable within its result list.";
@@ -308,9 +308,9 @@ impl McpTool for SearchMemoriesTool {
     type Output = SearchMemoriesOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         mut args: SearchMemoriesArgs,
-    ) -> BoxFuture<'static, Result<SearchMemoriesOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<SearchMemoriesOutput, ToolError>> {
         Box::pin(async move {
             let query = crate::validate_search_query(&args.query)?;
             validate_score_args(&args)?;
@@ -334,7 +334,7 @@ impl McpTool for SearchMemoriesTool {
             let mut output = if stores.route.local {
                 search_local(&ctx, &args, query, since, until).await?
             } else if args.cursor.is_some() {
-                return Err(McpToolError::InvalidInput(
+                return Err(ToolError::InvalidInput(
                     "cursor: a search of other stores only has no next page".into(),
                 ));
             } else {
@@ -408,7 +408,7 @@ impl McpTool for SearchMemoriesTool {
 ///
 /// Refuses an answered inventory containing local or duplicate store numbers.
 pub async fn caller_input_schema(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     schema: serde_json::Value,
 ) -> Result<serde_json::Value, crate::storage_ports::other_stores::OtherStoresError> {
     let Some(service) = super::other_stores::service(ctx) else {
@@ -547,12 +547,12 @@ fn remote_hit_output(
 
 /// This store's page of one search: every Owner lane, merged.
 async fn search_local(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     args: &SearchMemoriesArgs,
     query: &str,
     since: Option<time::OffsetDateTime>,
     until: Option<time::OffsetDateTime>,
-) -> Result<SearchMemoriesOutput, McpToolError> {
+) -> Result<SearchMemoriesOutput, ToolError> {
     use tracing::Instrument as _;
     let span = tracing::debug_span!(target: "proxiima::stage_timing", "memory_search",
         search = %uuid::Uuid::now_v7(), work = "query");
@@ -703,11 +703,11 @@ impl OwnerLane {
 /// A pure Semantic request fails when any Owner cannot be served — there
 /// is no lexical fallback to degrade to. Hybrid degrades just that Owner.
 async fn plan_owner_lanes(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     requested: SearchMode,
     query: &str,
     spaces: Vec<ResolvedMemorySpace>,
-) -> Result<Vec<OwnerLane>, McpToolError> {
+) -> Result<Vec<OwnerLane>, ToolError> {
     if matches!(requested, SearchMode::Lexical) {
         return Ok(spaces
             .into_iter()
@@ -761,7 +761,7 @@ async fn plan_owner_lanes(
                 );
                 LaneArm::Degraded
             }
-            (Err(err), _) => return Err(McpToolError::Unavailable(err)),
+            (Err(err), _) => return Err(ToolError::Unavailable(err)),
         };
         lanes.push(OwnerLane { space, arm });
     }
@@ -809,7 +809,7 @@ fn cursor_positions(
     after: Option<&PageCursor>,
     merge: MergeKind,
     lanes: &[OwnerLane],
-) -> Result<Vec<ListPosition>, McpToolError> {
+) -> Result<Vec<ListPosition>, ToolError> {
     match (after, merge) {
         (None, _) => Ok(vec![ListPosition::default(); lanes.len()]),
         // A keyset is a per-row predicate, so every list takes the same one
@@ -835,7 +835,7 @@ fn cursor_positions(
                     })
             })
             .collect()),
-        _ => Err(McpToolError::InvalidInput(
+        _ => Err(ToolError::InvalidInput(
             "malformed cursor: pass next_cursor from a previous core_search_memories response"
                 .into(),
         )),
@@ -867,22 +867,22 @@ struct SpaceSearchResult {
     neighbor_edges: Vec<NeighborEdge>,
 }
 
-fn validate_score_args(args: &SearchMemoriesArgs) -> Result<(), McpToolError> {
+fn validate_score_args(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
     if let Some(floor) = args.min_score
         && !(floor.is_finite() && (0.0..=1.0).contains(&floor))
     {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "min_score must be within 0.0..=1.0".into(),
         ));
     }
     if let Some(weight) = args.semantic_weight {
         if !(weight.is_finite() && (0.0..=1.0).contains(&weight)) {
-            return Err(McpToolError::InvalidInput(
+            return Err(ToolError::InvalidInput(
                 "semantic_weight must be within 0.0..=1.0".into(),
             ));
         }
         if !matches!(args.mode, SearchMemoriesMode::Hybrid) {
-            return Err(McpToolError::InvalidInput(
+            return Err(ToolError::InvalidInput(
                 "semantic_weight applies only to mode=hybrid".into(),
             ));
         }
@@ -891,9 +891,9 @@ fn validate_score_args(args: &SearchMemoriesArgs) -> Result<(), McpToolError> {
 }
 
 fn resolve_search_spaces(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     raw_spaces: &[String],
-) -> Result<Vec<super::memory_spaces::ResolvedMemorySpace>, McpToolError> {
+) -> Result<Vec<super::memory_spaces::ResolvedMemorySpace>, ToolError> {
     if raw_spaces.is_empty() {
         return Ok(vec![super::memory_spaces::resolve_space_owner(
             ctx,
@@ -921,12 +921,12 @@ fn resolve_search_spaces(
 }
 
 async fn search_one_space(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     args: &SearchMemoriesArgs,
     prepared: &PreparedSearch,
     lane: &OwnerLane,
     after: Option<SearchCursor>,
-) -> Result<SpaceSearchResult, McpToolError> {
+) -> Result<SpaceSearchResult, ToolError> {
     let space = &lane.space;
     let mode = lane.arm.mode();
     let req = MemorySearchRequest {
@@ -955,7 +955,7 @@ async fn search_one_space(
     let engine = ctx.require_engine()?;
     let response = engine
         .search(
-            &ctx.authz,
+            ctx.authz(),
             &SearchReadRequest {
                 search: req,
                 include_body: args.include_body,
@@ -1182,7 +1182,7 @@ fn encode_cursor(cursor: &PageCursor, fingerprint: &str) -> String {
     SEARCH_CURSOR.encode(fingerprint, cursor)
 }
 
-fn decode_cursor(raw: &str, fingerprint: &str) -> Result<PageCursor, McpToolError> {
+fn decode_cursor(raw: &str, fingerprint: &str) -> Result<PageCursor, ToolError> {
     SEARCH_CURSOR.decode(fingerprint, raw).map_err(Into::into)
 }
 
@@ -1261,9 +1261,9 @@ fn truncate_body(body: &str, max_chars: usize) -> (String, bool) {
 /// every body to `""` with `body_truncated=true` — a well-formed page that
 /// carries no text, which reads as data loss rather than the caller's own
 /// cap. A caller who wants no bodies has `include_body=false` for that.
-fn validate_body_max_chars(requested: Option<usize>) -> Result<(), McpToolError> {
+fn validate_body_max_chars(requested: Option<usize>) -> Result<(), ToolError> {
     if requested == Some(0) {
-        return Err(McpToolError::InvalidInput(
+        return Err(ToolError::InvalidInput(
             "body_max_chars must be >= 1 when provided; use include_body=false to skip bodies"
                 .into(),
         ));
@@ -1291,14 +1291,14 @@ fn fold_tag_filter(tags: &mut Vec<String>) {
     tags.dedup();
 }
 
-fn validate_list_caps(args: &SearchMemoriesArgs) -> Result<(), McpToolError> {
+fn validate_list_caps(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
     if args.spaces.len() > MAX_SEARCH_SPACES {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SEARCH_SPACES} spaces per search"
         )));
     }
     if args.tags.len() > MAX_SEARCH_TAGS {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SEARCH_TAGS} tags in the tags filter"
         )));
     }
@@ -1403,10 +1403,10 @@ fn retain_surviving_neighbor_edges(memories: &[SearchMemoryOutput], edges: &mut 
 fn parse_rfc3339(
     raw: Option<&str>,
     field: &str,
-) -> Result<Option<time::OffsetDateTime>, McpToolError> {
+) -> Result<Option<time::OffsetDateTime>, ToolError> {
     raw.map(|value| {
         time::OffsetDateTime::parse(value, &Rfc3339).map_err(|err| {
-            McpToolError::InvalidInput(format!("{field} must be an RFC3339 timestamp: {err}"))
+            ToolError::InvalidInput(format!("{field} must be an RFC3339 timestamp: {err}"))
         })
     })
     .transpose()

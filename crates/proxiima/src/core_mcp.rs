@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use proxiima_core::{
-    AuthzContext, CapabilitySet, Engine, McpAuthorContext, McpToolDescriptor, McpToolErrorKind,
-    OwnerId, ServedSurface, SpiiceRegistryFrozen, SpiiceServices, ToolEffect, ToolScope,
+    AuthzContext, CapabilitySet, Engine, McpToolDescriptor, OwnerId, ServedSurface,
+    SpiiceRegistryFrozen, SpiiceServices, ToolCaller, ToolEffect, ToolErrorKind, ToolScope,
     provider_safe_tool_name, resolve_operator_label, tool_name_matches,
 };
 use proxiima_mcp_server::{
@@ -64,7 +64,7 @@ pub enum CoreMcpError {
     NotFound(String),
     #[error("tool error ({kind:?}): {message}")]
     Tool {
-        kind: McpToolErrorKind,
+        kind: ToolErrorKind,
         message: String,
     },
 }
@@ -76,12 +76,12 @@ impl CoreMcpError {
             Self::NotAuthorized(_) => CoreMcpErrorKind::NotAuthorized,
             Self::NotFound(_) => CoreMcpErrorKind::NotFound,
             Self::Tool { kind, .. } => match kind {
-                McpToolErrorKind::InvalidInput => CoreMcpErrorKind::InvalidInput,
-                McpToolErrorKind::NotFound => CoreMcpErrorKind::NotFound,
-                McpToolErrorKind::InvalidRequest => CoreMcpErrorKind::InvalidRequest,
-                McpToolErrorKind::CapacityExhausted => CoreMcpErrorKind::CapacityExhausted,
-                McpToolErrorKind::StoreUnavailable => CoreMcpErrorKind::StoreUnavailable,
-                McpToolErrorKind::Internal => CoreMcpErrorKind::Internal,
+                ToolErrorKind::InvalidInput => CoreMcpErrorKind::InvalidInput,
+                ToolErrorKind::NotFound => CoreMcpErrorKind::NotFound,
+                ToolErrorKind::InvalidRequest => CoreMcpErrorKind::InvalidRequest,
+                ToolErrorKind::CapacityExhausted => CoreMcpErrorKind::CapacityExhausted,
+                ToolErrorKind::StoreUnavailable => CoreMcpErrorKind::StoreUnavailable,
+                ToolErrorKind::Internal => CoreMcpErrorKind::Internal,
             },
         }
     }
@@ -240,23 +240,14 @@ impl CoreMcpTools {
 /// Same precedence as the MCP and REST edges: a model identity bound by the
 /// caller's own `AuthzContext` wins, and a host that passes a different
 /// `model_id` is told rather than silently overridden.
-fn host_author(
-    authz: &AuthzContext,
-    model_id: Option<&str>,
-) -> Result<McpAuthorContext, CoreMcpError> {
+fn host_author(authz: &AuthzContext, model_id: Option<&str>) -> Result<ToolCaller, CoreMcpError> {
     let trusted = authz.trusted_model_id();
     let model_id =
         resolve_operator_label(trusted, model_id).map_err(|conflict| CoreMcpError::Tool {
-            kind: McpToolErrorKind::InvalidInput,
+            kind: ToolErrorKind::InvalidInput,
             message: conflict.detail("model_id"),
         })?;
-    Ok(McpAuthorContext {
-        model_id,
-        trusted_model_id: trusted.map(ToString::to_string),
-        client_name: "host".into(),
-        client_version: "0".into(),
-        caller_self_perspective: None,
-    })
+    Ok(ToolCaller::new(model_id, "host", "0"))
 }
 
 fn find_tool_descriptor<'a>(
@@ -283,7 +274,7 @@ mod tests {
     use super::*;
     use futures::FutureExt as _;
     use proxiima_core::{
-        AuthPath, McpTool, McpToolCtx, McpToolError, OwnerId, SpiiceRegistry, StorageError, UserId,
+        AuthPath, OwnerId, SpiiceRegistry, StorageError, Tool, ToolCtx, ToolError, UserId,
     };
 
     /// A tool that resolves its operator label exactly the way the core
@@ -295,7 +286,7 @@ mod tests {
         label: String,
     }
 
-    impl McpTool for LabelEchoTool {
+    impl Tool for LabelEchoTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "test_label_echo";
         const DESCRIPTION: &'static str = "echo the resolved operator label";
@@ -305,12 +296,12 @@ mod tests {
         type Output = LabelEchoOutput;
 
         fn call(
-            ctx: McpToolCtx,
+            ctx: ToolCtx,
             args: Self::Args,
-        ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
             async move {
                 Ok(LabelEchoOutput {
-                    label: proxiima_core::operator_label(&ctx, args.model_id.as_deref())?,
+                    label: ctx.operator_label(args.model_id.as_deref())?,
                 })
             }
             .boxed()
@@ -335,7 +326,7 @@ mod tests {
         marker: String,
     }
 
-    impl McpTool for MarkerTool {
+    impl Tool for MarkerTool {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "test_marker";
         const DESCRIPTION: &'static str = "test marker";
@@ -345,9 +336,9 @@ mod tests {
         type Output = MarkerOutput;
 
         fn call(
-            ctx: McpToolCtx,
+            ctx: ToolCtx,
             _args: Self::Args,
-        ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
             async move {
                 Ok(MarkerOutput {
                     marker: ctx
@@ -385,7 +376,6 @@ mod tests {
 
         let bound = host_author(&trusted_authz(owner), None).expect("no claim, no conflict");
         assert_eq!(bound.model_id, "acme/runner-v3");
-        assert_eq!(bound.trusted_model_id.as_deref(), Some("acme/runner-v3"));
 
         let agreeing = host_author(&trusted_authz(owner), Some("  acme/runner-v3  "))
             .expect("an agreeing claim is not a conflict");
@@ -394,12 +384,10 @@ mod tests {
         let unbound = host_author(&untrusted_authz(owner), Some("host/label"))
             .expect("no binding, the host label stands");
         assert_eq!(unbound.model_id, "host/label");
-        assert_eq!(unbound.trusted_model_id, None);
 
         let unattributed =
             host_author(&untrusted_authz(owner), None).expect("no binding, no claim");
         assert_eq!(unattributed.model_id, "unknown");
-        assert_eq!(unattributed.trusted_model_id, None);
     }
 
     #[test]
@@ -426,7 +414,7 @@ mod tests {
     #[tokio::test]
     async fn a_model_id_argument_that_differs_from_the_bound_identity_is_refused() {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<LabelEchoTool>("test");
+        registry.add_tool_or_panic_for_tests::<LabelEchoTool>("test");
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
             registry.clone(),
@@ -485,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn into_dynamic_handler_preserves_boot_services_in_per_call_context() {
         let mut registry = SpiiceRegistry::new();
-        registry.add_mcp_tool_or_panic_for_tests::<MarkerTool>("test");
+        registry.add_tool_or_panic_for_tests::<MarkerTool>("test");
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
             registry.clone(),
@@ -497,13 +485,7 @@ mod tests {
         );
         let handler = tools.into_dynamic_handler();
         let auth = marker_auth();
-        let author = McpAuthorContext {
-            model_id: "marker-test".into(),
-            trusted_model_id: None,
-            client_name: "test".into(),
-            client_version: "1".into(),
-            caller_self_perspective: None,
-        };
+        let author = ToolCaller::new("marker-test", "test", "1");
 
         let ctx = handler
             .server
@@ -526,13 +508,7 @@ mod tests {
             .call_tool(
                 "test_marker",
                 serde_json::json!({}),
-                McpAuthorContext {
-                    model_id: "marker-test".into(),
-                    trusted_model_id: None,
-                    client_name: "test".into(),
-                    client_version: "1".into(),
-                    caller_self_perspective: None,
-                },
+                ToolCaller::new("marker-test", "test", "1"),
                 None,
             )
             .await;
@@ -545,14 +521,14 @@ mod tests {
     #[test]
     fn facade_error_mapping_preserves_invalid_input_kind() {
         let err = CoreMcpError::from_invocation_error(ToolInvocationError::Tool(
-            McpToolError::InvalidInput("bad params".into()),
+            ToolError::InvalidInput("bad params".into()),
         ));
 
         assert_eq!(err.kind(), CoreMcpErrorKind::InvalidInput);
         assert!(matches!(
             err,
             CoreMcpError::Tool {
-                kind: McpToolErrorKind::InvalidInput,
+                kind: ToolErrorKind::InvalidInput,
                 ..
             }
         ));
@@ -561,14 +537,14 @@ mod tests {
     #[test]
     fn facade_error_mapping_preserves_internal_storage_kind() {
         let err = CoreMcpError::from_invocation_error(ToolInvocationError::Tool(
-            McpToolError::Storage(StorageError::Internal("boom".into())),
+            ToolError::Storage(StorageError::Internal("boom".into())),
         ));
 
         assert_eq!(err.kind(), CoreMcpErrorKind::Internal);
         assert!(matches!(
             err,
             CoreMcpError::Tool {
-                kind: McpToolErrorKind::Internal,
+                kind: ToolErrorKind::Internal,
                 ..
             }
         ));

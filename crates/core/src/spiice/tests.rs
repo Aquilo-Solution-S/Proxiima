@@ -1,5 +1,6 @@
 use super::*;
-use crate::mcp::{McpToolCtx, McpToolError, ToolEffect};
+use crate::mcp::ToolEffect;
+use crate::{ToolCtx, ToolError};
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 struct DemoOutput {}
@@ -9,7 +10,7 @@ struct EmptyDemoArgs {}
 
 struct Demo;
 
-impl McpTool for Demo {
+impl Tool for Demo {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test_demo";
     const DESCRIPTION: &'static str = "test";
@@ -20,9 +21,9 @@ impl McpTool for Demo {
     type Output = DemoOutput;
 
     fn call(
-        _ctx: McpToolCtx,
+        _ctx: ToolCtx,
         _args: EmptyDemoArgs,
-    ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(DemoOutput {}) })
     }
 }
@@ -30,8 +31,8 @@ impl McpTool for Demo {
 #[test]
 fn freeze_rejects_duplicate_tool_names() {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<Demo>("proxiima-test");
-    registry.add_mcp_tool_or_panic_for_tests::<Demo>("proxiima-test");
+    registry.add_tool_or_panic_for_tests::<Demo>("proxiima-test");
+    registry.add_tool_or_panic_for_tests::<Demo>("proxiima-test");
     let err = registry.try_freeze().expect_err("duplicate tool must fail");
     assert!(matches!(err, SpiiceRegistryError::DuplicateTool { .. }));
 }
@@ -186,7 +187,7 @@ fn freeze_rejects_capability_tags_for_unregistered_schema() {
 fn add_mcp_tool_rejects_unprefixed_tool_name() {
     struct Bad;
 
-    impl McpTool for Bad {
+    impl Tool for Bad {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "wrong/demo";
         const DESCRIPTION: &'static str = "x";
@@ -194,16 +195,16 @@ fn add_mcp_tool_rejects_unprefixed_tool_name() {
         type Output = DemoOutput;
 
         fn call(
-            _ctx: McpToolCtx,
+            _ctx: ToolCtx,
             _args: EmptyDemoArgs,
-        ) -> futures::future::BoxFuture<'static, Result<Self::Output, McpToolError>> {
+        ) -> futures::future::BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async { Ok(DemoOutput {}) })
         }
     }
 
     let mut registry = SpiiceRegistry::new();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        registry.add_mcp_tool_or_panic_for_tests::<Bad>("proxiima-test");
+        registry.add_tool_or_panic_for_tests::<Bad>("proxiima-test");
     }));
     assert!(result.is_err(), "must panic on prefix mismatch");
 }

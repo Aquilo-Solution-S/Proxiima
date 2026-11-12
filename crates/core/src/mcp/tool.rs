@@ -1,9 +1,7 @@
 use futures::future::BoxFuture;
 
 use crate::authz::{KeyDeclaration, McpToolAudience, OwnerNeed};
-use crate::{ActionName, CapabilitySet, ScopeKey, ScopeKeyError, ToolCaller, ToolCtx, ToolName};
-
-use super::{McpToolCtx, McpToolError};
+use crate::{ActionName, CapabilitySet, ScopeKey, ScopeKeyError, ToolCtx, ToolError, ToolName};
 
 /// The longest title ([`McpActionArgSpec::title`], [`McpToolDescriptor::title`]),
 /// in characters: a label beside a recorded call, not a description.
@@ -530,12 +528,12 @@ pub(crate) fn resolve_argv_action(
     tool_name: &str,
     specs: &[McpArgvActionSpec],
     args: &serde_json::Value,
-) -> Result<&'static str, McpToolError> {
+) -> Result<&'static str, ToolError> {
     let words = args
         .get("argv")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| {
-            McpToolError::InvalidInput(format!(
+            ToolError::InvalidInput(format!(
                 "{tool_name} arguments must include array field `argv`"
             ))
         })?;
@@ -543,9 +541,7 @@ pub(crate) fn resolve_argv_action(
         .iter()
         .map(|value| {
             value.as_str().ok_or_else(|| {
-                McpToolError::InvalidInput(format!(
-                    "{tool_name} `argv` must be an array of strings"
-                ))
+                ToolError::InvalidInput(format!("{tool_name} `argv` must be an array of strings"))
             })
         })
         .collect::<Result<_, _>>()?;
@@ -567,7 +563,7 @@ pub(crate) fn resolve_argv_action(
                 .map(|spec| spec.argv_prefix.join(" "))
                 .collect::<Vec<_>>()
                 .join(", ");
-            McpToolError::InvalidInput(format!(
+            ToolError::InvalidInput(format!(
                 "{tool_name} argv {words:?} matches no declared command; expected one of: \
                  {supported}"
             ))
@@ -578,18 +574,18 @@ pub(crate) fn validate_action_args(
     tool_name: &str,
     specs: &[McpActionArgSpec],
     args: &serde_json::Value,
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     if specs.is_empty() {
         return Ok(());
     }
     let object = args.as_object().ok_or_else(|| {
-        McpToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
+        ToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
     })?;
     let action = object
         .get("action")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
-            McpToolError::InvalidInput(format!(
+            ToolError::InvalidInput(format!(
                 "{tool_name} arguments must include string field `action`"
             ))
         })?;
@@ -602,7 +598,7 @@ pub(crate) fn validate_action_args(
                 .map(|spec| spec.action)
                 .collect::<Vec<_>>()
                 .join(", ");
-            McpToolError::InvalidInput(format!(
+            ToolError::InvalidInput(format!(
                 "{tool_name} action `{action}` is not supported; expected one of: {supported}"
             ))
         })?;
@@ -619,7 +615,7 @@ pub(crate) fn validate_action_args(
         .collect::<Vec<_>>();
     if !unexpected.is_empty() {
         unexpected.sort();
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "{tool_name} action `{action}` does not accept field(s): {}",
             unexpected.join(", ")
         )));
@@ -632,7 +628,7 @@ pub(crate) fn validate_action_args(
         .filter(|field| !object.contains_key(*field))
         .collect::<Vec<_>>();
     if !missing.is_empty() {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "{tool_name} action `{action}` requires field(s): {}",
             missing.join(", ")
         )));
@@ -660,10 +656,10 @@ pub(crate) fn prepare_flat_tool_args(
     properties: &[String],
     args: &mut serde_json::Value,
     policy: McpUnknownFieldPolicy,
-) -> Result<Vec<String>, McpToolError> {
+) -> Result<Vec<String>, ToolError> {
     coerce_space_aliases(tool_name, args, properties)?;
     let object = args.as_object_mut().ok_or_else(|| {
-        McpToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
+        ToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
     })?;
     let mut unexpected = object
         .keys()
@@ -675,7 +671,7 @@ pub(crate) fn prepare_flat_tool_args(
     }
     unexpected.sort();
     match policy {
-        McpUnknownFieldPolicy::Refuse => Err(McpToolError::InvalidInput(format!(
+        McpUnknownFieldPolicy::Refuse => Err(ToolError::InvalidInput(format!(
             "{tool_name} does not accept field(s): {}",
             unexpected.join(", ")
         ))),
@@ -696,7 +692,7 @@ pub(crate) fn coerce_space_aliases(
     tool_name: &str,
     args: &mut serde_json::Value,
     properties: &[String],
-) -> Result<(), McpToolError> {
+) -> Result<(), ToolError> {
     let Some(object) = args.as_object_mut() else {
         return Ok(());
     };
@@ -710,7 +706,7 @@ pub(crate) fn coerce_space_aliases(
             .map(Vec::len)
         && count > 1
     {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "{tool_name} accepts a single `space`; received `spaces` array with {count} elements"
         )));
     }
@@ -736,122 +732,18 @@ pub(crate) fn coerce_space_aliases(
     Ok(())
 }
 
-type McpCall = dyn Fn(McpToolCtx, serde_json::Value) -> BoxFuture<'static, Result<serde_json::Value, McpToolError>>
+type McpCall = dyn Fn(ToolCtx, serde_json::Value) -> BoxFuture<'static, Result<serde_json::Value, ToolError>>
     + Send
     + Sync;
 
 /// Copyable handle to a capture-capable, process-lifetime registered tool call.
 pub type McpCallFn = &'static McpCall;
 
-pub trait McpTool: Send + Sync + 'static {
-    const NAME: &'static str;
-    /// See [`crate::Tool::TITLE`]; forwarded from `Tool` by the blanket impl
-    /// below.
-    const TITLE: &'static str;
-    const DESCRIPTION: &'static str;
-    const PRODUCES_SCHEMA_IDS: &'static [&'static str] = &[];
-    /// The actions this tool dispatches, or `&[]` for a flat tool. See
-    /// [`crate::Tool::ACTION_ARG_SPECS`] — this is the single enumeration of
-    /// a dispatcher's action set, and the blanket impl below forwards it
-    /// from `Tool` so a spiice dispatcher declares it in exactly one place.
-    const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[];
-    /// The actions of an argv-keyed dispatcher, or `&[]`. See
-    /// [`crate::Tool::ARGV_ACTION_SPECS`] — the single enumeration for a
-    /// CLI-grammar tool, forwarded from `Tool` by the blanket impl below.
-    /// A tool declares this or [`Self::ACTION_ARG_SPECS`], never both;
-    /// registration refuses the pair.
-    const ARGV_ACTION_SPECS: &'static [McpArgvActionSpec] = &[];
-    /// What a flat tool does. See [`crate::Tool::EFFECT`]. Forwarded from
-    /// `Tool` by the blanket impl below.
-    const EFFECT: Option<crate::mcp::ToolEffect> = None;
-    /// Tool-level audience. See [`McpToolDescriptor::audience`]; forwarded
-    /// from `Tool` by the blanket impl below.
-    const AUDIENCE: McpToolAudience = McpToolAudience::Shared;
-    /// What this *flat* tool does with an undeclared top-level argument key.
-    /// See [`crate::Tool::UNKNOWN_FIELD_POLICY`]; forwarded from `Tool` by
-    /// the blanket impl below. Dispatchers validate per action and never
-    /// read it.
-    const UNKNOWN_FIELD_POLICY: McpUnknownFieldPolicy = McpUnknownFieldPolicy::Refuse;
-    /// Top-level argument keys a *flat* tool accepts beyond its static
-    /// schema, because the schema renders them per caller (and leaves them
-    /// out where nothing can be rendered). The unknown-field guard admits
-    /// them; every other undeclared key is still refused.
-    const CALLER_RENDERED_FIELDS: &'static [&'static str] = &[];
-
-    type Args: serde::de::DeserializeOwned + schemars::JsonSchema + Send + 'static;
-    /// See [`crate::Tool::Output`] — the manifest derives an output schema
-    /// from this type. Its schema and serialized value must have object roots;
-    /// use an empty braced struct for an empty reply.
-    type Output: serde::Serialize + schemars::JsonSchema + Send + 'static;
-
-    fn call(
-        ctx: McpToolCtx,
-        args: Self::Args,
-    ) -> BoxFuture<'static, Result<Self::Output, McpToolError>>;
-}
-
-impl<T> McpTool for T
-where
-    T: crate::Tool,
-{
-    const NAME: &'static str = T::NAME;
-    const TITLE: &'static str = T::TITLE;
-    const DESCRIPTION: &'static str = T::DESCRIPTION;
-    const PRODUCES_SCHEMA_IDS: &'static [&'static str] = T::PRODUCES_SCHEMA_IDS;
-    const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = <T as crate::Tool>::ACTION_ARG_SPECS;
-    const ARGV_ACTION_SPECS: &'static [McpArgvActionSpec] = <T as crate::Tool>::ARGV_ACTION_SPECS;
-    const EFFECT: Option<crate::mcp::ToolEffect> = <T as crate::Tool>::EFFECT;
-    const AUDIENCE: McpToolAudience = <T as crate::Tool>::AUDIENCE;
-    const UNKNOWN_FIELD_POLICY: McpUnknownFieldPolicy = <T as crate::Tool>::UNKNOWN_FIELD_POLICY;
-
-    type Args = T::Args;
-    type Output = T::Output;
-
-    fn call(
-        ctx: McpToolCtx,
-        args: Self::Args,
-    ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
-        let caller = ToolCaller::new(
-            ctx.author.model_id.clone(),
-            ctx.author.client_name.clone(),
-            ctx.author.client_version.clone(),
-        );
-        // From the authorization context, not from the author copy: the
-        // credential is the only authority on provenance, and this is the
-        // last point where the two could differ.
-        let caller = match ctx.authz.trusted_model_id() {
-            None => caller,
-            Some(trusted) => match caller.with_trusted_model_id(trusted) {
-                Ok(caller) => caller,
-                Err(err) => {
-                    // Unreachable through `AuthzContext`, which applies the
-                    // same rule when the value is bound. Reported rather
-                    // than unwrapped so a future carrier that skips that
-                    // check fails the call instead of the process.
-                    return Box::pin(std::future::ready(Err(McpToolError::Other(format!(
-                        "authenticated model identity is unusable: {err}"
-                    )))));
-                }
-            },
-        };
-        let services = ctx.services.into_tool_services();
-        let tool_ctx = ToolCtx::from_parts(
-            ctx.owner,
-            ctx.authz,
-            ctx.registry,
-            Some(caller),
-            ctx.caller_self_perspective,
-            services,
-            ctx.engine,
-        );
-        Box::pin(async move { T::call(tool_ctx, args).await.map_err(Into::into) })
-    }
-}
-
 #[cfg(test)]
 mod argv_action_tests {
     use super::{McpArgvActionSpec, McpToolAudience, OwnerNeed, resolve_argv_action};
-    use crate::mcp::{McpToolError, McpToolErrorKind, Replay, ToolEffect};
+    use crate::mcp::{Replay, ToolEffect};
+    use crate::{ToolError, ToolErrorKind};
 
     /// Two commands sharing a first word, so only longest-prefix matching
     /// can tell them apart.
@@ -881,9 +773,9 @@ mod argv_action_tests {
         let args = serde_json::json!({ "argv": ["unknown", "verb"] });
         let err = resolve_argv_action("stub_cli", SPECS, &args)
             .expect_err("argv outside the declared commands is refused");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         assert!(
-            matches!(err, McpToolError::InvalidInput(ref message)
+            matches!(err, ToolError::InvalidInput(ref message)
                 if message.contains("matches no declared command")),
             "got {err:?}",
         );
@@ -898,23 +790,17 @@ mod argv_action_tests {
         ] {
             let err = resolve_argv_action("stub_cli", SPECS, &args)
                 .expect_err("argv must be an array of strings");
-            assert_eq!(err.kind(), McpToolErrorKind::InvalidInput, "for {args}");
+            assert_eq!(err.kind(), ToolErrorKind::InvalidInput, "for {args}");
         }
     }
 }
 
 #[cfg(test)]
 mod flat_tool_tests {
-    use std::sync::Arc;
-
     use futures::future::BoxFuture;
 
-    use super::{McpTool, McpUnknownFieldPolicy, prepare_flat_tool_args};
-    use crate::mcp::{McpAuthorContext, McpToolCtx, McpToolError, McpToolErrorKind};
-    use crate::{
-        AuthPath, AuthzContext, MemoryId, OwnerId, SpiiceRegistry, SpiiceServices, Tool, ToolCtx,
-        ToolError, UserId,
-    };
+    use super::{McpUnknownFieldPolicy, prepare_flat_tool_args};
+    use crate::{Tool, ToolCtx, ToolError, ToolErrorKind};
 
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     struct CallerArgs {}
@@ -942,9 +828,7 @@ mod flat_tool_tests {
             _args: Self::Args,
         ) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
             Box::pin(async move {
-                let caller = ctx
-                    .caller()
-                    .ok_or_else(|| ToolError::Other("caller metadata missing".into()))?;
+                let caller = ctx.caller();
                 Ok(CallerOutput {
                     model_id: caller.model_id.clone(),
                     client_name: caller.client_name.clone(),
@@ -955,42 +839,6 @@ mod flat_tool_tests {
                 })
             })
         }
-    }
-
-    #[tokio::test]
-    async fn generic_adapter_maps_complete_caller_and_keeps_self_separate() {
-        let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let caller_self_perspective = MemoryId::new(uuid::Uuid::now_v7());
-        let ctx = McpToolCtx {
-            owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "planner/model".into(),
-                trusted_model_id: None,
-                client_name: "planner-client".into(),
-                client_version: "2.4.1".into(),
-                caller_self_perspective: Some(caller_self_perspective),
-            },
-            caller_self_perspective: Some(caller_self_perspective),
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
-
-        let output = <CallerTool as McpTool>::call(ctx, CallerArgs {})
-            .await
-            .expect("adapter supplies caller context");
-
-        assert_eq!(
-            output,
-            CallerOutput {
-                model_id: "planner/model".into(),
-                client_name: "planner-client".into(),
-                client_version: "2.4.1".into(),
-                caller_self_perspective: Some(caller_self_perspective.into_inner().to_string()),
-            }
-        );
     }
 
     #[test]
@@ -1004,7 +852,7 @@ mod flat_tool_tests {
         )
         .expect_err("unknown field rejected");
         assert!(
-            matches!(err, McpToolError::InvalidInput(ref m) if m.contains("does not accept field(s): bogus")),
+            matches!(err, ToolError::InvalidInput(ref m) if m.contains("does not accept field(s): bogus")),
             "got {err:?}",
         );
     }
@@ -1033,9 +881,9 @@ mod flat_tool_tests {
             McpUnknownFieldPolicy::Refuse,
         )
         .expect_err("multiple spaces rejected for a scalar-space tool");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         assert!(
-            matches!(err, McpToolError::InvalidInput(ref message)
+            matches!(err, ToolError::InvalidInput(ref message)
                 if message == "core_remember accepts a single `space`; received `spaces` array with 2 elements"),
             "got {err:?}",
         );
@@ -1097,7 +945,7 @@ mod flat_tool_tests {
             McpUnknownFieldPolicy::IgnoreAndReport,
         )
         .expect_err("an ambiguous space alias is still refused");
-        assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
     }
 
     /// Refusing is what a tool gets for free: the enum default and the
@@ -1109,7 +957,7 @@ mod flat_tool_tests {
             McpUnknownFieldPolicy::Refuse
         );
         assert_eq!(
-            <CallerTool as McpTool>::UNKNOWN_FIELD_POLICY,
+            <CallerTool as Tool>::UNKNOWN_FIELD_POLICY,
             McpUnknownFieldPolicy::Refuse,
             "a tool that declares nothing keeps the strict guard",
         );

@@ -1,16 +1,16 @@
-use crate::McpToolError;
 use crate::MemoryId;
-use crate::mcp::McpToolCtx;
+use crate::ToolCtx;
+use crate::ToolError;
 use crate::verbs::goal_write::IdempotencyKey;
 
 /// Parse the authoring destination once for source resolution and admission.
 pub(super) fn resolve_destination(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     space: Option<&str>,
     working_goal: Option<&str>,
-) -> Result<crate::MemoryDestination, McpToolError> {
+) -> Result<crate::MemoryDestination, ToolError> {
     match (space, working_goal) {
-        (Some(_), Some(_)) => Err(McpToolError::InvalidInput(
+        (Some(_), Some(_)) => Err(ToolError::InvalidInput(
             "space and working_goal are mutually exclusive".into(),
         )),
         (None, Some(goal)) => Ok(crate::MemoryDestination::WorkingGoal(
@@ -25,50 +25,6 @@ pub(super) fn resolve_destination(
             .owner,
         )),
     }
-}
-
-/// Resolve the reserved operator label for an authoring write.
-///
-/// The [`McpTool`](crate::mcp::McpTool) spelling of
-/// [`ToolCtx::operator_label`](crate::ToolCtx::operator_label); both call
-/// the same resolver, so a tool cannot get a different answer by picking a
-/// different trait.
-///
-/// This is an enforcement point for trusted model provenance, not a
-/// restatement of a transport check. `author_from_args` and
-/// `author_from_headers` only ever see a *top-level* `model_id`; a nested
-/// one (`core_episode_commit`'s per-item `derive.model_id` /
-/// `stance[].model_id`) and every argument on the embedded host API reach
-/// the tool untouched. Putting the rule here is what makes it hold for any
-/// tool that takes a `model_id` argument, including ones not written yet.
-///
-/// Precedence: a bound `trusted_model_id` wins, a differing `explicit` is
-/// refused, a blank one is no claim at all, and an absent one falls back to
-/// the request-context label (which the MCP server strips out of the
-/// reserved request field into `ctx.author.model_id`).
-///
-/// The bound identity is read from `ctx.authz`, not from
-/// `ctx.author.trusted_model_id`: the author context is a per-call struct a
-/// host can build by hand, while the authorization context is the carrier
-/// the authenticator hardened.
-///
-/// The label is trimmed before it is *used*, not just before it is checked:
-/// the stored label and any idempotency key derived from it must be the
-/// same string, or `" example "` and `"example"` are one label to the
-/// validator and two to the dedup key.
-///
-/// # Errors
-///
-/// Returns [`McpToolError::InvalidInput`] when `explicit` names a model
-/// other than the one the authenticated token binds, or when the resolved
-/// label is longer than
-/// [`MAX_OPERATOR_LABEL_CHARS`](crate::mcp::MAX_OPERATOR_LABEL_CHARS).
-pub fn operator_label(ctx: &McpToolCtx, explicit: Option<&str>) -> Result<String, McpToolError> {
-    Ok(crate::tool::resolve_recorded_operator_label(
-        ctx.authz.trusted_model_id(),
-        Some(ctx.author.model_id.as_str()),
-        explicit,
-    )?)
 }
 
 /// Resolve a caller's handle list to memories in request order with repeats
@@ -88,20 +44,18 @@ pub fn operator_label(ctx: &McpToolCtx, explicit: Option<&str>) -> Result<String
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError::InvalidInput`] when `handles` is over `max` or
+/// Returns [`ToolError::InvalidInput`] when `handles` is over `max` or
 /// resolves to nothing, and whatever `resolve` returns for a bad handle.
 pub async fn dedup_resolved<'a, T: Send>(
     handles: &'a [String],
     max: usize,
     field: &'static str,
     empty_message: &'static str,
-    mut resolve: impl FnMut(
-        &'a str,
-    ) -> futures::future::BoxFuture<'a, Result<(MemoryId, T), McpToolError>>
+    mut resolve: impl FnMut(&'a str) -> futures::future::BoxFuture<'a, Result<(MemoryId, T), ToolError>>
     + Send,
-) -> Result<Vec<(MemoryId, T)>, McpToolError> {
+) -> Result<Vec<(MemoryId, T)>, ToolError> {
     if handles.len() > max {
-        return Err(McpToolError::InvalidInput(format!(
+        return Err(ToolError::InvalidInput(format!(
             "{field} must contain at most {max} handles"
         )));
     }
@@ -114,7 +68,7 @@ pub async fn dedup_resolved<'a, T: Send>(
         }
     }
     if resolved.is_empty() {
-        return Err(McpToolError::InvalidInput(empty_message.into()));
+        return Err(ToolError::InvalidInput(empty_message.into()));
     }
     Ok(resolved)
 }
@@ -129,13 +83,13 @@ pub async fn dedup_resolved<'a, T: Send>(
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError::InvalidInput`] when `key` is `Some` and blank
+/// Returns [`ToolError::InvalidInput`] when `key` is `Some` and blank
 /// after trimming or over the character cap.
-pub fn normalize_idempotency_key(key: Option<String>) -> Result<Option<String>, McpToolError> {
+pub fn normalize_idempotency_key(key: Option<String>) -> Result<Option<String>, ToolError> {
     key.map(|raw| {
         IdempotencyKey::new(raw)
             .map(IdempotencyKey::into_string)
-            .map_err(McpToolError::InvalidInput)
+            .map_err(ToolError::InvalidInput)
     })
     .transpose()
 }
@@ -152,14 +106,12 @@ pub fn normalize_idempotency_key(key: Option<String>) -> Result<Option<String>, 
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError::InvalidInput`] when the value is not RFC3339.
-pub fn parse_observed_at(raw: Option<&str>) -> Result<Option<time::OffsetDateTime>, McpToolError> {
+/// Returns [`ToolError::InvalidInput`] when the value is not RFC3339.
+pub fn parse_observed_at(raw: Option<&str>) -> Result<Option<time::OffsetDateTime>, ToolError> {
     raw.map(|raw| {
         time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).map_err(
             |err| {
-                McpToolError::InvalidInput(format!(
-                    "observed_at must be an RFC3339 timestamp: {err}"
-                ))
+                ToolError::InvalidInput(format!("observed_at must be an RFC3339 timestamp: {err}"))
             },
         )
     })
@@ -192,11 +144,11 @@ pub fn fold_tag(tag: &str) -> String {
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError::InvalidInput`] when a tag is blank, a tag
+/// Returns [`ToolError::InvalidInput`] when a tag is blank, a tag
 /// exceeds [`MAX_TAG_CHARS`], or more than [`MAX_TAGS`] distinct tags
 /// remain after normalization. Blank and oversized get different
 /// messages — see [`crate::tool::validate_trimmed_len`].
-pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, McpToolError> {
+pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ToolError> {
     let mut out = Vec::with_capacity(tags.len());
     for tag in tags {
         let tag = fold_tag(&tag);
@@ -205,9 +157,7 @@ pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, McpToolError> {
     out.sort();
     out.dedup();
     if out.len() > MAX_TAGS {
-        return Err(McpToolError::InvalidInput(
-            "at most 16 distinct tags".into(),
-        ));
+        return Err(ToolError::InvalidInput("at most 16 distinct tags".into()));
     }
     Ok(out)
 }
@@ -216,15 +166,15 @@ pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, McpToolError> {
 mod tests {
     use super::super::super::memory_spaces::test_ctx::ctx_for;
     use super::{
-        MAX_TAGS, McpToolError, dedup_resolved, normalize_idempotency_key, normalize_tags,
-        operator_label, parse_observed_at,
+        MAX_TAGS, ToolError, dedup_resolved, normalize_idempotency_key, normalize_tags,
+        parse_observed_at,
     };
     use crate::mcp::MAX_OPERATOR_LABEL_CHARS;
     use crate::verbs::goal_write::IdempotencyKey;
-    use crate::{McpToolCtx, MemoryId, UserId};
+    use crate::{MemoryId, ToolCtx, UserId};
     use uuid::Uuid;
 
-    fn test_ctx() -> McpToolCtx {
+    fn test_ctx() -> ToolCtx {
         ctx_for(
             UserId::new(Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("uuid")),
             Vec::new(),
@@ -235,33 +185,35 @@ mod tests {
     fn authoring_destination_refuses_both_space_and_working_goal() {
         assert!(matches!(
             super::resolve_destination(&test_ctx(), Some("personal"), Some("goal")),
-            Err(McpToolError::InvalidInput(_))
+            Err(ToolError::InvalidInput(_))
         ));
     }
 
     #[test]
     fn an_oversized_operator_label_is_rejected() {
         let ctx = test_ctx();
-        assert!(operator_label(&ctx, Some(&"m".repeat(MAX_OPERATOR_LABEL_CHARS))).is_ok());
-        assert!(operator_label(&ctx, Some(&"m".repeat(MAX_OPERATOR_LABEL_CHARS + 1))).is_err());
+        assert!(
+            ctx.operator_label(Some(&"m".repeat(MAX_OPERATOR_LABEL_CHARS)))
+                .is_ok()
+        );
+        assert!(
+            ctx.operator_label(Some(&"m".repeat(MAX_OPERATOR_LABEL_CHARS + 1)))
+                .is_err()
+        );
     }
 
-    /// A context whose token binds a runner identity, with a deliberately
-    /// different `model_id` so a test cannot pass by reading the label slot.
+    /// A context whose token binds a runner identity.
     ///
-    /// The binding lives on `authz`, not on the author context: that is
-    /// the carrier the authenticator hardened, and the only one
-    /// `operator_label` consults.
-    fn trusted_ctx() -> McpToolCtx {
-        let mut ctx = test_ctx();
-        ctx.authz = ctx
-            .authz
+    /// The binding lives on `authz`: that is the carrier the authenticator
+    /// hardened, and the only one `operator_label` consults.
+    fn trusted_ctx() -> ToolCtx {
+        let ctx = test_ctx();
+        let authz = ctx
+            .authz()
             .clone()
             .with_trusted_model_id("acme/runner-v3")
             .expect("a well-formed runner id binds");
-        ctx.author.trusted_model_id = Some("acme/runner-v3".to_string());
-        ctx.author.model_id = "acme/runner-v3".to_string();
-        ctx
+        ctx.with_authz(authz)
     }
 
     /// The enforcement point. Transport edges only ever see a *top-level*
@@ -271,10 +223,11 @@ mod tests {
     /// actually covers them.
     #[test]
     fn an_explicit_label_differing_from_the_bound_identity_is_refused() {
-        let err = operator_label(&trusted_ctx(), Some("openai/gpt-9"))
+        let err = trusted_ctx()
+            .operator_label(Some("openai/gpt-9"))
             .expect_err("a caller may not relabel an authenticated runner");
 
-        let McpToolError::InvalidInput(message) = err else {
+        let ToolError::InvalidInput(message) = err else {
             panic!("a bad reserved argument is invalid input");
         };
         assert!(message.contains("model_id"), "{message}");
@@ -291,30 +244,36 @@ mod tests {
         let ctx = trusted_ctx();
         for explicit in [None, Some("acme/runner-v3"), Some("  acme/runner-v3  ")] {
             assert_eq!(
-                operator_label(&ctx, explicit).expect("agreeing or absent is accepted"),
+                ctx.operator_label(explicit)
+                    .expect("agreeing or absent is accepted"),
                 "acme/runner-v3",
                 "explicit {explicit:?}"
             );
         }
     }
 
-    /// The bound identity is recorded even if the author context
-    /// disagrees on both of its model fields, so a host that assembles
-    /// one by hand cannot launder a label past the binding. The transport
-    /// reconciles this at `ctx_for`; the tool does not depend on it having
-    /// done so.
+    /// The bound identity is recorded even if the caller a host assembled
+    /// by hand names another model, so a host cannot launder a label past
+    /// the binding: the context replaces the caller's label with the bound
+    /// identity when it is built.
     #[test]
-    fn the_bound_identity_outranks_a_mismatched_author_context() {
-        let mut ctx = trusted_ctx();
-        ctx.author.model_id = "stale/label".to_string();
-        ctx.author.trusted_model_id = None;
+    fn the_bound_identity_outranks_a_mismatched_caller() {
+        let trusted = trusted_ctx();
+        let ctx = crate::test_fixtures::tool_ctx_with(
+            trusted.owner(),
+            trusted.authz().clone(),
+            trusted.registry().clone(),
+            crate::SpiiceServices::default(),
+            crate::ToolCaller::new("stale/label", "test", "0"),
+        );
 
+        assert_eq!(ctx.caller().model_id, "acme/runner-v3");
         assert_eq!(
-            operator_label(&ctx, None).expect("bound identity wins"),
+            ctx.operator_label(None).expect("bound identity wins"),
             "acme/runner-v3"
         );
         assert!(
-            operator_label(&ctx, Some("openai/gpt-9")).is_err(),
+            ctx.operator_label(Some("openai/gpt-9")).is_err(),
             "the binding still refuses a differing claim"
         );
     }
@@ -323,17 +282,17 @@ mod tests {
         MemoryId::new(Uuid::from_bytes([byte; 16]))
     }
 
-    fn resolve_by_last_char(handle: &str) -> Result<(MemoryId, char), McpToolError> {
+    fn resolve_by_last_char(handle: &str) -> Result<(MemoryId, char), ToolError> {
         let last = handle
             .chars()
             .next_back()
-            .ok_or_else(|| McpToolError::InvalidInput("blank handle".into()))?;
+            .ok_or_else(|| ToolError::InvalidInput("blank handle".into()))?;
         Ok((memory(last as u8), last))
     }
 
     #[tokio::test]
     async fn dedup_resolved_rejects_an_empty_result_with_the_callers_message() {
-        let McpToolError::InvalidInput(message) = dedup_resolved(
+        let ToolError::InvalidInput(message) = dedup_resolved(
             &[],
             8,
             "source_handles",
@@ -353,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn dedup_resolved_rejects_more_handles_than_the_cap() {
         let handles: Vec<String> = (0..3).map(|i| format!("mem-{i}")).collect();
-        let McpToolError::InvalidInput(message) =
+        let ToolError::InvalidInput(message) =
             dedup_resolved(&handles, 2, "subjects", "nonempty", |handle| {
                 Box::pin(std::future::ready(resolve_by_last_char(handle)))
             })
@@ -401,12 +360,12 @@ mod tests {
     /// it satisfies.
     #[test]
     fn a_blank_tag_and_an_oversized_tag_are_told_apart() {
-        let McpToolError::InvalidInput(blank) =
+        let ToolError::InvalidInput(blank) =
             normalize_tags(vec!["  ".into()]).expect_err("blank tag")
         else {
             panic!("a bad tag must be invalid input");
         };
-        let McpToolError::InvalidInput(over) =
+        let ToolError::InvalidInput(over) =
             normalize_tags(vec!["x".repeat(49)]).expect_err("oversized tag")
         else {
             panic!("a bad tag must be invalid input");

@@ -14,7 +14,7 @@ use proxiima::{
     AppInfo, AuthzContext, McpHostTool, McpHostTools, Proxiima, ServedSurface, SpiiceApp, ToolCall,
     ToolEffect, ToolReply,
 };
-use proxiima_core::{AuthError, AuthPath, Authenticator, Credentials, McpToolError, UserId};
+use proxiima_core::{AuthError, AuthPath, Authenticator, Credentials, ToolError, UserId};
 use proxiima_pg_testkit::SplitRoleDb;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, Semaphore};
@@ -69,10 +69,7 @@ impl GateTools {
 
 #[async_trait]
 impl McpHostTools for GateTools {
-    async fn list(
-        &self,
-        _auth: &proxiima::McpAuthContext,
-    ) -> Result<Vec<McpHostTool>, McpToolError> {
+    async fn list(&self, _auth: &proxiima::McpAuthContext) -> Result<Vec<McpHostTool>, ToolError> {
         Ok(vec![
             McpHostTool::new(
                 GATE_TOOL,
@@ -84,12 +81,12 @@ impl McpHostTools for GateTools {
         ])
     }
 
-    async fn call(&self, _call: ToolCall) -> Result<ToolReply, McpToolError> {
+    async fn call(&self, _call: ToolCall) -> Result<ToolReply, ToolError> {
         self.entered.notify_one();
         self.release
             .acquire()
             .await
-            .map_err(|err| McpToolError::Other(err.to_string()))?
+            .map_err(|err| ToolError::Other(err.to_string()))?
             .forget();
         Ok(ToolReply::Structured(json!({"released": true})))
     }

@@ -50,7 +50,7 @@ pub use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
 /// Read application-specific verified claims through
 /// `ctx.authz().verified_claims()`; interpretation belongs to the spiice.
 pub use proxiima_core::mcp::{
-    KeyDeclaration, MAX_TITLE_CHARS, McpActionArgSpec, McpAuthorContext, Replay, ToolEffect,
+    KeyDeclaration, MAX_TITLE_CHARS, McpActionArgSpec, Replay, ToolEffect,
 };
 /// Build-time spiice declaration vocabulary. These are const-constructible
 /// contract values; no runtime registry or storage handle crosses the SDK.
@@ -148,7 +148,7 @@ pub use proxiima_core::{
     ScopeKey, ScopeKeyError, SearchProjectionColumnKind, ServedSurface, SidecarPayload,
     SpiiceDescriptor, SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen,
     SpiiceServiceError, SpiiceServices, Tool, ToolCaller, ToolCtx, ToolError, ToolId, ToolName,
-    ToolScope, ToolServices, TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice,
+    ToolScope, TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice,
     validate_endpoint_url, validate_endpoint_url_for_hosts,
 };
 /// Query / ingest types a spiice names next to [`crate::Engine`]
@@ -288,8 +288,7 @@ pub use sidecar_heads::sidecar_heads_by_key;
 pub use proxiima_core::mcp::{McpArgvActionSpec, McpToolAudience, OwnerNeed};
 /// The request-behavior onion [`SpiiceRegistry::add_request_behavior`] takes,
 /// with the reply it passes along ([`ToolReply`]) and the view
-/// [`RequestBehavior::visible`] reads ([`ToolDescriptorView`]). Its transport
-/// context/error (`McpToolCtx`, `McpToolError`) stay host-tier.
+/// [`RequestBehavior::visible`] reads ([`ToolDescriptorView`]).
 pub use proxiima_core::mcp::{
     Next, RequestBehavior, ToolCall, ToolContent, ToolDescriptorView, ToolReply, ToolSource,
 };

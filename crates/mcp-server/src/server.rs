@@ -13,12 +13,14 @@ use proxiima_core::mcp::core_tools::{
     walk_memory_lineage::{WalkMemoryLineageArgs, walk_memory_lineage},
 };
 use proxiima_core::mcp::{
-    McpAuthorContext, McpToolCtx, McpToolDescriptor, McpToolError, McpToolErrorKind, Next,
-    TerminalDispatch, ToolCall, ToolContent, ToolReply, resolve_operator_label, tool_name_matches,
+    McpToolDescriptor, Next, TerminalDispatch, ToolCall, ToolContent, ToolErrorKind, ToolReply,
+    resolve_operator_label, tool_name_matches,
 };
 use proxiima_core::protocol::resource as protocol_resource;
 use proxiima_core::spiice::spiice0::resource as core_resource;
-use proxiima_core::{Engine, SpiiceRegistryFrozen, SpiiceServices};
+use proxiima_core::{
+    Engine, ScopeKey, SpiiceRegistryFrozen, SpiiceServices, ToolCaller, ToolCtx, ToolError,
+};
 use serde::Serialize;
 
 use crate::auth::McpAuthContext;
@@ -111,12 +113,12 @@ impl McpToolHost {
     ///
     /// # Errors
     ///
-    /// The source's [`McpToolError`], unchanged; no host source means an
+    /// The source's [`ToolError`], unchanged; no host source means an
     /// empty catalog, a failing one never does.
     pub async fn host_tools_for(
         &self,
         auth: &McpAuthContext,
-    ) -> Result<Vec<McpHostTool>, McpToolError> {
+    ) -> Result<Vec<McpHostTool>, ToolError> {
         let Some(source) = &self.host_tools else {
             return Ok(Vec::new());
         };
@@ -152,14 +154,14 @@ impl McpToolHost {
     ///
     /// # Errors
     ///
-    /// [`McpToolError::InvalidInput`] for a repeated or non-ASCII allowlisted
-    /// header; [`McpToolError::Other`] when the extension bag carries a
+    /// [`ToolError::InvalidInput`] for a repeated or non-ASCII allowlisted
+    /// header; [`ToolError::Other`] when the extension bag carries a
     /// `RequestHeaders` of its own.
     pub fn request_services(
         &self,
         headers: &http::HeaderMap,
         extensions: &http::Extensions,
-    ) -> Result<SpiiceServices, McpToolError> {
+    ) -> Result<SpiiceServices, ToolError> {
         crate::request_scope::request_services(&self.request_headers, headers, extensions)
     }
 
@@ -168,30 +170,24 @@ impl McpToolHost {
         &self.registry
     }
 
-    /// Build a per-call `McpToolCtx` derived from the auth regime.
+    /// Build a per-call [`ToolCtx`] derived from the auth regime.
     ///
     /// All entity references cross the wire as bare UUIDs.
     ///
-    /// The author context is re-reconciled against the authenticated one
-    /// rather than trusted as given. Both halves of the invariant
-    /// [`McpAuthorContext`] documents — the bound identity, and
-    /// `model_id` equalling it when present — are restored here, because
-    /// an out-of-tree host builds this struct by hand and
-    /// [`ToolCaller`](proxiima_core::ToolCaller) hands `model_id` on to
-    /// spiice tools as the label to record.
+    /// The caller's `model_id` is re-reconciled against the authenticated
+    /// identity rather than trusted as given, because a host builds the
+    /// [`ToolCaller`] by hand and `model_id` is the label a tool records:
+    /// [`ToolCtx::new`] makes it the bound identity when the credential binds
+    /// one, and a differing claim is refused here.
     ///
     /// # Errors
     ///
-    /// [`McpToolError::InvalidInput`] when the author names a model other
+    /// [`ToolError::InvalidInput`] when the caller names a model other
     /// than the one the authenticated token binds. In-tree transports
     /// resolved that at the edge already, so reaching this is a host
-    /// assembling an author context the credential does not support.
-    pub fn ctx_for(
-        &self,
-        author: McpAuthorContext,
-        auth: &McpAuthContext,
-    ) -> Result<McpToolCtx, McpToolError> {
-        self.ctx_for_request(author, auth, SpiiceServices::default())
+    /// assembling a caller the credential does not support.
+    pub fn ctx_for(&self, caller: ToolCaller, auth: &McpAuthContext) -> Result<ToolCtx, ToolError> {
+        self.ctx_for_request(caller, auth, SpiiceServices::default())
     }
 
     /// [`Self::ctx_for`] with a per-request service set merged onto the boot
@@ -199,51 +195,46 @@ impl McpToolHost {
     ///
     /// # Errors
     ///
-    /// As [`Self::ctx_for`], and [`McpToolError::Other`] when `request`
+    /// As [`Self::ctx_for`], and [`ToolError::Other`] when `request`
     /// repeats a type the boot set already holds — a host wiring fault, never
     /// a caller one, so a request can never replace a boot service.
     pub fn ctx_for_request(
         &self,
-        mut author: McpAuthorContext,
+        mut caller: ToolCaller,
         auth: &McpAuthContext,
         request: SpiiceServices,
-    ) -> Result<McpToolCtx, McpToolError> {
+    ) -> Result<ToolCtx, ToolError> {
         let mut services = self.services.clone();
         services
             .try_extend(request)
-            .map_err(|err| McpToolError::Other(format!("request services: {err}")))?;
-        let owner = auth.owner;
-        let authz = auth.authz.clone();
-        let trusted = authz.trusted_model_id();
-        author.model_id = resolve_operator_label(trusted, Some(&author.model_id))
-            .map_err(|conflict| McpToolError::InvalidInput(conflict.detail("model_id")))?;
-        author.trusted_model_id = trusted.map(ToString::to_string);
-        Ok(McpToolCtx {
-            owner,
-            authz,
-            registry: self.registry.clone(),
-            caller_self_perspective: author.caller_self_perspective,
+            .map_err(|err| ToolError::Other(format!("request services: {err}")))?;
+        caller.model_id =
+            resolve_operator_label(auth.authz.trusted_model_id(), Some(&caller.model_id))
+                .map_err(|conflict| ToolError::InvalidInput(conflict.detail("model_id")))?;
+        Ok(ToolCtx::new(
+            auth.owner,
+            auth.authz.clone(),
+            self.registry.clone(),
             services,
-            author,
-            engine: self.engine.clone(),
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        })
+            caller,
+        )
+        .with_engine(self.engine.clone()))
     }
 
     /// # Errors
     ///
     /// Returns `ToolNotFound`, the called tool error, a failure of one text
-    /// block as [`McpToolError::Failure`] with that text, or an internal
+    /// block as [`ToolError::Failure`] with that text, or an internal
     /// error when the final reply after request behaviors is anything else
     /// but a JSON object.
     pub async fn call_tool(
         &self,
         name: &str,
         args: serde_json::Value,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        self.call_tool_in_request(name, args, author, auth, SpiiceServices::default())
+        self.call_tool_in_request(name, args, caller, auth, SpiiceServices::default())
             .await
     }
 
@@ -257,12 +248,12 @@ impl McpToolHost {
         &self,
         name: &str,
         args: serde_json::Value,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
         request: SpiiceServices,
     ) -> Result<serde_json::Value, ToolInvocationError> {
         let reply = self
-            .call_tool_reply_in_request(name, args, author, auth, request)
+            .call_tool_reply_in_request(name, args, caller, auth, request)
             .await?;
         Ok(json_reply(name, reply)?)
     }
@@ -285,47 +276,47 @@ impl McpToolHost {
         &self,
         name: &str,
         args: serde_json::Value,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
         request: SpiiceServices,
     ) -> Result<ToolReply, ToolInvocationError> {
-        self.call_tool_reply_observed_in_request(name, args, author, auth, request)
-            .1
+        self.call_tool_reply_observed_in_request(name, args, caller, auth, request)
             .await
+            .1
     }
 
-    /// Start [`Self::call_tool_reply_in_request`] with a fresh observation of
-    /// the scope gate.
-    ///
-    /// Retain the returned [`JudgedKey`](proxiima_core::mcp::JudgedKey), await
-    /// the future, then read the cell after success or refusal. It is the exact
-    /// cell used by the gate and stays empty if the request fails before the
-    /// gate derives a key. Each invocation creates its own cell; callers cannot
-    /// supply one shared with another call.
+    /// [`Self::call_tool_reply_in_request`], answering also the key the scope
+    /// gate judged the call by ([`ToolCtx::judged`]), after success or
+    /// refusal. `None` when the call failed before its context existed or the
+    /// gate derived no key.
     ///
     /// # Errors
     ///
-    /// The future returns the same errors as [`Self::call_tool_reply_in_request`].
+    /// The result holds the same errors as [`Self::call_tool_reply_in_request`].
     pub fn call_tool_reply_observed_in_request<'a>(
         &'a self,
         name: &'a str,
         args: serde_json::Value,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
         request: SpiiceServices,
-    ) -> (
-        proxiima_core::mcp::JudgedKey,
-        impl Future<Output = Result<ToolReply, ToolInvocationError>> + Send + use<'a>,
-    ) {
-        let judged = proxiima_core::mcp::JudgedKey::default();
-        let observation = judged.clone();
-        let call = async move {
-            let auth = auth.ok_or_else(|| ToolInvocationError::NotAuthorized(name.to_string()))?;
-            let target = self.resolve_tool(&auth, name).await?;
-            self.call_resolved(target, args, author, auth, request, judged)
-                .await
-        };
-        (observation, Box::pin(call))
+    ) -> impl Future<Output = (Option<ScopeKey>, Result<ToolReply, ToolInvocationError>)> + Send + use<'a>
+    {
+        Box::pin(async move {
+            let Some(auth) = auth else {
+                return (
+                    None,
+                    Err(ToolInvocationError::NotAuthorized(name.to_string())),
+                );
+            };
+            match self.resolve_tool(&auth, name).await {
+                Ok(target) => {
+                    self.call_resolved(target, args, caller, auth, request)
+                        .await
+                }
+                Err(err) => (None, Err(err)),
+            }
+        })
     }
 
     /// The tool `name` calls for `auth`: the registry's, else the host
@@ -362,19 +353,20 @@ impl McpToolHost {
         }
     }
 
-    /// Run a [`Self::resolve_tool`] result through the request behaviors. A
-    /// host tool's call services are the request's, the call's
-    /// [`McpHostToolCall`] and the `services` of the entry it resolved to; a
-    /// type any of them already holds is an internal error.
+    /// Run a [`Self::resolve_tool`] result through the request behaviors,
+    /// answering also the key the scope gate judged it by (see
+    /// [`Self::call_tool_reply_observed_in_request`]). A host tool's call
+    /// services are the request's, the call's [`McpHostToolCall`] and the
+    /// `services` of the entry it resolved to; a type any of them already
+    /// holds is an internal error.
     pub(crate) async fn call_resolved(
         &self,
         target: ToolTarget<'_>,
         args: serde_json::Value,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: McpAuthContext,
         mut request: SpiiceServices,
-        judged: proxiima_core::mcp::JudgedKey,
-    ) -> Result<ToolReply, ToolInvocationError> {
+    ) -> (Option<ScopeKey>, Result<ToolReply, ToolInvocationError>) {
         let declares_output_schema = target.declares_output_schema();
         let (name, terminal): (String, TerminalDispatch<'_>) = match target {
             ToolTarget::Registry(descriptor) => {
@@ -396,15 +388,21 @@ impl McpToolHost {
                 let McpHostTool { name, services, .. } = *tool;
                 let Some(source) = &self.host_tools else {
                     // A host tool only exists in a source's list.
-                    return Err(ToolInvocationError::ToolNotFound(name));
+                    return (None, Err(ToolInvocationError::ToolNotFound(name)));
                 };
-                request
-                    .try_insert(marker)
-                    .map_err(|err| McpToolError::Other(format!("request services: {err}")))?;
+                if let Err(err) = request.try_insert(marker) {
+                    return (
+                        None,
+                        Err(ToolError::Other(format!("request services: {err}")).into()),
+                    );
+                }
                 // After the call marker, so an entry cannot replace it.
-                request
-                    .try_extend(services)
-                    .map_err(|err| McpToolError::Other(format!("host tool services: {err}")))?;
+                if let Err(err) = request.try_extend(services) {
+                    return (
+                        None,
+                        Err(ToolError::Other(format!("host tool services: {err}")).into()),
+                    );
+                }
                 let source = Arc::clone(source);
                 (
                     name,
@@ -414,15 +412,24 @@ impl McpToolHost {
                 )
             }
         };
-        let mut ctx = self.ctx_for_request(author, &auth, request)?;
-        ctx.judged = judged;
-        // Validate once for every transport before a behavior can log
-        // arguments or a tool can pass them to storage.
-        reject_nul_in_args(&args)?;
-        let reply = self
-            .dispatch_through_behaviors(name.clone(), args, ctx, terminal)
-            .await?;
-        Ok(checked_reply(&name, declares_output_schema, reply)?)
+        let ctx = match self.ctx_for_request(caller, &auth, request) {
+            Ok(ctx) => ctx,
+            Err(err) => return (None, Err(err.into())),
+        };
+        // Clones share the judged key, so this one reads what the gate
+        // recorded on the context the behaviors receive.
+        let observer = ctx.clone();
+        let reply = async {
+            // Validate once for every transport before a behavior can log
+            // arguments or a tool can pass them to storage.
+            reject_nul_in_args(&args)?;
+            let reply = self
+                .dispatch_through_behaviors(name.clone(), args, ctx, terminal)
+                .await?;
+            Ok(checked_reply(&name, declares_output_schema, reply)?)
+        }
+        .await;
+        (observer.judged(), reply)
     }
 
     /// # Errors
@@ -431,10 +438,10 @@ impl McpToolHost {
     pub async fn read_resource(
         &self,
         uri: &str,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
     ) -> Result<serde_json::Value, ToolInvocationError> {
-        self.read_resource_in_request(uri, author, auth, SpiiceServices::default())
+        self.read_resource_in_request(uri, caller, auth, SpiiceServices::default())
             .await
     }
 
@@ -449,14 +456,14 @@ impl McpToolHost {
     pub async fn read_resource_in_request(
         &self,
         uri: &str,
-        author: McpAuthorContext,
+        caller: ToolCaller,
         auth: Option<McpAuthContext>,
         request: SpiiceServices,
     ) -> Result<serde_json::Value, ToolInvocationError> {
         let parsed = parse_resource_uri(uri).map_err(|err| err.into_invocation_error(uri))?;
         let auth =
             auth.ok_or_else(|| ToolInvocationError::NotAuthorized(parsed.scope_key().to_string()))?;
-        let ctx = self.ctx_for_request(author, &auth, request)?;
+        let ctx = self.ctx_for_request(caller, &auth, request)?;
         let scope_key = parsed.scope_key();
 
         let terminal: TerminalDispatch<'_> = Box::new(move |call| {
@@ -488,7 +495,7 @@ impl McpToolHost {
         &'a self,
         name: String,
         args: serde_json::Value,
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         terminal: TerminalDispatch<'a>,
     ) -> Result<ToolReply, ToolInvocationError> {
         Next::new(self.registry.request_behaviors(), terminal)
@@ -514,15 +521,13 @@ impl ToolTarget<'_> {
     }
 }
 
-/// A tool's own failure ([`McpToolError::Failure`]) is a result the caller
+/// A tool's own failure ([`ToolError::Failure`]) is a result the caller
 /// reads, `isError: true` with the tool's text unchanged; every other error
 /// stays a protocol error. Applied at the terminal, so the behaviors see the
 /// failure as the reply it is.
-fn tool_failure_as_reply(
-    result: Result<ToolReply, McpToolError>,
-) -> Result<ToolReply, McpToolError> {
+fn tool_failure_as_reply(result: Result<ToolReply, ToolError>) -> Result<ToolReply, ToolError> {
     match result {
-        Err(McpToolError::Failure(text)) => Ok(ToolReply::Failure(vec![ToolContent::Text(text)])),
+        Err(ToolError::Failure(text)) => Ok(ToolReply::Failure(vec![ToolContent::Text(text)])),
         other => other,
     }
 }
@@ -536,23 +541,21 @@ fn checked_reply(
     tool: &str,
     declares_output_schema: bool,
     reply: ToolReply,
-) -> Result<ToolReply, McpToolError> {
+) -> Result<ToolReply, ToolError> {
     match &reply {
         ToolReply::Structured(output) if !output.is_object() => {
             tracing::error!(tool = %tool, "tool output after request behaviors must be a JSON object");
-            Err(McpToolError::Other(
-                "tool output must be a JSON object".into(),
-            ))
+            Err(ToolError::Other("tool output must be a JSON object".into()))
         }
         ToolReply::Content(_) if declares_output_schema => {
             tracing::error!(tool = %tool, "a tool that declares an output schema must answer structured content");
-            Err(McpToolError::Other(
+            Err(ToolError::Other(
                 "tool output must be structured content".into(),
             ))
         }
         ToolReply::StructuredFailure { .. } if declares_output_schema => {
             tracing::error!(tool = %tool, "a tool that declares an output schema must not answer a structured failure");
-            Err(McpToolError::Other(
+            Err(ToolError::Other(
                 "a structured failure needs a tool without an output schema".into(),
             ))
         }
@@ -567,15 +570,15 @@ fn checked_reply(
 /// read, the REST surface, `CoreMcpTools`). A failure of one text block, the
 /// shape [`tool_failure_as_reply`] builds, is that tool failure again, its
 /// text unchanged.
-fn json_reply(name: &str, reply: ToolReply) -> Result<serde_json::Value, McpToolError> {
+fn json_reply(name: &str, reply: ToolReply) -> Result<serde_json::Value, ToolError> {
     let not_json = || {
         tracing::error!(tool = %name, "this surface carries JSON; the tool answered content");
-        McpToolError::Other("tool reply must be a JSON object".into())
+        ToolError::Other("tool reply must be a JSON object".into())
     };
     match reply.into_structured() {
         Ok(value) => Ok(value),
         Err(ToolReply::Failure(content)) => match <[ToolContent; 1]>::try_from(content) {
-            Ok([ToolContent::Text(text)]) => Err(McpToolError::Failure(text)),
+            Ok([ToolContent::Text(text)]) => Err(ToolError::Failure(text)),
             _ => Err(not_json()),
         },
         Err(_) => Err(not_json()),
@@ -614,8 +617,8 @@ fn host_tool_name_refusal(
 ///
 /// # Errors
 ///
-/// [`McpToolError::InvalidInput`] naming whether a value or a key held NUL.
-pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), McpToolError> {
+/// [`ToolError::InvalidInput`] naming whether a value or a key held NUL.
+pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), ToolError> {
     // An explicit worklist keeps the validator stack-safe independently of
     // serde_json's parser depth limit, including direct host callers.
     let mut stack = vec![args];
@@ -623,7 +626,7 @@ pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), McpToolError> 
         match value {
             serde_json::Value::String(text) => {
                 if text.contains('\0') {
-                    return Err(McpToolError::InvalidInput(
+                    return Err(ToolError::InvalidInput(
                         "arguments must not contain NUL (U+0000)".to_string(),
                     ));
                 }
@@ -632,7 +635,7 @@ pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), McpToolError> 
             serde_json::Value::Object(map) => {
                 for (key, item) in map {
                     if key.contains('\0') {
-                        return Err(McpToolError::InvalidInput(
+                        return Err(ToolError::InvalidInput(
                             "argument names must not contain NUL (U+0000)".to_string(),
                         ));
                     }
@@ -648,8 +651,8 @@ pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), McpToolError> 
 
 async fn dispatch_resource(
     parsed: ParsedResource,
-    ctx: McpToolCtx,
-) -> Result<serde_json::Value, McpToolError> {
+    ctx: ToolCtx,
+) -> Result<serde_json::Value, ToolError> {
     match parsed {
         ParsedResource::Schemas(args) => resource_output_value(list_schemas(ctx, args).await?),
         ParsedResource::Schema {
@@ -678,13 +681,13 @@ pub enum ToolInvocationError {
     #[error("tool not found: {0}")]
     ToolNotFound(String),
     #[error("tool error: {0}")]
-    Tool(McpToolError),
+    Tool(ToolError),
 }
 
-impl From<McpToolError> for ToolInvocationError {
-    fn from(err: McpToolError) -> Self {
+impl From<ToolError> for ToolInvocationError {
+    fn from(err: ToolError) -> Self {
         match err {
-            McpToolError::NotAuthorized(tool) => Self::NotAuthorized(tool),
+            ToolError::NotAuthorized(tool) => Self::NotAuthorized(tool),
             err => Self::Tool(err),
         }
     }
@@ -692,10 +695,10 @@ impl From<McpToolError> for ToolInvocationError {
 
 impl ToolInvocationError {
     #[must_use]
-    pub fn kind(&self) -> McpToolErrorKind {
+    pub fn kind(&self) -> ToolErrorKind {
         match self {
-            Self::NotAuthorized(_) => McpToolErrorKind::InvalidRequest,
-            Self::ToolNotFound(_) => McpToolErrorKind::InvalidInput,
+            Self::NotAuthorized(_) => ToolErrorKind::InvalidRequest,
+            Self::ToolNotFound(_) => ToolErrorKind::InvalidInput,
             Self::Tool(inner) => inner.kind(),
         }
     }
@@ -743,8 +746,7 @@ impl serde::de::Error for ResourceUriError {
 
 impl ResourceUriError {
     fn into_invocation_error(self, uri: &str) -> ToolInvocationError {
-        let invalid =
-            |message: String| ToolInvocationError::Tool(McpToolError::InvalidInput(message));
+        let invalid = |message: String| ToolInvocationError::Tool(ToolError::InvalidInput(message));
         match self {
             Self::UnknownPath => ToolInvocationError::ToolNotFound(uri.to_string()),
             Self::MalformedQueryPair { pair } => invalid(format!(
@@ -1076,12 +1078,12 @@ impl<'de> serde::de::Deserializer<'de> for QueryValue<'_> {
     }
 }
 
-fn resource_output_value<T>(output: T) -> Result<serde_json::Value, McpToolError>
+fn resource_output_value<T>(output: T) -> Result<serde_json::Value, ToolError>
 where
     T: Serialize,
 {
     serde_json::to_value(output)
-        .map_err(|err| McpToolError::Other(format!("serialize resource output: {err}")))
+        .map_err(|err| ToolError::Other(format!("serialize resource output: {err}")))
 }
 
 #[cfg(test)]

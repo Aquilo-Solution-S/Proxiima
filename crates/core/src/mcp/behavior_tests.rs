@@ -2,10 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::protocol::tool as protocol_tool;
-use crate::{
-    AuthPath, AuthzContext, McpAuthorContext, OwnerId, SpiiceRegistry, SpiiceServices, ToolScope,
-    UserId,
-};
+use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, ToolScope, UserId};
 
 fn palette(ids: &[&str]) -> ToolScope {
     ToolScope::Palette(
@@ -23,7 +20,7 @@ struct RecordingBehavior {
 
 #[async_trait]
 impl RequestBehavior for RecordingBehavior {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
         self.calls.lock().expect("recording lock").push(self.label);
         next.run(call).await
     }
@@ -94,9 +91,9 @@ async fn scope_gate_denies_out_of_palette_before_terminal() {
         .expect_err("scope denial");
 
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
+        matches!(err, ToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
     );
-    assert_eq!(err.kind(), super::super::McpToolErrorKind::InvalidRequest);
+    assert_eq!(err.kind(), super::super::ToolErrorKind::InvalidRequest);
 }
 
 #[tokio::test]
@@ -109,7 +106,7 @@ async fn scope_gate_requires_exact_palette_match_for_flat_tools() {
     .expect_err("flat tool requires exact palette entry");
 
     assert!(
-        matches!(action_only, McpToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
+        matches!(action_only, ToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
     );
 
     ScopeGateBehavior::enforce_scope(
@@ -149,7 +146,7 @@ fn a_request_name_that_is_no_key_is_refused_by_a_palette_and_passes_all() {
         let err = ScopeGateBehavior::enforce_scope(name, &args, &palette_ctx)
             .expect_err("a palette holds no key for this name");
         assert!(
-            matches!(err, McpToolError::NotAuthorized(ref denied) if denied == name),
+            matches!(err, ToolError::NotAuthorized(ref denied) if denied == name),
             "{name:?}: {err:?}"
         );
         ScopeGateBehavior::enforce_scope(name, &args, &all_ctx)
@@ -157,9 +154,9 @@ fn a_request_name_that_is_no_key_is_refused_by_a_palette_and_passes_all() {
     }
 }
 
-fn judged(name: &str, args: &serde_json::Value, ctx: &McpToolCtx) -> Option<String> {
+fn judged(name: &str, args: &serde_json::Value, ctx: &ToolCtx) -> Option<String> {
     let _ = ScopeGateBehavior::enforce_scope(name, args, ctx);
-    ctx.judged.get().map(|key| key.to_string())
+    ctx.judged().map(|key| key.to_string())
 }
 
 /// The gate is the one place the key is derived, and a host reads it
@@ -195,22 +192,22 @@ fn a_call_refused_for_its_key_carries_the_key() {
     let set = serde_json::json!({ "action": "set" });
     assert!(matches!(
         ScopeGateBehavior::enforce_scope(protocol_tool::CORE_GOAL, &set, &ctx),
-        Err(McpToolError::NotAuthorized(_))
+        Err(ToolError::NotAuthorized(_))
     ));
     // The palette holds no leaf of the dispatcher, so it is not even
     // advertised: refused as a whole, on its bare name.
     assert_eq!(
-        ctx.judged.get().map(|key| key.to_string()),
+        ctx.judged().map(|key| key.to_string()),
         Some("core_goal".into())
     );
 
     let ctx = test_ctx(palette(&["core_goal:transition"]));
     assert!(matches!(
         ScopeGateBehavior::enforce_scope(protocol_tool::CORE_GOAL, &set, &ctx),
-        Err(McpToolError::NotAuthorized(ref key)) if key == "core_goal:set"
+        Err(ToolError::NotAuthorized(ref key)) if key == "core_goal:set"
     ));
     assert_eq!(
-        ctx.judged.get().map(|key| key.to_string()),
+        ctx.judged().map(|key| key.to_string()),
         Some("core_goal:set".into())
     );
 
@@ -224,7 +221,7 @@ fn a_call_refused_for_its_key_carries_the_key() {
         .is_err()
     );
     assert_eq!(
-        ctx.judged.get().map(|key| key.to_string()),
+        ctx.judged().map(|key| key.to_string()),
         Some(protocol_tool::CORE_REMEMBER.into())
     );
 }
@@ -264,13 +261,13 @@ struct KeyReader {
 
 #[async_trait]
 impl RequestBehavior for KeyReader {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, McpToolError> {
+    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
         let ctx = call.ctx.clone();
         let reply = next.run(call).await;
         self.seen
             .lock()
             .expect("reader lock")
-            .push(ctx.judged.get().map(|key| key.to_string()));
+            .push(ctx.judged().map(|key| key.to_string()));
         reply
     }
 }
@@ -314,7 +311,7 @@ fn a_bare_dispatcher_entry_does_not_admit_a_call_of_its_action() {
     )
     .expect_err("the bare name is not the leaf");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref denied) if denied == protocol_tool::CORE_GOAL),
+        matches!(err, ToolError::NotAuthorized(ref denied) if denied == protocol_tool::CORE_GOAL),
         "got {err:?}"
     );
 }
@@ -333,7 +330,7 @@ fn an_undisclosed_dispatcher_refuses_before_action_diagnostics() {
                 &test_ctx(palette(&keys)),
             );
             assert!(
-                matches!(result, Err(McpToolError::NotAuthorized(_))),
+                matches!(result, Err(ToolError::NotAuthorized(_))),
                 "{keys:?} {args}: {result:?}"
             );
         }
@@ -343,7 +340,7 @@ fn an_undisclosed_dispatcher_refuses_before_action_diagnostics() {
             &test_ctx(palette(&["core_goal:set"])),
         );
         assert!(
-            matches!(result, Err(McpToolError::InvalidInput(_))),
+            matches!(result, Err(ToolError::InvalidInput(_))),
             "admitted caller keeps useful diagnostics: {result:?}"
         );
     }
@@ -353,9 +350,11 @@ fn an_undisclosed_dispatcher_refuses_before_action_diagnostics() {
 #[test]
 fn an_empty_served_palette_admits_reads_and_refuses_writes() {
     let mut ctx = test_ctx(ToolScope::All);
-    ctx.authz = ctx
-        .authz
+    let authz = ctx
+        .authz()
+        .clone()
         .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
+    ctx = ctx.with_authz(authz);
     ScopeGateBehavior::enforce_scope(
         protocol_tool::CORE_SEARCH_MEMORIES,
         &serde_json::json!({ "query": "x" }),
@@ -375,7 +374,7 @@ fn an_empty_served_palette_admits_reads_and_refuses_writes() {
         &ctx,
     )
     .expect_err("a write outside the palette is refused");
-    assert!(matches!(err, McpToolError::NotAuthorized(ref t) if t == protocol_tool::CORE_REMEMBER));
+    assert!(matches!(err, ToolError::NotAuthorized(ref t) if t == protocol_tool::CORE_REMEMBER));
 }
 
 /// #462: a dispatcher is judged per action, never by its tool-level
@@ -383,9 +382,11 @@ fn an_empty_served_palette_admits_reads_and_refuses_writes() {
 #[test]
 fn a_mixed_dispatcher_admits_only_its_read_action_outside_the_palette() {
     let mut ctx = test_ctx(ToolScope::All);
-    ctx.authz = ctx
-        .authz
+    let authz = ctx
+        .authz()
+        .clone()
         .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
+    ctx = ctx.with_authz(authz);
     ScopeGateBehavior::enforce_scope(
         protocol_tool::CORE_MEMBERSHIP,
         &serde_json::json!({ "action": "list_members" }),
@@ -398,7 +399,7 @@ fn a_mixed_dispatcher_admits_only_its_read_action_outside_the_palette() {
         &ctx,
     )
     .expect_err("the additive action is refused");
-    assert!(matches!(err, McpToolError::NotAuthorized(_)), "got {err:?}");
+    assert!(matches!(err, ToolError::NotAuthorized(_)), "got {err:?}");
 }
 
 /// An owner-audience read still needs its exact caller key.
@@ -411,7 +412,7 @@ fn an_owner_audience_read_needs_the_palette() {
         &test_ctx(ToolScope::Palette(Vec::new())),
     )
     .expect_err("an owner-audience read omitted by the caller is refused");
-    assert!(matches!(err, McpToolError::NotAuthorized(_)), "got {err:?}");
+    assert!(matches!(err, ToolError::NotAuthorized(_)), "got {err:?}");
     ScopeGateBehavior::enforce_scope(
         protocol_tool::CORE_MEMBERSHIP,
         &args,
@@ -423,9 +424,11 @@ fn an_owner_audience_read_needs_the_palette() {
 #[test]
 fn an_exact_caller_omits_reads_resources_and_the_guide() {
     let mut ctx = test_ctx(palette(&[protocol_tool::CORE_REMEMBER]));
-    ctx.authz = ctx
-        .authz
+    let authz = ctx
+        .authz()
+        .clone()
         .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
+    ctx = ctx.with_authz(authz);
     for (tool, args) in [
         (
             protocol_tool::CORE_SEARCH_MEMORIES,
@@ -437,7 +440,7 @@ fn an_exact_caller_omits_reads_resources_and_the_guide() {
         assert!(
             matches!(
                 ScopeGateBehavior::enforce_scope(tool, &args, &ctx),
-                Err(McpToolError::NotAuthorized(_))
+                Err(ToolError::NotAuthorized(_))
             ),
             "{tool}"
         );
@@ -447,9 +450,11 @@ fn an_exact_caller_omits_reads_resources_and_the_guide() {
 #[test]
 fn deployment_serves_an_owner_read_when_the_caller_holds_it() {
     let mut ctx = test_ctx(palette(&["core_membership:list_members"]));
-    ctx.authz = ctx
-        .authz
+    let authz = ctx
+        .authz()
+        .clone()
         .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
+    ctx = ctx.with_authz(authz);
     ScopeGateBehavior::enforce_scope(
         protocol_tool::CORE_MEMBERSHIP,
         &serde_json::json!({"action":"list_members"}),
@@ -468,7 +473,7 @@ fn an_undeclared_name_outside_the_palette_is_refused() {
         &test_ctx(ToolScope::Palette(Vec::new())),
     )
     .expect_err("silence is a write");
-    assert!(matches!(err, McpToolError::NotAuthorized(ref t) if t == "undeclared_tool"));
+    assert!(matches!(err, ToolError::NotAuthorized(ref t) if t == "undeclared_tool"));
 }
 
 #[test]
@@ -506,7 +511,7 @@ fn owner_role_gate_allows_read_tools_and_rejects_write_tools_for_viewer() {
     )
     .expect_err("viewer cannot call write tool");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
+        matches!(err, ToolError::NotAuthorized(ref tool) if tool == protocol_tool::CORE_REMEMBER)
     );
 }
 
@@ -523,7 +528,7 @@ fn core_goal_declares_set_modify_and_transition_goal_work() {
     );
     let ctx = test_ctx_with_authz(group, authz);
     let goal = ctx
-        .registry
+        .registry()
         .list_mcp_tools()
         .iter()
         .find(|tool| tool.name == protocol_tool::CORE_GOAL)
@@ -568,7 +573,7 @@ fn a_host_goal_work_declaration_classifies_writes_only() {
     );
 }
 
-fn test_ctx(tool_scope: ToolScope) -> McpToolCtx {
+fn test_ctx(tool_scope: ToolScope) -> ToolCtx {
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let authz =
         AuthzContext::single_owner(&owner, AuthPath::HostBearer).with_tool_scope(tool_scope);
@@ -576,7 +581,7 @@ fn test_ctx(tool_scope: ToolScope) -> McpToolCtx {
 }
 
 /// A viewer on a group owner: may read, may not write.
-fn read_only_ctx() -> McpToolCtx {
+fn read_only_ctx() -> ToolCtx {
     let subject = UserId::new(uuid::Uuid::now_v7());
     let owner = OwnerId::from(crate::GroupId::new(uuid::Uuid::now_v7()));
     let authz = AuthzContext::for_subject_with_role(
@@ -654,7 +659,7 @@ async fn an_expired_context_runs_no_tool() {
     };
     let live = || context(std::time::SystemTime::now() + std::time::Duration::from_mins(5));
     let expired = || context(std::time::SystemTime::UNIX_EPOCH);
-    let run = |name: &str, ctx: McpToolCtx| {
+    let run = |name: &str, ctx: ToolCtx| {
         let name = name.to_string();
         async move {
             let behaviors: Vec<Arc<dyn RequestBehavior>> = vec![Arc::new(ScopeGateBehavior)];
@@ -671,7 +676,10 @@ async fn an_expired_context_runs_no_tool() {
         }
     };
     for access in [OwnerAccess::Read, OwnerAccess::Write, OwnerAccess::GoalWork] {
-        assert!(!expired().authz.may_run_tool(&owner, access), "{access:?}");
+        assert!(
+            !expired().authz().may_run_tool(&owner, access),
+            "{access:?}"
+        );
     }
 
     let read = crate::protocol::resource::SCHEMAS;
@@ -688,29 +696,18 @@ async fn an_expired_context_runs_no_tool() {
     // that far: owner-space resolution, which asks the same context,
     // finds the owner inaccessible first.
     assert!(
-        matches!(run(read, expired()).await, Err(McpToolError::NotAuthorized(ref t)) if t == read)
+        matches!(run(read, expired()).await, Err(ToolError::NotAuthorized(ref t)) if t == read)
     );
     assert!(
-        matches!(run(write, expired()).await, Err(McpToolError::InvalidInput(ref m))
+        matches!(run(write, expired()).await, Err(ToolError::InvalidInput(ref m))
             if m == "current memory space is not accessible")
     );
 }
 
-fn test_ctx_with_authz(owner: OwnerId, authz: AuthzContext) -> McpToolCtx {
-    McpToolCtx {
+fn test_ctx_with_authz(owner: OwnerId, authz: AuthzContext) -> ToolCtx {
+    crate::test_fixtures::tool_ctx(
         owner,
         authz,
-        registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-        author: McpAuthorContext {
-            model_id: "test".into(),
-            trusted_model_id: None,
-            client_name: "test".into(),
-            client_version: "0".into(),
-            caller_self_perspective: None,
-        },
-        caller_self_perspective: None,
-        services: SpiiceServices::default(),
-        engine: None,
-        judged: proxiima_core::mcp::JudgedKey::default(),
-    }
+        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    )
 }

@@ -3,9 +3,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::verbs::schema::{PayloadKind, SchemaInfo, SpiiceRegistryFrozen};
 use crate::{SchemaId, SchemaVersion};
+use crate::{ToolCtx, ToolError};
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListSchemasArgs {
@@ -65,15 +65,15 @@ pub struct ResourceAnswerItem {
 ///
 /// Returns invalid kind filters.
 pub async fn list_schemas(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: ListSchemasArgs,
-) -> Result<ListSchemasOutput, McpToolError> {
+) -> Result<ListSchemasOutput, ToolError> {
     let schemas = ctx
-        .registry
+        .registry()
         .list()
         .into_iter()
         .filter(|info| args.kind.is_none_or(|k| info.kind == k))
-        .map(|info| schema_item(&ctx.registry, &info))
+        .map(|info| schema_item(ctx.registry(), &info))
         .collect();
     let resources = crate::all_core_resources()
         .map(|resource| ResourceAnswerItem {
@@ -110,27 +110,26 @@ pub struct GetSchemaOutput {
 ///
 /// # Errors
 ///
-/// Returns [`McpToolError::NotFound`] when the schema is not registered at
+/// Returns [`ToolError::NotFound`] when the schema is not registered at
 /// that version or carries no JSON Schema.
 #[allow(clippy::unused_async)]
 pub async fn get_schema(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     schema_id: &str,
     schema_version: u32,
-) -> Result<GetSchemaOutput, McpToolError> {
+) -> Result<GetSchemaOutput, ToolError> {
     let id = SchemaId::new(schema_id.to_string());
     let version = SchemaVersion::new(schema_version);
-    let missing =
-        || McpToolError::NotFound(format!("schema {schema_id}/{schema_version} not found"));
-    let info = ctx.registry.lookup(&id, version).ok_or_else(missing)?;
+    let missing = || ToolError::NotFound(format!("schema {schema_id}/{schema_version} not found"));
+    let info = ctx.registry().lookup(&id, version).ok_or_else(missing)?;
     let json_schema = ctx
-        .registry
+        .registry()
         .payload_json_schema(&id, version, info.kind)
         .ok_or_else(missing)?
         .clone();
-    let metadata = ctx
-        .registry
-        .evolution_metadata(&info.schema_id, info.schema_version, info.kind);
+    let metadata =
+        ctx.registry()
+            .evolution_metadata(&info.schema_id, info.schema_version, info.kind);
     Ok(GetSchemaOutput {
         schema_id: info.schema_id.as_str().to_string(),
         schema_version: info.schema_version.into_inner(),
@@ -147,28 +146,17 @@ mod tests {
     use std::sync::Arc;
 
     use super::get_schema;
-    use crate::mcp::{McpAuthorContext, McpToolCtx, McpToolError};
+    use crate::{ToolCtx, ToolError};
 
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceServices, UserId};
+    use crate::{AuthPath, AuthzContext, OwnerId, UserId};
 
-    fn ctx_with_probes() -> McpToolCtx {
+    fn ctx_with_probes() -> ToolCtx {
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-            registry: Arc::new(crate::test_fixtures::probe_registry()),
-            author: McpAuthorContext {
-                model_id: "t".into(),
-                trusted_model_id: None,
-                client_name: "t".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+            Arc::new(crate::test_fixtures::probe_registry()),
+        )
     }
 
     #[tokio::test]
@@ -176,7 +164,7 @@ mod tests {
         let err = get_schema(ctx_with_probes(), "probe/listenable-v1", 7)
             .await
             .expect_err("version 7 is not registered");
-        assert!(matches!(err, McpToolError::NotFound(_)), "{err}");
+        assert!(matches!(err, ToolError::NotFound(_)), "{err}");
     }
 
     /// #676: the catalog lists every resource's answer schema, derived from

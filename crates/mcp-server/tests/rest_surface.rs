@@ -18,7 +18,7 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use proxiima_core::SpiiceServices;
-use proxiima_core::mcp::McpAuthorContext;
+use proxiima_core::ToolCaller;
 use proxiima_core::mcp::{Replay, ToolEffect};
 use proxiima_core::protocol::{
     action as protocol_action, resource as protocol_resource, tool as protocol_tool,
@@ -70,12 +70,10 @@ impl proxiima_core::Tool for CallerContextTool {
     ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, proxiima_core::ToolError>>
     {
         Box::pin(async move {
-            let caller = ctx
-                .caller()
-                .ok_or_else(|| proxiima_core::ToolError::Other("caller metadata missing".into()))?;
+            let caller = ctx.caller();
             Ok(CallerContextOutput {
                 model_id: caller.model_id.clone(),
-                trusted_model_id: caller.trusted_model_id.clone(),
+                trusted_model_id: ctx.authz().trusted_model_id().map(ToString::to_string),
                 client_name: caller.client_name.clone(),
                 client_version: caller.client_version.clone(),
                 caller_self_perspective: ctx
@@ -115,7 +113,7 @@ struct StubDispatchTool;
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 struct StubDispatchOutput {}
 
-impl proxiima_core::mcp::McpTool for StubDispatchTool {
+impl proxiima_core::Tool for StubDispatchTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_DISPATCH;
     const DESCRIPTION: &'static str = "A spiice dispatcher.";
@@ -143,12 +141,10 @@ impl proxiima_core::mcp::McpTool for StubDispatchTool {
     type Output = StubDispatchOutput;
 
     fn call(
-        _ctx: proxiima_core::mcp::McpToolCtx,
+        _ctx: proxiima_core::ToolCtx,
         _args: Self::Args,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Self::Output, proxiima_core::mcp::McpToolError>,
-    > {
+    ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, proxiima_core::ToolError>>
+    {
         Box::pin(async { Ok(StubDispatchOutput {}) })
     }
 }
@@ -171,7 +167,7 @@ struct StubArgvOutput {
     argv: Vec<String>,
 }
 
-impl proxiima_core::mcp::McpTool for StubArgvTool {
+impl proxiima_core::Tool for StubArgvTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_ARGV;
     const DESCRIPTION: &'static str = "An argv-keyed spiice dispatcher.";
@@ -197,12 +193,10 @@ impl proxiima_core::mcp::McpTool for StubArgvTool {
     type Output = StubArgvOutput;
 
     fn call(
-        _ctx: proxiima_core::mcp::McpToolCtx,
+        _ctx: proxiima_core::ToolCtx,
         args: Self::Args,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<Self::Output, proxiima_core::mcp::McpToolError>,
-    > {
+    ) -> futures_util::future::BoxFuture<'static, Result<Self::Output, proxiima_core::ToolError>>
+    {
         Box::pin(async move { Ok(StubArgvOutput { argv: args.argv }) })
     }
 }
@@ -210,7 +204,7 @@ impl proxiima_core::mcp::McpTool for StubArgvTool {
 /// The same registry-only host, with one spiice dispatcher added.
 fn spiice_host() -> McpToolHost {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
     McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
         SpiiceServices::default(),
@@ -219,7 +213,7 @@ fn spiice_host() -> McpToolHost {
 
 fn argv_host() -> McpToolHost {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubArgvTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubArgvTool>("proxiima-stub");
     McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
         SpiiceServices::default(),
@@ -244,7 +238,7 @@ impl proxiima_core::RequestBehavior for ReplaceOutputBehavior {
         &self,
         call: proxiima_core::mcp::ToolCall,
         next: proxiima_core::mcp::Next<'_>,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         let output = next.run(call).await?;
         assert!(
             matches!(&output, proxiima_core::ToolReply::Structured(value) if value.is_object()),
@@ -294,14 +288,8 @@ fn viewer_auth(scope: ToolScope) -> McpAuthContext {
     }
 }
 
-fn author() -> McpAuthorContext {
-    McpAuthorContext {
-        model_id: "test-model".into(),
-        trusted_model_id: None,
-        client_name: "test".into(),
-        client_version: "0".into(),
-        caller_self_perspective: None,
-    }
+fn author() -> ToolCaller {
+    ToolCaller::new("test-model", "test", "0")
 }
 
 fn app(host: McpToolHost) -> Router {
@@ -432,7 +420,7 @@ impl proxiima_core::RequestBehavior for HidesWrites {
         &self,
         call: proxiima_core::mcp::ToolCall,
         next: proxiima_core::mcp::Next<'_>,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.handled
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         next.run(call).await
@@ -440,7 +428,7 @@ impl proxiima_core::RequestBehavior for HidesWrites {
 
     fn visible(
         &self,
-        _ctx: &proxiima_core::mcp::McpToolCtx,
+        _ctx: &proxiima_core::ToolCtx,
         tool: &proxiima_core::ToolDescriptorView<'_>,
     ) -> bool {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -458,14 +446,14 @@ impl proxiima_core::RequestBehavior for OpinionlessBehavior {
         &self,
         call: proxiima_core::mcp::ToolCall,
         next: proxiima_core::mcp::Next<'_>,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         next.run(call).await
     }
 }
 
 fn host_with(behavior: impl proxiima_core::RequestBehavior + 'static) -> McpToolHost {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
+    registry.add_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
     registry.add_request_behavior(behavior);
     McpToolHost::from_parts(
         Arc::new(registry.freeze_or_panic_for_tests()),
@@ -1907,7 +1895,7 @@ async fn resource_reads_match_the_mcp_error_class() {
                 format!("tool {name} not found")
             }
             proxiima_mcp_server::ToolInvocationError::NotAuthorized(name) => {
-                proxiima_core::McpToolError::NotAuthorized(name).client_message()
+                proxiima_core::ToolError::NotAuthorized(name).client_message()
             }
         };
         assert_eq!(detail, expected_detail, "{rest_uri}");

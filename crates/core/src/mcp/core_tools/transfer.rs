@@ -4,10 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::access::EntityId;
-use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use crate::mcp::{CoreActionMeta, McpActionArgSpec, McpToolAudience, OwnerNeed};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
+use crate::{Tool, ToolCtx, ToolError};
 
 pub const CORE_TRANSFER_ACTIONS: &[CoreActionMeta] = &[CoreActionMeta {
     tool: CoreTransferTool::NAME,
@@ -40,7 +39,7 @@ pub struct TransferOutput {
     pub ok: bool,
 }
 
-impl McpTool for CoreTransferTool {
+impl Tool for CoreTransferTool {
     const NAME: &'static str = protocol_tool::CORE_TRANSFER;
     const TITLE: &'static str = "Transfer ownership";
     const DESCRIPTION: &'static str =
@@ -58,9 +57,9 @@ impl McpTool for CoreTransferTool {
     type Output = TransferOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: CoreTransferArgs,
-    ) -> BoxFuture<'static, Result<TransferOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<TransferOutput, ToolError>> {
         Box::pin(async move {
             let engine = ctx.require_engine()?;
             match args {
@@ -68,7 +67,7 @@ impl McpTool for CoreTransferTool {
                     let entity = resolve_transferable_entity(&ctx, &args.entity).await?;
                     let to_owner = parse_to_owner(&args.to_owner)?;
                     engine
-                        .transfer_to_owner(&ctx.authz, entity, to_owner)
+                        .transfer_to_owner(ctx.authz(), entity, to_owner)
                         .await?;
                     Ok(TransferOutput { ok: true })
                 }
@@ -78,23 +77,20 @@ impl McpTool for CoreTransferTool {
 }
 
 /// The destination owner from the wire: the bare id, and nothing else.
-fn parse_to_owner(raw: &str) -> Result<crate::OwnerId, McpToolError> {
+fn parse_to_owner(raw: &str) -> Result<crate::OwnerId, ToolError> {
     raw.parse::<crate::OwnerId>()
-        .map_err(|err| McpToolError::InvalidInput(format!("to_owner: {err}")))
+        .map_err(|err| ToolError::InvalidInput(format!("to_owner: {err}")))
 }
 
 /// Resolve a wire reference to a memory or goal entity. Goal references
 /// still resolve here so `Engine::transfer_to_owner` can refuse them with
 /// the typed "goals do not transfer" error instead of a parse error.
-async fn resolve_transferable_entity(
-    ctx: &McpToolCtx,
-    raw: &str,
-) -> Result<EntityId, McpToolError> {
+async fn resolve_transferable_entity(ctx: &ToolCtx, raw: &str) -> Result<EntityId, ToolError> {
     let memory_id = ctx.resolve_memory(raw)?;
     let engine = ctx.require_engine()?;
     let memories = engine
         .get_memories(
-            &ctx.authz,
+            ctx.authz(),
             &crate::GetMemoriesReadRequest {
                 memory_ids: vec![memory_id],
             },
@@ -109,11 +105,11 @@ async fn resolve_transferable_entity(
     request.goal_ids = vec![goal_id];
     request.limit = 1;
     request.include_payloads = false;
-    let mut goals = engine.query(&ctx.authz, &request).await?;
+    let mut goals = engine.query(ctx.authz(), &request).await?;
     if goals.goals.is_empty() {
         request.goal_ids.clear();
         request.goal_handles = vec![goal_id.into_inner()];
-        goals = engine.query(&ctx.authz, &request).await?;
+        goals = engine.query(ctx.authz(), &request).await?;
     }
     if goals.goals.is_empty() {
         Ok(EntityId::Memory(memory_id))
@@ -124,7 +120,8 @@ async fn resolve_transferable_entity(
 
 #[cfg(test)]
 mod tests {
-    use crate::mcp::{McpTool, McpToolError, validate_action_args};
+    use crate::mcp::validate_action_args;
+    use crate::{Tool, ToolError};
 
     use super::{CoreTransferTool, parse_to_owner};
 
@@ -133,7 +130,7 @@ mod tests {
         let id = uuid::Uuid::now_v7();
         for raw in [format!("group:{id}"), format!("personal:{id}")] {
             assert!(
-                matches!(parse_to_owner(&raw), Err(McpToolError::InvalidInput(_))),
+                matches!(parse_to_owner(&raw), Err(ToolError::InvalidInput(_))),
                 "{raw}"
             );
         }
@@ -152,7 +149,7 @@ mod tests {
         )
         .expect_err("entity and to_owner are required");
 
-        assert!(matches!(err, McpToolError::InvalidInput(_)));
+        assert!(matches!(err, ToolError::InvalidInput(_)));
 
         let err = validate_action_args(
             CoreTransferTool::NAME,
@@ -164,7 +161,7 @@ mod tests {
         )
         .expect_err("to_owner is required");
 
-        assert!(matches!(err, McpToolError::InvalidInput(_)));
+        assert!(matches!(err, ToolError::InvalidInput(_)));
     }
 
     #[test]
@@ -181,6 +178,6 @@ mod tests {
         )
         .expect_err("extra fields are rejected");
 
-        assert!(matches!(err, McpToolError::InvalidInput(_)));
+        assert!(matches!(err, ToolError::InvalidInput(_)));
     }
 }

@@ -11,7 +11,7 @@
 //!   `BuiltProxiima::core_mcp_tools_with_request_services`.
 
 use http::{HeaderMap, HeaderName};
-use proxiima_core::{McpToolError, RequestHeaders, SpiiceServices};
+use proxiima_core::{RequestHeaders, SpiiceServices, ToolError};
 
 use crate::McpServerError;
 
@@ -98,10 +98,10 @@ impl RequestHeaderAllowlist {
     ///
     /// # Errors
     ///
-    /// [`McpToolError::InvalidInput`] when an allowlisted header appears more
+    /// [`ToolError::InvalidInput`] when an allowlisted header appears more
     /// than once (which copy a proxy appended is ambiguous) or its value is
     /// not visible ASCII.
-    pub fn extract(&self, headers: &HeaderMap) -> Result<Option<RequestHeaders>, McpToolError> {
+    pub fn extract(&self, headers: &HeaderMap) -> Result<Option<RequestHeaders>, ToolError> {
         if self.is_empty() {
             return Ok(None);
         }
@@ -112,12 +112,12 @@ impl RequestHeaderAllowlist {
                 continue;
             };
             if values.next().is_some() {
-                return Err(McpToolError::InvalidInput(format!(
+                return Err(ToolError::InvalidInput(format!(
                     "request header `{name}` must appear at most once"
                 )));
             }
             let value = value.to_str().map_err(|_| {
-                McpToolError::InvalidInput(format!("request header `{name}` must be visible ASCII"))
+                ToolError::InvalidInput(format!("request header `{name}` must be visible ASCII"))
             })?;
             pairs.push((name.as_str(), value.to_owned()));
         }
@@ -134,20 +134,20 @@ fn invalid(entry: &str, reason: &str) -> McpServerError {
 ///
 /// # Errors
 ///
-/// As [`RequestHeaderAllowlist::extract`], and [`McpToolError::Other`] when
+/// As [`RequestHeaderAllowlist::extract`], and [`ToolError::Other`] when
 /// the extension bag already carries a [`RequestHeaders`] — only the
 /// allowlist may produce one.
 pub(crate) fn request_services(
     allowlist: &RequestHeaderAllowlist,
     headers: &HeaderMap,
     extensions: &http::Extensions,
-) -> Result<SpiiceServices, McpToolError> {
+) -> Result<SpiiceServices, ToolError> {
     let mut services = extensions
         .get::<SpiiceServices>()
         .cloned()
         .unwrap_or_default();
     let forged = || {
-        McpToolError::Other(
+        ToolError::Other(
             "request extensions carry RequestHeaders; only the header allowlist may".into(),
         )
     };

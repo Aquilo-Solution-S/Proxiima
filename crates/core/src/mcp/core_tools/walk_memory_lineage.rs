@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::ancestry::{AncestorEdge, AncestorTarget, Unread};
 use crate::MemoryId;
 use crate::mcp::cursor as wire_cursor;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest};
+use crate::{ToolCtx, ToolError};
 
 const MAX_LINEAGE_DEPTH: u32 = 8;
 const DEFAULT_LINEAGE_DEPTH: u32 = 3;
@@ -160,9 +160,9 @@ fn lineage_fingerprint(memory: &str, direction: MemoryLineageDirection, depth: u
 ///
 /// Returns invalid memory references, storage, or projection failures.
 pub async fn walk_memory_lineage(
-    ctx: McpToolCtx,
+    ctx: ToolCtx,
     args: WalkMemoryLineageArgs,
-) -> Result<WalkMemoryLineageOutput, McpToolError> {
+) -> Result<WalkMemoryLineageOutput, ToolError> {
     let start = ctx.resolve_memory(&args.memory)?;
     let limit = super::resolve_page_limit(Some(args.limit))?;
     let direction = MemoryLineageDirection::from(args.direction);
@@ -182,7 +182,7 @@ pub async fn walk_memory_lineage(
     if matches!(direction, MemoryLineageDirection::Ancestors) {
         let page = walk_ancestors(&ctx, engine, start, depth, limit, after).await?;
         let Some(page) = page else {
-            return Err(McpToolError::NotFound(format!(
+            return Err(ToolError::NotFound(format!(
                 "memory {} not found",
                 args.memory
             )));
@@ -202,9 +202,9 @@ pub async fn walk_memory_lineage(
     }
     let response = engine
         .walk_memory_lineage(
-            &ctx.authz,
+            ctx.authz(),
             &MemoryLineageRequest {
-                owner: ctx.owner,
+                owner: ctx.owner(),
                 start_memory_id: start,
                 direction,
                 depth,
@@ -219,7 +219,7 @@ pub async fn walk_memory_lineage(
     // start does not exist or is not visible (deliberately
     // indistinguishable) — surface that instead of an empty walk.
     if response.nodes.is_empty() {
-        return Err(McpToolError::NotFound(format!(
+        return Err(ToolError::NotFound(format!(
             "memory {} not found",
             args.memory
         )));
@@ -283,14 +283,14 @@ struct AncestorPage {
 /// the caller under the same depth and limit. Its cursor travels inside this
 /// walk's own envelope, bound to the same memory, direction and depth.
 async fn remote_ancestors(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     start: MemoryId,
     args: WalkMemoryLineageArgs,
     depth: u8,
     limit: u32,
     fingerprint: &str,
-) -> Result<WalkMemoryLineageOutput, McpToolError> {
+) -> Result<WalkMemoryLineageOutput, ToolError> {
     let page = crate::storage_ports::other_stores::RemoteAncestorsPage {
         depth,
         limit,
@@ -379,15 +379,19 @@ fn resume_point(after: Option<MemoryLineageCursor>) -> (u8, Option<(uuid::Uuid, 
 /// `(distance, source, target)` the storage walk used, so its cursor shape
 /// is unchanged.
 async fn walk_ancestors(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     start: MemoryId,
     depth: u8,
     limit: u32,
     after: Option<MemoryLineageCursor>,
-) -> Result<Option<AncestorPage>, McpToolError> {
+) -> Result<Option<AncestorPage>, ToolError> {
     let page_len = usize::try_from(limit).unwrap_or(usize::MAX);
-    if engine.lineage_nodes(&ctx.authz, &[start]).await?.is_empty() {
+    if engine
+        .lineage_nodes(ctx.authz(), &[start])
+        .await?
+        .is_empty()
+    {
         return Ok(None);
     }
     let (start_distance, keyset) = resume_point(after);
@@ -455,12 +459,12 @@ async fn walk_ancestors(
 /// targets are read in one
 /// bounded batch and placed at their edge's distance.
 async fn render_ancestor_page(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     start: MemoryId,
     hops: &[AncestorHop],
     reached: &HashMap<MemoryId, u8>,
-) -> Result<(Vec<LineageNodeOutput>, Vec<LineageEdgeOutput>), McpToolError> {
+) -> Result<(Vec<LineageNodeOutput>, Vec<LineageEdgeOutput>), ToolError> {
     let mut local_ids = vec![start];
     for hop in hops {
         local_ids.push(hop.edge.source);
@@ -470,7 +474,7 @@ async fn render_ancestor_page(
     }
     let mut unique = HashSet::new();
     local_ids.retain(|id| unique.insert(*id));
-    let readable = engine.lineage_nodes(&ctx.authz, &local_ids).await?;
+    let readable = engine.lineage_nodes(ctx.authz(), &local_ids).await?;
     let live: HashMap<MemoryId, crate::EntityKind> = readable
         .iter()
         .map(|node| (node.memory_id, node.kind))
@@ -499,7 +503,7 @@ async fn render_ancestor_page(
     let unread = if unseen.is_empty() {
         crate::verbs::query::UnreadTargets::default()
     } else {
-        engine.unread_targets(&ctx.authz, &unseen).await?
+        engine.unread_targets(ctx.authz(), &unseen).await?
     };
     // Targets the caller could read but which are forgotten: a node with
     // status `forgotten`, and the walk goes no further (#488 D4).
@@ -548,7 +552,7 @@ async fn render_ancestor_page(
 /// for an interpretation's subject); erased or unreadable targets render
 /// with a `status` instead of failing the walk.
 async fn append_external_edges(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     nodes: &mut Vec<LineageNodeOutput>,
     edges: &mut Vec<LineageEdgeOutput>,
     external: Vec<(MemoryId, uuid::Uuid, crate::EdgeKind, u8)>,
@@ -788,13 +792,12 @@ mod tests {
     async fn lineage_page_deduplicates_caps_and_deadline_marks_origins() {
         let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
         let reads = Arc::new(AtomicUsize::new(0));
-        ctx.services = crate::SpiiceServices::with(
-            crate::storage_ports::other_stores::OtherStoresService::new(Arc::new(
-                SlowLineageStore {
-                    reads: Arc::clone(&reads),
-                },
-            )),
-        );
+        ctx.try_insert_service(crate::storage_ports::other_stores::OtherStoresService::new(
+            Arc::new(SlowLineageStore {
+                reads: Arc::clone(&reads),
+            }),
+        ))
+        .expect("the fixture context holds no service");
         let mut nodes = (0u128..200)
             .map(|index| {
                 let id = MemoryId::new(uuid::Uuid::from_u128(index + 1));

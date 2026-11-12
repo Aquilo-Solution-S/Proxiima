@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::list_schemas::{SchemaItem, schema_item};
 use super::list_substrate_tools::{SubstrateToolItem, scoped_substrate_tools};
 use crate::engine::GetGraphReadRequest;
-use crate::mcp::{McpToolCtx, McpToolError};
+use crate::{ToolCtx, ToolError};
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetGraphArgs {}
@@ -41,27 +41,24 @@ pub struct GetGraphOutput {
 /// # Errors
 ///
 /// Returns storage, engine, or projection failures.
-pub async fn get_graph(
-    ctx: McpToolCtx,
-    _args: GetGraphArgs,
-) -> Result<GetGraphOutput, McpToolError> {
+pub async fn get_graph(ctx: ToolCtx, _args: GetGraphArgs) -> Result<GetGraphOutput, ToolError> {
     let engine = ctx.require_engine()?;
     let graph = engine
-        .get_graph(&ctx.authz, &GetGraphReadRequest { owner: ctx.owner })
+        .get_graph(ctx.authz(), &GetGraphReadRequest { owner: ctx.owner() })
         .await?;
     // Routed only after the read is authorized; a route the host refuses
     // reports the same as no route.
     let embeddings_client_configured = engine
-        .search_route(&ctx.owner)
+        .search_route(&ctx.owner())
         .await
         .current_client()
         .is_some();
 
     let schemas = ctx
-        .registry
+        .registry()
         .list()
         .into_iter()
-        .map(|info| schema_item(&ctx.registry, &info))
+        .map(|info| schema_item(ctx.registry(), &info))
         .collect();
 
     let substrate_tools = scoped_substrate_tools(&ctx);

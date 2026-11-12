@@ -4,12 +4,10 @@ use futures::future::BoxFuture;
 
 use super::ScopeGateBehavior;
 use crate::mcp::{
-    McpArgvActionSpec, McpAuthorContext, McpTool, McpToolAudience, McpToolCtx, McpToolError,
-    McpToolErrorKind, OwnerNeed, Replay, ToolEffect,
+    McpArgvActionSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect, ToolErrorKind,
 };
-use crate::{
-    AuthPath, AuthzContext, OwnerId, ScopeKey, SpiiceRegistry, SpiiceServices, ToolScope, UserId,
-};
+use crate::{AuthPath, AuthzContext, OwnerId, ScopeKey, SpiiceRegistry, ToolScope, UserId};
+use crate::{Tool, ToolCtx, ToolError};
 
 fn palette(ids: &[&str]) -> ToolScope {
     ToolScope::Palette(
@@ -33,7 +31,7 @@ struct ArgvArgs {
 /// so itself; the sibling declares a write.
 struct ArgvTool;
 
-impl McpTool for ArgvTool {
+impl Tool for ArgvTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-stub_cli";
     const DESCRIPTION: &'static str = "An argv-keyed fixture dispatcher.";
@@ -65,17 +63,14 @@ impl McpTool for ArgvTool {
     ];
     type Args = ArgvArgs;
     type Output = super::StubOutput;
-    fn call(
-        _: McpToolCtx,
-        _: Self::Args,
-    ) -> BoxFuture<'static, Result<Self::Output, McpToolError>> {
+    fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async { Ok(super::StubOutput {}) })
     }
 }
 
 /// A group viewer under `ToolScope::All`: may read, may not write, so
 /// the owner-role half of the gate is the only thing that can deny.
-fn argv_viewer_ctx() -> McpToolCtx {
+fn argv_viewer_ctx() -> ToolCtx {
     let subject = UserId::new(uuid::Uuid::now_v7());
     let owner = OwnerId::from(crate::GroupId::new(uuid::Uuid::now_v7()));
     let authz = AuthzContext::for_subject_with_role(
@@ -87,32 +82,17 @@ fn argv_viewer_ctx() -> McpToolCtx {
     argv_ctx_with_authz(owner, authz)
 }
 
-fn argv_ctx(tool_scope: ToolScope) -> McpToolCtx {
+fn argv_ctx(tool_scope: ToolScope) -> ToolCtx {
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let authz =
         AuthzContext::single_owner(&owner, AuthPath::HostBearer).with_tool_scope(tool_scope);
     argv_ctx_with_authz(owner, authz)
 }
 
-fn argv_ctx_with_authz(owner: OwnerId, authz: AuthzContext) -> McpToolCtx {
+fn argv_ctx_with_authz(owner: OwnerId, authz: AuthzContext) -> ToolCtx {
     let mut registry = SpiiceRegistry::new();
-    registry.add_mcp_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
-    McpToolCtx {
-        owner,
-        authz,
-        registry: Arc::new(registry.freeze_or_panic_for_tests()),
-        author: McpAuthorContext {
-            model_id: "test".into(),
-            trusted_model_id: None,
-            client_name: "test".into(),
-            client_version: "0".into(),
-            caller_self_perspective: None,
-        },
-        caller_self_perspective: None,
-        services: SpiiceServices::default(),
-        engine: None,
-        judged: proxiima_core::mcp::JudgedKey::default(),
-    }
+    registry.add_tool_or_panic_for_tests::<ArgvTool>("proxiima-stub");
+    crate::test_fixtures::tool_ctx(owner, authz, Arc::new(registry.freeze_or_panic_for_tests()))
 }
 
 /// The gate judges the DERIVED key, so `tools/list` (which advertises
@@ -141,7 +121,7 @@ fn enforce_scope_gates_the_derived_argv_action() {
     )
     .expect_err("the sibling leaf must not admit the longer command");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref key)
+        matches!(err, ToolError::NotAuthorized(ref key)
             if key == &format!("{}:approval-decide", ArgvTool::NAME)),
         "got {err:?}",
     );
@@ -151,7 +131,7 @@ fn enforce_scope_gates_the_derived_argv_action() {
 #[test]
 fn the_descriptor_titles_an_argv_dispatchers_commands() {
     let ctx = argv_ctx(ToolScope::All);
-    let descriptor = ctx.registry.mcp_tool(ArgvTool::NAME).expect("registered");
+    let descriptor = ctx.registry().mcp_tool(ArgvTool::NAME).expect("registered");
     let key = ScopeKey::parse(&format!("{}:approval-decide", ArgvTool::NAME)).expect("a key");
     assert_eq!(descriptor.title_of(&key), Some("Test action"));
 }
@@ -167,7 +147,7 @@ fn the_gate_records_the_derived_argv_action() {
     )
     .expect("admitted");
     assert_eq!(
-        ctx.judged.get().map(|key| key.to_string()),
+        ctx.judged().map(|key| key.to_string()),
         Some(format!("{}:approval-decide", ArgvTool::NAME))
     );
 }
@@ -187,7 +167,7 @@ fn an_undisclosed_dispatcher_refuses_before_argv_diagnostics() {
             let result =
                 ScopeGateBehavior::enforce_scope(ArgvTool::NAME, &args, &argv_ctx(palette(&keys)));
             assert!(
-                matches!(result, Err(McpToolError::NotAuthorized(_))),
+                matches!(result, Err(ToolError::NotAuthorized(_))),
                 "{keys:?} {args}: {result:?}"
             );
         }
@@ -197,7 +177,7 @@ fn an_undisclosed_dispatcher_refuses_before_argv_diagnostics() {
             &argv_ctx(palette(&["proxiima-stub_cli:approval"])),
         );
         assert!(
-            matches!(result, Err(McpToolError::InvalidInput(_))),
+            matches!(result, Err(ToolError::InvalidInput(_))),
             "admitted caller keeps useful diagnostics: {result:?}"
         );
     }
@@ -208,7 +188,7 @@ fn argv_delegated_commands_require_registered_leaf_keys() {
     let ctx = argv_ctx(ToolScope::All);
     for leaf in ["approval", "approval-decide"] {
         let key = format!("{}:{leaf}", ArgvTool::NAME);
-        let command = crate::DelegatedCommand::parse(&key, &ctx.registry)
+        let command = crate::DelegatedCommand::parse(&key, ctx.registry())
             .expect("a registered argv leaf can be delegated");
         assert_eq!(command.action().map(crate::ActionName::as_str), Some(leaf));
     }
@@ -216,7 +196,7 @@ fn argv_delegated_commands_require_registered_leaf_keys() {
         ArgvTool::NAME.to_owned(),
         format!("{}:unknown", ArgvTool::NAME),
     ] {
-        assert!(crate::DelegatedCommand::parse(invalid, &ctx.registry).is_err());
+        assert!(crate::DelegatedCommand::parse(invalid, ctx.registry()).is_err());
     }
 }
 
@@ -232,20 +212,25 @@ fn argv_listing_and_calls_share_exact_caller_and_served_leaf_admission() {
         (palette(&[]), false),
     ] {
         let mut ctx = argv_ctx(scope);
-        ctx.authz = ctx
-            .authz
+        let authz = ctx
+            .authz()
+            .clone()
             .with_served_surface(crate::ServedSurface::Palette(Vec::new()));
+        ctx = ctx.with_authz(authz);
         let descriptor = ctx
-            .registry
+            .registry()
             .mcp_tool(ArgvTool::NAME)
             .expect("registered argv tool");
-        assert_eq!(descriptor.advertised_by(ctx.authz.capabilities()), allowed);
         assert_eq!(
-            descriptor.action_advertised_by(ctx.authz.capabilities(), "approval"),
+            descriptor.advertised_by(ctx.authz().capabilities()),
             allowed
         );
-        assert!(!descriptor.action_advertised_by(ctx.authz.capabilities(), "approval-decide"));
-        assert!(!descriptor.action_advertised_by(ctx.authz.capabilities(), "unknown"));
+        assert_eq!(
+            descriptor.action_advertised_by(ctx.authz().capabilities(), "approval"),
+            allowed
+        );
+        assert!(!descriptor.action_advertised_by(ctx.authz().capabilities(), "approval-decide"));
+        assert!(!descriptor.action_advertised_by(ctx.authz().capabilities(), "unknown"));
         let result = ScopeGateBehavior::enforce_scope(
             ArgvTool::NAME,
             &serde_json::json!({"argv":["approval"]}),
@@ -279,7 +264,7 @@ fn a_viewer_keeps_the_read_command_of_a_writable_argv_dispatcher() {
     )
     .expect_err("an argv action that declares nothing stays a write");
     assert!(
-        matches!(err, McpToolError::NotAuthorized(ref key) if key == ArgvTool::NAME),
+        matches!(err, ToolError::NotAuthorized(ref key) if key == ArgvTool::NAME),
         "got {err:?}",
     );
 
@@ -301,7 +286,7 @@ fn enforce_scope_refuses_argv_outside_the_vocabulary() {
         &argv_ctx(ToolScope::All),
     )
     .expect_err("unmatched argv is refused");
-    assert_eq!(err.kind(), McpToolErrorKind::InvalidInput);
+    assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
 
     // Positive control: the same scope serves a declared command.
     ScopeGateBehavior::enforce_scope(

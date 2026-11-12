@@ -11,8 +11,8 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
-use proxiima_core::mcp::{McpAuthorContext, resolve_operator_label};
-use proxiima_core::{MemoryId, RELEASE_VERSION};
+use proxiima_core::mcp::resolve_operator_label;
+use proxiima_core::{MemoryId, RELEASE_VERSION, ToolCaller};
 
 use crate::auth::McpAuthContext;
 use crate::handler::{MODEL_ID_ARG, SELF_PERSPECTIVE_ARGS};
@@ -53,7 +53,7 @@ pub const RESERVED_ARGUMENTS: &[(&str, &str)] = &[
 ///
 /// Deliberately the whole context rather than `proxiima::app::Authz`'s
 /// `AuthzContext` alone: the dispatch seam needs the bound `Owner` to build
-/// an `McpToolCtx`. Nothing here authenticates — the layer already did, and
+/// an `ToolCtx`. Nothing here authenticates — the layer already did, and
 /// re-implementing authentication here is forbidden.
 #[derive(Debug, Clone)]
 pub struct RestAuth(pub McpAuthContext);
@@ -74,7 +74,7 @@ where
     }
 }
 
-/// Build the author context for one REST call from its headers.
+/// Build the caller of one REST call from its headers.
 ///
 /// `X-Proxiima-Model-Id` is a caller *claim*. When the bearer token binds a
 /// model identity, that identity is the persisted label and a differing
@@ -91,7 +91,7 @@ pub fn author_from_headers(
     headers: &HeaderMap,
     auth: &McpAuthContext,
     instance: &str,
-) -> Result<McpAuthorContext, Problem> {
+) -> Result<ToolCaller, Problem> {
     let (client_name, client_version) = client_implementation(headers);
     let trusted = auth.authz.trusted_model_id();
     let model_id = resolve_operator_label(trusted, header_str(headers, MODEL_ID_HEADER)).map_err(
@@ -105,13 +105,8 @@ pub fn author_from_headers(
             )
         },
     )?;
-    Ok(McpAuthorContext {
-        model_id,
-        trusted_model_id: trusted.map(ToString::to_string),
-        client_name,
-        client_version,
-        caller_self_perspective: self_perspective(headers, instance)?,
-    })
+    Ok(ToolCaller::new(model_id, client_name, client_version)
+        .with_self_perspective(self_perspective(headers, instance)?))
 }
 
 fn self_perspective(headers: &HeaderMap, instance: &str) -> Result<Option<MemoryId>, Problem> {
@@ -219,10 +214,6 @@ mod tests {
         )
         .expect("author");
         assert_eq!(from_token.model_id, "runner/pinned");
-        assert_eq!(
-            from_token.trusted_model_id.as_deref(),
-            Some("runner/pinned")
-        );
 
         let agreeing = author_from_headers(
             &headers(&[(MODEL_ID_HEADER, "runner/pinned")]),
@@ -239,16 +230,11 @@ mod tests {
         )
         .expect("author");
         assert_eq!(header_only.model_id, "example-model");
-        assert_eq!(
-            header_only.trusted_model_id, None,
-            "a header is a claim, never trusted provenance"
-        );
 
         let unattributed =
             author_from_headers(&headers(&[]), &auth(None), "/v1/tools/core_remember")
                 .expect("author");
         assert_eq!(unattributed.model_id, "unknown");
-        assert_eq!(unattributed.trusted_model_id, None);
     }
 
     /// Blank is absent on both transports — this side already dropped an

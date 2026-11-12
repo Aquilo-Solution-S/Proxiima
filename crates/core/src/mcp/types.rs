@@ -1,8 +1,5 @@
 use std::sync::Arc;
 
-use crate::authz::AuthzContext;
-use crate::{MemoryId, OwnerId, SpiiceServices, verbs::schema::SpiiceRegistryFrozen};
-
 /// Upper bound on the reserved `model_id` operator label, in characters.
 ///
 /// Enforced in two places, both of which must agree or a deployment can
@@ -10,9 +7,8 @@ use crate::{MemoryId, OwnerId, SpiiceServices, verbs::schema::SpiiceRegistryFroz
 /// [`AuthzContext::with_trusted_model_id`](crate::AuthzContext::with_trusted_model_id)
 /// (and the OIDC subject map that feeds it) bounds what an authenticator
 /// may bind, and the operator-label resolvers
-/// ([`ToolCtx::operator_label`](crate::ToolCtx::operator_label) and
-/// `operator_label` for [`McpTool`](crate::mcp::McpTool)) bound the label a
-/// tool records through them.
+/// ([`ToolCtx::operator_label`](crate::ToolCtx::operator_label)) bound the
+/// label a tool records through it.
 ///
 /// Two things it does not cover, deliberately. Transport edges only decide
 /// precedence — a nested or per-item `model_id` never reaches them — and a
@@ -25,28 +21,6 @@ pub const MAX_OPERATOR_LABEL_CHARS: usize = 120;
 /// Recorded operator label when neither the authenticated edge nor the
 /// caller names one.
 pub const UNKNOWN_OPERATOR_LABEL: &str = "unknown";
-
-/// Operator provenance for one call.
-///
-/// `model_id` is the label that reaches append-only provenance.
-/// `trusted_model_id` is the authenticated one, present only when the
-/// edge authenticator bound a model identity to the principal; it is
-/// never populated from tool arguments, request headers, MCP
-/// `clientInfo`, or any `_proxiima_*` reserved argument.
-#[derive(Debug, Clone)]
-pub struct McpAuthorContext {
-    pub model_id: String,
-    /// Model identity certified by the authenticated token, if any.
-    ///
-    /// When present, `model_id` equals it. That is an invariant of this
-    /// struct, not of whoever built it: both fields are re-derived from
-    /// the authorization context in `McpToolHost::ctx_for`, because a host
-    /// assembles this by hand and `model_id` is what a tool records.
-    pub trusted_model_id: Option<String>,
-    pub client_name: String,
-    pub client_version: String,
-    pub caller_self_perspective: Option<MemoryId>,
-}
 
 /// The caller named a model and the authenticated token names a different
 /// one. Refused rather than silently overridden: the caller believes it is
@@ -118,8 +92,8 @@ fn bounded_for_echo(supplied: &str) -> String {
 /// request does not.
 ///
 /// Every surface that can name an operator calls this — both transport
-/// edges, the embedded host API, and `operator_label` inside the tools
-/// themselves — so their precedence cannot drift.
+/// edges, the embedded host API, and [`ToolCtx::operator_label`](crate::ToolCtx::operator_label)
+/// inside the tools themselves — so their precedence cannot drift.
 ///
 /// # Errors
 ///
@@ -141,38 +115,17 @@ pub fn resolve_operator_label(
     }
 }
 
-#[derive(Clone)]
-pub struct McpToolCtx {
-    pub owner: OwnerId,
-    /// Caller's authorization context, threaded from the transport
-    /// edge. Tools pass this to engine verbs — never a substituted
-    /// engine identity (privilege-escalation guard).
-    pub authz: AuthzContext,
-    pub registry: Arc<SpiiceRegistryFrozen>,
-    pub author: McpAuthorContext,
-    pub caller_self_perspective: Option<MemoryId>,
-    /// Backend/spiice services supplied by the host. Core does not name
-    /// concrete service types; PG-aware spiices may downcast their own
-    /// dependencies here.
-    pub services: SpiiceServices,
-    /// `Some` when the MCP server was constructed with `with_engine`.
-    /// Tools that need to call engine verbs (CRUD-via-MCP) require this;
-    /// pure read-only / projection tools can ignore it.
-    pub engine: Option<Arc<crate::Engine>>,
-    /// The key the scope gate judged this call by. See [`JudgedKey`].
-    pub judged: JudgedKey,
-}
-
 /// The one [`ScopeKey`](crate::ScopeKey) the scope gate decided a call on, for a later
 /// behavior or the host to read: a dispatcher's `tool:action`, a flat tool's
 /// name, a core resource's key.
 ///
 /// [`ScopeGateBehavior`](crate::mcp::ScopeGateBehavior) is the only writer,
 /// so the derivation stays in one place and a host that names what a call did
-/// reads that key instead of deriving it a second time. The gate writes it
-/// before it decides: a call it refuses for that key carries the key too,
-/// and a behavior that wraps the gate reads it from its own clone of the
-/// context once the call returns (clones share one cell). A tool the
+/// reads that key ([`ToolCtx::judged`](crate::ToolCtx::judged)) instead of
+/// deriving it a second time. The gate writes it before it decides: a call it
+/// refuses for that key carries the key too, and a behavior that wraps the
+/// gate reads it from its own clone of the context once the call returns
+/// (clones share one cell). A tool the
 /// caller's palette does not advertise is refused as a whole, on its bare
 /// name. Empty until the gate has derived a key, and when it never does: a
 /// dispatcher call without a declared action, a name that is no key.
@@ -180,12 +133,12 @@ pub struct McpToolCtx {
 /// Every context starts empty and the gate clears it on entry, so a context
 /// reused for a second call never shows the first call's key.
 #[derive(Debug, Clone, Default)]
-pub struct JudgedKey(Arc<std::sync::Mutex<Option<crate::ScopeKey>>>);
+pub(crate) struct JudgedKey(Arc<std::sync::Mutex<Option<crate::ScopeKey>>>);
 
 impl JudgedKey {
     /// The key the gate judged this call by, if it derived one.
     #[must_use]
-    pub fn get(&self) -> Option<crate::ScopeKey> {
+    pub(crate) fn get(&self) -> Option<crate::ScopeKey> {
         self.cell().clone()
     }
 
@@ -201,15 +154,6 @@ impl JudgedKey {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-impl std::fmt::Debug for McpToolCtx {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("McpToolCtx")
-            .field("owner", &self.owner)
-            .field("author", &self.author)
-            .finish_non_exhaustive()
     }
 }
 

@@ -45,7 +45,7 @@ const DEFAULT_EMBED_MAX_INPUT_CHARS: NonZeroU32 =
     NonZeroU32::new(16_384).expect("embedding input default is positive");
 
 /// Tool/action scope keys advertised by the `memory` profile. Flat entries
-/// reference the owning tool's `McpTool::NAME`; grouped tools contribute
+/// reference the owning tool's `Tool::NAME`; grouped tools contribute
 /// action leaf keys from their manifest.
 ///
 /// Reads `all_core_actions()` because it is a curated allow-list — a
@@ -56,7 +56,7 @@ const DEFAULT_EMBED_MAX_INPUT_CHARS: NonZeroU32 =
 /// `core_action_meta_decorates_only_declared_actions` in
 /// `crates/core/tests/spiice_registry.rs`.
 fn memory_keep_set() -> Vec<&'static str> {
-    use proxiima_core::mcp::McpTool;
+    use proxiima_core::Tool;
     use proxiima_core::mcp::core_tools::{
         CoreFactTool, CoreGoalTool, CoreUploadTool, DeriveTool, EpisodeCommitTool, ForgetTool,
         InterpretTool, MemorySpacesTool, RecallTool, RecordUtteranceTool, RememberTool,

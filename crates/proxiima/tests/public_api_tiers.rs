@@ -552,12 +552,12 @@ fn spiice_sdk_constructs_contract_goal_and_session_values() {
 #[test]
 fn spiice_sdk_exposes_tool_authoring_and_metadata() {
     use proxiima::spiice::{
-        McpActionArgSpec, McpAuthorContext, Replay, Tool, ToolCtx, ToolEffect, ToolError,
+        McpActionArgSpec, Replay, Tool, ToolCaller, ToolCtx, ToolEffect, ToolError,
     };
     fn needs_tool<T: Tool>() {}
     needs_tool::<TierLabelledTool>();
     let _: &[McpActionArgSpec] = &[];
-    let _: Option<(&ToolCtx, &ToolError, &McpAuthorContext)> = None;
+    let _: Option<(&ToolCtx, &ToolError, &ToolCaller)> = None;
     let _: ToolEffect = ToolEffect::Additive(Replay::Idempotent);
 }
 
@@ -591,9 +591,9 @@ impl proxiima::spiice::Tool for TierLabelledTool {
     ) -> futures::future::BoxFuture<'static, Result<Self::Output, proxiima::spiice::ToolError>>
     {
         // The point of the test: `Tool::call` is handed a `ToolCtx`, whose
-        // fields are private and which cannot produce an `McpToolCtx`. If
-        // this does not compile, an out-of-tree tool that takes `model_id`
-        // has no way to honour a token-bound model identity.
+        // fields are private. If this does not compile, an out-of-tree tool
+        // that takes `model_id` has no way to honour a token-bound model
+        // identity.
         Box::pin(async move {
             Ok(TierLabelledOutput {
                 label: ctx.operator_label(args.model_id.as_deref())?,
@@ -602,25 +602,21 @@ impl proxiima::spiice::Tool for TierLabelledTool {
     }
 }
 
-/// The operator-label rule must be reachable from *both* tool traits, or a
-/// spiice that takes its own `model_id` has to reimplement it — and a
-/// reimplementation is how a nested label got past the edge in the first
-/// place.
+/// The operator-label rule must be reachable from the one tool context, at
+/// both tiers, or a spiice that takes its own `model_id` has to reimplement
+/// it — and a reimplementation is how a nested label gets past the edge.
 #[test]
 fn spiice_sdk_exposes_the_operator_label_rule_and_host_adapter() {
-    use proxiima::host::{McpToolCtx, McpToolError};
     use proxiima::spiice::{ToolCtx, ToolError, TrustedModelIdError};
 
     fn needs_tool<T: proxiima::spiice::Tool>() {}
     needs_tool::<TierLabelledTool>();
 
-    // The `McpTool` spelling: a free function over the MCP context.
-    let _: fn(&McpToolCtx, Option<&str>) -> Result<String, McpToolError> =
-        proxiima::host::operator_label;
-    // The `Tool` spelling: an inherent method on the neutral context.
+    // An inherent method on the one context, which the host tier names too.
     let _: fn(&ToolCtx, Option<&str>) -> Result<String, ToolError> = ToolCtx::operator_label;
-    // Binding provenance onto the caller copy is fallible for the same
-    // reason it is on `AuthzContext`.
+    let _: fn(&proxiima::host::ToolCtx, Option<&str>) -> Result<String, proxiima::host::ToolError> =
+        ToolCtx::operator_label;
+    // Binding a model identity onto `AuthzContext` is fallible.
     let _: Option<TrustedModelIdError> = None;
 }
 

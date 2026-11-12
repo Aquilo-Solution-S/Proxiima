@@ -363,7 +363,7 @@ mod embedding_failure_regressions {
             observed.lexical["memories"][0]["score"]
         );
         assert!(matches!(observed.semantic, Err(CoreMcpError::Tool {
-            kind: proxiima_core::McpToolErrorKind::InvalidRequest, ref message,
+            kind: proxiima_core::ToolErrorKind::InvalidRequest, ref message,
         }) if message == "semantic search unavailable: embedding provider error"));
         for (packet, reason) in [
             (&observed.recall, "question"),

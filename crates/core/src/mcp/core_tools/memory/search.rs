@@ -1,4 +1,4 @@
-use crate::mcp::McpToolCtx;
+use crate::ToolCtx;
 use crate::mcp::core_tools::wire_ref;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -13,10 +13,7 @@ pub struct NeighborEdge {
     pub kind: crate::EdgeKind,
 }
 
-pub(crate) fn neighbor_edges_from_rows(
-    ctx: &McpToolCtx,
-    rows: Vec<crate::Edge>,
-) -> Vec<NeighborEdge> {
+pub(crate) fn neighbor_edges_from_rows(ctx: &ToolCtx, rows: Vec<crate::Edge>) -> Vec<NeighborEdge> {
     rows.into_iter()
         .map(|edge| NeighborEdge {
             source: wire_ref::format_endpoint(ctx, edge.source),

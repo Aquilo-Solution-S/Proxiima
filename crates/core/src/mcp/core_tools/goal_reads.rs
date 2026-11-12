@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::GoalId;
 use crate::mcp::cursor as wire_cursor;
-use crate::mcp::{McpToolCtx, McpToolError};
 use crate::verbs::goal_write::{GoalState, GoalStateParseError};
 use crate::verbs::query::{EntityKind, QueryCursor, QueryPage, QueryRequest, SupersessionStatus};
+use crate::{ToolCtx, ToolError};
 
 /// Opaque cursor codec: the shared `{v, fp, c}` envelope with the goal
 /// keyset under `c`. The fingerprint binds the state filter; `limit`
@@ -98,10 +98,7 @@ fn goal_fingerprint(states: &BTreeSet<GoalState>) -> String {
 ///
 /// Returns invalid state/cursor arguments, authorization, or storage
 /// failures.
-pub async fn list_goals(
-    ctx: McpToolCtx,
-    args: ListGoalsArgs,
-) -> Result<ListGoalsOutput, McpToolError> {
+pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOutput, ToolError> {
     let states = parse_goal_states(args.state.as_deref())?;
     let after = args
         .cursor
@@ -118,7 +115,7 @@ pub async fn list_goals(
     req.page = QueryPage { after };
     req.include_payloads = false;
     req.supersession = SupersessionStatus::HeadsOnly;
-    let response = engine.query(&ctx.authz, &req).await?;
+    let response = engine.query(ctx.authz(), &req).await?;
 
     let goals = project_goals(response.goals);
     let next_cursor = response.next_cursor.and_then(|cursor| match cursor {
@@ -144,7 +141,7 @@ pub async fn list_goals(
 ///
 /// Returns malformed/unknown goal references, authorization, or storage
 /// failures.
-pub async fn get_goal(ctx: McpToolCtx, raw: &str) -> Result<GoalItem, McpToolError> {
+pub async fn get_goal(ctx: ToolCtx, raw: &str) -> Result<GoalItem, ToolError> {
     let id = ctx.resolve_goal(raw)?.into_inner();
     let engine = ctx.require_engine()?;
     let handle = series_handle(&ctx, engine, id).await?;
@@ -153,27 +150,27 @@ pub async fn get_goal(ctx: McpToolCtx, raw: &str) -> Result<GoalItem, McpToolErr
     req.goal_handles = vec![handle];
     req.limit = 1;
     req.include_payloads = false;
-    let response = engine.query(&ctx.authz, &req).await?;
+    let response = engine.query(ctx.authz(), &req).await?;
     project_goals(response.goals)
         .into_iter()
         .next()
-        .ok_or_else(|| McpToolError::NotFound(format!("goal {raw} not found")))
+        .ok_or_else(|| ToolError::NotFound(format!("goal {raw} not found")))
 }
 
 /// The series a `<uuid>` names. A readable version resolves to its series;
 /// anything else is taken as a series handle. Version ids and handles are
 /// distinct UUIDs, so the version lookup cannot select another series.
 async fn series_handle(
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     engine: &crate::Engine,
     id: uuid::Uuid,
-) -> Result<uuid::Uuid, McpToolError> {
+) -> Result<uuid::Uuid, ToolError> {
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
     req.goal_ids = vec![GoalId::new(id)];
     req.limit = 1;
     req.include_payloads = false;
-    let response = engine.query(&ctx.authz, &req).await?;
+    let response = engine.query(ctx.authz(), &req).await?;
     Ok(response.goals.first().map_or(id, |version| version.handle))
 }
 
@@ -212,7 +209,7 @@ fn project_goals(rows: Vec<crate::verbs::query::GoalRow>) -> Vec<GoalItem> {
         .collect()
 }
 
-fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, McpToolError> {
+fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, ToolError> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());
     };
@@ -220,13 +217,13 @@ fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, McpToolEr
     for member in raw.split(',') {
         let member = member.trim();
         if member.is_empty() {
-            return Err(McpToolError::InvalidInput(
+            return Err(ToolError::InvalidInput(
                 "state must not contain empty members".into(),
             ));
         }
         let state = member
             .parse()
-            .map_err(|err: GoalStateParseError| McpToolError::InvalidInput(err.to_string()))?;
+            .map_err(|err: GoalStateParseError| ToolError::InvalidInput(err.to_string()))?;
         states.insert(state);
     }
     Ok(states)
@@ -243,10 +240,7 @@ fn encode_goal_cursor(
     )
 }
 
-fn decode_goal_cursor(
-    raw: &str,
-    states: &BTreeSet<GoalState>,
-) -> Result<QueryCursor, McpToolError> {
+fn decode_goal_cursor(raw: &str, states: &BTreeSet<GoalState>) -> Result<QueryCursor, ToolError> {
     let pos: GoalCursorPos = GOAL_CURSOR.decode(&goal_fingerprint(states), raw)?;
     Ok(QueryCursor::Goal {
         handle: pos.handle,
@@ -257,7 +251,7 @@ fn decode_goal_cursor(
 #[cfg(test)]
 mod tests {
     use super::{decode_goal_cursor, encode_goal_cursor, parse_goal_states, wire_cursor};
-    use crate::McpToolError;
+    use crate::ToolError;
     use crate::verbs::query::QueryCursor;
     use std::collections::BTreeSet;
 
@@ -332,12 +326,12 @@ mod tests {
         // Replay under a different (or missing) state filter fails closed.
         assert!(matches!(
             decode_goal_cursor(&token, &parse_goal_states(Some("Paused")).unwrap()),
-            Err(McpToolError::InvalidInput(message)) if message.contains("does not match")
+            Err(ToolError::InvalidInput(message)) if message.contains("does not match")
         ));
         assert!(decode_goal_cursor(&token, &BTreeSet::new()).is_err());
         assert!(matches!(
             decode_goal_cursor("garbage!!", &states),
-            Err(McpToolError::InvalidInput(message)) if message.contains("malformed cursor")
+            Err(ToolError::InvalidInput(message)) if message.contains("malformed cursor")
         ));
         let old = wire_cursor::FingerprintedCursor {
             version: 1,
@@ -350,7 +344,7 @@ mod tests {
         );
         assert!(matches!(
             decode_goal_cursor(&old, &states),
-            Err(McpToolError::InvalidInput(message)) if message.contains("malformed cursor")
+            Err(ToolError::InvalidInput(message)) if message.contains("malformed cursor")
         ));
     }
 
@@ -365,7 +359,7 @@ mod tests {
         assert!(parse_goal_states(Some("paused")).is_ok());
         assert!(matches!(
             parse_goal_states(Some("Superseded")),
-            Err(McpToolError::InvalidInput(message)) if message.contains("must be one of")
+            Err(ToolError::InvalidInput(message)) if message.contains("must be one of")
         ));
         assert!(parse_goal_states(Some(",active")).is_err());
         for raw in ["", " ", "Active,", "Active,,Paused"] {

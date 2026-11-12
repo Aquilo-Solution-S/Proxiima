@@ -52,7 +52,7 @@ pub(crate) const MAX_PAGE_LIMIT: u32 = 200;
 /// defaulting to [`DEFAULT_PAGE_LIMIT`] when omitted and rejecting zero
 /// per [`crate::reject_zero_limit`], which is shared with the spiice tool
 /// trait so both surfaces cannot drift on the same rule.
-pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::mcp::McpToolError> {
+pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::ToolError> {
     crate::reject_zero_limit(limit)?;
     Ok(limit.unwrap_or(DEFAULT_PAGE_LIMIT).min(MAX_PAGE_LIMIT))
 }
@@ -62,25 +62,25 @@ pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::mcp::
 pub(crate) fn register_all(
     registry: &mut crate::SpiiceRegistry,
 ) -> Result<(), crate::SpiiceRegistryError> {
-    registry.try_add_mcp_tool::<SearchMemoriesTool>("core")?;
-    registry.try_add_mcp_tool::<RecallTool>("core")?;
-    registry.try_add_mcp_tool::<ThinkTool>("core")?;
-    registry.try_add_mcp_tool::<MemorySpacesTool>("core")?;
-    registry.try_add_mcp_tool::<RememberTool>("core")?;
-    registry.try_add_mcp_tool::<EpisodeCommitTool>("core")?;
-    registry.try_add_mcp_tool::<ForgetTool>("core")?;
-    registry.try_add_mcp_tool::<RestoreTool>("core")?;
-    registry.try_add_mcp_tool::<ForkTool>("core")?;
-    registry.try_add_mcp_tool::<RecordUtteranceTool>("core")?;
-    registry.try_add_mcp_tool::<DeriveTool>("core")?;
-    registry.try_add_mcp_tool::<InterpretTool>("core")?;
-    registry.try_add_mcp_tool::<CoreGoalTool>("core")?;
-    registry.try_add_mcp_tool::<CoreFactTool>("core")?;
-    registry.try_add_mcp_tool::<CoreMembershipTool>("core")?;
-    registry.try_add_mcp_tool::<CoreTransferTool>("core")?;
-    registry.try_add_mcp_tool::<CoreUploadTool>("core")?;
-    registry.try_add_mcp_tool::<RetentionTool>("core")?;
-    registry.try_add_mcp_tool::<SetRetentionTool>("core")?;
+    registry.try_add_tool::<SearchMemoriesTool>("core")?;
+    registry.try_add_tool::<RecallTool>("core")?;
+    registry.try_add_tool::<ThinkTool>("core")?;
+    registry.try_add_tool::<MemorySpacesTool>("core")?;
+    registry.try_add_tool::<RememberTool>("core")?;
+    registry.try_add_tool::<EpisodeCommitTool>("core")?;
+    registry.try_add_tool::<ForgetTool>("core")?;
+    registry.try_add_tool::<RestoreTool>("core")?;
+    registry.try_add_tool::<ForkTool>("core")?;
+    registry.try_add_tool::<RecordUtteranceTool>("core")?;
+    registry.try_add_tool::<DeriveTool>("core")?;
+    registry.try_add_tool::<InterpretTool>("core")?;
+    registry.try_add_tool::<CoreGoalTool>("core")?;
+    registry.try_add_tool::<CoreFactTool>("core")?;
+    registry.try_add_tool::<CoreMembershipTool>("core")?;
+    registry.try_add_tool::<CoreTransferTool>("core")?;
+    registry.try_add_tool::<CoreUploadTool>("core")?;
+    registry.try_add_tool::<RetentionTool>("core")?;
+    registry.try_add_tool::<SetRetentionTool>("core")?;
     Ok(())
 }
 
@@ -104,10 +104,9 @@ mod page_limit_tests {
         assert_eq!(resolve_page_limit(Some(u32::MAX)).unwrap(), MAX_PAGE_LIMIT);
     }
 
-    /// Zero limit is invalid input, and that mapping survives `From<ToolError>`
-    /// into [`crate::mcp::McpToolError`].
+    /// Zero limit is invalid input, and the message names the bound.
     #[test]
-    fn the_rejection_survives_the_hop_to_mcp_tool_error() {
+    fn the_rejection_is_invalid_input_and_names_the_bound() {
         let crate::ToolError::InvalidInput(message) = reject_zero_limit(Some(0)).unwrap_err()
         else {
             panic!("a zero limit must be invalid input, not any other error kind");
@@ -115,12 +114,6 @@ mod page_limit_tests {
         assert!(
             message.contains("at least 1"),
             "the message must tell the caller the bound: {message}"
-        );
-
-        let promoted: crate::mcp::McpToolError = reject_zero_limit(Some(0)).unwrap_err().into();
-        assert!(
-            matches!(promoted, crate::mcp::McpToolError::InvalidInput(_)),
-            "the shared helper must still read as invalid input on the MCP surface: {promoted:?}"
         );
     }
 }

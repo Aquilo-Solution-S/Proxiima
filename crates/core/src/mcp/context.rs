@@ -1,46 +1,15 @@
-use std::sync::Arc;
+use crate::{GoalId, MemoryId, ToolCtx, ToolError};
 
-use crate::{GoalId, MemoryId};
-
-use super::error::McpToolError;
 use super::handles::MemoryHandleClass;
-use super::types::McpToolCtx;
 
 #[allow(clippy::unused_self)]
-impl McpToolCtx {
-    /// `None` when the MCP server is running without a wired engine
-    /// (early test scaffolds). Real deployments always wire an engine.
-    #[must_use]
-    pub fn engine(&self) -> Option<&crate::Engine> {
-        self.engine.as_deref()
-    }
-
-    /// The wired engine, or the one canonical "engine unavailable" error.
-    /// Every tool that needs storage goes through this so a missing
-    /// engine reads identically everywhere.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`McpToolError::Other`] when no engine is wired.
-    pub fn require_engine(&self) -> Result<&crate::Engine, McpToolError> {
-        self.engine()
-            .ok_or_else(|| McpToolError::Other("engine unavailable".into()))
-    }
-
-    #[must_use]
-    pub fn service<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.services.get::<T>()
-    }
-
+impl ToolCtx {
     /// Parse a bare memory UUID. Kind and visibility are checked by the engine.
     ///
     /// # Errors
     ///
     /// Returns invalid input for any other spelling.
-    pub fn resolve_memory(&self, raw: &str) -> Result<MemoryId, McpToolError> {
+    pub fn resolve_memory(&self, raw: &str) -> Result<MemoryId, ToolError> {
         super::ids::parse_wire_uuid(raw).map(MemoryId::new)
     }
 
@@ -49,7 +18,7 @@ impl McpToolCtx {
     /// # Errors
     ///
     /// Returns invalid input for any other spelling.
-    pub fn resolve_goal(&self, raw: &str) -> Result<GoalId, McpToolError> {
+    pub fn resolve_goal(&self, raw: &str) -> Result<GoalId, ToolError> {
         super::ids::parse_wire_uuid(raw).map(GoalId::new)
     }
 
@@ -61,7 +30,7 @@ impl McpToolCtx {
     pub async fn resolve_memory_with_kind(
         &self,
         raw: &str,
-    ) -> Result<(MemoryId, MemoryHandleClass), McpToolError> {
+    ) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
         let memory_id = self.resolve_memory(raw)?;
         self.resolve_memory_id_with_kind(memory_id).await
     }
@@ -69,13 +38,13 @@ impl McpToolCtx {
     pub(crate) async fn resolve_memory_id_with_kind(
         &self,
         memory_id: MemoryId,
-    ) -> Result<(MemoryId, MemoryHandleClass), McpToolError> {
+    ) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
         self.resolve_memory_ids_with_kind(&[memory_id])
             .await?
             .into_iter()
             .next()
             .ok_or_else(|| {
-                McpToolError::NotFound(format!("memory {} not found", memory_id.into_inner()))
+                ToolError::NotFound(format!("memory {} not found", memory_id.into_inner()))
             })
     }
 
@@ -85,15 +54,15 @@ impl McpToolCtx {
     pub(crate) async fn resolve_memory_ids_with_kind(
         &self,
         ids: &[MemoryId],
-    ) -> Result<Vec<(MemoryId, MemoryHandleClass)>, McpToolError> {
+    ) -> Result<Vec<(MemoryId, MemoryHandleClass)>, ToolError> {
         self.require_engine()?
-            .memory_kinds(&self.authz, ids)
+            .memory_kinds(self.authz(), ids)
             .await?
             .into_iter()
             .map(|(id, kind)| {
                 MemoryHandleClass::from_entity_kind(kind)
                     .map(|class| (id, class))
-                    .ok_or_else(|| McpToolError::InvalidInput("expected a memory".into()))
+                    .ok_or_else(|| ToolError::InvalidInput("expected a memory".into()))
             })
             .collect()
     }

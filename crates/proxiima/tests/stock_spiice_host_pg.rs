@@ -153,7 +153,7 @@ struct SpiiceHost;
 
 impl SpiiceBundle for SpiiceHost {
     fn register(registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
-        registry.try_add_mcp_tool::<Probe>("spiicehost")
+        registry.try_add_tool::<Probe>("spiicehost")
     }
 
     fn migrators() -> Vec<NamedMigrator> {

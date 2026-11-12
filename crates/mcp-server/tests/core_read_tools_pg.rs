@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use common::{create_core_db, db_url, drop_db, storage};
 use proxiima_core::SpiiceServices;
-use proxiima_core::mcp::McpAuthorContext;
+use proxiima_core::ToolCaller;
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{AuthPath, AuthzContext, Engine, MemoryId, OwnerId, SpiiceRegistry, UserId};
 use proxiima_mcp_server::{McpAuthContext, McpToolHost};
@@ -28,13 +28,13 @@ impl proxiima_core::RequestBehavior for HidesRemember {
         &self,
         call: proxiima_core::mcp::ToolCall,
         next: proxiima_core::mcp::Next<'_>,
-    ) -> Result<proxiima_core::ToolReply, proxiima_core::mcp::McpToolError> {
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         next.run(call).await
     }
 
     fn visible(
         &self,
-        _ctx: &proxiima_core::mcp::McpToolCtx,
+        _ctx: &proxiima_core::ToolCtx,
         tool: &proxiima_core::ToolDescriptorView<'_>,
     ) -> bool {
         tool.name() != proxiima_core::protocol::tool::CORE_REMEMBER
@@ -796,12 +796,6 @@ async fn insert_memory(
         .parse()?)
 }
 
-fn author_ctx() -> McpAuthorContext {
-    McpAuthorContext {
-        model_id: "codex-test".into(),
-        trusted_model_id: None,
-        client_name: "codex".into(),
-        client_version: "1".into(),
-        caller_self_perspective: None,
-    }
+fn author_ctx() -> ToolCaller {
+    ToolCaller::new("codex-test", "codex", "1")
 }

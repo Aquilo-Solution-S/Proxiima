@@ -8,11 +8,10 @@ use crate::authz::AuthzContext;
 use crate::engine::GroupMemberPage;
 use crate::error::ProtocolError;
 use crate::mcp::cursor as wire_cursor;
-use crate::mcp::{
-    CoreActionMeta, McpActionArgSpec, McpTool, McpToolAudience, McpToolCtx, McpToolError, OwnerNeed,
-};
+use crate::mcp::{CoreActionMeta, McpActionArgSpec, McpToolAudience, OwnerNeed};
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::{GroupId, OwnerId};
+use crate::{Tool, ToolCtx, ToolError};
 
 /// Opaque cursor codec: the shared `{v, fp, c}` envelope with the last
 /// `(member, relation)` pair under `c`. The fingerprint binds the group.
@@ -132,7 +131,7 @@ fn member_fingerprint(group: GroupId) -> String {
     wire_cursor::fingerprint(&canon)
 }
 
-impl McpTool for CoreMembershipTool {
+impl Tool for CoreMembershipTool {
     const NAME: &'static str = protocol_tool::CORE_MEMBERSHIP;
     const TITLE: &'static str = "Memberships";
     const DESCRIPTION: &'static str =
@@ -175,9 +174,9 @@ impl McpTool for CoreMembershipTool {
     type Output = CoreMembershipOutput;
 
     fn call(
-        ctx: McpToolCtx,
+        ctx: ToolCtx,
         args: CoreMembershipArgs,
-    ) -> BoxFuture<'static, Result<CoreMembershipOutput, McpToolError>> {
+    ) -> BoxFuture<'static, Result<CoreMembershipOutput, ToolError>> {
         Box::pin(async move {
             let engine = ctx.require_engine()?;
             execute_membership(engine, &ctx, args).await
@@ -247,22 +246,22 @@ impl MembershipEngine for crate::Engine {
 
 async fn execute_membership(
     engine: &dyn MembershipEngine,
-    ctx: &McpToolCtx,
+    ctx: &ToolCtx,
     args: CoreMembershipArgs,
-) -> Result<CoreMembershipOutput, McpToolError> {
+) -> Result<CoreMembershipOutput, ToolError> {
     match args {
         CoreMembershipArgs::AddMember(args) => {
             let group = resolve_group(ctx, &args.group)?;
             let member = parse_owner_id(&args.member)?;
             engine
-                .add_member(&ctx.authz, group, member, args.relation)
+                .add_member(ctx.authz(), group, member, args.relation)
                 .await?;
             Ok(CoreMembershipOutput::AddMember(MutationOutput { ok: true }))
         }
         CoreMembershipArgs::RemoveMember(args) => {
             let group = resolve_group(ctx, &args.group)?;
             let member = parse_owner_id(&args.member)?;
-            engine.remove_member(&ctx.authz, group, member).await?;
+            engine.remove_member(ctx.authz(), group, member).await?;
             Ok(CoreMembershipOutput::RemoveMember(MutationOutput {
                 ok: true,
             }))
@@ -276,10 +275,12 @@ async fn execute_membership(
                 .as_deref()
                 .map(|raw| {
                     let pos: MemberCursorPos = MEMBER_CURSOR.decode(&fingerprint, raw)?;
-                    Ok::<_, McpToolError>((OwnerId::new(pos.member), pos.relation))
+                    Ok::<_, ToolError>((OwnerId::new(pos.member), pos.relation))
                 })
                 .transpose()?;
-            let page = engine.list_members(&ctx.authz, group, limit, after).await?;
+            let page = engine
+                .list_members(ctx.authz(), group, limit, after)
+                .await?;
             let next_cursor = (page.has_more && !page.members.is_empty()).then(|| {
                 let (member, relation) = page.members.last().expect("non-empty page");
                 MEMBER_CURSOR.encode(
@@ -317,12 +318,12 @@ async fn execute_membership(
 /// `authorize_write` gate is the sole, authoritative decision, and it must
 /// surface as `Forbidden`, not an earlier `InvalidInput` that hides the
 /// real reason behind an existence-style non-answer.
-fn resolve_group(ctx: &McpToolCtx, raw: &str) -> Result<GroupId, McpToolError> {
+fn resolve_group(ctx: &ToolCtx, raw: &str) -> Result<GroupId, ToolError> {
     let owner = match MemorySpaceKey::parse(raw) {
-        Some(MemorySpaceKey::Current) => ctx.owner,
+        Some(MemorySpaceKey::Current) => ctx.owner(),
         Some(MemorySpaceKey::Owner(owner)) => owner,
         None => {
-            return Err(McpToolError::InvalidInput(format!(
+            return Err(ToolError::InvalidInput(format!(
                 "unknown memory space: {raw}"
             )));
         }
@@ -331,19 +332,19 @@ fn resolve_group(ctx: &McpToolCtx, raw: &str) -> Result<GroupId, McpToolError> {
     // other id names a group is the registry's to say: a membership write
     // under a user's id is refused by the database.
     if ctx
-        .authz
+        .authz()
         .subject()
         .is_some_and(|subject| owner == subject.into())
     {
-        return Err(McpToolError::InvalidInput("not a group".into()));
+        return Err(ToolError::InvalidInput("not a group".into()));
     }
     Ok(owner.as_group())
 }
 
-fn parse_owner_id(raw: &str) -> Result<OwnerId, McpToolError> {
+fn parse_owner_id(raw: &str) -> Result<OwnerId, ToolError> {
     raw.parse::<uuid::Uuid>()
         .map(OwnerId::new)
-        .map_err(|err| McpToolError::InvalidInput(format!("member is not an owner uuid: {err}")))
+        .map_err(|err| ToolError::InvalidInput(format!("member is not an owner uuid: {err}")))
 }
 
 fn default_relation() -> Relation {
@@ -356,8 +357,8 @@ mod tests {
 
     use crate::access::Role;
     use crate::mcp::core_tools::memory_spaces::MemorySpaceKey;
-    use crate::mcp::{McpAuthorContext, validate_action_args};
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceServices, UserId};
+    use crate::mcp::validate_action_args;
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
 
     use super::*;
 
@@ -424,7 +425,7 @@ mod tests {
         }
     }
 
-    fn ctx_with_principals(owner: OwnerId, accessible: Vec<OwnerId>) -> McpToolCtx {
+    fn ctx_with_principals(owner: OwnerId, accessible: Vec<OwnerId>) -> ToolCtx {
         let subject = owner.as_user();
         // Server-resolved: the caller manages (admin) every group it can
         // reach, plus its own personal owner.
@@ -432,22 +433,11 @@ mod tests {
             .into_iter()
             .filter(|principal| *principal != OwnerId::from(subject))
             .map(|principal| (principal, Role::admin()));
-        McpToolCtx {
+        crate::test_fixtures::tool_ctx(
             owner,
-            authz: AuthzContext::for_subject_with_role(subject, group_roles, AuthPath::HostBearer),
-            registry: Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test".into(),
-                trusted_model_id: None,
-                client_name: "test".into(),
-                client_version: "0".into(),
-                caller_self_perspective: None,
-            },
-            caller_self_perspective: None,
-            services: SpiiceServices::default(),
-            engine: None,
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        }
+            AuthzContext::for_subject_with_role(subject, group_roles, AuthPath::HostBearer),
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        )
     }
 
     #[test]
@@ -459,7 +449,7 @@ mod tests {
         )
         .expect_err("unknown action rejected");
 
-        assert!(matches!(err, McpToolError::InvalidInput(_)));
+        assert!(matches!(err, ToolError::InvalidInput(_)));
     }
 
     #[test]
@@ -471,7 +461,7 @@ mod tests {
         )
         .expect_err("transfer_to_owner is a core_transfer action, not a membership action");
 
-        assert!(matches!(err, McpToolError::InvalidInput(_)));
+        assert!(matches!(err, ToolError::InvalidInput(_)));
     }
 
     #[tokio::test]
@@ -493,7 +483,7 @@ mod tests {
         .await
         .expect_err("current user is not a group");
 
-        assert!(matches!(err, McpToolError::InvalidInput(message) if message == "not a group"));
+        assert!(matches!(err, ToolError::InvalidInput(message) if message == "not a group"));
     }
 
     #[test]
@@ -612,7 +602,7 @@ mod tests {
         .expect_err("foreign-group cursor must fail closed");
         assert!(matches!(
             err,
-            McpToolError::InvalidInput(message) if message.contains("cursor does not match")
+            ToolError::InvalidInput(message) if message.contains("cursor does not match")
         ));
     }
 }
