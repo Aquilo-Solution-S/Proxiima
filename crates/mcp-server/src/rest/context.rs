@@ -11,7 +11,7 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
-use proxiima_core::mcp::resolve_operator_label;
+use proxiima_core::catalog::resolve_operator_label;
 use proxiima_core::{MemoryId, RELEASE_VERSION, ToolCaller};
 
 use crate::auth::McpAuthContext;
@@ -113,7 +113,7 @@ fn self_perspective(headers: &HeaderMap, instance: &str) -> Result<Option<Memory
     let Some(raw) = header_str(headers, SELF_PERSPECTIVE_HEADER) else {
         return Ok(None);
     };
-    proxiima_core::mcp::parse_wire_uuid(raw)
+    proxiima_core::catalog::parse_wire_uuid(raw)
         .map(|id| Some(MemoryId::new(id)))
         .map_err(|err| {
             Problem::invalid_input(

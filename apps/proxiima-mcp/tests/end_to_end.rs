@@ -43,7 +43,7 @@ fn an_explicit_object_root_constrains_every_union_branch() {
             keyword: [{"type": "object"}, {"type": "string"}],
         });
         let original = schema.clone();
-        proxiima_core::mcp::normalize_mcp_output_schema(&mut schema)
+        proxiima_core::catalog::normalize_mcp_output_schema(&mut schema)
             .expect("an explicit object root already constrains the union");
         assert_eq!(schema, original);
         let mut compiler = Compiler::new();

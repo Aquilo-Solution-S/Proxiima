@@ -108,7 +108,7 @@ pub enum SpiiceRegistryError {
         message: String,
     },
     /// A tool's, or one of its actions', human title is empty, multi-line,
-    /// padded or too long ([`MAX_TITLE_CHARS`](crate::mcp::MAX_TITLE_CHARS)).
+    /// padded or too long ([`MAX_TITLE_CHARS`](crate::catalog::MAX_TITLE_CHARS)).
     #[error("{key} has an invalid title {title:?}: it {problem}")]
     InvalidTitle {
         key: String,
@@ -172,7 +172,7 @@ pub enum SpiiceRegistryError {
     )]
     DispatcherWithoutActionSpecs { name: &'static str },
     /// A tool's `ACTION_ARG_SPECS` and its schemars-derived
-    /// [`McpDispatcherSchema`](crate::mcp::McpDispatcherSchema) do not
+    /// [`DispatcherSchema`](crate::catalog::DispatcherSchema) do not
     /// describe the same dispatcher.
     #[error("tool {name} has inconsistent ACTION_ARG_SPECS: {message}")]
     InvalidActionSpecs { name: &'static str, message: String },

@@ -600,7 +600,7 @@ fn write_host_tool(name: &str) -> crate::McpHostTool {
         name,
         "Host fixture",
         serde_json::json!({"type": "object"}),
-        proxiima_core::ToolEffect::Additive(proxiima_core::mcp::Replay::NonIdempotent),
+        proxiima_core::ToolEffect::Additive(proxiima_core::catalog::Replay::NonIdempotent),
     )
     .with_output_schema(serde_json::json!({"type": "object"}))
 }
@@ -629,7 +629,7 @@ impl crate::McpHostTools for HostFixture {
 
     async fn call(
         &self,
-        _: proxiima_core::mcp::ToolCall,
+        _: proxiima_core::catalog::ToolCall,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.reply
             .clone()
@@ -1084,8 +1084,8 @@ struct Hiding {
 impl proxiima_core::RequestBehavior for Hiding {
     async fn handle(
         &self,
-        call: proxiima_core::mcp::ToolCall,
-        next: proxiima_core::mcp::Next<'_>,
+        call: proxiima_core::catalog::ToolCall,
+        next: proxiima_core::catalog::Next<'_>,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.handled
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

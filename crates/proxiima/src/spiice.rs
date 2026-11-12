@@ -8,6 +8,19 @@ pub use crate::spiice_bundle;
 /// runtime handles a spawning spiice receives and the named join handle
 /// it returns.
 pub use crate::workers::{SpiiceWorker, SpiiceWorkerContext};
+/// Transport-neutral tool metadata.
+/// Implement [`Tool`] with [`ToolCtx`] / [`ToolError`]; MCP and REST adapt it.
+/// Declare what the tool does once, as a [`ToolEffect`]: `Tool::EFFECT` on a
+/// flat tool, `ActionArgSpec::effect` per action of a dispatcher. Name it
+/// for a person once too: `Tool::TITLE`, and `ActionArgSpec::title` per
+/// action, each at most [`MAX_TITLE_CHARS`] characters.
+/// Resolve dependencies with `ctx.service::<T>()` and model labels with
+/// [`ToolCtx::operator_label`]. The authenticated model identity takes precedence.
+/// Read application-specific verified claims through
+/// `ctx.authz().verified_claims()`; interpretation belongs to the spiice.
+pub use proxiima_core::catalog::{
+    ActionArgSpec, KeyDeclaration, MAX_TITLE_CHARS, Replay, ToolEffect,
+};
 /// The typed artefact inside [`CitedBlobStaged`], and the outcome of
 /// [`proxiima_core::Engine::complete_upload_as_fact`].
 ///
@@ -39,19 +52,6 @@ pub use proxiima_core::goal_collaboration::{
 };
 /// Explicitly select the deployment's lexical configuration for a memory write.
 pub use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
-/// Transport-neutral tool metadata.
-/// Implement [`Tool`] with [`ToolCtx`] / [`ToolError`]; MCP and REST adapt it.
-/// Declare what the tool does once, as a [`ToolEffect`]: `Tool::EFFECT` on a
-/// flat tool, `McpActionArgSpec::effect` per action of a dispatcher. Name it
-/// for a person once too: `Tool::TITLE`, and `McpActionArgSpec::title` per
-/// action, each at most [`MAX_TITLE_CHARS`] characters.
-/// Resolve dependencies with `ctx.service::<T>()` and model labels with
-/// [`ToolCtx::operator_label`]. The authenticated model identity takes precedence.
-/// Read application-specific verified claims through
-/// `ctx.authz().verified_claims()`; interpretation belongs to the spiice.
-pub use proxiima_core::mcp::{
-    KeyDeclaration, MAX_TITLE_CHARS, McpActionArgSpec, Replay, ToolEffect,
-};
 /// Build-time spiice declaration vocabulary. These are const-constructible
 /// contract values; no runtime registry or storage handle crosses the SDK.
 pub use proxiima_core::spiice::{
@@ -285,11 +285,11 @@ pub use sidecar_heads::sidecar_heads_by_key;
 
 /// Types of the [`Tool::ARGV_ACTION_SPECS`] and [`Tool::AUDIENCE`] consts,
 /// and of an action spec's `need`.
-pub use proxiima_core::mcp::{McpArgvActionSpec, McpToolAudience, OwnerNeed};
+pub use proxiima_core::catalog::{ArgvActionSpec, OwnerNeed, ToolAudience};
 /// The request-behavior onion [`SpiiceRegistry::add_request_behavior`] takes,
 /// with the reply it passes along ([`ToolReply`]) and the view
 /// [`RequestBehavior::visible`] reads ([`ToolDescriptorView`]).
-pub use proxiima_core::mcp::{
+pub use proxiima_core::catalog::{
     Next, RequestBehavior, ToolCall, ToolContent, ToolDescriptorView, ToolReply, ToolSource,
 };
 /// sqlx → `StorageError` classifier for hand-written [`PgMemorySidecar`]

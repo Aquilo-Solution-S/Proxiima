@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use proxiima_core::authz::OwnerResolver;
+use proxiima_core::catalog::{ActionArgSpec, OwnerNeed, Replay, ToolAudience, ToolEffect};
 use proxiima_core::error::ProtocolError;
-use proxiima_core::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect};
 use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{
     AuthzContext, OwnerId, SchemaId, SchemaVersion, ScopeKeyError, ScopeKeyPart, SpiiceDescriptor,
@@ -172,7 +172,7 @@ const STUB_EFFECT: ToolEffect = ToolEffect::Additive(Replay::NonIdempotent);
 /// that `UndeclaredToolBehavior` (checked first at freeze) never stands in
 /// for the dispatcher guard under test, and none when it dispatches, where
 /// `DispatcherToolEffect` would.
-const fn stub_tool_effect(specs: &[McpActionArgSpec]) -> Option<ToolEffect> {
+const fn stub_tool_effect(specs: &[ActionArgSpec]) -> Option<ToolEffect> {
     if specs.is_empty() {
         Some(STUB_EFFECT)
     } else {
@@ -264,7 +264,7 @@ macro_rules! stub_tool {
             const TITLE: &'static str = "Test tool";
             const NAME: &'static str = $name;
             const DESCRIPTION: &'static str = "test";
-            const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = $specs;
+            const ACTION_ARG_SPECS: &'static [ActionArgSpec] = $specs;
             const EFFECT: Option<ToolEffect> = stub_tool_effect($specs);
             type Args = $args;
             type Output = EmptyOutput;
@@ -312,12 +312,12 @@ stub_tool!(
     LegacyExtensionTool,
     "proxiima-test_legacyext",
     LegacyExtensionArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "run",
         allowed_fields: &["value"],
         required_fields: &["value"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -327,12 +327,12 @@ stub_tool!(
     ColonActionTool,
     "proxiima-test_colonaction",
     ColonActionArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look:at",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -341,12 +341,12 @@ stub_tool!(
     SpacedActionTool,
     "proxiima-test_spacedaction",
     SpacedActionArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look at",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -356,12 +356,12 @@ stub_tool!(
     WrongTagTool,
     "proxiima-test_wrongtag",
     WrongTagArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -370,12 +370,12 @@ stub_tool!(
     FlatWithSpecsTool,
     "proxiima-test_flatspecs",
     EmptyArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look",
         allowed_fields: &[],
         required_fields: &[],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -384,12 +384,12 @@ stub_tool!(
     DriftedActionsTool,
     "proxiima-test_driftactions",
     TwoActionArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -399,21 +399,21 @@ stub_tool!(
     "proxiima-test_driftfields",
     TwoActionArgs,
     &[
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "touch",
             allowed_fields: &["id"],
             required_fields: &["id", "note"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
@@ -423,12 +423,12 @@ stub_tool!(
     ReadOnlyDispatcherTool,
     "proxiima-test_readonlydispatch",
     TaggedArgs,
-    &[McpActionArgSpec {
+    &[ActionArgSpec {
         action: "look",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::ReadOnly,
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Test action",
     }]
@@ -440,21 +440,21 @@ stub_tool!(
     "proxiima-test_dupspecs",
     TaggedArgs,
     &[
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },

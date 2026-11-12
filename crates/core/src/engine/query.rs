@@ -125,7 +125,7 @@ impl Engine {
     /// Its ancestors follow local `origin` pins only. It does NOT apply the
     /// shared ancestor-edge rule (declared payload subjects as `reference`,
     /// other-store memories as leaves) that the `walk_memory_lineage` tool
-    /// and `core_think` follow (`mcp::core_tools::ancestry`, #480); the
+    /// and `core_think` follow (`catalog::core_tools::ancestry`, #480); the
     /// other-store rows of the page's nodes come back unexpanded in
     /// `external_edges`. Descendants follow `origin` pins, as the tool does.
     /// Every node carries its real hop distance (the start is 0, a memory

@@ -13,6 +13,7 @@ pub mod auth;
 pub mod authz;
 pub mod canonical_json;
 pub mod capability;
+pub mod catalog;
 pub mod citations;
 pub mod cold;
 pub mod count;
@@ -27,7 +28,6 @@ pub mod goal_collaboration;
 pub mod ids;
 pub mod lexical_language;
 pub mod llm;
-pub mod mcp;
 pub mod memory;
 mod memory_uuid;
 pub mod models;
@@ -55,7 +55,6 @@ pub mod storage_ports;
 #[cfg(any(test, feature = "testkit"))]
 pub mod test_fixtures;
 pub mod text_bounds;
-pub mod tool;
 pub mod verbs;
 pub mod write_wake;
 
@@ -64,6 +63,17 @@ pub use auth::*;
 pub use authz::*;
 pub use canonical_json::canonical_json_bytes;
 pub use capability::*;
+pub use catalog::contract::*;
+pub use catalog::{
+    CallFn, CoreActionMeta, HostToolCall, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS,
+    MemoryHandleClass, Next, OperatorLabelConflict, OwnerNeed, Replay, RequestBehavior,
+    ScopeGateBehavior, TerminalDispatch, ToolAnnotations, ToolAudience, ToolContent,
+    ToolDescriptor, ToolDescriptorView, ToolEffect, ToolErrorKind, ToolOrigin, ToolReply,
+    ToolSource, UNKNOWN_OPERATOR_LABEL, UnknownFieldPolicy, all_core_actions, all_core_resources,
+    canonical_scope_keys, canonical_scope_keys_excluding, canonical_served_read_keys,
+    core_action_meta, how_to_resource_declaration, how_to_resource_key, provider_safe_tool_name,
+    resolve_operator_label, tool_name_matches,
+};
 pub use citations::*;
 pub use cold::{
     ColdObjectStore, MAX_OBJECT_STORE_ID_BYTES, MAX_OPERATOR_STORE_ID_BYTES, ObjectStoreId,
@@ -79,16 +89,6 @@ pub use error::*;
 pub use goal::{SimpleTextGoalV1, TaskGoalV1, TaskPriority};
 pub use ids::*;
 pub use llm::*;
-pub use mcp::{
-    CoreActionMeta, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS, McpCallFn, McpHostToolCall,
-    McpToolAnnotations, McpToolAudience, McpToolDescriptor, McpToolOrigin, McpUnknownFieldPolicy,
-    MemoryHandleClass, Next, OperatorLabelConflict, OwnerNeed, Replay, RequestBehavior,
-    ScopeGateBehavior, TerminalDispatch, ToolContent, ToolDescriptorView, ToolEffect,
-    ToolErrorKind, ToolReply, ToolSource, UNKNOWN_OPERATOR_LABEL, all_core_actions,
-    all_core_resources, canonical_scope_keys, canonical_scope_keys_excluding,
-    canonical_served_read_keys, core_action_meta, how_to_resource_declaration, how_to_resource_key,
-    provider_safe_tool_name, resolve_operator_label, tool_name_matches,
-};
 pub use memory::*;
 pub use memory_uuid::{memory_store_number, new_memory_uuid, new_memory_uuid_after};
 pub use models::*;
@@ -120,7 +120,6 @@ pub use spiice::*;
 pub use sql_text::{PgIdent, SqlBuilder, SqlText};
 pub use storage::*;
 pub use text_bounds::*;
-pub use tool::*;
 
 pub use verbs::fact_ingest::{
     AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,

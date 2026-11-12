@@ -2,7 +2,7 @@
 //!
 //! REST is a rendering of the tool manifest, not a second API (docs/protocol.md,
 //! REST projection), so nothing here is authored per tool: every path,
-//! operation, and request schema is derived from `McpToolDescriptor` and
+//! operation, and request schema is derived from `ToolDescriptor` and
 //! `ResourceContract`. A tool added to a spiice crate appears in this document
 //! with no edit here.
 //!
@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use proxiima_core::SpiiceRegistryFrozen;
-use proxiima_core::mcp::{McpToolAnnotations, McpToolDescriptor, ToolEffect, all_core_resources};
+use proxiima_core::catalog::{ToolAnnotations, ToolDescriptor, ToolEffect, all_core_resources};
 use proxiima_core::spiice::ResourceContract;
 use serde_json::{Map, Value, json};
 
@@ -120,7 +120,7 @@ pub(crate) fn document_for_caller(
     caller: Caller<'_>,
 ) -> Value {
     let auth = caller.auth();
-    let tools: Vec<&McpToolDescriptor> = registry
+    let tools: Vec<&ToolDescriptor> = registry
         .list_mcp_tools()
         .iter()
         .filter(|descriptor| auth.is_none() || tool_allowed_for_auth(caller, descriptor))
@@ -139,7 +139,7 @@ pub(crate) fn document_for_caller(
 /// knows its externally reachable origin.
 #[must_use]
 pub fn document(
-    tools: &[&McpToolDescriptor],
+    tools: &[&ToolDescriptor],
     resources: &[&ResourceContract],
     public_url: Option<&str>,
     auth: Option<&McpAuthContext>,
@@ -148,7 +148,7 @@ pub fn document(
 }
 
 fn document_with(
-    tools: &[&McpToolDescriptor],
+    tools: &[&ToolDescriptor],
     resources: &[&ResourceContract],
     public_url: Option<&str>,
     caller: Caller<'_>,
@@ -202,7 +202,7 @@ fn collect_how_to_path(paths: &mut BTreeMap<String, Value>) {
         request_schema: None,
         produces_schema_ids: &[],
         output_schema: None,
-        annotations: McpToolAnnotations::registered(ToolEffect::ReadOnly),
+        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
     }
     .render("get");
     operation["responses"]["200"]["content"] = json!({
@@ -225,7 +225,7 @@ struct Operation<'a> {
     /// The reply schema derived from the tool's `Output` or the resource's
     /// answer type. `None` for the guide, whose body is markdown.
     output_schema: Option<&'a Value>,
-    annotations: McpToolAnnotations,
+    annotations: ToolAnnotations,
 }
 
 /// The structural identity of an operation before its HTTP method is added.
@@ -270,7 +270,7 @@ impl Operation<'_> {
         if !self.description.is_empty() {
             operation.insert("description".to_string(), json!(self.description));
         }
-        // Silence means write, matching `McpToolDescriptor::is_read_only` —
+        // Silence means write, matching `ToolDescriptor::is_read_only` —
         // so read-only is always stated. The other two hints carry no such
         // default, and inventing one would misreport a tool that said nothing.
         operation.insert(
@@ -314,7 +314,7 @@ impl Operation<'_> {
 
 /// Whole-tool path plus one path per dispatcher action.
 fn collect_tool_paths(
-    tool: &McpToolDescriptor,
+    tool: &ToolDescriptor,
     caller: Caller<'_>,
     paths: &mut BTreeMap<String, Value>,
 ) {
@@ -348,7 +348,7 @@ fn collect_tool_paths(
         });
         // Per-action, not tool-level: the spec's effect is the same
         // authority the owner-role gate and router read.
-        let action_annotations = McpToolAnnotations::registered(spec.effect);
+        let action_annotations = ToolAnnotations::registered(spec.effect);
         let action_description = tool.action_description(action).unwrap_or(tool.description);
         let narrowed = Operation {
             target: OperationTarget::Action {
@@ -420,7 +420,7 @@ fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<Strin
         // read, which is why they exist as a separate concept from tools.
         produces_schema_ids: &[],
         output_schema: Some(&answer),
-        annotations: McpToolAnnotations::registered(ToolEffect::ReadOnly),
+        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
     };
     let mut item = Map::new();
     item.insert("get".to_string(), operation.render("get"));
@@ -618,7 +618,7 @@ mod tests {
     use proxiima_core::protocol::tool as protocol_tool;
     use proxiima_core::{SpiiceRegistry, SpiiceRegistryFrozen};
 
-    use super::{McpToolDescriptor, ResourceContract, Value, all_core_resources, document};
+    use super::{ResourceContract, ToolDescriptor, Value, all_core_resources, document};
 
     fn frozen_registry() -> SpiiceRegistryFrozen {
         SpiiceRegistry::default()
@@ -629,7 +629,7 @@ mod tests {
     /// Generated from the real frozen registry, so the tests exercise the
     /// descriptors the server actually serves rather than hand-made ones.
     fn core_document(registry: &SpiiceRegistryFrozen) -> Value {
-        let tools: Vec<&McpToolDescriptor> = registry.list_mcp_tools().iter().collect();
+        let tools: Vec<&ToolDescriptor> = registry.list_mcp_tools().iter().collect();
         let resources: Vec<&ResourceContract> = all_core_resources().collect();
         document(&tools, &resources, Some("https://proxiima.example"), None)
     }
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn public_url_is_the_only_source_of_servers() {
         let registry = frozen_registry();
-        let tools: Vec<&McpToolDescriptor> = registry.list_mcp_tools().iter().collect();
+        let tools: Vec<&ToolDescriptor> = registry.list_mcp_tools().iter().collect();
         let document = document(&tools, &[], None, None);
         assert!(
             document.get("servers").is_none(),

@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use proxiima_core::Tool;
-use proxiima_core::mcp::core_tools::{
+use proxiima_core::catalog::core_tools::{
     CoreGoalTool, DeriveTool, InterpretTool, MemorySpacesTool, RecallTool, RecordUtteranceTool,
     RememberTool, SearchMemoriesTool, ThinkTool,
 };

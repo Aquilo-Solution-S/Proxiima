@@ -267,7 +267,7 @@ pub(super) static UNREGISTERED_TOOL: SpiiceContract = contract(
 );
 
 /// The registration says nothing dispatches; the declaration names an
-/// action. `actions` is a copy of `McpActionArgSpec::action`, and a copy
+/// action. `actions` is a copy of `ActionArgSpec::action`, and a copy
 /// that has drifted is worse than no copy: palette scope keys are
 /// `"<wire_name>:<action>"`, so the drifted list is read by people
 /// composing palettes against actions the dispatcher will not route.
@@ -293,14 +293,14 @@ pub(super) static TOOL_AGREES: SpiiceContract = contract(
 );
 
 /// One action for a fixture dispatcher.
-pub(super) const FIXTURE_ACTIONS: &[crate::mcp::McpActionArgSpec] =
-    &[crate::mcp::McpActionArgSpec {
+pub(super) const FIXTURE_ACTIONS: &[crate::catalog::ActionArgSpec] =
+    &[crate::catalog::ActionArgSpec {
         action: "look",
         allowed_fields: &[],
         required_fields: &[],
-        effect: crate::mcp::ToolEffect::ReadOnly,
-        audience: crate::mcp::McpToolAudience::Shared,
-        need: crate::mcp::OwnerNeed::Memory,
+        effect: crate::catalog::ToolEffect::ReadOnly,
+        audience: crate::catalog::ToolAudience::Shared,
+        need: crate::catalog::OwnerNeed::Memory,
         title: "Test action",
     }];
 
@@ -313,21 +313,21 @@ pub(super) const FIXTURE_ACTIONS: &[crate::mcp::McpActionArgSpec] =
 /// check sits.
 pub(super) fn register_fixture_tool(
     registry: &mut SpiiceRegistry,
-    action_arg_specs: &'static [crate::mcp::McpActionArgSpec],
-    effect: Option<crate::mcp::ToolEffect>,
+    action_arg_specs: &'static [crate::catalog::ActionArgSpec],
+    effect: Option<crate::catalog::ToolEffect>,
 ) {
     // Registrations live for the process; a leaked closure gives the
     // descriptor the `'static` call handle its field type demands.
-    let call: crate::mcp::McpCallFn = Box::leak(Box::new(
+    let call: crate::catalog::CallFn = Box::leak(Box::new(
         |_ctx: crate::ToolCtx, _args: serde_json::Value| {
             Box::pin(async { Err(crate::ToolError::Other("a fixture".to_owned())) })
                 as futures::future::BoxFuture<'static, _>
         },
     ));
-    registry.mcp_tools.push(crate::mcp::McpToolDescriptor {
+    registry.mcp_tools.push(crate::catalog::ToolDescriptor {
         name: "test_spiice_flat",
         description: "a fixture's tool",
-        origin: crate::mcp::McpToolOrigin::Spiice(FIXTURE_SPIICE.to_owned()),
+        origin: crate::catalog::ToolOrigin::Spiice(FIXTURE_SPIICE.to_owned()),
         produces_schema_ids: &[],
         args_schema: serde_json::json!({ "type": "object" }),
         dispatcher_schema: None,
@@ -335,7 +335,7 @@ pub(super) fn register_fixture_tool(
         action_arg_specs,
         argv_action_specs: &[],
         effect,
-        audience: crate::mcp::McpToolAudience::Shared,
+        audience: crate::catalog::ToolAudience::Shared,
         call,
         title: "Test tool",
     });
@@ -343,8 +343,8 @@ pub(super) fn register_fixture_tool(
 
 /// A flat tool's effect that `validate_tools_declare_behavior` accepts, so
 /// a fixture reaches the check it is about.
-pub(super) const FIXTURE_EFFECT: Option<crate::mcp::ToolEffect> = Some(
-    crate::mcp::ToolEffect::Additive(crate::mcp::Replay::NonIdempotent),
+pub(super) const FIXTURE_EFFECT: Option<crate::catalog::ToolEffect> = Some(
+    crate::catalog::ToolEffect::Additive(crate::catalog::Replay::NonIdempotent),
 );
 
 /// A fixture's ingress. Never called: the registries these fixtures build

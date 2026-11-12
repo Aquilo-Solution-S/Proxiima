@@ -10,10 +10,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use proxiima_core::mcp::{
-    McpToolAnnotations, McpToolDescriptor, ToolContent, ToolDescriptorView, ToolEffect,
-    ToolErrorKind, ToolReply, all_core_resources, mcp_wire_output_schema,
-    normalize_mcp_output_schema, provider_safe_tool_name, tool_name_matches,
+use proxiima_core::catalog::{
+    ToolAnnotations, ToolContent, ToolDescriptor, ToolDescriptorView, ToolEffect, ToolErrorKind,
+    ToolReply, all_core_resources, mcp_wire_output_schema, normalize_mcp_output_schema,
+    provider_safe_tool_name, tool_name_matches,
 };
 use proxiima_core::{
     MemoryId, SpiiceRegistryFrozen, UNKNOWN_OPERATOR_LABEL, resolve_operator_label,
@@ -27,7 +27,6 @@ use rmcp::model::{
     PaginatedRequestParams, ProgressNotificationParam, ProgressToken, ProtocolVersion,
     ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
     ResourceContents, ResourceTemplate, ServerCapabilities, ServerConfig, SubscriptionFilter, Tool,
-    ToolAnnotations,
 };
 use rmcp::service::{MaybeSendFuture, Peer, RequestContext, RoleServer, SubscriptionContext};
 
@@ -839,7 +838,7 @@ fn with_mime_type(contents: ResourceContents, mime_type: Option<String>) -> Reso
 /// Unrestricted (or absent) capabilities and flat tools get the full schema.
 #[cfg(test)]
 pub(crate) fn project_dispatcher_actions(
-    descriptor: &McpToolDescriptor,
+    descriptor: &ToolDescriptor,
     capabilities: Option<&CapabilitySet>,
 ) -> serde_json::Value {
     descriptor.input_schema(|action| {
@@ -854,7 +853,7 @@ pub(crate) fn project_dispatcher_actions(
 /// cannot invoke.
 pub(crate) fn project_dispatcher_actions_for_auth(
     caller: Caller<'_>,
-    descriptor: &McpToolDescriptor,
+    descriptor: &ToolDescriptor,
 ) -> serde_json::Value {
     descriptor.input_schema(|action| {
         caller.auth.is_none() || action_allowed_for_auth(caller, descriptor, action)
@@ -865,13 +864,13 @@ async fn caller_search_input_schema(
     ctx: &ToolCtx,
     schema: serde_json::Value,
 ) -> Result<serde_json::Value, ErrorData> {
-    proxiima_core::mcp::core_tools::search_memories::caller_input_schema(ctx, schema)
+    proxiima_core::catalog::core_tools::search_memories::caller_input_schema(ctx, schema)
         .await
         .map_err(generic_internal_error)
 }
 
-fn to_rmcp_annotations(annotations: McpToolAnnotations) -> ToolAnnotations {
-    let mut hints = ToolAnnotations::new();
+fn to_rmcp_annotations(annotations: ToolAnnotations) -> rmcp::model::ToolAnnotations {
+    let mut hints = rmcp::model::ToolAnnotations::new();
     if let Some(read_only) = annotations.read_only {
         hints = hints.read_only(read_only);
     }
@@ -935,8 +934,8 @@ fn resource_declaration_allowed_for_auth(
 pub(crate) fn how_to_allowed_for_auth(auth: Option<&McpAuthContext>) -> bool {
     resource_declaration_allowed_for_auth(
         auth,
-        proxiima_core::mcp::how_to_resource_key(),
-        proxiima_core::mcp::how_to_resource_declaration(),
+        proxiima_core::catalog::how_to_resource_key(),
+        proxiima_core::catalog::how_to_resource_declaration(),
     )
 }
 
@@ -1038,7 +1037,7 @@ pub fn auth_context(context: &RequestContext<RoleServer>) -> Option<McpAuthConte
     Some(ctx.clone())
 }
 
-fn scope_allows(capabilities: Option<&CapabilitySet>, descriptor: &McpToolDescriptor) -> bool {
+fn scope_allows(capabilities: Option<&CapabilitySet>, descriptor: &ToolDescriptor) -> bool {
     match capabilities {
         Some(capabilities) => {
             // Argv-keyed dispatchers advertise through `tool:action` leaves
@@ -1106,7 +1105,7 @@ impl<'a> Caller<'a> {
 /// permitted by the caller's owner role, and (in a listing) shown by every
 /// request behavior. This keeps a mixed spiice dispatcher useful to a viewer
 /// without advertising its writes.
-pub(crate) fn tool_allowed_for_auth(caller: Caller<'_>, descriptor: &McpToolDescriptor) -> bool {
+pub(crate) fn tool_allowed_for_auth(caller: Caller<'_>, descriptor: &ToolDescriptor) -> bool {
     let scope = caller.auth.map(|ctx| ctx.authz.capabilities());
     if !scope_allows(scope, descriptor) {
         return false;
@@ -1131,7 +1130,7 @@ pub(crate) fn tool_allowed_for_auth(caller: Caller<'_>, descriptor: &McpToolDesc
 /// a listing) shown by every request behavior.
 pub(crate) fn action_allowed_for_auth(
     caller: Caller<'_>,
-    descriptor: &McpToolDescriptor,
+    descriptor: &ToolDescriptor,
     action: &str,
 ) -> bool {
     let scope_allowed = caller
@@ -1149,7 +1148,7 @@ pub(crate) fn action_allowed_for_auth(
 /// scope gate checks the concrete selection. Other tools use the default.
 fn tool_owner_role_allows(
     auth: Option<&McpAuthContext>,
-    descriptor: &McpToolDescriptor,
+    descriptor: &ToolDescriptor,
     action: Option<&str>,
 ) -> bool {
     let access = descriptor.declaration(action).owner_access();
@@ -1183,15 +1182,15 @@ fn owner_role_allows(auth: Option<&McpAuthContext>, access: OwnerAccess) -> bool
 /// `None` when the caller sees no action at all.
 pub(crate) fn annotations_for_auth(
     caller: Caller<'_>,
-    descriptor: &McpToolDescriptor,
-) -> Option<McpToolAnnotations> {
+    descriptor: &ToolDescriptor,
+) -> Option<ToolAnnotations> {
     // Each action's classification is the descriptor's single rule, never
     // re-derived here.
     descriptor
         .effect_over(|action| {
             caller.auth.is_none() || action_allowed_for_auth(caller, descriptor, action)
         })
-        .map(McpToolAnnotations::registered)
+        .map(ToolAnnotations::registered)
 }
 
 /// Whether a request that carries no bound auth context may see or call
@@ -1266,7 +1265,7 @@ fn caller_self_perspective_from_args(
             None,
         ));
     };
-    let id = proxiima_core::mcp::parse_wire_uuid(raw).map_err(|err| {
+    let id = proxiima_core::catalog::parse_wire_uuid(raw).map_err(|err| {
         ErrorData::invalid_params(format!("{field} must be a valid UUID: {err}"), None)
     })?;
     Ok(Some(MemoryId::new(id)))
@@ -1322,7 +1321,7 @@ fn host_tool_allowed_for_auth(caller: Caller<'_>, tool: &McpHostTool) -> bool {
 /// A host tool's `tools/list` entry; `None` (and a warning) when its
 /// input schema is not a JSON object or its output schema admits non-objects.
 /// Its output schema goes out as registered tools' do: validation only.
-/// Its hints are [`McpToolAnnotations::host`] of its effect, plus the
+/// Its hints are [`ToolAnnotations::host`] of its effect, plus the
 /// `openWorldHint` it set; its `_meta` goes out as given.
 fn host_tool_metadata(mut tool: McpHostTool) -> Option<Tool> {
     let output = match host_wire_output_schema(tool.output_schema.as_mut()) {
@@ -1341,9 +1340,9 @@ fn host_tool_metadata(mut tool: McpHostTool) -> Option<Tool> {
         Cow::Owned(tool.description),
         Arc::new(args),
     )
-    .annotate(to_rmcp_annotations(McpToolAnnotations {
+    .annotate(to_rmcp_annotations(ToolAnnotations {
         open_world: tool.open_world,
-        ..McpToolAnnotations::host(tool.effect)
+        ..ToolAnnotations::host(tool.effect)
     }));
     if let Some(output) = output {
         listed = listed.with_raw_output_schema(Arc::new(output));

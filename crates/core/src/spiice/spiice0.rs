@@ -16,14 +16,14 @@
 //!   declared comparable projections from every spiice, independently of ordinal.
 
 use crate::SearchProjectionColumnKind as ColumnKind;
-use crate::mcp::core_tools::get_graph::GetGraphOutput;
-use crate::mcp::core_tools::get_memories::GetMemoriesOutput;
-use crate::mcp::core_tools::get_memory::GetMemoryOutput;
-use crate::mcp::core_tools::goal_reads::{GoalItem, ListGoalsOutput};
-use crate::mcp::core_tools::list_schemas::{GetSchemaOutput, ListSchemasOutput};
-use crate::mcp::core_tools::list_substrate_tools::ListSubstrateToolsOutput;
-use crate::mcp::core_tools::memory_counts::MemoryCountsOutput;
-use crate::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageOutput;
+use crate::catalog::core_tools::get_graph::GetGraphOutput;
+use crate::catalog::core_tools::get_memories::GetMemoriesOutput;
+use crate::catalog::core_tools::get_memory::GetMemoryOutput;
+use crate::catalog::core_tools::goal_reads::{GoalItem, ListGoalsOutput};
+use crate::catalog::core_tools::list_schemas::{GetSchemaOutput, ListSchemasOutput};
+use crate::catalog::core_tools::list_substrate_tools::ListSubstrateToolsOutput;
+use crate::catalog::core_tools::memory_counts::MemoryCountsOutput;
+use crate::catalog::core_tools::walk_memory_lineage::WalkMemoryLineageOutput;
 use crate::protocol::resource as scope;
 use crate::protocol::tool;
 use crate::spiice::contract::{

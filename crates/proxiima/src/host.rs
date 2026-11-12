@@ -2,7 +2,7 @@
 
 /// How a [`ToolError`] answers on the wire ([`ToolError::kind`]).
 pub use proxiima_core::ToolErrorKind;
-pub use proxiima_core::mcp::parse_wire_uuid;
+pub use proxiima_core::catalog::parse_wire_uuid;
 pub use proxiima_core::{memory_store_number, new_memory_uuid};
 
 pub use crate::app::{AppContext, AppInfo, Authz, SpiiceApp};
@@ -48,6 +48,8 @@ pub use crate::runtime_config::{
 ///
 /// `BlobError` comes with them because `from_env` returns it.
 pub use proxiima_blob_s3::{BlobError, CitedBlobStore, S3KeyPair, S3RuntimeConfig};
+/// The node states a [`RemoteLineageNode`] carries, as a lineage walk reports them.
+pub use proxiima_core::catalog::core_tools::{NodeStatus, UnavailableReason};
 /// The Postgres schemas a frozen registry stores into, sorted. Boot derives
 /// its runtime-grant plan, owner-RLS census and platform scope from this
 /// function, so a host that freezes a registry without booting runs the same
@@ -92,8 +94,6 @@ pub use proxiima_core::goal_collaboration::{
 /// Explicitly select the deployment's lexical configuration for a memory write.
 pub use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
 pub use proxiima_core::llm;
-/// The node states a [`RemoteLineageNode`] carries, as a lineage walk reports them.
-pub use proxiima_core::mcp::core_tools::{NodeStatus, UnavailableReason};
 /// [`EmbedCaps`] is the second parameter of
 /// [`OpenAiCompatEmbeddingClient::new`], so without it on the facade that
 /// constructor is unspellable for a host depending on `proxiima` alone. That
@@ -186,13 +186,13 @@ pub use proxiima_core::{
 };
 pub use proxiima_core::{FeatureControlError, FeatureStatus};
 pub use proxiima_core::{KeepDays, KeepDaysOutOfRange, Retention};
-/// Frozen-registry catalog element. [`SpiiceRegistryFrozen::list_mcp_tools`]
-/// already returns `&[McpToolDescriptor]`; without these names a host
-/// depending only on `proxiima` cannot write a typed signature or match
-/// [`McpToolOrigin`]. `CoreToolInfo` stays the projected list DTO.
-pub use proxiima_core::{McpToolDescriptor, McpToolOrigin};
 /// The `plaintext_hosts` field of [`S3RuntimeConfig`] holds one.
 pub use proxiima_core::{PlaintextHosts, PlaintextHostsError};
+/// Frozen-registry catalog element. [`SpiiceRegistryFrozen::list_mcp_tools`]
+/// already returns `&[ToolDescriptor]`; without these names a host
+/// depending only on `proxiima` cannot write a typed signature or match
+/// [`ToolOrigin`]. `CoreToolInfo` stays the projected list DTO.
+pub use proxiima_core::{ToolDescriptor, ToolOrigin};
 /// Typed dispatch for the host's one [`PgHostStateParticipant`]:
 /// [`PgCommandDispatcher`] routes each command type to its
 /// [`HostStateHandler`], which only receives an [`AgreedCommand`] (owners
@@ -392,41 +392,40 @@ pub use proxiima_blob_s3::{
 };
 /// The per-call marker behaviors see for host-served MCP tools
 /// ([`RuntimeBuilder::host_tools`]).
-pub use proxiima_core::McpHostToolCall;
+pub use proxiima_core::HostToolCall;
 /// Stream revalidation cadence: the type of [`McpEdge::revalidation`] and of
 /// [`RuntimeConfig::stream_revalidation`], and the parameter of
 /// [`layered_router_with_revalidation`], [`layered_router_mcp_only`] and
 /// [`mcp_auth_layer_with_metadata`].
 pub use proxiima_core::authz::RevalidationConfig;
+/// Field types of [`ToolDescriptor`] and consts of [`Tool`]; a host
+/// partitioning tool surfaces by audience reads them. [`ToolEffect`] is also
+/// what an [`McpHostTool`] declares, and [`ToolAnnotations`] the MCP hints
+/// it projects to.
+pub use proxiima_core::catalog::{
+    ArgvActionSpec, KeyDeclaration, OwnerNeed, Replay, ToolAnnotations, ToolAudience, ToolEffect,
+};
 /// Tool names and core-tool metadata for a host that gates or presents its
 /// own surface. [`tool_name_matches`] compares a requested name with the
 /// canonical or the [`provider_safe_tool_name`] form. [`all_core_resources`]
 /// enumerates the core resources' scope keys and [`core_action_meta`] returns
 /// the [`CoreActionMeta`] of one core tool action.
-pub use proxiima_core::mcp::{
+pub use proxiima_core::catalog::{
     CoreActionMeta, all_core_resources, core_action_meta, tool_name_matches,
-};
-/// Field types of [`McpToolDescriptor`] and consts of [`Tool`]; a host
-/// partitioning tool surfaces by audience reads them. [`ToolEffect`] is also
-/// what an [`McpHostTool`] declares, and [`McpToolAnnotations`] the MCP hints
-/// it projects to.
-pub use proxiima_core::mcp::{
-    KeyDeclaration, McpArgvActionSpec, McpToolAnnotations, McpToolAudience, OwnerNeed, Replay,
-    ToolEffect,
 };
 /// The request-behavior onion. A behavior wraps [`ToolCtx`] /
 /// [`ToolError`]; spiices register one through `proxiima::spiice`.
-pub use proxiima_core::mcp::{Next, RequestBehavior, ToolCall};
+pub use proxiima_core::catalog::{Next, RequestBehavior, ToolCall};
 /// The host-built behavior chain: [`Next::new`] and
 /// [`McpToolHost::dispatch_through_behaviors`] take a [`TerminalDispatch`],
 /// and [`ScopeGateBehavior`] is the tool-scope gate a host that assembles its
 /// own chain names. Host API only; spiices register behaviors, they do not
 /// build the chain.
-pub use proxiima_core::mcp::{ScopeGateBehavior, TerminalDispatch};
+pub use proxiima_core::catalog::{ScopeGateBehavior, TerminalDispatch};
 /// What a tool call answers ([`ToolReply`] of [`ToolContent`] blocks, which
 /// [`McpHostTools::call`] returns and every behavior passes on) and the
 /// borrowed view of one tool a behavior's [`RequestBehavior::visible`] reads.
-pub use proxiima_core::mcp::{ToolContent, ToolDescriptorView, ToolReply, ToolSource};
+pub use proxiima_core::catalog::{ToolContent, ToolDescriptorView, ToolReply, ToolSource};
 /// Host-bound `CloudEvents` extension attributes
 /// ([`AuthzContext::with_publication_extensions`]); the error and value
 /// types are what binding returns and `get` reads.
@@ -484,6 +483,14 @@ pub use proxiima_core::{
 /// ([`AuthzContext::with_read_set`], #677): the set, one named memory, and
 /// the refusal building one gives.
 pub use proxiima_core::{BoundReadSet, ReadPin, ReadSet, ReadSetError};
+/// The tool-descriptor and handle vocabulary of [`ToolDescriptor`],
+/// [`ToolError`],
+/// [`RequestHeaderAllowlist::extract`]: a
+/// host that registers or presents its own tools names them.
+pub use proxiima_core::{
+    CallFn, MemoryHandleClass, RequestHeaders, ToolError, UnknownFieldPolicy,
+    catalog::ActionArgSpec, catalog::ActionSchema, catalog::DispatcherSchema,
+};
 /// The storage ports and their handles. [`StoragePortsBuilder`]'s setters take the
 /// `*Handle` aliases (`Arc<dyn ...Port>`), [`StoragePortsBuilder::try_build`]
 /// returns the `StoragePortsBuildError`, and a host that supplies its own backend
@@ -535,14 +542,6 @@ pub use proxiima_core::{
 /// [`AuthzContext::invoking_tool`] return, and the refusal
 /// [`AuthzContext::with_trusted_model_id`] gives.
 pub use proxiima_core::{Identity, InvokingTool, TrustedModelIdError};
-/// The tool-descriptor and handle vocabulary of [`McpToolDescriptor`],
-/// [`ToolError`],
-/// [`RequestHeaderAllowlist::extract`]: a
-/// host that registers or presents its own tools names them.
-pub use proxiima_core::{
-    McpCallFn, McpUnknownFieldPolicy, MemoryHandleClass, RequestHeaders, ToolError,
-    mcp::McpActionArgSpec, mcp::McpActionSchema, mcp::McpDispatcherSchema,
-};
 /// The publication extension set and plan the Fact write path carries
 /// ([`PublicationExtensions::iter`], [`AuthorizedFactWrite`]'s `publication`):
 /// a host that binds extensions through
@@ -709,7 +708,7 @@ mod tests {
     };
     use proxiima_core::SpiiceRegistry;
     use proxiima_core::Tool;
-    use proxiima_core::mcp::core_tools::{CoreGoalTool, SearchMemoriesTool};
+    use proxiima_core::catalog::core_tools::{CoreGoalTool, SearchMemoriesTool};
     use proxiima_core::protocol::resource as protocol_resource;
 
     // `SpiiceRegistry::default()` already registers every substrate tool

@@ -77,7 +77,7 @@ impl ProxiimaHost {
     /// spiice-owned store over tables the host migrates (as `proxiima-mcp`
     /// does with `CodeSpiiceStore::from_backend_pool_for_host`). Wrap the pool
     /// in that store immediately. Do not put `PgPool` on `SpiiceServices`, do
-    /// not pass it into a [`proxiima_core::tool::Tool`], and do not run
+    /// not pass it into a [`proxiima_core::catalog::Tool`], and do not run
     /// `proxiima_core.*` SQL through it — spiice `src/` still has zero
     /// core-table SQL.
     ///

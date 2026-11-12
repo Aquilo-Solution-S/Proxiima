@@ -395,7 +395,7 @@ async fn multi_owner_core_transfer_needs_admin_on_both_owners_through_the_http_e
         );
 
         // The move is real, not just a happy answer.
-        let memory_t = proxiima_core::mcp::parse_wire_uuid(&handle)?;
+        let memory_t = proxiima_core::catalog::parse_wire_uuid(&handle)?;
         let pool = sqlx::PgPool::connect(&database_url).await?;
         let landed: Uuid =
             sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory WHERE t = $1")
@@ -476,7 +476,7 @@ async fn multi_owner_core_transfer_needs_admin_on_both_owners_through_the_http_e
         );
 
         // The refusals left the series where it was.
-        let stranded_t = proxiima_core::mcp::parse_wire_uuid(&stranded_handle)?;
+        let stranded_t = proxiima_core::catalog::parse_wire_uuid(&stranded_handle)?;
         let unmoved: Uuid =
             sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory WHERE t = $1")
                 .bind(stranded_t)

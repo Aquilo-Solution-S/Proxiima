@@ -1,6 +1,6 @@
 //! A spiice can declare a dispatcher, and every seam treats it as one.
 //!
-//! `McpToolDescriptor::action_arg_specs` is THE enumeration of a dispatcher's
+//! `ToolDescriptor::action_arg_specs` is THE enumeration of a dispatcher's
 //! actions. Every seam reads it: the scope gate, argument validation,
 //! `proxiima://tools`, and the REST action routes. A tool whose `Args` is an
 //! internally tagged enum derives a dispatcher schema, so
@@ -11,9 +11,9 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use proxiima_core::mcp::{
-    McpActionArgSpec, McpToolAudience, McpToolOrigin, Next, OwnerNeed, Replay, RequestBehavior,
-    ScopeGateBehavior, TerminalDispatch, ToolCall, ToolEffect, ToolReply,
+use proxiima_core::catalog::{
+    ActionArgSpec, Next, OwnerNeed, Replay, RequestBehavior, ScopeGateBehavior, TerminalDispatch,
+    ToolAudience, ToolCall, ToolEffect, ToolOrigin, ToolReply,
 };
 use proxiima_core::spiice::{ProjectionDecl, SpiiceContract, ToolContract};
 use proxiima_core::{
@@ -58,22 +58,22 @@ impl Tool for DispatchTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = DISPATCH;
     const DESCRIPTION: &'static str = "A spiice dispatcher declared through proxiima_spiice!.";
-    const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
-        McpActionArgSpec {
+    const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+        ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "touch",
             allowed_fields: &["id", "note"],
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
@@ -192,7 +192,7 @@ fn a_macro_registered_spiice_dispatcher_carries_its_action_specs() {
 
     assert_eq!(
         descriptor.origin,
-        McpToolOrigin::Spiice(SPIICE.to_string()),
+        ToolOrigin::Spiice(SPIICE.to_string()),
         "a macro-registered tool is spiice-origin",
     );
     let declared: Vec<&str> = descriptor

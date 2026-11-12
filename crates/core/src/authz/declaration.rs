@@ -4,13 +4,13 @@ use crate::OwnerAccess;
 ///
 /// THE behaviour declaration: a flat tool declares one
 /// ([`crate::Tool::EFFECT`]), a dispatcher one per action
-/// (`McpActionArgSpec::effect`, `McpArgvActionSpec::effect`), a host tool one
+/// (`ActionArgSpec::effect`, `ArgvActionSpec::effect`), a host tool one
 /// (`McpHostTool::effect`). Every other answer is derived from it:
 ///
 /// | Reader | Derived answer |
 /// |---|---|
 /// | owner-role gate | [`Self::ReadOnly`] needs read access, anything else write |
-/// | MCP / REST / `OpenAPI` hints | `McpToolAnnotations::registered`, `McpToolAnnotations::host` |
+/// | MCP / REST / `OpenAPI` hints | `ToolAnnotations::registered`, `ToolAnnotations::host` |
 /// | REST `QUERY` | admitted for [`Self::ReadOnly`] only |
 /// | [`crate::UnitOfWork::erase_own_series`] | admits only a call whose action is [`Self::Destructive`] |
 ///
@@ -100,7 +100,7 @@ impl ToolEffect {
 /// meaning, and a future audience is a new variant instead of a second bool
 /// that has to be read together with the first.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum McpToolAudience {
+pub enum ToolAudience {
     /// Eligible for every surface a host computes. The default: saying
     /// nothing does not narrow anything.
     #[default]
@@ -128,12 +128,12 @@ pub enum OwnerNeed {
 /// What one scope key declares: what it does, who it is for and what it
 /// asks of the owner. The scope gate, the owner-role gate and every listing
 /// judge a key by this one value ([`CapabilitySet::admits`](crate::CapabilitySet::admits),
-/// [`Self::owner_access`], `McpToolDescriptor::declaration`).
+/// [`Self::owner_access`], `ToolDescriptor::declaration`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyDeclaration {
     /// `None` for a name nothing declares, which every gate reads as a write.
     pub effect: Option<ToolEffect>,
-    pub audience: McpToolAudience,
+    pub audience: ToolAudience,
     pub need: OwnerNeed,
 }
 
@@ -146,7 +146,7 @@ impl KeyDeclaration {
     pub const fn shared(effect: Option<ToolEffect>) -> Self {
         Self {
             effect,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
         }
     }
@@ -172,7 +172,7 @@ impl KeyDeclaration {
     /// membership is still required for both shared and owner reads.
     #[must_use]
     pub fn is_open_read(self) -> bool {
-        self.is_read() && self.audience == McpToolAudience::Shared
+        self.is_read() && self.audience == ToolAudience::Shared
     }
 }
 

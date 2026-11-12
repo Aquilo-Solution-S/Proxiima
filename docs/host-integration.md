@@ -487,8 +487,8 @@ path and drop the key. It is `None` when the call failed before the gate
 derived one. A behavior wrapping the gate reads `ctx.judged()` from its own
 clone of the context once the call returns.
 It names the key from the descriptor:
-`McpToolDescriptor::title_of(&key)` returns the tool's `Tool::TITLE` for a bare
-key and the action's `McpActionArgSpec::title` (`McpArgvActionSpec::title` for
+`ToolDescriptor::title_of(&key)` returns the tool's `Tool::TITLE` for a bare
+key and the action's `ActionArgSpec::title` (`ArgvActionSpec::title` for
 an argv dispatcher) for `tool:action`, so the host keeps no word list of its
 own.
 

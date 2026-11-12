@@ -1,0 +1,1712 @@
+//! MCP tool argument- and output-schema generation.
+//!
+//! The single source of truth for a tool's argument schema is its Rust
+//! `Args` type, and for its output schema its `Output` type.
+//! `mcp_tool_schema` and `mcp_output_schema` both produce a `$ref`-free /
+//! `$defs`-free JSON Schema draft 2020-12 document so that MCP clients
+//! which do not resolve `$ref` still render every field (see commit
+//! 37f209b). They differ in the client-facing normalization applied
+//! afterwards; see `mcp_output_schema`.
+//!
+//! What reaches the wire is plain JSON Schema: no `x-` extension, no
+//! `$schema`, no Rust type name as `title`, no non-standard `format`. A
+//! dispatcher's per-action contract is typed data
+//! ([`DispatcherSchema`]) the flat `inputSchema` is rendered from, so a
+//! caller shown a subset of actions is shown only their fields and prose.
+
+use schemars::JsonSchema;
+use schemars::generate::SchemaSettings;
+
+/// A tool's argument schema as registration derives it from `Args`.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgsSchema {
+    /// The complete wire `inputSchema`.
+    pub(crate) schema: serde_json::Value,
+    /// A tagged-enum dispatcher's per-action contract; `None` for a flat
+    /// tool.
+    pub(crate) dispatcher: Option<DispatcherSchema>,
+}
+
+/// Generate the `$ref`-free draft-2020-12 argument schema for `T`.
+///
+/// Panics at registration (startup) if `T` is recursive: `schemars`
+/// cannot inline a recursive subschema, so it emits a `$ref` that no
+/// inlining pass can eliminate. A recursive MCP tool argument type is a
+/// registration error. So is a dispatcher two of whose actions give one
+/// field incompatible schemas: the flat `inputSchema` could not describe
+/// both.
+pub(crate) fn mcp_tool_schema<T: JsonSchema>() -> ArgsSchema {
+    let mut value = generated_schema::<T>(SchemaSettings::draft2020_12());
+    let dispatcher = derive_dispatcher(&value).unwrap_or_else(|error| {
+        panic!(
+            "MCP tool type `{}` has an invalid dispatcher schema: {error}",
+            std::any::type_name::<T>(),
+        )
+    });
+    if let Some(dispatcher) = &dispatcher {
+        value = dispatcher.render(|_| true);
+    }
+    ensure_client_safe_root::<T>(&mut value);
+    assert!(
+        !schema_contains_ref(&value),
+        "MCP tool type `{}` is recursive: schemars emitted a $ref that \
+         cannot be inlined. MCP tool argument types must be non-recursive.",
+        std::any::type_name::<T>(),
+    );
+    remove_definition_containers(&mut value);
+    ArgsSchema {
+        schema: value,
+        dispatcher,
+    }
+}
+
+/// `T`'s schema with subschemas inlined, `$schema` and the Rust type name
+/// (`title`) dropped from the root, every non-standard `format` and
+/// `default: null` removed, and doc-comment wraps rejoined.
+fn generated_schema<T: JsonSchema>(mut settings: SchemaSettings) -> serde_json::Value {
+    settings.inline_subschemas = true;
+    let schema = settings.into_generator().into_root_schema_for::<T>();
+    let mut value = serde_json::to_value(schema).expect("JsonSchema must serialize");
+    if let Some(root) = value.as_object_mut() {
+        root.remove("$schema");
+        root.remove("title");
+    }
+    strip_nonstandard_formats(&mut value);
+    strip_null_defaults(&mut value);
+    unwrap_descriptions(&mut value);
+    value
+}
+
+/// Drop `default: null`: an optional field's absence already means none,
+/// so the keyword is payload that tells a model nothing.
+fn strip_null_defaults(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    if map.get("default").is_some_and(serde_json::Value::is_null) {
+        map.remove("default");
+    }
+    for_each_subschema_mut(map, &mut strip_null_defaults);
+}
+
+/// Rejoin the hard wraps a multi-line `///` comment leaves in a
+/// `description`. A blank line (paragraph) and a line opening a list item
+/// (`- `, `* `, `1. `) keep their break; every other break was the source
+/// file's line width, not the author's meaning.
+fn unwrap_descriptions(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(serde_json::Value::String(text)) = map.get_mut("description")
+        && text.contains('\n')
+    {
+        *text = unwrap_lines(text);
+    }
+    for_each_subschema_mut(map, &mut unwrap_descriptions);
+}
+
+fn unwrap_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut lines = text.split('\n').map(str::trim_end).peekable();
+    while let Some(line) = lines.next() {
+        out.push_str(line);
+        let Some(next) = lines.peek() else {
+            break;
+        };
+        let next = next.trim_start();
+        let keeps_break = line.is_empty()
+            || next.is_empty()
+            || next.starts_with("- ")
+            || next.starts_with("* ")
+            || next.split_once(". ").is_some_and(|(number, _)| {
+                !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())
+            });
+        out.push(if keeps_break { '\n' } else { ' ' });
+    }
+    out
+}
+
+/// The `format` values JSON Schema 2020-12 defines. schemars also writes
+/// Rust widths (`uint32`, `int64`, `float`, …), which no JSON Schema
+/// validator or model API knows; the bound they imply is `minimum` or the
+/// server's own decode.
+const STANDARD_FORMATS: &[&str] = &[
+    "date-time",
+    "date",
+    "time",
+    "duration",
+    "email",
+    "idn-email",
+    "hostname",
+    "idn-hostname",
+    "ipv4",
+    "ipv6",
+    "uri",
+    "uri-reference",
+    "iri",
+    "iri-reference",
+    "uuid",
+    "uri-template",
+    "json-pointer",
+    "relative-json-pointer",
+    "regex",
+];
+
+fn strip_nonstandard_formats(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    if map
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|format| !STANDARD_FORMATS.contains(&format))
+    {
+        map.remove("format");
+    }
+    for_each_subschema_mut(map, &mut strip_nonstandard_formats);
+}
+
+/// The output schema as `tools/list` sends it: validation keywords only.
+///
+/// Output-schema prose never reaches a model — model APIs carry a tool's
+/// name, description and input schema — so `outputSchema` is a client-side
+/// validation contract and its annotations are payload. Drops
+/// `description`, `title`, `examples`, `default`, `$comment`, `$schema` and
+/// non-standard `format` at every schema position; property *names* are
+/// untouched. The registry keeps the documented schema for the REST
+/// projection's `OpenAPI` document.
+#[must_use]
+pub fn mcp_wire_output_schema(schema: &serde_json::Value) -> serde_json::Value {
+    let mut wire = schema.clone();
+    if let Some(root) = wire.as_object_mut() {
+        root.remove("$schema");
+    }
+    strip_annotations(&mut wire);
+    strip_nonstandard_formats(&mut wire);
+    wire
+}
+
+fn strip_annotations(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    for key in ["description", "title", "examples", "default", "$comment"] {
+        map.remove(key);
+    }
+    for_each_subschema_mut(map, &mut strip_annotations);
+}
+
+/// Generate a `$ref`-free draft-2020-12 *output* schema for `T`.
+///
+/// Generated for serialization, because a reply is what `T` serializes to:
+/// a field `#[serde(skip_serializing_if)]` may omit is optional here, where
+/// the deserialize contract would require it and a strict client would
+/// refuse the reply.
+///
+/// MCP output schemas declare an object root. Output unions retain their
+/// branches, so clients can validate each reply variant; unlike argument
+/// dispatchers, their fields are never merged into one flat call surface.
+/// Recursive output types still panic at registration because their `$ref`
+/// cannot be inlined.
+pub(crate) fn mcp_output_schema<T: JsonSchema>() -> Result<serde_json::Value, String> {
+    let mut settings = SchemaSettings::draft2020_12().for_serialize();
+    settings.inline_subschemas = true;
+    let schema = settings.into_generator().into_root_schema_for::<T>();
+    let mut value = serde_json::to_value(schema).expect("JsonSchema must serialize");
+    assert!(
+        !schema_contains_ref(&value),
+        "MCP tool output type `{}` is recursive: schemars emitted a $ref that \
+         cannot be inlined. MCP tool output types must be non-recursive.",
+        std::any::type_name::<T>(),
+    );
+    normalize_mcp_output_schema(&mut value)?;
+    Ok(value)
+}
+
+/// Require an MCP output schema to declare an object root.
+///
+/// When the root type is absent, nonempty `anyOf`/`oneOf` unions whose branches
+/// each declare `type: "object"` receive that root type. Every present union
+/// must meet this condition; branches and other keywords are preserved.
+/// An explicit object root already excludes non-objects: `type` and root
+/// combinators are conjunctive, so a union cannot override that constraint.
+///
+/// # Errors
+///
+/// Rejects non-object root types, boolean schemas, and missing object evidence.
+/// The schema is unchanged on failure.
+pub fn normalize_mcp_output_schema(value: &mut serde_json::Value) -> Result<(), String> {
+    let root = value.as_object_mut().ok_or_else(|| {
+        "MCP output schema must be a JSON object declaring type object".to_owned()
+    })?;
+    if let Some(kind) = root.get("type") {
+        return if kind == "object" {
+            Ok(())
+        } else {
+            Err("MCP output schema root type must be exactly object".to_owned())
+        };
+    }
+    let mut has_union = false;
+    for keyword in ["anyOf", "oneOf"] {
+        let Some(branches) = root.get(keyword) else {
+            continue;
+        };
+        has_union = true;
+        let branches = branches
+            .as_array()
+            .filter(|branches| !branches.is_empty())
+            .ok_or_else(|| {
+                format!("MCP output schema {keyword} must be a nonempty object union")
+            })?;
+        for (index, branch) in branches.iter().enumerate() {
+            if branch.get("type").and_then(serde_json::Value::as_str) != Some("object") {
+                return Err(format!(
+                    "MCP output schema {keyword} branch {index} must declare type object"
+                ));
+            }
+        }
+    }
+    if !has_union {
+        return Err("MCP output schema must declare type object or an object union".to_owned());
+    }
+    root.insert("type".to_owned(), serde_json::json!("object"));
+    Ok(())
+}
+
+/// One action of a tagged-enum dispatcher, derived from its variant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionSchema {
+    /// The discriminator value that selects this action.
+    pub action: String,
+    /// What the action does: the variant's doc comment.
+    pub description: Option<String>,
+    /// The closed schema of this action's own fields: discriminator
+    /// removed, root branch fields hoisted as unconstrained properties so
+    /// the root names the whole vocabulary.
+    pub argument_schema: serde_json::Value,
+}
+
+impl ActionSchema {
+    /// The root fields this action accepts, as its schema derives them.
+    #[must_use]
+    pub fn allowed_fields(&self) -> Vec<String> {
+        analyze_root_fields(&self.argument_schema)
+            .map(|fields| fields.allowed)
+            .unwrap_or_default()
+    }
+
+    /// The root fields this action requires, as its schema derives them.
+    #[must_use]
+    pub fn required_fields(&self) -> Vec<String> {
+        analyze_root_fields(&self.argument_schema)
+            .map(|fields| fields.required)
+            .unwrap_or_default()
+    }
+}
+
+/// A dispatcher's argument contract, one entry per action in declaration
+/// order, derived from an internally tagged `Args` enum.
+///
+/// The flat wire `inputSchema` is rendered from it ([`Self::render`]):
+/// whole at registration, narrowed per caller. Field lists, per-action prose
+/// and the action enum therefore cannot disagree with what the caller may
+/// run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DispatcherSchema {
+    /// The serde tag (`#[serde(tag = "...")]`). `try_freeze` requires
+    /// `action`, the key scope keys and REST routes read.
+    pub discriminator: String,
+    /// The enum's own doc comment.
+    pub description: Option<String>,
+    pub actions: Vec<ActionSchema>,
+}
+
+impl DispatcherSchema {
+    /// The action named `action`.
+    #[must_use]
+    pub fn action(&self, action: &str) -> Option<&ActionSchema> {
+        self.actions.iter().find(|schema| schema.action == action)
+    }
+
+    /// The flat `inputSchema` over the actions `permitted` admits.
+    ///
+    /// - the discriminator is a string enum of those actions; its
+    ///   description gives one line per action: what it does, then its
+    ///   required and optional fields;
+    /// - every other property is a field of at least one of them. A field
+    ///   whose schemas differ only in nullability is widened to admit both;
+    ///   one an action leaves unconstrained stays unconstrained;
+    /// - a field whose prose differs by action carries each action's prose
+    ///   under a "Depends on" heading naming the discriminator, so no client
+    ///   has to read anything but the schema.
+    ///
+    /// Registration refuses a dispatcher whose actions give a field
+    /// incompatible schemas; a hand-built schema with such a field renders
+    /// it unconstrained.
+    #[must_use]
+    pub fn render(&self, permitted: impl Fn(&str) -> bool) -> serde_json::Value {
+        let actions = self
+            .actions
+            .iter()
+            .filter(|schema| permitted(&schema.action))
+            .collect::<Vec<_>>();
+        render_dispatcher(self, &actions)
+    }
+}
+
+/// Derive the dispatcher contract of a schemars root `oneOf` for an
+/// internally tagged enum, or `None` when the root is not that shape.
+///
+/// Anthropic/OpenAI-compatible tool schemas cannot rely on a root-level
+/// union, so the wire carries the rendered flat object. Runtime serde
+/// validation remains authoritative for per-action required fields.
+///
+/// # Errors
+///
+/// An unresolved, non-local or cyclic local reference, or a field two
+/// actions give incompatible schemas.
+fn derive_dispatcher(value: &serde_json::Value) -> Result<Option<DispatcherSchema>, String> {
+    let Some(raw_variants) = value
+        .as_object()
+        .and_then(|map| map.get("oneOf"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(None);
+    };
+
+    // Resolve every definition first: an unresolved/non-local/cyclic
+    // reference must fail registration even when no variant reaches it.
+    let defs = local_defs(value);
+    for definition in defs.draft.values().chain(defs.legacy.values()) {
+        let mut checked_definition = definition.clone();
+        inline_variant_refs(&mut checked_definition, &defs)?;
+    }
+    let mut variants = Vec::with_capacity(raw_variants.len());
+    for raw_variant in raw_variants {
+        let mut variant = raw_variant.clone();
+        inline_variant_refs(&mut variant, &defs)?;
+        remove_definition_containers(&mut variant);
+        variants.push(variant);
+    }
+
+    // The discriminator KEY: the single property present across every
+    // variant with a distinct string `const` per variant — for an
+    // internally tagged enum, the `#[serde(tag = ...)]` field.
+    let Some(discriminator) = detect_discriminator_key(&variants) else {
+        return Ok(None);
+    };
+    let mut actions = Vec::with_capacity(variants.len());
+    for variant in &variants {
+        // A variant without an object root or a string `const` under the
+        // discriminator is not the shape this derives; leave it a union.
+        let (Some(action), Some(argument_schema)) = (
+            root_const_value(variant, &discriminator),
+            normalize_action_argument_schema(variant, &discriminator),
+        ) else {
+            return Ok(None);
+        };
+        actions.push(ActionSchema {
+            action,
+            description: root_variant_description(variant).map(one_line),
+            argument_schema,
+        });
+    }
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    let dispatcher = DispatcherSchema {
+        discriminator,
+        description: value
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        actions,
+    };
+    // Every subset of mutually compatible actions merges, so checking the
+    // whole set once is what makes every narrowed render exact.
+    for (name, occurrences) in field_occurrences(&dispatcher.actions.iter().collect::<Vec<_>>()) {
+        merge_typed(name, &occurrences)?;
+    }
+    Ok(Some(dispatcher))
+}
+
+/// Field name → every (action, property schema) naming it, in first-seen
+/// order so the rendered properties follow declaration order.
+type FieldOccurrences<'a> = Vec<(&'a str, Vec<(&'a str, &'a serde_json::Value)>)>;
+
+fn field_occurrences<'a>(actions: &[&'a ActionSchema]) -> FieldOccurrences<'a> {
+    let mut fields: FieldOccurrences<'a> = Vec::new();
+    for action in actions {
+        let properties = action
+            .argument_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object);
+        for (name, property) in properties.into_iter().flatten() {
+            let occurrence = (action.action.as_str(), property);
+            match fields.iter_mut().find(|(field, _)| field == name) {
+                Some((_, occurrences)) => occurrences.push(occurrence),
+                None => fields.push((name.as_str(), vec![occurrence])),
+            }
+        }
+    }
+    fields
+}
+
+/// The flat object over `actions`.
+fn render_dispatcher(
+    dispatcher: &DispatcherSchema,
+    actions: &[&ActionSchema],
+) -> serde_json::Value {
+    let discriminator = dispatcher.discriminator.as_str();
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        discriminator.to_owned(),
+        serde_json::json!({
+            "type": "string",
+            "enum": actions.iter().map(|action| action.action.as_str()).collect::<Vec<_>>(),
+            "description": action_guide(actions),
+        }),
+    );
+    for (name, occurrences) in field_occurrences(actions) {
+        properties.insert(
+            name.to_owned(),
+            merge_field(name, discriminator, &occurrences),
+        );
+    }
+    let mut root = serde_json::Map::new();
+    root.insert("type".to_owned(), serde_json::json!("object"));
+    if let Some(description) = &dispatcher.description {
+        root.insert("description".to_owned(), serde_json::json!(description));
+    }
+    root.insert(
+        "properties".to_owned(),
+        serde_json::Value::Object(properties),
+    );
+    root.insert("required".to_owned(), serde_json::json!([discriminator]));
+    root.insert("additionalProperties".to_owned(), serde_json::json!(false));
+    serde_json::Value::Object(root)
+}
+
+/// The discriminator's description: one line per action — what it does,
+/// then its required and optional fields. Standard clients render a
+/// property's description and nothing else, so the per-action contract
+/// lives here.
+fn action_guide(actions: &[&ActionSchema]) -> String {
+    use std::fmt::Write as _;
+    let mut guide =
+        String::from("The action to run. Each action takes only the fields listed for it.");
+    for action in actions {
+        let (allowed, required) = (action.allowed_fields(), action.required_fields());
+        let optional = allowed
+            .iter()
+            .filter(|field| !required.contains(field))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        write!(guide, "\n- {}:", action.action).expect("write to String is infallible");
+        if let Some(description) = &action.description {
+            write!(guide, " {}", sentence(description)).expect("write to String is infallible");
+        }
+        if !required.is_empty() {
+            write!(guide, " Required: {}.", required.join(", "))
+                .expect("write to String is infallible");
+        }
+        if !optional.is_empty() {
+            write!(guide, " Optional: {}.", optional.join(", "))
+                .expect("write to String is infallible");
+        }
+        if allowed.is_empty() {
+            guide.push_str(" No fields.");
+        }
+    }
+    guide
+}
+
+/// One field as the flat object advertises it, from every action naming it.
+///
+/// Identical occurrences are the field as declared. Otherwise the schemas
+/// merge — nullability widens, an unconstrained occurrence (a hoisted
+/// branch field) leaves the field unconstrained — `title` goes, `default`
+/// stays only when every action agrees, and the prose is
+/// [`shared_description`].
+fn merge_field(
+    name: &str,
+    discriminator: &str,
+    occurrences: &[(&str, &serde_json::Value)],
+) -> serde_json::Value {
+    let first = occurrences[0].1;
+    if occurrences.iter().all(|(_, schema)| *schema == first) {
+        return first.clone();
+    }
+    let unconstrained = occurrences
+        .iter()
+        .any(|(_, schema)| is_unconstrained(schema));
+    let mut field = match merge_typed(name, occurrences) {
+        Ok(Some(merged)) if !unconstrained => merged,
+        _ => serde_json::Value::Object(serde_json::Map::new()),
+    };
+    if let Some(map) = field.as_object_mut() {
+        map.remove("title");
+        let default = first.get("default");
+        match default.filter(|_| {
+            occurrences
+                .iter()
+                .all(|(_, schema)| schema.get("default") == default)
+        }) {
+            Some(default) => map.insert("default".to_owned(), default.clone()),
+            None => map.remove("default"),
+        };
+        match shared_description(discriminator, occurrences) {
+            Some(description) => map.insert("description".to_owned(), description.into()),
+            None => map.remove("description"),
+        };
+    }
+    field
+}
+
+/// A schema that admits every value: `{}`/`true` up to annotations — what
+/// hoisting a branch-only field leaves at an action's root.
+fn is_unconstrained(schema: &serde_json::Value) -> bool {
+    let shape = validation_shape(schema);
+    shape == serde_json::json!({}) || shape == serde_json::Value::Bool(true)
+}
+
+/// The constrained occurrences of one field merged by widening
+/// nullability; `None` when every occurrence is unconstrained.
+///
+/// # Errors
+///
+/// Two constrained occurrences whose validation differs beyond nullability:
+/// no flat property describes both.
+fn merge_typed(
+    name: &str,
+    occurrences: &[(&str, &serde_json::Value)],
+) -> Result<Option<serde_json::Value>, String> {
+    let mut merged: Option<serde_json::Value> = None;
+    for (action, schema) in occurrences {
+        if is_unconstrained(schema) {
+            continue;
+        }
+        merged = Some(match merged {
+            None => (*schema).clone(),
+            Some(current) => nullable_compatible_schema(&current, schema).ok_or_else(|| {
+                format!(
+                    "conflicting property `{name}` while flattening action `{action}`: \
+                     {current:#} vs {schema:#}"
+                )
+            })?,
+        });
+    }
+    Ok(merged)
+}
+
+/// One description when every action describing the field agrees; else
+/// each distinct text under the actions it belongs to.
+fn shared_description(
+    discriminator: &str,
+    occurrences: &[(&str, &serde_json::Value)],
+) -> Option<String> {
+    let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (action, schema) in occurrences {
+        let Some(description) = schema
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        match groups.iter_mut().find(|(text, _)| *text == description) {
+            Some((_, actions)) => actions.push(action),
+            None => groups.push((description, vec![action])),
+        }
+    }
+    match groups.as_slice() {
+        [] => None,
+        [(description, _)] => Some((*description).to_owned()),
+        _ => {
+            Some(
+                std::iter::once(format!("Depends on `{discriminator}`:"))
+                    .chain(groups.iter().map(|(text, actions)| {
+                        format!("- {}: {}", actions.join(", "), one_line(text))
+                    }))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        }
+    }
+}
+
+/// `text` on one line: a doc comment's wrapped paragraphs joined by spaces.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `text` on one line, ending as a sentence.
+fn sentence(text: &str) -> String {
+    let mut line = one_line(text);
+    if !line.ends_with(['.', '!', '?']) {
+        line.push('.');
+    }
+    line
+}
+
+/// The root fields of one action schema. This is deliberately a root-only
+/// analysis: a nested object's fields are that object's contract, not fields
+/// accepted beside the dispatcher's discriminator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RootFieldAnalysis {
+    pub(crate) allowed: Vec<String>,
+    pub(crate) required: Vec<String>,
+}
+
+/// Analyse the field vocabulary of an action schema, including root
+/// combinator branches. The same implementation feeds the derived metadata
+/// and the registry freeze check; keeping the walk here prevents authorization
+/// from silently drifting away from the advertised schema.
+pub(crate) fn analyze_root_fields(schema: &serde_json::Value) -> Result<RootFieldAnalysis, String> {
+    let (allowed, required) = analyze_root_node(schema, true)?;
+    if required
+        .iter()
+        .any(|field| !allowed.iter().any(|name| name == field))
+    {
+        return Err(format!(
+            "required field set {required:?} is not a subset of allowed fields {allowed:?}"
+        ));
+    }
+    Ok(RootFieldAnalysis { allowed, required })
+}
+
+/// Check the structural promises made by a normalized action schema. Branches
+/// may contribute root properties only when those names are also hoisted into
+/// the root; otherwise the flat schema and the preserved conditional subtree
+/// describe different call surfaces.
+pub(crate) fn validate_closed_root_schema(schema: &serde_json::Value) -> Result<(), String> {
+    let map = schema
+        .as_object()
+        .ok_or_else(|| "action_schema must be a JSON object".to_string())?;
+    if map.get("type") != Some(&serde_json::Value::String("object".to_string())) {
+        return Err("action_schema root must declare type object".to_string());
+    }
+    if map.get("additionalProperties") != Some(&serde_json::Value::Bool(false)) {
+        return Err("action_schema root additionalProperties must be false".to_string());
+    }
+    let properties = map
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "action_schema root properties must be an object".to_string())?;
+    let names = properties.keys().collect::<std::collections::BTreeSet<_>>();
+    if names
+        .iter()
+        .any(|name| name.is_empty() || **name == "action")
+    {
+        return Err("action_schema root has an empty or action property".to_string());
+    }
+    validate_root_branches_against_properties(schema, &names)
+}
+
+fn validate_root_branches_against_properties(
+    schema: &serde_json::Value,
+    root_names: &std::collections::BTreeSet<&String>,
+) -> Result<(), String> {
+    let map = schema
+        .as_object()
+        .ok_or_else(|| "action_schema branch must be a JSON object".to_string())?;
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = map.get(keyword) {
+            let branches = branches
+                .as_array()
+                .ok_or_else(|| format!("action_schema {keyword} must be an array"))?;
+            for branch in branches {
+                validate_one_root_branch(branch, keyword, root_names)?;
+            }
+        }
+    }
+    for keyword in ["if", "then", "else"] {
+        if let Some(branch) = map.get(keyword) {
+            validate_one_root_branch(branch, keyword, root_names)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_one_root_branch(
+    branch: &serde_json::Value,
+    keyword: &str,
+    root_names: &std::collections::BTreeSet<&String>,
+) -> Result<(), String> {
+    let Some(map) = branch.as_object() else {
+        return branch
+            .is_boolean()
+            .then_some(())
+            .ok_or_else(|| format!("action_schema {keyword} branch must be an object"));
+    };
+    let contributes_fields = root_node_has_fields(branch)?;
+    if contributes_fields && !schema_allows_object(map.get("type")) {
+        return Err(format!(
+            "action_schema {keyword} branch has an explicit non-object type with root fields"
+        ));
+    }
+    if let Some(additional) = map.get("additionalProperties")
+        && additional != &serde_json::Value::Bool(false)
+    {
+        return Err(format!(
+            "action_schema {keyword} branch additionalProperties must be false"
+        ));
+    }
+    if let Some(properties) = map.get("properties") {
+        let properties = properties.as_object().ok_or_else(|| {
+            format!("action_schema {keyword} branch properties must be an object")
+        })?;
+        for name in properties.keys() {
+            if name.is_empty() || name == "action" {
+                return Err(format!(
+                    "action_schema {keyword} branch has an empty or action property"
+                ));
+            }
+            if !root_names.contains(name) {
+                return Err(format!(
+                    "action_schema {keyword} branch property {name} is not hoisted at root"
+                ));
+            }
+        }
+    }
+    for name in parse_required(map.get("required"), true)? {
+        if !root_names.iter().any(|root| *root == &name) {
+            return Err(format!(
+                "action_schema {keyword} branch required field {name} is not hoisted at root"
+            ));
+        }
+    }
+    validate_root_branches_against_properties(branch, root_names)
+}
+
+fn analyze_root_node(
+    schema: &serde_json::Value,
+    reject_action: bool,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let Some(map) = schema.as_object() else {
+        return schema
+            .is_boolean()
+            .then_some((Vec::new(), Vec::new()))
+            .ok_or_else(|| "schema root/branch must be a JSON object".to_string());
+    };
+
+    let mut allowed = Vec::new();
+    if let Some(properties) = map.get("properties") {
+        let properties = properties
+            .as_object()
+            .ok_or_else(|| "schema properties must be an object".to_string())?;
+        for name in properties.keys() {
+            if name.is_empty() {
+                return Err("schema property names must not be empty".to_string());
+            }
+            if reject_action && name == "action" {
+                return Err("action discriminator must not appear in an action schema".to_string());
+            }
+            push_unique(&mut allowed, name);
+        }
+    }
+    let mut required = parse_required(map.get("required"), reject_action)?;
+
+    for keyword in ["oneOf", "anyOf"] {
+        if let Some(branches) = map.get(keyword) {
+            let branches = branches
+                .as_array()
+                .ok_or_else(|| format!("schema {keyword} must be an array"))?;
+            if branches.is_empty() {
+                return Err(format!("schema {keyword} must not be empty"));
+            }
+            let mut branch_analysis = Vec::with_capacity(branches.len());
+            for branch in branches {
+                validate_root_branch_closed(branch, keyword)?;
+                branch_analysis.push(analyze_root_node(branch, reject_action)?);
+            }
+            for (branch_allowed, _) in &branch_analysis {
+                for field in branch_allowed {
+                    push_unique(&mut allowed, field);
+                }
+            }
+            let common = branch_analysis
+                .first()
+                .map(|(_, fields)| fields.clone())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|field| {
+                    branch_analysis
+                        .iter()
+                        .all(|(_, fields)| fields.iter().any(|name| name == field))
+                })
+                .collect::<Vec<_>>();
+            for field in common {
+                push_unique(&mut required, &field);
+            }
+        }
+    }
+
+    if let Some(branches) = map.get("allOf") {
+        let branches = branches
+            .as_array()
+            .ok_or_else(|| "schema allOf must be an array".to_string())?;
+        if branches.is_empty() {
+            return Err("schema allOf must not be empty".to_string());
+        }
+        for branch in branches {
+            validate_root_branch_closed(branch, "allOf")?;
+            let (branch_allowed, branch_required) = analyze_root_node(branch, reject_action)?;
+            for field in branch_allowed {
+                push_unique(&mut allowed, &field);
+            }
+            for field in branch_required {
+                push_unique(&mut required, &field);
+            }
+        }
+    }
+
+    // Conditions add possible root fields, but their requirements remain
+    // conditional and therefore cannot become flat authorization fields.
+    for keyword in ["if", "then", "else"] {
+        if let Some(branch) = map.get(keyword) {
+            validate_root_branch_closed(branch, keyword)?;
+            let (branch_allowed, _) = analyze_root_node(branch, reject_action)?;
+            for field in branch_allowed {
+                push_unique(&mut allowed, &field);
+            }
+        }
+    }
+
+    if (!allowed.is_empty() || !required.is_empty()) && !schema_allows_object(map.get("type")) {
+        return Err(
+            "schema root/branch has an explicit non-object type with root fields".to_string(),
+        );
+    }
+    Ok((allowed, required))
+}
+
+fn parse_required(
+    required: Option<&serde_json::Value>,
+    reject_action: bool,
+) -> Result<Vec<String>, String> {
+    let Some(required) = required else {
+        return Ok(Vec::new());
+    };
+    let items = required
+        .as_array()
+        .ok_or_else(|| "schema required must be an array".to_string())?;
+    let mut fields = Vec::with_capacity(items.len());
+    for item in items {
+        let field = item
+            .as_str()
+            .ok_or_else(|| "schema required entries must be strings".to_string())?;
+        if field.is_empty() {
+            return Err("schema required names must not be empty".to_string());
+        }
+        if reject_action && field == "action" {
+            return Err(
+                "action discriminator must not be required by an action schema".to_string(),
+            );
+        }
+        if fields.iter().any(|name| name == field) {
+            return Err(format!("schema required contains duplicate field {field}"));
+        }
+        fields.push(field.to_string());
+    }
+    Ok(fields)
+}
+
+fn push_unique(fields: &mut Vec<String>, field: &str) {
+    if !fields.iter().any(|name| name == field) {
+        fields.push(field.to_string());
+    }
+}
+
+fn validate_root_branch_closed(branch: &serde_json::Value, keyword: &str) -> Result<(), String> {
+    let Some(map) = branch.as_object() else {
+        return branch
+            .is_boolean()
+            .then_some(())
+            .ok_or_else(|| format!("schema {keyword} branch must be an object schema"));
+    };
+    let contributes_fields = root_node_has_fields(branch)?;
+    if contributes_fields && !schema_allows_object(map.get("type")) {
+        return Err(format!(
+            "schema {keyword} branch has an explicit non-object type with root fields"
+        ));
+    }
+    if let Some(additional) = map.get("additionalProperties")
+        && additional != &serde_json::Value::Bool(false)
+    {
+        return Err(format!(
+            "schema {keyword} branch additionalProperties must be false, found {additional}"
+        ));
+    }
+    Ok(())
+}
+
+fn schema_allows_object(schema_type: Option<&serde_json::Value>) -> bool {
+    match schema_type {
+        Some(serde_json::Value::String(kind)) => kind == "object",
+        Some(serde_json::Value::Array(kinds)) => kinds.iter().any(|kind| kind == "object"),
+        // Object applicators are conditional on the instance type in JSON
+        // Schema. The normalized action root already fixes the instance to an
+        // object, so an applicator branch may omit `type`; only an explicit
+        // incompatible type is contradictory.
+        None => true,
+        _ => false,
+    }
+}
+
+/// Report whether a schema node contributes fields at its own root. This
+/// deliberately follows only root applicators; property schemas are nested
+/// contracts and never affect the dispatcher's flat field vocabulary.
+fn root_node_has_fields(schema: &serde_json::Value) -> Result<bool, String> {
+    let Some(map) = schema.as_object() else {
+        return Ok(false);
+    };
+    let direct = if let Some(properties) = map.get("properties") {
+        !properties
+            .as_object()
+            .ok_or_else(|| "schema properties must be an object".to_string())?
+            .is_empty()
+    } else {
+        false
+    };
+    let required = !parse_required(map.get("required"), true)?.is_empty();
+    let mut contributes = direct || required;
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = map.get(keyword) {
+            let branches = branches
+                .as_array()
+                .ok_or_else(|| format!("schema {keyword} must be an array"))?;
+            for branch in branches {
+                contributes |= root_node_has_fields(branch)?;
+            }
+        }
+    }
+    for keyword in ["if", "then", "else"] {
+        if let Some(branch) = map.get(keyword) {
+            contributes |= root_node_has_fields(branch)?;
+        }
+    }
+    Ok(contributes)
+}
+
+/// Normalize one raw tagged-enum variant into its action's own argument
+/// schema. The copied variant's local refs are expanded first; this pass
+/// then removes only the direct discriminator and performs the root
+/// closure/field hoist. Nested property schemas remain otherwise untouched.
+fn normalize_action_argument_schema(
+    variant: &serde_json::Value,
+    discriminator: &str,
+) -> Option<serde_json::Value> {
+    let mut schema = variant.clone();
+    {
+        let map = schema.as_object_mut()?;
+        let variant_type_is_object =
+            map.get("type") == Some(&serde_json::Value::String("object".to_string()));
+        if !variant_type_is_object {
+            return None;
+        }
+        if let Some(properties) = map
+            .get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            properties.remove(discriminator);
+        }
+        remove_root_discriminator(map, discriminator);
+        let mut required = map.remove("required");
+        if let Some(items) = required.as_mut().and_then(serde_json::Value::as_array_mut) {
+            items.retain(|field| field.as_str() != Some(discriminator));
+            if items.is_empty() {
+                required = None;
+            }
+        }
+        if let Some(required) = required {
+            map.insert("required".to_string(), required);
+        }
+
+        // A variant's root is always closed after the discriminator is removed.
+        // Explicit reopening is a schema-generation error, not a reason to weaken
+        // the flat dispatcher precheck.
+        if let Some(additional) = map.get("additionalProperties")
+            && additional != &serde_json::Value::Bool(false)
+        {
+            return None;
+        }
+        map.insert(
+            "type".to_string(),
+            serde_json::Value::String("object".to_string()),
+        );
+        map.insert(
+            "additionalProperties".to_string(),
+            serde_json::Value::Bool(false),
+        );
+    }
+
+    let (hoisted, _) = analyze_root_node(&schema, true).ok()?;
+    let mut merged = serde_json::Map::new();
+    if let Some(root_properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (name, property) in root_properties {
+            merged.insert(name.clone(), property.clone());
+        }
+    }
+    // analyze_root_node sees branch fields but deliberately never walks
+    // nested objects. Pull only those root branch properties into the flat
+    // object; each branch remains in place for validation.
+    for name in hoisted {
+        if merged.contains_key(&name) {
+            continue;
+        }
+        // Branch-only constraints remain in their conditional/combinator
+        // branch. A neutral root property makes the flat object vocabulary
+        // closed without accidentally requiring a branch's value shape on
+        // every action input.
+        merged.insert(name, serde_json::Value::Object(serde_json::Map::new()));
+    }
+    schema
+        .as_object_mut()?
+        .insert("properties".to_string(), serde_json::Value::Object(merged));
+    let fields = analyze_root_fields(&schema).ok()?;
+    let required = fields
+        .required
+        .iter()
+        .map(|field| serde_json::Value::String(field.clone()))
+        .collect::<Vec<_>>();
+    let map = schema.as_object_mut()?;
+    if required.is_empty() {
+        map.remove("required");
+    } else {
+        map.insert("required".to_string(), serde_json::Value::Array(required));
+    }
+    validate_closed_root_schema(&schema).ok()?;
+    Some(schema)
+}
+
+fn root_const_value(schema: &serde_json::Value, discriminator: &str) -> Option<String> {
+    let mut values = Vec::new();
+    collect_root_consts(schema, &mut values)?;
+    let mut found = None;
+    for (name, value) in values {
+        if name != discriminator {
+            continue;
+        }
+        if found.as_deref().is_some_and(|previous| previous != value) {
+            return None;
+        }
+        found = Some(value);
+    }
+    found
+}
+
+fn root_variant_description(schema: &serde_json::Value) -> Option<&str> {
+    schema
+        .as_object()?
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+}
+
+fn remove_root_discriminator(map: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = map
+            .get_mut(keyword)
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for branch in branches {
+                if let Some(branch_map) = branch.as_object_mut() {
+                    if let Some(properties) = branch_map
+                        .get_mut("properties")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        properties.remove(key);
+                    }
+                    if let Some(required) = branch_map
+                        .get_mut("required")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        required.retain(|field| field.as_str() != Some(key));
+                        if required.is_empty() {
+                            branch_map.remove("required");
+                        }
+                    }
+                    remove_root_discriminator(branch_map, key);
+                }
+            }
+        }
+    }
+    for keyword in ["if", "then", "else"] {
+        if let Some(branch_map) = map
+            .get_mut(keyword)
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            if let Some(properties) = branch_map
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                properties.remove(key);
+            }
+            if let Some(required) = branch_map
+                .get_mut("required")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                required.retain(|field| field.as_str() != Some(key));
+                if required.is_empty() {
+                    branch_map.remove("required");
+                }
+            }
+            remove_root_discriminator(branch_map, key);
+        }
+    }
+}
+
+#[derive(Default)]
+struct LocalDefs {
+    draft: serde_json::Map<String, serde_json::Value>,
+    legacy: serde_json::Map<String, serde_json::Value>,
+}
+
+// Draft 2020-12 keywords whose values contain subschemas. Keeping this
+// vocabulary shared prevents ref expansion, definition cleanup, and freeze
+// detection from disagreeing about which JSON objects are schemas rather
+// than literal instance or annotation data.
+const SUBSCHEMA_ARRAY_KEYWORDS: &[&str] = &["oneOf", "anyOf", "allOf", "prefixItems"];
+const SUBSCHEMA_SINGLE_KEYWORDS: &[&str] = &[
+    "if",
+    "then",
+    "else",
+    "not",
+    "items",
+    "contains",
+    "additionalItems",
+    "additionalProperties",
+    "propertyNames",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+    "contentSchema",
+];
+const SUBSCHEMA_MAP_KEYWORDS: &[&str] = &[
+    "properties",
+    "patternProperties",
+    "dependentSchemas",
+    "dependencies",
+    "$defs",
+    "definitions",
+];
+
+fn for_each_subschema_mut(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    visit: &mut impl FnMut(&mut serde_json::Value),
+) {
+    let _ = for_each_subschema_result(map, &mut |child| {
+        visit(child);
+        Ok(())
+    });
+}
+
+fn for_each_subschema_result(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    visit: &mut impl FnMut(&mut serde_json::Value) -> Result<(), String>,
+) -> Result<(), String> {
+    for &key in SUBSCHEMA_ARRAY_KEYWORDS {
+        if let Some(items) = map.get_mut(key).and_then(serde_json::Value::as_array_mut) {
+            for item in items {
+                visit(item)?;
+            }
+        }
+    }
+    for &key in SUBSCHEMA_SINGLE_KEYWORDS {
+        if let Some(child) = map.get_mut(key) {
+            if key == "items"
+                && let Some(items) = child.as_array_mut()
+            {
+                // Legacy tuple validation used an array here; draft 2020-12
+                // uses `prefixItems`, but walking both costs nothing.
+                for item in items {
+                    visit(item)?;
+                }
+            } else {
+                visit(child)?;
+            }
+        }
+    }
+    for &key in SUBSCHEMA_MAP_KEYWORDS {
+        if let Some(children) = map.get_mut(key).and_then(serde_json::Value::as_object_mut) {
+            for child in children.values_mut() {
+                visit(child)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn local_defs(value: &serde_json::Value) -> LocalDefs {
+    let mut defs = LocalDefs::default();
+    if let Some(entries) = value.get("$defs").and_then(serde_json::Value::as_object) {
+        defs.draft.clone_from(entries);
+    }
+    if let Some(entries) = value
+        .get("definitions")
+        .and_then(serde_json::Value::as_object)
+    {
+        defs.legacy.clone_from(entries);
+    }
+    defs
+}
+
+/// Inline only a copied dispatcher variant against the generated root's local
+/// definitions. `$ref` siblings are a conjunction in draft 2020-12, so keep
+/// them as `allOf` rather than letting a sibling overwrite the referenced
+/// target. Every target and sibling is recursively resolved before the copy is
+/// returned; unresolved, non-local and cyclic references are registration
+/// errors.
+fn inline_variant_refs(value: &mut serde_json::Value, defs: &LocalDefs) -> Result<(), String> {
+    inline_value(value, defs, &mut Vec::new())
+}
+
+fn inline_value(
+    value: &mut serde_json::Value,
+    defs: &LocalDefs,
+    stack: &mut Vec<String>,
+) -> Result<(), String> {
+    if let serde_json::Value::Array(items) = value {
+        for item in items {
+            inline_value(item, defs, stack)?;
+        }
+        return Ok(());
+    }
+    let Some(map) = value.as_object_mut() else {
+        return Ok(());
+    };
+    if map.contains_key("$ref") {
+        let reference = map
+            .get("$ref")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "$ref must be a string".to_string())?
+            .to_string();
+        let target = if let Some(name) = reference.strip_prefix("#/$defs/") {
+            defs.draft
+                .get(name)
+                .ok_or_else(|| format!("unresolved local reference {reference}"))?
+        } else if let Some(name) = reference.strip_prefix("#/definitions/") {
+            defs.legacy
+                .get(name)
+                .ok_or_else(|| format!("unresolved local reference {reference}"))?
+        } else {
+            return Err(format!("non-local reference {reference}"));
+        };
+        if stack.iter().any(|seen| seen == &reference) {
+            return Err(format!("cyclic local reference {reference}"));
+        }
+
+        let siblings = map
+            .iter()
+            .filter(|(key, _)| key.as_str() != "$ref")
+            .map(|(key, child)| (key.clone(), child.clone()))
+            .collect::<serde_json::Map<_, _>>();
+        let mut replacement = target.clone();
+        stack.push(reference);
+        inline_value(&mut replacement, defs, stack)?;
+        stack.pop();
+        let mut sibling_schema = serde_json::Value::Object(siblings);
+        inline_value(&mut sibling_schema, defs, stack)?;
+
+        let resolved_object = replacement.get("type") == Some(&serde_json::json!("object"));
+        let has_siblings = !sibling_schema
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty);
+        let description = sibling_schema
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                replacement
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .map(str::to_string);
+        if has_siblings {
+            *value = serde_json::json!({
+                "allOf": [replacement, sibling_schema]
+            });
+            // Preserve an explicitly object-shaped resolved root so a
+            // `$ref` arm with annotation/validation siblings remains a valid
+            // dispatcher variant without fabricating an untyped root.
+            if resolved_object {
+                value
+                    .as_object_mut()
+                    .expect("composed reference schema is an object")
+                    .insert(
+                        "type".to_string(),
+                        serde_json::Value::String("object".to_string()),
+                    );
+            }
+            if let Some(description) = description {
+                value
+                    .as_object_mut()
+                    .expect("composed reference schema is an object")
+                    .insert(
+                        "description".to_string(),
+                        serde_json::Value::String(description),
+                    );
+            }
+        } else {
+            *value = replacement;
+        }
+        return Ok(());
+    }
+    for_each_subschema_result(map, &mut |child| inline_value(child, defs, stack))
+}
+
+fn remove_definition_containers(value: &mut serde_json::Value) {
+    remove_definition_containers_from_schema(value);
+}
+
+fn remove_definition_containers_from_schema(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    map.remove("$defs");
+    map.remove("definitions");
+    for_each_subschema_mut(map, &mut remove_definition_containers_from_schema);
+}
+
+/// Top-level property names in `args_schema` that carry no non-empty
+/// `description`. Used by tool registration to warn (never fail) on
+/// under-documented MCP tool fields.
+pub(crate) fn undescribed_property_names(args_schema: &serde_json::Value) -> Vec<String> {
+    let Some(properties) = args_schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let mut out = properties
+        .iter()
+        .filter(|(_, schema)| {
+            schema
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|description| description.trim().is_empty())
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    out.sort();
+    out
+}
+
+/// Detect the internally-tagged discriminator KEY across a root `oneOf`'s
+/// variants.
+///
+/// An internally-tagged enum (`#[serde(tag = "k")]`) emits one object variant
+/// per case, each carrying the tag field as a string `const` whose value is the
+/// (renamed) variant name. The discriminator is the property name that, across
+/// *all* variants, is present with a string `const` and takes a *distinct*
+/// value per variant. Returns `Some(key)` iff exactly one such key exists;
+/// otherwise `None`, signalling the caller to leave the schema unflattened.
+fn detect_discriminator_key(variants: &[serde_json::Value]) -> Option<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // For each candidate property key, collect one unambiguous string `const`
+    // value from every variant. A key carrying two different root constants
+    // in one variant is not a discriminator candidate.
+    let mut const_values: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for variant in variants {
+        let mut root_consts = Vec::new();
+        collect_root_consts(variant, &mut root_consts)?;
+        let mut unique_consts = BTreeMap::new();
+        let mut ambiguous = BTreeSet::new();
+        for (name, value) in root_consts {
+            if ambiguous.contains(&name) {
+                continue;
+            }
+            if let Some(previous) = unique_consts.get(&name) {
+                if previous != &value {
+                    unique_consts.remove(&name);
+                    ambiguous.insert(name);
+                }
+            } else {
+                unique_consts.insert(name, value);
+            }
+        }
+        if !ambiguous.is_empty() {
+            return None;
+        }
+        for (name, value) in unique_consts {
+            const_values.entry(name).or_default().push(value);
+        }
+    }
+
+    let mut candidates = const_values.into_iter().filter(|(_, values)| {
+        // Present in every variant, with a distinct value in each.
+        values.len() == variants.len()
+            && values.iter().collect::<BTreeSet<_>>().len() == values.len()
+    });
+    let key = candidates.next()?.0;
+    if candidates.next().is_some() {
+        // Ambiguous: more than one property qualifies as a discriminator.
+        return None;
+    }
+    Some(key)
+}
+
+fn collect_root_consts(schema: &serde_json::Value, out: &mut Vec<(String, String)>) -> Option<()> {
+    let Some(map) = schema.as_object() else {
+        return schema.is_boolean().then_some(());
+    };
+    if let Some(properties) = map.get("properties").and_then(serde_json::Value::as_object) {
+        for (name, property_schema) in properties {
+            if let Some(value) = property_schema
+                .get("const")
+                .and_then(serde_json::Value::as_str)
+            {
+                out.push((name.clone(), value.to_string()));
+            }
+        }
+    }
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = map.get(keyword).and_then(serde_json::Value::as_array) {
+            for branch in branches {
+                collect_root_consts(branch, out)?;
+            }
+        }
+    }
+    for keyword in ["if", "then", "else"] {
+        if let Some(branch) = map.get(keyword) {
+            collect_root_consts(branch, out)?;
+        }
+    }
+    Some(())
+}
+
+/// Merge two shared root property schemas when their only validation
+/// difference is nullability. The result is canonical and therefore does not
+/// depend on which action's schema was encountered first. A schema pair with a
+/// different validation shape is not widened here; the existing conflict
+/// error remains the honest result for incompatible action contracts.
+fn nullable_compatible_schema(
+    first: &serde_json::Value,
+    second: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if validation_shape(first) != validation_shape(second) {
+        return None;
+    }
+    let mut widened = first.clone();
+    merge_nullable_nodes(&mut widened, second);
+    Some(widened)
+}
+
+fn merge_nullable_nodes(first: &mut serde_json::Value, second: &serde_json::Value) {
+    let (Some(first_map), Some(second_map)) = (first.as_object_mut(), second.as_object()) else {
+        return;
+    };
+    if let (Some(first_type), Some(second_type)) = (first_map.get("type"), second_map.get("type"))
+        && let Some(type_union) = nullable_type_union(first_type, second_type)
+    {
+        first_map.insert("type".to_string(), type_union);
+    }
+
+    for &key in SUBSCHEMA_ARRAY_KEYWORDS {
+        let Some(first_items) = first_map
+            .get_mut(key)
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        let Some(second_items) = second_map.get(key).and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for (first_item, second_item) in first_items.iter_mut().zip(second_items) {
+            merge_nullable_nodes(first_item, second_item);
+        }
+    }
+    for &key in SUBSCHEMA_SINGLE_KEYWORDS {
+        let Some(first_child) = first_map.get_mut(key) else {
+            continue;
+        };
+        let Some(second_child) = second_map.get(key) else {
+            continue;
+        };
+        if key == "items"
+            && let (Some(first_items), Some(second_items)) =
+                (first_child.as_array_mut(), second_child.as_array())
+        {
+            for (first_item, second_item) in first_items.iter_mut().zip(second_items) {
+                merge_nullable_nodes(first_item, second_item);
+            }
+        } else {
+            merge_nullable_nodes(first_child, second_child);
+        }
+    }
+    for &key in SUBSCHEMA_MAP_KEYWORDS {
+        let Some(first_children) = first_map
+            .get_mut(key)
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        let Some(second_children) = second_map.get(key).and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        for (name, first_child) in first_children {
+            if let Some(second_child) = second_children.get(name) {
+                merge_nullable_nodes(first_child, second_child);
+            }
+        }
+    }
+}
+
+fn nullable_type_union(
+    first: &serde_json::Value,
+    second: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let mut kinds = std::collections::BTreeSet::new();
+    for value in [first, second] {
+        match value {
+            serde_json::Value::String(kind) => {
+                kinds.insert(kind.clone());
+            }
+            serde_json::Value::Array(many) => {
+                for kind in many {
+                    kinds.insert(kind.as_str()?.to_string());
+                }
+            }
+            _ => return None,
+        }
+    }
+    if kinds.len() == 1 {
+        return kinds.into_iter().next().map(serde_json::Value::String);
+    }
+    let null = kinds.remove("null");
+    let mut values = kinds
+        .into_iter()
+        .map(serde_json::Value::String)
+        .collect::<Vec<_>>();
+    if null {
+        values.push(serde_json::Value::String("null".to_string()));
+    }
+    Some(serde_json::Value::Array(values))
+}
+
+fn validation_shape(value: &serde_json::Value) -> serde_json::Value {
+    let mut value = value.clone();
+    strip_non_validation_fields(&mut value);
+    normalize_nullable_types(&mut value);
+    value
+}
+
+fn strip_non_validation_fields(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    for key in ["description", "title", "default"] {
+        map.remove(key);
+    }
+    for_each_subschema_mut(map, &mut strip_non_validation_fields);
+}
+
+fn normalize_nullable_types(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(type_value) = map.get_mut("type")
+        && let serde_json::Value::Array(types) = type_value
+    {
+        types.retain(|item| item != "null");
+        if types.len() == 1 {
+            *type_value = types[0].clone();
+        }
+    }
+    for_each_subschema_mut(map, &mut normalize_nullable_types);
+}
+
+/// Ensure the generated schema is acceptable as an MCP `inputSchema` root.
+///
+/// MCP clients such as Pi require every tool input schema to declare
+/// `type: "object"` and a root `properties` object. Provider-compatible
+/// tool schemas must also avoid root combinators.
+fn ensure_client_safe_root<T: JsonSchema>(value: &mut serde_json::Value) {
+    let serde_json::Value::Object(map) = value else {
+        panic!(
+            "MCP tool type `{}` root schema must be an object schema document",
+            std::any::type_name::<T>(),
+        );
+    };
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        assert!(
+            !map.contains_key(keyword),
+            "MCP tool type `{}` leaves root schema combinator `{keyword}` after normalization. A dispatcher Args type must be an internally tagged enum (`#[serde(tag = \"...\")]`) whose variants each carry the tag as a distinct string `const`; adjacently/externally tagged enums, untagged enums, or otherwise heterogeneous variants cannot be made client-safe. Use such an enum or a plain struct Args type.",
+            std::any::type_name::<T>(),
+        );
+    }
+    if let Some(root_type) = map.get("type") {
+        assert_eq!(
+            root_type,
+            "object",
+            "MCP tool type `{}` root schema type must be `object`, got {root_type:#}",
+            std::any::type_name::<T>(),
+        );
+    } else {
+        map.insert(
+            "type".to_string(),
+            serde_json::Value::String("object".to_string()),
+        );
+    }
+    map.entry("properties".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+}
+
+/// True if `value` contains a `$ref` keyword in a JSON-Schema node.
+///
+/// Schema maps such as `properties` are not themselves schema nodes: a user
+/// may legitimately name a property `$ref`, `$defs` or `definitions`. Walking
+/// only subschema-valued keywords keeps those instance names distinct from
+/// actual schema keywords while still finding refs in local definitions.
+pub(crate) fn schema_contains_ref(value: &serde_json::Value) -> bool {
+    schema_contains_keyword(value, "$ref")
+}
+
+pub(crate) fn schema_contains_defs(value: &serde_json::Value) -> bool {
+    schema_contains_keyword(value, "$defs") || schema_contains_keyword(value, "definitions")
+}
+
+fn schema_contains_keyword(value: &serde_json::Value, keyword: &str) -> bool {
+    let Some(map) = value.as_object() else {
+        return value.as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| schema_contains_keyword(item, keyword))
+        });
+    };
+    if map.contains_key(keyword) {
+        return true;
+    }
+    for &key in SUBSCHEMA_ARRAY_KEYWORDS {
+        if let Some(items) = map.get(key).and_then(serde_json::Value::as_array)
+            && items
+                .iter()
+                .any(|item| schema_contains_keyword(item, keyword))
+        {
+            return true;
+        }
+    }
+    for &key in SUBSCHEMA_SINGLE_KEYWORDS {
+        if let Some(child) = map.get(key)
+            && schema_contains_keyword(child, keyword)
+        {
+            return true;
+        }
+    }
+    for &key in SUBSCHEMA_MAP_KEYWORDS {
+        if let Some(children) = map.get(key).and_then(serde_json::Value::as_object)
+            && children
+                .values()
+                .any(|child| schema_contains_keyword(child, keyword))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod tests;

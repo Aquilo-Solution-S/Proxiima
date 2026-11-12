@@ -1,10 +1,10 @@
 use super::{
-    McpCallFn, McpToolDescriptor, McpToolOrigin, SpiiceRegistry, SpiiceRegistryError, Tool,
+    CallFn, SpiiceRegistry, SpiiceRegistryError, Tool, ToolDescriptor, ToolOrigin,
     mcp_output_schema, mcp_tool_schema, validate_action_args,
 };
 use crate::ToolError;
-use crate::mcp::prepare_flat_tool_args;
-use crate::mcp::schema::undescribed_property_names;
+use crate::catalog::prepare_flat_tool_args;
+use crate::catalog::schema::undescribed_property_names;
 use futures::future::BoxFuture;
 
 /// Top-level property names advertised by the flat tool's `Args` schema. This
@@ -42,7 +42,7 @@ fn serialize_tool_output<T: serde::Serialize>(output: T) -> Result<serde_json::V
 }
 
 /// Name the argument keys an
-/// [`IgnoreAndReport`](crate::mcp::McpUnknownFieldPolicy::IgnoreAndReport)
+/// [`IgnoreAndReport`](crate::catalog::UnknownFieldPolicy::IgnoreAndReport)
 /// tool dropped back to the caller, on the tool's own result, so tolerating
 /// them stays observable rather than silent.
 ///
@@ -86,7 +86,7 @@ impl SpiiceRegistry {
         if !T::ACTION_ARG_SPECS.is_empty() && !T::ARGV_ACTION_SPECS.is_empty() {
             return Err(SpiiceRegistryError::ConflictingActionVocabularies { name: T::NAME });
         }
-        let crate::mcp::schema::McpArgsSchema {
+        let crate::catalog::schema::ArgsSchema {
             schema: args_schema,
             dispatcher: dispatcher_schema,
         } = mcp_tool_schema::<T::Args>();
@@ -108,7 +108,7 @@ impl SpiiceRegistry {
             .collect();
         // Tool registrations live for the process lifetime; leaking the
         // closure preserves the descriptor's copyable call-handle semantics.
-        let call: McpCallFn = Box::leak(Box::new(move |ctx, mut args| -> BoxFuture<'static, _> {
+        let call: CallFn = Box::leak(Box::new(move |ctx, mut args| -> BoxFuture<'static, _> {
             let properties = properties.clone();
             Box::pin(async move {
                 // Dispatcher tools (non-empty specs) run per-action validation;
@@ -127,7 +127,7 @@ impl SpiiceRegistry {
                         .map(|spec| spec.effect)
                 } else if !T::ARGV_ACTION_SPECS.is_empty() {
                     let action =
-                        crate::mcp::resolve_argv_action(T::NAME, T::ARGV_ACTION_SPECS, &args)?;
+                        crate::catalog::resolve_argv_action(T::NAME, T::ARGV_ACTION_SPECS, &args)?;
                     T::ARGV_ACTION_SPECS
                         .iter()
                         .find(|spec| spec.action == action)
@@ -162,14 +162,14 @@ impl SpiiceRegistry {
                 Ok(result)
             })
         }));
-        self.mcp_tools.push(McpToolDescriptor {
+        self.mcp_tools.push(ToolDescriptor {
             name: T::NAME,
             title: T::TITLE,
             description: T::DESCRIPTION,
             origin: if expected_prefix == "core" {
-                McpToolOrigin::Substrate
+                ToolOrigin::Substrate
             } else {
-                McpToolOrigin::Spiice(expected_prefix.to_string())
+                ToolOrigin::Spiice(expected_prefix.to_string())
             },
             produces_schema_ids: T::PRODUCES_SCHEMA_IDS,
             args_schema,
@@ -198,7 +198,7 @@ fn validate_tool_name(
             message: format!("expected prefix {slash:?} or {under:?}"),
         });
     }
-    let provider_safe = crate::mcp::provider_safe_tool_name(name);
+    let provider_safe = crate::catalog::provider_safe_tool_name(name);
     if name != provider_safe {
         return Err(SpiiceRegistryError::InvalidToolName {
             name,
@@ -226,7 +226,7 @@ mod tests {
 
     use super::serialize_tool_output;
     use crate::ToolError;
-    use crate::mcp::ToolErrorKind;
+    use crate::catalog::ToolErrorKind;
 
     struct FailingOutput;
 
@@ -280,9 +280,8 @@ mod action_vocabulary_tests {
 
     use futures::future::BoxFuture;
 
-    use crate::mcp::{
-        McpActionArgSpec, McpArgvActionSpec, McpToolAudience, OwnerNeed, Replay, ToolEffect,
-        ToolErrorKind,
+    use crate::catalog::{
+        ActionArgSpec, ArgvActionSpec, OwnerNeed, Replay, ToolAudience, ToolEffect, ToolErrorKind,
     };
     use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, SpiiceRegistryError, UserId};
     use crate::{Tool, ToolCtx, ToolError};
@@ -301,20 +300,20 @@ mod action_vocabulary_tests {
     #[derive(serde::Serialize, schemars::JsonSchema)]
     struct EmptyOutput {}
 
-    const ARGV_SPECS: &[McpArgvActionSpec] = &[
-        McpArgvActionSpec {
+    const ARGV_SPECS: &[ArgvActionSpec] = &[
+        ArgvActionSpec {
             action: "approval",
             argv_prefix: &["approval"],
             effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
-        McpArgvActionSpec {
+        ArgvActionSpec {
             action: "approval-decide",
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Owner,
+            audience: ToolAudience::Owner,
             need: OwnerNeed::Memory,
             title: "Test action",
         },
@@ -328,7 +327,7 @@ mod action_vocabulary_tests {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_cli";
         const DESCRIPTION: &'static str = "An argv-keyed fixture dispatcher.";
-        const ARGV_ACTION_SPECS: &'static [McpArgvActionSpec] = ARGV_SPECS;
+        const ARGV_ACTION_SPECS: &'static [ArgvActionSpec] = ARGV_SPECS;
         type Args = ArgvArgs;
         type Output = ArgvOutput;
         fn call(
@@ -346,20 +345,20 @@ mod action_vocabulary_tests {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_both";
         const DESCRIPTION: &'static str = "A fixture declaring both spec kinds.";
-        const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[McpActionArgSpec {
+        const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         }];
-        const ARGV_ACTION_SPECS: &'static [McpArgvActionSpec] = &[McpArgvActionSpec {
+        const ARGV_ACTION_SPECS: &'static [ArgvActionSpec] = &[ArgvActionSpec {
             action: "look",
             argv_prefix: &["look"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
         }];
@@ -377,7 +376,7 @@ mod action_vocabulary_tests {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_admin";
         const DESCRIPTION: &'static str = "A flat fixture in the owner-only class.";
-        const AUDIENCE: McpToolAudience = McpToolAudience::Owner;
+        const AUDIENCE: ToolAudience = ToolAudience::Owner;
         const EFFECT: Option<ToolEffect> = Some(ToolEffect::Additive(Replay::NonIdempotent));
         type Args = ArgvArgs;
         type Output = EmptyOutput;
@@ -452,7 +451,7 @@ mod action_vocabulary_tests {
 
         // The canonical palette is built from the same definition, so every
         // argv leaf is in it and the gate admits a call the palette names.
-        let canonical = crate::mcp::canonical_scope_keys(&frozen);
+        let canonical = crate::catalog::canonical_scope_keys(&frozen);
         for key in argv_tool.palette_keys() {
             assert!(canonical.contains(&key), "{key} missing from {canonical:?}");
         }
@@ -469,7 +468,7 @@ mod action_vocabulary_tests {
         let membership = frozen
             .mcp_tool(crate::protocol::tool::CORE_MEMBERSHIP)
             .expect("core_membership is registered");
-        assert_eq!(membership.audience, McpToolAudience::Owner);
+        assert_eq!(membership.audience, ToolAudience::Owner);
     }
 
     pub(super) fn test_ctx() -> ToolCtx {
@@ -514,7 +513,7 @@ mod unknown_field_policy_tests {
     use futures::future::BoxFuture;
 
     use super::action_vocabulary_tests::test_ctx;
-    use crate::mcp::{McpUnknownFieldPolicy, ToolEffect, ToolErrorKind};
+    use crate::catalog::{ToolEffect, ToolErrorKind, UnknownFieldPolicy};
     use crate::{SpiiceRegistry, Tool, ToolCtx, ToolError};
 
     const READ_ONLY: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
@@ -540,7 +539,7 @@ mod unknown_field_policy_tests {
         const NAME: &'static str = "proxiima-stub_tolerant";
         const DESCRIPTION: &'static str = "A flat fixture tolerating unknown argument fields.";
         const EFFECT: Option<ToolEffect> = READ_ONLY;
-        const UNKNOWN_FIELD_POLICY: McpUnknownFieldPolicy = McpUnknownFieldPolicy::IgnoreAndReport;
+        const UNKNOWN_FIELD_POLICY: UnknownFieldPolicy = UnknownFieldPolicy::IgnoreAndReport;
         type Args = EchoArgs;
         type Output = EchoOutput;
         fn call(_: ToolCtx, args: Self::Args) -> BoxFuture<'static, Result<EchoOutput, ToolError>> {
@@ -557,7 +556,7 @@ mod unknown_field_policy_tests {
         const NAME: &'static str = "proxiima-stub_tolerant_scalar";
         const DESCRIPTION: &'static str = "A tolerating flat fixture answering with a scalar.";
         const EFFECT: Option<ToolEffect> = READ_ONLY;
-        const UNKNOWN_FIELD_POLICY: McpUnknownFieldPolicy = McpUnknownFieldPolicy::IgnoreAndReport;
+        const UNKNOWN_FIELD_POLICY: UnknownFieldPolicy = UnknownFieldPolicy::IgnoreAndReport;
         type Args = EchoArgs;
         type Output = String;
         fn call(_: ToolCtx, args: Self::Args) -> BoxFuture<'static, Result<String, ToolError>> {

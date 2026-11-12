@@ -1,4 +1,4 @@
-use proxiima_core::mcp::core_tools::goal::CORE_GOAL_ACTIONS;
+use proxiima_core::catalog::core_tools::goal::CORE_GOAL_ACTIONS;
 use proxiima_core::spiice::SpiiceRegistry;
 
 const CORE_FACT_ACTION_NAMES: &[&str] = &["citation_of_fact", "facts_citing_object"];
@@ -210,7 +210,7 @@ fn goal_child_and_episode_evidence_are_optional_but_children_are_required() {
     );
 }
 
-/// The hand-written `McpActionArgSpec` lists that gate `validate_action_args`
+/// The hand-written `ActionArgSpec` lists that gate `validate_action_args`
 /// (and feed the `proxiima://tools` catalog) must match the schemars-derived
 /// dispatcher schema exactly. Without this guard the two silently
 /// drift: add a field to a dispatcher variant struct and forget its
@@ -304,7 +304,7 @@ fn action_arg_specs_match_schema_derived_action_fields() {
 /// exactly that), and boot has no business refusing to start over it.
 #[test]
 fn core_action_meta_decorates_only_declared_actions() {
-    use proxiima_core::mcp::{McpToolOrigin, all_core_actions};
+    use proxiima_core::catalog::{ToolOrigin, all_core_actions};
     use std::collections::BTreeSet;
 
     let frozen = SpiiceRegistry::default().freeze_or_panic_for_tests();
@@ -327,12 +327,12 @@ fn core_action_meta_decorates_only_declared_actions() {
     }
 
     for tool in frozen.list_mcp_tools() {
-        if tool.origin != McpToolOrigin::Substrate {
+        if tool.origin != ToolOrigin::Substrate {
             continue;
         }
         for spec in tool.action_arg_specs {
             assert!(
-                proxiima_core::mcp::core_action_meta(tool.name, spec.action).is_some(),
+                proxiima_core::catalog::core_action_meta(tool.name, spec.action).is_some(),
                 "substrate action {}:{} declares itself but has no CoreActionMeta, so it has no \
                  scope key",
                 tool.name,

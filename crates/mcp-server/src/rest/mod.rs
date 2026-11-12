@@ -27,7 +27,7 @@ use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use proxiima_core::SpiiceServices;
-use proxiima_core::mcp::{McpToolDescriptor, McpToolOrigin, all_core_resources, tool_name_matches};
+use proxiima_core::catalog::{ToolDescriptor, ToolOrigin, all_core_resources, tool_name_matches};
 use proxiima_core::spiice::ResourceContract;
 use proxiima_core::{ToolCaller, ToolCtx};
 
@@ -439,7 +439,7 @@ async fn read_resource(
 
 // ---------------------------------------------------------------- helpers
 
-fn find_descriptor<'a>(state: &'a RestState, tool: &str) -> Option<&'a McpToolDescriptor> {
+fn find_descriptor<'a>(state: &'a RestState, tool: &str) -> Option<&'a ToolDescriptor> {
     state
         .host
         .registry()
@@ -562,13 +562,13 @@ fn inject_action(
     Ok(args)
 }
 
-fn tool_json(descriptor: &McpToolDescriptor, caller: Caller<'_>) -> serde_json::Value {
+fn tool_json(descriptor: &ToolDescriptor, caller: Caller<'_>) -> serde_json::Value {
     serde_json::json!({
         "id": descriptor.name,
         "description": descriptor.description,
         "origin": match &descriptor.origin {
-            McpToolOrigin::Substrate => serde_json::json!("substrate"),
-            McpToolOrigin::Spiice(spiice) => serde_json::json!({ "spiice": spiice }),
+            ToolOrigin::Substrate => serde_json::json!("substrate"),
+            ToolOrigin::Spiice(spiice) => serde_json::json!({ "spiice": spiice }),
         },
         "annotations": annotations_for_auth(caller, descriptor),
         // Narrowed per action by the same projection `tools/list` applies, so

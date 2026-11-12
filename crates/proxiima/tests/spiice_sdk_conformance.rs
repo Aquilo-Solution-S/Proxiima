@@ -2,7 +2,7 @@ use proxiima::spiice::{
     FactPayload, PayloadKeyBuilder, SpiiceDescriptor, SpiiceProvenance, SpiiceRegistry,
     SpiiceRegistryError,
 };
-use proxiima_core::mcp::core_tools::SearchMemoriesTool;
+use proxiima_core::catalog::core_tools::SearchMemoriesTool;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -77,7 +77,7 @@ fn host_and_spiice_sdk_imports_are_separate_and_compile() {
 }
 
 // A spiice MCP-tool author implements the tool via `proxiima::spiice`
-// alone — no direct `proxiima_core::mcp` reach-through. This mirrors
+// alone — no direct `proxiima_core::catalog` reach-through. This mirrors
 // `docs/build-a-spiice.md`.
 mod mcp_tool_authoring {
     use futures::future::BoxFuture;

@@ -9,7 +9,7 @@
 //! call that happens to name the drifted action.
 
 use super::{
-    BTreeSet, McpToolDescriptor, SpiiceRegistry, SpiiceRegistryError, analyze_root_fields,
+    BTreeSet, SpiiceRegistry, SpiiceRegistryError, ToolDescriptor, analyze_root_fields,
     schema_contains_defs, schema_contains_ref, validate_closed_root_schema,
 };
 
@@ -42,7 +42,7 @@ impl SpiiceRegistry {
     ///
     /// The scope gate and every palette identify a tool by
     /// [`ScopeKey`](crate::ScopeKey)s built from these names
-    /// ([`McpToolDescriptor::palette_keys`] trusts this ran). An action outside
+    /// ([`ToolDescriptor::palette_keys`] trusts this ran). An action outside
     /// the grammar, or a dispatcher called `resource`, is refused here and
     /// not at the first palette build.
     pub(super) fn validate_scope_keys(&self) -> Result<(), SpiiceRegistryError> {
@@ -57,7 +57,7 @@ impl SpiiceRegistry {
     }
 
     /// Cross-check: every tool and every action carries a title a person can
-    /// read ([`crate::mcp::MAX_TITLE_CHARS`]).
+    /// read ([`crate::catalog::MAX_TITLE_CHARS`]).
     pub(super) fn validate_titles(&self) -> Result<(), SpiiceRegistryError> {
         for tool in &self.mcp_tools {
             let actions = tool
@@ -72,7 +72,7 @@ impl SpiiceRegistry {
                 .map(|(action, title)| (format!("{}:{action}", tool.name), title));
             for (key, title) in std::iter::once((tool.name.to_string(), tool.title)).chain(actions)
             {
-                if let Some(problem) = crate::mcp::title_problem(title) {
+                if let Some(problem) = crate::catalog::title_problem(title) {
                     return Err(SpiiceRegistryError::InvalidTitle {
                         key,
                         title,
@@ -110,7 +110,7 @@ impl SpiiceRegistry {
     /// Cross-check: a dispatcher's declared actions and its derived schema
     /// describe the same dispatcher.
     ///
-    /// `McpToolDescriptor::action_arg_specs` is the one enumeration.
+    /// `ToolDescriptor::action_arg_specs` is the one enumeration.
     /// Discriminator must be `action`: `ToolScope` keys are `"{tool}:{action}"`,
     /// validators and the scope gate read `args["action"]`, REST injects
     /// `"action"` before dispatch.
@@ -189,8 +189,8 @@ impl SpiiceRegistry {
 /// The action sets are known to agree by the time this runs, so `dispatcher`
 /// has an action for every spec.
 fn validate_action_field_sets(
-    tool: &McpToolDescriptor,
-    dispatcher: &crate::mcp::McpDispatcherSchema,
+    tool: &ToolDescriptor,
+    dispatcher: &crate::catalog::DispatcherSchema,
 ) -> Result<(), SpiiceRegistryError> {
     for spec in tool.action_arg_specs {
         let argument_schema = &dispatcher
@@ -221,10 +221,10 @@ fn validate_action_field_sets(
 /// schema is known to be closed and ref-free: a `$ref` or `$defs` would put
 /// part of the vocabulary in a subtree the dispatcher never resolves.
 fn derived_action_fields(
-    tool: &McpToolDescriptor,
-    spec: &crate::mcp::McpActionArgSpec,
+    tool: &ToolDescriptor,
+    spec: &crate::catalog::ActionArgSpec,
     argument_schema: &serde_json::Value,
-) -> Result<crate::mcp::schema::RootFieldAnalysis, SpiiceRegistryError> {
+) -> Result<crate::catalog::schema::RootFieldAnalysis, SpiiceRegistryError> {
     validate_closed_root_schema(argument_schema).map_err(|message| {
         SpiiceRegistryError::InvalidActionSpecs {
             name: tool.name,
@@ -254,8 +254,8 @@ fn derived_action_fields(
 /// One declared field list on the spec (`allowed_fields` or `required_fields`)
 /// against the set the schema derives.
 fn validate_declared_action_fields(
-    tool: &McpToolDescriptor,
-    spec: &crate::mcp::McpActionArgSpec,
+    tool: &ToolDescriptor,
+    spec: &crate::catalog::ActionArgSpec,
     key: &str,
     fields: &[&str],
     expected_fields: &BTreeSet<&str>,
@@ -295,9 +295,9 @@ fn validate_declared_action_fields(
 /// The schema's own two sets against each other: a required field the schema
 /// does not allow is a call surface nothing can satisfy.
 fn validate_derived_required_are_allowed(
-    tool: &McpToolDescriptor,
-    spec: &crate::mcp::McpActionArgSpec,
-    derived: &crate::mcp::schema::RootFieldAnalysis,
+    tool: &ToolDescriptor,
+    spec: &crate::catalog::ActionArgSpec,
+    derived: &crate::catalog::schema::RootFieldAnalysis,
 ) -> Result<(), SpiiceRegistryError> {
     if !derived
         .required

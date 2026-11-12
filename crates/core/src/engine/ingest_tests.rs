@@ -405,7 +405,7 @@ async fn a_listenable_admission_captures_the_deployment_source_permit_owner_and_
 ///
 /// The only value `resolve_publication` reads is
 /// `AuthzContext::trusted_model_id`. The caller-supplied `model_id`
-/// label lives on [`crate::tool::ToolCaller`] and is never consulted
+/// label lives on [`crate::catalog::ToolCaller`] and is never consulted
 /// here, so an unauthenticated deployment publishes `None` rather than
 /// whatever a caller wrote in its arguments.
 #[tokio::test]

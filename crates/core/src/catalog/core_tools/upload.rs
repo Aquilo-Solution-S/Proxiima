@@ -1,0 +1,595 @@
+//! `core_upload` — the cited-blob S3 lane over MCP.
+//!
+//! The MCP transport caps request bodies, so artefact bytes never travel
+//! through a tool call: `prepare` mints a presigned S3 `PUT`, the client
+//! uploads the bytes directly, and `complete` verifies and returns the
+//! canonical `cited_object_id`. The tool talks to the host-wired
+//! [`CitedBlobService`] service; a host without S3 configured fails
+//! typed at call time with a `PROXIIMA_S3_*` hint.
+
+use crate::catalog::{Replay, ToolEffect};
+use std::sync::Arc;
+
+use futures::future::BoxFuture;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::catalog::{ActionArgSpec, CoreActionMeta, OwnerNeed, ToolAudience};
+use crate::error::ProtocolError;
+use crate::protocol::{action as protocol_action, tool as protocol_tool};
+use crate::storage_ports::CitedBlobService;
+use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{Tool, ToolCtx, ToolError};
+
+use super::memory_spaces::resolve_space_for_write;
+
+pub const CORE_UPLOAD_ACTIONS: &[CoreActionMeta] = &[
+    CoreActionMeta {
+        tool: CoreUploadTool::NAME,
+        action: "prepare",
+        scope_key: protocol_action::CORE_UPLOAD_PREPARE,
+        produces_schema_ids: &[],
+    },
+    CoreActionMeta {
+        tool: CoreUploadTool::NAME,
+        action: "complete",
+        scope_key: protocol_action::CORE_UPLOAD_COMPLETE,
+        produces_schema_ids: &[],
+    },
+    CoreActionMeta {
+        tool: CoreUploadTool::NAME,
+        action: "abort",
+        scope_key: protocol_action::CORE_UPLOAD_ABORT,
+        produces_schema_ids: &[],
+    },
+];
+
+#[derive(Debug, Default)]
+pub struct CoreUploadTool;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UploadPrepareArgs {
+    #[schemars(description = "Filename of the artefact being uploaded, e.g. 'handbuch.pdf'.")]
+    pub filename: String,
+    #[schemars(description = "MIME type of the artefact bytes, e.g. 'application/pdf'.")]
+    pub mime: String,
+    #[schemars(
+        description = "Exact byte length of the artefact. Completion verifies the uploaded length against it."
+    )]
+    pub byte_len: u64,
+    #[serde(default)]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UploadCompleteArgs {
+    #[schemars(description = "The `upload_id` returned by the prepare action.")]
+    pub upload_id: String,
+    #[serde(default)]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UploadAbortArgs {
+    #[schemars(description = "The `upload_id` returned by the prepare action.")]
+    pub upload_id: String,
+    #[serde(default)]
+    #[schemars(description = "Memory space key from core_memory_spaces; omit for current owner.")]
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum CoreUploadArgs {
+    /// Mint a presigned S3 PUT for one artefact and record the pending upload.
+    Prepare(UploadPrepareArgs),
+    /// Verify an uploaded artefact, persist its canonical cited object, and record the upload
+    /// as a core/upload-v1 Fact citing it.
+    Complete(UploadCompleteArgs),
+    /// Abort a pending upload and discard its pending object.
+    Abort(UploadAbortArgs),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UploadHeaderOutput {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UploadPrepareOutput {
+    pub upload_id: String,
+    pub upload_url: String,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
+    pub expires_at: time::OffsetDateTime,
+    pub headers: Vec<UploadHeaderOutput>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UploadCompleteOutput {
+    pub cited_object_id: String,
+    pub schema: String,
+    pub content_hash: String,
+    pub sha256: String,
+    pub byte_len: u64,
+    pub mime: String,
+    pub filename: String,
+    /// True when this completion added nothing: the artefact and its
+    /// arrival were already recorded for this owner.
+    pub idempotent_replay: bool,
+    /// Handle of the `core/upload-v1` Fact recording this arrival. It
+    /// cites the artefact, so `core_fact` on it reaches the same
+    /// `cited_object_id`, and `core/search_memories` finds the file by
+    /// its name.
+    pub fact: String,
+    /// Present (true) only when `fact` answers a replay of an upload Fact
+    /// that has been forgotten: nothing was written and it stays forgotten.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub forgotten: bool,
+}
+
+impl From<crate::engine::UploadCompleted> for UploadCompleteOutput {
+    fn from(completed: crate::engine::UploadCompleted) -> Self {
+        let outcome = completed.blob;
+        Self {
+            cited_object_id: outcome.cited_object_id,
+            schema: outcome.schema,
+            content_hash: outcome.content_hash,
+            sha256: outcome.sha256,
+            byte_len: outcome.byte_len,
+            mime: outcome.mime,
+            filename: outcome.filename,
+            idempotent_replay: outcome.idempotent_replay,
+            fact: completed.fact.memory_id.into_inner().to_string(),
+            forgotten: completed.fact.forgotten,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UploadAbortOutput {
+    pub aborted: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CoreUploadOutput {
+    Prepare(UploadPrepareOutput),
+    Complete(UploadCompleteOutput),
+    Abort(UploadAbortOutput),
+}
+
+impl Tool for CoreUploadTool {
+    const NAME: &'static str = protocol_tool::CORE_UPLOAD;
+    const TITLE: &'static str = "Uploads";
+    const DESCRIPTION: &'static str = "Upload an artefact (document, image, transcript) \
+         without sending its bytes through MCP: `prepare` returns a presigned `upload_url` and \
+         `headers`; HTTP PUT the raw bytes there with exactly those headers before `expires_at`; \
+         `complete` verifies them, returns the `cited_object_id`, and records a `core/upload-v1` \
+         Fact citing it (`fact`), findable by file name. Cite the artefact from further Facts via \
+         core_remember's `citation.cited_object_id`.";
+    const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+        ActionArgSpec {
+            action: "prepare",
+            title: "Prepare an upload",
+            allowed_fields: &["filename", "mime", "byte_len", "space"],
+            required_fields: &["filename", "mime", "byte_len"],
+            effect: ToolEffect::Additive(Replay::NonIdempotent),
+            audience: ToolAudience::Shared,
+            need: OwnerNeed::Memory,
+        },
+        ActionArgSpec {
+            action: "complete",
+            title: "Complete an upload",
+            allowed_fields: &["upload_id", "space"],
+            required_fields: &["upload_id"],
+            effect: ToolEffect::Additive(Replay::NonIdempotent),
+            audience: ToolAudience::Shared,
+            need: OwnerNeed::Memory,
+        },
+        ActionArgSpec {
+            action: "abort",
+            title: "Abort an upload",
+            allowed_fields: &["upload_id", "space"],
+            required_fields: &["upload_id"],
+            effect: ToolEffect::Additive(Replay::NonIdempotent),
+            audience: ToolAudience::Shared,
+            need: OwnerNeed::Memory,
+        },
+    ];
+    type Args = CoreUploadArgs;
+    type Output = CoreUploadOutput;
+
+    fn call(
+        ctx: ToolCtx,
+        args: CoreUploadArgs,
+    ) -> BoxFuture<'static, Result<CoreUploadOutput, ToolError>> {
+        Box::pin(async move {
+            match args {
+                CoreUploadArgs::Prepare(args) => {
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
+                    let service = blob_service(&ctx)?;
+                    let outcome = service
+                        .prepare_upload(
+                            &authz,
+                            owner,
+                            args.filename.trim(),
+                            args.mime.trim(),
+                            args.byte_len,
+                        )
+                        .await?;
+                    Ok(CoreUploadOutput::Prepare(UploadPrepareOutput {
+                        upload_id: outcome.upload_id,
+                        upload_url: outcome.upload_url,
+                        expires_at: outcome.expires_at,
+                        headers: outcome
+                            .headers
+                            .into_iter()
+                            .map(|header| UploadHeaderOutput {
+                                name: header.name,
+                                value: header.value,
+                            })
+                            .collect(),
+                    }))
+                }
+                CoreUploadArgs::Complete(args) => {
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
+                    let service = blob_service(&ctx)?;
+                    let engine = ctx.require_engine()?;
+                    // No extension sidecars from the MCP surface: a tool
+                    // caller has no registered schema of its own to add.
+                    // Spiices reach the same verb in-process and pass theirs.
+                    let completed = engine
+                        .complete_upload_as_fact(
+                            service.as_ref(),
+                            &authz,
+                            owner,
+                            args.upload_id.trim(),
+                            &[],
+                        )
+                        .await?;
+                    Ok(CoreUploadOutput::Complete(completed.into()))
+                }
+                CoreUploadArgs::Abort(args) => {
+                    let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
+                    let service = blob_service(&ctx)?;
+                    let outcome = service
+                        .abort_upload(&authz, owner, args.upload_id.trim())
+                        .await?;
+                    Ok(CoreUploadOutput::Abort(UploadAbortOutput {
+                        aborted: outcome.aborted,
+                    }))
+                }
+            }
+        })
+    }
+}
+
+/// The authority an upload action needs on the resolved space owner:
+/// prepare/complete/abort mutate rows under it.
+/// Space resolution + authz narrowing, exactly like `core_remember`: the
+/// key is a selector only, and the narrowed context is what the port
+/// re-authorizes against.
+///
+/// `narrowed_to_owner` keeps whatever role the caller holds — a group
+/// Viewer narrows successfully — so role authority is gated here, with
+/// the same `forbidden` denial `core_remember` raises for the identical
+/// refusal. The port re-checks the same predicate as defense in depth,
+/// but its storage taxonomy would misreport the denial as caller-fixable
+/// invalid input.
+fn narrowed_space(
+    ctx: &ToolCtx,
+    space: Option<&str>,
+) -> Result<(AuthzContext, OwnerId), ToolError> {
+    let (space, authz) = resolve_space_for_write(ctx, space)?;
+    let (allowed, denied) = (
+        authz.may_write(&space.owner, AccessKind::Fact),
+        "requires Fact write on this owner",
+    );
+    if !allowed {
+        return Err(ToolError::Protocol(ProtocolError::forbidden(denied)));
+    }
+    Ok((authz, space.owner))
+}
+
+fn blob_service(ctx: &ToolCtx) -> Result<Arc<CitedBlobService>, ToolError> {
+    ctx.service::<CitedBlobService>().ok_or_else(|| {
+        ToolError::Unavailable(
+            "blob storage is not configured for this host: set PROXIIMA_S3_BUCKET / \
+             PROXIIMA_S3_REGION / PROXIIMA_S3_ACCESS_KEY_ID / PROXIIMA_S3_SECRET_ACCESS_KEY \
+             (see PROXIIMA_S3_* in docs/configuration.md) to enable \
+             the cited-blob upload lane"
+                .into(),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::access::Role;
+    use crate::catalog::{ToolErrorKind, validate_action_args};
+    use crate::storage_ports::{
+        CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
+        CitedBlobUploadPrepared,
+    };
+    use crate::{AuthzContext, GroupId, OwnerId, StorageError, UserId};
+
+    use super::super::memory_spaces::test_ctx::ctx_for;
+    use super::*;
+
+    /// One recorded port call: which action ran, against which owner,
+    /// and whether the passed authz could still see a foreign owner.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SeenCall {
+        action: &'static str,
+        owner: OwnerId,
+        authz_reaches_owner: bool,
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingBlobPort {
+        calls: Mutex<Vec<SeenCall>>,
+    }
+
+    impl RecordingBlobPort {
+        fn record(&self, action: &'static str, authz: &AuthzContext, owner: OwnerId) {
+            self.calls.lock().expect("lock").push(SeenCall {
+                action,
+                owner,
+                authz_reaches_owner: authz.can_access_owner(&owner),
+            });
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CitedBlobPort for RecordingBlobPort {
+        async fn prepare_upload(
+            &self,
+            authz: &AuthzContext,
+            owner: OwnerId,
+            _filename: &str,
+            _mime: &str,
+            _byte_len: u64,
+        ) -> Result<CitedBlobUploadPrepared, StorageError> {
+            self.record("prepare", authz, owner);
+            Ok(CitedBlobUploadPrepared {
+                upload_id: "0198c0de-0000-7000-8000-000000000001".into(),
+                upload_url: "https://s3.test/put".into(),
+                expires_at: time::OffsetDateTime::UNIX_EPOCH,
+                headers: Vec::new(),
+            })
+        }
+
+        async fn stage_upload(
+            &self,
+            authz: &AuthzContext,
+            owner: OwnerId,
+            _upload_id: &str,
+        ) -> Result<CitedBlobStaged, StorageError> {
+            self.record("stage", authz, owner);
+            Ok(CitedBlobStaged {
+                payload: crate::citations::UploadedBlobPayload {
+                    content_hash: [0x00; 32],
+                    bucket: "test-bucket".into(),
+                    object_key: "objects/test/x.pdf".into(),
+                    sha256: [0x11; 32],
+                    byte_len: 4,
+                    mime: "application/pdf".into(),
+                    filename: "x.pdf".into(),
+                    etag: None,
+                    uploaded_at: time::OffsetDateTime::UNIX_EPOCH,
+                },
+                already_completed: None,
+            })
+        }
+
+        async fn finish_upload(
+            &self,
+            authz: &AuthzContext,
+            owner: OwnerId,
+            _upload_id: &str,
+            _cited_object_id: uuid::Uuid,
+        ) -> Result<(), StorageError> {
+            self.record("finish", authz, owner);
+            Ok(())
+        }
+
+        async fn abort_upload(
+            &self,
+            authz: &AuthzContext,
+            owner: OwnerId,
+            _upload_id: &str,
+        ) -> Result<CitedBlobUploadAborted, StorageError> {
+            self.record("abort", authz, owner);
+            Ok(CitedBlobUploadAborted { aborted: true })
+        }
+
+        async fn find_held_blobs(
+            &self,
+            authz: &AuthzContext,
+            owner: OwnerId,
+            _content_hashes: &[[u8; 32]],
+        ) -> Result<Vec<CitedBlobHeld>, StorageError> {
+            self.record("find_held", authz, owner);
+            Ok(Vec::new())
+        }
+    }
+
+    fn ctx_with_port(
+        subject: UserId,
+        group_roles: Vec<(OwnerId, Role)>,
+    ) -> (ToolCtx, Arc<RecordingBlobPort>) {
+        let mut ctx = ctx_for(subject, group_roles);
+        let port = Arc::new(RecordingBlobPort::default());
+        ctx.try_insert_service(CitedBlobService::new(port.clone() as Arc<dyn CitedBlobPort>))
+            .expect("the fixture context holds no service");
+        (ctx, port)
+    }
+
+    fn prepare_args(space: Option<&str>) -> CoreUploadArgs {
+        CoreUploadArgs::Prepare(UploadPrepareArgs {
+            filename: "doc.pdf".into(),
+            mime: "application/pdf".into(),
+            byte_len: 4,
+            space: space.map(ToOwned::to_owned),
+        })
+    }
+
+    #[tokio::test]
+    async fn missing_service_fails_typed_with_the_s3_config_hint() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let ctx = ctx_for(subject, vec![]);
+
+        let err = CoreUploadTool::call(ctx, prepare_args(None))
+            .await
+            .expect_err("no CitedBlobService wired");
+        // A precondition fault, not an internal error: the message must
+        // reach the caller verbatim and name the enabling configuration.
+        assert_eq!(err.kind(), ToolErrorKind::InvalidRequest);
+        assert!(
+            err.client_message().contains("PROXIIMA_S3_"),
+            "message must name the enabling env: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_space_reaches_the_port_with_the_current_owner() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let (ctx, port) = ctx_with_port(subject, vec![]);
+
+        CoreUploadTool::call(ctx, prepare_args(None))
+            .await
+            .expect("prepare succeeds");
+        let calls = port.calls.lock().expect("lock");
+        assert_eq!(
+            *calls,
+            vec![SeenCall {
+                action: "prepare",
+                owner: OwnerId::from(subject),
+                authz_reaches_owner: true,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_group_space_narrows_the_authz_to_that_owner() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let (ctx, port) = ctx_with_port(subject, vec![(group, Role::editor())]);
+        let space_key = super::super::memory_spaces::MemorySpaceKey::owner(group).to_wire();
+
+        CoreUploadTool::call(ctx, prepare_args(Some(&space_key)))
+            .await
+            .expect("prepare succeeds in the group space");
+        let calls = port.calls.lock().expect("lock");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].owner, group);
+        // The port receives an authz narrowed to the space owner, not the
+        // caller's full context.
+        assert!(calls[0].authz_reaches_owner);
+    }
+
+    #[tokio::test]
+    async fn unknown_space_key_is_rejected_before_the_port() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let (ctx, port) = ctx_with_port(subject, vec![]);
+        let foreign = uuid::Uuid::now_v7().to_string();
+
+        let err = CoreUploadTool::call(ctx, prepare_args(Some(&foreign)))
+            .await
+            .expect_err("inaccessible space rejected");
+        assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
+        assert!(err.to_string().contains("unknown memory space"));
+        assert!(port.calls.lock().expect("lock").is_empty());
+    }
+
+    /// A group Viewer's write denial carries the exact error `core_remember`
+    /// raises for the same refusal (forbidden -> `invalid_request`), not
+    /// model-fixable invalid input: a client that re-prompts on
+    /// `invalid_params` must not retry a permissions failure. The port is
+    /// never reached.
+    #[tokio::test]
+    async fn viewer_write_denial_matches_core_remember_error_class() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let (ctx, port) = ctx_with_port(subject, vec![(group, Role::viewer())]);
+        let space_key = super::super::memory_spaces::MemorySpaceKey::owner(group).to_wire();
+
+        let err = CoreUploadTool::call(ctx, prepare_args(Some(&space_key)))
+            .await
+            .expect_err("viewer cannot prepare an upload in the group space");
+        let remember_denial = ToolError::Protocol(ProtocolError::forbidden(
+            "requires Fact write on this owner",
+        ));
+        assert_eq!(err.kind(), remember_denial.kind());
+        assert_eq!(err.client_message(), remember_denial.client_message());
+        assert!(port.calls.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn action_arg_specs_reject_foreign_missing_and_unknown() {
+        // Foreign field for the action.
+        let err = validate_action_args(
+            CoreUploadTool::NAME,
+            CoreUploadTool::ACTION_ARG_SPECS,
+            &serde_json::json!({ "action": "complete", "upload_id": "u", "filename": "x" }),
+        )
+        .expect_err("prepare-only field on complete rejected");
+        assert!(err.to_string().contains("filename"), "got {err}");
+
+        // Missing required field.
+        let err = validate_action_args(
+            CoreUploadTool::NAME,
+            CoreUploadTool::ACTION_ARG_SPECS,
+            &serde_json::json!({ "action": "prepare", "filename": "x", "mime": "y" }),
+        )
+        .expect_err("missing byte_len rejected");
+        assert!(err.to_string().contains("byte_len"), "got {err}");
+
+        // Unknown action.
+        let err = validate_action_args(
+            CoreUploadTool::NAME,
+            CoreUploadTool::ACTION_ARG_SPECS,
+            &serde_json::json!({ "action": "download" }),
+        )
+        .expect_err("unknown action rejected");
+        assert!(err.to_string().contains("prepare"), "got {err}");
+    }
+
+    /// #488 review r3: re-completing an upload whose Fact was forgotten
+    /// answers that Fact and says it is forgotten; a live one says nothing.
+    #[test]
+    fn a_completion_replaying_a_forgotten_upload_fact_says_forgotten() {
+        let completed = |forgotten: bool| crate::engine::UploadCompleted {
+            blob: crate::storage_ports::CitedBlobUploadCompleted {
+                cited_object_id: uuid::Uuid::nil().to_string(),
+                schema: "core/uploaded-blob-v1".into(),
+                content_hash: "00".into(),
+                sha256: "00".into(),
+                byte_len: 1,
+                mime: "text/plain".into(),
+                filename: "a.txt".into(),
+                idempotent_replay: true,
+            },
+            fact: crate::verbs::fact_ingest::FactIngestOutcome {
+                receipt_id: None,
+                memory_id: crate::MemoryId::new(uuid::Uuid::nil()),
+                handle: uuid::Uuid::nil(),
+                idempotent_replay: true,
+                cited_object_id: None,
+                forgotten,
+            },
+        };
+        let forgotten =
+            serde_json::to_value(UploadCompleteOutput::from(completed(true))).expect("serialize");
+        assert_eq!(forgotten["forgotten"], true, "{forgotten}");
+        let live =
+            serde_json::to_value(UploadCompleteOutput::from(completed(false))).expect("serialize");
+        assert!(live.get("forgotten").is_none(), "{live}");
+    }
+}

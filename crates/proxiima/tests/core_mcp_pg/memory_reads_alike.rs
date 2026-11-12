@@ -4,7 +4,7 @@
 //! tags, both derived from the schema's search declaration.
 
 use super::*;
-use proxiima_core::mcp::core_tools::{
+use proxiima_core::catalog::core_tools::{
     get_memory::GetMemoryOutput, recall::RecallOutput, think::ThinkOutput,
     walk_memory_lineage::WalkMemoryLineageOutput,
 };

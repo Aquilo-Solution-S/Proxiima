@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use proxiima_core::AuthPath;
-use proxiima_core::mcp::core_tools::{
+use proxiima_core::catalog::core_tools::{
     get_graph::{GetGraphArgs, get_graph},
     get_memories::{GetMemoriesArgs, get_memories},
     get_memory::{GetMemoryArgs, get_memory},
@@ -12,8 +12,8 @@ use proxiima_core::mcp::core_tools::{
     memory_counts::memory_counts,
     walk_memory_lineage::{WalkMemoryLineageArgs, walk_memory_lineage},
 };
-use proxiima_core::mcp::{
-    McpToolDescriptor, Next, TerminalDispatch, ToolCall, ToolContent, ToolErrorKind, ToolReply,
+use proxiima_core::catalog::{
+    Next, TerminalDispatch, ToolCall, ToolContent, ToolDescriptor, ToolErrorKind, ToolReply,
     resolve_operator_label, tool_name_matches,
 };
 use proxiima_core::protocol::resource as protocol_resource;
@@ -356,7 +356,7 @@ impl McpToolHost {
     /// Run a [`Self::resolve_tool`] result through the request behaviors,
     /// answering also the key the scope gate judged it by (see
     /// [`Self::call_tool_reply_observed_in_request`]). A host tool's call
-    /// services are the request's, the call's [`McpHostToolCall`] and the
+    /// services are the request's, the call's [`HostToolCall`] and the
     /// `services` of the entry it resolved to; a type any of them already
     /// holds is an internal error.
     pub(crate) async fn call_resolved(
@@ -507,7 +507,7 @@ impl McpToolHost {
 
 /// What a `tools/call` name resolved to.
 pub(crate) enum ToolTarget<'a> {
-    Registry(&'a McpToolDescriptor),
+    Registry(&'a ToolDescriptor),
     Host(Box<McpHostTool>),
 }
 

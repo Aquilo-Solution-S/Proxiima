@@ -31,7 +31,7 @@ use super::projection_fixtures::{
     PROJECTION_OUTSIDE_THE_MERGE, PROJECTION_WITHOUT_TAGS, TOO_MANY_WEIGHT_LEVELS,
     WEIGHTS_NOT_UNIFORM,
 };
-use crate::mcp::ToolEffect;
+use crate::catalog::ToolEffect;
 use crate::verbs::schema::PayloadKind;
 use crate::{SpiiceRegistry, SpiiceRegistryError};
 

@@ -1,0 +1,91 @@
+use crate::catalog::ToolEffect;
+use crate::catalog::{ActionArgSpec, CoreActionMeta, OwnerNeed, ToolAudience};
+use crate::protocol::{action as protocol_action, tool as protocol_tool};
+use crate::{Tool, ToolCtx, ToolError};
+use futures::future::BoxFuture;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::citation_of_fact::{CitationOfFactArgs, CitationOfFactOutput, citation_of_fact};
+use super::facts_citing_object::{
+    FactsCitingObjectArgs, FactsCitingObjectOutput, facts_citing_object,
+};
+
+pub const CORE_FACT_ACTIONS: &[CoreActionMeta] = &[
+    CoreActionMeta {
+        tool: CoreFactTool::NAME,
+        action: "citation_of_fact",
+        scope_key: protocol_action::CORE_FACT_CITATION_OF_FACT,
+        produces_schema_ids: &[],
+    },
+    CoreActionMeta {
+        tool: CoreFactTool::NAME,
+        action: "facts_citing_object",
+        scope_key: protocol_action::CORE_FACT_FACTS_CITING_OBJECT,
+        produces_schema_ids: &[],
+    },
+];
+
+#[derive(Debug, Default)]
+pub struct CoreFactTool;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum CoreFactArgs {
+    /// Return one Fact's citation, or citation=null if none.
+    CitationOfFact(CitationOfFactArgs),
+    /// Return citing Facts newest first.
+    FactsCitingObject(FactsCitingObjectArgs),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CoreFactOutput {
+    CitationOfFact(CitationOfFactOutput),
+    FactsCitingObject(FactsCitingObjectOutput),
+}
+
+impl Tool for CoreFactTool {
+    const NAME: &'static str = protocol_tool::CORE_FACT;
+    const TITLE: &'static str = "Facts";
+    const DESCRIPTION: &'static str = "Read citations: the cited object behind one Fact, or \
+         every Fact that cites one object.";
+    const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+        ActionArgSpec {
+            action: "citation_of_fact",
+            title: "Find the citation of a fact",
+            allowed_fields: &["fact"],
+            required_fields: &["fact"],
+            effect: ToolEffect::ReadOnly,
+            audience: ToolAudience::Shared,
+            need: OwnerNeed::Memory,
+        },
+        ActionArgSpec {
+            action: "facts_citing_object",
+            title: "Find the facts citing an object",
+            allowed_fields: &["cited_object_id", "limit", "cursor"],
+            required_fields: &["cited_object_id"],
+            effect: ToolEffect::ReadOnly,
+            audience: ToolAudience::Shared,
+            need: OwnerNeed::Memory,
+        },
+    ];
+    type Args = CoreFactArgs;
+    type Output = CoreFactOutput;
+
+    fn call(
+        ctx: ToolCtx,
+        args: CoreFactArgs,
+    ) -> BoxFuture<'static, Result<CoreFactOutput, ToolError>> {
+        Box::pin(async move {
+            match args {
+                CoreFactArgs::CitationOfFact(args) => citation_of_fact(ctx, args)
+                    .await
+                    .map(CoreFactOutput::CitationOfFact),
+                CoreFactArgs::FactsCitingObject(args) => facts_citing_object(ctx, args)
+                    .await
+                    .map(CoreFactOutput::FactsCitingObject),
+            }
+        })
+    }
+}

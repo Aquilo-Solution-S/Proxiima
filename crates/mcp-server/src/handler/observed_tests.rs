@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
-use proxiima_core::mcp::{McpActionArgSpec, McpToolAudience, OwnerNeed};
+use proxiima_core::catalog::{ActionArgSpec, OwnerNeed, ToolAudience};
 use proxiima_core::{AuthPath, AuthzContext, ScopeKey, SpiiceRegistry, SpiiceServices, ToolScope};
 use proxiima_core::{Tool, ToolCtx, ToolError};
 use rmcp::service::{RunningService, serve_directly};
@@ -61,22 +61,22 @@ impl Tool for Dispatch {
     const TITLE: &'static str = "Observed dispatcher";
     const NAME: &'static str = DISPATCH;
     const DESCRIPTION: &'static str = "Exercises action scope decisions.";
-    const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
-        McpActionArgSpec {
+    const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+        ActionArgSpec {
             action: "look",
             allowed_fields: &[],
             required_fields: &[],
             effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Look",
         },
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "touch",
             allowed_fields: &[],
             required_fields: &[],
             effect: ToolEffect::ReadOnly,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Touch",
         },

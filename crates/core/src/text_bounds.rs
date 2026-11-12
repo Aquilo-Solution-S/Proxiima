@@ -5,7 +5,7 @@
 //! and a caller can only act on the one they made. A single
 //! `title must be 1..=240 chars` names a range a blank title satisfies.
 //!
-//! [`crate::tool::validate_trimmed_len`] cannot be called from `verbs`
+//! [`crate::catalog::validate_trimmed_len`] cannot be called from `verbs`
 //! (SDK sits above). This module is the lowest thing `IdempotencyKey`,
 //! and `GoalWriteBuildError` can reach: it depends
 //! on nothing, decides only *which* half of the contract broke, and leaves

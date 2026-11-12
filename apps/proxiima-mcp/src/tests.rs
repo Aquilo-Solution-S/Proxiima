@@ -117,9 +117,9 @@ fn admitted(
                     .declaration(Some(action.as_str())),
             ),
             ScopeKey::Resource(resource)
-                if *resource == proxiima_core::mcp::how_to_resource_key() =>
+                if *resource == proxiima_core::catalog::how_to_resource_key() =>
             {
-                capabilities.admits(key, proxiima_core::mcp::how_to_resource_declaration())
+                capabilities.admits(key, proxiima_core::catalog::how_to_resource_declaration())
             }
             ScopeKey::Resource(resource) => capabilities.admits(
                 key,
@@ -615,10 +615,10 @@ fn registered_ids_carry_a_spiice_dispatchers_leaves() {
     for id in &ids {
         match id {
             ScopeKey::Resource(resource)
-                if *resource == proxiima_core::mcp::how_to_resource_key() =>
+                if *resource == proxiima_core::catalog::how_to_resource_key() =>
             {
                 assert_eq!(id.to_string(), protocol_resource::HOW_TO);
-                assert!(proxiima_core::mcp::how_to_resource_declaration().is_read());
+                assert!(proxiima_core::catalog::how_to_resource_declaration().is_read());
             }
             ScopeKey::Resource(_) => {
                 assert!(

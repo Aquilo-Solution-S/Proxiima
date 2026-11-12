@@ -1,5 +1,5 @@
 use super::*;
-use proxiima_core::mcp::Replay;
+use proxiima_core::catalog::Replay;
 use proxiima_core::protocol::{
     action as protocol_action, resource as protocol_resource, tool as protocol_tool,
 };
@@ -19,11 +19,11 @@ fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), ErrorData> {
     crate::server::reject_nul_in_args(args).map_err(|error| mcp_tool_error_to_error_data(&error))
 }
 
-fn spiice_descriptor(name: &'static str, effect: Option<ToolEffect>) -> McpToolDescriptor {
-    McpToolDescriptor {
+fn spiice_descriptor(name: &'static str, effect: Option<ToolEffect>) -> ToolDescriptor {
+    ToolDescriptor {
         name,
         description: "stub",
-        origin: proxiima_core::mcp::McpToolOrigin::Spiice("proxiima-stub".to_string()),
+        origin: proxiima_core::catalog::ToolOrigin::Spiice("proxiima-stub".to_string()),
         produces_schema_ids: &[],
         args_schema: serde_json::json!({"type": "object"}),
         dispatcher_schema: None,
@@ -31,50 +31,50 @@ fn spiice_descriptor(name: &'static str, effect: Option<ToolEffect>) -> McpToolD
         action_arg_specs: &[],
         argv_action_specs: &[],
         effect,
-        audience: proxiima_core::mcp::McpToolAudience::Shared,
+        audience: proxiima_core::catalog::ToolAudience::Shared,
         call: &|_, _| Box::pin(async { Ok(serde_json::json!({})) }),
         title: "Test tool",
     }
 }
 
-const MIXED_ACTIONS: &[proxiima_core::mcp::McpActionArgSpec] = &[
-    proxiima_core::mcp::McpActionArgSpec {
+const MIXED_ACTIONS: &[proxiima_core::catalog::ActionArgSpec] = &[
+    proxiima_core::catalog::ActionArgSpec {
         action: "look",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::ReadOnly,
-        audience: proxiima_core::mcp::McpToolAudience::Shared,
-        need: proxiima_core::mcp::OwnerNeed::Memory,
+        audience: proxiima_core::catalog::ToolAudience::Shared,
+        need: proxiima_core::catalog::OwnerNeed::Memory,
         title: "Test action",
     },
-    proxiima_core::mcp::McpActionArgSpec {
+    proxiima_core::catalog::ActionArgSpec {
         action: "touch",
         allowed_fields: &["id"],
         required_fields: &["id"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: proxiima_core::mcp::McpToolAudience::Shared,
-        need: proxiima_core::mcp::OwnerNeed::Memory,
+        audience: proxiima_core::catalog::ToolAudience::Shared,
+        need: proxiima_core::catalog::OwnerNeed::Memory,
         title: "Test action",
     },
 ];
 
 /// The argv twin of [`MIXED_ACTIONS`]: one command that reads, one that
 /// writes.
-const MIXED_ARGV_ACTIONS: &[proxiima_core::mcp::McpArgvActionSpec] = &[
-    proxiima_core::mcp::McpArgvActionSpec {
+const MIXED_ARGV_ACTIONS: &[proxiima_core::catalog::ArgvActionSpec] = &[
+    proxiima_core::catalog::ArgvActionSpec {
         action: "approval",
         argv_prefix: &["approval"],
         effect: ToolEffect::ReadOnly,
-        audience: proxiima_core::mcp::McpToolAudience::Shared,
-        need: proxiima_core::mcp::OwnerNeed::Memory,
+        audience: proxiima_core::catalog::ToolAudience::Shared,
+        need: proxiima_core::catalog::OwnerNeed::Memory,
         title: "Test action",
     },
-    proxiima_core::mcp::McpArgvActionSpec {
+    proxiima_core::catalog::ArgvActionSpec {
         action: "approval-decide",
         argv_prefix: &["approval", "decide"],
         effect: ToolEffect::Additive(Replay::NonIdempotent),
-        audience: proxiima_core::mcp::McpToolAudience::Shared,
-        need: proxiima_core::mcp::OwnerNeed::Memory,
+        audience: proxiima_core::catalog::ToolAudience::Shared,
+        need: proxiima_core::catalog::OwnerNeed::Memory,
         title: "Test action",
     },
 ];
@@ -115,7 +115,7 @@ fn listing_under_an_empty_served_palette_shows_reads_only() {
     // Owner audience is still a registered read; owner authorization
     // remains independent of deployment command selection.
     let mut owner_read = spiice_descriptor("stub_owner_read", Some(ToolEffect::ReadOnly));
-    owner_read.audience = proxiima_core::mcp::McpToolAudience::Owner;
+    owner_read.audience = proxiima_core::catalog::ToolAudience::Owner;
     assert!(tool_allowed_for_auth(caller, &owner_read));
     let held = full_auth(ToolScope::Palette(vec![
         ScopeKey::parse("stub_owner_read").expect("a scope key"),
@@ -140,7 +140,7 @@ fn an_empty_caller_palette_hides_every_read_resource_and_guide() {
         &spiice_descriptor("stub_read", Some(ToolEffect::ReadOnly))
     ));
     let mut owner_read = spiice_descriptor("stub_owner_read", Some(ToolEffect::ReadOnly));
-    owner_read.audience = proxiima_core::mcp::McpToolAudience::Owner;
+    owner_read.audience = proxiima_core::catalog::ToolAudience::Owner;
     assert!(!tool_allowed_for_auth(caller, &owner_read));
     let mut mixed = spiice_descriptor("stub_mixed", None);
     mixed.action_arg_specs = MIXED_ACTIONS;
@@ -580,7 +580,7 @@ fn not_authorized_message_lists_allowed_actions() {
 #[test]
 fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
     use futures_util::future::BoxFuture;
-    use proxiima_core::mcp::McpActionArgSpec;
+    use proxiima_core::catalog::ActionArgSpec;
     use proxiima_core::{Tool, ToolCtx, ToolError};
 
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -607,23 +607,23 @@ fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_dispatch";
         const DESCRIPTION: &'static str = "A spiice dispatcher.";
-        const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
-            McpActionArgSpec {
+        const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+            ActionArgSpec {
                 action: "look",
                 allowed_fields: &["id"],
                 required_fields: &["id"],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
-                audience: proxiima_core::mcp::McpToolAudience::Shared,
-                need: proxiima_core::mcp::OwnerNeed::Memory,
+                audience: proxiima_core::catalog::ToolAudience::Shared,
+                need: proxiima_core::catalog::OwnerNeed::Memory,
                 title: "Test action",
             },
-            McpActionArgSpec {
+            ActionArgSpec {
                 action: "touch",
                 allowed_fields: &["id"],
                 required_fields: &["id"],
                 effect: ToolEffect::Additive(Replay::NonIdempotent),
-                audience: proxiima_core::mcp::McpToolAudience::Shared,
-                need: proxiima_core::mcp::OwnerNeed::Memory,
+                audience: proxiima_core::catalog::ToolAudience::Shared,
+                need: proxiima_core::catalog::OwnerNeed::Memory,
                 title: "Test action",
             },
         ];
@@ -781,8 +781,8 @@ fn a_viewer_sees_a_spiice_read_tool_and_not_its_write_tool() {
     );
     // No name-keyed fallback: a substrate descriptor that declares
     // nothing is a write, whatever its name.
-    let silent_core = McpToolDescriptor {
-        origin: proxiima_core::mcp::McpToolOrigin::Substrate,
+    let silent_core = ToolDescriptor {
+        origin: proxiima_core::catalog::ToolOrigin::Substrate,
         ..spiice_descriptor(protocol_tool::CORE_SEARCH_MEMORIES, None)
     };
     let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
@@ -876,18 +876,18 @@ fn a_viewer_sees_only_the_read_leaf_of_a_mixed_dispatcher() {
     let no_fields = serde_json::json!({
         "type": "object", "properties": {}, "additionalProperties": false
     });
-    let dispatcher = proxiima_core::mcp::McpDispatcherSchema {
+    let dispatcher = proxiima_core::catalog::DispatcherSchema {
         discriminator: "action".to_owned(),
         description: None,
         actions: ["look", "touch"]
-            .map(|action| proxiima_core::mcp::McpActionSchema {
+            .map(|action| proxiima_core::catalog::ActionSchema {
                 action: action.to_owned(),
                 description: None,
                 argument_schema: no_fields.clone(),
             })
             .to_vec(),
     };
-    let mixed = McpToolDescriptor {
+    let mixed = ToolDescriptor {
         args_schema: dispatcher.render(|_| true),
         dispatcher_schema: Some(dispatcher),
         action_arg_specs: MIXED_ACTIONS,
@@ -1002,7 +1002,7 @@ fn a_viewer_keeps_the_annotated_read_command_of_an_argv_dispatcher() {
         )
         .with_tool_scope(ToolScope::All),
     };
-    let cli = McpToolDescriptor {
+    let cli = ToolDescriptor {
         argv_action_specs: MIXED_ARGV_ACTIONS,
         // The tool writes; only the annotated command opts out.
         ..spiice_descriptor(
@@ -1050,17 +1050,17 @@ fn a_viewer_keeps_the_annotated_read_command_of_an_argv_dispatcher() {
 /// (which `try_freeze` refuses on a dispatcher) lends it to no command.
 #[test]
 fn an_argv_command_classifies_from_its_own_effect_never_the_tools() {
-    const WRITE: &[proxiima_core::mcp::McpArgvActionSpec] =
-        &[proxiima_core::mcp::McpArgvActionSpec {
+    const WRITE: &[proxiima_core::catalog::ArgvActionSpec] =
+        &[proxiima_core::catalog::ArgvActionSpec {
             action: "approval",
             argv_prefix: &["approval"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: proxiima_core::mcp::McpToolAudience::Shared,
-            need: proxiima_core::mcp::OwnerNeed::Memory,
+            audience: proxiima_core::catalog::ToolAudience::Shared,
+            need: proxiima_core::catalog::OwnerNeed::Memory,
             title: "Test action",
         }];
 
-    let tool = McpToolDescriptor {
+    let tool = ToolDescriptor {
         argv_action_specs: WRITE,
         ..spiice_descriptor("proxiima-stub_cli", Some(ToolEffect::ReadOnly))
     };
@@ -1127,7 +1127,7 @@ fn core_tool_effects_encode_expected_semantics() {
     let hints = |name: &str| {
         registry
             .mcp_tool(name)
-            .and_then(McpToolDescriptor::annotations)
+            .and_then(ToolDescriptor::annotations)
             .unwrap_or_else(|| panic!("{name} resolves hints"))
     };
 

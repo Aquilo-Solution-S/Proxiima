@@ -57,7 +57,7 @@ const DEFAULT_EMBED_MAX_INPUT_CHARS: NonZeroU32 =
 /// `crates/core/tests/spiice_registry.rs`.
 fn memory_keep_set() -> Vec<&'static str> {
     use proxiima_core::Tool;
-    use proxiima_core::mcp::core_tools::{
+    use proxiima_core::catalog::core_tools::{
         CoreFactTool, CoreGoalTool, CoreUploadTool, DeriveTool, EpisodeCommitTool, ForgetTool,
         InterpretTool, MemorySpacesTool, RecallTool, RecordUtteranceTool, RememberTool,
         RestoreTool, SearchMemoriesTool, ThinkTool,

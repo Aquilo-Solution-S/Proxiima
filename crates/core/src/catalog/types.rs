@@ -1,0 +1,239 @@
+use std::sync::Arc;
+
+/// Upper bound on the reserved `model_id` operator label, in characters.
+///
+/// Enforced in two places, both of which must agree or a deployment can
+/// authenticate and then fail every write:
+/// [`AuthzContext::with_trusted_model_id`](crate::AuthzContext::with_trusted_model_id)
+/// (and the OIDC subject map that feeds it) bounds what an authenticator
+/// may bind, and the operator-label resolvers
+/// ([`ToolCtx::operator_label`](crate::ToolCtx::operator_label)) bound the
+/// label a tool records through it.
+///
+/// Two things it does not cover, deliberately. Transport edges only decide
+/// precedence — a nested or per-item `model_id` never reaches them — and a
+/// label that feeds a hash rather than a stored column (Goal
+/// system-operator identity, which no replay reads back) is not routed
+/// through a resolver, because bounding it would turn a caller's long
+/// label into a failed write with nothing gained.
+pub const MAX_OPERATOR_LABEL_CHARS: usize = 120;
+
+/// Recorded operator label when neither the authenticated edge nor the
+/// caller names one.
+pub const UNKNOWN_OPERATOR_LABEL: &str = "unknown";
+
+/// The caller named a model and the authenticated token names a different
+/// one. Refused rather than silently overridden: the caller believes it is
+/// labelling an append-only write, and a surface that quietly relabels it
+/// teaches the caller nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorLabelConflict {
+    trusted: String,
+    supplied: String,
+}
+
+impl OperatorLabelConflict {
+    /// The model identity the authenticated token binds.
+    #[must_use]
+    pub fn trusted(&self) -> &str {
+        &self.trusted
+    }
+
+    /// The label the caller sent, bounded for echoing back.
+    ///
+    /// Truncated to [`MAX_OPERATOR_LABEL_CHARS`] with a `…` marker at
+    /// construction: the conflict is decided *before* the length check, so
+    /// the value reaching here is whatever the caller sent, and a refusal
+    /// that quoted it whole would let a request choose how much of itself
+    /// to write into every error log that records the refusal.
+    #[must_use]
+    pub fn supplied(&self) -> &str {
+        &self.supplied
+    }
+
+    /// Refusal text naming the transport's own field (`model_id` on MCP,
+    /// `X-Proxiima-Model-Id` on REST).
+    #[must_use]
+    pub fn detail(&self, field: &str) -> String {
+        format!(
+            "{field} is {supplied:?}, but the authenticated token already binds \
+             the model identity {trusted:?}; omit {field} or send the bound value",
+            supplied = self.supplied,
+            trusted = self.trusted,
+        )
+    }
+}
+
+/// Bound a caller-supplied value before it is quoted back in a refusal.
+///
+/// The conflict is decided before the length check — it has to be, or a
+/// caller could relabel a bound write by padding the claim — so this is the
+/// only thing standing between an unbounded argument and the error text.
+fn bounded_for_echo(supplied: &str) -> String {
+    if supplied.chars().count() <= MAX_OPERATOR_LABEL_CHARS {
+        return supplied.to_string();
+    }
+    let kept: String = supplied.chars().take(MAX_OPERATOR_LABEL_CHARS).collect();
+    format!("{kept}…")
+}
+
+/// Resolve the operator label that reaches append-only provenance, for one
+/// call on any surface.
+///
+/// Precedence: the authenticated `trusted` id, else the caller-supplied
+/// label, else [`UNKNOWN_OPERATOR_LABEL`]. A caller-supplied label that
+/// differs from a bound one is a conflict, not an override — the token,
+/// not the payload, decides which model this is.
+///
+/// Both values are trimmed first, and a `supplied` that is blank after
+/// trimming is treated as absent. That is not cosmetic: REST drops an empty
+/// header before it can reach here, so without the same rule an empty
+/// `model_id` argument on MCP would mean something the identical REST
+/// request does not.
+///
+/// Every surface that can name an operator calls this — both transport
+/// edges, the embedded host API, and [`ToolCtx::operator_label`](crate::ToolCtx::operator_label)
+/// inside the tools themselves — so their precedence cannot drift.
+///
+/// # Errors
+///
+/// Returns [`OperatorLabelConflict`] when `trusted` is present and
+/// `supplied` names a different model.
+pub fn resolve_operator_label(
+    trusted: Option<&str>,
+    supplied: Option<&str>,
+) -> Result<String, OperatorLabelConflict> {
+    let supplied = supplied.map(str::trim).filter(|value| !value.is_empty());
+    match (trusted.map(str::trim), supplied) {
+        (Some(trusted), Some(supplied)) if supplied != trusted => Err(OperatorLabelConflict {
+            trusted: trusted.to_string(),
+            supplied: bounded_for_echo(supplied),
+        }),
+        (Some(trusted), _) => Ok(trusted.to_string()),
+        (None, Some(supplied)) => Ok(supplied.to_string()),
+        (None, None) => Ok(UNKNOWN_OPERATOR_LABEL.to_string()),
+    }
+}
+
+/// The one [`ScopeKey`](crate::ScopeKey) the scope gate decided a call on, for a later
+/// behavior or the host to read: a dispatcher's `tool:action`, a flat tool's
+/// name, a core resource's key.
+///
+/// [`ScopeGateBehavior`](crate::catalog::ScopeGateBehavior) is the only writer,
+/// so the derivation stays in one place and a host that names what a call did
+/// reads that key ([`ToolCtx::judged`](crate::ToolCtx::judged)) instead of
+/// deriving it a second time. The gate writes it before it decides: a call it
+/// refuses for that key carries the key too, and a behavior that wraps the
+/// gate reads it from its own clone of the context once the call returns
+/// (clones share one cell). A tool the
+/// caller's palette does not advertise is refused as a whole, on its bare
+/// name. Empty until the gate has derived a key, and when it never does: a
+/// dispatcher call without a declared action, a name that is no key.
+///
+/// Every context starts empty and the gate clears it on entry, so a context
+/// reused for a second call never shows the first call's key.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct JudgedKey(Arc<std::sync::Mutex<Option<crate::ScopeKey>>>);
+
+impl JudgedKey {
+    /// The key the gate judged this call by, if it derived one.
+    #[must_use]
+    pub(crate) fn get(&self) -> Option<crate::ScopeKey> {
+        self.cell().clone()
+    }
+
+    pub(crate) fn clear(&self) {
+        *self.cell() = None;
+    }
+
+    pub(crate) fn record(&self, key: crate::ScopeKey) {
+        *self.cell() = Some(key);
+    }
+
+    fn cell(&self) -> std::sync::MutexGuard<'_, Option<crate::ScopeKey>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_OPERATOR_LABEL_CHARS, UNKNOWN_OPERATOR_LABEL, resolve_operator_label};
+
+    #[test]
+    fn the_trusted_id_wins_over_a_caller_supplied_label() {
+        assert_eq!(
+            resolve_operator_label(Some("runner/pinned"), None).expect("no conflict"),
+            "runner/pinned"
+        );
+        assert_eq!(
+            resolve_operator_label(Some("runner/pinned"), Some("runner/pinned")).expect("equal"),
+            "runner/pinned"
+        );
+    }
+
+    #[test]
+    fn a_differing_label_is_refused_and_names_both_sides() {
+        let conflict = resolve_operator_label(Some("runner/pinned"), Some("claimed/model"))
+            .expect_err("a different label must not silently lose");
+        assert_eq!(conflict.trusted(), "runner/pinned");
+        assert_eq!(conflict.supplied(), "claimed/model");
+
+        let detail = conflict.detail("model_id");
+        assert!(detail.contains("model_id"), "{detail}");
+        assert!(detail.contains("claimed/model"), "{detail}");
+        assert!(detail.contains("runner/pinned"), "{detail}");
+        assert!(
+            detail.contains("authenticated token already binds"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn without_a_trusted_id_the_caller_label_stands_and_absence_is_unknown() {
+        assert_eq!(
+            resolve_operator_label(None, Some("caller/model")).expect("no conflict"),
+            "caller/model"
+        );
+        assert_eq!(
+            resolve_operator_label(None, None).expect("no conflict"),
+            UNKNOWN_OPERATOR_LABEL
+        );
+    }
+
+    /// The conflict is decided before any length check — it has to be, or
+    /// padding a claim would evade the binding — so the refusal is the one
+    /// place an unbounded argument could reach a log. It is quoted back
+    /// bounded, and still says enough for the caller to recognise what it
+    /// sent.
+    #[test]
+    fn an_over_long_claim_is_bounded_before_it_is_quoted_back() {
+        let claim = "x".repeat(200);
+        let conflict = resolve_operator_label(Some("runner/pinned"), Some(&claim))
+            .expect_err("a differing claim conflicts however long it is");
+
+        assert_eq!(
+            conflict.supplied().chars().count(),
+            MAX_OPERATOR_LABEL_CHARS + 1,
+            "the bound plus the marker, not the caller's 200"
+        );
+        assert!(conflict.supplied().ends_with('…'), "truncation is visible");
+        assert!(conflict.supplied().starts_with("xxx"));
+        assert!(
+            conflict.detail("model_id").chars().count() < claim.chars().count() + 120,
+            "the message cannot grow without bound with the claim"
+        );
+    }
+
+    /// A claim exactly at the bound is quoted whole: the truncation is
+    /// there to bound the echo, not to mangle every refusal.
+    #[test]
+    fn a_claim_within_the_bound_is_quoted_whole() {
+        let claim = "x".repeat(MAX_OPERATOR_LABEL_CHARS);
+        let conflict = resolve_operator_label(Some("runner/pinned"), Some(&claim))
+            .expect_err("still a conflict");
+
+        assert_eq!(conflict.supplied(), claim);
+    }
+}

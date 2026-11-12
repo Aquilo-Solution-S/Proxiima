@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode, header};
-use proxiima_core::mcp::ToolEffect;
+use proxiima_core::catalog::ToolEffect;
 use proxiima_core::{AuthError, AuthPath, Authenticator, AuthzContext, Credentials};
 use proxiima_core::{Tool, ToolCtx, ToolError};
 use proxiima_mcp_server::{McpEdgeAuth, McpToolHost};

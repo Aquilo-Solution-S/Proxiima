@@ -31,7 +31,7 @@ use crate::{GroupId, OwnerId, UserId};
 
 #[cfg(test)]
 pub(crate) use declaration::ALL_EFFECTS;
-pub use declaration::{KeyDeclaration, McpToolAudience, OwnerNeed, Replay, ToolEffect};
+pub use declaration::{KeyDeclaration, OwnerNeed, Replay, ToolAudience, ToolEffect};
 pub use hooks::{
     AuthorizationHook, AuthzInput, AuthzOperation, AuthzOutcome, AuthzVeto,
     GoalCollaborationChange, MembershipChange, OwnerResolver,
@@ -1185,7 +1185,7 @@ impl AuthzContext {
         trusted_model_id: impl Into<String>,
     ) -> Result<Self, TrustedModelIdError> {
         self.identity.trusted_model_id =
-            Some(crate::tool::validate_trusted_model_id(trusted_model_id)?);
+            Some(crate::catalog::validate_trusted_model_id(trusted_model_id)?);
         Ok(self)
     }
 

@@ -1,0 +1,470 @@
+use crate::catalog::ToolEffect;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::protocol::tool as protocol_tool;
+use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{Tool, ToolCtx, ToolError};
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemorySpacesArgs {}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MemorySpacesOutput {
+    pub spaces: Vec<MemorySpaceOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MemorySpaceOutput {
+    pub key: String,
+    pub label: String,
+    pub access: MemorySpaceAccessOutput,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+pub struct MemorySpaceAccessOutput {
+    /// Whether the caller holds write authority (Fact-write) on this space, as
+    /// opposed to read-only visibility. Resolved per space from the caller's
+    /// host-resolved owner roles (there is no blanket "unrestricted" mode).
+    pub writable: bool,
+}
+
+#[derive(Debug)]
+pub struct MemorySpacesTool;
+
+impl Tool for MemorySpacesTool {
+    const NAME: &'static str = protocol_tool::CORE_MEMORY_SPACES;
+    const TITLE: &'static str = "Memory spaces";
+    const DESCRIPTION: &'static str = "List the memory spaces you can use and their keys (`current` or an owner's `<uuid>`) for other tools' space/spaces arguments.";
+    const EFFECT: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
+    type Args = MemorySpacesArgs;
+    type Output = MemorySpacesOutput;
+
+    fn call(
+        ctx: ToolCtx,
+        _args: MemorySpacesArgs,
+    ) -> futures::future::BoxFuture<'static, Result<MemorySpacesOutput, ToolError>> {
+        Box::pin(async move {
+            Ok(MemorySpacesOutput {
+                spaces: list_memory_spaces(&ctx),
+            })
+        })
+    }
+}
+
+#[must_use]
+pub fn list_memory_spaces(ctx: &ToolCtx) -> Vec<MemorySpaceOutput> {
+    sorted_accessible_principals(ctx)
+        .into_iter()
+        .map(|owner| {
+            let ResolvedMemorySpace { key, label, .. } = space_for(ctx, owner);
+            MemorySpaceOutput {
+                key,
+                label,
+                access: MemorySpaceAccessOutput {
+                    writable: ctx.authz().may_write(&owner, AccessKind::Fact),
+                },
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedMemorySpace {
+    pub key: String,
+    pub label: String,
+    pub owner: OwnerId,
+}
+
+/// Resolve the memory space a write lands in, and narrow the caller's
+/// authorization to that space's Owner.
+///
+/// The space key is a selector; the narrowing is the gate. A caller who can
+/// *see* a space but holds no role on its Owner cannot narrow to it, and that
+/// refusal is `NotAuthorized`, not "unknown space" — the space exists, the
+/// caller just may not write there. Every write-side surface resolves through
+/// here so the two steps cannot drift apart or be taken in the wrong order.
+///
+/// # Errors
+///
+/// Returns `InvalidInput` when the key is unknown or the default space is not
+/// accessible, and `NotAuthorized` when the caller holds no role on the
+/// resolved Owner.
+pub fn resolve_space_for_write(
+    ctx: &ToolCtx,
+    raw: Option<&str>,
+) -> Result<(ResolvedMemorySpace, AuthzContext), ToolError> {
+    let space = resolve_space_owner(ctx, raw, SpaceDefault::Current)?;
+    let authz = ctx
+        .authz()
+        .clone()
+        .narrowed_to_owner(space.owner)
+        .ok_or_else(|| ToolError::NotAuthorized("memory space write".into()))?;
+    Ok((space, authz))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaceDefault {
+    Current,
+    Identity,
+}
+
+/// Resolve a public space key to a server-issued Owner. The key is a selector
+/// only: callers must still check the returned Owner with the concrete verb's
+/// relation gate.
+///
+/// # Errors
+///
+/// Returns `InvalidInput` when a provided key is unknown, or when omitted
+/// default resolution has no accessible default Owner.
+pub fn resolve_space_owner(
+    ctx: &ToolCtx,
+    raw: Option<&str>,
+    default: SpaceDefault,
+) -> Result<ResolvedMemorySpace, ToolError> {
+    let default_owner = match default {
+        SpaceDefault::Current => ctx.owner(),
+        SpaceDefault::Identity => ctx.authz().principal(),
+    };
+    let owner = match raw {
+        Some(key) => MemorySpaceKey::parse(key).and_then(|parsed| match parsed {
+            MemorySpaceKey::Current => ctx
+                .authz()
+                .can_access_owner(&ctx.owner())
+                .then_some(ctx.owner()),
+            MemorySpaceKey::Owner(owner) => ctx.authz().can_access_owner(&owner).then_some(owner),
+        }),
+        None => ctx
+            .authz()
+            .can_access_owner(&default_owner)
+            .then_some(default_owner),
+    };
+    owner.map(|owner| space_for(ctx, owner)).ok_or_else(|| {
+        ToolError::InvalidInput(raw.map_or_else(
+            || "current memory space is not accessible".to_string(),
+            |key| format!("unknown memory space: {key}"),
+        ))
+    })
+}
+
+/// The one key builder: `current` for the session's own owner, otherwise
+/// the owner's bare id. `core_memory_spaces`, space resolution and the
+/// memory reads all report keys through here, so they cannot disagree.
+fn space_for(ctx: &ToolCtx, owner: OwnerId) -> ResolvedMemorySpace {
+    let current = owner == ctx.owner();
+    ResolvedMemorySpace {
+        key: if current {
+            MemorySpaceKey::Current.to_wire()
+        } else {
+            MemorySpaceKey::owner(owner).to_wire()
+        },
+        label: if current {
+            "Current owner".into()
+        } else {
+            space_label(&owner)
+        },
+        owner,
+    }
+}
+
+/// The space key a memory read reports for a memory whose home owner is
+/// `owner`: `current` iff it is the session's owner, otherwise the same key
+/// `core_memory_spaces` advertises for that owner.
+///
+/// A memory has exactly one home owner at read time (storage fails closed
+/// on a second candidate), so the label is total and deterministic.
+#[must_use]
+pub fn space_key_for_owner(ctx: &ToolCtx, owner: OwnerId) -> String {
+    space_for(ctx, owner).key
+}
+
+/// The space key of each readable memory in `ids`, read from the same
+/// sketch rows `core_think` and `core_recall` take their owner from. An id
+/// the reader cannot read live has no entry.
+///
+/// # Errors
+///
+/// Returns storage failures of the sketch read.
+pub(super) async fn local_space_keys(
+    ctx: &ToolCtx,
+    engine: &crate::Engine,
+    ids: &[crate::MemoryId],
+) -> Result<std::collections::HashMap<crate::MemoryId, String>, ToolError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    Ok(engine
+        .load_sketches(ctx.authz(), ids)
+        .await?
+        .into_iter()
+        .map(|sketch| (sketch.id, space_key_for_owner(ctx, sketch.owner)))
+        .collect())
+}
+
+fn sorted_accessible_principals(ctx: &ToolCtx) -> Vec<OwnerId> {
+    let mut owners = ctx.authz().accessible_owners().collect::<Vec<_>>();
+    let own = ctx.authz().principal();
+    owners.sort_by_key(|owner| (*owner != ctx.owner(), *owner != own, *owner));
+    owners
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemorySpaceKey {
+    Current,
+    Owner(OwnerId),
+}
+
+impl MemorySpaceKey {
+    const CURRENT: &'static str = "current";
+
+    #[must_use]
+    pub const fn owner(owner: OwnerId) -> Self {
+        Self::Owner(owner)
+    }
+
+    /// `current` or a bare owner UUID. A kind-prefixed key is refused like
+    /// any malformed id.
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        if raw == Self::CURRENT {
+            return Some(Self::Current);
+        }
+        raw.parse::<OwnerId>().ok().map(Self::Owner)
+    }
+
+    #[must_use]
+    pub fn to_wire(self) -> String {
+        match self {
+            Self::Current => Self::CURRENT.to_string(),
+            Self::Owner(owner) => owner.to_string(),
+        }
+    }
+}
+
+/// Display label only; it decides nothing.
+pub(crate) fn space_label(owner: &OwnerId) -> String {
+    format!("Owner {owner}")
+}
+
+/// Engine-free `ToolCtx` builders shared by unit tests across the core
+/// tools (space resolution has no storage dependency).
+#[cfg(test)]
+pub(crate) mod test_ctx {
+    use std::sync::Arc;
+
+    use crate::ToolCtx;
+    use crate::access::Role;
+    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
+
+    /// Build a server-resolved caller context: personal role on `subject`'s own
+    /// owner plus the given per-group roles.
+    pub(crate) fn ctx_for(subject: UserId, group_roles: Vec<(OwnerId, Role)>) -> ToolCtx {
+        make_ctx(
+            OwnerId::from(subject),
+            AuthzContext::for_subject_with_role(subject, group_roles, AuthPath::HostBearer),
+        )
+    }
+
+    pub(crate) fn make_ctx(owner: OwnerId, authz: AuthzContext) -> ToolCtx {
+        crate::test_fixtures::tool_ctx(
+            owner,
+            authz,
+            Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Tool;
+    use crate::access::Role;
+    use crate::{GroupId, OwnerId, UserId};
+
+    use super::test_ctx::ctx_for;
+    use super::*;
+
+    fn writable_for(spaces: &[MemorySpaceOutput], key: &str) -> bool {
+        spaces
+            .iter()
+            .find(|space| space.key == key)
+            .unwrap_or_else(|| panic!("space {key} present"))
+            .access
+            .writable
+    }
+
+    #[tokio::test]
+    async fn memory_spaces_reports_per_space_writability() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let shared_key = MemorySpaceKey::owner(shared).to_wire();
+        let ctx = ctx_for(subject, vec![(shared, Role::editor())]);
+
+        let out = MemorySpacesTool::call(ctx, MemorySpacesArgs {})
+            .await
+            .unwrap();
+        // current (own personal) sorts first; the editor group follows.
+        assert_eq!(out.spaces[0].key, "current");
+        assert!(writable_for(&out.spaces, "current"));
+        // Editor on the group → writable.
+        assert!(writable_for(&out.spaces, &shared_key));
+    }
+
+    #[tokio::test]
+    async fn memory_spaces_viewer_group_is_not_writable() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let shared_key = MemorySpaceKey::owner(shared).to_wire();
+        let ctx = ctx_for(subject, vec![(shared, Role::viewer())]);
+
+        let out = MemorySpacesTool::call(ctx, MemorySpacesArgs {})
+            .await
+            .unwrap();
+        // Read-only member: the group space is visible but not writable; the
+        // caller's own space still is.
+        assert!(writable_for(&out.spaces, "current"));
+        assert!(!writable_for(&out.spaces, &shared_key));
+    }
+
+    #[tokio::test]
+    async fn space_key_for_owner_matches_the_advertised_keys() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let stranger = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let ctx = ctx_for(subject, vec![(shared, Role::viewer())]);
+
+        let advertised = list_memory_spaces(&ctx)
+            .into_iter()
+            .map(|space| space.key)
+            .collect::<Vec<_>>();
+        let personal = space_key_for_owner(&ctx, OwnerId::from(subject));
+        let group = space_key_for_owner(&ctx, shared);
+
+        assert_eq!(personal, "current");
+        assert_eq!(group, shared.to_string());
+        assert_eq!(advertised, vec![personal, group]);
+        let stranger_key = space_key_for_owner(&ctx, stranger);
+        assert_eq!(stranger_key, stranger.to_string());
+        assert!(
+            resolve_space_owner(&ctx, Some(&stranger_key), SpaceDefault::Current).is_err(),
+            "a presentation key must not authorize owner selection"
+        );
+    }
+
+    #[test]
+    fn resolution_omitted_space_matches_current_owner() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let ctx = ctx_for(subject, vec![(shared, Role::editor())]);
+
+        let resolved = resolve_space_owner(&ctx, None, SpaceDefault::Current).unwrap();
+        assert_eq!(resolved.key, "current");
+        assert_eq!(resolved.owner, OwnerId::from(subject));
+    }
+
+    #[test]
+    fn resolution_accepts_explicit_owner_keys() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let ctx = ctx_for(subject, vec![(shared, Role::viewer())]);
+
+        let group_key = MemorySpaceKey::owner(shared).to_wire();
+        let group = resolve_space_owner(&ctx, Some(&group_key), SpaceDefault::Current).unwrap();
+        assert_eq!(group.owner, shared);
+        assert_eq!(group.key, group_key);
+
+        // The caller's own space canonicalizes to `current` even when
+        // named by its own bare id.
+        let own_key = MemorySpaceKey::owner(OwnerId::from(subject)).to_wire();
+        let own = resolve_space_owner(&ctx, Some(&own_key), SpaceDefault::Current).unwrap();
+        assert_eq!(own.owner, OwnerId::from(subject));
+        assert_eq!(own.key, "current");
+    }
+
+    #[test]
+    fn identity_default_resolves_to_principal_not_space_owner() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let authz = crate::AuthzContext::for_subject_with_role(
+            subject,
+            vec![(shared, Role::editor())],
+            crate::AuthPath::HostBearer,
+        );
+        let ctx = super::test_ctx::make_ctx(shared, authz);
+
+        // An omitted key with the Current default follows the session's
+        // space owner (here a group)...
+        let current = resolve_space_owner(&ctx, None, SpaceDefault::Current).unwrap();
+        assert_eq!(current.owner, shared);
+        assert_eq!(current.key, "current");
+        // ...while the Identity default follows the authenticated
+        // principal regardless of which space the session is bound to.
+        let identity = resolve_space_owner(&ctx, None, SpaceDefault::Identity).unwrap();
+        assert_eq!(identity.owner, OwnerId::from(subject));
+    }
+
+    #[test]
+    fn space_key_wire_round_trip_covers_every_owner_kind() {
+        for owner in [
+            OwnerId::from(UserId::new(uuid::Uuid::now_v7())),
+            OwnerId::from(GroupId::new(uuid::Uuid::now_v7())),
+        ] {
+            let wire = MemorySpaceKey::owner(owner).to_wire();
+            assert_eq!(
+                MemorySpaceKey::parse(&wire),
+                Some(MemorySpaceKey::Owner(owner)),
+                "round trip for {wire}",
+            );
+        }
+        assert_eq!(
+            MemorySpaceKey::parse("current"),
+            Some(MemorySpaceKey::Current)
+        );
+        // Unknown prefixes and malformed uuids fail closed.
+        assert_eq!(MemorySpaceKey::parse("personal:not-a-uuid"), None);
+        assert_eq!(MemorySpaceKey::parse("tenant:123"), None);
+        assert_eq!(MemorySpaceKey::parse("world"), None);
+    }
+
+    /// The old kind-prefixed spelling names no space: it is refused like any
+    /// malformed id, for the caller's own id and for a group it belongs to.
+    #[test]
+    fn an_old_kind_prefixed_space_key_is_refused() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let shared = GroupId::new(uuid::Uuid::now_v7());
+        let ctx = ctx_for(subject, vec![(OwnerId::from(shared), Role::editor())]);
+        for key in [
+            format!("personal:{}", subject.into_inner()),
+            format!("group:{}", shared.into_inner()),
+        ] {
+            assert_eq!(MemorySpaceKey::parse(&key), None, "{key}");
+            let err = resolve_space_owner(&ctx, Some(&key), SpaceDefault::Current).unwrap_err();
+            assert!(
+                err.to_string().contains("unknown memory space"),
+                "{key}: {err}"
+            );
+        }
+        let bare = shared.into_inner().to_string();
+        assert_eq!(
+            resolve_space_owner(&ctx, Some(&bare), SpaceDefault::Current)
+                .unwrap()
+                .owner,
+            OwnerId::from(shared)
+        );
+    }
+
+    #[test]
+    fn resolution_rejects_owner_without_visibility() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let hidden = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+        let ctx = ctx_for(subject, vec![]);
+        let hidden_key = MemorySpaceKey::owner(hidden).to_wire();
+
+        let err = resolve_space_owner(&ctx, Some(&hidden_key), SpaceDefault::Current).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&format!("unknown memory space: {hidden_key}"))
+        );
+        // A bare subject sees only its own space.
+        assert_eq!(list_memory_spaces(&ctx).len(), 1);
+    }
+}

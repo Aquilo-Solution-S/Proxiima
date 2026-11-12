@@ -1,8 +1,8 @@
 use super::contract::SpiiceContract;
 use super::{
-    Arc, AuthorizationHook, McpToolDescriptor, OwnerResolver, PayloadKind,
-    ProtocolPayloadIngressEntry, RequestBehavior, SchemaCapabilityTags, SchemaId, SchemaInfo,
-    ScopeGateBehavior, ScopeKind, SpiiceDescriptor,
+    Arc, AuthorizationHook, OwnerResolver, PayloadKind, ProtocolPayloadIngressEntry,
+    RequestBehavior, SchemaCapabilityTags, SchemaId, SchemaInfo, ScopeGateBehavior, ScopeKind,
+    SpiiceDescriptor, ToolDescriptor,
 };
 use crate::FactPayload;
 
@@ -15,7 +15,7 @@ pub struct SpiiceRegistry {
     pub(crate) schemas: Vec<SchemaInfo>,
     pub(crate) schema_capability_tags: Vec<SchemaCapabilityTags>,
     pub(crate) protocol_ingress: Vec<ProtocolPayloadIngressEntry>,
-    pub(crate) mcp_tools: Vec<McpToolDescriptor>,
+    pub(crate) mcp_tools: Vec<ToolDescriptor>,
     pub(crate) request_behaviors: Vec<Arc<dyn RequestBehavior>>,
     pub(crate) spiices: Vec<SpiiceDescriptor>,
     /// One [`SpiiceContract`] per linked spiice. This is what makes erase,
@@ -54,7 +54,7 @@ impl Default for SpiiceRegistry {
         crate::memory::register_all(&mut registry)
             .expect("built-in memory registration must be valid");
         crate::goal::register_all(&mut registry).expect("built-in goal registration must be valid");
-        crate::mcp::core_tools::register_all(&mut registry)
+        crate::catalog::core_tools::register_all(&mut registry)
             .expect("built-in MCP tool registration must be valid");
         // Spiice #0's contract lands beside the registrations it describes:
         // `default()` is the single entry point, so a binary cannot link

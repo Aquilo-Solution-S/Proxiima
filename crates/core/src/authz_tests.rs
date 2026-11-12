@@ -991,7 +991,7 @@ fn deployment_admits_declared_reads_but_callers_require_exact_keys() {
     let search_key = key(protocol_tool::CORE_SEARCH_MEMORIES);
     let read = KeyDeclaration::shared(Some(ToolEffect::ReadOnly));
     let owner_read = KeyDeclaration {
-        audience: McpToolAudience::Owner,
+        audience: ToolAudience::Owner,
         ..read
     };
     assert!(empty.admits(&search_key, read));

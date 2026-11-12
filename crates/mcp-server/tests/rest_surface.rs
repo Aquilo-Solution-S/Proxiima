@@ -19,7 +19,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use proxiima_core::SpiiceServices;
 use proxiima_core::ToolCaller;
-use proxiima_core::mcp::{Replay, ToolEffect};
+use proxiima_core::catalog::{Replay, ToolEffect};
 use proxiima_core::protocol::{
     action as protocol_action, resource as protocol_resource, tool as protocol_tool,
 };
@@ -117,23 +117,23 @@ impl proxiima_core::Tool for StubDispatchTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_DISPATCH;
     const DESCRIPTION: &'static str = "A spiice dispatcher.";
-    const ACTION_ARG_SPECS: &'static [proxiima_core::mcp::McpActionArgSpec] = &[
-        proxiima_core::mcp::McpActionArgSpec {
+    const ACTION_ARG_SPECS: &'static [proxiima_core::catalog::ActionArgSpec] = &[
+        proxiima_core::catalog::ActionArgSpec {
             action: "look",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::ReadOnly,
-            audience: proxiima_core::mcp::McpToolAudience::Shared,
-            need: proxiima_core::mcp::OwnerNeed::Memory,
+            audience: proxiima_core::catalog::ToolAudience::Shared,
+            need: proxiima_core::catalog::OwnerNeed::Memory,
             title: "Test action",
         },
-        proxiima_core::mcp::McpActionArgSpec {
+        proxiima_core::catalog::ActionArgSpec {
             action: "touch",
             allowed_fields: &["id"],
             required_fields: &["id"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: proxiima_core::mcp::McpToolAudience::Shared,
-            need: proxiima_core::mcp::OwnerNeed::Memory,
+            audience: proxiima_core::catalog::ToolAudience::Shared,
+            need: proxiima_core::catalog::OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -171,21 +171,21 @@ impl proxiima_core::Tool for StubArgvTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_ARGV;
     const DESCRIPTION: &'static str = "An argv-keyed spiice dispatcher.";
-    const ARGV_ACTION_SPECS: &'static [proxiima_core::mcp::McpArgvActionSpec] = &[
-        proxiima_core::mcp::McpArgvActionSpec {
+    const ARGV_ACTION_SPECS: &'static [proxiima_core::catalog::ArgvActionSpec] = &[
+        proxiima_core::catalog::ArgvActionSpec {
             action: "approval",
             argv_prefix: &["approval"],
             effect: ToolEffect::ReadOnly,
-            audience: proxiima_core::mcp::McpToolAudience::Shared,
-            need: proxiima_core::mcp::OwnerNeed::Memory,
+            audience: proxiima_core::catalog::ToolAudience::Shared,
+            need: proxiima_core::catalog::OwnerNeed::Memory,
             title: "Test action",
         },
-        proxiima_core::mcp::McpArgvActionSpec {
+        proxiima_core::catalog::ArgvActionSpec {
             action: "approval-decide",
             argv_prefix: &["approval", "decide"],
             effect: ToolEffect::Additive(Replay::NonIdempotent),
-            audience: proxiima_core::mcp::McpToolAudience::Shared,
-            need: proxiima_core::mcp::OwnerNeed::Memory,
+            audience: proxiima_core::catalog::ToolAudience::Shared,
+            need: proxiima_core::catalog::OwnerNeed::Memory,
             title: "Test action",
         },
     ];
@@ -236,8 +236,8 @@ struct ReplaceOutputBehavior(serde_json::Value);
 impl proxiima_core::RequestBehavior for ReplaceOutputBehavior {
     async fn handle(
         &self,
-        call: proxiima_core::mcp::ToolCall,
-        next: proxiima_core::mcp::Next<'_>,
+        call: proxiima_core::catalog::ToolCall,
+        next: proxiima_core::catalog::Next<'_>,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         let output = next.run(call).await?;
         assert!(
@@ -418,8 +418,8 @@ struct HidesWrites {
 impl proxiima_core::RequestBehavior for HidesWrites {
     async fn handle(
         &self,
-        call: proxiima_core::mcp::ToolCall,
-        next: proxiima_core::mcp::Next<'_>,
+        call: proxiima_core::catalog::ToolCall,
+        next: proxiima_core::catalog::Next<'_>,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         self.handled
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -444,8 +444,8 @@ struct OpinionlessBehavior;
 impl proxiima_core::RequestBehavior for OpinionlessBehavior {
     async fn handle(
         &self,
-        call: proxiima_core::mcp::ToolCall,
-        next: proxiima_core::mcp::Next<'_>,
+        call: proxiima_core::catalog::ToolCall,
+        next: proxiima_core::catalog::Next<'_>,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         next.run(call).await
     }
@@ -1060,7 +1060,7 @@ async fn a_conflicting_body_action_is_400_and_an_unknown_action_is_404() {
 
 /// A spiice dispatcher's action routes are served, not 404'd.
 ///
-/// The router enumerates actions from `McpToolDescriptor::action_arg_specs`.
+/// The router enumerates actions from `ToolDescriptor::action_arg_specs`.
 /// `try_add_tool` — the path `proxiima_spiice!` uses — hardcoded an empty
 /// slice, so this exact request was a `404` while the same tool's flattened
 /// schema advertised the action to every client.
@@ -1657,7 +1657,7 @@ async fn mixed_spiice_dispatcher_actions_keep_role_and_method_boundaries() {
 /// An argv-keyed dispatcher mixes reads and writes exactly like a tagged
 /// one, and every gate reads the derived command's own annotation.
 ///
-/// Before `McpArgvActionSpec` could carry annotations, every command
+/// Before `ArgvActionSpec` could carry annotations, every command
 /// classified from the tool — which, for a dispatcher that must declare
 /// itself writable because a minority of its commands write, cost a
 /// read-capable-only owner the whole read surface and took retry-safe
@@ -1739,7 +1739,7 @@ async fn an_annotated_argv_read_command_keeps_role_and_query_under_a_write_tool(
 
 #[tokio::test]
 async fn argv_catalog_actions_follow_permissions_and_describe_the_shared_envelope() {
-    use proxiima_core::mcp::core_tools::list_substrate_tools::{
+    use proxiima_core::catalog::core_tools::list_substrate_tools::{
         ListSubstrateToolsArgs, list_substrate_tools,
     };
 

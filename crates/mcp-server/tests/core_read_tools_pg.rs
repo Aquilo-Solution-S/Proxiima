@@ -26,8 +26,8 @@ struct HidesRemember;
 impl proxiima_core::RequestBehavior for HidesRemember {
     async fn handle(
         &self,
-        call: proxiima_core::mcp::ToolCall,
-        next: proxiima_core::mcp::Next<'_>,
+        call: proxiima_core::catalog::ToolCall,
+        next: proxiima_core::catalog::Next<'_>,
     ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
         next.run(call).await
     }

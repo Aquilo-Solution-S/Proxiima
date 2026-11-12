@@ -101,7 +101,7 @@ fn dispatcher_argument_schema_freeze_rejects_malformed_metadata() {
     assert!(err.to_string().contains("declares allowed_fields"), "{err}");
 }
 
-fn goal_mut(registry: &mut SpiiceRegistry) -> &mut crate::McpToolDescriptor {
+fn goal_mut(registry: &mut SpiiceRegistry) -> &mut crate::ToolDescriptor {
     registry
         .mcp_tools
         .iter_mut()
@@ -114,8 +114,8 @@ fn goal_mut(registry: &mut SpiiceRegistry) -> &mut crate::McpToolDescriptor {
 /// lines or run past `MAX_TITLE_CHARS`.
 #[test]
 fn a_title_a_person_cannot_read_is_refused_at_freeze() {
-    let longest = "x".repeat(crate::mcp::MAX_TITLE_CHARS);
-    let too_long = "x".repeat(crate::mcp::MAX_TITLE_CHARS + 1);
+    let longest = "x".repeat(crate::catalog::MAX_TITLE_CHARS);
+    let too_long = "x".repeat(crate::catalog::MAX_TITLE_CHARS + 1);
     let leak = |text: &str| -> &'static str { Box::leak(text.to_owned().into_boxed_str()) };
 
     let mut registry = SpiiceRegistry::default();
@@ -182,13 +182,13 @@ fn the_descriptor_titles_a_tool_and_each_of_its_actions() {
 /// Each action name of an argv-keyed dispatcher is declared once.
 #[test]
 fn an_argv_action_name_declared_twice_is_refused_at_freeze() {
-    use crate::mcp::{McpArgvActionSpec, McpToolAudience, OwnerNeed, ToolEffect};
+    use crate::catalog::{ArgvActionSpec, OwnerNeed, ToolAudience, ToolEffect};
 
-    let spec = |prefix: &'static [&'static str]| McpArgvActionSpec {
+    let spec = |prefix: &'static [&'static str]| ArgvActionSpec {
         action: "approval",
         argv_prefix: prefix,
         effect: ToolEffect::ReadOnly,
-        audience: McpToolAudience::Shared,
+        audience: ToolAudience::Shared,
         need: OwnerNeed::Memory,
         title: "Approve",
     };

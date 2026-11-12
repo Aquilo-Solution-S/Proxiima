@@ -114,8 +114,8 @@ impl proxiima::spiice::Tool for OwnerOnlyTool {
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "facade_owner_only";
     const DESCRIPTION: &'static str = "declare tool consts through the facade";
-    const ARGV_ACTION_SPECS: &'static [proxiima::spiice::McpArgvActionSpec] = &[];
-    const AUDIENCE: proxiima::spiice::McpToolAudience = proxiima::spiice::McpToolAudience::Owner;
+    const ARGV_ACTION_SPECS: &'static [proxiima::spiice::ArgvActionSpec] = &[];
+    const AUDIENCE: proxiima::spiice::ToolAudience = proxiima::spiice::ToolAudience::Owner;
 
     type Args = OwnerOnlyArgs;
     type Output = OwnerOnlyOutput;
@@ -139,18 +139,15 @@ fn both_tiers_name_the_tool_declaration_consts() {
 
     // Host tier: the descriptor fields a host partitions surfaces on.
     fn declaration(
-        descriptor: &proxiima::McpToolDescriptor,
-    ) -> (
-        proxiima::McpToolAudience,
-        &'static [proxiima::McpArgvActionSpec],
-    ) {
+        descriptor: &proxiima::ToolDescriptor,
+    ) -> (proxiima::ToolAudience, &'static [proxiima::ArgvActionSpec]) {
         (descriptor.audience, descriptor.argv_action_specs)
     }
 
     // Spiice tier: the consts a `Tool` declares.
     assert_eq!(
         OwnerOnlyTool::AUDIENCE,
-        proxiima::spiice::McpToolAudience::Owner
+        proxiima::spiice::ToolAudience::Owner
     );
     assert!(OwnerOnlyTool::ARGV_ACTION_SPECS.is_empty());
 
@@ -162,7 +159,7 @@ fn both_tiers_name_the_tool_declaration_consts() {
             .list_mcp_tools()
             .iter()
             .map(declaration)
-            .any(|(audience, _)| audience == proxiima::McpToolAudience::Shared)
+            .any(|(audience, _)| audience == proxiima::ToolAudience::Shared)
     );
 }
 

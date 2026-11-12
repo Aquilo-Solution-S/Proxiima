@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use proxiima_core::ToolError;
-use proxiima_core::mcp::{ToolCall, ToolEffect, ToolReply};
-use proxiima_core::{McpHostToolCall, OwnerNeed, SpiiceServices};
+use proxiima_core::catalog::{ToolCall, ToolEffect, ToolReply};
+use proxiima_core::{HostToolCall, OwnerNeed, SpiiceServices};
 
 use crate::auth::McpAuthContext;
 
@@ -51,24 +51,24 @@ pub struct McpHostTool {
     /// `None` for a tool that answers with content or a structured failure.
     pub output_schema: Option<serde_json::Value>,
     /// What the tool does; its MCP hints are
-    /// [`McpToolAnnotations::host`](proxiima_core::McpToolAnnotations::host),
+    /// [`ToolAnnotations::host`](proxiima_core::ToolAnnotations::host),
     /// the only source of `readOnlyHint`, `destructiveHint` and
     /// `idempotentHint`.
     pub effect: ToolEffect,
     /// The tool's `_meta` on `tools/list`.
     pub meta: Option<serde_json::Map<String, serde_json::Value>>,
-    /// `openWorldHint`, which [`McpToolAnnotations::host`] leaves unset
+    /// `openWorldHint`, which [`ToolAnnotations::host`] leaves unset
     /// because [`ToolEffect`] says nothing about it.
     ///
-    /// [`McpToolAnnotations::host`]: proxiima_core::McpToolAnnotations::host
+    /// [`ToolAnnotations::host`]: proxiima_core::ToolAnnotations::host
     pub open_world: Option<bool>,
     /// Values a call resolved to this entry carries: they join the call's
     /// request services beside
-    /// [`McpHostToolCall`](proxiima_core::McpHostToolCall), taken from the list
+    /// [`HostToolCall`](proxiima_core::HostToolCall), taken from the list
     /// the call was resolved against, so [`McpHostTools::call`] and every
     /// request behavior read the entry the scope gate judged without listing
     /// again. Proxiima neither reads them nor lists them. A type the call's
-    /// services already hold (`McpHostToolCall`, a request or boot service) is
+    /// services already hold (`HostToolCall`, a request or boot service) is
     /// an internal error.
     pub services: SpiiceServices,
     /// What the tool asks of the owner (see [`Self::with_goal_work`]).
@@ -134,8 +134,8 @@ impl McpHostTool {
 
     /// The marker a call resolved to this entry carries; the scope gate and
     /// every listing read the tool's declaration from it.
-    pub(crate) fn call_marker(&self) -> McpHostToolCall {
-        let marker = McpHostToolCall::new(self.name.clone(), self.effect);
+    pub(crate) fn call_marker(&self) -> HostToolCall {
+        let marker = HostToolCall::new(self.name.clone(), self.effect);
         match self.need {
             OwnerNeed::Memory => marker,
             OwnerNeed::GoalWork => marker.with_goal_work(),
@@ -151,7 +151,7 @@ impl McpHostTool {
 /// `visible`, like every registry tool. `tools/call` runs a listed tool
 /// through the registry's request behaviors (scope gate first) with
 /// [`Self::call`] as the terminal; the call's services carry an
-/// [`McpHostToolCall`](proxiima_core::McpHostToolCall) and the resolved entry's
+/// [`HostToolCall`](proxiima_core::HostToolCall) and the resolved entry's
 /// [`services`](McpHostTool::services). Each call resolves its name once.
 ///
 /// [`McpToolHost::with_host_tools`]: crate::McpToolHost::with_host_tools

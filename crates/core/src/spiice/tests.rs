@@ -1,5 +1,5 @@
 use super::*;
-use crate::mcp::ToolEffect;
+use crate::catalog::ToolEffect;
 use crate::{ToolCtx, ToolError};
 
 #[derive(serde::Serialize, schemars::JsonSchema)]

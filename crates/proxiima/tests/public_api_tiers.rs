@@ -552,11 +552,11 @@ fn spiice_sdk_constructs_contract_goal_and_session_values() {
 #[test]
 fn spiice_sdk_exposes_tool_authoring_and_metadata() {
     use proxiima::spiice::{
-        McpActionArgSpec, Replay, Tool, ToolCaller, ToolCtx, ToolEffect, ToolError,
+        ActionArgSpec, Replay, Tool, ToolCaller, ToolCtx, ToolEffect, ToolError,
     };
     fn needs_tool<T: Tool>() {}
     needs_tool::<TierLabelledTool>();
-    let _: &[McpActionArgSpec] = &[];
+    let _: &[ActionArgSpec] = &[];
     let _: Option<(&ToolCtx, &ToolError, &ToolCaller)> = None;
     let _: ToolEffect = ToolEffect::Additive(Replay::Idempotent);
 }
@@ -1164,9 +1164,9 @@ fn host_api_names_global_and_owner_reconcile_outcomes() {
 fn host_names_mcp_catalog_descriptor_types() {
     // `SpiiceRegistryFrozen::list_mcp_tools` already returns this slice.
     // The element type and origin enum must be nameable on the Host API.
-    use proxiima::host::{McpToolDescriptor, McpToolOrigin, SpiiceRegistryFrozen};
+    use proxiima::host::{SpiiceRegistryFrozen, ToolDescriptor, ToolOrigin};
 
-    fn bind(frozen: &SpiiceRegistryFrozen) -> &[McpToolDescriptor] {
+    fn bind(frozen: &SpiiceRegistryFrozen) -> &[ToolDescriptor] {
         frozen.list_mcp_tools()
     }
 
@@ -1175,12 +1175,7 @@ fn host_names_mcp_catalog_descriptor_types() {
         .expect("empty registry freezes");
     let named = bind(&frozen)
         .iter()
-        .filter(|tool| {
-            matches!(
-                tool.origin,
-                McpToolOrigin::Substrate | McpToolOrigin::Spiice(_)
-            )
-        })
+        .filter(|tool| matches!(tool.origin, ToolOrigin::Substrate | ToolOrigin::Spiice(_)))
         .count();
     assert!(
         named >= 1,

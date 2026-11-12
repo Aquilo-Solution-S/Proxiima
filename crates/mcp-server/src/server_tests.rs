@@ -2,11 +2,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::auth::McpAuthContext;
-use proxiima_core::mcp::core_tools::get_memory::VersionSelector;
-use proxiima_core::mcp::core_tools::walk_memory_lineage::WalkMemoryLineageDirectionArg;
-use proxiima_core::mcp::{
-    McpActionArgSpec, McpHostToolCall, McpToolAudience, OwnerNeed, ToolContent,
-};
+use proxiima_core::catalog::core_tools::get_memory::VersionSelector;
+use proxiima_core::catalog::core_tools::walk_memory_lineage::WalkMemoryLineageDirectionArg;
+use proxiima_core::catalog::{ActionArgSpec, HostToolCall, OwnerNeed, ToolAudience, ToolContent};
 use proxiima_core::{
     AuthzContext, OwnerId, ScopeKey, ServedSurface, SpiiceRegistry, ToolScope, UserId,
 };
@@ -117,7 +115,7 @@ impl McpHostTools for EchoHostTools {
     async fn call(&self, call: ToolCall) -> Result<ToolReply, ToolError> {
         let marker = call
             .ctx
-            .service::<McpHostToolCall>()
+            .service::<HostToolCall>()
             .ok_or_else(|| ToolError::Other("no host-call marker".into()))?;
         Ok(ToolReply::Structured(serde_json::json!({
             "tool": call.name,
@@ -954,23 +952,23 @@ impl Tool for Board {
     const TITLE: &'static str = "Board";
     const NAME: &'static str = "plan_board";
     const DESCRIPTION: &'static str = "Two writes, one of them Goal work.";
-    const ACTION_ARG_SPECS: &'static [McpActionArgSpec] = &[
-        McpActionArgSpec {
+    const ACTION_ARG_SPECS: &'static [ActionArgSpec] = &[
+        ActionArgSpec {
             action: "advance",
             title: "Advance a card",
             allowed_fields: &[],
             required_fields: &[],
             effect: WRITE,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::GoalWork,
         },
-        McpActionArgSpec {
+        ActionArgSpec {
             action: "note",
             title: "Pin a note",
             allowed_fields: &[],
             required_fields: &[],
             effect: WRITE,
-            audience: McpToolAudience::Shared,
+            audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
         },
     ];
@@ -1071,9 +1069,8 @@ async fn a_declared_goal_work_action_runs_for_every_member_who_works_goals() {
 /// the call fails before any behavior or the source's `call` runs.
 #[tokio::test]
 async fn a_listed_entry_cannot_replace_a_call_service() {
-    let forged = host_tool("host_forged", WRITE).with_services(SpiiceServices::with(
-        McpHostToolCall::new("host_forged", READ),
-    ));
+    let forged = host_tool("host_forged", WRITE)
+        .with_services(SpiiceServices::with(HostToolCall::new("host_forged", READ)));
     let (server, _) = scripted(
         Ok(vec![forged]),
         ToolReply::Structured(serde_json::json!({"ran": true})),

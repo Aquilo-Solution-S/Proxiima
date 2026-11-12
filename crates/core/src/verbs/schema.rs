@@ -4,15 +4,15 @@
 //! docs/build-a-spiice.md.
 
 use crate::authz::{AuthorizationHook, AuthzContext, AuthzInput, AuthzOutcome, OwnerResolver};
+use crate::catalog::RequestBehavior;
 use crate::error::ProtocolError;
-use crate::mcp::RequestBehavior;
 use crate::spiice::contract::{
     Band, BandComparability, CoreBandName, LanguagePolicy, RankSource, SearchProjectionDecl,
     SpiiceContract, SubstringArm,
 };
 use crate::{
-    CapabilityTag, McpToolDescriptor, OwnerId, SchemaId, SchemaVersion, SearchProjectionColumnKind,
-    SidecarPayload, SpiiceDescriptor,
+    CapabilityTag, OwnerId, SchemaId, SchemaVersion, SearchProjectionColumnKind, SidecarPayload,
+    SpiiceDescriptor, ToolDescriptor,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -509,7 +509,7 @@ pub struct SpiiceRegistryFrozen {
     search_projections: Vec<MemorySearchProjection>,
     embed_units: Vec<MemoryEmbedUnit>,
     protocol_ingress: Vec<ProtocolPayloadIngressEntry>,
-    mcp_tools: Vec<McpToolDescriptor>,
+    mcp_tools: Vec<ToolDescriptor>,
     request_behaviors: Vec<Arc<dyn RequestBehavior>>,
     spiices: Vec<SpiiceDescriptor>,
     contracts: Vec<&'static SpiiceContract>,
@@ -942,7 +942,7 @@ impl SpiiceRegistryFrozen {
     }
 
     #[must_use]
-    pub fn list_mcp_tools(&self) -> &[McpToolDescriptor] {
+    pub fn list_mcp_tools(&self) -> &[ToolDescriptor] {
         &self.mcp_tools
     }
 
@@ -951,7 +951,7 @@ impl SpiiceRegistryFrozen {
     /// Exact-name only: the REST router keeps its own lookup because it also
     /// accepts a request's provider-safe alias for a canonical name.
     #[must_use]
-    pub fn mcp_tool(&self, name: &str) -> Option<&McpToolDescriptor> {
+    pub fn mcp_tool(&self, name: &str) -> Option<&ToolDescriptor> {
         self.mcp_tools.iter().find(|tool| tool.name == name)
     }
 

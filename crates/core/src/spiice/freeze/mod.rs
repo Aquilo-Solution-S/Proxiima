@@ -19,10 +19,10 @@
 //! rather than a runtime error some request discovers.
 
 use super::{
-    BTreeSet, CapabilityTag, McpToolDescriptor, PayloadKind, SchemaCapabilityTags, SchemaId,
-    SchemaVersion, SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen,
+    BTreeSet, CapabilityTag, PayloadKind, SchemaCapabilityTags, SchemaId, SchemaVersion,
+    SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen, ToolDescriptor,
 };
-use crate::mcp::schema::{
+use crate::catalog::schema::{
     analyze_root_fields, schema_contains_defs, schema_contains_ref, validate_closed_root_schema,
 };
 

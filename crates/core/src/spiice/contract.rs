@@ -1547,7 +1547,7 @@ impl ProjectionDecl {
 /// action leaves the scope gate authorizes at.
 ///
 /// It states no behaviour. What a tool does is its
-/// [`ToolEffect`](crate::mcp::ToolEffect), declared once on the tool and
+/// [`ToolEffect`](crate::catalog::ToolEffect), declared once on the tool and
 /// per action; the contract names the tool so a spiice-scoped erase can
 /// require that the calling tool is the named spiice's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1626,7 +1626,7 @@ impl ResourceAnswer {
     #[must_use]
     pub const fn of<T: schemars::JsonSchema>() -> Self {
         Self {
-            schema: crate::mcp::schema::mcp_output_schema::<T>,
+            schema: crate::catalog::schema::mcp_output_schema::<T>,
         }
     }
 
@@ -1648,9 +1648,9 @@ impl ResourceContract {
     /// What this resource's key declares, for every audience: a read when
     /// [`Self::read_only`] says so, else a write.
     #[must_use]
-    pub const fn declaration(&self) -> crate::mcp::KeyDeclaration {
-        crate::mcp::KeyDeclaration::shared(if self.read_only {
-            Some(crate::mcp::ToolEffect::ReadOnly)
+    pub const fn declaration(&self) -> crate::catalog::KeyDeclaration {
+        crate::catalog::KeyDeclaration::shared(if self.read_only {
+            Some(crate::catalog::ToolEffect::ReadOnly)
         } else {
             None
         })

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use proxiima_core::{
-    AuthzContext, CapabilitySet, Engine, McpToolDescriptor, OwnerId, ServedSurface,
-    SpiiceRegistryFrozen, SpiiceServices, ToolCaller, ToolEffect, ToolErrorKind, ToolScope,
+    AuthzContext, CapabilitySet, Engine, OwnerId, ServedSurface, SpiiceRegistryFrozen,
+    SpiiceServices, ToolCaller, ToolDescriptor, ToolEffect, ToolErrorKind, ToolScope,
     provider_safe_tool_name, resolve_operator_label, tool_name_matches,
 };
 use proxiima_mcp_server::{
@@ -29,7 +29,7 @@ pub struct CoreToolInfo {
     pub output_schema: serde_json::Value,
     /// What the tool does: a flat tool's declaration, a dispatcher's join
     /// over its actions. `Some` for every tool of a frozen registry; its
-    /// MCP hints are [`McpToolAnnotations::registered`](proxiima_core::McpToolAnnotations::registered).
+    /// MCP hints are [`ToolAnnotations::registered`](proxiima_core::ToolAnnotations::registered).
     pub effect: Option<ToolEffect>,
 }
 
@@ -230,7 +230,7 @@ impl CoreMcpTools {
             .map_err(CoreMcpError::from_invocation_error)
     }
 
-    fn find_tool(&self, name: &str) -> Option<&McpToolDescriptor> {
+    fn find_tool(&self, name: &str) -> Option<&ToolDescriptor> {
         find_tool_descriptor(self.host.registry().list_mcp_tools(), name)
     }
 }
@@ -251,15 +251,15 @@ fn host_author(authz: &AuthzContext, model_id: Option<&str>) -> Result<ToolCalle
 }
 
 fn find_tool_descriptor<'a>(
-    descriptors: &'a [McpToolDescriptor],
+    descriptors: &'a [ToolDescriptor],
     name: &str,
-) -> Option<&'a McpToolDescriptor> {
+) -> Option<&'a ToolDescriptor> {
     descriptors
         .iter()
         .find(|descriptor| tool_name_matches(descriptor.name, name))
 }
 
-fn tool_info_from_descriptor(descriptor: &McpToolDescriptor) -> CoreToolInfo {
+fn tool_info_from_descriptor(descriptor: &ToolDescriptor) -> CoreToolInfo {
     CoreToolInfo {
         name: provider_safe_tool_name(descriptor.name),
         description: descriptor.description.to_string(),

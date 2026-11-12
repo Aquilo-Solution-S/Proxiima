@@ -383,7 +383,7 @@ impl SpiiceRegistry {
             };
             // `actions` is a SECOND description of a fact the registry
             // already holds. The dispatcher's truth is
-            // `McpToolDescriptor::action_arg_specs`, validated against the
+            // `ToolDescriptor::action_arg_specs`, validated against the
             // JSON schema and never against this list.
             //
             // The list is compared in ORDER, not as a set. A palette scope

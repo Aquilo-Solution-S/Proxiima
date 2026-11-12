@@ -1,0 +1,884 @@
+//! `core/walk_memory_lineage` — wire-facing memory lineage walk.
+
+use std::collections::{HashMap, HashSet};
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::ancestry::{AncestorEdge, AncestorTarget, Unread};
+use crate::MemoryId;
+use crate::catalog::cursor as wire_cursor;
+use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
+use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest};
+use crate::{ToolCtx, ToolError};
+
+const MAX_LINEAGE_DEPTH: u32 = 8;
+const DEFAULT_LINEAGE_DEPTH: u32 = 3;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WalkMemoryLineageArgs {
+    /// Memory UUID.
+    pub memory: String,
+    /// Walk direction: `ancestors` walks toward what this memory was made
+    /// from or is about (default), the edges `core_think` follows:
+    /// `origin`, declared subjects as `reference`, and other stores'
+    /// memories as leaves; `descendants` follows `origin` edges toward
+    /// what was made from it.
+    #[serde(default = "default_direction")]
+    pub direction: WalkMemoryLineageDirectionArg,
+    /// Maximum hop distance from the start memory; clamped to 1..=8,
+    /// default 3.
+    #[serde(default = "default_depth")]
+    pub depth: u32,
+    /// Max lineage edges per page; values above 200 are clamped, 0 is
+    /// rejected, default 50.
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    /// Opaque pagination cursor from a previous response's `next_cursor`.
+    /// The memory, direction, and depth must stay unchanged between
+    /// pages; `limit` may vary.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WalkMemoryLineageDirectionArg {
+    /// Toward what this memory was derived from.
+    Ancestors,
+    /// Toward what was derived from this memory.
+    Descendants,
+}
+
+impl From<MemoryLineageDirection> for WalkMemoryLineageDirectionArg {
+    fn from(value: MemoryLineageDirection) -> Self {
+        match value {
+            MemoryLineageDirection::Ancestors => Self::Ancestors,
+            MemoryLineageDirection::Descendants => Self::Descendants,
+        }
+    }
+}
+
+impl From<WalkMemoryLineageDirectionArg> for MemoryLineageDirection {
+    fn from(value: WalkMemoryLineageDirectionArg) -> Self {
+        match value {
+            WalkMemoryLineageDirectionArg::Ancestors => Self::Ancestors,
+            WalkMemoryLineageDirectionArg::Descendants => Self::Descendants,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct WalkMemoryLineageOutput {
+    pub start: String,
+    pub direction: WalkMemoryLineageDirectionArg,
+    pub nodes: Vec<LineageNodeOutput>,
+    pub edges: Vec<LineageEdgeOutput>,
+    /// More lineage edges exist beyond this page; `true` iff
+    /// `next_cursor` is present. Named `has_more` to match every other
+    /// paginated surface.
+    pub has_more: bool,
+    /// Opaque cursor for the next page of lineage edges; absent on the
+    /// last page. Pass back as `cursor` with the same memory, direction,
+    /// and depth.
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LineageNodeOutput {
+    pub memory: String,
+    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// for the session's own owner, otherwise the owner's key from
+    /// `core_memory_spaces`; another store's memory, the owner's UUID that
+    /// store reported. Always present; `null` means the owner is unknown: a
+    /// node with a `status`, or a memory no longer readable.
+    /// A missing `space` is refused, never read as unknown.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub space: Option<String>,
+    pub kind: String,
+    pub schema_id: String,
+    pub snippet: String,
+    /// Hops from the start, which is 0: the level at which the walk first
+    /// reached this memory, in either direction and on every page, as on
+    /// its edges.
+    pub distance: u8,
+    /// Set only on a node of another store: its store number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<u16>,
+    /// Set on an other-store node that could not be read: `erased` (the
+    /// store erased it) or `unavailable` (no port, the store did not answer,
+    /// or the caller may no longer read it); and on a local node the caller
+    /// could read but which is forgotten: `forgotten` (no snippet; the walk
+    /// stops there). The walk never fails on such a node.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<NodeStatus>,
+    /// Why an `unavailable` origin was not read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<UnavailableReason>,
+}
+
+/// One hop of the walk: `origin` (made from) or, toward ancestors,
+/// `reference` (a declared subject, e.g. an interpretation's). An edge to
+/// another store's memory carries its recorded kind (#480).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LineageEdgeOutput {
+    pub source: String,
+    pub target: String,
+    pub kind: crate::EdgeKind,
+    pub distance: u8,
+}
+
+fn default_direction() -> WalkMemoryLineageDirectionArg {
+    WalkMemoryLineageDirectionArg::Ancestors
+}
+
+fn default_depth() -> u32 {
+    DEFAULT_LINEAGE_DEPTH
+}
+
+fn default_limit() -> u32 {
+    super::DEFAULT_PAGE_LIMIT
+}
+
+/// Opaque cursor codec: the shared `{v, fp, c}` envelope with the
+/// storage keyset position under `c`. The fingerprint binds the memory,
+/// direction, and effective depth; `limit` stays out so it may vary
+/// between pages.
+const LINEAGE_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
+    version: 1,
+    source: "proxiima://memory/{id}/lineage page",
+    rebind_hint: "repeat the memory, direction, and depth that produced it",
+};
+
+fn lineage_fingerprint(memory: &str, direction: MemoryLineageDirection, depth: u8) -> String {
+    let canon = serde_json::to_string(&(memory, format!("{direction:?}"), depth))
+        .expect("fingerprint canon serializes");
+    wire_cursor::fingerprint(&canon)
+}
+
+/// # Errors
+///
+/// Returns invalid memory references, storage, or projection failures.
+pub async fn walk_memory_lineage(
+    ctx: ToolCtx,
+    args: WalkMemoryLineageArgs,
+) -> Result<WalkMemoryLineageOutput, ToolError> {
+    let start = ctx.resolve_memory(&args.memory)?;
+    let limit = super::resolve_page_limit(Some(args.limit))?;
+    let direction = MemoryLineageDirection::from(args.direction);
+    let depth = u8::try_from(args.depth.clamp(1, MAX_LINEAGE_DEPTH)).unwrap_or(8);
+    let fingerprint = lineage_fingerprint(&args.memory, direction, depth);
+    let engine = ctx.require_engine()?;
+    if matches!(direction, MemoryLineageDirection::Ancestors)
+        && crate::memory_store_number(start.into_inner()) != engine.store_number()
+    {
+        return remote_ancestors(&ctx, engine, start, args, depth, limit, &fingerprint).await;
+    }
+    let after: Option<MemoryLineageCursor> = args
+        .cursor
+        .as_deref()
+        .map(|raw| LINEAGE_CURSOR.decode(&fingerprint, raw))
+        .transpose()?;
+    if matches!(direction, MemoryLineageDirection::Ancestors) {
+        let page = walk_ancestors(&ctx, engine, start, depth, limit, after).await?;
+        let Some(page) = page else {
+            return Err(ToolError::NotFound(format!(
+                "memory {} not found",
+                args.memory
+            )));
+        };
+        let next_cursor = page
+            .next_cursor
+            .map(|cursor| LINEAGE_CURSOR.encode(&fingerprint, &cursor));
+        let has_more = next_cursor.is_some();
+        return Ok(WalkMemoryLineageOutput {
+            start: args.memory,
+            direction: direction.into(),
+            nodes: page.nodes,
+            edges: page.edges,
+            has_more,
+            next_cursor,
+        });
+    }
+    let response = engine
+        .walk_memory_lineage(
+            ctx.authz(),
+            &MemoryLineageRequest {
+                owner: ctx.owner(),
+                start_memory_id: start,
+                direction,
+                depth,
+                limit,
+                after,
+            },
+        )
+        .await?;
+
+    // A visible start memory always projects itself as a distance-0 node,
+    // even with no lineage edges; an empty node set therefore means the
+    // start does not exist or is not visible (deliberately
+    // indistinguishable) — surface that instead of an empty walk.
+    if response.nodes.is_empty() {
+        return Err(ToolError::NotFound(format!(
+            "memory {} not found",
+            args.memory
+        )));
+    }
+
+    let node_ids: Vec<MemoryId> = response.nodes.iter().map(|node| node.memory_id).collect();
+    let mut spaces = super::memory_spaces::local_space_keys(&ctx, engine, &node_ids).await?;
+    let nodes = response
+        .nodes
+        .into_iter()
+        .map(|node| LineageNodeOutput {
+            memory: node.memory_id.into_inner().to_string(),
+            space: spaces.remove(&node.memory_id),
+            kind: node.kind.as_str().to_string(),
+            schema_id: node.schema_id.as_str().to_string(),
+            snippet: node.snippet,
+            distance: node.distance,
+            store: None,
+            status: None,
+            unavailable_reason: None,
+        })
+        .collect::<Vec<_>>();
+
+    let edges: Vec<LineageEdgeOutput> = response
+        .edges
+        .into_iter()
+        .map(|hop| LineageEdgeOutput {
+            source: super::wire_ref::format_endpoint(&ctx, hop.edge.source),
+            target: super::wire_ref::format_target_projection(&ctx, hop.edge.target),
+            kind: hop.edge.kind,
+            distance: hop.distance,
+        })
+        .collect();
+
+    let next_cursor = response
+        .next_cursor
+        .map(|cursor| LINEAGE_CURSOR.encode(&fingerprint, &cursor));
+    // Derived from the cursor, not the verb's separate `truncated` flag,
+    // so the documented "`has_more` iff `next_cursor`" invariant holds by
+    // construction — the same derivation every other paginated surface
+    // uses.
+    let has_more = next_cursor.is_some();
+    Ok(WalkMemoryLineageOutput {
+        start: args.memory,
+        direction: direction.into(),
+        nodes,
+        edges,
+        has_more,
+        next_cursor,
+    })
+}
+
+/// One page of an ancestors walk; `None` when the start is not readable.
+struct AncestorPage {
+    nodes: Vec<LineageNodeOutput>,
+    edges: Vec<LineageEdgeOutput>,
+    next_cursor: Option<MemoryLineageCursor>,
+}
+
+/// The ancestors page of a start in another store, walked by that store as
+/// the caller under the same depth and limit. Its cursor travels inside this
+/// walk's own envelope, bound to the same memory, direction and depth.
+async fn remote_ancestors(
+    ctx: &ToolCtx,
+    engine: &crate::Engine,
+    start: MemoryId,
+    args: WalkMemoryLineageArgs,
+    depth: u8,
+    limit: u32,
+    fingerprint: &str,
+) -> Result<WalkMemoryLineageOutput, ToolError> {
+    let page = crate::storage_ports::other_stores::RemoteAncestorsPage {
+        depth,
+        limit,
+        cursor: args
+            .cursor
+            .as_deref()
+            .map(|raw| LINEAGE_CURSOR.decode::<String>(fingerprint, raw))
+            .transpose()?,
+    };
+    let ancestors = super::other_stores::read_ancestors(ctx, start.into_inner(), &page).await?;
+    let local = engine.store_number();
+    let nodes = ancestors
+        .nodes
+        .into_iter()
+        .map(|node| {
+            let store = crate::memory_store_number(node.handle);
+            LineageNodeOutput {
+                memory: node.handle.to_string(),
+                space: node.owner.map(|owner| owner.to_string()),
+                kind: node.kind,
+                schema_id: node.schema_id,
+                snippet: node.snippet,
+                distance: node.distance,
+                store: (store != local).then_some(store),
+                status: node.status,
+                unavailable_reason: node.unavailable_reason,
+            }
+        })
+        .collect();
+    let edges = ancestors
+        .edges
+        .into_iter()
+        .map(|edge| LineageEdgeOutput {
+            source: edge.source.to_string(),
+            target: super::wire_ref::format_remote_target(edge.target),
+            kind: edge.kind,
+            distance: edge.distance,
+        })
+        .collect();
+    let next_cursor = ancestors
+        .next_cursor
+        .map(|next| LINEAGE_CURSOR.encode(fingerprint, &next));
+    Ok(WalkMemoryLineageOutput {
+        start: args.memory,
+        direction: WalkMemoryLineageDirectionArg::Ancestors,
+        nodes,
+        edges,
+        has_more: next_cursor.is_some(),
+        next_cursor,
+    })
+}
+
+/// One edge on an ancestors page, `distance` hops from the start.
+#[derive(Debug, Clone, Copy)]
+struct AncestorHop {
+    edge: AncestorEdge,
+    distance: u8,
+}
+
+/// Where a page resumes: the hop distance and, within it, the keyset
+/// `(source, target)` the previous page ended on (edges are listed newest
+/// `(source, target)` first). A cursor whose ends are not memories (none is
+/// ever issued) resumes at the next distance.
+fn resume_point(after: Option<MemoryLineageCursor>) -> (u8, Option<(uuid::Uuid, uuid::Uuid)>) {
+    let Some(after) = after else {
+        return (1, None);
+    };
+    match (after.source, after.target) {
+        (crate::EntityRef::Memory(src), crate::EntityRef::Memory(tgt)) => (
+            after.distance.max(1),
+            Some((src.into_inner(), tgt.into_inner())),
+        ),
+        _ => (after.distance.saturating_add(1).max(1), None),
+    }
+}
+
+/// The ancestors of `start`, level by level over the ancestor-edge rule
+/// `core_think` follows ([`super::ancestry::ancestor_edges`], #480):
+/// declared origins, declared payload subjects (`reference`), host-certified
+/// reads (`read`, #677), and the recorded edges to other stores' memories,
+/// which are leaves. Descendants walk `origin` and `read` pins in storage.
+///
+/// Every edge of a level is listed, newest `(source, target)` first; only
+/// unseen local targets are expanded. A page holds at most `limit` edges,
+/// other-store ones included, and resumes on the same keyset
+/// `(distance, source, target)` the storage walk used, so its cursor shape
+/// is unchanged.
+async fn walk_ancestors(
+    ctx: &ToolCtx,
+    engine: &crate::Engine,
+    start: MemoryId,
+    depth: u8,
+    limit: u32,
+    after: Option<MemoryLineageCursor>,
+) -> Result<Option<AncestorPage>, ToolError> {
+    let page_len = usize::try_from(limit).unwrap_or(usize::MAX);
+    if engine
+        .lineage_nodes(ctx.authz(), &[start])
+        .await?
+        .is_empty()
+    {
+        return Ok(None);
+    }
+    let (start_distance, keyset) = resume_point(after);
+    let mut hops: Vec<AncestorHop> = Vec::new();
+    // Hop distance at which each local memory is first reached; the start
+    // is 0. A memory is expanded once, from its first level.
+    let mut reached: HashMap<MemoryId, u8> = HashMap::from([(start, 0)]);
+    let mut frontier = vec![start];
+    'walk: for distance in 1..=depth {
+        if frontier.is_empty() {
+            break;
+        }
+        let level = super::ancestry::ancestor_edges(engine, ctx, &frontier).await?;
+        let mut next: Vec<MemoryId> = Vec::new();
+        for edge in &level {
+            if let AncestorTarget::Local(id) = edge.target
+                && !reached.contains_key(&id)
+            {
+                reached.insert(id, distance);
+                next.push(id);
+            }
+        }
+        if distance >= start_distance {
+            for edge in &level {
+                if distance == start_distance
+                    && let Some(position) = keyset
+                    && (edge.source.into_inner(), edge.target.uuid()) >= position
+                {
+                    continue;
+                }
+                hops.push(AncestorHop {
+                    edge: *edge,
+                    distance,
+                });
+                if hops.len() > page_len {
+                    break 'walk;
+                }
+            }
+        }
+        next.sort_by_key(|id| std::cmp::Reverse(*id));
+        frontier = next;
+    }
+    let truncated = hops.len() > page_len;
+    hops.truncate(page_len);
+    let next_cursor = truncated.then(|| {
+        let last = hops.last().expect("truncated page is non-empty");
+        MemoryLineageCursor {
+            distance: last.distance,
+            source: crate::EntityRef::Memory(last.edge.source),
+            target: crate::EntityRef::Memory(MemoryId::new(last.edge.target.uuid())),
+        }
+    });
+    let (nodes, edges) = render_ancestor_page(ctx, engine, start, &hops, &reached).await?;
+    Ok(Some(AncestorPage {
+        nodes,
+        edges,
+        next_cursor,
+    }))
+}
+
+/// Nodes and edges of an ancestors page. Local nodes carry the hop
+/// distance at which the walk first reached them (`reached`; the start is
+/// 0), as edges and other-store nodes do; a local target the reader cannot
+/// read live is projected by [`crate::project_memory_target`]. Other-store
+/// targets are read in one
+/// bounded batch and placed at their edge's distance.
+async fn render_ancestor_page(
+    ctx: &ToolCtx,
+    engine: &crate::Engine,
+    start: MemoryId,
+    hops: &[AncestorHop],
+    reached: &HashMap<MemoryId, u8>,
+) -> Result<(Vec<LineageNodeOutput>, Vec<LineageEdgeOutput>), ToolError> {
+    let mut local_ids = vec![start];
+    for hop in hops {
+        local_ids.push(hop.edge.source);
+        if let AncestorTarget::Local(id) = hop.edge.target {
+            local_ids.push(id);
+        }
+    }
+    let mut unique = HashSet::new();
+    local_ids.retain(|id| unique.insert(*id));
+    let readable = engine.lineage_nodes(ctx.authz(), &local_ids).await?;
+    let live: HashMap<MemoryId, crate::EntityKind> = readable
+        .iter()
+        .map(|node| (node.memory_id, node.kind))
+        .collect();
+    let readable_ids: Vec<MemoryId> = readable.iter().map(|node| node.memory_id).collect();
+    let mut spaces = super::memory_spaces::local_space_keys(ctx, engine, &readable_ids).await?;
+    let mut nodes: Vec<LineageNodeOutput> = readable
+        .into_iter()
+        .map(|node| LineageNodeOutput {
+            memory: node.memory_id.into_inner().to_string(),
+            space: spaces.remove(&node.memory_id),
+            kind: node.kind.as_str().to_string(),
+            schema_id: node.schema_id.as_str().to_string(),
+            snippet: node.snippet,
+            distance: reached.get(&node.memory_id).copied().unwrap_or_default(),
+            store: None,
+            status: None,
+            unavailable_reason: None,
+        })
+        .collect();
+    let unseen: Vec<MemoryId> = local_ids
+        .iter()
+        .copied()
+        .filter(|id| !live.contains_key(id))
+        .collect();
+    let unread = if unseen.is_empty() {
+        crate::verbs::query::UnreadTargets::default()
+    } else {
+        engine.unread_targets(ctx.authz(), &unseen).await?
+    };
+    // Targets the caller could read but which are forgotten: a node with
+    // status `forgotten`, and the walk goes no further (#488 D4).
+    nodes.extend(unread.forgotten.iter().map(|node| LineageNodeOutput {
+        memory: node.memory_id.into_inner().to_string(),
+        space: None,
+        kind: node.kind.as_str().to_string(),
+        schema_id: node.schema_id.as_str().to_string(),
+        snippet: String::new(),
+        distance: reached.get(&node.memory_id).copied().unwrap_or_default(),
+        store: None,
+        status: Some(NodeStatus::Forgotten),
+        unavailable_reason: None,
+    }));
+    let mut edges = Vec::with_capacity(hops.len());
+    let mut external = Vec::new();
+    for hop in hops {
+        if !live.contains_key(&hop.edge.source) {
+            continue;
+        }
+        let source = hop.edge.source.into_inner().to_string();
+        match hop.edge.target {
+            AncestorTarget::Local(id) => {
+                edges.push(LineageEdgeOutput {
+                    source,
+                    target: super::wire_ref::format_target_projection(
+                        ctx,
+                        crate::project_memory_target(id, &live, &unread),
+                    ),
+                    kind: hop.edge.kind,
+                    distance: hop.distance,
+                });
+            }
+            AncestorTarget::Remote(id) => {
+                external.push((hop.edge.source, id, hop.edge.kind, hop.distance));
+            }
+        }
+    }
+    append_external_edges(ctx, &mut nodes, &mut edges, external).await;
+    Ok((nodes, edges))
+}
+
+/// Other-store edges of the page's nodes, each target read through the
+/// port as the caller. A node of another store is a leaf at its edge's
+/// distance, over an edge of the recorded kind (`origin`, or `reference`
+/// for an interpretation's subject); erased or unreadable targets render
+/// with a `status` instead of failing the walk.
+async fn append_external_edges(
+    ctx: &ToolCtx,
+    nodes: &mut Vec<LineageNodeOutput>,
+    edges: &mut Vec<LineageEdgeOutput>,
+    external: Vec<(MemoryId, uuid::Uuid, crate::EdgeKind, u8)>,
+) {
+    let mut unique = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, origin, _, _) in &external {
+        if seen.insert(*origin) {
+            unique.push(*origin);
+        }
+    }
+    let mut projections = super::ancestry::read_remote_targets(ctx, &unique).await;
+    for (memory_id, origin, edge_kind, distance) in external {
+        let source = memory_id.into_inner().to_string();
+        let handle = origin.to_string();
+        if let Some(remote) = projections.remove(&origin) {
+            nodes.push(LineageNodeOutput {
+                memory: handle.clone(),
+                space: remote.space,
+                kind: remote.kind,
+                schema_id: remote.schema_id,
+                snippet: remote.snippet,
+                distance,
+                store: Some(crate::memory_store_number(origin)),
+                status: remote.unread.map(Unread::status),
+                unavailable_reason: remote.unread.and_then(Unread::reason),
+            });
+        }
+        edges.push(LineageEdgeOutput {
+            source,
+            target: handle,
+            kind: edge_kind,
+            distance,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::{LINEAGE_CURSOR, LineageNodeOutput, append_external_edges, lineage_fingerprint};
+    use crate::catalog::core_tools::ancestry::{Unread, project_remote_read};
+    use crate::catalog::core_tools::memory_spaces::test_ctx::ctx_for;
+    use crate::storage_ports::other_stores::{NodeStatus, RemoteOriginRead, UnavailableReason};
+    use crate::storage_ports::other_stores::{
+        OtherStores, OtherStoresError, RemoteMemory, RemoteRead, RemoteSearch, RemoteSearchResult,
+        StoreCaller, StoreInfo,
+    };
+    use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection};
+    use crate::{MemoryId, UserId};
+    use futures::future::BoxFuture;
+
+    /// The cursor binds memory, direction, and depth; any of the three
+    /// changing between pages fails closed. `limit` stays out of the
+    /// fingerprint so it may vary.
+    #[test]
+    /// #480: an other-store origin the store says it cannot read is "not
+    /// readable"; a store that failed or answered for another memory is
+    /// "store unavailable" (retry later). Deadline and cap reasons are kept,
+    /// and every one of them keeps the console-safe status `unavailable`.
+    fn unreadable_origins_say_why_they_are_unavailable() {
+        let reason = |read: Option<&Result<RemoteOriginRead, OtherStoresError>>, capped| {
+            let projection = project_remote_read(read, capped);
+            assert_eq!(
+                projection.unread.map(Unread::status),
+                Some(NodeStatus::Unavailable)
+            );
+            projection.unread.and_then(Unread::reason)
+        };
+        assert_eq!(
+            reason(Some(&Ok(RemoteOriginRead::NotFound)), false),
+            Some(UnavailableReason::NotReadable)
+        );
+        assert_eq!(
+            reason(Some(&Err(OtherStoresError::UnknownStore(1))), false),
+            Some(UnavailableReason::NotReadable)
+        );
+        assert_eq!(reason(None, false), Some(UnavailableReason::NotReadable));
+        for failed in [
+            OtherStoresError::Unavailable("remote internals".into()),
+            OtherStoresError::MismatchedMemory {
+                requested: crate::new_memory_uuid(1),
+                returned: crate::new_memory_uuid(1),
+            },
+        ] {
+            assert_eq!(
+                reason(Some(&Err(failed)), false),
+                Some(UnavailableReason::StoreUnavailable)
+            );
+        }
+        assert_eq!(
+            reason(Some(&Err(OtherStoresError::DeadlineExceeded)), false),
+            Some(UnavailableReason::DeadlineExceeded)
+        );
+        assert_eq!(
+            reason(None, true),
+            Some(UnavailableReason::OriginLimitExceeded)
+        );
+    }
+
+    /// A node's `space` is required and nullable: `null` parses as an
+    /// unknown owner, and a node without the field is refused, never read
+    /// as unknown.
+    #[test]
+    fn a_node_without_its_space_is_refused_and_null_is_unknown() {
+        let node = serde_json::json!({
+            "memory": crate::new_memory_uuid(0).to_string(), "space": null,
+            "kind": "fact", "schema_id": "test/fact-v1", "snippet": "", "distance": 0,
+        });
+        let unknown: LineageNodeOutput =
+            serde_json::from_value(node.clone()).expect("a null space parses");
+        assert_eq!(unknown.space, None);
+        let mut missing = node;
+        missing.as_object_mut().expect("a node").remove("space");
+        assert!(serde_json::from_value::<LineageNodeOutput>(missing).is_err());
+    }
+
+    /// The words a client sees are the ones it saw when these were strings.
+    #[test]
+    fn status_and_reason_keep_their_wire_words() {
+        let words = |statuses: &[NodeStatus], reasons: &[UnavailableReason]| {
+            serde_json::json!([statuses, reasons])
+        };
+        assert_eq!(
+            words(
+                &[
+                    NodeStatus::Erased,
+                    NodeStatus::Unavailable,
+                    NodeStatus::Forgotten
+                ],
+                &[
+                    UnavailableReason::NotReadable,
+                    UnavailableReason::StoreUnavailable,
+                    UnavailableReason::DeadlineExceeded,
+                    UnavailableReason::OriginLimitExceeded,
+                ]
+            ),
+            serde_json::json!([
+                ["erased", "unavailable", "forgotten"],
+                [
+                    "not readable",
+                    "store unavailable",
+                    "deadline exceeded",
+                    "origin limit exceeded"
+                ]
+            ])
+        );
+    }
+
+    #[test]
+    fn lineage_cursor_binds_memory_direction_and_depth() {
+        let memory = "018f0000-0000-7000-8000-000000000001";
+        let fingerprint = lineage_fingerprint(memory, MemoryLineageDirection::Ancestors, 3);
+        let cursor = MemoryLineageCursor {
+            distance: 2,
+            source: crate::EntityRef::Memory(crate::MemoryId::new(uuid::Uuid::now_v7())),
+            target: crate::EntityRef::Memory(crate::MemoryId::new(uuid::Uuid::now_v7())),
+        };
+        let token = LINEAGE_CURSOR.encode(&fingerprint, &cursor);
+        let decoded: MemoryLineageCursor = LINEAGE_CURSOR
+            .decode(&fingerprint, &token)
+            .expect("round trip");
+        assert_eq!(decoded, cursor);
+
+        for other in [
+            lineage_fingerprint(memory, MemoryLineageDirection::Descendants, 3),
+            lineage_fingerprint(memory, MemoryLineageDirection::Ancestors, 4),
+            lineage_fingerprint(
+                "018f0000-0000-7000-8000-000000000002",
+                MemoryLineageDirection::Ancestors,
+                3,
+            ),
+        ] {
+            let err = LINEAGE_CURSOR
+                .decode::<MemoryLineageCursor>(&other, &token)
+                .expect_err("changed walk shape must fail closed");
+            assert!(err.into_message().starts_with("cursor does not match"));
+        }
+    }
+
+    /// #676: a node always carries `space`, null only when the owner is unknown.
+    #[test]
+    fn lineage_node_schema_requires_the_nullable_space() {
+        let schema = crate::catalog::schema::mcp_output_schema::<LineageNodeOutput>()
+            .expect("lineage node schema");
+        let required = schema["required"].as_array().expect("required fields");
+        assert!(required.contains(&serde_json::json!("space")));
+        assert_eq!(
+            schema["properties"]["space"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+    }
+
+    struct SlowLineageStore {
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl OtherStores for SlowLineageStore {
+        fn stores<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+        ) -> BoxFuture<'a, Result<Vec<StoreInfo>, OtherStoresError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn search<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            _store: u16,
+            _args: &'a RemoteSearch,
+        ) -> BoxFuture<'a, Result<RemoteSearchResult, OtherStoresError>> {
+            Box::pin(async {
+                Ok(RemoteSearchResult {
+                    hits: Vec::new(),
+                    degraded_to_lexical: false,
+                })
+            })
+        }
+        fn read<'a>(
+            &'a self,
+            _caller: StoreCaller<'a>,
+            id: uuid::Uuid,
+            _at: crate::storage_ports::other_stores::ReadAt,
+        ) -> BoxFuture<'a, Result<RemoteRead, OtherStoresError>> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1_900)).await;
+                Ok(RemoteRead::Found(Box::new(RemoteMemory::fixture(id))))
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lineage_page_deduplicates_caps_and_deadline_marks_origins() {
+        let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
+        let reads = Arc::new(AtomicUsize::new(0));
+        ctx.try_insert_service(crate::storage_ports::other_stores::OtherStoresService::new(
+            Arc::new(SlowLineageStore {
+                reads: Arc::clone(&reads),
+            }),
+        ))
+        .expect("the fixture context holds no service");
+        let mut nodes = (0u128..200)
+            .map(|index| {
+                let id = MemoryId::new(uuid::Uuid::from_u128(index + 1));
+                LineageNodeOutput {
+                    memory: id.into_inner().to_string(),
+                    space: None,
+                    kind: "fact".into(),
+                    schema_id: "test/fact-v1".into(),
+                    snippet: String::new(),
+                    distance: 0,
+                    store: None,
+                    status: None,
+                    unavailable_reason: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let remote_ids = (0..255)
+            .map(|_| crate::new_memory_uuid(1))
+            .collect::<Vec<_>>();
+        let origins = (0u128..200)
+            .flat_map(|node| {
+                let id = MemoryId::new(uuid::Uuid::from_u128(node + 1));
+                remote_ids
+                    .iter()
+                    .copied()
+                    .map(move |origin| (id, origin, crate::EdgeKind::Origin, 1))
+            })
+            .collect::<Vec<_>>();
+        let mut edges = Vec::new();
+        let started = tokio::time::Instant::now();
+        let deadline = crate::storage_ports::other_stores::DEFAULT_REMOTE_BATCH_DEADLINE;
+        tokio::time::timeout(
+            deadline + std::time::Duration::from_millis(1),
+            append_external_edges(&ctx, &mut nodes, &mut edges, origins),
+        )
+        .await
+        .expect("lineage page must finish within the call deadline");
+        assert!(started.elapsed() <= deadline);
+        assert_eq!(reads.load(Ordering::SeqCst), 48);
+        assert_eq!(nodes.len(), 200 + 255);
+        let remote = nodes
+            .iter()
+            .filter(|node| node.store.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            remote.iter().filter(|node| node.status.is_none()).count(),
+            40
+        );
+        assert_eq!(
+            remote
+                .iter()
+                .filter(|node| node.status == Some(NodeStatus::Unavailable))
+                .count(),
+            215
+        );
+        assert_eq!(
+            remote
+                .iter()
+                .filter(
+                    |node| node.unavailable_reason == Some(UnavailableReason::OriginLimitExceeded)
+                )
+                .count(),
+            191
+        );
+        assert_eq!(
+            remote
+                .iter()
+                .filter(|node| node.unavailable_reason == Some(UnavailableReason::DeadlineExceeded))
+                .count(),
+            24
+        );
+        assert_eq!(edges.len(), 200 * 255);
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.unavailable_reason == Some(UnavailableReason::OriginLimitExceeded))
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.unavailable_reason == Some(UnavailableReason::DeadlineExceeded))
+        );
+    }
+}

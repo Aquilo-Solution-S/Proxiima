@@ -1,0 +1,804 @@
+//! `core_episode_commit` — one transaction, explicit `bind[]`.
+
+mod bind;
+
+use crate::catalog::{Replay, ToolEffect};
+use futures::future::BoxFuture;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::goal::{GoalPayloadArgs, encode_goal_payload, system_operator_authorship};
+use super::memory::derive::{
+    self, DerivedKind, MAX_SOURCE_HANDLES, core_derive_input_contract_id, core_derive_operator_id,
+    map_derive_authoring_error,
+};
+use super::memory::interpret::{
+    self, MAX_CLAIM_CHARS, MAX_SUBJECTS, default_confidence, interpretation_memory_id,
+    reject_self_subject,
+};
+use super::memory::remember::{self, NoteWriteInput};
+use super::memory::util::dedup_resolved;
+use crate::catalog::MemoryHandleClass;
+use crate::catalog::validate_trimmed_len;
+use crate::engine::GoalCreatePayloadWriteRequest;
+use crate::error::ErrorCode;
+use crate::memory::payloads::write_act::WriteActV1;
+use crate::protocol::tool as protocol_tool;
+use crate::verbs::goal_write::{
+    GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, IdempotencyKey,
+};
+use crate::{
+    DerivationIdentity, DerivedMemory, FactWrite, InterpretationSubjectKind, InterpretationV1,
+    MemoryId, SeriesHandle, UnitOfWork,
+};
+use crate::{Tool, ToolCtx, ToolError};
+
+use bind::{BindSet, EpisodeKey, EpisodeKeyParseError, parse_bind, reject_duplicate_keys};
+
+const MAX_REMEMBER: usize = 16;
+const MAX_STANCE: usize = 16;
+const MAX_GOAL: usize = 16;
+const MAX_BIND: usize = 32;
+
+#[derive(Debug, Default)]
+pub struct EpisodeCommitTool;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EpisodeRememberItem {
+    #[schemars(length(max = 240), description = "Fact title, 1 to 240 chars.")]
+    pub title: String,
+    #[schemars(length(max = 20000), description = "Fact body, 1 to 20000 chars.")]
+    pub body: String,
+    #[serde(default)]
+    #[schemars(description = "Search tags, at most 16, 1 to 48 chars each; stored lowercase.")]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional key, 1 to 180 chars, unique within this call, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
+    )]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional memory handle of a live agent-note Fact to revise. Requires a new `idempotency_key`."
+    )]
+    pub supersedes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EpisodeDeriveItem {
+    #[schemars(length(max = 240), description = "Abstraction title, 1 to 240 chars.")]
+    pub title: String,
+    #[schemars(
+        length(max = 20000),
+        description = "Abstraction body, 1 to 20000 chars."
+    )]
+    pub body: String,
+    #[serde(default)]
+    #[schemars(description = "Search tags, at most 16, 1 to 48 chars each; stored lowercase.")]
+    pub tags: Vec<String>,
+    #[schemars(
+        description = "What the Abstraction is made from, at least one and all one kind: Facts (`<uuid>` or this call's 0-based `remember:N`) or Abstractions (`<uuid>`)."
+    )]
+    pub source_handles: Vec<String>,
+    #[serde(default)]
+    #[schemars(description = "Author label, 1 to 120 chars. Omit for the host-supplied model id.")]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional key, 1 to 180 chars, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
+    )]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional memory handle of a live Abstraction to revise. Requires a new `idempotency_key`."
+    )]
+    pub supersedes: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Lexical language: a PostgreSQL text-search config (e.g. 'german'), an ISO 639 / BCP-47 code (e.g. 'de'), or 'auto'. Omit for the database default."
+    )]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EpisodeStanceItem {
+    #[schemars(
+        length(max = 1000),
+        description = "Claim about the subjects, 1 to 1000 chars."
+    )]
+    pub claim: String,
+    #[serde(default = "default_confidence")]
+    #[schemars(range(max = 100), description = "Confidence 0..=100. Defaults to 80.")]
+    pub confidence: u8,
+    #[schemars(
+        description = "1 to 64 memories the claim is about: memory UUIDs, or this call's `remember:N`, `derive` or an earlier `stance:N` (0-based)."
+    )]
+    pub subjects: Vec<String>,
+    #[serde(default)]
+    #[schemars(description = "Author label, 1 to 120 chars. Omit for the host-supplied model id.")]
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EpisodeGoalItem {
+    #[serde(flatten)]
+    pub payload: GoalPayloadArgs,
+    #[serde(default)]
+    #[schemars(
+        description = "Facts or Abstractions motivating the goal: `<uuid>`, this call's `remember:N`, or this call's `derive`."
+    )]
+    pub evidence: Vec<String>,
+    #[serde(default)]
+    #[schemars(description = "Exact Perspective versions that motivated the goal.")]
+    pub motivated_by: Vec<String>,
+    #[serde(default)]
+    #[schemars(description = "Optional replay key, 1 to 180 chars, unique within this call.")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EpisodeCommitArgs {
+    #[serde(default)]
+    #[schemars(length(max = 16), description = "Facts authored in this episode.")]
+    pub remember: Vec<EpisodeRememberItem>,
+    #[serde(default)]
+    #[schemars(description = "Optional Abstraction derived over this episode's sources.")]
+    pub derive: Option<EpisodeDeriveItem>,
+    #[serde(default)]
+    #[schemars(
+        length(max = 16),
+        description = "Interpretation Perspectives (`claim` + `subjects`)."
+    )]
+    pub stance: Vec<EpisodeStanceItem>,
+    #[serde(default)]
+    #[schemars(
+        length(max = 16),
+        description = "Active Goals assigned in this episode."
+    )]
+    pub goal: Vec<EpisodeGoalItem>,
+    #[serde(default)]
+    #[schemars(
+        length(max = 32),
+        description = "0-based keys of items to link to this call's write-act Fact: `remember:N`, `derive`, `stance:N`, `goal:N`. A bound item must be new; one that replays an existing write fails the call."
+    )]
+    pub bind: Vec<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Memory space key from core_memory_spaces for every item. Omit for current owner."
+    )]
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct EpisodeCommitOutput {
+    pub write_act: String,
+    pub remembered: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived: Option<String>,
+    pub stances: Vec<String>,
+    pub goals: Vec<String>,
+    pub bound: Vec<String>,
+    /// Replayed items whose memory has been forgotten (#488): each answers
+    /// with its handle above, nothing was written, and it stays forgotten.
+    /// Absent when none is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forgotten: Vec<String>,
+}
+
+struct Slot {
+    id: MemoryId,
+    handle: String,
+    class: MemoryHandleClass,
+}
+
+#[derive(Default)]
+struct EpisodeSlots {
+    remember: Vec<Slot>,
+    derive: Option<Slot>,
+    stance: Vec<Slot>,
+    forgotten: Vec<String>,
+}
+
+/// The one context every `episode_commit` write phase needs: the open
+/// transaction, the handles minted so far, and the ordered ledger of
+/// handles that pinned the write-act.
+struct EpisodeWrite<'a> {
+    ctx: &'a ToolCtx,
+    uow: UnitOfWork<'a>,
+    bind: &'a BindSet,
+    owner: crate::OwnerId,
+    /// Caller-supplied space key (same as `EpisodeCommitArgs.space`).
+    space: Option<&'a str>,
+    act_id: MemoryId,
+    slots: EpisodeSlots,
+    bound: Vec<String>,
+}
+
+impl Tool for EpisodeCommitTool {
+    const NAME: &'static str = protocol_tool::CORE_EPISODE_COMMIT;
+    const TITLE: &'static str = "Commit an episode";
+    const DESCRIPTION: &'static str = "Write several items in one transaction, in this order: Facts (remember), one Abstraction (derive), interpretation Perspectives (stance), Active Goals (goal); at least one item. Later items can name earlier ones by 0-based key (`remember:N`, `derive`, `stance:N`). Also writes a write-act Fact; items listed in bind reference it.";
+    const EFFECT: Option<ToolEffect> = Some(ToolEffect::Additive(Replay::NonIdempotent));
+    type Args = EpisodeCommitArgs;
+    type Output = EpisodeCommitOutput;
+
+    fn call(
+        ctx: ToolCtx,
+        args: EpisodeCommitArgs,
+    ) -> BoxFuture<'static, Result<EpisodeCommitOutput, ToolError>> {
+        Box::pin(async move { episode_commit(ctx, args).await })
+    }
+}
+
+async fn episode_commit(
+    ctx: ToolCtx,
+    args: EpisodeCommitArgs,
+) -> Result<EpisodeCommitOutput, ToolError> {
+    validate_episode_shape(&args)?;
+    let bind = parse_bind(
+        &args.bind,
+        args.remember.len(),
+        args.derive.is_some(),
+        args.stance.len(),
+        args.goal.len(),
+    )?;
+    let (space, authz) =
+        super::memory_spaces::resolve_space_for_write(&ctx, args.space.as_deref())?;
+    let engine = ctx.require_engine()?;
+    let mut uow = engine.unit_of_work(&authz).await?;
+    let write_act = uow
+        .ingest_fact(FactWrite::new(
+            space.owner,
+            "core/episode-commit",
+            &WriteActV1 {
+                episode_id: uuid::Uuid::now_v7(),
+            },
+        ))
+        .await?;
+    let act_id = write_act.memory_id;
+    let mut write = EpisodeWrite {
+        ctx: &ctx,
+        uow,
+        bind: &bind,
+        owner: space.owner,
+        space: args.space.as_deref(),
+        act_id,
+        slots: EpisodeSlots::default(),
+        bound: Vec::new(),
+    };
+    write.write_remembered(&args.remember).await?;
+    let derived = match args.derive.as_ref() {
+        Some(item) => Some(write.write_derive(item).await?),
+        None => None,
+    };
+    write.write_stances(&args.stance).await?;
+    let goals = write.write_goals(&args.goal).await?;
+    let (slots, bound) = write.commit().await?;
+    Ok(EpisodeCommitOutput {
+        write_act: write_act.memory_id.into_inner().to_string(),
+        remembered: slots.remember.into_iter().map(|slot| slot.handle).collect(),
+        derived,
+        stances: slots.stance.into_iter().map(|slot| slot.handle).collect(),
+        goals,
+        bound,
+        forgotten: slots.forgotten,
+    })
+}
+
+fn validate_episode_shape(args: &EpisodeCommitArgs) -> Result<(), ToolError> {
+    if args.remember.is_empty()
+        && args.derive.is_none()
+        && args.stance.is_empty()
+        && args.goal.is_empty()
+    {
+        return Err(ToolError::InvalidInput(
+            "episode_commit requires at least one remember, derive, stance, or goal item".into(),
+        ));
+    }
+    if args.remember.len() > MAX_REMEMBER {
+        return Err(ToolError::InvalidInput(format!(
+            "at most {MAX_REMEMBER} remember items"
+        )));
+    }
+    if args.stance.len() > MAX_STANCE {
+        return Err(ToolError::InvalidInput(format!(
+            "at most {MAX_STANCE} stance items"
+        )));
+    }
+    if args.goal.len() > MAX_GOAL {
+        return Err(ToolError::InvalidInput(format!(
+            "at most {MAX_GOAL} goal items"
+        )));
+    }
+    if args.bind.len() > MAX_BIND {
+        return Err(ToolError::InvalidInput(format!(
+            "at most {MAX_BIND} bind keys"
+        )));
+    }
+    reject_duplicate_keys(
+        args.remember
+            .iter()
+            .map(|item| item.idempotency_key.clone()),
+        "remember",
+    )?;
+    reject_duplicate_keys(
+        args.goal.iter().map(|item| item.idempotency_key.clone()),
+        "goal",
+    )?;
+    Ok(())
+}
+
+impl EpisodeWrite<'_> {
+    async fn write_remembered(&mut self, items: &[EpisodeRememberItem]) -> Result<(), ToolError> {
+        let bind = self.bind;
+        let act_id = self.act_id;
+        let ctx = self.ctx;
+        for (idx, item) in items.iter().enumerate() {
+            let prepared = remember::prepare_note_write(
+                ctx,
+                NoteWriteInput {
+                    title: &item.title,
+                    body: &item.body,
+                    tags: item.tags.clone(),
+                    idempotency_key: item.idempotency_key.clone(),
+                    supersedes: item.supersedes.as_deref(),
+                    citation: None,
+                    space: self.space,
+                    observed_at: None,
+                    language: None,
+                },
+            )
+            .await?;
+            // Episode notes share core/agent and NOTE_NAMESPACE with core_remember.
+            // prepare_note_write already stamps SOURCE_ID = core/agent.
+            let pin = bind.remember.contains(&idx);
+            let draft = &prepared.draft;
+            let payload = prepared.payload.clone();
+            let mut spec = crate::FactWrite::new(self.owner, remember::SOURCE_ID, &payload);
+            if let Some(handle) = draft.handle {
+                spec = spec.handle(crate::SeriesHandle::new(handle));
+            }
+            if let Some(request) = draft.request.clone() {
+                spec = spec.request_key(request);
+            }
+            if pin {
+                spec = spec.refs([act_id]);
+            }
+            let outcome = self
+                .uow
+                .ingest_fact(spec)
+                .await
+                .map_err(|err| map_bound_fact_error(err, "remember", pin))?;
+            reject_bound_replay(pin, outcome.idempotent_replay, "remember")?;
+            let handle = outcome.memory_id.into_inner().to_string();
+            if outcome.forgotten {
+                self.slots.forgotten.push(handle.clone());
+            }
+            if pin {
+                self.bound.push(handle.clone());
+            }
+            self.slots.remember.push(Slot {
+                id: outcome.memory_id,
+                handle,
+                class: MemoryHandleClass::Fact,
+            });
+        }
+        Ok(())
+    }
+
+    async fn write_derive(&mut self, item: &EpisodeDeriveItem) -> Result<String, ToolError> {
+        let ctx = self.ctx;
+        let owner = self.owner;
+        let act_id = self.act_id;
+        let pin = self.bind.derive;
+        let authored = derive::authored_derivation(
+            ctx,
+            derive::DerivationFields {
+                title: &item.title,
+                body: &item.body,
+                tags: &item.tags,
+                model_id: item.model_id.as_deref(),
+                idempotency_key: item.idempotency_key.as_deref(),
+            },
+        )?;
+        if item.source_handles.len() > MAX_SOURCE_HANDLES {
+            return Err(ToolError::InvalidInput(format!(
+                "source_handles must contain at most {MAX_SOURCE_HANDLES} handles"
+            )));
+        }
+        let sources = dedup_resolved(
+            &item.source_handles,
+            MAX_SOURCE_HANDLES,
+            "source_handles",
+            "source_handles must be nonempty for operator derivation",
+            |handle| Box::pin(resolve_memory_source(ctx, &self.slots, handle)),
+        )
+        .await?;
+        let lexical_language = crate::lexical_language::resolve_lexical_language(
+            item.language.as_deref(),
+            &format!("{}\n{}", authored.title, authored.body),
+        )
+        .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
+        let kind = DerivedKind::Abstraction;
+        let origins = sources.iter().map(|(id, _class)| *id).collect::<Vec<_>>();
+        let supersedes = derive::resolve_supersedes(
+            ctx,
+            kind,
+            authored.idempotency_key.as_deref(),
+            item.supersedes.as_deref(),
+        )
+        .await?;
+        let request = derive::derive_request_key(
+            kind,
+            &authored,
+            &origins,
+            &[],
+            supersedes.map(MemoryId::into_inner),
+            &[],
+        )?;
+        let derive::DerivationPlan {
+            memory_id,
+            sidecar,
+            authored,
+        } = derive::plan_derivation(ctx, owner.into_inner(), kind, authored, &sources, &request)?;
+        let extra_refs = pin.then_some(act_id).into_iter().collect::<Vec<_>>();
+        let identity = DerivationIdentity::new(
+            core_derive_operator_id(kind),
+            core_derive_input_contract_id(kind),
+        );
+        let target = supersedes.map_or(
+            crate::MemoryTarget::Series(SeriesHandle::new(memory_id.into_inner())),
+            crate::MemoryTarget::Revision,
+        );
+        let outcome = self
+            .uow
+            .derive_memory(
+                DerivedMemory::abstraction(
+                    target,
+                    owner,
+                    authored.body.clone(),
+                    sidecar,
+                    origins,
+                    identity,
+                )?
+                .refs(extra_refs)
+                .lexical_language(lexical_language)
+                .request_key(request),
+            )
+            .await
+            .map_err(|err| map_bound_derived_error(err, "derive", pin))?;
+        reject_bound_replay(pin, outcome.idempotent_replay, "derive")?;
+        let handle = outcome.memory_id.into_inner().to_string();
+        if outcome.forgotten {
+            self.slots.forgotten.push(handle.clone());
+        }
+        if pin {
+            self.bound.push(handle.clone());
+        }
+        self.slots.derive = Some(Slot {
+            id: outcome.memory_id,
+            handle: handle.clone(),
+            class: MemoryHandleClass::Abstraction,
+        });
+        Ok(handle)
+    }
+
+    async fn write_stances(&mut self, items: &[EpisodeStanceItem]) -> Result<(), ToolError> {
+        let ctx = self.ctx;
+        let owner = self.owner;
+        let bind = self.bind;
+        let act_id = self.act_id;
+        for (idx, item) in items.iter().enumerate() {
+            let claim = validate_trimmed_len("claim", &item.claim, MAX_CLAIM_CHARS)?.to_string();
+            if item.confidence > 100 {
+                return Err(ToolError::InvalidInput("confidence must be 0..=100".into()));
+            }
+            if item.subjects.is_empty() {
+                return Err(ToolError::InvalidInput(
+                    "an interpretation must be about at least one memory".into(),
+                ));
+            }
+            if item.subjects.len() > MAX_SUBJECTS {
+                return Err(ToolError::InvalidInput(format!(
+                    "subjects must contain at most {MAX_SUBJECTS} handles"
+                )));
+            }
+            let model_id = ctx.operator_label(item.model_id.as_deref())?;
+            let (subject_memory_ids, subject_kinds): (Vec<uuid::Uuid>, Vec<_>) = dedup_resolved(
+                &item.subjects,
+                MAX_SUBJECTS,
+                "subjects",
+                "an interpretation must be about at least one memory",
+                |handle| Box::pin(resolve_stance_subject(ctx, &self.slots, handle)),
+            )
+            .await?
+            .into_iter()
+            .map(|(memory_id, kind)| (memory_id.into_inner(), kind))
+            .unzip();
+            let memory_id = MemoryId::new(interpretation_memory_id(
+                owner.into_inner(),
+                &model_id,
+                &claim,
+                item.confidence,
+                &subject_memory_ids,
+            ));
+            reject_self_subject(memory_id, &subject_memory_ids)?;
+            let subject_refs = subject_memory_ids
+                .iter()
+                .copied()
+                .map(MemoryId::new)
+                .collect::<Vec<_>>();
+            let payload = InterpretationV1 {
+                claim: claim.clone(),
+                confidence: item.confidence,
+                subject_memory_ids,
+                subject_kinds,
+                model_id: model_id.clone(),
+                client_name: ctx.caller().client_name.clone(),
+                client_version: ctx.caller().client_version.clone(),
+            };
+            let pin = bind.stance.contains(&idx);
+            let extra_refs = pin.then_some(act_id).into_iter().collect::<Vec<_>>();
+            let outcome = self
+                .uow
+                .derive_memory(
+                    DerivedMemory::interpretation(
+                        crate::MemoryTarget::Series(SeriesHandle::new(memory_id.into_inner())),
+                        owner,
+                        claim,
+                        payload,
+                    )
+                    .refs(subject_refs.into_iter().chain(extra_refs))
+                    .lexical_language(crate::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT),
+                )
+                .await
+                .map_err(|err| map_bound_derived_error(err, "stance", pin))?;
+            reject_bound_replay(pin, outcome.idempotent_replay, "stance")?;
+            let handle = outcome.memory_id.into_inner().to_string();
+            if outcome.forgotten {
+                self.slots.forgotten.push(handle.clone());
+            }
+            if pin {
+                self.bound.push(handle.clone());
+            }
+            self.slots.stance.push(Slot {
+                id: outcome.memory_id,
+                handle,
+                class: MemoryHandleClass::Perspective,
+            });
+        }
+        Ok(())
+    }
+
+    async fn write_goals(&mut self, items: &[EpisodeGoalItem]) -> Result<Vec<String>, ToolError> {
+        let ctx = self.ctx;
+        let owner = self.owner;
+        let bind = self.bind;
+        let act_id = self.act_id;
+        let mut goals = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let payload = encode_goal_payload(ctx, item.payload.clone())?;
+            let evidence = resolve_goal_evidence(ctx, &self.slots, &item.evidence).await?;
+            let motivated_by = resolve_goal_motivations(ctx, &self.slots, &item.motivated_by)?;
+            let topology = GoalTopologyWrite::new(motivated_by, Vec::new(), evidence)
+                .map_err(ToolError::Protocol)?;
+            let request_id =
+                IdempotencyKey::optional_or_generated("episode_goal", item.idempotency_key.clone())
+                    .map_err(ToolError::InvalidInput)?;
+            let pin = bind.goal.contains(&idx);
+            let outcome = self
+                .uow
+                .create_goal_from_payload_write(
+                    GoalCreatePayloadWriteRequest {
+                        owner,
+                        topology,
+                        payload,
+                        request_id,
+                        authorship: system_operator_authorship(ctx, "episode_commit"),
+                        author_self_perspective_id: ctx.caller_self_perspective(),
+                    },
+                    pin.then_some(act_id),
+                )
+                .await
+                .map_err(|err| map_bound_fact_error(err, "goal", pin))?;
+            reject_bound_replay(pin, outcome.idempotent_replay, "goal")?;
+            let handle = outcome.goal_id.into_inner().to_string();
+            if pin {
+                self.bound.push(handle.clone());
+            }
+            goals.push(handle);
+        }
+        Ok(goals)
+    }
+
+    /// Commit the transaction and hand back the minted slots and the
+    /// bound-handle ledger, in write order.
+    async fn commit(self) -> Result<(EpisodeSlots, Vec<String>), ToolError> {
+        self.uow.commit().await?;
+        Ok((self.slots, self.bound))
+    }
+}
+
+/// The refusal for a bound write that came back as a replay of an existing
+/// `noun` (row or memory): a replay cannot pin this write-act.
+fn bound_replay_refusal(kind: &str, noun: &str) -> ToolError {
+    ToolError::InvalidInput(format!(
+        "bound {kind} replayed an existing {noun}; bind requires a new admission that pins this write-act"
+    ))
+}
+
+fn reject_bound_replay(pin: bool, replay: bool, kind: &str) -> Result<(), ToolError> {
+    if pin && replay {
+        return Err(bound_replay_refusal(kind, "row"));
+    }
+    Ok(())
+}
+
+fn map_bound_fact_error(err: crate::error::ProtocolError, kind: &str, pin: bool) -> ToolError {
+    if pin && err.code == ErrorCode::IdempotencyConflict {
+        return bound_replay_refusal(kind, "row");
+    }
+    ToolError::Protocol(err)
+}
+
+fn map_bound_derived_error(err: crate::error::ProtocolError, kind: &str, pin: bool) -> ToolError {
+    if pin && err.code == ErrorCode::IdempotencyConflict {
+        return bound_replay_refusal(kind, "memory");
+    }
+    map_derive_authoring_error(err)
+}
+
+async fn resolve_memory_source(
+    ctx: &ToolCtx,
+    slots: &EpisodeSlots,
+    handle: &str,
+) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
+    if let Some(slot) = resolve_local_slot(slots, handle)? {
+        return Ok((slot.id, slot.class));
+    }
+    derive::resolve_source_memory(ctx, handle).await
+}
+
+async fn resolve_stance_subject(
+    ctx: &ToolCtx,
+    slots: &EpisodeSlots,
+    handle: &str,
+) -> Result<(MemoryId, InterpretationSubjectKind), ToolError> {
+    if let Some(slot) = resolve_local_slot(slots, handle)? {
+        let kind = match slot.class {
+            MemoryHandleClass::Fact => InterpretationSubjectKind::Fact,
+            MemoryHandleClass::Abstraction => InterpretationSubjectKind::Abstraction,
+            MemoryHandleClass::Perspective => InterpretationSubjectKind::Perspective,
+        };
+        return Ok((slot.id, kind));
+    }
+    interpret::resolve_subject(ctx, handle).await
+}
+
+async fn resolve_goal_evidence(
+    ctx: &ToolCtx,
+    slots: &EpisodeSlots,
+    evidence: &[String],
+) -> Result<Vec<GoalEvidenceRef>, ToolError> {
+    let mut resolved = Vec::with_capacity(evidence.len());
+    for handle in evidence {
+        if let Some(slot) = resolve_local_slot(slots, handle)? {
+            // A forgotten replay slot needs no case here: storage refuses it
+            // and the unit of work answers "entry not found".
+            match slot.class {
+                MemoryHandleClass::Fact | MemoryHandleClass::Abstraction => {
+                    resolved.push(GoalEvidenceRef::new(slot.id));
+                }
+                MemoryHandleClass::Perspective => {
+                    return Err(ToolError::InvalidInput(
+                        "Goal evidence must reference a Fact or Abstraction".into(),
+                    ));
+                }
+            }
+        } else {
+            resolved.extend(
+                super::goal::resolve_goal_evidence_handles(ctx, std::slice::from_ref(handle))
+                    .await?,
+            );
+        }
+    }
+    Ok(resolved)
+}
+
+fn resolve_goal_motivations(
+    ctx: &ToolCtx,
+    slots: &EpisodeSlots,
+    handles: &[String],
+) -> Result<Vec<GoalMotivationRef>, ToolError> {
+    handles
+        .iter()
+        .map(|handle| {
+            if let Some(slot) = resolve_local_slot(slots, handle)? {
+                if slot.class != MemoryHandleClass::Perspective {
+                    return Err(ToolError::InvalidInput(
+                        "motivated_by must name a Perspective".into(),
+                    ));
+                }
+                return Ok(GoalMotivationRef::perspective(slot.id));
+            }
+            ctx.resolve_memory(handle)
+                .map(GoalMotivationRef::perspective)
+        })
+        .collect()
+}
+
+fn resolve_local_slot<'a>(
+    slots: &'a EpisodeSlots,
+    handle: &str,
+) -> Result<Option<&'a Slot>, ToolError> {
+    match EpisodeKey::parse(handle) {
+        Ok(EpisodeKey::Remember(idx)) => {
+            slots.remember.get(idx).map(Some).ok_or_else(|| {
+                ToolError::InvalidInput(format!("local key {handle} is out of range"))
+            })
+        }
+        Ok(EpisodeKey::Derive) => slots
+            .derive
+            .as_ref()
+            .map(Some)
+            .ok_or_else(|| ToolError::InvalidInput("local key derive is out of range".into())),
+        Ok(EpisodeKey::Stance(idx)) => {
+            slots.stance.get(idx).map(Some).ok_or_else(|| {
+                ToolError::InvalidInput(format!("local key {handle} is out of range"))
+            })
+        }
+        Ok(EpisodeKey::Goal(_)) => Err(ToolError::InvalidInput(
+            "goal:<index> is not a memory handle".into(),
+        )),
+        Err(EpisodeKeyParseError::NotIndex) => {
+            if handle.starts_with("goal:") {
+                Err(ToolError::InvalidInput(
+                    "goal:<index> is not a memory handle".into(),
+                ))
+            } else if handle.starts_with("remember:") {
+                Err(ToolError::InvalidInput(format!(
+                    "local key {handle} is not remember:<index>"
+                )))
+            } else {
+                Err(ToolError::InvalidInput(format!(
+                    "local key {handle} is not stance:<index>"
+                )))
+            }
+        }
+        Err(EpisodeKeyParseError::Unknown) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_bound_derived_error, map_bound_fact_error};
+    use crate::ReplayDrift;
+    use crate::ToolError;
+    use crate::error::ProtocolError;
+
+    /// Every drift a replay can show is, for a bound write, the refusal to
+    /// replay; unbound, the idempotency conflict passes through.
+    #[test]
+    fn a_bound_write_refuses_any_changed_replay_by_its_code() {
+        for drift in [
+            ReplayDrift::FactRefs,
+            ReplayDrift::DerivedRefs,
+            ReplayDrift::DerivedIndexRows,
+            ReplayDrift::DerivedExternalEdges,
+        ] {
+            let err = ProtocolError::replay_changed(drift);
+            assert!(matches!(
+                map_bound_fact_error(err.clone(), "remember", true),
+                ToolError::InvalidInput(_)
+            ));
+            assert!(matches!(
+                map_bound_derived_error(err.clone(), "derive", true),
+                ToolError::InvalidInput(_)
+            ));
+            assert!(matches!(
+                map_bound_fact_error(err, "remember", false),
+                ToolError::Protocol(_)
+            ));
+        }
+    }
+}
