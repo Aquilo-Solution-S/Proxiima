@@ -55,7 +55,7 @@ impl DelegationStorePort for PgDelegationStore {
                  tool_name, action_name, read_ceiling, write_ceiling,
                  goal_access, administers,
                  expires_at, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(grant.delegation_id().into_uuid())
         .bind(grant.subject().into_inner())
