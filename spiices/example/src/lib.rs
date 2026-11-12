@@ -7,19 +7,22 @@
 //! ([`payload::StampV1`]), a sealed stamp Fact that never transfers
 //! ([`payload::SealedStampV1`]), a notebook scope registry, an ownerless settings
 //! table, one read-only tool and one migration lane with its own ledger.
+//!
+//! The library depends on `proxiima-spiice` alone. The `host` feature links
+//! `proxiima` to serve the example as an app; `testkit` builds on it.
 
 pub mod contract;
 mod heads;
 pub mod payload;
 pub mod tool;
 
-#[cfg(any(test, feature = "testkit"))]
+#[cfg(feature = "testkit")]
 pub mod testkit;
 
 pub use contract::{EXAMPLE_BASELINE_CONTRACT, EXAMPLE_CONTRACT, PG_SCHEMA, SPIICE_ID};
 pub use heads::note_heads;
 pub use payload::{DigestV1, NoteV1, SealedStampV1, StampV1};
-pub use tool::{ExampleStore, ListNotebooksTool};
+pub use tool::ListNotebooksTool;
 
 /// The spiice's embedded migrations.
 #[must_use]
@@ -60,9 +63,9 @@ pub fn installer_calls() -> Vec<&'static str> {
 /// The baseline with its owner-RLS section replaced by `calls`, in place,
 /// for the tutorial's variants.
 #[must_use]
-pub fn baseline_sql_with_owner_rls(calls: &[&'static str]) -> proxiima::spiice::SqlText {
+pub fn baseline_sql_with_owner_rls(calls: &[&'static str]) -> proxiima_spiice::SqlText {
     let (before, _, after) = owner_rls_split();
-    let mut sql = proxiima::spiice::SqlText::new(before);
+    let mut sql = proxiima_spiice::SqlText::new(before);
     for call in calls {
         sql.push(call).push(";\n");
     }
@@ -72,20 +75,11 @@ pub fn baseline_sql_with_owner_rls(calls: &[&'static str]) -> proxiima::spiice::
 
 /// The baseline with no owner-RLS section at all.
 #[must_use]
-pub fn baseline_sql_without_installer() -> proxiima::spiice::SqlText {
+pub fn baseline_sql_without_installer() -> proxiima_spiice::SqlText {
     baseline_sql_with_owner_rls(&[])
 }
 
-#[allow(clippy::unnecessary_wraps, reason = "SpiiceApp::services signature")]
-fn services(
-    ctx: &proxiima::AppContext,
-) -> Result<proxiima::spiice::SpiiceServices, proxiima::spiice::SpiiceServiceError> {
-    Ok(proxiima::spiice::SpiiceServices::with(
-        ExampleStore::from_host_pool(ctx.host().clone_pool_for_host()),
-    ))
-}
-
-proxiima::spiice_bundle! {
+proxiima_spiice::spiice_bundle! {
     bundle = ExampleSpiice,
     name = "proxiima-example",
     display_name = "Example",
@@ -94,5 +88,11 @@ proxiima::spiice_bundle! {
     mcp_tools = [tool::ListNotebooksTool],
     contract = &contract::EXAMPLE_CONTRACT,
     migrations = migrator(),
-    app = { title = "Proxiima example spiice (test fixture)", services = services },
+}
+
+#[cfg(feature = "host")]
+proxiima::spiice_app! {
+    bundle = ExampleSpiice,
+    id = "proxiima-example",
+    title = "Proxiima example spiice (test fixture)",
 }

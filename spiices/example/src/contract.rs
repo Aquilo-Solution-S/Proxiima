@@ -1,11 +1,11 @@
 //! The example spiice's contract. A test and tutorial fixture, not a product.
 
-use proxiima::spiice::{
+use proxiima_spiice::{
     CounterRule, DbConstraint, EmbeddingRecipe, Enforcement, EraseRule, ExportRule, ForgetRule,
     KeyShape, NaturalKeyDeclaration, ProjectionDecl, Provenance, SchemaContract, SchemaRef,
     SearchProjectionDecl, SpiiceContract, Surface, ToolContract, TransferRule,
 };
-use proxiima::spiice::{PayloadKind, ScopeDecl};
+use proxiima_spiice::{PayloadKind, ScopeDecl};
 
 use crate::payload::NOTEBOOK_SCOPE;
 

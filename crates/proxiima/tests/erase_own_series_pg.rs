@@ -954,7 +954,9 @@ async fn the_host_erases_under_system_authority_with_the_same_scope_rules() {
         pool, engine, db, ..
     } = harness;
     let result: Result<(), Box<dyn std::error::Error>> = async {
-        let (engine, system) = engine.into_system_authority();
+        let (engine, system) = std::sync::Arc::into_inner(engine)
+            .expect("the harness holds the one engine handle")
+            .into_system_authority();
         let fact = ingest(&engine, &authz, owner, &note(notebook_id, "h1"), None).await;
         let core_note = engine
             .ingest_fact(

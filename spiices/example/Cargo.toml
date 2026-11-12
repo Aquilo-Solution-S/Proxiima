@@ -13,10 +13,14 @@ name = "proxiima_example"
 
 [features]
 default = []
-testkit = []
+# Serve the example as a `proxiima` app (`SpiiceApp`, through
+# `proxiima::spiice_app!`): the host tier, for the hosts and tools that boot it.
+host = ["dep:proxiima"]
+testkit = ["host"]
 
 [dependencies]
-proxiima = { path = "../../crates/proxiima" }
+proxiima-spiice = { path = "../../crates/proxiima-spiice" }
+proxiima = { path = "../../crates/proxiima", optional = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

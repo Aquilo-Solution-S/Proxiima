@@ -10,8 +10,8 @@ use proxiima_storage_pg::PgPoolConfig;
 use uuid::Uuid;
 
 use super::*;
-use crate::bundle::SpiiceBundle;
 use crate::{AppInfo, RuntimeBuilder, company_owner};
+use proxiima_spiice::SpiiceBundle;
 
 mod alpha {
     proxiima_core::proxiima_spiice! {
@@ -133,6 +133,7 @@ async fn extension_assembly_publishes_owner_blob_reconcile_separately() {
 
     let services = assemble_services::<AlphaApp>(
         &app_ctx,
+        proxiima_storage_pg::OwnerTransactions::for_tests(),
         &registry,
         &ServedSurface::All,
         None,
@@ -181,6 +182,7 @@ async fn delegation_service_is_authenticator_gated_and_shared_by_identity() {
     let authenticator: Arc<dyn Authenticator> = Arc::new(StubAuth { owner: owner() });
     let services = assemble_services::<AlphaApp>(
         &app_ctx,
+        proxiima_storage_pg::OwnerTransactions::for_tests(),
         &registry,
         &ServedSurface::All,
         Some(&authenticator),
@@ -198,8 +200,7 @@ async fn delegation_service_is_authenticator_gated_and_shared_by_identity() {
     assert!(Arc::ptr_eq(&service, &cloned_service));
 
     let worker =
-        crate::workers::SpiiceWorkerContext::new_for_tests(engine, CancellationToken::new())
-            .with_services(cloned);
+        proxiima_spiice::SpiiceWorkerContext::new(engine, CancellationToken::new(), cloned);
     let worker_service = worker
         .service::<DelegatedAuthorityService>()
         .expect("worker sees composed delegation service");

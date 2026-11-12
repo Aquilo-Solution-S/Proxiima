@@ -2156,6 +2156,7 @@ dependencies = [
  "proxiima-llm-openai-compat",
  "proxiima-pg-testkit",
  "proxiima-server",
+ "proxiima-spiice",
  "proxiima-storage-pg",
  "rcgen",
  "reqwest",
@@ -2274,6 +2275,7 @@ version = "0.0.72"
 dependencies = [
  "proxiima",
  "proxiima-example",
+ "proxiima-spiice",
  "schemars",
  "serde",
  "serde_json",
@@ -2368,6 +2370,18 @@ dependencies = [
  "tower",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "proxiima-spiice"
+version = "0.0.72"
+dependencies = [
+ "proxiima-core",
+ "proxiima-storage-pg",
+ "sqlx",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

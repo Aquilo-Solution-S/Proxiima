@@ -20,6 +20,8 @@ proxiima-core = { path = "../core" }
 # host that only uses the Host API can drop the JWT and HTTP stack.
 proxiima-auth-oidc = { path = "../auth-oidc", optional = true }
 proxiima-storage-pg = { path = "../storage-pg", features = ["backend-api"] }
+# The Spiice SDK, re-exported as `proxiima::spiice`.
+proxiima-spiice = { path = "../proxiima-spiice" }
 proxiima-blob-s3 = { path = "../blob-s3" }
 proxiima-llm-openai-compat = { path = "../llm-openai-compat", optional = true }
 proxiima-server = { path = "../proxiima-server" }

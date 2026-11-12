@@ -46,6 +46,7 @@ pub use owner_mode::SidecarOwnerMode;
 pub use permit::SidecarInsertPermit;
 pub use read_ctx::PgSidecarReadCtx;
 pub(crate) use read_ctx::read_own_sidecar;
+pub(crate) use read_ctx::refuse_core_schema_sql;
 #[cfg(test)]
 pub(crate) use read_ctx::validate_sidecar_read_sql;
 pub use registry::PgSidecarRegistry;

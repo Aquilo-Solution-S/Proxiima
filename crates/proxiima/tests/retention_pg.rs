@@ -126,6 +126,7 @@ async fn failed_first_retention_rolls_back_owner_admission()
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
     let h = ExampleEngine::new("proxiima_retention", |_| {}).await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -204,7 +205,9 @@ async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
             "a set replaces the row, and a set with no days removes it"
         );
 
-        let (engine, system) = h.engine.into_system_authority();
+        let (engine, system) = std::sync::Arc::into_inner(h.engine)
+            .expect("the fixture holds the one engine handle")
+            .into_system_authority();
         assert_eq!(
             engine.all_retention(&system).await?,
             sorted(vec![

@@ -1,11 +1,15 @@
-//! #474 A2: the example spiice names only `proxiima` among workspace crates.
+//! The example spiice's library depends on `proxiima-spiice` alone among
+//! workspace crates.
 //!
 //! The manifest is parsed, not grepped: every dependency table (plain, dev,
 //! build, their legacy spellings, and each of those under any `target.<cfg>`)
 //! is walked, `workspace = true` entries are resolved through the root
 //! `[workspace.dependencies]`, and the effective package (`package = …` if
-//! renamed, the key otherwise) and any `path` decide. Any workspace crate other
-//! than `proxiima` (or the example itself, as its own dev-dependency) fails.
+//! renamed, the key otherwise) and any `path` decide. A library or build
+//! dependency on a workspace crate other than `proxiima-spiice` fails, except
+//! `proxiima` as an optional dependency: the `host` feature links the host
+//! tier. Dev-dependencies may also name `proxiima` (the tests boot a host) and
+//! the example itself.
 
 const MANIFEST: &str = include_str!("../Cargo.toml");
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
@@ -19,8 +23,15 @@ const DEPENDENCY_TABLES: [&str; 5] = [
     "build_dependencies",
 ];
 
-/// The paths an allowed entry may name: `proxiima`, or the example itself.
-const ALLOWED_PATHS: [&str; 3] = ["../../crates/proxiima", ".", "crates/proxiima"];
+/// The SDK, which every table may name.
+const SDK: &str = "proxiima-spiice";
+const SDK_PATHS: [&str; 2] = ["../../crates/proxiima-spiice", "crates/proxiima-spiice"];
+
+/// The host tier and the example itself: a dev-dependency, or `proxiima` as
+/// an optional library dependency.
+const HOST: &str = "proxiima";
+const HOST_PATHS: [&str; 2] = ["../../crates/proxiima", "crates/proxiima"];
+const SELF: &str = "proxiima-example";
 
 fn collect_dependency_tables<'a>(
     prefix: &str,
@@ -73,10 +84,19 @@ fn workspace_crate_offenders(manifest: &str, workspace: &str) -> Vec<String> {
                 .unwrap_or(key)
                 .replace('_', "-");
             let path = entry.get("path").and_then(toml::Value::as_str);
-            let package_offends = package.starts_with("proxiima")
-                && package != "proxiima"
-                && package != "proxiima-example";
-            let path_offends = path.is_some_and(|path| !ALLOWED_PATHS.contains(&path));
+            let optional = value.get("optional").and_then(toml::Value::as_bool) == Some(true);
+            let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
+            let allowed: &[&str] = if package == SDK {
+                &SDK_PATHS
+            } else if package == HOST && (dev || optional) {
+                &HOST_PATHS
+            } else if package == SELF && dev {
+                &["."]
+            } else {
+                &[]
+            };
+            let package_offends = package.starts_with("proxiima") && allowed.is_empty();
+            let path_offends = path.is_some_and(|path| !allowed.contains(&path));
             if package_offends || path_offends {
                 let origin = if from_workspace { " (workspace)" } else { "" };
                 offenders.push(format!(
@@ -94,16 +114,25 @@ fn assert_refused(manifest: &str, workspace: &str) {
     let offenders = workspace_crate_offenders(manifest, workspace);
     assert!(
         !offenders.is_empty(),
-        "the guardrail admitted a workspace crate other than proxiima:\n{manifest}"
+        "the guardrail admitted a workspace crate other than proxiima-spiice:\n{manifest}"
     );
 }
 
 #[test]
-fn the_example_depends_on_no_workspace_crate_but_proxiima() {
+fn the_example_library_depends_on_no_workspace_crate_but_proxiima_spiice() {
     let offenders = workspace_crate_offenders(MANIFEST, WORKSPACE_MANIFEST);
     assert!(
         offenders.is_empty(),
-        "spiices/example/Cargo.toml names workspace crates other than proxiima: {offenders:?}"
+        "spiices/example/Cargo.toml names workspace crates other than proxiima-spiice: {offenders:?}"
+    );
+}
+
+/// The host tier is not a library dependency unless a feature asks for it.
+#[test]
+fn a_required_host_dependency_is_refused() {
+    assert_refused(
+        "[dependencies]\nproxiima = { path = \"../../crates/proxiima\" }\n",
+        EMPTY_WORKSPACE,
     );
 }
 
@@ -175,10 +204,12 @@ fn inline_dev_build_and_target_dependencies_are_refused() {
 #[test]
 fn allowed_forms_pass() {
     let manifest = "[dependencies]\n\
-                    proxiima = { path = \"../../crates/proxiima\" }\n\
+                    proxiima-spiice = { path = \"../../crates/proxiima-spiice\" }\n\
+                    proxiima = { path = \"../../crates/proxiima\", optional = true }\n\
                     serde = { workspace = true }\n\
                     sqlx = \"0.9\"\n\
                     [dev-dependencies]\n\
+                    proxiima = { path = \"../../crates/proxiima\" }\n\
                     proxiima-example = { path = \".\" }\n";
     let workspace = "[workspace]\n[workspace.dependencies]\n\
                      serde = { version = \"1\", features = [\"derive\"] }\n";

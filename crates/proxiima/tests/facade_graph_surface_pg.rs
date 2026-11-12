@@ -1899,14 +1899,20 @@ async fn readable_query_and_typed_candidates_use_only_authenticated_owners() {
             ids[0].into_inner(),
             ids[1].into_inner(),
         ];
-        let typed = authorized_fact_payloads::<FacadeFact>(engine, &authz, &candidates, 10).await?;
+        let ctx = proxiima_core::test_fixtures::tool_ctx_on(
+            owners[0],
+            authz.clone(),
+            engine.clone(),
+            proxiima_core::SpiiceServices::default(),
+            proxiima_core::ToolCaller::new("test", "test", "0"),
+        );
+        let typed = authorized_fact_payloads::<FacadeFact>(&ctx, &candidates, 10).await?;
         assert_eq!(
             typed.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             [ids[1], ids[0]]
         );
         let visible = authorized_memory_ids(
-            engine,
-            &authz,
+            &ctx,
             &candidates,
             EntityKind::Fact,
             Some(FacadeFact::schema_id()),
@@ -1916,16 +1922,16 @@ async fn readable_query_and_typed_candidates_use_only_authenticated_owners() {
         assert_eq!(visible, [ids[1], ids[0]]);
         for candidates in [&[][..], &candidates[..]] {
             assert!(matches!(
-                authorized_fact_payloads::<FacadeFact>(engine, &authz, candidates, 0).await,
+                authorized_fact_payloads::<FacadeFact>(&ctx, candidates, 0).await,
                 Err(ToolError::InvalidInput(_))
             ));
             assert!(matches!(
-                authorized_memory_ids(engine, &authz, candidates, EntityKind::Fact, None, 0).await,
+                authorized_memory_ids(&ctx, candidates, EntityKind::Fact, None, 0).await,
                 Err(ToolError::InvalidInput(_))
             ));
         }
         assert!(
-            authorized_fact_payloads::<FacadeFact>(engine, &authz, &[], 1)
+            authorized_fact_payloads::<FacadeFact>(&ctx, &[], 1)
                 .await?
                 .is_empty()
         );

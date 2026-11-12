@@ -3,9 +3,10 @@
 use proxiima_core::verbs::query::{
     SidecarAtom, SidecarHeadsPage, SidecarHeadsRequest, SidecarHeadsScope,
 };
-use proxiima_core::{AuthzContext, Engine, FactPayload, MemoryId, ToolError};
+use proxiima_core::{FactPayload, MemoryId, ToolCtx, ToolError};
 
-/// List the current heads of `P`'s natural-key series, newest admission first.
+/// List the current heads of `P`'s natural-key series that the caller of
+/// `ctx` reads, newest admission first.
 ///
 /// `key_prefix` supplies whole values for the first N natural-key columns in
 /// frozen-contract order: an empty slice lists all series, one value narrows
@@ -23,16 +24,16 @@ use proxiima_core::{AuthzContext, Engine, FactPayload, MemoryId, ToolError};
 /// sidecar, and propagates storage errors. Limits above
 /// [`super::MAX_SIDECAR_HEAD_PAGE_LIMIT`] are clamped to that cap.
 pub async fn sidecar_heads_by_key<P: FactPayload>(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     scope: SidecarHeadsScope,
     key_prefix: &[SidecarAtom],
     after: Option<MemoryId>,
     limit: u32,
 ) -> Result<SidecarHeadsPage, ToolError> {
-    Ok(engine
+    Ok(ctx
+        .engine()
         .sidecar_heads_by_key(
-            authz,
+            ctx.authz(),
             &SidecarHeadsRequest {
                 schema_id: P::schema_id(),
                 scope,

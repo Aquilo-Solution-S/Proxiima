@@ -225,9 +225,19 @@ pub async fn assert_tombstone_head() -> TestResult {
         .with_sidecars(sidecars)
         .await?
         .with_spiices(&registry);
-    let engine = proxiima::Engine::new(registry, Arc::new(storage).storage_ports());
+    let engine = Arc::new(proxiima::Engine::new(
+        registry,
+        Arc::new(storage).storage_ports(),
+    ));
     let owner = owner();
     let authz = authz(&[owner]);
+    let ctx = proxiima_core::test_fixtures::tool_ctx_on(
+        owner,
+        authz.clone(),
+        engine.clone(),
+        proxiima_core::SpiiceServices::default(),
+        proxiima_core::ToolCaller::new("test", "test", "0"),
+    );
     let mut admitted = Vec::<MemoryId>::new();
     for payload in [
         observation("retired", "live"),
@@ -242,8 +252,7 @@ pub async fn assert_tombstone_head() -> TestResult {
         );
     }
     let page = sidecar_heads_by_key::<HeadObservation>(
-        &engine,
-        &authz,
+        &ctx,
         SidecarHeadsScope::Owner(owner),
         &[],
         None,
@@ -256,13 +265,8 @@ pub async fn assert_tombstone_head() -> TestResult {
         std::collections::BTreeSet::from([admitted[1], admitted[2]])
     );
     assert!(!ids.contains(&admitted[0]));
-    let payloads = authorized_fact_payloads::<HeadObservation>(
-        &engine,
-        &authz,
-        &[admitted[1].into_inner()],
-        1,
-    )
-    .await?;
+    let payloads =
+        authorized_fact_payloads::<HeadObservation>(&ctx, &[admitted[1].into_inner()], 1).await?;
     assert_eq!(payloads.len(), 1);
     assert_eq!(
         payloads[0].1.state, "deleted",

@@ -18,7 +18,7 @@ workspace = true
 proxiima = { path = "../../crates/proxiima" }
 proxiima-core = { path = "../../crates/core" }
 proxiima-storage-pg = { path = "../../crates/storage-pg", features = ["backend-api"] }
-proxiima-example = { path = "../../spiices/example" }
+proxiima-example = { path = "../../spiices/example", features = ["host"] }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

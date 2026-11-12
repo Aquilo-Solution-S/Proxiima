@@ -6,7 +6,8 @@ use proxiima_core::AuthzContext;
 use proxiima_core::{Setting, SpiiceServiceError, SpiiceServices};
 use proxiima_server::AuthContext;
 
-use crate::bundle::SpiiceBundle;
+use proxiima_spiice::SpiiceBundle;
+
 use crate::{ProxiimaHost, RuntimeBuilder};
 
 /// Static identity for one composed Proxiima application binary.
@@ -81,6 +82,72 @@ pub trait SpiiceApp: SpiiceBundle {
     fn services(_ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {
         Ok(SpiiceServices::default())
     }
+}
+
+/// Serve a bundle as an app: implements [`SpiiceApp`] for a type that
+/// `proxiima_spiice::spiice_bundle!` (or a hand-written impl) made a
+/// [`SpiiceBundle`]. Host tier, so a spiice crate invokes it behind the
+/// feature that links `proxiima`.
+///
+/// | Key | Emits |
+/// |---|---|
+/// | `bundle = Type` (first) | the type the impl is for |
+/// | `id = "…"` | [`AppInfo::id`] |
+/// | `title = "…"` | [`AppInfo::title`] |
+/// | `version = expr` | [`AppInfo::version`]; absent: the invoking crate's `CARGO_PKG_VERSION` |
+/// | `configure = path` | [`SpiiceApp::configure`] = `path(builder)`; absent: the default |
+/// | `services = path` | [`SpiiceApp::services`] = `path(ctx)`; absent: the default |
+///
+/// An app that mounts HTTP or declares settings keeps a hand-written impl.
+///
+/// ```ignore
+/// proxiima::spiice_app! {
+///     bundle = OcrSpiice,
+///     id = "acme-ocr",
+///     title = "Acme OCR",
+/// }
+/// ```
+#[macro_export]
+macro_rules! spiice_app {
+    (
+        bundle = $bundle:ty,
+        id = $id:literal,
+        title = $title:literal
+        $(, version = $version:expr)?
+        $(, configure = $configure:path)?
+        $(, services = $services:path)?
+        $(,)?
+    ) => {
+        impl $crate::SpiiceApp for $bundle {
+            fn app_info() -> $crate::AppInfo {
+                #[allow(unused_assignments, unused_mut)]
+                let mut version: &'static str = ::std::env!("CARGO_PKG_VERSION");
+                $(version = $version;)?
+                $crate::AppInfo {
+                    id: $id,
+                    title: $title,
+                    version,
+                }
+            }
+
+            $(
+                fn configure(builder: $crate::RuntimeBuilder) -> $crate::RuntimeBuilder {
+                    $configure(builder)
+                }
+            )?
+
+            $(
+                fn services(
+                    ctx: &$crate::AppContext,
+                ) -> ::std::result::Result<
+                    $crate::spiice::SpiiceServices,
+                    $crate::spiice::SpiiceServiceError,
+                > {
+                    $services(ctx)
+                }
+            )?
+        }
+    };
 }
 
 /// What [`SpiiceApp::services`], [`SpiiceApp::mount_http`] and
@@ -185,8 +252,7 @@ mod tests {
     use proxiima_core::{SpiiceRegistry, SpiiceRegistryError};
 
     use super::{AppContext, AppInfo, SpiiceApp};
-    use crate::NamedMigrator;
-    use crate::bundle::SpiiceBundle;
+    use proxiima_spiice::{NamedMigrator, SpiiceBundle};
 
     #[derive(Debug)]
     struct AlphaService;

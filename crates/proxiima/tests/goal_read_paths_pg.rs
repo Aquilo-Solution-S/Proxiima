@@ -455,8 +455,7 @@ async fn goal_route_counts_latest_visible_series_once() {
         .await;
     assert!(hidden_read.is_err(), "unpublished Stamp must remain hidden");
     let note_heads = sidecar_heads_by_key::<NoteV1>(
-        &host.engine,
-        &guest_auth,
+        &host.tool_ctx(&guest_auth),
         SidecarHeadsScope::Readable,
         &[],
         None,

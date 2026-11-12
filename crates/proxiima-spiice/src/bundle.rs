@@ -7,7 +7,7 @@ use proxiima_core::{SpiiceRegistry, SpiiceRegistryError};
 use proxiima_storage_pg::PgSidecarRegistry;
 
 use crate::NamedMigrator;
-use crate::workers::{SpiiceWorker, SpiiceWorkerContext};
+use crate::worker::{SpiiceWorker, SpiiceWorkerContext};
 
 pub trait SpiiceBundle {
     /// # Errors
@@ -21,13 +21,13 @@ pub trait SpiiceBundle {
 
     /// Spawn this spiice's background workers. Default: none.
     ///
-    /// The serving runtime ([`Proxiima::run`](crate::Proxiima::run)) calls
-    /// this once after boot and stores the returned workers; they run for
-    /// the lifetime of the serving app and are joined by
-    /// [`RunningProxiima::shutdown`](crate::RunningProxiima::shutdown).
-    /// Tuple bundles chain element workers in tuple order. The serverless
-    /// [`Proxiima::build`](crate::Proxiima::build) variant never calls this;
-    /// hosts driving a `BuiltProxiima` own their own background tasks.
+    /// The serving runtime (`proxiima::Proxiima::run`) calls this once
+    /// after boot and stores the returned workers; they run for the lifetime
+    /// of the serving app and are joined by
+    /// `proxiima::RunningProxiima::shutdown`. Tuple bundles chain element
+    /// workers in tuple order. The serverless `proxiima::Proxiima::build`
+    /// variant never calls this; hosts driving a `BuiltProxiima` own their
+    /// own background tasks.
     ///
     /// Contract:
     ///
@@ -50,12 +50,10 @@ pub trait SpiiceBundle {
     ///   It never reconstructs or serializes `AuthzContext`.
     ///
     /// To unit-test an implementation without booting the serving
-    /// runtime, build the context with
-    /// `SpiiceWorkerContext::new_for_tests` (available under `cfg(test)` or
-    /// the `testkit` feature).
+    /// runtime, build the context with [`SpiiceWorkerContext::new`].
     ///
     /// ```rust,no_run
-    /// use proxiima::spiice::{
+    /// use proxiima_spiice::{
     ///     SpiiceBundle, SpiiceRegistry, SpiiceRegistryError, SpiiceWorker, SpiiceWorkerContext,
     ///     NamedMigrator,
     /// };
@@ -144,12 +142,13 @@ impl_spiice_bundle_tuple!(A, B, C, D, E, F);
 impl_spiice_bundle_tuple!(A, B, C, D, E, F, G);
 impl_spiice_bundle_tuple!(A, B, C, D, E, F, G, H);
 
-/// One declaration for a whole spiice: [`proxiima_spiice!`](crate::spiice::proxiima_spiice)'s registration,
+/// One declaration for a whole spiice: [`proxiima_spiice!`](crate::proxiima_spiice)'s registration,
 /// the PG sidecar registration derived from the same schema lists, the
 /// spiice's own migration ledger ([`NamedMigrator::spiice`]), and the
-/// [`SpiiceBundle`] (plus, with `app`, [`SpiiceApp`](crate::SpiiceApp)) impls.
+/// [`SpiiceBundle`] impl. A host serves the bundle as an app through
+/// `proxiima::spiice_app!`, a host-tier macro.
 ///
-/// Keys are [`proxiima_spiice!`](crate::spiice::proxiima_spiice)'s, in its order, framed by the bundle's own:
+/// Keys are [`proxiima_spiice!`](crate::proxiima_spiice)'s, in its order, framed by the bundle's own:
 ///
 /// | Key | Emits |
 /// |---|---|
@@ -158,21 +157,19 @@ impl_spiice_bundle_tuple!(A, B, C, D, E, F, G, H);
 /// | (derived) | `pub fn register_pg_sidecars`: `add_fact` / `add_abstraction` / `add_perspective` / `add_goal` for every fact, abstraction, perspective and goal schema listed |
 /// | `migrations = expr` | `migrators()` = `[NamedMigrator::spiice(name, expr)]`, ledger `public._sqlx_migrations_<name>`; absent: none |
 /// | `workers = path` | `spawn_workers` = `path(ctx)` |
-/// | `app = { title, id?, version?, configure?, services? }` | [`SpiiceApp`](crate::SpiiceApp); `id` defaults to `name`, `version` to the spiice crate's `CARGO_PKG_VERSION`, the fns to the trait defaults |
 ///
 /// Every listed fact, abstraction, perspective and goal schema must implement
 /// its PG sidecar trait (`pg_sidecar!` emits them); citation schemas are
 /// opaque and have none. A spiice whose sidecars differ from its
-/// schema lists, or whose app mounts HTTP, keeps hand-written impls.
+/// schema lists keeps hand-written impls.
 ///
 /// ```ignore
-/// proxiima::spiice_bundle! {
+/// proxiima_spiice::spiice_bundle! {
 ///     bundle = OcrSpiice,
 ///     name = "acme-ocr",
 ///     fact_schemas = [payloads::PageScannedV1],
 ///     contract = &contract::OCR_SPIICE_CONTRACT,
 ///     migrations = sqlx::migrate!("./migrations"),
-///     app = { title = "Acme OCR" },
 /// }
 /// ```
 #[macro_export]
@@ -193,17 +190,9 @@ macro_rules! spiice_bundle {
         $(, evolutions = [ $($evolution:expr),* $(,)? ])?
         $(, migrations = $migrator:expr)?
         $(, workers = $workers:path)?
-        $(, app = {
-            title = $title:literal
-            $(, id = $app_id:literal)?
-            $(, version = $version:expr)?
-            $(, configure = $configure:path)?
-            $(, services = $services:path)?
-            $(,)?
-        })?
         $(,)?
     ) => {
-        $crate::spiice::proxiima_spiice! {
+        $crate::proxiima_spiice! {
             name = $name
             $(, display_name = $display_name)?
             $(, fact_schemas = [ $($fact),* ])?
@@ -219,7 +208,7 @@ macro_rules! spiice_bundle {
 
         /// Generated by `spiice_bundle!`: every fact, abstraction, perspective and goal schema's PG sidecar.
         #[allow(unused_variables)]
-        pub fn register_pg_sidecars(registry: &mut $crate::spiice::PgSidecarRegistry) {
+        pub fn register_pg_sidecars(registry: &mut $crate::PgSidecarRegistry) {
             $($( registry.add_fact::<$fact>(); )*)?
             $($( registry.add_abstraction::<$abs>(); )*)?
             $($( registry.add_perspective::<$persp>(); )*)?
@@ -231,74 +220,39 @@ macro_rules! spiice_bundle {
         #[derive(Debug, Clone, Copy, Default)]
         pub struct $bundle;
 
-        impl $crate::spiice::SpiiceBundle for $bundle {
+        impl $crate::SpiiceBundle for $bundle {
             fn register(
-                registry: &mut $crate::spiice::SpiiceRegistry,
-            ) -> ::std::result::Result<(), $crate::spiice::SpiiceRegistryError> {
+                registry: &mut $crate::SpiiceRegistry,
+            ) -> ::std::result::Result<(), $crate::SpiiceRegistryError> {
                 self::register(registry)
             }
 
-            fn register_pg_sidecars(registry: &mut $crate::spiice::PgSidecarRegistry) {
+            fn register_pg_sidecars(registry: &mut $crate::PgSidecarRegistry) {
                 self::register_pg_sidecars(registry);
             }
 
 
-            fn migrators() -> ::std::vec::Vec<$crate::spiice::NamedMigrator> {
+            fn migrators() -> ::std::vec::Vec<$crate::NamedMigrator> {
                 #[allow(unused_mut)]
                 let mut migrators = ::std::vec::Vec::new();
                 $(
                     const _: () = ::std::assert!(
-                        $crate::spiice::is_spiice_ledger_id($name),
+                        $crate::is_spiice_ledger_id($name),
                         "spiice_bundle! name must be 1-40 bytes of [a-z0-9_-] starting with a letter: it names the spiice's ledger",
                     );
-                    migrators.push($crate::spiice::NamedMigrator::spiice($name, $migrator));
+                    migrators.push($crate::NamedMigrator::spiice($name, $migrator));
                 )?
                 migrators
             }
 
             $(
                 fn spawn_workers(
-                    ctx: &$crate::spiice::SpiiceWorkerContext,
-                ) -> ::std::vec::Vec<$crate::spiice::SpiiceWorker> {
+                    ctx: &$crate::SpiiceWorkerContext,
+                ) -> ::std::vec::Vec<$crate::SpiiceWorker> {
                     $workers(ctx)
                 }
             )?
         }
-
-        $(
-            impl $crate::SpiiceApp for $bundle {
-                fn app_info() -> $crate::AppInfo {
-                    #[allow(unused_assignments, unused_mut)]
-                    let mut id: &'static str = $name;
-                    $(id = $app_id;)?
-                    #[allow(unused_assignments, unused_mut)]
-                    let mut version: &'static str = ::std::env!("CARGO_PKG_VERSION");
-                    $(version = $version;)?
-                    $crate::AppInfo {
-                        id,
-                        title: $title,
-                        version,
-                    }
-                }
-
-                $(
-                    fn configure(builder: $crate::RuntimeBuilder) -> $crate::RuntimeBuilder {
-                        $configure(builder)
-                    }
-                )?
-
-                $(
-                    fn services(
-                        ctx: &$crate::AppContext,
-                    ) -> ::std::result::Result<
-                        $crate::spiice::SpiiceServices,
-                        $crate::spiice::SpiiceServiceError,
-                    > {
-                        $services(ctx)
-                    }
-                )?
-            }
-        )?
     };
 }
 
@@ -353,7 +307,7 @@ mod tests {
         empty_contract("proxiima-test-alpha", 7);
 
     mod retired {
-        use crate::spiice::{
+        use crate::{
             CounterRule, EraseRule, ExportRule, ForgetRule, KeyShape, RetiredFactContract,
             SchemaRef, SpiiceContract, Surface, TransferRule,
         };
@@ -391,7 +345,7 @@ mod tests {
         retired::RetiredBundle::register(&mut core).unwrap();
         let core = core.try_freeze().unwrap();
         let mut pg = PgSidecarRegistry::new();
-        crate::spiice::register_core_pg_sidecars(&mut pg);
+        crate::register_core_pg_sidecars(&mut pg);
         retired::RetiredBundle::register_pg_sidecars(&mut pg);
         let pg = pg.freeze_against(&core).unwrap();
         let [metadata] = pg.retired_fact_sidecars() else {

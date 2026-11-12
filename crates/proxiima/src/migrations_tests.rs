@@ -12,11 +12,13 @@ use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 
 use proxiima_core::SqlText;
 
+use proxiima_spiice::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
+
 use super::{
-    LedgerConflict, LedgerRow, MigrationError, MissingMigrationPolicy, NamedMigrator,
+    LedgerConflict, LedgerRow, MigrationError, MigrationSource, MissingMigrationPolicy,
     PendingMigration, VectorStorage, check_recorded_versions, composed_ledgers, core_source,
     ledger_conflict, order_pending_operations, pending_migrations, prepare_sources,
-    schema_evolution_schedule, spiice_ledger_table, unapplied, unrecorded,
+    schema_evolution_schedule, unapplied, unrecorded,
 };
 
 fn select_version(version: i64) -> SqlText {
@@ -426,7 +428,7 @@ fn a_spiice_id_that_would_need_quoting_is_refused() {
     ] {
         let result = std::panic::catch_unwind(|| spiice_ledger_table(id));
         assert!(result.is_err(), "{id:?} must be refused");
-        assert!(!super::is_spiice_ledger_id(id));
+        assert!(!is_spiice_ledger_id(id));
     }
 }
 

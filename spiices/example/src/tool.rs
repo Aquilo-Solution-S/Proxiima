@@ -4,8 +4,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use proxiima::OwnerScope;
-use proxiima::spiice::{Tool, ToolCtx, ToolEffect, ToolError};
+use proxiima_spiice::{Tool, ToolCtx, ToolEffect, ToolError, owner_transaction};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -17,43 +16,17 @@ use crate::contract::LIST_NOTEBOOKS_TOOL;
 const LIST_NOTEBOOKS_SQL: &str = "SELECT notebook_id, name FROM proxiima_example.notebooks \
      WHERE owner_id = $1 ORDER BY name, notebook_id";
 
-/// The tool service: the host pool, wrapped as soon as the host hands it
-/// out. Every statement runs on an owner-scoped transaction.
-#[derive(Debug, Clone)]
-pub struct ExampleStore {
-    pool: sqlx::PgPool,
-}
-
-impl ExampleStore {
-    /// Wrap the pool `ProxiimaHost::clone_pool_for_host` returns.
-    #[must_use]
-    pub const fn from_host_pool(pool: sqlx::PgPool) -> Self {
-        Self { pool }
-    }
-
-    /// The caller's notebooks, `(notebook_id, name)`, ordered by name.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors from the owner-scoped transaction or the read.
-    pub async fn list_notebooks(
-        &self,
-        scope: &OwnerScope,
-        owner: Uuid,
-    ) -> Result<Vec<(Uuid, String)>, ToolError> {
-        let mut tx = proxiima::host::begin_owner_transaction(&self.pool, scope)
-            .await
-            .map_err(|error| ToolError::Other(error.to_string()))?;
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(LIST_NOTEBOOKS_SQL)
-            .bind(owner)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|error| ToolError::Other(error.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|error| ToolError::Other(error.to_string()))?;
-        Ok(rows)
-    }
+/// The caller's notebooks, `(notebook_id, name)`, ordered by name, read on
+/// the caller's owner-scoped transaction.
+async fn list_notebooks(ctx: &ToolCtx) -> Result<Vec<(Uuid, String)>, ToolError> {
+    let mut tx = owner_transaction(ctx).await?;
+    let rows = tx
+        .fetch_all(
+            sqlx::query_as::<_, (Uuid, String)>(LIST_NOTEBOOKS_SQL).bind(ctx.owner().into_inner()),
+        )
+        .await?;
+    tx.commit().await?;
+    Ok(rows)
 }
 
 /// No arguments: the tool lists the calling owner's notebooks.
@@ -96,16 +69,7 @@ impl Tool for ListNotebooksTool {
         _args: ListNotebooksArgs,
     ) -> Pin<Box<dyn Future<Output = Result<ListNotebooksOutput, ToolError>> + Send>> {
         Box::pin(async move {
-            let store = ctx.service::<ExampleStore>().ok_or_else(|| {
-                ToolError::Other("example spiice requires an ExampleStore tool service".into())
-            })?;
-            let scope = ctx
-                .authz()
-                .owner_scope()
-                .cloned()
-                .ok_or_else(|| ToolError::Other("authenticated owner scope required".into()))?;
-            let notebooks = store
-                .list_notebooks(&scope, ctx.owner().into_inner())
+            let notebooks = list_notebooks(&ctx)
                 .await?
                 .into_iter()
                 .map(|(notebook_id, name)| NotebookItem { notebook_id, name })

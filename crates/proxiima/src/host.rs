@@ -12,9 +12,9 @@ pub use crate::features::{BootReport, Feature, FeatureDecision, FeatureState};
 pub use crate::mcp_edge::{McpEdge, layered_router_mcp_only};
 pub use crate::migrations::{
     LedgerConflict, MigrationError, MigrationRunReport, MigrationStorage, MissingMigrationPolicy,
-    NamedMigrator, PendingMigration, VectorStorage, is_spiice_ledger_id, pending_migrations,
-    pending_migrations_with_lock_timeout, pending_migrations_with_policy,
-    preflight_without_migrations, preflight_without_migrations_with_policy, spiice_ledger_table,
+    PendingMigration, VectorStorage, pending_migrations, pending_migrations_with_lock_timeout,
+    pending_migrations_with_policy, preflight_without_migrations,
+    preflight_without_migrations_with_policy,
 };
 /// The migration runner itself, for tests that drive it with their own
 /// lineups. A host migrates through [`Proxiima::migrate`], the one step that
@@ -193,6 +193,9 @@ pub use proxiima_core::{PlaintextHosts, PlaintextHostsError};
 /// depending only on `proxiima` cannot write a typed signature or match
 /// [`ToolOrigin`]. `CoreToolInfo` stays the projected list DTO.
 pub use proxiima_core::{ToolDescriptor, ToolOrigin};
+/// The migration sources [`SpiiceBundle::migrators`] returns and the
+/// migration functions take.
+pub use proxiima_spiice::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
 /// Typed dispatch for the host's one [`PgHostStateParticipant`]:
 /// [`PgCommandDispatcher`] routes each command type to its
 /// [`HostStateHandler`], which only receives an [`AgreedCommand`] (owners
@@ -645,6 +648,10 @@ pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
     memories_citing, memory_embeddings, memory_versions, series_versions,
 };
+/// What [`PgStorage::owner_transactions`] returns and what its transactions
+/// run. The runtime publishes the service to every tool call; a spiice
+/// begins its transaction through [`crate::spiice::owner_transaction`].
+pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction, OwnerTransactions};
 /// Owner-RLS boot: the runtime-role guard, the platform scope
 /// [`ProxiimaHost::platform_scope_for_host`] returns, and the sqlx →
 /// [`StorageError`] classifier for host-state SQL.
@@ -658,7 +665,6 @@ pub use proxiima_storage_pg::{
 /// sidecar registry's integrity report. The Spiice SDK names some of these under
 /// `proxiima::spiice` too.
 pub use {
-    crate::{bundle::SpiiceBundle, workers::SpiiceWorker, workers::SpiiceWorkerContext},
     proxiima_core::{
         AuthorizationHook, AuthzInput, AuthzOperation, AuthzOutcome, AuthzVeto, Band,
         BandComparability, CapabilityTag, CapabilityTagError, CounterRule, DbConstraint, DbTrigger,
@@ -672,6 +678,7 @@ pub use {
         schema::MemorySearchProjectionField, schema::ProtocolPayload, schema::RenderBands,
         schema::SchemaInfo, schema::SchemaTombstone,
     },
+    proxiima_spiice::{SpiiceBundle, SpiiceWorker, SpiiceWorkerContext},
     proxiima_storage_pg::{
         PgSidecarKey, PgSidecarRegistry, PgSidecarRegistryFrozen, integrity::IntegrityFinding,
         integrity::IntegrityReport, integrity::IntegrityViolation, integrity::ProjectedSchema,

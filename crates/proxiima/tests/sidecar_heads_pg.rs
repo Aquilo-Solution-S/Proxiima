@@ -77,8 +77,7 @@ async fn note_heads_return_only_current_revisions_and_whole_key_prefixes() -> Te
     let other_notebook = remember(&fixture, owner, elsewhere, "alpha", "elsewhere").await;
 
     let page = note_heads(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &[],
         None,
@@ -104,8 +103,7 @@ async fn note_heads_return_only_current_revisions_and_whole_key_prefixes() -> Te
     }
 
     let notebook_heads = note_heads(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &[SidecarAtom::Uuid(notebook)],
         None,
@@ -121,8 +119,7 @@ async fn note_heads_return_only_current_revisions_and_whole_key_prefixes() -> Te
         BTreeSet::from([latest, beta])
     );
     let exact = note_heads(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &[
             SidecarAtom::Uuid(notebook),
@@ -142,8 +139,7 @@ async fn note_heads_return_only_current_revisions_and_whole_key_prefixes() -> Te
         ]
     );
     let partial_text = note_heads(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &[SidecarAtom::Uuid(notebook), SidecarAtom::Text("al".into())],
         None,
@@ -181,8 +177,7 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
             AuthPath::HostBearer,
         ));
     let mine_only = note_heads(
-        &fixture.engine,
-        &readable,
+        &fixture.tool_ctx(&readable),
         SidecarHeadsScope::Owner(personal),
         &[],
         None,
@@ -198,8 +193,7 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
         vec![mine]
     );
     let group_only = note_heads(
-        &fixture.engine,
-        &readable,
+        &fixture.tool_ctx(&readable),
         SidecarHeadsScope::Owner(group),
         &[],
         None,
@@ -215,8 +209,7 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
         vec![shared]
     );
     let both = note_heads(
-        &fixture.engine,
-        &readable,
+        &fixture.tool_ctx(&readable),
         SidecarHeadsScope::Readable,
         &[],
         None,
@@ -228,8 +221,7 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
     assert!(!ids.contains(&secret));
     protocol_error(
         note_heads(
-            &fixture.engine,
-            &readable,
+            &fixture.tool_ctx(&readable),
             SidecarHeadsScope::Owner(hidden),
             &[],
             None,
@@ -240,8 +232,7 @@ async fn note_head_owner_and_readable_scopes_enforce_personal_and_group_access()
         ErrorCode::Forbidden,
     );
     let personal_only = note_heads(
-        &fixture.engine,
-        &authz(&[personal]),
+        &fixture.tool_ctx(&authz(&[personal])),
         SidecarHeadsScope::Readable,
         &[SidecarAtom::Uuid(group_book)],
         None,
@@ -279,8 +270,7 @@ async fn pages_skip_forgotten_heads_and_reject_invalid_prefixes() -> TestResult 
     let mut actual = Vec::new();
     for _ in 0..4 {
         let page = note_heads(
-            &fixture.engine,
-            &authz,
+            &fixture.tool_ctx(&authz),
             SidecarHeadsScope::Owner(owner),
             &[],
             after,
@@ -313,8 +303,7 @@ async fn pages_skip_forgotten_heads_and_reject_invalid_prefixes() -> TestResult 
     ] {
         protocol_error(
             note_heads(
-                &fixture.engine,
-                &authz,
+                &fixture.tool_ctx(&authz),
                 SidecarHeadsScope::Owner(owner),
                 &prefix,
                 None,
@@ -327,8 +316,7 @@ async fn pages_skip_forgotten_heads_and_reject_invalid_prefixes() -> TestResult 
     }
     protocol_error(
         sidecar_heads_by_key::<StampV1>(
-            &fixture.engine,
-            &authz,
+            &fixture.tool_ctx(&authz),
             SidecarHeadsScope::Owner(owner),
             &[],
             None,

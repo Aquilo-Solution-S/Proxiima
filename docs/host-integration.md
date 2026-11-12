@@ -148,7 +148,10 @@ with delivery admission and verify the complete body before returning it.
 ## Boot a composed host
 
 Implement `SpiiceApp` for the application bundle. Defaults are applied first;
-environment and explicit builder calls then overlay them.
+environment and explicit builder calls then overlay them. A spiice crate
+serves its `spiice_bundle!` bundle as an app with `proxiima::spiice_app!`
+(host tier; its rustdoc lists the keys), behind a feature that links
+`proxiima`.
 
 ```rust
 use proxiima::{AppInfo, SpiiceApp, RuntimeBuilder};
@@ -632,8 +635,8 @@ A route that cannot carry a token, such as an OAuth redirect back from another
 provider or a signed webhook, goes in `SpiiceApp::mount_public_http`: it skips
 bearer authentication, keeps the body cap, Host guard and CORS, and
 authenticates its own requests. A public route on a method and path already
-served refuses boot. The host accessor provides a pool and the resolved query
-policy:
+served refuses boot. For a store over tables the host migrates, the host
+accessor provides a pool and the resolved query policy:
 
 ```rust
 fn services(ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {
@@ -641,6 +644,10 @@ fn services(ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {
     Ok(SpiiceServices::with(store))
 }
 ```
+
+A spiice takes no pool for its own tables: its tools run their statements on
+`proxiima::spiice::owner_transaction`, under the caller's owner scope, through
+the service the runtime publishes to every tool call.
 
 Every memory handle is a bare UUID. The host assigns each store a unique
 16-bit number among the stores it routes between; configure it with

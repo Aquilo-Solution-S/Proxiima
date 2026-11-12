@@ -17,13 +17,13 @@ use proxiima_storage_pg::{
 };
 use sqlx::PgPool;
 
-use crate::bundle::SpiiceBundle;
 use crate::migrations::run_core_and_spiice_migrations_with_policy;
 use crate::runtime_grants::{self, RuntimeGrants};
 use crate::{
     CitedBlobStore, LedgerConflict, MigrationError, NamedMigrator, ProxiimaError, RuntimeConfig,
     RuntimeParts, StorageConfig, StorageParts, preflight_without_migrations_with_policy,
 };
+use proxiima_spiice::SpiiceBundle;
 
 /// A composed engine, ready for host services and retirement before startup.
 pub(crate) struct Booted {

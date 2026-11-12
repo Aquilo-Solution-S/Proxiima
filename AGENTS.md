@@ -30,7 +30,8 @@ concepts and integration; avoid a second invariant or configuration ledger.
 |---|---|
 | `apps/proxiima-mcp` | Canonical MCP host; core only, links no spiice |
 | `crates/core` | Domain types, engine, typed ports, registry |
-| `crates/proxiima` | Host facade and spiice SDK |
+| `crates/proxiima` | Host facade; re-exports the SDK as `proxiima::spiice` |
+| `crates/proxiima-spiice` | Spiice SDK: what a spiice crate depends on |
 | `crates/storage-pg`, `crates/blob-s3` | PostgreSQL and object backends |
 | `crates/proxiima-server`, `crates/auth-oidc` | Transports and bearer authentication |
 | `crates/llm-openai-compat` | Host-injected embedding adapter |
@@ -86,7 +87,7 @@ enforcer there. This table holds the engineering boundaries.
 | Boundary | Enforcer |
 |---|---|
 | Optional kernel witnesses, typed schema contracts | Payload traits, registry freeze, authorized sidecar helpers |
-| Build-time spiices; no raw spiice core SQL | Facade SDK; the sidecar read context refuses core SQL; review |
+| Build-time spiices; no raw spiice core SQL | The `proxiima-spiice` crate boundary; the sidecar read context and `OwnerTransaction` refuse core SQL; review |
 | Atomic writes and scoped host state | `UnitOfWork`, private permits, PG rollback tests |
 | Trusted composed SQL and closed database vocabularies | `SqlText` and `SqlBuilder`; the architecture guardrail keeps sqlx's safety assertion and query builder inside their module; migration catalog tests |
 | No mirrors: one source of truth | Rust to Rust: one type, the compiler. Rust to wire: the schema derive. Code to prose: link, do not restate (review judgment; example: a docs page listing the pin kinds beside `EdgeKind` went stale when a kind was added) |

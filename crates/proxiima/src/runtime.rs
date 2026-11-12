@@ -31,7 +31,7 @@ use crate::runtime_config::cause_with;
 use crate::{AppContext, ProxiimaError, ProxiimaHost, RuntimeBuilder, SpiiceApp};
 #[cfg(test)]
 use proxiima_storage_pg::PgPlatformScope;
-use proxiima_storage_pg::{PgDelegationStore, PgOwnerAccessResolver};
+use proxiima_storage_pg::{OwnerTransactions, PgDelegationStore, PgOwnerAccessResolver};
 
 /// Application runtime facade.
 ///
@@ -342,6 +342,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         }
         let services = assemble_services::<A>(
             &app_ctx,
+            booted.storage.owner_transactions(),
             &booted.registry,
             &config.served_surface,
             parts.authenticator.as_ref(),
@@ -983,9 +984,12 @@ fn runtime_owner_access(
 /// REST, and spiice workers receive the same immutable service set.
 ///
 /// The delegation service is published only with an authenticator, and
-/// redeems through `owner_access`.
+/// redeems through `owner_access`. `owner_transactions` begins the
+/// owner-scoped transactions a tool runs on its spiice's own tables
+/// (`proxiima_spiice::owner_transaction`).
 fn assemble_services<A: SpiiceApp>(
     app_ctx: &AppContext,
+    owner_transactions: OwnerTransactions,
     registry: &Arc<SpiiceRegistryFrozen>,
     deployment_served_surface: &ServedSurface,
     authenticator: Option<&Arc<dyn Authenticator>>,
@@ -1001,6 +1005,7 @@ fn assemble_services<A: SpiiceApp>(
             .is_none(),
         "host-state maintenance authority must remain outside SpiiceServices"
     );
+    services.try_insert(owner_transactions)?;
     if let Some((transfer, verified_read, owner_reconcile)) =
         cited_blob_services(host.blobs.as_ref(), runtime_authority)
     {

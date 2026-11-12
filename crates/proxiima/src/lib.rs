@@ -20,10 +20,14 @@
 //!   config is present ([`Feature`], [`BootReport`]); the booted handle's
 //!   host accessors are one [`ProxiimaHost`]. A host binary that just stands
 //!   up the MCP server needs nothing below this line.
-//! - **Spiice SDK:** import from `proxiima::spiice`, not the root facade. The
-//!   SDK exposes payload traits, ids, `proxiima_spiice!`, `Tool`/`ToolCtx`,
-//!   payload reference declarations, sidecar macros/traits, and registry types. It does
-//!   not expose raw `PgPool`, raw storage verbs, or proofless append helpers.
+//! - **Spiice SDK:** the `proxiima-spiice` crate, which a spiice depends on
+//!   alone; this facade re-exports it as [`spiice`] for host code. The SDK
+//!   exposes payload traits, ids, `proxiima_spiice!`, `spiice_bundle!`,
+//!   `Tool`/`ToolCtx`, payload reference declarations, sidecar macros/traits,
+//!   registry types, and an owner-scoped transaction for the spiice's own
+//!   tables ([`spiice::owner_transaction`]). It does not expose raw `PgPool`,
+//!   raw storage verbs, or proofless append helpers. A spiice served as an
+//!   app implements [`SpiiceApp`] through [`spiice_app!`], which is host tier.
 //!   Host extra-table wiring uses [`ProxiimaHost::clone_pool_for_host`] plus
 //!   [`ProxiimaHost::pg_tuning_for_host`] (via [`AppContext::host`]) inside
 //!   [`SpiiceApp::services`] and wraps them immediately. Atomic host-state with Fact writes uses
@@ -37,7 +41,7 @@
 //! this facade is nameable through it, in the tier of the signature that
 //! exposes it. A host-tier signature gets its types at the root (`host.rs`
 //! groups them by the signature that needs them); a Spiice SDK signature gets
-//! its types under `proxiima::spiice` ([`spiice::HostStateEraseDisposition`], for
+//! its types in `proxiima-spiice` ([`spiice::HostStateEraseDisposition`], for
 //! [`spiice::EraseRule::HostState`], is the latest). Host-only names stay out of
 //! the SDK. Third-party crates stay the host's own dependencies, with one
 //! exception: [`rmcp`] is re-exported at the version and feature set the
@@ -46,31 +50,6 @@
 //!
 //! Nothing finds a signature whose type is missing from the facade: a host or
 //! spiice that cannot write the name down is the report.
-//!
-//! The SDK names no storage handle, no raw pool and no owner-scoped
-//! transaction:
-//!
-//! ```compile_fail,E0432
-//! use proxiima::spiice::PgStorage;
-//! ```
-//!
-//! ```compile_fail,E0432
-//! use proxiima::spiice::PgPool;
-//! ```
-//!
-//! ```compile_fail,E0432
-//! use proxiima::spiice::begin_owner_transaction;
-//! ```
-//!
-//! Nor does it name the host-state participant or its command trait:
-//!
-//! ```compile_fail,E0432
-//! use proxiima::spiice::PgHostStateParticipant;
-//! ```
-//!
-//! ```compile_fail,E0432
-//! use proxiima::spiice::HostStateCommand;
-//! ```
 //!
 //! The host-only capability and its permit cannot be caller-constructed:
 //!
@@ -133,18 +112,11 @@
 //!     let _ = unit.forget;
 //! }
 //! ```
-//!
-//! Spiice SDK imports cannot name the host-only authority:
-//!
-//! ```compile_fail
-//! use proxiima::spiice::HostStateMaintenanceAuthority;
-//! ```
 
 mod app;
 #[cfg(feature = "auth-oidc")]
 pub mod auth;
 mod boot;
-mod bundle;
 mod config;
 mod core_mcp;
 mod features;
@@ -164,7 +136,6 @@ mod runtime;
 mod runtime_config;
 mod runtime_grants;
 pub mod settings;
-pub mod spiice;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 pub mod vector_index_http;
@@ -175,6 +146,7 @@ pub use object_maintenance::{ObjectMaintenanceOutcome, object_maintenance_pass};
 pub use proxiima_core::authz::SystemAuthority;
 /// Declares a host's own settings ([`SpiiceApp::settings`]).
 pub use proxiima_core::settings;
+pub use proxiima_spiice as spiice;
 
 /// One Owner per embedded host: a Group principal.
 ///

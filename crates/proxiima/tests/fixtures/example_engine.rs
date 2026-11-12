@@ -11,7 +11,9 @@ use std::sync::{Arc, LazyLock};
 
 use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle, register_core_pg_sidecars};
 use proxiima::testkit::{HostTemplate, SplitRoleDb, TemplateFamily, describe_connection_error};
-use proxiima_core::{Engine, OwnerId, SpiiceRegistry};
+use proxiima_core::{
+    AuthzContext, Engine, OwnerId, SpiiceRegistry, SpiiceServices, ToolCaller, ToolCtx,
+};
 use proxiima_example::ExampleSpiice;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
 use sqlx::postgres::PgPoolOptions;
@@ -141,7 +143,7 @@ pub async fn initialize_store_number(db: &SplitRoleDb) -> Result<(), String> {
 /// One test's database and the Engine over it.
 pub struct ExampleEngine {
     pub pool: sqlx::PgPool,
-    pub engine: Engine,
+    pub engine: Arc<Engine>,
     /// Dropped last: after a passing test the clone goes, after a panic it
     /// stays for inspection.
     pub db: SplitRoleDb,
@@ -162,7 +164,29 @@ impl ExampleEngine {
         let engine = compose(db.runtime_url(), db.platform_url(), extra).await;
         let pool =
             expect_described("admin connection", fixture_pool(&db.admin_url(), 2).await).await;
-        Self { pool, engine, db }
+        Self {
+            pool,
+            engine: Arc::new(engine),
+            db,
+        }
+    }
+
+    /// A tool call's context under `authz` on this Engine, with no services:
+    /// what an SDK read takes. The reads answer for the caller `authz`
+    /// names, so the context's owner is the fixture owner.
+    #[must_use]
+    #[allow(
+        dead_code,
+        reason = "only the suites that read through the SDK call it"
+    )]
+    pub fn tool_ctx(&self, authz: &AuthzContext) -> ToolCtx {
+        proxiima_core::test_fixtures::tool_ctx_on(
+            proxiima_core::test_fixtures::owner_fixture(),
+            authz.clone(),
+            self.engine.clone(),
+            SpiiceServices::default(),
+            ToolCaller::new("test", "test", "0"),
+        )
     }
 
     /// Register a notebook for `owner`, as every notebook-scoped note needs.

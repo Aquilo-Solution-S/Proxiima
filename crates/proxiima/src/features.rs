@@ -23,11 +23,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::RuntimeConfig;
-use crate::bundle::SpiiceBundle;
 use crate::in_process_outbox::{Drain, Proceed, Settings};
 use crate::metrics::{Metrics, SAMPLER_LABEL, Sample};
 use crate::object_maintenance::ObjectPurgeHealth;
-use crate::workers::{Backoff, EndedWorkers, Pass, SpiiceWorkerContext, Wake, WorkerPass, Workers};
+use crate::workers::{Backoff, EndedWorkers, Pass, Wake, WorkerPass, Workers};
+use proxiima_spiice::{SpiiceBundle, SpiiceWorkerContext};
 
 /// One runtime feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -400,11 +400,11 @@ impl Features {
 /// boot step, so an early return can never leave a task running detached.
 /// Every task observes a child of `cancel`, so none can trigger shutdown.
 pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInputs<'_>) -> Features {
-    let worker_ctx = SpiiceWorkerContext {
-        engine: inputs.engine.clone(),
-        cancel: inputs.cancel.child_token(),
-        services: inputs.services.clone(),
-    };
+    let worker_ctx = SpiiceWorkerContext::new(
+        inputs.engine.clone(),
+        inputs.cancel.child_token(),
+        inputs.services.clone(),
+    );
     let mut workers = Workers::default();
     let spiice_workers = A::spawn_workers(&worker_ctx);
     let workers_decision = if spiice_workers.is_empty() {

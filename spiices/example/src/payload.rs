@@ -2,7 +2,7 @@
 //! Abstraction, a stamp Fact that follows its memory on transfer, and a
 //! sealed stamp Fact that never transfers.
 
-use proxiima::spiice::{
+use proxiima_spiice::{
     AbstractionPayload, DurablePayloadBuilder, FactPayload, KeyField, PayloadDisplay,
     PayloadKeyBuilder, PayloadProjection, ScopeKind,
 };
@@ -88,7 +88,7 @@ impl PayloadProjection for NoteV1 {
             ..PayloadDisplay::default()
         }
     }
-    fn durable(&self) -> Result<proxiima::spiice::DurablePayload, String> {
+    fn durable(&self) -> Result<proxiima_spiice::DurablePayload, String> {
         let Self {
             notebook_id,
             key,
@@ -146,7 +146,7 @@ impl PayloadProjection for DigestV1 {
             ..PayloadDisplay::default()
         }
     }
-    fn durable(&self) -> Result<proxiima::spiice::DurablePayload, String> {
+    fn durable(&self) -> Result<proxiima_spiice::DurablePayload, String> {
         let mut fields = DurablePayloadBuilder::new();
         fields
             .field("notebook_id", &self.notebook_id)?
@@ -155,7 +155,7 @@ impl PayloadProjection for DigestV1 {
     }
 }
 
-proxiima::spiice::pg_sidecar! {
+proxiima_spiice::pg_sidecar! {
     payload: NoteV1,
     row: NoteRow,
     kinds: [Fact],
@@ -169,7 +169,7 @@ proxiima::spiice::pg_sidecar! {
     },
 }
 
-proxiima::spiice::pg_sidecar! {
+proxiima_spiice::pg_sidecar! {
     payload: DigestV1,
     row: DigestRow,
     kinds: [Abstraction],
@@ -221,14 +221,14 @@ impl PayloadProjection for StampV1 {
             ..PayloadDisplay::default()
         }
     }
-    fn durable(&self) -> Result<proxiima::spiice::DurablePayload, String> {
+    fn durable(&self) -> Result<proxiima_spiice::DurablePayload, String> {
         let mut fields = DurablePayloadBuilder::new();
         fields.field("mark", &self.mark)?;
         Ok(fields.finish())
     }
 }
 
-proxiima::spiice::pg_sidecar! {
+proxiima_spiice::pg_sidecar! {
     payload: StampV1,
     row: StampRow,
     kinds: [Fact],
@@ -284,7 +284,7 @@ impl PayloadProjection for SealedStampV1 {
             ..PayloadDisplay::default()
         }
     }
-    fn durable(&self) -> Result<proxiima::spiice::DurablePayload, String> {
+    fn durable(&self) -> Result<proxiima_spiice::DurablePayload, String> {
         let mut fields = DurablePayloadBuilder::new();
         fields.field("mark", &self.mark)?;
         Ok(fields.finish())
@@ -350,7 +350,7 @@ mod projection_tests {
     }
 }
 
-proxiima::spiice::pg_sidecar! {
+proxiima_spiice::pg_sidecar! {
     payload: SealedStampV1,
     row: SealedStampRow,
     kinds: [Fact],

@@ -110,7 +110,7 @@ fn view_migrator(security_invoker: bool) -> Migrator {
 }
 
 mod kit_definer_view {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitDefinerViewSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -118,12 +118,17 @@ mod kit_definer_view {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::view_migrator(false),
-        app = { title = "Kit fixture with a definer view" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitDefinerViewSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture with a definer view",
     }
 }
 
 mod kit_invoker_view {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitInvokerViewSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -131,12 +136,17 @@ mod kit_invoker_view {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::view_migrator(true),
-        app = { title = "Kit fixture with an invoker view" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitInvokerViewSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture with an invoker view",
     }
 }
 
 mod kit_gap {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitGapSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -144,12 +154,17 @@ mod kit_gap {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::gap_migrator(),
-        app = { title = "Kit fixture, one table unclassified" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitGapSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture, one table unclassified",
     }
 }
 
 mod kit_per_table {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitPerTableSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -157,12 +172,17 @@ mod kit_per_table {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::per_table_migrator(super::PerTableHost::CallsEveryTable),
-        app = { title = "Kit fixture, one owner-RLS call per table" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitPerTableSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture, one owner-RLS call per table",
     }
 }
 
 mod kit_forgotten_table {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitForgottenTableSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -170,12 +190,17 @@ mod kit_forgotten_table {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::per_table_migrator(super::PerTableHost::ForgetsSettings),
-        app = { title = "Kit fixture, one table without a call" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitForgottenTableSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture, one table without a call",
     }
 }
 
 mod kit_forgotten_table_census {
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitForgottenTableCensusSpiice,
         name = "proxiima-example",
         fact_schemas = [proxiima_example::NoteV1],
@@ -183,7 +208,12 @@ mod kit_forgotten_table_census {
         mcp_tools = [proxiima_example::ListNotebooksTool],
         contract = &proxiima_example::EXAMPLE_BASELINE_CONTRACT,
         migrations = super::per_table_migrator(super::PerTableHost::ForgetsSettingsAssertsCensus),
-        app = { title = "Kit fixture, one table without a call, census at the end" },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitForgottenTableCensusSpiice,
+        id = "proxiima-example",
+        title = "Kit fixture, one table without a call, census at the end",
     }
 }
 
@@ -206,7 +236,7 @@ mod kit_full {
         Ok(proxiima::spiice::SpiiceServices::default())
     }
 
-    proxiima::spiice_bundle! {
+    proxiima::spiice::spiice_bundle! {
         bundle = KitFullSpiice,
         name = "proxiima-example",
         display_name = "Example",
@@ -216,13 +246,15 @@ mod kit_full {
         contract = &proxiima_example::EXAMPLE_CONTRACT,
         migrations = proxiima_example::migrator(),
         workers = no_workers,
-        app = {
-            title = "Kit, every key",
-            id = "kit-full",
-            version = "1.2.3",
-            configure = configure,
-            services = services,
-        },
+    }
+
+    proxiima::spiice_app! {
+        bundle = KitFullSpiice,
+        id = "kit-full",
+        title = "Kit, every key",
+        version = "1.2.3",
+        configure = configure,
+        services = services,
     }
 }
 
@@ -310,7 +342,6 @@ fn the_bundle_is_the_hand_written_one() {
         "public._sqlx_migrations_proxiima_example"
     );
     assert!(!migrators[0].migrator().ignore_missing);
-    assert_eq!(kit_gap::KitGapSpiice::app_info().id, "proxiima-example");
     assert_eq!(
         kit_full::KitFullSpiice::app_info(),
         AppInfo {

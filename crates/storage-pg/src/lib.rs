@@ -48,9 +48,11 @@ pub use rename_bootstrap::{
 pub mod definitions;
 mod delegated_authority;
 mod error;
+mod ledger_name;
 mod lifecycle_scope;
 mod maintenance_lease;
 mod owner_scope;
+mod owner_transaction;
 #[cfg(test)]
 mod pause_point;
 #[doc(hidden)]
@@ -104,7 +106,9 @@ pub use access::{
     owner_registry::register_group,
 };
 pub use delegated_authority::PgDelegationStore;
+pub use ledger_name::{is_core_ledger, parse_ledger_name, parse_name_parts};
 pub use owner_scope::begin_owner_transaction;
+pub use owner_transaction::{OwnerStatement, OwnerTransaction, OwnerTransactions};
 pub use platform_scope::{PgPlatformScope, begin_migration_transaction};
 pub use pool_config::PgPoolConfig;
 pub use ports::{
@@ -1001,6 +1005,14 @@ fn env_int_or<T: std::str::FromStr>(
 }
 
 impl PgStorage {
+    /// The service that begins [`OwnerTransaction`]s on this store's pool.
+    /// The runtime publishes it to every tool call; the Spiice SDK reaches it
+    /// through `proxiima_spiice::owner_transaction`.
+    #[must_use]
+    pub fn owner_transactions(&self) -> OwnerTransactions {
+        OwnerTransactions::new(self.pool.clone())
+    }
+
     /// The immutable number validated against this database at boot.
     #[must_use]
     pub const fn store_number(&self) -> u16 {

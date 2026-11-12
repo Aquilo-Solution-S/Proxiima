@@ -20,12 +20,14 @@ use std::time::Duration;
 
 use proxiima_core::{PgIdent, SqlText};
 use proxiima_core::{SchemaEvolution, StorageError};
+use proxiima_spiice::NamedMigrator;
 pub use proxiima_storage_pg::{MissingMigrationPolicy, VectorStorage};
 use proxiima_storage_pg::{
     PgMigrationStorage, PgSidecarRegistryFrozen, PgStorage, core_migrator_for,
-    ensure_core_ledger_compatible_on_connection_with_policy,
+    ensure_core_ledger_compatible_on_connection_with_policy, is_core_ledger, parse_ledger_name,
+    parse_name_parts,
 };
-use sqlx::migrate::{MigrateError, Migration, Migrator};
+use sqlx::migrate::{MigrateError, Migration};
 use sqlx::pool::PoolConnection;
 use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction};
 
@@ -59,69 +61,6 @@ impl MigrationStorage for PgMigrationStorage {
 
     fn vector_storage(&self) -> VectorStorage {
         PgMigrationStorage::vector_storage(self)
-    }
-}
-
-/// One named `SQLx` migration source in a composite Proxiima binary.
-#[derive(Debug)]
-pub struct NamedMigrator {
-    source: &'static str,
-    migrator: Migrator,
-}
-
-impl NamedMigrator {
-    /// Build a named migrator. Use the spiice id or host app id as
-    /// `source`, e.g. `fixture-spiice`.
-    ///
-    /// The migrator keeps whatever tracking table it declares; a spiice
-    /// that declares none records into core's `public._sqlx_migrations`.
-    /// Prefer [`Self::spiice`].
-    #[must_use]
-    pub fn new(source: &'static str, migrator: Migrator) -> Self {
-        Self { source, migrator }
-    }
-
-    /// A spiice's migrator on its own ledger: [`spiice_ledger_table`]`(id)`,
-    /// unless the migrator already declares a table of its own, which it
-    /// keeps (a ledger is never renamed under a live database).
-    ///
-    /// A spiice ledger lives in `public` because a destructive spiice
-    /// baseline drops the spiice schema and the ledger must survive it. A
-    /// database whose rows for this spiice sit in a different ledger must
-    /// be reset before changing its tracking table.
-    ///
-    /// # Panics
-    ///
-    /// When `id` is not a spiice id (see [`spiice_ledger_table`]); ids are
-    /// compile-time constants, so this is a programming error.
-    #[must_use]
-    pub fn spiice(id: &'static str, mut migrator: Migrator) -> Self {
-        let derived = spiice_ledger_table(id);
-        if is_core_ledger(&migrator.table_name) {
-            migrator.dangerous_set_table_name(derived);
-        }
-        Self {
-            source: id,
-            migrator,
-        }
-    }
-
-    /// Source id used in reports and errors.
-    #[must_use]
-    pub fn source(&self) -> &'static str {
-        self.source
-    }
-
-    /// Borrow the underlying `SQLx` migrator.
-    #[must_use]
-    pub fn migrator(&self) -> &Migrator {
-        &self.migrator
-    }
-
-    fn has_version(&self, version: i64) -> bool {
-        self.lane()
-            .iter()
-            .any(|migration| migration.version == version)
     }
 }
 
@@ -229,50 +168,6 @@ fn visit_evolution<'a>(
     visited.insert(evolution.id);
     result.push(evolution);
     Ok(())
-}
-
-/// The tracking table [`NamedMigrator::spiice`] gives spiice `id`:
-/// `public._sqlx_migrations_<id>`, `-` spelled `_`
-/// (`fixture-spiice` → `public._sqlx_migrations_fixture_spiice`).
-///
-/// # Panics
-///
-/// When `id` is empty, longer than 40 bytes, or not lowercase ASCII
-/// letters, digits, `-` and `_` starting with a letter. The derived name is
-/// interpolated into DDL by `SQLx` and ledger preparation, so only a name
-/// that needs no quoting is accepted, and the bound keeps it within
-/// the 63-byte `PostgreSQL` identifier limit.
-#[must_use]
-pub fn spiice_ledger_table(id: &str) -> String {
-    assert!(
-        is_spiice_ledger_id(id),
-        "spiice id {id:?} must be 1-40 bytes of [a-z0-9_-] starting with a letter"
-    );
-    format!("public._sqlx_migrations_{}", id.replace('-', "_"))
-}
-
-/// Whether [`spiice_ledger_table`] accepts `id`. `const`, so
-/// `spiice_bundle!` checks its `name` at compile time.
-#[must_use]
-pub const fn is_spiice_ledger_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    if bytes.is_empty() || bytes.len() > 40 || !bytes[0].is_ascii_lowercase() {
-        return false;
-    }
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_') {
-            return false;
-        }
-        index += 1;
-    }
-    true
-}
-
-fn is_core_ledger(table_name: &str) -> bool {
-    matches!(parse_ledger_name(table_name), Some((schema, table))
-        if schema == "public" && table == "_sqlx_migrations")
 }
 
 /// Successful migration run metadata.
@@ -634,7 +529,7 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
         }
         for source in sources
             .iter()
-            .filter(|source| !is_core_ledger(&source.migrator.table_name))
+            .filter(|source| !is_core_ledger(&source.migrator().table_name))
         {
             let recorded =
                 ledger_versions(&read_ledger(&mut snapshot, source, &source.ledger(), true).await?);
@@ -941,7 +836,7 @@ async fn plan_snapshot(
         }
     }
     for source in lineup {
-        if source.source == CORE_SOURCE {
+        if source.source() == CORE_SOURCE {
             source.require_transactional()?;
             let rows = read_ledger(snapshot, source, &source.ledger(), true).await?;
             unrecorded(&source.lane(), &rows).map_err(|err| source.run_error(err))?;
@@ -985,8 +880,8 @@ fn order_pending_operations(
                 (
                     migration.version,
                     (
-                        proxiima_storage_pg::migration_phase(&source.migrator, migration),
-                        source.source == CORE_SOURCE,
+                        proxiima_storage_pg::migration_phase(source.migrator(), migration),
+                        source.source() == CORE_SOURCE,
                     ),
                 )
             })
@@ -1069,7 +964,7 @@ fn order_current_evolution_operations(
         // check_lineup rejects duplicate versions across all source ledgers,
         // so this anchor identifies exactly one owning source.
         let Some(source) = lineup.iter().find(|source| {
-            source.source != CORE_SOURCE && source.has_version(evolution.after_migration)
+            source.source() != CORE_SOURCE && source.has_version(evolution.after_migration)
         }) else {
             return Err(MigrationError::EvolutionAnchorMissing {
                 evolution_id: evolution.id,
@@ -1104,7 +999,7 @@ async fn plan_source(
 ) -> Result<Vec<PendingMigration>, MigrationError> {
     source.require_transactional()?;
     let rows = read_ledger(snapshot, source, &source.ledger(), true).await?;
-    if !is_core_ledger(&source.migrator.table_name)
+    if !is_core_ledger(&source.migrator().table_name)
         && let Some(conflict) = ledger_conflict(&source.lane_versions(), &ledger_versions(&rows))
     {
         return Err(source.ledger_error(conflict));
@@ -1158,7 +1053,7 @@ fn unrecorded<'a>(
 
 impl MigrationRunReport {
     fn from_sources(sources: &[NamedMigrator]) -> Self {
-        let sources = sources.iter().map(|source| source.source).collect();
+        let sources = sources.iter().map(NamedMigrator::source).collect();
         Self { sources }
     }
 }
@@ -1210,7 +1105,7 @@ async fn run_sources_on_connection(
     }
     run_historical_sources(conn, sources, sidecars, vectors).await?;
     for source in sources {
-        if source.source != CORE_SOURCE {
+        if source.source() != CORE_SOURCE {
             prepare_ledger(conn, source).await?;
         }
         run_source_with_contention_retry(
@@ -1220,7 +1115,7 @@ async fn run_sources_on_connection(
             proxiima_storage_pg::MigrationPhase::Current,
         )
         .await?;
-        if source.source == CORE_SOURCE {
+        if source.source() == CORE_SOURCE {
             prepare_ledger(conn, source).await?;
             sync_owner_follows(conn, sidecars)
                 .await?
@@ -1229,7 +1124,10 @@ async fn run_sources_on_connection(
                 .map_err(execute_error)?;
         }
     }
-    for source in sources.iter().filter(|source| source.source != CORE_SOURCE) {
+    for source in sources
+        .iter()
+        .filter(|source| source.source() != CORE_SOURCE)
+    {
         run_source_with_contention_retry(
             conn,
             source,
@@ -1273,7 +1171,7 @@ async fn run_evolution_sources(
     if historical_pending(transaction.as_mut(), sources).await? {
         run_historical_transaction(&mut transaction, sources, sidecars, vectors).await?;
     }
-    if sources.iter().any(|source| source.source == CORE_SOURCE) {
+    if sources.iter().any(|source| source.source() == CORE_SOURCE) {
         proxiima_storage_pg::run_core_phase(
             &mut transaction,
             MissingMigrationPolicy::Allow,
@@ -1297,14 +1195,14 @@ async fn run_evolution_sources(
         // check_lineup rejects duplicate versions across all source ledgers,
         // so this anchor identifies exactly one owning source.
         let Some(source) = sources.iter().find(|source| {
-            source.source != CORE_SOURCE && source.has_version(evolution.after_migration)
+            source.source() != CORE_SOURCE && source.has_version(evolution.after_migration)
         }) else {
             return Err(MigrationError::EvolutionAnchorMissing {
                 evolution_id: evolution.id,
                 after_migration: evolution.after_migration,
             });
         };
-        let previous = applied.get(source.source).copied().unwrap_or(i64::MIN);
+        let previous = applied.get(source.source()).copied().unwrap_or(i64::MIN);
         run_source_range(
             &mut transaction,
             source,
@@ -1313,7 +1211,7 @@ async fn run_evolution_sources(
             evolution.after_migration,
         )
         .await?;
-        applied.insert(source.source, evolution.after_migration);
+        applied.insert(source.source(), evolution.after_migration);
         sidecars
             .run_schema_evolution(&mut transaction, evolution)
             .await
@@ -1329,11 +1227,14 @@ async fn run_evolution_sources(
         .map_err(MigrationError::SchemaEvolution)?;
     // Source rows and deferred sidecar obligations are drained before a
     // trailing spiice migration may remove their obsolete tables.
-    for source in sources.iter().filter(|source| source.source != CORE_SOURCE) {
-        let previous = applied.get(source.source).copied().unwrap_or(i64::MIN);
+    for source in sources
+        .iter()
+        .filter(|source| source.source() != CORE_SOURCE)
+    {
+        let previous = applied.get(source.source()).copied().unwrap_or(i64::MIN);
         run_source_range(&mut transaction, source, vectors, previous, i64::MAX).await?;
         proxiima_storage_pg::migrations_for_phase(
-            &source.migrator,
+            source.migrator(),
             proxiima_storage_pg::MigrationPhase::Finalize,
         )
         .run_direct(None, transaction.as_mut(), false)
@@ -1367,7 +1268,7 @@ async fn run_source_range(
     upper_inclusive: i64,
 ) -> Result<(), MigrationError> {
     let migrations = proxiima_storage_pg::migrations_for_phase(
-        &source.migrator,
+        source.migrator(),
         proxiima_storage_pg::MigrationPhase::Current,
     );
     let selected = migrations
@@ -1404,7 +1305,7 @@ async fn historical_pending(
         let migrations =
             unrecorded(&source.lane(), &rows).map_err(|error| source.run_error(error))?;
         if migrations.into_iter().any(|migration| {
-            proxiima_storage_pg::migration_phase(&source.migrator, migration)
+            proxiima_storage_pg::migration_phase(source.migrator(), migration)
                 != proxiima_storage_pg::MigrationPhase::Current
         }) {
             return Ok(true);
@@ -1460,7 +1361,7 @@ async fn run_historical_transaction(
         .await
         .map_err(execute_error)?;
     for source in sources {
-        if source.source == CORE_SOURCE {
+        if source.source() == CORE_SOURCE {
             proxiima_storage_pg::run_core_phase(
                 transaction,
                 MissingMigrationPolicy::Allow,
@@ -1476,14 +1377,14 @@ async fn run_historical_transaction(
         } else {
             prepare_ledger(transaction.as_mut(), source).await?;
             proxiima_storage_pg::migrations_for_phase(
-                &source.migrator,
+                source.migrator(),
                 proxiima_storage_pg::MigrationPhase::Historical,
             )
             .run_direct(None, transaction.as_mut(), false)
             .await
             .map_err(|error| source.run_error(error))?;
         }
-        if source.source == CORE_SOURCE {
+        if source.source() == CORE_SOURCE {
             prepare_ledger(transaction.as_mut(), source).await?;
         }
     }
@@ -1576,7 +1477,7 @@ async fn run_source_with_contention_retry(
             .execute(&mut *transaction)
             .await
             .map_err(|error| source.run_error(MigrateError::Execute(error)))?;
-        if !is_core_ledger(&source.migrator.table_name) {
+        if !is_core_ledger(&source.migrator().table_name) {
             let recorded = ledger_versions(
                 &read_ledger(&mut transaction, source, &source.ledger(), false).await?,
             );
@@ -1588,7 +1489,7 @@ async fn run_source_with_contention_retry(
                 return Err(source.ledger_error(conflict));
             }
         }
-        if source.source == CORE_SOURCE {
+        if source.source() == CORE_SOURCE {
             ensure_core_ledger_compatible_on_connection_with_policy(
                 &mut transaction,
                 MissingMigrationPolicy::Allow,
@@ -1610,7 +1511,7 @@ async fn run_source_with_contention_retry(
                 .await
                 .map_err(|err| source.run_error(MigrateError::Execute(err)));
         }
-        let result = proxiima_storage_pg::migrations_for_phase(&source.migrator, phase)
+        let result = proxiima_storage_pg::migrations_for_phase(source.migrator(), phase)
             .run_direct(None, &mut *transaction, false)
             .await;
         let result = match result {
@@ -1628,7 +1529,7 @@ async fn run_source_with_contention_retry(
                 if attempt < CATALOG_CONTENTION_ATTEMPTS && is_shared_catalog_contention(&err) =>
             {
                 tracing::warn!(
-                    source = source.source,
+                    source = source.source(),
                     attempt,
                     error = %err,
                     "shared-catalog contention during migration; retrying"
@@ -1706,7 +1607,7 @@ async fn prepare_ledger(
 ) -> Result<(), MigrationError> {
     let table_name = source.migrator().table_name.clone();
     let map_err = |err: sqlx::Error| MigrationError::SpiiceLedgerPreparation {
-        source: source.source,
+        source: source.source(),
         err,
     };
     let mut tx = conn.begin().await.map_err(map_err)?;
@@ -1803,13 +1704,26 @@ BEGIN
 END
 $prepare_ledger$";
 
-impl NamedMigrator {
+/// What the migration runner reads of a [`NamedMigrator`]: its errors, its
+/// ledger and the lane it applies. Private to the runner.
+pub(crate) trait MigrationSource {
+    fn run_error(&self, err: MigrateError) -> MigrationError;
+    fn ledger_error(&self, conflict: LedgerConflict) -> MigrationError;
+    fn require_transactional(&self) -> Result<(), MigrationError>;
+    fn ledger(&self) -> String;
+    fn ledger_identity(&self) -> LedgerIdentity;
+    fn lane(&self) -> Vec<&Migration>;
+    fn lane_versions(&self) -> Vec<i64>;
+    fn has_version(&self, version: i64) -> bool;
+}
+
+impl MigrationSource for NamedMigrator {
     fn run_error(&self, err: MigrateError) -> MigrationError {
-        if self.source == CORE_SOURCE {
+        if self.source() == CORE_SOURCE {
             MigrationError::Core(err)
         } else {
             MigrationError::Spiice {
-                source: self.source,
+                source: self.source(),
                 err,
             }
         }
@@ -1817,8 +1731,8 @@ impl NamedMigrator {
 
     fn ledger_error(&self, conflict: LedgerConflict) -> MigrationError {
         MigrationError::Ledger {
-            source: self.source,
-            ledger: self.migrator.table_name.to_string(),
+            source: self.source(),
+            ledger: self.migrator().table_name.to_string(),
             conflict,
         }
     }
@@ -1827,7 +1741,7 @@ impl NamedMigrator {
     /// its scope and ledger rows, so it refuses a `no_tx` migration before
     /// it touches the ledger.
     fn require_transactional(&self) -> Result<(), MigrationError> {
-        if self.migrator.iter().any(|migration| migration.no_tx) {
+        if self.migrator().iter().any(|migration| migration.no_tx) {
             return Err(self.run_error(MigrateError::Execute(sqlx::Error::Protocol(
                 "platform-scoped migrations require transactional migration files".into(),
             ))));
@@ -1838,8 +1752,8 @@ impl NamedMigrator {
     /// The schema-qualified table this source records on, spelled as
     /// [`spiice_ledger_table`] spells a spiice's. A table declared without a
     /// schema lives in `public`, where a run pins `search_path`.
-    pub(crate) fn ledger(&self) -> String {
-        let table = self.migrator.table_name.as_ref();
+    fn ledger(&self) -> String {
+        let table = self.migrator().table_name.as_ref();
         if table.contains('.') {
             table.to_owned()
         } else {
@@ -1852,7 +1766,7 @@ impl NamedMigrator {
     /// identifier rules ([`parse_ledger_name`]); a spelling outside them is
     /// compared as written.
     fn ledger_identity(&self) -> LedgerIdentity {
-        let name = self.migrator.table_name.as_ref();
+        let name = self.migrator().table_name.as_ref();
         match parse_ledger_name(name) {
             Some((schema, table)) => LedgerIdentity::Resolved { schema, table },
             None => LedgerIdentity::Spelled(name.to_owned()),
@@ -1871,9 +1785,9 @@ impl NamedMigrator {
     /// A version a source repeats is listed once, at its first place; a
     /// lineup with one is refused before a run or a plan reads the database
     /// ([`validate_sources`]).
-    pub(crate) fn lane(&self) -> Vec<&Migration> {
+    fn lane(&self) -> Vec<&Migration> {
         let mut seen = BTreeSet::new();
-        self.migrator
+        self.migrator()
             .iter()
             .filter(|migration| !migration.migration_type.is_down_migration())
             .filter(|migration| seen.insert(migration.version))
@@ -1890,12 +1804,18 @@ impl NamedMigrator {
             .collect();
         versions.into_iter().collect()
     }
+
+    fn has_version(&self, version: i64) -> bool {
+        self.lane()
+            .iter()
+            .any(|migration| migration.version == version)
+    }
 }
 
 /// A ledger as two sources compare it. Private: only the shared-ledger check
 /// reads it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum LedgerIdentity {
+pub(crate) enum LedgerIdentity {
     /// The table the name resolves to.
     Resolved { schema: String, table: String },
     /// A spelling [`parse_ledger_name`] does not read (a comment inside the
@@ -1910,83 +1830,6 @@ impl std::fmt::Display for LedgerIdentity {
             Self::Spelled(name) => f.write_str(name),
         }
     }
-}
-
-/// Postgres' whitespace between the tokens of a name.
-fn is_name_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
-}
-
-/// The `(schema, table)` a ledger name resolves to, by Postgres' rules for an
-/// identifier: parts split on `.` outside double quotes, with whitespace
-/// allowed around parts and dots; a quoted part keeps its case, with `""` for
-/// `"`; an unquoted part folds to ASCII lower case; each is cut to 63 bytes
-/// (`NAMEDATALEN` - 1) on a character boundary; a name without a schema is in
-/// `public`, where a run pins `search_path`.
-///
-/// `None` for a name that is not one or two such parts. That says nothing
-/// against the name (SQL accepts more spellings than this reads, comments
-/// among them): it is not matched by what it resolves to.
-fn parse_ledger_name(name: &str) -> Option<(String, String)> {
-    match <[String; 1]>::try_from(parse_name_parts(name)?) {
-        Ok([table]) => Some(("public".to_owned(), table)),
-        Err(parts) => <[String; 2]>::try_from(parts)
-            .ok()
-            .map(|[schema, table]| (schema, table)),
-    }
-}
-
-/// The identifier parts of a dotted name, resolved as
-/// [`parse_ledger_name`] describes; `None` for a spelling it does not read.
-/// At least one part.
-fn parse_name_parts(name: &str) -> Option<Vec<String>> {
-    const MAX_IDENTIFIER_BYTES: usize = 63;
-    let mut parts: Vec<String> = Vec::new();
-    let mut chars = name.chars().peekable();
-    loop {
-        while chars.next_if(|c| is_name_space(*c)).is_some() {}
-        let mut part = String::new();
-        if chars.next_if_eq(&'"').is_some() {
-            loop {
-                match chars.next()? {
-                    '"' if chars.next_if_eq(&'"').is_some() => part.push('"'),
-                    '"' => break,
-                    c => part.push(c),
-                }
-            }
-            if part.is_empty() {
-                return None;
-            }
-        } else {
-            while let Some(c) = chars.next_if(|c| *c != '.' && !is_name_space(*c)) {
-                part.push(c);
-            }
-            let mut letters = part.chars();
-            let starts = letters
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || !c.is_ascii());
-            if !starts
-                || !letters
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii())
-            {
-                return None;
-            }
-            part.make_ascii_lowercase();
-        }
-        let mut end = part.len().min(MAX_IDENTIFIER_BYTES);
-        while !part.is_char_boundary(end) {
-            end -= 1;
-        }
-        part.truncate(end);
-        parts.push(part);
-        while chars.next_if(|c| is_name_space(*c)).is_some() {}
-        match chars.next() {
-            None => break,
-            Some('.') => {}
-            Some(_) => return None,
-        }
-    }
-    Some(parts)
 }
 
 /// `SELECT` of a ledger's rows. The spelling is resolved by
@@ -2066,7 +1909,7 @@ async fn read_ledger(
     may_be_absent: bool,
 ) -> Result<Vec<LedgerRow>, MigrationError> {
     let read_error = |err| MigrationError::LedgerRead {
-        source: source.source,
+        source: source.source(),
         ledger: ledger.to_owned(),
         err: MigrateError::Execute(err),
     };
@@ -2271,11 +2114,14 @@ pub(crate) fn lineup(
 ) -> Vec<NamedMigrator> {
     let mut sources = vec![core_source(vectors)];
 
-    for mut source in spiices {
-        source.migrator.set_ignore_missing(true);
-        if is_core_ledger(&source.migrator.table_name) {
+    for source in spiices {
+        let id = source.source();
+        let mut migrator = source.into_migrator();
+        migrator.set_ignore_missing(true);
+        let source = NamedMigrator::new(id, migrator);
+        if is_core_ledger(&source.migrator().table_name) {
             tracing::warn!(
-                source = source.source,
+                source = source.source(),
                 "spiice records its migrations in core's public._sqlx_migrations; \
                  build it with NamedMigrator::spiice to give it its own ledger \
                  (docs/build-a-spiice.md §Migrations)"
@@ -2302,18 +2148,18 @@ fn validate_sources(sources: &[&NamedMigrator]) -> Result<(), MigrationError> {
 fn reject_shared_spiice_ledgers(sources: &[&NamedMigrator]) -> Result<(), MigrationError> {
     let mut seen: BTreeMap<LedgerIdentity, &'static str> = BTreeMap::new();
     for source in sources.iter().skip(1) {
-        if is_core_ledger(&source.migrator.table_name) {
+        if is_core_ledger(&source.migrator().table_name) {
             continue;
         }
         // The table Postgres resolves the name to, not its spelling:
         // `_sqlx_migrations_host`, `public."_sqlx_migrations_host"` and
         // `PUBLIC._SQLX_Migrations_Host` are one table.
         let identity = source.ledger_identity();
-        if let Some(first_source) = seen.insert(identity.clone(), source.source) {
+        if let Some(first_source) = seen.insert(identity.clone(), source.source()) {
             return Err(MigrationError::DuplicateLedger {
                 table: identity.to_string(),
                 first_source,
-                second_source: source.source,
+                second_source: source.source(),
             });
         }
     }
@@ -2324,16 +2170,16 @@ fn reject_duplicate_versions(sources: &[&NamedMigrator]) -> Result<(), Migration
     let mut seen: BTreeMap<i64, (&'static str, String)> = BTreeMap::new();
 
     for source in sources {
-        for migration in source.migrator.iter() {
+        for migration in source.migrator().iter() {
             let description = migration.description.to_string();
             if let Some((first_source, first_description)) =
-                seen.insert(migration.version, (source.source, description.clone()))
+                seen.insert(migration.version, (source.source(), description.clone()))
             {
                 return Err(MigrationError::DuplicateVersion {
                     version: migration.version,
                     first_source,
                     first_description,
-                    second_source: source.source,
+                    second_source: source.source(),
                     second_description: description,
                 });
             }

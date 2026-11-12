@@ -507,7 +507,7 @@ async fn fixture(
         .with_spiices(&registry);
     let engine = proxiima::Engine::new(registry, Arc::new(storage).storage_ports());
     Ok(example_engine::ExampleEngine {
-        engine,
+        engine: Arc::new(engine),
         pool: admin,
         db,
     })
@@ -616,8 +616,7 @@ async fn transfer_and_reuse<P: FactPayload + Clone>(
         (destination, destination_next.memory_id),
     ] {
         let page = sidecar_heads_by_key::<P>(
-            engine,
-            &both,
+            &fixture.tool_ctx(&both),
             SidecarHeadsScope::Owner(owner),
             &[],
             None,
@@ -654,8 +653,7 @@ async fn assert_actual_key<P: FactPayload + Clone>(
     unit.commit().await?;
 
     let page = sidecar_heads_by_key::<P>(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &[],
         None,
@@ -670,8 +668,7 @@ async fn assert_actual_key<P: FactPayload + Clone>(
         .map(|(_, value)| value.clone())
         .collect::<Vec<_>>();
     let filtered = sidecar_heads_by_key::<P>(
-        &fixture.engine,
-        &authz,
+        &fixture.tool_ctx(&authz),
         SidecarHeadsScope::Owner(owner),
         &prefix,
         None,

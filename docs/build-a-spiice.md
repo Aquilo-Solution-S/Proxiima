@@ -1,8 +1,9 @@
 # Build a spiice
 
 A spiice is a vocabulary crate linked into a host. It contributes typed
-payloads, references, sidecars, tools, and migrations. It uses the `proxiima`
-facade; it neither runs as a remote plugin nor accesses core tables directly.
+payloads, references, sidecars, tools, and migrations. It depends on the Spiice
+SDK, the `proxiima-spiice` crate; it neither runs as a remote plugin nor
+accesses core tables directly.
 
 ## Walk through the executable example
 
@@ -10,7 +11,8 @@ The test spiice
 [`spiices/example`](https://github.com/Aquilo-Solution-S/proxiima/tree/main/spiices/example)
 (`proxiima-example`, a test and tutorial fixture, not a product) is a complete
 small spiice. It uses the same public SDK as an external crate: among workspace
-crates its `Cargo.toml` depends on `proxiima` only. Follow its
+crates its library depends on `proxiima-spiice` only, and its `host` feature
+links `proxiima` to serve it as an app. Follow its
 `NoteV1` payload and sidecar (`src/payload.rs`), `EXAMPLE_CONTRACT`
 (`src/contract.rs`), migration (`migrations/`), tool (`src/tool.rs`) and
 `ExampleSpiice` bundle (`src/lib.rs`) in that order. The facade's
@@ -23,8 +25,8 @@ cargo test -p proxiima --features testkit --test spiice_kit_pg
 
 The fixture verifies typed sidecar persistence, split-role boot, RLS
 classification, migration ledgers, and registry behavior.
-Build the API reference locally with `cargo doc -p proxiima --no-deps --open`;
-`proxiima::spiice` is the SDK entry point.
+Build the API reference locally with `cargo doc -p proxiima-spiice --no-deps --open`;
+`proxiima_spiice` is the SDK entry point, and hosts reach it as `proxiima::spiice`.
 
 ## 1. Define the vocabulary
 
@@ -47,7 +49,7 @@ probing field names.
 For example, a new document observation's payload can be:
 
 ```rust
-use proxiima::spiice::{
+use proxiima_spiice::{
     DurablePayloadBuilder, FactPayload, KeyField, PayloadDisplay, PayloadKeyBuilder,
     PayloadProjection,
 };
@@ -91,7 +93,7 @@ impl PayloadProjection for DocumentFiledV1 {
         }
     }
 
-    fn durable(&self) -> Result<proxiima::spiice::DurablePayload, String> {
+    fn durable(&self) -> Result<proxiima_spiice::DurablePayload, String> {
         let mut fields = DurablePayloadBuilder::new();
         fields
             .field("source_path", &self.source_path)?
@@ -145,7 +147,7 @@ what a migration may name.
 For a one-row payload, the typed helper connects fields to the sidecar:
 
 ```rust
-proxiima::spiice::pg_sidecar! {
+proxiima_spiice::pg_sidecar! {
     payload: DocumentFiledV1,
     row: DocumentFiledRow,
     kinds: [Fact],
@@ -272,7 +274,7 @@ declare `SearchProjectionDecl::None { why: "...", tag_column: Some("labels") }`;
 the named sidecar column contains `text[]` tags. Use `tag_column: None` when
 the schema has no filterable tags. The sidecar must be keyed by memory `t`.
 Migration authors can obtain the canonical projection DDL and its inverses
-through `proxiima::spiice::projection_artifacts(contract)`. Reuse
+through `proxiima_spiice::projection_artifacts(contract)`. Reuse
 `BAND_EXACT`, `BAND_RESCUE`, and `BAND_SUBSTRING` from the SDK when declaring
 core-comparable bands; `LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT` explicitly selects
 the deployment's lexical configuration on a memory write.
@@ -287,7 +289,7 @@ pass replaces their bodies with the current generated definitions.
 Serving startup validates these definitions and refuses a mismatch; it never
 replaces them. Run the host's migration command with the new binary and frozen
 sidecars before starting a searchable composed host, including its first boot.
-`proxiima::spiice::search_candidate_artifacts(contract)` remains available for
+`proxiima_spiice::search_candidate_artifacts(contract)` remains available for
 inspection. Test the effective catalog after migration replay instead of
 asserting that generated text occurs somewhere in migration history.
 
@@ -297,7 +299,7 @@ in the write transaction and follows the series' current owner, including
 earlier uncommitted writes in that unit of work.
 
 For a stateful Fact sidecar, use
-`proxiima::spiice::sidecar_heads_by_key::<YourPayload>` to list current series
+`proxiima_spiice::sidecar_heads_by_key::<YourPayload>` to list current series
 heads without core SQL. Prefix values match the first natural-key columns in
 contract order; an empty prefix selects all keys. Choose `SidecarHeadsScope::Owner`
 or `Readable` for the caller's authorized owners. The page returns admission
@@ -306,7 +308,7 @@ next page. Superseded and forgotten admissions are absent; a schema-defined
 tombstone is still a head. The example spiice's `note_heads` calls this helper
 for its `(notebook_id, key)` series.
 
-`proxiima::spiice::ingest_receipt` reads one Fact receipt by owner, source id
+`proxiima_spiice::ingest_receipt` reads one Fact receipt by owner, source id
 and ingest key on a transaction the caller already holds, so a shared lock
 in that transaction covers the read. It share-locks the admission until the
 caller finishes the transaction. It returns the admission id, series handle
@@ -320,7 +322,7 @@ returns one row per embedding job of the memories the caller names, at most
 age from the database clock; pending and failed jobs do not. Coverage
 counters stay on `Engine::embedding_coverage`.
 
-Use `proxiima::spiice_bundle!` to register the payloads, contract, sidecars, and
+Use `proxiima_spiice::spiice_bundle!` to register the payloads, contract, sidecars, and
 `NamedMigrator` together. Its rustdoc shows all parameters. Use a manual
 `SpiiceBundle` implementation only when composition needs it. Registry freeze
 refuses inconsistent declarations; migrations and the PG catalog tests verify
@@ -331,9 +333,19 @@ contract, receives `ToolCtx`, and resolves host-wired services. Declare the
 actual effect once per action; owner scope, MCP hints, REST methods, and OpenAPI
 consume that declaration. A tool has no raw database pool from the SDK.
 
+A tool reads and writes its spiice's own tables on
+`proxiima_spiice::owner_transaction(&ctx)`: an `OwnerTransaction` under the
+caller's owner scope, so owner row security applies as well as the
+statement's own filter. It runs `sqlx::query`, `query_as` and `query_scalar`
+statements with their binds, refuses one that names the core schema, and
+rolls back unless committed; its rustdoc lists the methods. The example's
+`src/tool.rs` lists notebooks this way.
+
 ## 4. Link into the host
 
-Implement the host's `SpiiceApp` or compose tuple bundles at build time. Register
+Implement the host's `SpiiceApp` with `proxiima::spiice_app!`, behind a
+feature of the spiice crate that links `proxiima` (the example's `host`
+feature), or compose tuple bundles at build time. Register
 host services through `SpiiceApp::services` and configure remote stores through
 `OtherStores`; see [host integration](host-integration.md). Keep the same
 Proxiima git selector across all crates in the consumer graph. Cargo package

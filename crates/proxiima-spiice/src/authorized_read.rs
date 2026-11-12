@@ -13,25 +13,23 @@ use std::collections::{HashMap, HashSet};
 
 use proxiima_core::verbs::query::{EntityKind, QueryRequest, SupersessionStatus};
 use proxiima_core::{
-    AbstractionPayload, AuthzContext, Engine, FactPayload, MemoryId, SchemaId, SidecarPayload,
-    ToolError,
+    AbstractionPayload, FactPayload, MemoryId, SchemaId, SidecarPayload, ToolCtx, ToolError,
 };
 
 /// Candidate id lists are bounded before they ever reach a query so a
 /// pathological caller cannot force an unbounded `IN (...)`/`ANY($1)` scan.
 const MAX_AUTHZ_CANDIDATES: usize = 2_000;
 
-/// Narrow `candidates` to the ids visible to `authz`, optionally
+/// Narrow `candidates` to the ids visible to the caller of `ctx`, optionally
 /// restricted to one `entity_kind`/`schema_id`. Heads-only,
 /// same ordering-agnostic contract as the other helpers in this module.
 ///
 /// # Errors
 ///
-/// Rejects a zero limit. Otherwise returns [`Engine::query`] authorization
+/// Rejects a zero limit. Otherwise returns [`Engine::query`](proxiima_core::Engine::query) authorization
 /// or storage errors.
 pub async fn authorized_memory_ids(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     candidates: &[uuid::Uuid],
     entity_kind: EntityKind,
     schema_id: Option<SchemaId>,
@@ -51,7 +49,7 @@ pub async fn authorized_memory_ids(
     req.include_payloads = false;
     req.memory_ids = candidates.iter().copied().map(MemoryId::new).collect();
 
-    let visible = engine.query(authz, &req).await?;
+    let visible = ctx.engine().query(ctx.authz(), &req).await?;
     let visible_ids = visible
         .memories
         .into_iter()
@@ -73,26 +71,18 @@ pub async fn authorized_memory_ids(
 ///
 /// # Errors
 ///
-/// Rejects a zero limit. Otherwise returns [`Engine::query`] authorization
+/// Rejects a zero limit. Otherwise returns [`Engine::query`](proxiima_core::Engine::query) authorization
 /// or storage errors.
 pub async fn authorized_fact_payloads<P>(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     candidates: &[uuid::Uuid],
     limit: usize,
 ) -> Result<Vec<(MemoryId, P)>, ToolError>
 where
     P: FactPayload + Clone,
 {
-    let payloads = authorized_payloads(
-        engine,
-        authz,
-        candidates,
-        EntityKind::Fact,
-        P::schema_id(),
-        limit,
-    )
-    .await?;
+    let payloads =
+        authorized_payloads(ctx, candidates, EntityKind::Fact, P::schema_id(), limit).await?;
     Ok(payloads
         .into_iter()
         .filter_map(|(id, payload)| payload.downcast_ref::<P>().cloned().map(|p| (id, p)))
@@ -107,11 +97,10 @@ where
 ///
 /// # Errors
 ///
-/// Rejects a zero limit. Otherwise returns [`Engine::query`] authorization
+/// Rejects a zero limit. Otherwise returns [`Engine::query`](proxiima_core::Engine::query) authorization
 /// or storage errors.
 pub async fn authorized_abstraction_payloads<P>(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     candidates: &[uuid::Uuid],
     limit: usize,
 ) -> Result<Vec<(MemoryId, P)>, ToolError>
@@ -119,8 +108,7 @@ where
     P: AbstractionPayload + Clone,
 {
     let payloads = authorized_payloads(
-        engine,
-        authz,
+        ctx,
         candidates,
         EntityKind::Abstraction,
         P::schema_id(),
@@ -136,7 +124,7 @@ where
 /// The stored owner ids of the caller's read access set (`S_read`).
 ///
 /// For a spiice that runs its own candidate scan before admitting through
-/// [`Engine::query`]. Binding this array into the scan's `owner_id = ANY($n)`
+/// [`Engine::query`](proxiima_core::Engine::query). Binding this array into the scan's `owner_id = ANY($n)`
 /// is what makes a `gin(owner_id, search_tsv)` projection index reachable:
 /// with the owner reached through a join instead, the planner has the two
 /// halves of a two-column index on two relations and uses neither. It is a
@@ -148,12 +136,10 @@ where
 /// Returns `Forbidden` when the context authorizes no reads. When the host
 /// vetoes every readable owner the list is empty and `Ok`; a scan bound to
 /// it reads nothing.
-pub async fn read_owner_ids(
-    engine: &Engine,
-    authz: &AuthzContext,
-) -> Result<Vec<uuid::Uuid>, ToolError> {
-    Ok(engine
-        .authorized_read_owners(authz)
+pub async fn read_owner_ids(ctx: &ToolCtx) -> Result<Vec<uuid::Uuid>, ToolError> {
+    Ok(ctx
+        .engine()
+        .authorized_read_owners(ctx.authz())
         .await?
         .into_iter()
         .map(proxiima_core::OwnerId::into_inner)
@@ -161,8 +147,7 @@ pub async fn read_owner_ids(
 }
 
 async fn authorized_payloads(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     candidates: &[uuid::Uuid],
     entity_kind: EntityKind,
     schema_id: SchemaId,
@@ -182,7 +167,7 @@ async fn authorized_payloads(
     req.include_payloads = true;
     req.memory_ids = candidates.iter().copied().map(MemoryId::new).collect();
 
-    let response = engine.query(authz, &req).await?;
+    let response = ctx.engine().query(ctx.authz(), &req).await?;
     let mut by_id = response
         .memories
         .into_iter()

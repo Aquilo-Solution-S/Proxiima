@@ -23,8 +23,9 @@ use proxiima_storage_pg::{
 };
 use sqlx::PgPool;
 
-use crate::bundle::SpiiceBundle;
-use crate::migrations::{MigrationError, NamedMigrator, check_lineup, lineup, run_lineup};
+use proxiima_spiice::{NamedMigrator, SpiiceBundle};
+
+use crate::migrations::{MigrationError, MigrationSource, check_lineup, lineup, run_lineup};
 
 /// The store number a [`HostTemplate`] initializes, as the migrate step does:
 /// a test boots its clone with `.store_number(TEMPLATE_STORE_NUMBER)`.
@@ -89,7 +90,7 @@ impl HostTemplate {
     /// Returns the [`MigrationError`] a run refuses the lineup with before it
     /// connects: a repeated version, a shared ledger. Such a lineup gets no
     /// template name, because the hash cannot tell it from a valid one (it
-    /// reads each lane through `NamedMigrator::lane`, which lists a repeated
+    /// reads each lane through `MigrationSource::lane`, which lists a repeated
     /// version once) and a name could match a cached template.
     pub fn new(
         family: TemplateFamily,
@@ -224,7 +225,7 @@ impl HostTemplate {
 /// The template hash: `fingerprint`, the definitions, release and store
 /// number the template holds, then each source's id, ledger and
 /// `(version, checksum)` pairs in run order, from the enumeration the ledger
-/// checks and the migration plan use ([`NamedMigrator::lane`]), followed by
+/// checks and the migration plan use (`MigrationSource::lane`), followed by
 /// sorted spiice schema and Follows table sets. Every field is length-prefixed
 /// and each list has a count, so different inputs cannot spell the same bytes.
 fn fingerprint_hash(
@@ -290,6 +291,18 @@ pub fn scoped_authz(owner: OwnerId) -> AuthzContext {
     .narrowed_to_owner(owner)
     .expect("an admin on exactly this owner narrows to it");
     proxiima_core::test_fixtures::authenticated_context(context)
+}
+
+/// A verified caller that is admin on each of `owners`: its owner scope
+/// reads all of them, for a test that shows a tool answers for the calling
+/// owner only.
+#[must_use]
+pub fn shared_authz(owners: &[OwnerId]) -> AuthzContext {
+    proxiima_core::test_fixtures::authenticated_context(AuthzContext::for_subject_with_role(
+        UserId::new(uuid::Uuid::now_v7()),
+        owners.iter().map(|owner| (*owner, Role::admin())),
+        AuthPath::HostBearer,
+    ))
 }
 
 /// Assert that every declaration and presence trigger the substrate

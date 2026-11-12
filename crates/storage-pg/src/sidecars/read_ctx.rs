@@ -320,13 +320,23 @@ pub(crate) fn validate_sidecar_read_sql(
     sql: &str,
     allow_core_schema: bool,
 ) -> Result<(), StorageError> {
-    let lowered = sql.to_ascii_lowercase();
-    if !allow_core_schema && lowered.contains("proxiima_core.") {
-        return Err(StorageError::Internal(
-            "sidecar read SQL must not reference proxiima_core.*".to_string(),
-        ));
+    if !allow_core_schema {
+        refuse_core_schema_sql(sql)?;
     }
     validate_sidecar_read_sql_shape(sql)
+}
+
+/// The rule for SQL a spiice writes: a statement that names the core schema
+/// is refused. The sidecar read context and
+/// [`OwnerTransaction`](crate::OwnerTransaction) apply it before they run a
+/// statement.
+pub(crate) fn refuse_core_schema_sql(sql: &str) -> Result<(), StorageError> {
+    if sql.to_ascii_lowercase().contains("proxiima_core.") {
+        return Err(StorageError::Internal(
+            "spiice SQL must not reference proxiima_core.*".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_sidecar_read_sql_shape(sql: &str) -> Result<(), StorageError> {

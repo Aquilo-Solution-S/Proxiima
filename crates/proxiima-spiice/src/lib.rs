@@ -1,13 +1,32 @@
-//! Spiice SDK exports.
+//! The Proxiima Spiice SDK: everything a spiice crate names, and nothing a
+//! host alone may hold. A spiice depends on this crate; `proxiima`
+//! re-exports it as `proxiima::spiice` for host code.
+//!
+//! A type that appears in an SDK signature is nameable here. The SDK names
+//! no storage handle, no raw pool and no host-tier owner-scoped transaction;
+//! a spiice reaches its own tables through [`owner_transaction`]:
+//!
+//! ```compile_fail,E0432
+//! use proxiima_spiice::PgPool;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use proxiima_spiice::begin_owner_transaction;
+//! ```
 
-pub use crate::bundle::SpiiceBundle;
-pub use crate::migrations::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
-/// One-declaration spiice bundle; see the macro's docs.
-pub use crate::spiice_bundle;
-/// Background-worker surface for [`SpiiceBundle::spawn_workers`]: the
-/// runtime handles a spawning spiice receives and the named join handle
-/// it returns.
-pub use crate::workers::{SpiiceWorker, SpiiceWorkerContext};
+mod authorized_read;
+mod bundle;
+mod detached;
+mod migrator;
+mod owner_transaction;
+mod sidecar_heads;
+mod worker;
+
+pub use bundle::SpiiceBundle;
+pub use migrator::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
+/// An owner-scoped transaction for the spiice's own tables, begun for the
+/// calling owner ([`owner_transaction`]), and the statements it runs.
+pub use owner_transaction::owner_transaction;
 /// Transport-neutral tool metadata.
 /// Implement [`Tool`] with [`ToolCtx`] / [`ToolError`]; MCP and REST adapt it.
 /// Declare what the tool does once, as a [`ToolEffect`]: `Tool::EFFECT` on a
@@ -81,15 +100,15 @@ pub use proxiima_core::spiice0::{BAND_EXACT, BAND_RESCUE, BAND_SUBSTRING};
 /// Delivery admission is host-only. The SDK may use the read service for
 /// verified, locator-free bytes, but cannot call its host-coordinate seam:
 ///
-/// ```compile_fail
-/// use proxiima::spiice::CitedBlobReadService;
-/// fn no_host_delivery(service: &CitedBlobReadService, authority: &proxiima::AuthzContext, request: proxiima::CitedBlobDeliveryRequest) {
+/// ```compile_fail,E0624
+/// use proxiima_spiice::CitedBlobReadService;
+/// fn no_host_delivery(
+///     service: &CitedBlobReadService,
+///     authority: &proxiima_core::AuthzContext,
+///     request: proxiima_core::storage_ports::CitedBlobDeliveryRequest,
+/// ) {
 ///     let _ = service.authorize_delivery(authority, request);
 /// }
-/// ```
-///
-/// ```compile_fail
-/// let _: Option<proxiima::spiice::CitedBlobDeliveryTarget> = None;
 /// ```
 ///
 /// The admission, request, and target types are intentionally absent here;
@@ -151,7 +170,7 @@ pub use proxiima_core::{
     ToolScope, TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice,
     validate_endpoint_url, validate_endpoint_url_for_hosts,
 };
-/// Query / ingest types a spiice names next to [`crate::Engine`]
+/// Query / ingest types a spiice names next to [`proxiima_core::Engine`]
 /// (Host API). `Engine` itself stays off this module (`docs/protocol.md`).
 ///
 /// [`AuthorizationHook`] is the advertised extension. Implementing `veto`
@@ -266,14 +285,16 @@ pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
     memories_citing, memory_embeddings, memory_versions, series_versions,
 };
+pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction};
 pub use proxiima_storage_pg::{PgMigrationSchemas, PgSchemaEvolution};
 pub use proxiima_storage_pg::{
     PgSidecarRegistry, PgSidecarRegistryFrozen, register_core_pg_sidecars,
 };
+/// Background-worker surface for [`SpiiceBundle::spawn_workers`]: the
+/// runtime handles a spawning spiice receives and the named join handle
+/// it returns.
+pub use worker::{SpiiceWorker, SpiiceWorkerContext};
 
-mod authorized_read;
-mod detached;
-mod sidecar_heads;
 pub use authorized_read::{
     authorized_abstraction_payloads, authorized_fact_payloads, authorized_memory_ids,
     read_owner_ids,

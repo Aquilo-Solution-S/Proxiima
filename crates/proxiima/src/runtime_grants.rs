@@ -38,8 +38,8 @@ use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
 
 use crate::ProxiimaError;
-use crate::migrations::NamedMigrator;
 use crate::runtime_config::cause_with;
+use proxiima_spiice::NamedMigrator;
 
 /// `pg_advisory_xact_lock` key owned by this step: ASCII `proxgrnt`, beside
 /// storage's `proxembm` / `proxretn` maintenance keys.
@@ -588,11 +588,11 @@ mod tests {
 
     #[test]
     fn ledger_names_are_qualified_and_deduplicated() {
-        let named = crate::migrations::NamedMigrator::new(
+        let named = proxiima_spiice::NamedMigrator::new(
             "fixture-spiice",
             fixture_migrator("public._sqlx_migrations_proxiima_fixture"),
         );
-        let unqualified = crate::migrations::NamedMigrator::new(
+        let unqualified = proxiima_spiice::NamedMigrator::new(
             "inline-spiice",
             fixture_migrator("_sqlx_migrations"),
         );

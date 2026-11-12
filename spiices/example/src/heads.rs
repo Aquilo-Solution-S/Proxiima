@@ -1,13 +1,14 @@
 //! Current note series through the generic, owner-scoped facade.
 
-use proxiima::spiice::{
-    SidecarAtom, SidecarHeadsPage, SidecarHeadsScope, ToolError, sidecar_heads_by_key,
+use proxiima_spiice::{
+    MemoryId, SidecarAtom, SidecarHeadsPage, SidecarHeadsScope, ToolCtx, ToolError,
+    sidecar_heads_by_key,
 };
-use proxiima::{AuthzContext, Engine, MemoryId};
 
 use crate::NoteV1;
 
-/// List current note heads, optionally narrowed by a natural-key tuple prefix.
+/// List current note heads the caller of `ctx` reads, optionally narrowed by
+/// a natural-key tuple prefix.
 ///
 /// An empty prefix lists every visible note; one UUID selects a notebook;
 /// that UUID followed by a text key selects one note series. Resume from the
@@ -16,12 +17,11 @@ use crate::NoteV1;
 /// # Errors
 /// Returns facade authorization, prefix, limit, and storage errors.
 pub async fn note_heads(
-    engine: &Engine,
-    authz: &AuthzContext,
+    ctx: &ToolCtx,
     scope: SidecarHeadsScope,
     key_prefix: &[SidecarAtom],
     after: Option<MemoryId>,
     limit: u32,
 ) -> Result<SidecarHeadsPage, ToolError> {
-    sidecar_heads_by_key::<NoteV1>(engine, authz, scope, key_prefix, after, limit).await
+    sidecar_heads_by_key::<NoteV1>(ctx, scope, key_prefix, after, limit).await
 }

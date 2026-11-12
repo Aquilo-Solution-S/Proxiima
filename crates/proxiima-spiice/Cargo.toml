@@ -1,0 +1,27 @@
+[package]
+name = "proxiima-spiice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "The Proxiima Spiice SDK: what a spiice crate depends on."
+
+[lib]
+name = "proxiima_spiice"
+
+[dependencies]
+proxiima-core = { path = "../core" }
+proxiima-storage-pg = { path = "../storage-pg" }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+proxiima-core = { path = "../core", features = ["testkit"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

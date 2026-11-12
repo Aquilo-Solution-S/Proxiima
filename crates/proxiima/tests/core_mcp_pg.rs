@@ -2865,9 +2865,15 @@ async fn facade_authorized_read_surfaces_group_transferred_fact_to_group_member(
             [(group_owner, Role::viewer())],
             AuthPath::HostBearer,
         ));
+        let member_ctx = proxiima_core::test_fixtures::tool_ctx_on(
+            OwnerId::from(member),
+            member_authz,
+            built.host().engine().clone(),
+            proxiima_core::SpiiceServices::default(),
+            proxiima_core::ToolCaller::new("test", "test", "0"),
+        );
         let visible = proxiima::spiice::authorized_memory_ids(
-            built.host().engine(),
-            &member_authz,
+            &member_ctx,
             &[memory_id],
             proxiima_core::verbs::query::EntityKind::Fact,
             None,
@@ -2884,9 +2890,15 @@ async fn facade_authorized_read_surfaces_group_transferred_fact_to_group_member(
         // not the transfer, is what grants visibility.
         let stranger = UserId::new(Uuid::now_v7());
         let stranger_authz = verified(AuthzContext::for_subject(stranger, AuthPath::HostBearer));
+        let stranger_ctx = proxiima_core::test_fixtures::tool_ctx_on(
+            OwnerId::from(stranger),
+            stranger_authz,
+            built.host().engine().clone(),
+            proxiima_core::SpiiceServices::default(),
+            proxiima_core::ToolCaller::new("test", "test", "0"),
+        );
         let hidden = proxiima::spiice::authorized_memory_ids(
-            built.host().engine(),
-            &stranger_authz,
+            &stranger_ctx,
             &[memory_id],
             proxiima_core::verbs::query::EntityKind::Fact,
             None,
