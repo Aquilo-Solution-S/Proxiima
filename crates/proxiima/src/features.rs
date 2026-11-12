@@ -2,14 +2,16 @@
 //! starts (docs/configuration.md §Runtime features).
 //!
 //! The runtime decides every feature once per boot, in `build()` and `run()`
-//! alike, logs one INFO line per decision, owns the tasks it started and
-//! joins them on shutdown. A half-configured feature never reaches this
-//! module: resolve refuses it before storage.
+//! alike, logs one INFO line per decision, owns every worker it started in
+//! one supervised set ([`crate::workers::Workers`]) and joins them on
+//! shutdown. A half-configured feature never reaches this module: resolve
+//! refuses it before storage.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use proxiima_core::quiesce::Checkpoint;
+use proxiima_core::engine::EmbeddingDrainOutcome;
+use proxiima_core::quiesce::GateWorker;
 use proxiima_core::storage_ports::publication::{PublicationOutboxPort, PublicationRetentionPort};
 use proxiima_core::write_wake::WriteWake;
 use proxiima_core::{
@@ -20,9 +22,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::RuntimeConfig;
 use crate::bundle::SpiiceBundle;
-use crate::in_process_outbox::{self, Drain, Proceed, Settings};
+use crate::in_process_outbox::{Drain, Proceed, Settings};
 use crate::object_maintenance::ObjectPurgeHealth;
-use crate::workers::{SpiiceWorker, SpiiceWorkerContext};
+use crate::workers::{Backoff, EndedWorkers, Pass, SpiiceWorkerContext, Wake, WorkerPass, Workers};
 
 /// One runtime feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -322,6 +324,8 @@ pub(crate) struct FeatureInputs<'a> {
     pub(crate) engine: &'a Arc<Engine>,
     pub(crate) services: &'a SpiiceServices,
     pub(crate) cancel: &'a CancellationToken,
+    /// Where the supervisor lists a worker that ends before shutdown.
+    pub(crate) ended: EndedWorkers,
     pub(crate) config: &'a RuntimeConfig,
     pub(crate) publication: PublicationHandles,
     /// The object store and what draining it needs; `None` without one.
@@ -342,32 +346,17 @@ pub(crate) struct PublicationHandles {
     pub(crate) retention: Arc<dyn PublicationRetentionPort>,
 }
 
-/// The started features: their decisions and the tasks the runtime owns.
+/// The started features: their decisions, the pause gates of the ones that
+/// claim, and the supervisor of every worker the runtime started.
+#[derive(Debug)]
 pub(crate) struct Features {
     pub(crate) report: BootReport,
-    workers: Vec<SpiiceWorker>,
-    embedding: Option<(QuiesceGate, JoinHandle<()>)>,
-    publisher: Option<Publisher>,
-    object_purge: Option<(QuiesceGate, JoinHandle<()>)>,
-}
-
-/// The outbox publisher's task and one pause gate per consumer drain.
-type Publisher = (Vec<QuiesceGate>, JoinHandle<()>);
-
-impl std::fmt::Debug for Features {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Features")
-            .field("report", &self.report)
-            .field(
-                "workers",
-                &self
-                    .workers
-                    .iter()
-                    .map(|worker| worker.name)
-                    .collect::<Vec<_>>(),
-            )
-            .finish_non_exhaustive()
-    }
+    embedding: Option<QuiesceGate>,
+    /// One pause gate per consumer drain.
+    publisher: Option<Vec<QuiesceGate>>,
+    object_purge: Option<QuiesceGate>,
+    /// Owns the [`Workers`] set; finishes once every worker has ended.
+    supervisor: JoinHandle<()>,
 }
 
 impl Features {
@@ -376,12 +365,9 @@ impl Features {
     /// so a new one must decide whether it claims.
     pub(crate) fn feature_control(&self, feature: Feature) -> Option<FeatureControl> {
         let gates = match feature {
-            Feature::EmbeddingWorker => self.embedding.as_ref().map(|(gate, _)| vec![gate.clone()]),
-            Feature::OutboxPublisher => self.publisher.as_ref().map(|(gates, _)| gates.clone()),
-            Feature::ObjectPurge => self
-                .object_purge
-                .as_ref()
-                .map(|(gate, _)| vec![gate.clone()]),
+            Feature::EmbeddingWorker => self.embedding.as_ref().map(|gate| vec![gate.clone()]),
+            Feature::OutboxPublisher => self.publisher.clone(),
+            Feature::ObjectPurge => self.object_purge.as_ref().map(|gate| vec![gate.clone()]),
             // Serving continues by definition; the other two claim no
             // queue row through the runtime's gate.
             Feature::Mcp | Feature::SpiiceWorkers | Feature::PublishedRecordPrune => None,
@@ -389,27 +375,10 @@ impl Features {
         Some(FeatureControl::new(feature, gates))
     }
 
-    /// Join every started task. The caller cancelled their token first.
+    /// Join every started worker. The caller cancelled their token first.
     pub(crate) async fn join(self) {
-        for worker in self.workers {
-            if let Err(err) = worker.handle.await {
-                tracing::warn!(worker = worker.name, error = %err, "spiice worker join failed");
-            }
-        }
-        if let Some((_, embedding)) = self.embedding
-            && let Err(err) = embedding.await
-        {
-            tracing::warn!(error = %err, "embedding worker join failed");
-        }
-        if let Some((_, publisher)) = self.publisher
-            && let Err(err) = publisher.await
-        {
-            tracing::warn!(error = %err, "outbox publisher join failed");
-        }
-        if let Some((_, object_purge)) = self.object_purge
-            && let Err(err) = object_purge.await
-        {
-            tracing::warn!(error = %err, "object purge worker join failed");
+        if let Err(err) = self.supervisor.await {
+            tracing::warn!(error = %err, "worker supervisor join failed");
         }
     }
 }
@@ -424,26 +393,33 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         cancel: inputs.cancel.child_token(),
         services: inputs.services.clone(),
     };
-    let workers = A::spawn_workers(&worker_ctx);
-    let workers_decision = if workers.is_empty() {
+    let mut workers = Workers::default();
+    let spiice_workers = A::spawn_workers(&worker_ctx);
+    let workers_decision = if spiice_workers.is_empty() {
         FeatureDecision::off(
             Feature::SpiiceWorkers,
             "no linked spiice contributes a worker",
         )
     } else {
-        let names: Vec<&str> = workers.iter().map(|worker| worker.name).collect();
+        let names: Vec<&str> = spiice_workers.iter().map(|worker| worker.name).collect();
         FeatureDecision::started(
             Feature::SpiiceWorkers,
             format!("linked spiices contribute {}", names.join(", ")),
         )
     };
+    for worker in spiice_workers {
+        workers.adopt(worker);
+    }
 
     let (embedding, embedding_decision) = if inputs.engine.embedding_router().is_some() {
+        let (gate, worker) = QuiesceGate::new();
+        workers.spawn(
+            "embedding-drain",
+            None,
+            embedding_worker(inputs.engine.clone(), inputs.cancel.child_token(), worker),
+        );
         (
-            Some(spawn_embedding_worker(
-                inputs.engine.clone(),
-                inputs.cancel.child_token(),
-            )),
+            Some(gate),
             FeatureDecision::started(
                 Feature::EmbeddingWorker,
                 "an embedding client or router is configured (embed_client / embedding_router)",
@@ -459,8 +435,8 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         )
     };
 
-    let (publisher, publisher_decision, prune_decision) = start_publisher(inputs);
-    let (object_purge, object_purge_decision) = start_object_purge(inputs);
+    let (publisher, publisher_decision, prune_decision) = start_publisher(inputs, &mut workers);
+    let (object_purge, object_purge_decision) = start_object_purge(inputs, &mut workers);
     let report = BootReport {
         decisions: [
             mcp,
@@ -474,10 +450,10 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
     report.log();
     Features {
         report,
-        workers,
         embedding,
         publisher,
         object_purge,
+        supervisor: workers.supervise(inputs.cancel.clone(), inputs.ended.clone()),
     }
 }
 
@@ -485,7 +461,8 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
 /// object store is configured.
 fn start_object_purge(
     inputs: &FeatureInputs<'_>,
-) -> (Option<(QuiesceGate, JoinHandle<()>)>, FeatureDecision) {
+    workers: &mut Workers,
+) -> (Option<QuiesceGate>, FeatureDecision) {
     let Some(objects) = &inputs.objects else {
         return (
             None,
@@ -512,11 +489,18 @@ fn start_object_purge(
         interval,
         health: objects.health.clone(),
     };
-    (
-        Some(crate::object_maintenance::spawn_object_purge_worker(
+    let (gate, gate_worker) = QuiesceGate::new();
+    workers.spawn(
+        "object-purge",
+        None,
+        crate::object_maintenance::object_purge_worker(
             worker,
             inputs.cancel.child_token(),
-        )),
+            gate_worker,
+        ),
+    );
+    (
+        Some(gate),
         FeatureDecision::started(
             Feature::ObjectPurge,
             format!(
@@ -531,7 +515,8 @@ fn start_object_purge(
 /// The publisher, and the prune that rides on it.
 fn start_publisher(
     inputs: &FeatureInputs<'_>,
-) -> (Option<Publisher>, FeatureDecision, FeatureDecision) {
+    workers: &mut Workers,
+) -> (Option<Vec<QuiesceGate>>, FeatureDecision, FeatureDecision) {
     let horizon = inputs.config.published_retention;
     let consumers = &inputs.config.outbox_consumers;
     if consumers.is_empty() {
@@ -551,43 +536,56 @@ fn start_publisher(
             FeatureDecision::off(Feature::PublishedRecordPrune, prune),
         );
     }
-    let retention = horizon.map(|older_than| PublicationRetention {
-        port: inputs.publication.retention.clone(),
-        older_than,
-    });
     let prune = match horizon {
-        Some(horizon) => FeatureDecision::started(
-            Feature::PublishedRecordPrune,
-            format!(
-                "the outbox publisher runs and a retention of {}s is configured \
-                 (PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS / published_retention)",
-                horizon.as_secs()
-            ),
-        ),
+        Some(older_than) => {
+            let retention = PublicationRetention {
+                port: inputs.publication.retention.clone(),
+                older_than,
+            };
+            workers.spawn(
+                "outbox-prune",
+                None,
+                prune_worker(retention, inputs.cancel.child_token()),
+            );
+            FeatureDecision::started(
+                Feature::PublishedRecordPrune,
+                format!(
+                    "the outbox publisher runs and a retention of {}s is configured \
+                     (PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS / published_retention)",
+                    older_than.as_secs()
+                ),
+            )
+        }
         None => FeatureDecision::off(
             Feature::PublishedRecordPrune,
             "retention is off (PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS=0 / \
              published_retention)",
         ),
     };
-    let drains = consumers
+    // One worker per consumer, so a consumer whose `accept` blocks holds up
+    // only itself.
+    let gates = consumers
         .iter()
         .map(|(name, intake)| {
-            Drain::new(
+            let drain = Drain::new(
                 inputs.publication.outbox.clone(),
                 name.clone(),
                 intake.clone(),
                 Settings::new(),
                 Arc::new(Proceed),
-            )
+            );
+            let (gate, worker) = QuiesceGate::new();
+            let cancel = inputs.cancel.child_token();
+            // The consumer goes to the log only: `/readyz` is anonymous.
+            workers.spawn("outbox-publisher", Some(name.to_string()), async move {
+                drain.run(cancel, worker).await;
+            });
+            gate
         })
         .collect();
-    let publisher = in_process_outbox::spawn(drains, inputs.cancel.child_token(), move |cancel| {
-        prune_published_records(retention, cancel)
-    });
     let names: Vec<String> = consumers.names().map(ToString::to_string).collect();
     (
-        Some(publisher),
+        Some(gates),
         FeatureDecision::started(
             Feature::OutboxPublisher,
             format!(
@@ -619,7 +617,8 @@ impl std::fmt::Debug for PublicationRetention {
 /// Bounded because the statement runs beside the live write path and must not
 /// hold row locks over an unbounded delete. A backlog larger than this is
 /// reclaimed by [`prune_until_short`], one statement at a time.
-const RETENTION_PRUNE_BATCH: u32 = 1_000;
+const RETENTION_PRUNE_BATCH: std::num::NonZeroU32 =
+    std::num::NonZeroU32::new(1_000).expect("1000 is not zero");
 
 /// How often a prune sequence runs.
 ///
@@ -649,37 +648,37 @@ async fn prune_until_short(
     Ok(total)
 }
 
-/// Reclaim delivered records older than the configured horizon, until
-/// cancellation. A no-op future when no horizon is configured.
-async fn prune_published_records(
-    retention: Option<PublicationRetention>,
-    cancel: CancellationToken,
-) {
-    let Some(retention) = retention else {
-        return;
-    };
-    let Some(limit) = std::num::NonZeroU32::new(RETENTION_PRUNE_BATCH) else {
-        return;
-    };
-    loop {
-        tokio::select! {
-            () = cancel.cancelled() => return,
-            () = tokio::time::sleep(RETENTION_PRUNE_INTERVAL) => {}
-        }
+/// Reclaim delivered records older than the configured horizon, one prune
+/// sequence every [`RETENTION_PRUNE_INTERVAL`], until cancellation.
+async fn prune_worker(retention: PublicationRetention, cancel: CancellationToken) {
+    // The prune claims no queue row, so nothing pauses it: no handle holds
+    // this gate's control.
+    let (_, gate) = QuiesceGate::new();
+    let backoff = Backoff::fixed(RETENTION_PRUNE_INTERVAL);
+    crate::workers::run(gate, cancel, Wake::Never, backoff, retention).await;
+}
+
+impl WorkerPass for PublicationRetention {
+    async fn once(&mut self, _gate: &GateWorker, cancel: &CancellationToken) -> Pass {
         match prune_until_short(
-            retention.port.as_ref(),
-            retention.older_than,
-            limit,
-            &cancel,
+            self.port.as_ref(),
+            self.older_than,
+            RETENTION_PRUNE_BATCH,
+            cancel,
         )
         .await
         {
-            Ok(0) => {}
-            Ok(pruned) => tracing::debug!(
-                pruned,
-                horizon_secs = retention.older_than.as_secs(),
-                "reclaimed delivered publication records"
-            ),
+            // A sequence runs until a batch comes back short, so the next
+            // one waits the interval whatever this one removed.
+            Ok(0) => Pass::Idle,
+            Ok(pruned) => {
+                tracing::debug!(
+                    pruned,
+                    horizon_secs = self.older_than.as_secs(),
+                    "reclaimed delivered publication records"
+                );
+                Pass::Idle
+            }
             // Never fatal. Housekeeping that cannot run is a growing table,
             // which is an operator's problem to see; stopping the publisher
             // over it would turn it into an undelivered backlog.
@@ -687,6 +686,7 @@ async fn prune_published_records(
                 tracing::warn!(
                     "publication retention prune failed; delivered records are retained"
                 );
+                Pass::Failed
             }
         }
     }
@@ -698,8 +698,7 @@ async fn prune_published_records(
 const EMBED_IDLE_POLL_MAX: Duration = Duration::from_mins(1);
 
 /// Startup reconcile, then drain until cancellation. Started only when the
-/// engine has an embedding router. Returns the worker's pause control and
-/// its task.
+/// engine has an embedding router.
 ///
 /// The gate is checked before every `drain_embedding_jobs` call, which claims
 /// jobs and reclaims stale `processing` ones: a quiesce lets the call in
@@ -708,108 +707,143 @@ const EMBED_IDLE_POLL_MAX: Duration = Duration::from_mins(1);
 /// `processing` ones (storage-pg `reconcile_embeddings`), and claims none.
 /// It runs before the first checkpoint, so a quiesce that arrives during it
 /// waits for it.
-fn spawn_embedding_worker(
-    engine: Arc<Engine>,
-    cancel: CancellationToken,
-) -> (QuiesceGate, JoinHandle<()>) {
-    let (control, mut gate) = QuiesceGate::new();
-    let task = tokio::spawn(async move {
-        let policy = engine.embedding_runtime_policy();
-        // Boot-time catch-up, not a recurring clock: memories written while
-        // no embedding client was configured never got a job (and exhausted
-        // `failed` jobs stay dead), so one reconcile pass before the first
-        // drain keeps a restart from leaving them silently unsearchable.
-        // Recurring scans and reports stay outside the process
-        // (`proxiima-mcp maintain-embeddings`); owed work drains here.
-        match engine
-            .reconcile_embeddings(
-                proxiima_core::EmbeddingReconcileScope::MissingOnly,
-                Some(proxiima_core::EMBEDDING_RECONCILE_DEFAULT_LIMIT),
-            )
-            .await
-        {
-            Ok(outcome) if outcome.enqueued > 0 => {
-                tracing::info!(
-                    scanned = outcome.scanned,
-                    enqueued = outcome.enqueued,
-                    "startup embedding reconcile enqueued missing jobs"
-                );
-            }
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(error = %err, "startup embedding reconcile failed");
-            }
+async fn embedding_worker(engine: Arc<Engine>, cancel: CancellationToken, gate: GateWorker) {
+    let policy = engine.embedding_runtime_policy();
+    // Boot-time catch-up, not a recurring clock: memories written while
+    // no embedding client was configured never got a job (and exhausted
+    // `failed` jobs stay dead), so one reconcile pass before the first
+    // drain keeps a restart from leaving them silently unsearchable.
+    // Recurring scans and reports stay outside the process
+    // (`proxiima-mcp maintain-embeddings`); owed work drains here.
+    match engine
+        .reconcile_embeddings(
+            proxiima_core::EmbeddingReconcileScope::MissingOnly,
+            Some(proxiima_core::EMBEDDING_RECONCILE_DEFAULT_LIMIT),
+        )
+        .await
+    {
+        Ok(outcome) if outcome.enqueued > 0 => {
+            tracing::info!(
+                scanned = outcome.scanned,
+                enqueued = outcome.enqueued,
+                "startup embedding reconcile enqueued missing jobs"
+            );
         }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, "startup embedding reconcile failed");
+        }
+    }
+    let pass = EmbeddingDrain {
+        engine,
+        size: policy.drain_pass_size(),
+    };
+    crate::workers::run(
+        gate,
+        cancel,
         // Subscribed before the first drain, so a write that commits while
         // one runs wakes the worker right after it.
-        let mut writes = WriteWake::subscribe();
-        let floor = policy.worker_interval();
-        let ceiling = EMBED_IDLE_POLL_MAX.max(floor);
-        let mut idle_wait = floor;
-        loop {
-            if cancel.is_cancelled() {
-                break;
-            }
-            let mut processed = 0usize;
-            let mut failed = 0usize;
-            let mut errored = false;
-            loop {
-                if gate.checkpoint(cancel.cancelled()).await == Checkpoint::Cancelled {
-                    return;
+        Wake::OnIdle(WriteWake::subscribe()),
+        embedding_backoff(policy.worker_interval()),
+        pass,
+    )
+    .await;
+}
+
+/// Idle drains wait longer each round that found nothing, from the
+/// configured worker interval up to [`EMBED_IDLE_POLL_MAX`] (or the
+/// interval, if longer), until a write commits here; jobs enqueued by
+/// another process are found by the poll. A drain that failed retries on
+/// the plain interval, not on every write.
+fn embedding_backoff(floor: Duration) -> Backoff {
+    Backoff {
+        floor,
+        idle_max: EMBED_IDLE_POLL_MAX.max(floor),
+        failed_max: floor,
+    }
+}
+
+/// What one `drain_embedding_jobs` call means for the next wait.
+fn embedding_pass(drained: &Result<EmbeddingDrainOutcome, StorageError>) -> Pass {
+    match drained {
+        // It may have left more: the next drain starts at once. A job that
+        // failed for good is settled, and counts as processed.
+        Ok(outcome) if outcome.processed > 0 => Pass::Worked,
+        Ok(_) => Pass::Idle,
+        Err(_) => Pass::Failed,
+    }
+}
+
+/// One `drain_embedding_jobs` call of `size` jobs per pass.
+struct EmbeddingDrain {
+    engine: Arc<Engine>,
+    size: usize,
+}
+
+impl WorkerPass for EmbeddingDrain {
+    async fn once(&mut self, _gate: &GateWorker, _cancel: &CancellationToken) -> Pass {
+        let drained = self.engine.drain_embedding_jobs(self.size).await;
+        match &drained {
+            Ok(outcome) => {
+                if !outcome.configuration_faults.is_empty() {
+                    tracing::warn!(
+                        faults = ?outcome.configuration_faults,
+                        "embedding clients paused for configuration faults"
+                    );
                 }
-                match engine.drain_embedding_jobs(policy.drain_pass_size()).await {
-                    Ok(outcome) => {
-                        if !outcome.configuration_faults.is_empty() {
-                            tracing::warn!(
-                                faults = ?outcome.configuration_faults,
-                                "embedding clients paused for configuration faults"
-                            );
-                        }
-                        processed += outcome.processed;
-                        failed += outcome.failed;
-                        if outcome.processed == 0 {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        tracing::warn!(error = %err, "embedding drain failed");
-                        errored = true;
-                        break;
-                    }
+                if outcome.processed > 0 || outcome.failed > 0 {
+                    tracing::info!(
+                        processed = outcome.processed,
+                        failed = outcome.failed,
+                        "drained embedding jobs"
+                    );
                 }
             }
-            if processed > 0 || failed > 0 {
-                tracing::info!(processed, failed, "drained embedding jobs");
-            }
-            if errored {
-                // A failing drain retries on the plain interval, not on
-                // every write.
-                idle_wait = floor;
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = gate.changed() => {}
-                    () = tokio::time::sleep(floor) => {}
-                }
-                continue;
-            }
-            // Idle: sleep, longer each round that found nothing, until a
-            // write commits here. Jobs enqueued by another process are found
-            // by the poll, within the ceiling.
-            let sleep = if processed > 0 || failed > 0 {
-                floor
-            } else {
-                idle_wait
-            };
-            idle_wait = sleep.saturating_mul(2).min(ceiling).max(floor);
-            tokio::select! {
-                () = cancel.cancelled() => break,
-                () = gate.changed() => {}
-                () = writes.changed() => idle_wait = floor,
-                () = tokio::time::sleep(sleep) => {}
-            }
+            Err(err) => tracing::warn!(error = %err, "embedding drain failed"),
         }
-    });
-    (control, task)
+        embedding_pass(&drained)
+    }
+}
+
+#[cfg(test)]
+mod embedding_tests {
+    use super::*;
+
+    fn drained(processed: usize, failed: usize) -> Pass {
+        embedding_pass(&Ok(EmbeddingDrainOutcome {
+            processed,
+            failed,
+            ..EmbeddingDrainOutcome::default()
+        }))
+    }
+
+    #[test]
+    fn a_drain_report_decides_the_next_wait() {
+        assert_eq!(drained(3, 0), Pass::Worked);
+        assert_eq!(drained(3, 2), Pass::Worked);
+        assert_eq!(drained(0, 0), Pass::Idle);
+        assert_eq!(
+            embedding_pass(&Err(StorageError::ConstraintViolation("down".into()))),
+            Pass::Failed
+        );
+    }
+
+    /// A failed pass waits the floor: `failed_max` is the floor, so the
+    /// failure wait never doubles past it. Idle passes back off to a minute.
+    #[test]
+    fn failures_retry_on_the_interval_and_idle_drains_back_off_to_a_minute() {
+        let floor = Duration::from_secs(5);
+        let backoff = embedding_backoff(floor);
+        assert_eq!(backoff.floor, floor);
+        assert_eq!(backoff.failed_max, floor);
+        assert_eq!(backoff.idle_max, Duration::from_mins(1));
+        let slow = Duration::from_mins(5);
+        assert_eq!(
+            embedding_backoff(slow).idle_max,
+            slow,
+            "a longer interval wins"
+        );
+    }
 }
 
 #[cfg(test)]

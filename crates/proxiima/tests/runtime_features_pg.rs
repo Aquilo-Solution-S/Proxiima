@@ -95,6 +95,36 @@ impl SpiiceApp for WorkerApp {
     }
 }
 
+/// Contributes one worker that panics as soon as it runs.
+struct PanickingWorkerApp;
+
+impl SpiiceBundle for PanickingWorkerApp {
+    fn register(_registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
+        Ok(())
+    }
+
+    fn migrators() -> Vec<NamedMigrator> {
+        Vec::new()
+    }
+
+    fn spawn_workers(_ctx: &SpiiceWorkerContext) -> Vec<SpiiceWorker> {
+        vec![SpiiceWorker {
+            name: "panics-at-once",
+            handle: tokio::spawn(async { panic!("a worker that panics") }),
+        }]
+    }
+}
+
+impl SpiiceApp for PanickingWorkerApp {
+    fn app_info() -> AppInfo {
+        AppInfo {
+            id: "runtime-features-panicking-worker",
+            title: "Runtime Features Panicking Worker",
+            version: "1",
+        }
+    }
+}
+
 /// An intake that records nothing: enough to start the outbox publisher.
 #[derive(Debug)]
 struct DiscardIntake;
@@ -123,7 +153,7 @@ impl Authenticator for StubAuth {
     }
 }
 
-/// Every event of this test binary as `(thread, "field=value ...")`.
+/// Every event of this test binary as `(thread, "field=value ... level=LEVEL")`.
 ///
 /// Global, not `set_default`: a thread-scoped dispatcher races the callsite
 /// interest cache against the other tests booting in parallel. Each test
@@ -135,6 +165,10 @@ impl<S: Subscriber> Layer<S> for Captured {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
         let mut fields = Fields::default();
         event.record(&mut fields);
+        {
+            use std::fmt::Write as _;
+            write!(&mut fields.0, "level={}", event.metadata().level()).expect("string write");
+        }
         self.0
             .lock()
             .expect("capture lock")
@@ -184,6 +218,18 @@ impl Captured {
             "one boot-report line for {feature}: {lines:?}"
         );
         lines.into_iter().next().unwrap_or_default()
+    }
+
+    /// This thread's lines that contain `needle`.
+    fn lines_with(&self, needle: &str) -> Vec<String> {
+        let thread = std::thread::current().id();
+        self.0
+            .lock()
+            .expect("capture lock")
+            .iter()
+            .filter(|(from, line)| *from == thread && line.contains(needle))
+            .map(|(_, line)| line.clone())
+            .collect()
     }
 }
 
@@ -436,4 +482,91 @@ async fn a_retention_without_a_publisher_is_off_and_says_so() {
     tokio::time::timeout(Duration::from_secs(10), built.shutdown())
         .await
         .expect("shutdown");
+}
+
+/// A worker that panics while the process runs is logged as an error naming
+/// it when it ends and listed on `/readyz`, which stays 200; the listener
+/// keeps serving and the other workers keep running.
+#[tokio::test]
+async fn a_worker_that_panics_is_reported_while_serving_continues() {
+    let db = SplitRoleDb::create("proxiima_features_panic", &[])
+        .await
+        .expect("PG required");
+    migrated_app::migrate_app::<PanickingWorkerApp>(db.platform_url()).await;
+    let captured = captured();
+    let owner = company_owner(Uuid::now_v7());
+    let subject = UserId::new(Uuid::now_v7());
+    let running = Proxiima::<PanickingWorkerApp>::app()
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(owner)
+                .authenticator(Arc::new(StubAuth { subject, owner }))
+                .served_surface(ServedSurface::All)
+                .mcp_bind("127.0.0.1:0".parse().expect("loopback bind"))
+                .health_endpoints(true)
+        })
+        .configure(|b| {
+            b.publication(PublicationConfig::new(
+                PublicationSource::new("urn:proxiima:features-test").expect("publication source"),
+            ))
+            .outbox_intake(Arc::new(DiscardIntake))
+        })
+        .run()
+        .await
+        .expect("configured run");
+    let base = format!("http://{}", running.mcp_addr().expect("bound"));
+    let readyz = || async {
+        let response = reqwest::get(format!("{base}/readyz"))
+            .await
+            .expect("readyz answers");
+        let status = response.status();
+        (status, response.text().await.expect("readyz body"))
+    };
+
+    let (status, body) = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (status, body) = readyz().await;
+            if body.contains("ended-workers") {
+                return (status, body);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the ended worker is listed while the process runs");
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(body, "ready\nended-workers: panics-at-once");
+
+    let logged = captured.lines_with("worker=\"panics-at-once\"");
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(logged[0].ends_with("level=ERROR"), "{logged:?}");
+    assert!(logged[0].contains("panicked"), "{logged:?}");
+
+    // Serving continues: the listener still answers, and the outbox drain
+    // still reaches its checkpoint between passes.
+    let healthz = reqwest::get(format!("{base}/healthz"))
+        .await
+        .expect("healthz answers");
+    assert_eq!(healthz.status(), reqwest::StatusCode::OK);
+    let publisher = running
+        .feature_control(Feature::OutboxPublisher)
+        .expect("the publisher runs");
+    assert_eq!(publisher.status(), FeatureStatus::Running);
+    tokio::time::timeout(Duration::from_secs(10), publisher.quiesce())
+        .await
+        .expect("the drain parks at its next checkpoint")
+        .expect("the drain is alive");
+    assert_eq!(publisher.resume(), Ok(()));
+    assert_eq!(publisher.status(), FeatureStatus::Running);
+
+    tokio::time::timeout(Duration::from_secs(10), running.shutdown())
+        .await
+        .expect("shutdown joins the remaining workers");
+    assert_eq!(
+        captured.lines_with("worker=\"panics-at-once\"").len(),
+        1,
+        "shutdown does not report the worker again"
+    );
 }

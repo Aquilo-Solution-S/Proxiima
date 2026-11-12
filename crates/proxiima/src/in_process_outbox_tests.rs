@@ -19,7 +19,7 @@ use proxiima_core::storage_ports::publication::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::in_process_outbox::{AfterAccept, Drain, Proceed, Settings, spawn};
+use crate::in_process_outbox::{AfterAccept, Drain, Proceed, Settings, spawn_for_tests};
 use crate::outbox_test_fixture::{OutboxProbeApp, PROBE_SOURCE, capture, wait_for_outbox};
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
@@ -284,7 +284,7 @@ impl World {
             hook,
         );
         let cancel = CancellationToken::new();
-        let (_gate, task) = spawn(vec![drain], cancel.clone(), |_| async {});
+        let (_gate, task) = spawn_for_tests(drain, cancel.clone());
         (cancel, task)
     }
 
@@ -978,7 +978,7 @@ async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
             Arc::new(Proceed),
         );
         let cancel = CancellationToken::new();
-        let (_gate, task) = spawn(vec![drain], cancel.clone(), |_| async {});
+        let (_gate, task) = spawn_for_tests(drain, cancel.clone());
         world.wait_for_claims(1).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
@@ -1048,7 +1048,7 @@ async fn a_batch_of_records_is_marked_in_one_transaction() {
             Arc::new(Proceed),
         );
         let cancel = CancellationToken::new();
-        let (_gate, task) = spawn(vec![drain], cancel.clone(), |_| async {});
+        let (_gate, task) = spawn_for_tests(drain, cancel.clone());
         for t in records {
             wait_for_outbox(&world.pool, t, "published").await;
         }

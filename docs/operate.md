@@ -270,7 +270,15 @@ purge queue as the last drain pass left it, counts only:
 readiness: readiness answers whether this replica can serve traffic now, and
 background debt does not change that. Alert on `stuck` above zero, and run
 `maintain-storage --retry-cold-object-purges` to see each stuck debt's key,
-owner and last error. Readiness returns 503 only when the
+owner and last error. A background worker (a runtime feature's or a
+spiice's) that ends before shutdown, by panicking or returning, is logged at
+ERROR when it ends and adds the line `ended-workers: <label>, …` until the
+process restarts; nothing restarts it, and serving and the other workers
+continue. The probe shows only labels fixed in code, once per ended worker:
+`outbox-publisher`, `embedding-drain`, `object-purge`, `outbox-prune`, or a
+spiice worker's declared name. The log line carries the label as `worker`
+and, for an outbox drain, the consumer name as `instance`. Readiness returns
+503 only when the
 database is unavailable or shutdown has started; liveness continues to answer.
 These routes sit outside bearer and Host guards; expose them according to
 deployment policy.

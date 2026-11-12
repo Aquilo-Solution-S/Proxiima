@@ -11,14 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use proxiima_blob_s3::{CitedBlobStore, UploadExpirySweepOutcome};
+use proxiima_core::StorageError;
 use proxiima_core::authz::SystemAuthority;
-use proxiima_core::quiesce::Checkpoint;
-use proxiima_core::{QuiesceGate, StorageError};
+use proxiima_core::quiesce::GateWorker;
 use proxiima_storage_pg::{
     ColdPurgeRetryOptions, ObjectPurgePassOutcome, PgStorage, StorageMaintenanceLock,
 };
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::workers::{Backoff, Pass, Wake, WorkerPass};
 
 /// Expired uploads one sweep call decides.
 const SWEEP_BATCH: u32 = 500;
@@ -216,50 +217,58 @@ pub(crate) struct ObjectPurgeWorker {
 }
 
 /// Run [`object_maintenance_pass`] every `interval` until cancellation.
-/// Returns the worker's pause control and its task.
 ///
 /// The gate is checked before every pass: a quiesce lets the pass in
 /// progress finish, then parks. The first pass runs at once, so a restart
-/// drains what the previous process left owed.
-pub(crate) fn spawn_object_purge_worker(
+/// drains what the previous process left owed. A pass drains up to its own
+/// bound, so the next one waits the interval whatever this one did.
+pub(crate) async fn object_purge_worker(
     worker: ObjectPurgeWorker,
     cancel: CancellationToken,
-) -> (QuiesceGate, JoinHandle<()>) {
-    let (control, mut gate) = QuiesceGate::new();
-    let task = tokio::spawn(async move {
-        let mut stuck_seen = 0_u64;
-        loop {
-            if gate.checkpoint(cancel.cancelled()).await == Checkpoint::Cancelled {
-                return;
-            }
-            match object_maintenance_pass(&worker.storage, &worker.blobs, &worker.authority).await {
-                Ok(outcome) => {
-                    let snapshot = ObjectPurgeSnapshot::of(&outcome.purge);
-                    worker.health.record(snapshot);
-                    log_pass(&outcome);
-                    // Warn when the stuck count changes, not on every pass:
-                    // it stays visible on the probe.
-                    if snapshot.stuck != stuck_seen {
-                        if snapshot.stuck > 0 {
-                            tracing::warn!(
-                                stuck = snapshot.stuck,
-                                "object purge debt keeps failing: run proxiima-mcp \
-                                 maintain-storage --retry-cold-object-purges to name it"
-                            );
-                        }
-                        stuck_seen = snapshot.stuck;
+    gate: GateWorker,
+) {
+    let backoff = Backoff::fixed(worker.interval);
+    let pass = ObjectPurgePass {
+        worker,
+        stuck_seen: 0,
+    };
+    crate::workers::run(gate, cancel, Wake::Never, backoff, pass).await;
+}
+
+/// The object-purge worker and the stuck count it last warned about.
+struct ObjectPurgePass {
+    worker: ObjectPurgeWorker,
+    stuck_seen: u64,
+}
+
+impl WorkerPass for ObjectPurgePass {
+    async fn once(&mut self, _gate: &GateWorker, _cancel: &CancellationToken) -> Pass {
+        let worker = &self.worker;
+        match object_maintenance_pass(&worker.storage, &worker.blobs, &worker.authority).await {
+            Ok(outcome) => {
+                let snapshot = ObjectPurgeSnapshot::of(&outcome.purge);
+                worker.health.record(snapshot);
+                log_pass(&outcome);
+                // Warn when the stuck count changes, not on every pass:
+                // it stays visible on the probe.
+                if snapshot.stuck != self.stuck_seen {
+                    if snapshot.stuck > 0 {
+                        tracing::warn!(
+                            stuck = snapshot.stuck,
+                            "object purge debt keeps failing: run proxiima-mcp \
+                             maintain-storage --retry-cold-object-purges to name it"
+                        );
                     }
+                    self.stuck_seen = snapshot.stuck;
                 }
-                Err(err) => tracing::warn!(error = %err, "object maintenance pass failed"),
+                Pass::Idle
             }
-            tokio::select! {
-                () = cancel.cancelled() => return,
-                () = gate.changed() => {}
-                () = tokio::time::sleep(worker.interval) => {}
+            Err(err) => {
+                tracing::warn!(error = %err, "object maintenance pass failed");
+                Pass::Failed
             }
         }
-    });
-    (control, task)
+    }
 }
 
 fn log_pass(outcome: &ObjectMaintenanceOutcome) {

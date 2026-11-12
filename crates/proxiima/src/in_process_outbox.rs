@@ -29,15 +29,15 @@
 //! mark redelivers the record when its lease expires, with a higher
 //! `delivered_count`, and the intake deduplicates on the event id.
 
-use std::future::Future;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
 use proxiima_core::QuiesceGate;
 use proxiima_core::publication::intake::{DurableIntake, ReceivedEvent};
-use proxiima_core::quiesce::{Checkpoint, GateWorker};
+use proxiima_core::quiesce::GateWorker;
 #[cfg(test)]
 use proxiima_core::storage_ports::publication::ClaimToken;
 use proxiima_core::storage_ports::publication::{
@@ -45,8 +45,9 @@ use proxiima_core::storage_ports::publication::{
     ReleaseOutcome,
 };
 use proxiima_core::write_wake::WriteWake;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::workers::{Backoff, Pass, Wake, WorkerPass};
 
 /// The longest a failing drain waits between passes, and the shipped
 /// [`Settings::idle_poll_max`].
@@ -207,56 +208,26 @@ impl Drain {
     /// Never panics and never returns an error: a drain that stopped on an
     /// intake outage would turn a recoverable delivery pause into a silent
     /// permanent one, and capture keeps running either way.
-    pub(crate) async fn run(&self, cancel: &CancellationToken, mut gate: GateWorker) {
-        // Subscribed before the first claim, so a write that commits while a
-        // pass runs wakes the drain right after it.
-        let mut writes = WriteWake::subscribe();
-        let floor = self.settings.poll_interval;
-        let mut idle_wait = floor;
-        let mut failure_wait = floor;
-        loop {
-            // Before every claim: a quiesced drain parks here, holding
-            // nothing, until it is resumed or cancelled.
-            if gate.checkpoint(cancel.cancelled()).await == Checkpoint::Cancelled {
-                return;
-            }
-            match self.pass(cancel, &gate).await {
-                // A pass that claimed anything is a pass with more waiting.
-                Ok(claimed) if claimed > 0 => {
-                    idle_wait = floor;
-                    failure_wait = floor;
-                }
-                // An empty claim: sleep, longer each time nothing turns up,
-                // until a write commits here. Writes committed by another
-                // process are found by the poll, within `idle_poll_max`.
-                Ok(_) => {
-                    failure_wait = floor;
-                    let sleep = idle_wait;
-                    idle_wait = next_backoff(idle_wait, floor, self.settings.idle_poll_max);
-                    tokio::select! {
-                        () = cancel.cancelled() => return,
-                        () = gate.changed() => {}
-                        () = writes.changed() => idle_wait = floor,
-                        () = tokio::time::sleep(sleep) => {}
-                    }
-                }
-                // A failing intake is not hurried by new writes.
-                Err(failure) => {
-                    tracing::warn!(
-                        consumer = %self.consumer,
-                        failure_category = ?failure,
-                        "in-process outbox delivery failed; the records stay pending and are retried"
-                    );
-                    idle_wait = floor;
-                    failure_wait = next_backoff(failure_wait, floor, MAX_BACKOFF);
-                    tokio::select! {
-                        () = cancel.cancelled() => return,
-                        () = gate.changed() => {}
-                        () = tokio::time::sleep(failure_wait) => {}
-                    }
-                }
-            }
-        }
+    pub(crate) async fn run(self, cancel: CancellationToken, gate: GateWorker) {
+        // An empty claim waits longer each time nothing turns up, until a
+        // write commits here; writes committed by another process are found
+        // by the poll, within `idle_poll_max`. A failing intake is not
+        // hurried by new writes.
+        let backoff = Backoff {
+            floor: self.settings.poll_interval,
+            idle_max: self.settings.idle_poll_max,
+            failed_max: MAX_BACKOFF,
+        };
+        crate::workers::run(
+            gate,
+            cancel,
+            // Subscribed before the first claim, so a write that commits
+            // while a pass runs wakes the drain right after it.
+            Wake::OnIdle(WriteWake::subscribe()),
+            backoff,
+            self,
+        )
+        .await;
     }
 
     /// One claim → accept → mark pass; the number of records it claimed.
@@ -469,51 +440,34 @@ impl Drain {
     }
 }
 
-/// Doubling backoff, capped so a long outage still polls often enough to
-/// notice recovery within a few seconds.
-///
-/// `min` then `max`, never `clamp`: `Ord::clamp` PANICS when `min > max`, and
-/// a floor above the ceiling must not kill the drain task and leave the
-/// outbox undrained for the life of the process. A floor above the ceiling
-/// wins.
-fn next_backoff(current: Duration, floor: Duration, ceiling: Duration) -> Duration {
-    current.saturating_mul(2).min(ceiling).max(floor)
+impl WorkerPass for Drain {
+    async fn once(&mut self, gate: &GateWorker, cancel: &CancellationToken) -> Pass {
+        match self.pass(cancel, gate).await {
+            // A pass that claimed anything is a pass with more waiting.
+            Ok(claimed) if claimed > 0 => Pass::Worked,
+            Ok(_) => Pass::Idle,
+            Err(failure) => {
+                tracing::warn!(
+                    consumer = %self.consumer,
+                    failure_category = ?failure,
+                    "in-process outbox delivery failed; the records stay pending and are retried"
+                );
+                Pass::Failed
+            }
+        }
+    }
 }
 
-/// Spawn one task per drain beside `housekeeping` (the retained-record
-/// prune), each under its own pause gate, returned in `drains` order.
-///
-/// Each drain runs as its own task so a consumer whose `accept` blocks holds
-/// up only itself. `housekeeping` starts at once; a quiesce does not pause
-/// it, because it claims no queue row. The returned handle finishes when all
-/// of them have, and aborting it aborts every drain.
-pub(crate) fn spawn<F, Fut>(
-    drains: Vec<Drain>,
+/// Run `drain` on its own task under its own pause gate, outside the
+/// runtime: crate tests drive a drain they configured themselves.
+#[cfg(test)]
+pub(crate) fn spawn_for_tests(
+    drain: Drain,
     cancel: CancellationToken,
-    housekeeping: F,
-) -> (Vec<QuiesceGate>, JoinHandle<()>)
-where
-    F: FnOnce(CancellationToken) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let (gates, workers): (Vec<_>, Vec<_>) = drains
-        .into_iter()
-        .map(|drain| {
-            let (gate, worker) = QuiesceGate::new();
-            (gate, (drain, worker))
-        })
-        .unzip();
-    let task = tokio::spawn(async move {
-        let mut running = tokio::task::JoinSet::new();
-        for (drain, worker) in workers {
-            let cancel = cancel.clone();
-            running.spawn(async move { drain.run(&cancel, worker).await });
-        }
-        let housekeeping = housekeeping(cancel.clone());
-        let drains = async move { while running.join_next().await.is_some() {} };
-        tokio::join!(drains, housekeeping);
-    });
-    (gates, task)
+) -> (QuiesceGate, tokio::task::JoinHandle<()>) {
+    let (gate, worker) = QuiesceGate::new();
+    let task = tokio::spawn(async move { drain.run(cancel, worker).await });
+    (gate, task)
 }
 
 /// Counts every `claim` the runtime drain issues, empty ones included.
@@ -665,7 +619,7 @@ mod tests {
     fn run_drain(
         outbox: &Arc<EmptyOutbox>,
         settings: Settings,
-    ) -> (CancellationToken, JoinHandle<()>) {
+    ) -> (CancellationToken, tokio::task::JoinHandle<()>) {
         let drain = Drain::new(
             outbox.clone(),
             ConsumerName::default(),
@@ -674,7 +628,7 @@ mod tests {
             Arc::new(Proceed),
         );
         let cancel = CancellationToken::new();
-        let (_gates, task) = spawn(vec![drain], cancel.clone(), |_| async {});
+        let (_gate, task) = spawn_for_tests(drain, cancel.clone());
         (cancel, task)
     }
 
@@ -697,7 +651,7 @@ mod tests {
         let mut wait = poll;
         while wait < ceiling {
             doubling += 1;
-            wait = next_backoff(wait, poll, ceiling);
+            wait = wait.saturating_mul(2).min(ceiling);
         }
         let ramp: Duration = (0..doubling)
             .map(|step| poll.saturating_mul(1 << u32::try_from(step).expect("small")))
@@ -744,25 +698,6 @@ mod tests {
         claims(3).await.expect("and wakes it again");
         cancel.cancel();
         task.await.expect("drain joins");
-    }
-
-    #[test]
-    fn the_backoff_doubles_to_the_ceiling_and_a_higher_floor_wins() {
-        let poll = Duration::from_millis(500);
-        assert_eq!(
-            next_backoff(poll, poll, MAX_BACKOFF),
-            Duration::from_secs(1)
-        );
-        assert_eq!(
-            next_backoff(Duration::from_secs(20), poll, MAX_BACKOFF),
-            Duration::from_secs(30)
-        );
-        let slow = Duration::from_mins(1);
-        assert_eq!(
-            next_backoff(slow, slow, MAX_BACKOFF),
-            slow,
-            "a floor over the ceiling wins"
-        );
     }
 }
 

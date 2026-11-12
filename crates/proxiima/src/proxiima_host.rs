@@ -36,6 +36,8 @@ pub struct ProxiimaHost {
     pub(crate) services: SpiiceServices,
     /// What the object-purge feature last saw of the purge queue.
     pub(crate) object_purge_health: crate::object_maintenance::ObjectPurgeHealth,
+    /// The background workers that ended before shutdown.
+    pub(crate) ended_workers: crate::workers::EndedWorkers,
 }
 
 impl ProxiimaHost {
@@ -200,6 +202,7 @@ impl ProxiimaHost {
             owner: None,
             services: SpiiceServices::default(),
             object_purge_health: crate::object_maintenance::ObjectPurgeHealth::default(),
+            ended_workers: crate::workers::EndedWorkers::default(),
         }
     }
 }

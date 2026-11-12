@@ -2,8 +2,9 @@
 //!
 //! Served on the MCP listener below the Host guard and bearer auth: an
 //! orchestrator probes the pod address with no token. Answers contain only
-//! process readiness, sanitized embedding-configuration status codes, and
-//! the object purge queue's counts as the in-process drain last saw them.
+//! process readiness, sanitized embedding-configuration status codes, the
+//! object purge queue's counts as the in-process drain last saw them, and
+//! the names of background workers that ended before shutdown.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +18,7 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use crate::object_maintenance::ObjectPurgeHealth;
+use crate::workers::EndedWorkers;
 
 /// Process liveness.
 pub(crate) const HEALTHZ_PATH: &str = "/healthz";
@@ -34,6 +36,7 @@ struct Probe {
     cancel: CancellationToken,
     engine: Arc<Engine>,
     objects: ObjectPurgeHealth,
+    ended: EndedWorkers,
 }
 
 pub(crate) fn router(
@@ -41,6 +44,7 @@ pub(crate) fn router(
     cancel: CancellationToken,
     engine: Arc<Engine>,
     objects: ObjectPurgeHealth,
+    ended: EndedWorkers,
 ) -> Router {
     Router::new()
         .route(HEALTHZ_PATH, get(|| async { (StatusCode::OK, "ok") }))
@@ -50,6 +54,7 @@ pub(crate) fn router(
             cancel,
             engine,
             objects,
+            ended,
         })
 }
 
@@ -79,6 +84,12 @@ async fn ready(State(probe): State<Probe>) -> (StatusCode, String) {
                 answer.push('\n');
                 answer.push_str(&objects.line());
             }
+            // Information, not a verdict: the listener still serves, so an
+            // ended worker leaves the status as it is.
+            if let Some(ended) = probe.ended.line() {
+                answer.push('\n');
+                answer.push_str(&ended);
+            }
             (StatusCode::OK, answer)
         }
         _ => (
@@ -104,6 +115,7 @@ mod tests {
                 proxiima_core::StoragePorts::rejecting_for_tests(),
             )),
             objects: ObjectPurgeHealth::default(),
+            ended: EndedWorkers::default(),
         };
         assert_eq!(
             ready(State(probe.clone())).await,

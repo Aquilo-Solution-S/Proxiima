@@ -318,6 +318,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
                 owner: config.owner,
                 services: parts.services.clone(),
                 object_purge_health: crate::object_maintenance::ObjectPurgeHealth::default(),
+                ended_workers: crate::workers::EndedWorkers::default(),
             },
         };
         let owner_access = runtime_owner_access(
@@ -441,6 +442,7 @@ impl Runtime {
                 engine: &host.engine,
                 services: &host.services,
                 cancel: &cancel,
+                ended: host.ended_workers.clone(),
                 config,
                 publication: crate::features::PublicationHandles {
                     outbox: publication_outbox,
@@ -1115,6 +1117,7 @@ fn build_router<A: SpiiceApp>(
             cancel.clone(),
             app_ctx.host().engine.clone(),
             app_ctx.host().object_purge_health.clone(),
+            app_ctx.host().ended_workers.clone(),
         )
     } else {
         Router::new()
