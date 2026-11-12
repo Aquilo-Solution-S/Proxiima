@@ -1,9 +1,12 @@
 /-
-Causa — Pin authorization
+Causa — Goal collaboration authority
 
-Writer can read each pinned `t` (UML §2 `read`). No edge row. Source-owned
-means the pin lives on the declaring Memory/Goal. Target render is a
-separate gate (live / forgotten / unavailable).
+Access on one exact Goal: the owner's group gives the capability, or a grant
+in force on that Goal does (`goal_route`). Editing a Goal, reading a
+publication and working a bound Memory are stated over that route. Reading
+the Goal itself is wider: it waives the grant's own Goal ceiling
+(`goal_read_admitted`). Achieving a Goal and forking a source version have
+their own admissions (`goal_achieve_admitted`, `fork_admitted`).
 -/
 
 import Causa.Edges
@@ -16,25 +19,6 @@ def MemoryKind.accessKind : MemoryKind → AccessKind
   | .Fact => .fact
   | .Abstraction => .abstraction
   | .Perspective => .perspective
-
-/-- Seeing the declaring row is source-local. -/
-def pin_source_read_admitted (requester : User) (source : Memory) : Prop :=
-  may_read requester (memory_owner source) (memory_kind source).accessKind
-
-/-- Target projection: the pinned row may be shown only if readable. -/
-def pin_target_readable (requester : User) (target : Memory) : Prop :=
-  may_read requester (memory_owner target) (memory_kind target).accessKind
-
-/-- Uniform write admission: source write + target read. -/
-def pin_write_admitted (requester : User) (source target : Memory) : Prop :=
-  may_write requester (memory_owner source) (memory_kind source).accessKind ∧
-  may_read requester (memory_owner target) (memory_kind target).accessKind
-
-/-- Goal pin: the writer works the Goal owner's Goals or administers that
-    owner, whichever the Goal operation needs, and reads the named Memory. -/
-def goal_pin_write_admitted (requester : User) (g : Goal) (target : Memory) : Prop :=
-  (may_work_goals requester (goal_owner g) ∨ may_administer requester (goal_owner g)) ∧
-  may_read requester (memory_owner target) (memory_kind target).accessKind
 
 /- ================================================================
    Goal collaboration authority

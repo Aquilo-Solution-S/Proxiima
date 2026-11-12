@@ -58,25 +58,10 @@ def may_write (r : User) (o : Owner) (k : AccessKind) : Prop :=
 def may_read_goals (r : User) (o : Owner) : Prop :=
   ∃ x : Role, o r = some x ∧ x.readsGoals
 
-/-- A request may WORK the owner's Goals — set, modify and transition them —
-    iff its role there works Goals. The write ceiling bounds the owner's
-    memory, not its work. -/
-def may_work_goals (r : User) (o : Owner) : Prop :=
-  ∃ x : Role, o r = some x ∧ x.worksGoals
-
 /-- A request may ADMINISTER the owner — transfer, erase, and achieving,
     decomposing and sharing its Goals — iff its role there administers. -/
 def may_administer (r : User) (o : Owner) : Prop :=
   ∃ x : Role, o r = some x ∧ x.administers
-
-/-- Server-resolved read gate: rows store `OwnerRef`; the trusted host resolves
-    it through `OwnerState` before the pure kernel rule runs. -/
-def may_read_in (s : OwnerState) (r : User) (o : OwnerRef) (k : AccessKind) : Prop :=
-  may_read r (s.resolve o) k
-
-/-- Server-resolved write gate: callers never supply the resolved Owner map. -/
-def may_write_in (s : OwnerState) (r : User) (o : OwnerRef) (k : AccessKind) : Prop :=
-  may_write r (s.resolve o) k
 
 /-- AUTH-MANAGE — a request may META-MANAGE a group `o` (write its membership /
     role map) iff `o` is not a personal group AND the requester holds a role
@@ -85,10 +70,6 @@ def may_write_in (s : OwnerState) (r : User) (o : OwnerRef) (k : AccessKind) : P
     immutable. -/
 def may_manage (r : User) (o : Owner) : Prop :=
   ¬ Owner.isPersonal o ∧ ∃ x : Role, o r = some x ∧ x.manages
-
-/-- Server-resolved management gate over stable owner references. -/
-def may_manage_in (s : OwnerState) (r : User) (o : OwnerRef) : Prop :=
-  may_manage r (s.resolve o)
 
 /-- AUTH-1 — write implies read: whoever may write an entity may read it.
     THEOREM — same owning group, and `Role.write_le_read` (read ceiling ≥ write
@@ -152,23 +133,6 @@ def request_may_read (s : OwnerState) (p : ForwardingPolicy) (r : User)
     (a : RequestAuthority) (o : OwnerRef) (k : AccessKind) : Prop :=
   ∃ role : Role, request_has_role s p r a o role ∧ role.mayRead k
 
-def request_may_write (s : OwnerState) (p : ForwardingPolicy) (r : User)
-    (a : RequestAuthority) (o : OwnerRef) (k : AccessKind) : Prop :=
-  ∃ role : Role, request_has_role s p r a o role ∧ role.mayWrite k
-
-/-- Management always uses ordinary membership, never forwarding policy. -/
-def request_may_manage (s : OwnerState) (r : User)
-    (a : RequestAuthority) (o : OwnerRef) : Prop :=
-  match a with
-  | .membership => may_manage_in s r o
-  | .forwarded _ => False
-
-/-- Durable delegation requires ordinary membership authority. -/
-def request_may_delegate (a : RequestAuthority) : Prop :=
-  match a with
-  | .membership => True
-  | .forwarded _ => False
-
 /-- A forwarded role is some role under the forwarding cap. -/
 theorem forwarding_role_capped (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
@@ -205,11 +169,6 @@ theorem forwarding_role_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
   have := (Role.meet_capped x Role.forwardingCap).1 hw
   simp [Role.worksGoals, Role.forwardingCap] at this
 
-/-- Reading the owner's Goals. -/
-def request_may_read_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
-    (a : RequestAuthority) (o : OwnerRef) : Prop :=
-  ∃ role : Role, request_has_role s p r a o role ∧ role.readsGoals
-
 /-- Goal work — setting, modifying and transitioning a Goal of the owner.
     It is the role's own capability: the write ceiling bounds the owner's
     memory, not its work. -/
@@ -217,16 +176,10 @@ def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
     (a : RequestAuthority) (o : OwnerRef) : Prop :=
   ∃ role : Role, request_has_role s p r a o role ∧ role.worksGoals
 
-/-- Administering the owner: transfer, erase, and achieving, decomposing and
-    sharing its Goals. -/
-def request_may_administer (s : OwnerState) (p : ForwardingPolicy) (r : User)
-    (a : RequestAuthority) (o : OwnerRef) : Prop :=
-  ∃ role : Role, request_has_role s p r a o role ∧ role.administers
-
 /-- A Goal work unit — one host-state command declared Goal work on a Goal
     of the owner — writes Facts on that owner only where the command declares
     them, under the Goal work rule. It writes no other kind, and it is no
-    memory write permission: `request_may_write` is unchanged. -/
+    memory write permission. -/
 def request_may_write_goal_work (s : OwnerState) (p : ForwardingPolicy) (r : User)
     (a : RequestAuthority) (o : OwnerRef) (declared : Bool) (k : AccessKind) : Prop :=
   k = .fact ∧ declared = true ∧ request_may_work_goals s p r a o

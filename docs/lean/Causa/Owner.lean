@@ -248,9 +248,6 @@ def Owner.isPersonal (o : Owner) : Prop := ∃ u : User, o = Owner.ofUser u
     not an axiom. ES-3: org does not exist at this layer. -/
 def visible (o : Owner) (requester : User) : Prop := o requester ≠ none
 
-/-- Computable membership test — the Bool face of `visible`. -/
-def Group.member? (g : Group) (u : User) : Bool := (g u).isSome
-
 instance (o : Owner) (u : User) : Decidable (visible o u) :=
   match h : o u with
   | some _ => .isTrue (by simp [visible, h])
@@ -267,12 +264,6 @@ instance (o : Owner) (u : User) : Decidable (visible o u) :=
    person relations or paths join. The kernel sees only the resolved `Owner`,
    never the storage tree. Group-as-member is not a kernel notion, and a
    recursive `Group → Option Role` field would be non-strictly-positive. -/
-
-/-- The empty group: no user has a role. -/
-def Group.empty : Group := fun _ => none
-
-/-- The universal group at a fixed role: every user has that role. -/
-def Group.everyone (r : Role) : Group := fun _ => some r
 
 /-- Mount sub-group `g` into a parent at role `cap`: every member of `g` joins at
     their g-role capped by `cap` (lattice meet). Produces an ordinary `Owner`;

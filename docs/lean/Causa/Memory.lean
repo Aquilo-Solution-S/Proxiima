@@ -29,12 +29,6 @@ inductive MemoryKind where
   | Perspective
   deriving DecidableEq, Repr
 
-/-- ℓ(F)=0, ℓ(A)=1, ℓ(P)=2 — doc 02, verbatim. -/
-def MemoryKind.layer : MemoryKind → Nat
-  | .Fact        => 0
-  | .Abstraction => 1
-  | .Perspective => 2
-
 /-- The closed historical vocabulary used by the database-only erase witness.
     `Goal` is deliberately outside `MemoryKind`: a Goal witness can satisfy a
     reference target, never a Memory origin/evidence target. -/
@@ -84,10 +78,6 @@ def ErasedPinTargetKindCompatible
   ∀ e : ErasedPinTarget, e ∈ targets → erased_pin_target_t e = id →
     erased_pin_target_kind e = kind
 
-def erasedPinTargetExists
-    (targets : Set ErasedPinTarget) (id : MemoryId) : Prop :=
-  ∃ e : ErasedPinTarget, e ∈ targets ∧ erased_pin_target_t e = id
-
 def recordedMemoryTargetKind
     (targets : Set ErasedPinTarget) (id : MemoryId) (kind : MemoryKind) : Prop :=
   ∃ e : ErasedPinTarget,
@@ -118,26 +108,6 @@ structure Content where
   hash   : ContentHash
 
 def content_id : Content → ContentId := Content.id
-def content_owner : Content → Owner := Content.owner
-def content_schema : Content → SchemaRef := Content.schema
-def content_hash : Content → ContentHash := Content.hash
-
-def ContentIdUnique (contents : Set Content) : Prop :=
-  ∀ c1 c2 : Content,
-    c1 ∈ contents →
-    c2 ∈ contents →
-    content_id c1 = content_id c2 →
-    c1 = c2
-
-/-- S1 — `(owner, schema, hash)` is unique. Cross-owner equality is not identity. -/
-def ContentKeyUnique (contents : Set Content) : Prop :=
-  ∀ c1 c2 : Content,
-    c1 ∈ contents →
-    c2 ∈ contents →
-    content_owner c1 = content_owner c2 →
-    content_schema c1 = content_schema c2 →
-    content_hash c1 = content_hash c2 →
-    c1 = c2
 
 instance : AppendOnly Content := ⟨⟩
 instance : Immutable Content := ⟨⟩
@@ -195,11 +165,8 @@ structure Memory where
 
 def memory_handle : Memory → Handle := Memory.handle
 def memory_t : Memory → MemoryId := Memory.t
-/-- Compatibility: the row id is `t`. -/
-def memory_id : Memory → MemoryId := Memory.t
 def memory_kind : Memory → MemoryKind := Memory.kind
 def memory_owner : Memory → Owner := Memory.owner
-def memory_writer : Memory → WriterAttribution := Memory.writer
 def memory_origins : Memory → List MemoryId := Memory.origins
 def memory_refs : Memory → List MemoryId := Memory.refs
 def memory_goal_refs : Memory → List GoalId := Memory.goal_refs
@@ -210,7 +177,6 @@ def memory_reads : Memory → List MemoryId := Memory.reads
 def memory_reference_ids (m : Memory) : List MemoryId :=
   memory_refs m ++ (memory_forked_from m).toList
 def memory_blob_id : Memory → Option BlobId := Memory.blob_id
-def memory_content_id : Memory → Option ContentId := Memory.content_id
 def memory_tick : Memory → Instant := Memory.tick
 def memory_forgotten : Memory → Bool := Memory.forgotten
 
@@ -236,8 +202,6 @@ instance : AppendOnly Memory := ⟨⟩
 
 def Fact : Type := { m : Memory // memory_kind m = .Fact }
 
-def Fact.memory (f : Fact) : Memory := f.val
-
 -- ============================================================
 -- Series catalog (UML §2b)
 -- ============================================================
@@ -253,16 +217,8 @@ structure MemoryHead where
 
 def memory_head_handle : MemoryHead → Handle := MemoryHead.handle
 def memory_head_kind : MemoryHead → MemoryKind := MemoryHead.kind
-def memory_head_schema : MemoryHead → SchemaRef := MemoryHead.schema
 def memory_head_owner : MemoryHead → Owner := MemoryHead.owner
 def memory_head_t : MemoryHead → MemoryId := MemoryHead.t
-
-def MemoryHeadHandleUnique (heads : Set MemoryHead) : Prop :=
-  ∀ h1 h2 : MemoryHead,
-    h1 ∈ heads →
-    h2 ∈ heads →
-    memory_head_handle h1 = memory_head_handle h2 →
-    h1 = h2
 
 /-- Every version of a handle agrees with the catalog on kind and owner. -/
 def MemoryHeadAligned (memories : Set Memory) (heads : Set MemoryHead) : Prop :=
@@ -273,38 +229,6 @@ def MemoryHeadAligned (memories : Set Memory) (heads : Set MemoryHead) : Prop :=
       memory_kind m = memory_head_kind h ∧
       memory_owner m = memory_head_owner h
 
-/-- A/P always name a Content. Facts only if the schema has a sidecar
-    (engine); the kernel only requires A/P. -/
-def memoryRequiresContent (m : Memory) : Prop :=
-  memory_kind m = .Abstraction ∨ memory_kind m = .Perspective
-
-def ContentNamed
-    (contents : Set Content) (m : Memory) : Prop :=
-  ∃ c : Content, c ∈ contents ∧ memory_content_id m = some (content_id c)
-
-/-- Owner-scoped share: an admission may name only a Content of the same owner.
-    Head schema must match Content.schema when both are present. -/
-structure ContentAligned
-    (memories : Set Memory) (heads : Set MemoryHead) (contents : Set Content) : Prop where
-  idsUnique : ContentIdUnique contents
-  keysUnique : ContentKeyUnique contents
-  apHasContent : ∀ m : Memory, m ∈ memories → memoryRequiresContent m →
-    ContentNamed contents m
-  ownerMatch : ∀ (m : Memory) (c : Content),
-    m ∈ memories → c ∈ contents → memory_content_id m = some (content_id c) →
-      memory_owner m = content_owner c
-  schemaMatch : ∀ (m : Memory) (h : MemoryHead) (c : Content),
-    m ∈ memories → h ∈ heads → c ∈ contents →
-    memory_handle m = memory_head_handle h →
-    memory_content_id m = some (content_id c) →
-      memory_head_schema h = content_schema c
-
-/-- Two admissions share a payload. Identity remains the two `t`s. -/
-def contentShared (m1 m2 : Memory) : Prop :=
-  memory_content_id m1 = memory_content_id m2 ∧
-  (memory_content_id m1).isSome = true ∧
-  memory_t m1 ≠ memory_t m2
-
 /-- A Memory lifecycle head: the catalog names this `t` for the handle. -/
 def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) : Prop :=
   m ∈ memories ∧
@@ -312,21 +236,12 @@ def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) :
     memory_head_handle h = memory_handle m ∧
     memory_head_t h = memory_t m
 
-def memoryHeads (memories : Set Memory) (heads : Set MemoryHead) : Set Memory :=
-  fun m => memoryIsHead memories heads m
-
-def perspectiveHeads (memories : Set Memory) (heads : Set MemoryHead) : Set Memory :=
-  fun m => memory_kind m = .Perspective ∧ memoryIsHead memories heads m
-
 -- ============================================================
 -- Forgetting (#488) — a flag on the row, not a move to a stub
 -- ============================================================
 
 /-- Forget sets the flag and nothing else. -/
 def Memory.forget (m : Memory) : Memory := { m with forgotten := true }
-
-/-- Restore clears the flag and nothing else. -/
-def Memory.restore (m : Memory) : Memory := { m with forgotten := false }
 
 /-- The store after forgetting the row `id`: every row stays, that one is
     flagged. -/

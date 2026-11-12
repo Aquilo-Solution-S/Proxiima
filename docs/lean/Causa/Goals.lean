@@ -5,8 +5,9 @@ Goal is its own timeseries (UML §3). Not Memory.
 
   series  = handle
   version = t
-  later t on the same handle is the new head
-  terminal state admits no later t
+
+The runtime orders the versions of a handle: a later `t` is the new head, and
+a terminal state admits no later `t`. The kernel states neither.
 
 No `supersedes`. No authorship blob. Title stays. `text` is on the row: the
 version's prompt, `none` when unknown, never blank (`goal_text_nonblank_chk`,
@@ -46,16 +47,6 @@ def GoalState.terminal : GoalState → Bool
   | .Achieved | .Abandoned => true
   | _ => false
 
-/-- Admitted transitions between consecutive versions of one handle. -/
-def goalTransitionAdmitted : GoalState → GoalState → Prop
-  | .Active,   .Active    => True
-  | .Active,   .Paused    => True
-  | .Active,   .Achieved  => True
-  | .Active,   .Abandoned => True
-  | .Paused,   .Active    => True
-  | .Paused,   .Abandoned => True
-  | _, _ => False
-
 -- ============================================================
 -- The Goal entity
 -- ============================================================
@@ -94,29 +85,17 @@ structure Goal where
   text_nonblank :
     ∀ s, text = some s → GoalTextNonblank s
 
-structure GoalHead where
-  handle : Handle
-  schema : SchemaRef
-  owner  : Owner
-  t      : GoalId
-
 def goal_handle : Goal → Handle := Goal.handle
 def goal_t : Goal → GoalId := Goal.t
 def goal_id : Goal → GoalId := Goal.t
 def goal_owner : Goal → Owner := Goal.owner
-def goal_writer : Goal → WriterAttribution := Goal.writer
-def goal_title : Goal → Text := Goal.title
-def goal_text : Goal → Option Text := Goal.text
 def goal_state : Goal → GoalState := Goal.state
-def goal_request_id : Goal → Text := Goal.request_id
 def goal_close_fact_t : Goal → Option MemoryId := Goal.close_fact_t
 def goal_assignment : Goal → Option MemoryId := Goal.assignment_t
 def goal_dependencies : Goal → List GoalId := Goal.dependency_t
 def goal_evidence : Goal → List MemoryId := Goal.evidence_t
 def goal_motivated_by : Goal → List MemoryId := Goal.motivated_by
 def goal_write_act_t : Goal → Option MemoryId := Goal.write_act_t
-def goal_tick : Goal → Instant := Goal.tick
-def goal_parent : Goal → Option Handle := Goal.parent_handle
 
 /- The new causal relations are source-owned, exact-version references. -/
 def goal_motivations_valid
@@ -177,100 +156,7 @@ def GoalIdUnique (goals : Set Goal) : Prop :=
     goal_t g1 = goal_t g2 →
     g1 = g2
 
-/-- Same `(owner, request_id)` is the same Goal version (UML §3). -/
-def GoalRequestUnique (goals : Set Goal) : Prop :=
-  ∀ g1 g2 : Goal,
-    g1 ∈ goals →
-    g2 ∈ goals →
-    goal_owner g1 = goal_owner g2 →
-    goal_request_id g1 = goal_request_id g2 →
-    g1 = g2
-
 instance : AppendOnly Goal := ⟨⟩
-
--- ============================================================
--- Version order on a handle (replaces supersedes)
--- ============================================================
-
-def goalSameSeries (g g' : Goal) : Prop :=
-  goal_handle g = goal_handle g'
-
-def goalLater (new old : Goal) : Prop :=
-  goalSameSeries new old ∧ goal_tick old < goal_tick new
-
-/-- Adjacent later version: no mid tick on the same handle. -/
-def goalImmediatelySucceeds (goals : Set Goal) (new old : Goal) : Prop :=
-  new ∈ goals ∧ old ∈ goals ∧
-  goalLater new old ∧
-  ¬ ∃ mid : Goal, mid ∈ goals ∧ goalSameSeries mid old ∧
-      goal_tick old < goal_tick mid ∧ goal_tick mid < goal_tick new
-
-def GoalTransitionValid (goals : Set Goal) : Prop :=
-  ∀ new old : Goal,
-    goalImmediatelySucceeds goals new old →
-    goal_owner new = goal_owner old ∧
-    goalTransitionAdmitted (goal_state old) (goal_state new) ∧
-    (goal_state new ≠ goal_state old → goal_text new = goal_text old)
-
-/-- Root = least tick on the handle. Creation is Active only. -/
-def GoalRootValid (goals : Set Goal) : Prop :=
-  ∀ g : Goal, g ∈ goals →
-    (∀ g' : Goal, g' ∈ goals → goalSameSeries g' g → goal_tick g ≤ goal_tick g') →
-    goal_state g = .Active
-
-/-- Terminal admits no later `t` (UML §3). -/
-def GoalTerminalClosed (goals : Set Goal) : Prop :=
-  ∀ g g' : Goal,
-    g ∈ goals → g' ∈ goals →
-    goalSameSeries g' g →
-    (goal_state g).terminal = true →
-    goal_tick g' ≤ goal_tick g
-
--- ============================================================
--- Close Fact
--- ============================================================
-
-def GoalTerminalCloseFactValid
-    (goals : Set Goal) (memories : Set Memory) : Prop :=
-  ∀ g : Goal, g ∈ goals → (goal_state g).terminal = true →
-    (∃ m : Memory,
-      m ∈ memories ∧
-      goal_close_fact_t g = some (memory_t m) ∧
-      memory_kind m = .Fact ∧
-      memory_owner m = goal_owner g)
-
--- ============================================================
--- Heads and the active set
--- ============================================================
-
-def goalIsHead (goals : Set Goal) (heads : Set GoalHead) (g : Goal) : Prop :=
-  g ∈ goals ∧
-  ∃ h : GoalHead, h ∈ heads ∧ h.handle = goal_handle g ∧ h.t = goal_t g
-
--- ============================================================
--- The goal tree (#514)
--- ============================================================
--- Row level: the edge, its fixity and the achieve check. The step model
--- below proves the depth-independent rule from the one-level checks.
-
-/-- `child` is the current head of a series decomposed under `parent`'s series. -/
-def goalChildOf (goals : Set Goal) (heads : Set GoalHead) (child parent : Goal) : Prop :=
-  goalIsHead goals heads child ∧ goal_parent child = some (goal_handle parent)
-
-/-- Every version of a series names the same parent (the `goal_parent_fixed`
-    trigger). -/
-def GoalParentFixed (goals : Set Goal) : Prop :=
-  ∀ g g' : Goal, g ∈ goals → g' ∈ goals →
-    goalSameSeries g g' → goal_parent g = goal_parent g'
-
-/-- An Achieved parent head has no open child head and, if it has children,
-    at least one Achieved child (the post-lock achieve check). -/
-def GoalTreeClosed (goals : Set Goal) (heads : Set GoalHead) : Prop :=
-  ∀ p : Goal, goalIsHead goals heads p → goal_state p = .Achieved →
-    (∀ c : Goal, goalChildOf goals heads c p →
-      goal_state c = .Achieved ∨ goal_state c = .Abandoned) ∧
-    ((∃ c : Goal, goalChildOf goals heads c p) →
-      ∃ c : Goal, goalChildOf goals heads c p ∧ goal_state c = .Achieved)
 
 -- ============================================================
 -- No open goal under a closed one: the step model (refs #514)
@@ -282,7 +168,7 @@ def GoalState.isOpen : GoalState → Bool
   | .Achieved | .Abandoned => false
 
 /-- The goal tree at one moment: one entry per series, holding its head
-    state. `parent` is a function of the handle because of `GoalParentFixed`:
+    state. `parent` is a function of the handle:
     every version of a series names the same parent. `born` orders series by creation; `clock` is the next birth. -/
 structure GoalForest where
   state  : Handle → Option GoalState
@@ -359,8 +245,6 @@ inductive GoalStep : GoalForest → GoalForest → Prop where
       ForestRelabel F F' x .Paused .Active → GoalStep F F'
   | modify {F F' : GoalForest} (x : Handle) :
       ForestRelabel F F' x .Active .Active → GoalStep F F'
-  /-- "At least one Achieved child" is deliberately absent here: #514's row-level
-      `GoalTreeClosed` covers it, and the invariant needs only `NoOpenChild`. -/
   | achieve {F F' : GoalForest} (x : Handle) :
       NoOpenChild F x → ForestRelabel F F' x .Active .Achieved → GoalStep F F'
   | abandon {F F' : GoalForest} (x : Handle) {old : GoalState} :
@@ -635,30 +519,6 @@ theorem goal_tree_acyclic :
   intro F h inv hdesc
   exact Nat.lt_irrefl _ (descends_born_lt inv hdesc)
 
-/-- The row-level rule: a head's open child head has an open parent. -/
-def GoalNoOpenUnderClosed (goals : Set Goal) (heads : Set GoalHead) : Prop :=
-  ∀ p c : Goal, goalIsHead goals heads p → goalChildOf goals heads c p →
-    (goal_state c).isOpen = true → (goal_state p).isOpen = true
-
-/-- Reachability along later ticks of the same handle. -/
-inductive GoalSeriesReachable (goals : Set Goal) : Goal → Goal → Prop where
-  | refl {g : Goal} :
-      g ∈ goals → GoalSeriesReachable goals g g
-  | step {source mid next : Goal} :
-      GoalSeriesReachable goals source mid →
-      next ∈ goals →
-      goalLater next mid →
-      GoalSeriesReachable goals source next
-
-def activeGoalHeadFrom
-    (goals : Set Goal) (heads : Set GoalHead) (source head : Goal) : Prop :=
-  GoalSeriesReachable goals source head ∧
-  goal_state head = .Active ∧
-  goalIsHead goals heads head
-
-def activeGoals (goals : Set Goal) (heads : Set GoalHead) (o : Owner) : Set Goal :=
-  fun g => goal_owner g = o ∧ goal_state g = .Active ∧ goalIsHead goals heads g
-
 -- ============================================================
 -- Self as query, not entity (S3: cue-indexed, not parameterless)
 -- ============================================================
@@ -666,13 +526,6 @@ def activeGoals (goals : Set Goal) (heads : Set GoalHead) (o : Owner) : Set Goal
 /-- Candidate pool — owner's Perspectives. Not Self. -/
 def ownerPerspectives (memories : Set Memory) (o : Owner) : Set Memory :=
   fun m => m ∈ memories ∧ memory_owner m = o ∧ memory_kind m = .Perspective
-
-/-- Compatibility name. Not the Self query. -/
-def selfPerspectives (memories : Set Memory) (o : Owner) : Set Memory :=
-  ownerPerspectives memories o
-
-def selfGoals (goals : Set Goal) (heads : Set GoalHead) (o : Owner) : Set Goal :=
-  activeGoals goals heads o
 
 /-- Situation touches this admission: the `t` is in the cue, or a pin is. -/
 def cueTouches (m : Memory) (cue : Cue) : Prop :=
@@ -693,17 +546,6 @@ def situatedSelf
 -- Goal assignment and evidence
 -- ============================================================
 
-def goalAssignedToPerspective (memories : Set Memory) (goal : Goal) (self : Memory) : Prop :=
-  self ∈ memories ∧
-  memory_kind self = .Perspective ∧
-  memory_owner self = goal_owner goal ∧
-  goal_assignment goal = some (memory_t self)
-
-def GoalAssignmentValid (memories : Set Memory) (goals : Set Goal) : Prop :=
-  ∀ g : Goal, g ∈ goals →
-    goal_assignment g = none ∨
-    ∃ self : Memory, goalAssignedToPerspective memories g self
-
 def RetainedGoalAssignmentValid
     (goals : Set Goal) (memories : Set Memory)
   (targets : Set ErasedPinTarget) : Prop :=
@@ -720,23 +562,6 @@ def RetainedGoalAssignmentValid
         goal_assignment g = some id ∧
         erased_pin_target_t e = id ∧
       erased_pin_target_kind e = .Perspective)
-
-def activeGoalsForSelf
-    (goals : Set Goal) (heads : Set GoalHead) (memories : Set Memory)
-    (self : Memory) : Set Goal :=
-  fun head =>
-    ∃ source : Goal,
-      source ∈ goals ∧
-      goalAssignedToPerspective memories source self ∧
-      activeGoalHeadFrom goals heads source head
-
-/-- Evidence ids resolve to admitted Fact or Abstraction. No authorship
-    field — operator-must-have-evidence is retired with the authorship blob. -/
-structure GoalEvidenceValid
-    (goals : Set Goal) (memories : Set Memory) : Prop where
-  resolved : ∀ g : Goal, g ∈ goals → ∀ i : MemoryId, i ∈ goal_evidence g →
-    (∃ m : Memory, m ∈ memories ∧ memory_t m = i ∧
-      memory_kind m ≠ .Perspective)
 
 def RetainedGoalEvidenceValid
     (goals : Set Goal) (memories : Set Memory)

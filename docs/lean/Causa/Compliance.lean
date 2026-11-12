@@ -29,14 +29,6 @@ def unreferenced (memories : Set Memory) (id : MemoryId) : Prop :=
   ∀ m : Memory, m ∈ memories →
     id ∉ memory_origins m ∧ id ∉ memory_reference_ids m
 
-/-- No remaining admission names this Content. A forgotten row is still an
-    admission and keeps its payload; Content GC is admission-set emptiness. -/
-def contentUnreferenced (memories : Set Memory) (id : ContentId) : Prop :=
-  ∀ m : Memory, m ∈ memories → memory_content_id m ≠ some id
-
-def contentWipeable (o : Owner) (memories : Set Memory) (id : ContentId) : Prop :=
-  abandoned o ∨ contentUnreferenced memories id
-
 /-- The row `id` is stored and flagged forgotten. -/
 def forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_forgotten m = true
@@ -87,16 +79,13 @@ def wipeable (o : Owner) (memories : Set Memory)
   abandoned o ∨ (forgotten memories id ∧ unreferenced memories id ∧ policy) ∨
     ∃ e : SpiiceScopedErase memories, e.owner = o ∧ e.selects id
 
-/-- Target render: live / forgotten / unavailable. A pin to a forgotten `t`
-    renders forgotten, not a missing origin. -/
+/-- Target render: live or forgotten. A pin to a forgotten `t` renders
+    forgotten, not a missing origin. -/
 def pin_render_live (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_forgotten m = false
 
 def pin_render_forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
   forgotten memories id
-
-def pin_render_unavailable (memories : Set Memory) (id : MemoryId) : Prop :=
-  ¬ pinExists memories id
 
 theorem pin_render_live_not_forgotten
     (memories : Set Memory) (hunique : MemoryIdUnique memories) (id : MemoryId)
@@ -214,19 +203,6 @@ theorem hard_erase_memory_result_well_formed
     | inl hold => exact htransition.witnessGoalDisjoint e hold g hg
     | inr hnew =>
         exact fun same => htransition.targetNotGoal g hg (hnew.1.symm.trans same)
-
-/-- Forget sets the flag on the target row (#488): every row stays, the
-    payload and pins with it, and the hard-erase witness set is untouched. -/
-structure ForgetMemoryTransition
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget) : Prop where
-  targetInMemories : target ∈ memories
-  witnessIdsUnique : ErasedPinTargetIdUnique targets
-  witnessMemoryDisjoint : ErasedTargetsDisjointMemories targets memories
-  memoriesEq : memories' = forgetIn memories (memory_t target)
-  targetsEq : targets' = targets
 
 /-- A Goal erase records a Goal witness while leaving the Memory set intact. -/
 def hardEraseGoalRows (goals : Set Goal) (target : Goal) : Set Goal :=

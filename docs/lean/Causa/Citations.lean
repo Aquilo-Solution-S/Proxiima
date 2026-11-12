@@ -19,23 +19,9 @@ structure Blob where
 
 def blob_id : Blob → BlobId := Blob.id
 def blob_owner : Blob → Owner := Blob.owner
-def blob_schema : Blob → SchemaRef := Blob.schema
-
-def BlobIdUnique (objects : Set Blob) : Prop :=
-  ∀ b1 b2 : Blob,
-    b1 ∈ objects →
-    b2 ∈ objects →
-    blob_id b1 = blob_id b2 →
-    b1 = b2
 
 instance : Immutable Blob := ⟨⟩
 instance : AppendOnly Blob := ⟨⟩
-
-def Citable : Type := { m : Memory // memory_kind m = .Fact ∨ memory_kind m = .Abstraction }
-
-def Citable.memory (c : Citable) : Memory := c.val
-
-def Fact.citable (f : Fact) : Citable := ⟨f.val, Or.inl f.property⟩
 
 /-- The Memory cites this blob. Multiplicity 0..1 is the Option itself. -/
 def memory_cites (m : Memory) (b : Blob) : Prop :=

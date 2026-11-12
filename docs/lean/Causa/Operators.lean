@@ -35,10 +35,6 @@ def OperatorPhase.outputGoalAllowed : OperatorPhase → Prop
   | .atogoal => True
   | _ => False
 
-def OperatorPhase.inputEdgeKind : OperatorPhase → EdgeKind
-  | .toa | .atop => .origin
-  | .atogoal => .reference
-
 structure OperatorInvocation where
   phase : OperatorPhase
   operatorId : OperatorId
@@ -46,13 +42,6 @@ structure OperatorInvocation where
   inputs : Set Memory
   outputMemories : Set Memory
   outputGoals : Set Goal
-
-structure InvocationInGraph
-    (memories : Set Memory) (goals : Set Goal)
-    (inv : OperatorInvocation) : Prop where
-  inputsPresent : ∀ m : Memory, m ∈ inv.inputs → m ∈ memories
-  outputMemoriesPresent : ∀ m : Memory, m ∈ inv.outputMemories → m ∈ memories
-  outputGoalsPresent : ∀ g : Goal, g ∈ inv.outputGoals → g ∈ goals
 
 structure InvocationShapeValid (inv : OperatorInvocation) : Prop where
   inputsShape : ∀ m : Memory, m ∈ inv.inputs →
