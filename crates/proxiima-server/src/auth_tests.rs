@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use proxiima_core::{
-    AccessError, AccessKind, AuthError, Engine, ErrorCode, ForwarderRole, GetGraphReadRequest,
-    GroupId, OwnerId, OwnerRoles, Relation, Role, ScopeKey, SpiiceRegistry, ToolScope, UserId,
+    AccessError, AuthError, Engine, ErrorCode, ForwarderRole, GetGraphReadRequest, GroupId,
+    MemoryKind, OwnerId, OwnerRoles, Relation, Role, ScopeKey, SpiiceRegistry, ToolScope, UserId,
 };
 
 fn fake_owner() -> OwnerId {
@@ -176,7 +176,7 @@ async fn forwarded_owner_resolves_exact_policy_role_and_preserves_authenticated_
             Some(ForwarderRole::Viewer.role())
         );
         assert_eq!(
-            ctx.authz.readable_owners(AccessKind::Perspective),
+            ctx.authz.readable_owners(MemoryKind::Perspective),
             vec![owner]
         );
         assert!(!ctx.authz.can_access_owner(&OwnerId::from(subject)));

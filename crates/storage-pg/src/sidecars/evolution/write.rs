@@ -161,7 +161,8 @@ async fn materialize_memory_heads(
     let mut targets: Vec<_> = plan.memories.iter().collect();
     targets.sort_by_key(|target| target.id);
     for target in targets {
-        let kind = PgMemoryKind::of(target.source.kind())
+        let kind = proxiima_core::MemoryKind::of(target.source.kind())
+            .map(PgMemoryKind::from)
             .ok_or_else(|| refused("Goal cannot materialize as a memory head"))?;
         let schema = target.payload.schema_id.as_str().to_owned();
         let source_head: Option<(i64, i64)> = sqlx::query_as(

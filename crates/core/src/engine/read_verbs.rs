@@ -1,5 +1,5 @@
+use crate::MemoryKind;
 use crate::SearchProjectionColumnKind;
-use crate::access::AccessKind;
 use crate::authz::AuthzContext;
 use crate::edge::Edge;
 use crate::error::ProtocolError;
@@ -116,7 +116,7 @@ impl Engine {
             crate::verbs::query::MemorySearchScope::Owner(owner) => {
                 let owner = crate::stage_timing::timed(
                     "search_authorization",
-                    self.authorize_owner_read(authz, &owner, AccessKind::Fact),
+                    self.authorize_owner_read(authz, &owner, MemoryKind::Fact),
                 )
                 .await?;
                 vec![owner]
@@ -323,7 +323,7 @@ impl Engine {
             return Err(ProtocolError::invalid_argument("entities", message));
         }
         let owner = self
-            .authorize_owner_read(authz, owner, AccessKind::Fact)
+            .authorize_owner_read(authz, owner, MemoryKind::Fact)
             .await?;
         if entities.is_empty() {
             return Ok(Vec::new());

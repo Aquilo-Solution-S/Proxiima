@@ -4,7 +4,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use proxiima_core::MemoryKind;
 use proxiima_core::owner_inverse::{
     EraseAuthorization, ExportAuthorization, OwnerEraseOutcome, OwnerEraseTarget,
     OwnerExportTarget, OwnerSurfaces,
@@ -26,7 +25,7 @@ use proxiima_core::storage_ports::{
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, EntityId, GroupId, MemoryId, OwnerId, SchemaId, SchemaVersion, SourceId,
+    EntityId, GroupId, MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion, SourceId,
     StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -899,7 +898,7 @@ fn draft(source_id: &str, ingest_key: &str) -> FactWriteCommand {
 
 async fn ingest(pg: &PgStorage, owner: OwnerId, source: &str, key: &str) -> MemoryId {
     pg.ingest_fact_atomic(
-        &OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+        &OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
         &draft(source, key),
         None,
     )
@@ -1025,7 +1024,7 @@ async fn source_erase_binds_exact_hot_and_cooled_fact_selection_and_owner_kind()
         let other_a = ingest(&pg, other_owner, source_a.as_str(), "other-a").await;
         MemoryAuthoringPort::forget_memory(
             pg.as_ref(),
-            &OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            &OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             cold_a,
         )
         .await?;
@@ -1138,7 +1137,7 @@ async fn source_erase_combines_physical_and_original_copy_selectors_once() {
             pg.transfer_to_owner(
                 &OwnerWritePermit::transfer_for_tests(
                     original_owner,
-                    AccessKind::Fact,
+                    MemoryKind::Fact,
                     transferred_owner,
                 ),
                 EntityId::Memory(original_only),
@@ -2853,7 +2852,7 @@ async fn forget_restore_and_a_forget_only_unit_wait_for_an_erasing_owners_fence(
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pool = pg.pool_for_tests();
         let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(erased, MemoryKind::Fact);
         let to_forget = ingest(&pg, erased, "source-a", "to-forget").await;
         let to_restore = ingest(&pg, erased, "source-a", "to-restore").await;
         let to_unit_forget = ingest(&pg, erased, "source-a", "to-unit-forget").await;
@@ -2876,21 +2875,21 @@ async fn forget_restore_and_a_forget_only_unit_wait_for_an_erasing_owners_fence(
         let forget = tokio::spawn({
             let pg = pg.clone();
             async move {
-                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                let permit = OwnerWritePermit::new_for_tests(erased, MemoryKind::Fact);
                 pg.forget_memory(&permit, to_forget).await
             }
         });
         let restore = tokio::spawn({
             let pg = pg.clone();
             async move {
-                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                let permit = OwnerWritePermit::new_for_tests(erased, MemoryKind::Fact);
                 pg.restore_memory(&permit, to_restore, &[]).await
             }
         });
         let unit = tokio::spawn({
             let pg = pg.clone();
             async move {
-                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                let permit = OwnerWritePermit::new_for_tests(erased, MemoryKind::Fact);
                 let scope = owner_scope_for_tests(&[erased]);
                 let mut session = WriteSessionFactory::begin(pg.as_ref(), Some(&scope)).await?;
                 session.forget_memory(&permit, to_unit_forget).await
@@ -2947,7 +2946,7 @@ async fn an_erase_waits_for_a_forget_that_holds_its_locks_and_then_erases() {
         let forget = tokio::spawn({
             let pg = pg.clone();
             async move {
-                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                let permit = OwnerWritePermit::new_for_tests(erased, MemoryKind::Fact);
                 pg.forget_memory(&permit, target).await
             }
         });
@@ -3006,7 +3005,7 @@ async fn origin_check_waits_for_the_erase_of(erased_is_original: bool) {
         .await?;
         assert!(
             pg.transfer_to_owner(
-                &OwnerWritePermit::transfer_for_tests(original, AccessKind::Fact, holder),
+                &OwnerWritePermit::transfer_for_tests(original, MemoryKind::Fact, holder),
                 EntityId::Memory(fact),
                 holder,
                 pg.surfaces(),
@@ -3105,7 +3104,7 @@ async fn a_pin_of_an_erasing_owners_memory_waits_for_the_erase_and_is_then_refus
                 let mut command = draft("source-w", "pins-x");
                 command.refs = vec![pinned.into_inner()];
                 pg.ingest_fact_atomic(
-                    &OwnerWritePermit::new_for_tests(writer, AccessKind::Fact),
+                    &OwnerWritePermit::new_for_tests(writer, MemoryKind::Fact),
                     &command,
                     None,
                 )
@@ -3165,7 +3164,7 @@ async fn an_erase_waits_for_a_writer_that_pins_its_memory_and_then_records_the_w
                 let mut command = draft("source-w", "pins-x");
                 command.refs = vec![pinned.into_inner()];
                 pg.ingest_fact_atomic(
-                    &OwnerWritePermit::new_for_tests(writer, AccessKind::Fact),
+                    &OwnerWritePermit::new_for_tests(writer, MemoryKind::Fact),
                     &command,
                     None,
                 )
@@ -3230,7 +3229,7 @@ async fn hidden_physical_owner_check(erase_first: bool) {
         .await?;
         assert!(
             pg.transfer_to_owner(
-                &OwnerWritePermit::transfer_for_tests(original, AccessKind::Fact, holder),
+                &OwnerWritePermit::transfer_for_tests(original, MemoryKind::Fact, holder),
                 EntityId::Memory(fact),
                 holder,
                 pg.surfaces(),

@@ -61,17 +61,14 @@ impl Reach {
 }
 
 /// The stored Memory kinds at or below `limit`; none without a limit.
-pub(crate) fn kinds_within(limit: Option<proxiima_core::AccessKind>) -> Vec<PgMemoryKind> {
-    use proxiima_core::AccessKind;
-    [
-        (AccessKind::Fact, PgMemoryKind::Fact),
-        (AccessKind::Abstraction, PgMemoryKind::Abstraction),
-        (AccessKind::Perspective, PgMemoryKind::Perspective),
-    ]
-    .into_iter()
-    .filter(|(access, _)| limit.is_some_and(|limit| access.rank() <= limit.rank()))
-    .map(|(_, kind)| kind)
-    .collect()
+pub(crate) fn kinds_within(limit: Option<proxiima_core::MemoryKind>) -> Vec<PgMemoryKind> {
+    proxiima_core::MemoryKind::ALL
+        .into_iter()
+        .filter(|kind| {
+            limit.is_some_and(|limit| proxiima_core::AccessCeiling::covering(limit).allows(*kind))
+        })
+        .map(PgMemoryKind::from)
+        .collect()
 }
 
 /// Owner-pinned sidecars do not take part in forget/restore at all.

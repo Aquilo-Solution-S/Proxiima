@@ -104,10 +104,10 @@ async fn prepare_goal_work_authority(
     )
     .await?;
     let write_rank = current.map_or(0, |role| i16::from(role.write_ceiling().rank()));
-    if write_rank < i16::from(permit.kind().rank()) {
+    let required = proxiima_core::AccessCeiling::covering(permit.kind()).rank();
+    if write_rank < i16::from(required) {
         return Err(StorageError::ConstraintViolation(format!(
-            "Goal work write ceiling denied: rank={write_rank} required={}",
-            permit.kind().rank()
+            "Goal work write ceiling denied: rank={write_rank} required={required}"
         )));
     }
     Ok(GoalWorkAuthority {
@@ -327,7 +327,7 @@ pub(crate) async fn author_work_memory(
     permit: &GoalWorkPermit,
     _proof: OperatorWriteProof,
 ) -> Result<AuthorDerivedOutcome, StorageError> {
-    if req.owner != permit.owner() || proxiima_core::AccessKind::of(req.kind) != Some(permit.kind())
+    if req.owner != permit.owner() || proxiima_core::MemoryKind::of(req.kind) != Some(permit.kind())
     {
         return Err(StorageError::ConstraintViolation(
             "Goal work draft does not match its sealed destination".into(),

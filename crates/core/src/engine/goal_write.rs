@@ -1,5 +1,6 @@
 use super::{Engine, pipeline::WritePermit};
-use crate::access::{AccessKind, EntityId};
+use crate::MemoryKind;
+use crate::access::EntityId;
 use crate::authz::{AuthzContext, EngineAuthority};
 use crate::error::ProtocolError;
 use crate::goal_collaboration::GoalEditPermit;
@@ -627,7 +628,7 @@ impl Engine {
         if &home_owner != goal_owner {
             return Err(ProtocolError::forbidden("entry not found"));
         }
-        self.authorize_owner_read(authz, &home_owner, AccessKind::Perspective)
+        self.authorize_owner_read(authz, &home_owner, MemoryKind::Perspective)
             .await?;
         self.require_perspective_kind(authz, &home_owner, memory_id, "motivated_by")
             .await?;
@@ -653,7 +654,7 @@ impl Engine {
             .await
             .map_err(|err| ProtocolError::internal(format!("home_owner: {err}")))?
             .ok_or_else(|| ProtocolError::forbidden("entry not found"))?;
-        self.authorize_owner_read(authz, &home_owner, AccessKind::Perspective)
+        self.authorize_owner_read(authz, &home_owner, MemoryKind::Perspective)
             .await?;
         self.require_perspective_kind(authz, &home_owner, memory_id, "author_self_perspective_id")
             .await?;

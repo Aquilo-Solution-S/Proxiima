@@ -14,9 +14,9 @@ use proxiima_core::verbs::goal_write::{
 };
 use proxiima_core::verbs::query::QueryRequest;
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, Engine, ErrorCode, GoalCreatePayloadWriteRequest,
-    GoalDecomposeRequest, GoalMarkAchievedRequest, GoalModifyRequest, GoalTransitionRequest,
-    MemoryId, OwnerId, PendingWork, SimpleTextGoalV1, SpiiceRegistry, UserId,
+    AuthPath, AuthzContext, Engine, ErrorCode, GoalCreatePayloadWriteRequest, GoalDecomposeRequest,
+    GoalMarkAchievedRequest, GoalModifyRequest, GoalTransitionRequest, MemoryId, MemoryKind,
+    OwnerId, PendingWork, SimpleTextGoalV1, SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::DbGuard;
 use proxiima_storage_pg::PgStorage;
@@ -347,10 +347,10 @@ async fn a_hook_sees_each_goal_write_under_its_declared_need() -> TestResult {
 
 /// Refuses reads of one memory kind while it is set.
 #[derive(Debug, Default)]
-struct RefuseKind(Mutex<Option<AccessKind>>);
+struct RefuseKind(Mutex<Option<MemoryKind>>);
 
 impl RefuseKind {
-    fn set(&self, kind: Option<AccessKind>) {
+    fn set(&self, kind: Option<MemoryKind>) {
         *self.0.lock().expect("refused kind lock") = kind;
     }
 }
@@ -409,8 +409,8 @@ async fn modify_authorizes_each_carried_evidence_target() -> TestResult {
     };
 
     for (refused, key) in [
-        (AccessKind::Fact, "carried-fact"),
-        (AccessKind::Abstraction, "carried-abstraction"),
+        (MemoryKind::Fact, "carried-fact"),
+        (MemoryKind::Abstraction, "carried-abstraction"),
     ] {
         hook.set(Some(refused));
         let before = w.goal_ids().await?;

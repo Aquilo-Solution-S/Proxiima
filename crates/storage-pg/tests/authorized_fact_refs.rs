@@ -5,7 +5,6 @@
 //! same engine, write-session, and Postgres paths used by a composed host.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
-use proxiima_core::MemoryKind;
 use proxiima_core::spiice::{
     CounterRule, DbConstraint, EmbeddingRecipe, EraseRule, ExportRule, ForgetRule, KeyShape,
     ProjectionDecl, Provenance, SchemaContract, SchemaRef, SearchProjectionDecl, SpiiceContract,
@@ -23,9 +22,9 @@ use proxiima_core::verbs::goal_write::{
 };
 use proxiima_core::verbs::query::{EdgeFilter, EdgeReadRequest, QueryRequest};
 use proxiima_core::{
-    AccessKind, AgentDerivationV1, AuthPath, AuthzContext, DerivationIdentity, DerivedMemory,
-    EdgeEndpoint, EdgeKind, EdgeTargetProjection, EntityKind, EntityRef, FactPayload, FactWrite,
-    GoalId, InputContractId, MemoryId, MemoryTarget, OperatorId, OwnerId, PayloadKeyBuilder,
+    AgentDerivationV1, AuthPath, AuthzContext, DerivationIdentity, DerivedMemory, EdgeEndpoint,
+    EdgeKind, EdgeTargetProjection, EntityKind, EntityRef, FactPayload, FactWrite, GoalId,
+    InputContractId, MemoryId, MemoryKind, MemoryTarget, OperatorId, OwnerId, PayloadKeyBuilder,
     PayloadReference, SchemaId, SchemaVersion, SeriesHandle, SidecarPayload, SpiiceRegistry,
     StorageError, StorageRule, UploadedBlobPayload, UserId,
 };
@@ -1369,7 +1368,7 @@ async fn storage_refuses_authorized_links_to_a_goal_that_does_not_exist() {
             vec![EdgeEndpoint::goal(GoalId::new(Uuid::now_v7()))],
         );
         let authorized = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             direct_draft("direct-links-missing-goal", Vec::new()),
             None,
             Vec::new(),
@@ -1415,7 +1414,7 @@ async fn storage_persists_authorized_links_not_draft_refs() {
             ],
         );
         let authorized = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             draft,
             None,
             Vec::new(),
@@ -1485,7 +1484,7 @@ async fn receipt_replay_requires_identical_authorized_refs() {
             ],
         );
         let first = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             first_draft.clone(),
             None,
             Vec::new(),
@@ -1495,7 +1494,7 @@ async fn receipt_replay_requires_identical_authorized_refs() {
         assert!(!outcome.idempotent_replay);
 
         let same = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             first_draft.clone(),
             None,
             Vec::new(),
@@ -1507,7 +1506,7 @@ async fn receipt_replay_requires_identical_authorized_refs() {
 
         let changed_draft = direct_draft("replay-links", vec![fact_b.into_inner()]);
         let changed = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             changed_draft,
             None,
             Vec::new(),
@@ -1554,7 +1553,7 @@ async fn forgotten_replay_requires_known_identical_refs() {
         let goal = create_goal(&pg, &registry, owner, seed_perspective(&pg, owner).await?).await?;
         let first_draft = direct_draft("forgotten-links", vec![fact_a.into_inner()]);
         let first = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             first_draft.clone(),
             None,
             Vec::new(),
@@ -1569,13 +1568,13 @@ async fn forgotten_replay_requires_known_identical_refs() {
         let outcome = pg.ingest_authorized_fact_atomic(&first, &[]).await?;
         MemoryAuthoringPort::forget_memory(
             &pg,
-            &OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            &OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             outcome.memory_id,
         )
         .await?;
 
         let replay = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             first_draft.clone(),
             None,
             Vec::new(),
@@ -1594,7 +1593,7 @@ async fn forgotten_replay_requires_known_identical_refs() {
         );
 
         let changed = AuthorizedFactWrite::new_with_links_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             direct_draft("forgotten-links", vec![fact_b.into_inner()]),
             None,
             Vec::new(),

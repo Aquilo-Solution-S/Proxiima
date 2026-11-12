@@ -6,15 +6,15 @@ use super::transfer::entity_kind;
 use crate::error::{map_err, with_bounded_retry};
 use proxiima_core::storage_ports::{MembershipEndpointAuthority, MembershipMemberAuthority};
 use proxiima_core::{
-    AccessKind, EntityId, EntityKind, GroupId, MembershipRow, OwnerId, Relation, Role, SchemaId,
+    EntityId, EntityKind, GroupId, MembershipRow, MemoryKind, OwnerId, Relation, Role, SchemaId,
     StorageError, UserId,
 };
 use sqlx::{FromRow, PgConnection, PgPool, Row};
 use uuid::Uuid;
 
 /// The access kind of a memory's entity kind.
-pub(crate) fn memory_access_kind(kind: EntityKind) -> Result<AccessKind, StorageError> {
-    AccessKind::of(kind)
+pub(crate) fn memory_access_kind(kind: EntityKind) -> Result<MemoryKind, StorageError> {
+    MemoryKind::of(kind)
         .ok_or_else(|| StorageError::ConstraintViolation("a Goal is no memory".into()))
 }
 

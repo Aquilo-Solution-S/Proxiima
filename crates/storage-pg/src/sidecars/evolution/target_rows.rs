@@ -43,9 +43,11 @@ async fn content_id(
         return Ok(None);
     }
     let hash = crate::verbs::content::hash_sidecar_payloads(std::slice::from_ref(&target.payload))?;
-    let kind = PgMemoryKind::of(target.source.kind()).ok_or_else(|| {
-        StorageError::ConstraintViolation("schema migration target is not a memory".into())
-    })?;
+    let kind = proxiima_core::MemoryKind::of(target.source.kind())
+        .map(PgMemoryKind::from)
+        .ok_or_else(|| {
+            StorageError::ConstraintViolation("schema migration target is not a memory".into())
+        })?;
     Ok(Some(
         crate::verbs::content::ensure_content(
             tx,
@@ -65,9 +67,11 @@ pub(super) async fn memory(
     let (refs, goal_refs) = memory_refs(target)?;
     let content_id = content_id(tx, target).await?;
     let source = &target.source.row;
-    let kind = PgMemoryKind::of(source.kind).ok_or_else(|| {
-        StorageError::ConstraintViolation("schema migration target is not a memory".into())
-    })?;
+    let kind = proxiima_core::MemoryKind::of(source.kind)
+        .map(PgMemoryKind::from)
+        .ok_or_else(|| {
+            StorageError::ConstraintViolation("schema migration target is not a memory".into())
+        })?;
     let origins: Vec<_> = target
         .pins
         .origins

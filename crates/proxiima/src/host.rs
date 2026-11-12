@@ -295,15 +295,15 @@ pub use proxiima_core::verbs::query::{
 };
 pub use proxiima_core::verbs::schema::{PayloadKind, SchemaRequest, SchemaResponse};
 pub use proxiima_core::{
-    AccessCeiling, AccessError, AccessKind, ActionName, AuthPath, Authenticator, AuthzContext,
-    CapabilitySet, DelegatedAuthorityError, DelegatedAuthorityService, DelegatedCommand,
-    DelegatedPhase, DelegationId, DelegationIssued, DelegationRevocation,
-    EmbeddingAnnObservability, EmbeddingJobBacklog, EmbeddingOrphanCounts,
-    EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRuntimePolicy, Engine,
-    EngineAuthority, ForwarderRole, GoalAccess, GroupId, MemoryId, OwnerAccessPort, OwnerId,
-    OwnerIdParseError, OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError,
-    ServedSurface, Setting, SettingKind, SourceId, SpiiceRegistryFrozen, SpiiceServiceError,
-    SpiiceServices, StorageError, ToolName, ToolScope, UserId, provider_safe_tool_name,
+    AccessCeiling, AccessError, ActionName, AuthPath, Authenticator, AuthzContext, CapabilitySet,
+    DelegatedAuthorityError, DelegatedAuthorityService, DelegatedCommand, DelegatedPhase,
+    DelegationId, DelegationIssued, DelegationRevocation, EmbeddingAnnObservability,
+    EmbeddingJobBacklog, EmbeddingOrphanCounts, EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary,
+    EmbeddingRuntimePolicy, Engine, EngineAuthority, ForwarderRole, GoalAccess, GroupId, MemoryId,
+    MemoryKind, OwnerAccessPort, OwnerId, OwnerIdParseError, OwnerRoles, Relation, ResourceKey,
+    Role, SchemaId, ScopeKey, ScopeKeyError, ServedSurface, Setting, SettingKind, SourceId,
+    SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices, StorageError, ToolName, ToolScope,
+    UserId, provider_safe_tool_name,
 };
 #[cfg(feature = "openai-compat-embed")]
 pub use proxiima_llm_openai_compat::{OpenAiCompatConfig, OpenAiCompatEmbeddingClient};
@@ -490,8 +490,8 @@ pub use proxiima_core::{BoundReadSet, ReadPin, ReadSet, ReadSetError};
 /// [`RequestHeaderAllowlist::extract`]: a
 /// host that registers or presents its own tools names them.
 pub use proxiima_core::{
-    CallFn, MemoryHandleClass, RequestHeaders, ToolError, UnknownFieldPolicy,
-    catalog::ActionArgSpec, catalog::ActionSchema, catalog::DispatcherSchema,
+    CallFn, RequestHeaders, ToolError, UnknownFieldPolicy, catalog::ActionArgSpec,
+    catalog::ActionSchema, catalog::DispatcherSchema,
 };
 /// The storage ports and their handles. [`StoragePortsBuilder`]'s setters take the
 /// `*Handle` aliases (`Arc<dyn ...Port>`), [`StoragePortsBuilder::try_build`]

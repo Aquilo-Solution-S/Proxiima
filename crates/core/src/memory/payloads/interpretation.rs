@@ -1,6 +1,6 @@
 use crate::{
-    DurablePayloadBuilder, EntityKind, KeyField, MemoryId, PayloadDisplay, PayloadProjection,
-    PayloadReference, PerspectivePayload,
+    DurablePayloadBuilder, EntityKind, KeyField, MemoryId, MemoryKind, PayloadDisplay,
+    PayloadProjection, PayloadReference, PerspectivePayload,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,50 +23,10 @@ pub struct InterpretationV1 {
     /// `subject_memory_ids`. Carried because a reference declaration
     /// needs its target's kind and this payload is the only place the
     /// resolved kinds survive re-derivation.
-    pub subject_kinds: Vec<InterpretationSubjectKind>,
+    pub subject_kinds: Vec<MemoryKind>,
     pub model_id: String,
     pub client_name: String,
     pub client_version: String,
-}
-
-/// Memory layer of an interpretation subject. A Perspective may
-/// interpret any layer — the layering rule is satisfied because the
-/// Perspective, not the subject, is the source.
-///
-/// Closed here and closed in the database: the discriminators match the
-/// SQL enum `proxiima_core.interpretation_subject_kind`, so the column
-/// cannot hold a value this type is unable to represent. It is
-/// deliberately not [`EntityKind`], which carries `Goal`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, sqlx::Type)]
-#[sqlx(type_name = "proxiima_core.interpretation_subject_kind")]
-pub enum InterpretationSubjectKind {
-    Fact,
-    Abstraction,
-    Perspective,
-}
-
-impl From<InterpretationSubjectKind> for EntityKind {
-    fn from(value: InterpretationSubjectKind) -> Self {
-        match value {
-            InterpretationSubjectKind::Fact => Self::Fact,
-            InterpretationSubjectKind::Abstraction => Self::Abstraction,
-            InterpretationSubjectKind::Perspective => Self::Perspective,
-        }
-    }
-}
-
-impl InterpretationSubjectKind {
-    /// `None` for Goal, which is not a memory and cannot be an
-    /// interpretation subject on this payload.
-    #[must_use]
-    pub const fn from_entity_kind(kind: EntityKind) -> Option<Self> {
-        match kind {
-            EntityKind::Fact => Some(Self::Fact),
-            EntityKind::Abstraction => Some(Self::Abstraction),
-            EntityKind::Perspective => Some(Self::Perspective),
-            EntityKind::Goal => None,
-        }
-    }
 }
 
 impl PerspectivePayload for InterpretationV1 {
@@ -116,11 +76,7 @@ impl PayloadProjection for InterpretationV1 {
         let subject_kinds = self
             .subject_kinds
             .iter()
-            .map(|kind| match kind {
-                InterpretationSubjectKind::Fact => "Fact",
-                InterpretationSubjectKind::Abstraction => "Abstraction",
-                InterpretationSubjectKind::Perspective => "Perspective",
-            })
+            .map(|kind| kind.entity_kind().as_str())
             .collect::<Vec<_>>();
         let mut fields = DurablePayloadBuilder::new();
         fields
@@ -145,9 +101,9 @@ mod projection_tests {
             confidence: 80,
             subject_memory_ids: vec![uuid::Uuid::nil(); 3],
             subject_kinds: vec![
-                InterpretationSubjectKind::Fact,
-                InterpretationSubjectKind::Abstraction,
-                InterpretationSubjectKind::Perspective,
+                MemoryKind::Fact,
+                MemoryKind::Abstraction,
+                MemoryKind::Perspective,
             ],
             model_id: "model".into(),
             client_name: "client".into(),
@@ -162,8 +118,8 @@ mod projection_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{InterpretationSubjectKind, InterpretationV1};
-    use crate::{EntityKind, PerspectivePayload, ReferenceBinding};
+    use super::InterpretationV1;
+    use crate::{EntityKind, MemoryKind, PerspectivePayload, ReferenceBinding};
 
     #[test]
     fn subjects_become_pinned_reference_declarations() {
@@ -172,7 +128,7 @@ mod tests {
             claim: "the outage followed the deploy".into(),
             confidence: 80,
             subject_memory_ids: vec![subject],
-            subject_kinds: vec![InterpretationSubjectKind::Fact],
+            subject_kinds: vec![MemoryKind::Fact],
             model_id: "test-model".into(),
             client_name: "test".into(),
             client_version: "1".into(),

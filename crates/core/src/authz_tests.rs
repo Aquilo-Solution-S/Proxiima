@@ -139,7 +139,7 @@ fn a_system_context_is_sealed_from_the_witness_without_a_bearer() {
     assert_eq!(context.writer(), Some(writer));
     assert_eq!(context.owner_scope().unwrap().writer(), writer);
     assert!(context.owner_scope().is_some(), "the owner scope is sealed");
-    assert!(context.may_write(&group, AccessKind::Fact));
+    assert!(context.may_write(&group, MemoryKind::Fact));
     assert!(
         !context.can_access_owner(&OwnerId::from(GroupId::new(uuid::Uuid::now_v7()))),
         "no owner beyond the roles it was given"
@@ -158,11 +158,11 @@ fn insecure_single_owner_scope_cannot_expand_beyond_its_owner() {
     let context = AuthzContext::for_insecure_single_owner(&authority, group);
 
     assert_eq!(context.auth_path(), AuthPath::HostBearer);
-    assert_eq!(context.readable_owners(AccessKind::Fact), vec![group]);
-    assert_eq!(context.writable_owners(AccessKind::Fact), vec![group]);
+    assert_eq!(context.readable_owners(MemoryKind::Fact), vec![group]);
+    assert_eq!(context.writable_owners(MemoryKind::Fact), vec![group]);
     let scope = context.owner_scope().expect("sealed single-owner scope");
-    assert_eq!(scope.readable_owners(AccessKind::Fact), vec![group]);
-    assert_eq!(scope.writable_owners(AccessKind::Fact), vec![group]);
+    assert_eq!(scope.readable_owners(MemoryKind::Fact), vec![group]);
+    assert_eq!(scope.writable_owners(MemoryKind::Fact), vec![group]);
     assert_eq!(
         context.writer(),
         Some(WriterAttribution {
@@ -172,7 +172,7 @@ fn insecure_single_owner_scope_cannot_expand_beyond_its_owner() {
     );
     assert_eq!(scope.writer(), context.writer().unwrap());
     assert!(!context.can_access_owner(&personal));
-    assert!(!scope.may_write(&personal, AccessKind::Fact));
+    assert!(!scope.may_write(&personal, MemoryKind::Fact));
     assert!(
         scope
             .add_group_role(GroupId::new(uuid::Uuid::now_v7()), Role::admin())
@@ -197,7 +197,7 @@ fn single_owner_context_is_server_resolved_and_owner_accessible() {
 
     assert_eq!(ctx.auth_path, AuthPath::System);
     assert!(ctx.is_server_resolved());
-    assert!(ctx.may_write(&o, AccessKind::Fact));
+    assert!(ctx.may_write(&o, MemoryKind::Fact));
     assert!(ctx.can_access_owner(&o));
     assert!(ctx.expires_at().is_none());
     assert!(ctx.owner_scope().is_none());
@@ -261,8 +261,8 @@ fn group_goal_work_follows_membership_not_the_memory_write_ceiling() {
     let viewer = member(Role::viewer());
     assert!(viewer.may_run_tool(&group, OwnerAccess::GoalWork));
     assert!(!viewer.may_run_tool(&group, OwnerAccess::Write));
-    assert!(!viewer.may_write(&group, AccessKind::Fact));
-    assert!(!viewer.may_write(&group, AccessKind::Perspective));
+    assert!(!viewer.may_write(&group, MemoryKind::Fact));
+    assert!(!viewer.may_write(&group, MemoryKind::Perspective));
     assert!(member(Role::admin()).may_work_goals(&group));
     assert!(!member(Role::ingest()).may_work_goals(&group));
     let delegated = AuthzContext::for_subject_with_role(
@@ -305,7 +305,7 @@ async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
                     .with_tool_scope(ToolScope::Palette(Vec::new()))
                     .with_trusted_model_id("trusted-forwarder-model")
                     .unwrap();
-            assert!(pending.readable_owners(AccessKind::Fact).is_empty());
+            assert!(pending.readable_owners(MemoryKind::Fact).is_empty());
             assert!(!pending.can_access_owner(&OwnerId::from(subject)));
             assert!(
                 pending
@@ -355,16 +355,16 @@ async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
             assert_eq!(bound.expires_at(), Some(expires));
             assert_eq!(bound.trusted_model_id(), Some("trusted-forwarder-model"));
             assert_eq!(bound.tool_scope(), &ToolScope::Palette(Vec::new()));
-            assert_eq!(bound.readable_owners(AccessKind::Fact), [owner]);
+            assert_eq!(bound.readable_owners(MemoryKind::Fact), [owner]);
             assert!(!bound.may_manage(&owner));
-            for kind in AccessKind::ALL {
+            for kind in MemoryKind::ALL {
                 assert_eq!(bound.may_read(&owner, kind), role.may_read(kind));
                 assert_eq!(bound.may_write(&owner, kind), role.may_write(kind));
                 assert!(!bound.may_read(&unrelated, kind));
                 assert!(!bound.may_write(&unrelated, kind));
             }
             if owner != OwnerId::from(subject) {
-                assert!(!bound.may_read(&OwnerId::from(subject), AccessKind::Fact));
+                assert!(!bound.may_read(&OwnerId::from(subject), MemoryKind::Fact));
             }
             assert!(bound.clone().narrowed_to_owner(unrelated).is_none());
             assert!(
@@ -376,7 +376,7 @@ async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
             let scope = bound.owner_scope().unwrap();
             assert_eq!(scope.subject(), subject);
             assert_eq!(scope.writer(), forwarded_writer());
-            assert_eq!(scope.readable_owners(AccessKind::Fact), [owner]);
+            assert_eq!(scope.readable_owners(MemoryKind::Fact), [owner]);
             assert!(scope.managed_owners().is_empty());
         }
     }
@@ -492,7 +492,7 @@ async fn only_core_authentication_seals_an_owner_scope() {
     .await
     .expect("the trusted authenticator succeeds");
     let scope = verified.owner_scope().expect("authentication seals scope");
-    assert!(scope.may_write(&group, AccessKind::Fact));
+    assert!(scope.may_write(&group, MemoryKind::Fact));
     assert!(
         verified
             .clone()
@@ -506,7 +506,7 @@ async fn only_core_authentication_seals_an_owner_scope() {
         narrowed
             .owner_scope()
             .expect("scope survives")
-            .readable_owners(AccessKind::Fact),
+            .readable_owners(MemoryKind::Fact),
         vec![group]
     );
 }
@@ -545,11 +545,11 @@ fn unauthenticated_denied_context_grants_no_owner_access() {
 
     assert_eq!(ctx.auth_path(), AuthPath::Denied);
     assert_eq!(ctx.subject(), None);
-    assert!(!ctx.may_read(&owner, AccessKind::Fact));
-    assert!(!ctx.may_write(&owner, AccessKind::Fact));
+    assert!(!ctx.may_read(&owner, MemoryKind::Fact));
+    assert!(!ctx.may_write(&owner, MemoryKind::Fact));
     assert!(!ctx.may_manage(&owner));
-    assert!(ctx.readable_owners(AccessKind::Fact).is_empty());
-    assert!(ctx.writable_owners(AccessKind::Fact).is_empty());
+    assert!(ctx.readable_owners(MemoryKind::Fact).is_empty());
+    assert!(ctx.writable_owners(MemoryKind::Fact).is_empty());
     assert!(!ctx.may_read_goals(&owner) && !ctx.may_administer(&owner));
 }
 
@@ -563,12 +563,12 @@ fn resolved_subject_context_gets_role_ceilings() {
 
     assert_eq!(ctx.subject(), Some(subject));
     assert!(ctx.may_administer(&OwnerId::from(subject)));
-    assert!(ctx.may_write(&group, AccessKind::Perspective));
+    assert!(ctx.may_write(&group, MemoryKind::Perspective));
     assert!(ctx.may_work_goals(&group));
     assert!(!ctx.may_administer(&group));
     assert!(!ctx.may_manage(&group));
 
-    let readable = ctx.readable_owners(AccessKind::Perspective);
+    let readable = ctx.readable_owners(MemoryKind::Perspective);
     assert_eq!(readable.len(), 2, "own personal owner plus the one group");
     assert!(readable.contains(&OwnerId::from(subject)));
     assert!(readable.contains(&group));
@@ -595,14 +595,14 @@ fn the_bound_reader_follows_the_contexts_deadline() {
 
     let reads = narrowed.bound_reads();
     let reader = reads.reader().expect("bound on a sealed context");
-    assert!(reader.may_read(&OwnerId::from(subject), AccessKind::Fact));
-    assert!(reader.may_read(&group, AccessKind::Fact));
+    assert!(reader.may_read(&OwnerId::from(subject), MemoryKind::Fact));
+    assert!(reader.may_read(&group, MemoryKind::Fact));
 
     let expired = narrowed.with_expires_at(Some(SystemTime::UNIX_EPOCH));
     let reads = expired.bound_reads();
     let reader = reads.reader().expect("still bound");
     assert!(reader.is_expired());
-    assert!(!reader.may_read(&group, AccessKind::Fact));
+    assert!(!reader.may_read(&group, MemoryKind::Fact));
 }
 
 /// Roles, accessible owners and expiry answer from one state: a
@@ -635,11 +635,11 @@ fn roles_accessible_owners_and_expiry_answer_from_one_state() {
     let expired = sealed.with_expires_at(Some(SystemTime::UNIX_EPOCH));
     let scope = expired.owner_scope().unwrap();
     for owner in [&group, &personal] {
-        assert!(!expired.may_read(owner, AccessKind::Fact), "{owner:?}");
-        assert!(!expired.may_write(owner, AccessKind::Fact), "{owner:?}");
+        assert!(!expired.may_read(owner, MemoryKind::Fact), "{owner:?}");
+        assert!(!expired.may_write(owner, MemoryKind::Fact), "{owner:?}");
         assert!(!expired.can_access_owner(owner), "{owner:?}");
         assert_eq!(expired.role_for_owner(owner), None, "{owner:?}");
-        assert!(!scope.may_read(owner, AccessKind::Fact), "{owner:?}");
+        assert!(!scope.may_read(owner, MemoryKind::Fact), "{owner:?}");
     }
     assert!(expired.accessible_owners().next().is_none());
     assert!(expired.clone().narrowed_to_owner(group).is_none());
@@ -677,10 +677,10 @@ fn a_host_resolved_role_narrows_to_exactly_that_owner() {
     assert_eq!(narrowed.subject(), Some(subject));
     assert_eq!(narrowed.auth_path(), AuthPath::HostBearer);
     assert_eq!(narrowed.role_for_owner(&group), Some(Role::editor()));
-    assert!(narrowed.may_write(&group, AccessKind::Perspective));
+    assert!(narrowed.may_write(&group, MemoryKind::Perspective));
     assert!(!narrowed.may_administer(&group));
     assert_eq!(
-        narrowed.readable_owners(AccessKind::Perspective),
+        narrowed.readable_owners(MemoryKind::Perspective),
         vec![group],
         "the narrowed set is exactly the one party"
     );
@@ -718,7 +718,7 @@ fn each_host_resolved_narrowing_sees_only_its_own_party() {
 
     assert!(to_first.can_access_owner(&first) && !to_first.can_access_owner(&second));
     assert!(to_second.can_access_owner(&second) && !to_second.can_access_owner(&first));
-    assert!(!to_second.may_write(&second, AccessKind::Fact));
+    assert!(!to_second.may_write(&second, MemoryKind::Fact));
 }
 
 /// Personal owners are a kernel rule, not a membership row: no resolved

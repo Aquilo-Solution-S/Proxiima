@@ -13,8 +13,8 @@ use proxiima_core::verbs::goal_write::{
     IdempotencyKey,
 };
 use proxiima_core::{
-    AgentNoteV1, DerivedMemory, InterpretationSubjectKind, InterpretationV1, MemoryId,
-    MemoryTarget, SeriesHandle, SimpleTextGoalV1,
+    AgentNoteV1, DerivedMemory, InterpretationV1, MemoryId, MemoryKind, MemoryTarget, SeriesHandle,
+    SimpleTextGoalV1,
 };
 use proxiima_core::{ErrorCode, Role, UserId};
 use proxiima_pg_testkit::db_url;
@@ -121,7 +121,7 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                         claim: "claim".to_owned(),
                         confidence: 80,
                         subject_memory_ids: vec![fact.memory_id.into_inner()],
-                        subject_kinds: vec![InterpretationSubjectKind::Fact],
+                        subject_kinds: vec![MemoryKind::Fact],
                         model_id: "test".to_owned(),
                         client_name: "test".to_owned(),
                         client_version: "1".to_owned(),
@@ -174,7 +174,7 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                     claim: "pending claim".to_owned(),
                     confidence: 90,
                     subject_memory_ids: vec![pending_fact.memory_id.into_inner()],
-                    subject_kinds: vec![InterpretationSubjectKind::Fact],
+                    subject_kinds: vec![MemoryKind::Fact],
                     model_id: "test".to_owned(),
                     client_name: "test".to_owned(),
                     client_version: "1".to_owned(),
@@ -263,7 +263,7 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                     claim: "committed claim".to_owned(),
                     confidence: 90,
                     subject_memory_ids: vec![committed_fact.memory_id.into_inner()],
-                    subject_kinds: vec![InterpretationSubjectKind::Fact],
+                    subject_kinds: vec![MemoryKind::Fact],
                     model_id: "test".to_owned(),
                     client_name: "test".to_owned(),
                     client_version: "1".to_owned(),
@@ -349,7 +349,7 @@ async fn typed_goal_pending_foreign_perspective_rejects_cross_owner_assignment()
                     claim: "foreign claim".to_owned(),
                     confidence: 90,
                     subject_memory_ids: vec![foreign_fact.memory_id.into_inner()],
-                    subject_kinds: vec![InterpretationSubjectKind::Fact],
+                    subject_kinds: vec![MemoryKind::Fact],
                     model_id: "test".to_owned(),
                     client_name: "test".to_owned(),
                     client_version: "1".to_owned(),

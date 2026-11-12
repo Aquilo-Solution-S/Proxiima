@@ -1,4 +1,4 @@
-use crate::catalog::MemoryHandleClass;
+use crate::MemoryKind;
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
@@ -48,7 +48,7 @@ pub(crate) fn core_derive_input_contract_id(kind: DerivedKind) -> InputContractI
 pub(crate) async fn resolve_source_memory(
     ctx: &ToolCtx,
     handle: &str,
-) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
+) -> Result<(MemoryId, MemoryKind), ToolError> {
     ctx.resolve_memory_with_kind(handle).await
 }
 
@@ -56,7 +56,7 @@ pub(crate) async fn resolve_source_memory(
 /// that derives `kind`.
 fn check_sources_admitted(
     kind: DerivedKind,
-    sources: &[(MemoryId, MemoryHandleClass)],
+    sources: &[(MemoryId, MemoryKind)],
 ) -> Result<(), ToolError> {
     if sources.is_empty() {
         return Err(ToolError::InvalidInput(
@@ -69,8 +69,9 @@ fn check_sources_admitted(
         .find(|(_memory_id, class)| !admitted.contains(&class.entity_kind()))
     {
         return Err(ToolError::LayeringViolation(format!(
-            "{} cannot be derived from {class} sources",
-            kind.as_str()
+            "{} cannot be derived from {} sources",
+            kind.as_str(),
+            class.entity_kind().as_str()
         )));
     }
     Ok(())
@@ -141,9 +142,7 @@ pub struct DeriveArgs {
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 pub enum DerivedKind {
-    #[serde(alias = "abstraction", alias = "ABSTRACTION")]
     Abstraction,
-    #[serde(alias = "perspective", alias = "PERSPECTIVE")]
     Perspective,
 }
 
@@ -210,14 +209,8 @@ impl Tool for DeriveTool {
 async fn resolve_derive_sources(
     ctx: &ToolCtx,
     source_handles: &[String],
-    retained: &[(crate::MemoryId, MemoryHandleClass)],
-) -> Result<
-    (
-        Vec<(crate::MemoryId, MemoryHandleClass)>,
-        Vec<ResolvedMemory>,
-    ),
-    ToolError,
-> {
+    retained: &[(crate::MemoryId, MemoryKind)],
+) -> Result<(Vec<(crate::MemoryId, MemoryKind)>, Vec<ResolvedMemory>), ToolError> {
     if source_handles.len() > MAX_SOURCE_HANDLES {
         return Err(ToolError::InvalidInput(format!(
             "source_handles must contain at most {MAX_SOURCE_HANDLES} handles"
@@ -318,9 +311,7 @@ async fn derive_call(ctx: ToolCtx, args: DeriveArgs) -> Result<DeriveOutput, Too
             )
             .await?
             .into_iter()
-            .filter_map(|(id, kind)| {
-                MemoryHandleClass::from_entity_kind(kind).map(|class| (id, class))
-            })
+            .filter_map(|(id, kind)| MemoryKind::of(kind).map(|class| (id, class)))
             .collect::<Vec<_>>(),
         None => Vec::new(),
     };
@@ -401,11 +392,11 @@ async fn derive_call(ctx: ToolCtx, args: DeriveArgs) -> Result<DeriveOutput, Too
 async fn prepare_derivation(
     ctx: &ToolCtx,
     args: &DeriveArgs,
-    retained: &[(crate::MemoryId, MemoryHandleClass)],
+    retained: &[(crate::MemoryId, MemoryKind)],
 ) -> Result<
     (
         AuthoredDerivation,
-        Vec<(crate::MemoryId, MemoryHandleClass)>,
+        Vec<(crate::MemoryId, MemoryKind)>,
         Vec<ResolvedMemory>,
         String,
     ),
@@ -508,7 +499,7 @@ pub(crate) fn plan_derivation(
     planning_namespace: uuid::Uuid,
     kind: DerivedKind,
     authored: AuthoredDerivation,
-    sources: &[(MemoryId, MemoryHandleClass)],
+    sources: &[(MemoryId, MemoryKind)],
     request: &crate::RequestKey,
 ) -> Result<DerivationPlan, ToolError> {
     check_sources_admitted(kind, sources)?;
@@ -529,7 +520,7 @@ pub(crate) fn plan_derivation(
 pub(crate) fn derivation_sidecar(
     ctx: &ToolCtx,
     authored: &AuthoredDerivation,
-    sources: &[(MemoryId, MemoryHandleClass)],
+    sources: &[(MemoryId, MemoryKind)],
 ) -> AgentDerivationV1 {
     AgentDerivationV1 {
         title: authored.title.clone(),
@@ -562,8 +553,8 @@ pub(crate) async fn resolve_supersedes(
     }
     let (prior, class) = ctx.resolve_memory_with_kind(raw).await?;
     let expected = match kind {
-        DerivedKind::Abstraction => MemoryHandleClass::Abstraction,
-        DerivedKind::Perspective => MemoryHandleClass::Perspective,
+        DerivedKind::Abstraction => MemoryKind::Abstraction,
+        DerivedKind::Perspective => MemoryKind::Perspective,
     };
     if class != expected {
         return Err(ToolError::InvalidInput(format!(
@@ -691,8 +682,8 @@ pub(crate) fn goal_planning_namespace(
 #[cfg(test)]
 mod tests {
     use super::super::super::memory_spaces::test_ctx::ctx_for;
-    use super::{AuthoredDerivation, derivation_sidecar};
-    use crate::catalog::MemoryHandleClass;
+    use super::{AuthoredDerivation, DeriveArgs, DerivedKind, derivation_sidecar};
+    use crate::MemoryKind;
     use crate::{AgentDerivationV1, MemoryId, UserId};
     use uuid::Uuid;
 
@@ -703,6 +694,35 @@ mod tests {
             model_id: "example-model".into(),
             tags: vec!["alpha".into(), "beta".into()],
             idempotency_key: idempotency_key.map(ToString::to_string),
+        }
+    }
+
+    #[test]
+    fn kind_accepts_only_the_wire_spelling() {
+        let parse = |kind: &str| {
+            serde_json::from_value::<DeriveArgs>(serde_json::json!({
+                "kind": kind,
+                "title": "t",
+                "body": "b",
+                "source_handles": ["00000000-0000-8000-8000-000000000001"],
+            }))
+        };
+        assert!(matches!(
+            parse("Abstraction").map(|args| args.kind),
+            Ok(DerivedKind::Abstraction)
+        ));
+        assert!(matches!(
+            parse("Perspective").map(|args| args.kind),
+            Ok(DerivedKind::Perspective)
+        ));
+        for bad in [
+            "abstraction",
+            "ABSTRACTION",
+            "perspective",
+            "PERSPECTIVE",
+            "Fact",
+        ] {
+            assert!(parse(bad).is_err(), "{bad} must be refused");
         }
     }
 
@@ -718,7 +738,7 @@ mod tests {
         let source = MemoryId::new(
             Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").expect("uuid literal"),
         );
-        let sources = [(source, MemoryHandleClass::Fact)];
+        let sources = [(source, MemoryKind::Fact)];
 
         assert_eq!(
             derivation_sidecar(&ctx, &golden_authored(None), &sources),

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use crate::access::{AccessCeiling, AccessKind, Relation, Role};
+use crate::MemoryKind;
+use crate::access::{AccessCeiling, Relation, Role};
 use crate::authz::{
     AuthPath, AuthorizationHook, AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome, AuthzVeto,
     OwnerResolver,
@@ -90,7 +91,7 @@ impl AuthorizationHook for RecordingHook {
         assert_eq!(
             input.operation,
             AuthzOperation::Read {
-                kind: AccessKind::Fact
+                kind: MemoryKind::Fact
             }
         );
         self.outcomes.lock().expect("recorder lock").push(outcome);
@@ -115,7 +116,7 @@ async fn single_owner_context_reads_its_owner() {
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
 
     let resolved = engine
-        .authorize_owner_read(&authz, &owner, AccessKind::Perspective)
+        .authorize_owner_read(&authz, &owner, MemoryKind::Perspective)
         .await
         .expect("single-owner context should authorize");
 
@@ -146,7 +147,7 @@ async fn every_gate_follows_the_role_limit() {
         let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
         let authz =
             AuthzContext::for_subject_with_role(subject, [(group, role)], AuthPath::HostBearer);
-        for kind in AccessKind::ALL {
+        for kind in MemoryKind::ALL {
             let read = engine.authorize_owner_read(&authz, &group, kind).await;
             assert_eq!(read.is_ok(), role.may_read(kind), "{role:?} read {kind:?}");
             let write = engine.authorize_write(&authz, &group, kind).await;
@@ -175,7 +176,7 @@ async fn authorize_write_allows_self_editor() {
     let authz = granted_context(&p);
 
     let permit = engine
-        .authorize_write(&authz, &p, AccessKind::Perspective)
+        .authorize_write(&authz, &p, MemoryKind::Perspective)
         .await
         .expect("the personal owner writes every kind");
 
@@ -193,19 +194,19 @@ async fn a_system_context_writes_only_when_for_system_built_it() {
         .authorize_owner_write(
             &AuthzContext::for_system(&authority, roles.clone()),
             &owner,
-            AccessKind::Perspective,
+            MemoryKind::Perspective,
         )
         .await
         .expect("for_system proves the host holds the witness");
     assert_eq!(permit.owner(), &owner);
     assert_eq!(
         permit.authority(),
-        crate::storage_ports::WriteAuthority::Memory(AccessKind::Perspective)
+        crate::storage_ports::WriteAuthority::Memory(MemoryKind::Perspective)
     );
 
     let forged = AuthzContext::server_resolved(roles.clone(), AuthPath::System);
     let error = engine
-        .authorize_owner_write(&forged, &owner, AccessKind::Fact)
+        .authorize_owner_write(&forged, &owner, MemoryKind::Fact)
         .await
         .expect_err("a System context not from for_system writes nothing");
     assert_eq!(error.code, ErrorCode::Forbidden);
@@ -219,7 +220,7 @@ async fn a_system_context_writes_only_when_for_system_built_it() {
         .authorize_owner_write(
             &AuthzContext::for_system(&foreign, roles),
             &owner,
-            AccessKind::Fact,
+            MemoryKind::Fact,
         )
         .await
         .expect_err("another Engine's witness stays powerless");
@@ -235,7 +236,7 @@ async fn authorize_write_denies_viewer_for_editor() {
     let authz = member_context(&p, g1, Relation::Viewer);
 
     let err = engine
-        .authorize_write(&authz, &g1_owner, AccessKind::Fact)
+        .authorize_write(&authz, &g1_owner, MemoryKind::Fact)
         .await
         .expect_err("a viewer writes nothing");
 
@@ -251,7 +252,7 @@ async fn authorize_write_allows_editor_member_for_group() {
     let authz = member_context(&p, g1, Relation::Editor);
 
     let permit = engine
-        .authorize_write(&authz, &g1_owner, AccessKind::Perspective)
+        .authorize_write(&authz, &g1_owner, MemoryKind::Perspective)
         .await
         .expect("an editor writes Perspectives");
 
@@ -267,7 +268,7 @@ async fn authorize_write_veto_denies() {
     let authz = granted_context(&p);
 
     let err = engine
-        .authorize_write(&authz, &p, AccessKind::Fact)
+        .authorize_write(&authz, &p, MemoryKind::Fact)
         .await
         .expect_err("veto should deny otherwise-allowed write");
 
@@ -282,7 +283,7 @@ async fn authorize_write_denied_context_forbidden() {
     let authz = AuthzContext::denied_for_owner(&p);
 
     let err = engine
-        .authorize_write(&authz, &p, AccessKind::Fact)
+        .authorize_write(&authz, &p, MemoryKind::Fact)
         .await
         .expect_err("denied context should reject write authorization");
 
@@ -341,7 +342,7 @@ impl AuthorizationHook for RecordingOwnerHook {
 }
 
 const FACT_READ: AuthzOperation = AuthzOperation::Read {
-    kind: AccessKind::Fact,
+    kind: MemoryKind::Fact,
 };
 
 #[tokio::test]
@@ -533,7 +534,7 @@ async fn denied_context_returns_forbidden() {
     let authz = AuthzContext::denied_for_owner(&owner);
 
     let err = engine
-        .authorize_owner_read(&authz, &owner, AccessKind::Fact)
+        .authorize_owner_read(&authz, &owner, MemoryKind::Fact)
         .await
         .expect_err("denied context should reject authorization");
 
@@ -552,7 +553,7 @@ async fn denied_context_notifies_observers() {
     let authz = AuthzContext::denied_for_owner(&owner);
 
     let err = engine
-        .authorize_owner_read(&authz, &owner, AccessKind::Fact)
+        .authorize_owner_read(&authz, &owner, MemoryKind::Fact)
         .await
         .expect_err("denied context should reject authorization");
 
@@ -573,7 +574,7 @@ async fn resolver_remap_still_gates_resolved_owner() {
     let authz = AuthzContext::single_owner(&requested, AuthPath::System);
 
     let err = engine
-        .authorize_owner_read(&authz, &requested, AccessKind::Fact)
+        .authorize_owner_read(&authz, &requested, MemoryKind::Fact)
         .await
         .expect_err("resolved hidden owner should be denied");
 
@@ -589,7 +590,7 @@ async fn veto_hook_denies_otherwise_allowed_request() {
     let authz = AuthzContext::single_owner(&owner, AuthPath::System);
 
     let err = engine
-        .authorize_owner_read(&authz, &owner, AccessKind::Fact)
+        .authorize_owner_read(&authz, &owner, MemoryKind::Fact)
         .await
         .expect_err("veto should deny otherwise-allowed request");
 
@@ -611,11 +612,11 @@ async fn observer_records_allowed_and_denied_outcomes() {
     let denied = granted_context(&owner);
 
     engine
-        .authorize_owner_read(&allowed, &owner, AccessKind::Fact)
+        .authorize_owner_read(&allowed, &owner, MemoryKind::Fact)
         .await
         .expect("allowed request should pass");
     let err = engine
-        .authorize_owner_read(&denied, &denied_owner, AccessKind::Fact)
+        .authorize_owner_read(&denied, &denied_owner, MemoryKind::Fact)
         .await
         .expect_err("denied context should reject authorization");
 

@@ -30,8 +30,8 @@ impl Engine {
             .authorize_entry_read(authz, EntityId::Memory(request.source))
             .await?;
         let kind = match source.kind() {
-            crate::EntityKind::Abstraction => crate::AccessKind::Abstraction,
-            crate::EntityKind::Perspective => crate::AccessKind::Perspective,
+            crate::EntityKind::Abstraction => crate::MemoryKind::Abstraction,
+            crate::EntityKind::Perspective => crate::MemoryKind::Perspective,
             crate::EntityKind::Fact | crate::EntityKind::Goal => {
                 return Err(ProtocolError::invalid_argument(
                     "source",

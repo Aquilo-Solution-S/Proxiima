@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::tool as protocol_tool;
-use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{AuthzContext, MemoryKind, OwnerId};
 use crate::{Tool, ToolCtx, ToolError};
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -62,7 +62,7 @@ pub fn list_memory_spaces(ctx: &ToolCtx) -> Vec<MemorySpaceOutput> {
                 key,
                 label,
                 access: MemorySpaceAccessOutput {
-                    writable: ctx.authz().may_write(&owner, AccessKind::Fact),
+                    writable: ctx.authz().may_write(&owner, MemoryKind::Fact),
                 },
             }
         })

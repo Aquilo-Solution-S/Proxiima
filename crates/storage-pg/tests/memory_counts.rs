@@ -4,14 +4,13 @@
 
 use std::sync::Arc;
 
-use proxiima_core::MemoryKind;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::read_models::MemoryCounts;
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, EdgeEndpoint, Engine, EntityKind, GroupId, MemoryId,
+    AuthPath, AuthzContext, EdgeEndpoint, Engine, EntityKind, GroupId, MemoryId, MemoryKind,
     OwnerId, Role, SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -183,7 +182,7 @@ async fn counts_are_heads_by_kind_and_follow_forget() {
         assert_eq!(memory_rows(&pg, owner, "fact").await?, 3);
         assert_eq!(engine.memory_counts(&authz).await?, seeded_counts(0));
 
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         MemoryAuthoringPort::forget_memory(&pg, &permit, seeded.forgettable).await?;
         assert_eq!(
             engine.memory_counts(&authz).await?,

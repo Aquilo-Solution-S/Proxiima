@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::MemoryHandleClass;
+use crate::MemoryKind;
 use crate::engine::GetMemoryReadRequest;
 use crate::{ToolCtx, ToolError};
 
@@ -259,8 +259,8 @@ pub(super) fn snapshot_payload_value(
         .map_err(|err| ToolError::Other(format!("serialize typed payload: {err}")))
 }
 
-pub(super) fn memory_class(kind: crate::EntityKind) -> Result<MemoryHandleClass, ToolError> {
-    MemoryHandleClass::from_entity_kind(kind)
+pub(super) fn memory_class(kind: crate::EntityKind) -> Result<MemoryKind, ToolError> {
+    MemoryKind::of(kind)
         .ok_or_else(|| ToolError::Other(format!("unknown memory kind: {}", kind.as_str())))
 }
 

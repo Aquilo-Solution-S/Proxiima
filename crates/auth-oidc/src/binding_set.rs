@@ -104,7 +104,7 @@ fn narrowed_by_host(
     shaped: AuthzContext,
     token_expires_at: std::time::SystemTime,
 ) -> Result<AuthzContext, AuthError> {
-    let rights_widened = proxiima_core::AccessKind::ALL.into_iter().any(|kind| {
+    let rights_widened = proxiima_core::MemoryKind::ALL.into_iter().any(|kind| {
         shaped.readable_owners(kind).iter().any(|owner| {
             !resolved.may_read(owner, kind)
                 || (shaped.may_manage(owner) && !resolved.may_manage(owner))

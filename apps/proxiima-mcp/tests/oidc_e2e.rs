@@ -27,7 +27,7 @@ use proxiima_auth_oidc::{OidcAuthConfig, OidcAuthenticator, OidcSubjectMap, Stat
 use proxiima_core::ToolScope;
 use proxiima_core::storage_ports::{MembershipWritePermit, OwnerMembershipAdminPort};
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, Engine, GroupId, OwnerAccessPort, OwnerId, Relation, Role,
+    AuthPath, AuthzContext, Engine, GroupId, MemoryKind, OwnerAccessPort, OwnerId, Relation, Role,
     SpiiceRegistry, UserId,
 };
 use proxiima_mcp::ProxiimaMcpApp;
@@ -938,7 +938,7 @@ async fn oidc_e2e_group_auth_host_resolved_editor_role_permits_tool_call()
             AuthPath::HostBearer,
         ));
     let permit = permit_engine
-        .authorize_owner_write(&permit_authz, &group_owner, AccessKind::Perspective)
+        .authorize_owner_write(&permit_authz, &group_owner, MemoryKind::Perspective)
         .await?;
     storage
         .add_group_member(

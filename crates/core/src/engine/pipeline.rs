@@ -1,5 +1,6 @@
+use crate::MemoryKind;
 use crate::OwnerId;
-use crate::access::{AccessKind, EntityId};
+use crate::access::EntityId;
 use crate::authz::{
     AuthPath, AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome, EngineAuthority,
 };
@@ -101,7 +102,7 @@ impl Engine {
         &self,
         authz: &AuthzContext,
         owner: &OwnerId,
-        kind: AccessKind,
+        kind: MemoryKind,
     ) -> Result<OwnerWritePermit, ProtocolError> {
         Ok(self
             .write_permit(authz, owner, WriteAuthority::Memory(kind))?
@@ -117,7 +118,7 @@ impl Engine {
         &self,
         authority: &A,
         owner: &OwnerId,
-        kind: AccessKind,
+        kind: MemoryKind,
     ) -> Result<WritePermit, ProtocolError>
     where
         A: EngineAuthority + ?Sized,
@@ -166,7 +167,7 @@ impl Engine {
             .authz()
             .role_for_owner(owner)
             .and_then(|role| role.write_ceiling().top())
-            .unwrap_or(AccessKind::Fact);
+            .unwrap_or(MemoryKind::Fact);
         self.write_permit(authority, owner, WriteAuthority::Memory(kind))
     }
 
@@ -240,7 +241,7 @@ impl Engine {
         &self,
         authority: &A,
         owner: &OwnerId,
-        kind: AccessKind,
+        kind: MemoryKind,
     ) -> Result<OwnerId, ProtocolError>
     where
         A: EngineAuthority + ?Sized,
@@ -354,7 +355,7 @@ impl Engine {
         let read = self.readable_set(authz)?;
         Ok(read
             .into_iter()
-            .filter(|owner| self.veto_read_owner(authz, owner, AccessKind::Fact).is_ok())
+            .filter(|owner| self.veto_read_owner(authz, owner, MemoryKind::Fact).is_ok())
             .collect())
     }
 
@@ -373,7 +374,7 @@ impl Engine {
         let candidates = self.row_read_candidates(authz).await?;
         Ok(candidates
             .into_iter()
-            .filter(|owner| self.veto_read_owner(authz, owner, AccessKind::Fact).is_ok())
+            .filter(|owner| self.veto_read_owner(authz, owner, MemoryKind::Fact).is_ok())
             .collect())
     }
 
@@ -407,7 +408,7 @@ impl Engine {
         let read = if authz.auth_path() == AuthPath::Denied {
             Vec::new()
         } else {
-            authz.readable_owners(AccessKind::Fact)
+            authz.readable_owners(MemoryKind::Fact)
         };
         if read.is_empty() {
             let principal = authz.principal();
@@ -416,7 +417,7 @@ impl Engine {
                 requested: &principal,
                 resolved: &principal,
                 operation: AuthzOperation::Read {
-                    kind: AccessKind::Fact,
+                    kind: MemoryKind::Fact,
                 },
             };
             self.registry
@@ -433,7 +434,7 @@ impl Engine {
         &self,
         authz: &AuthzContext,
         owner: &OwnerId,
-        kind: AccessKind,
+        kind: MemoryKind,
     ) -> Result<(), ProtocolError> {
         self.veto_read(authz, owner, AuthzOperation::Read { kind })
     }
@@ -524,7 +525,7 @@ impl Engine {
                     })
                     .ok_or_else(|| ProtocolError::forbidden(ENTRY_NOT_FOUND_MESSAGE))?;
                 let (owner, kind) = (entry.owner, entry.kind);
-                let operation = match AccessKind::of(kind) {
+                let operation = match MemoryKind::of(kind) {
                     Some(kind) => AuthzOperation::Read { kind },
                     None => AuthzOperation::GoalRead,
                 };

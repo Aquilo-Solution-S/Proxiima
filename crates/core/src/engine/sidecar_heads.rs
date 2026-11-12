@@ -1,5 +1,5 @@
 use super::Engine;
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::AuthzContext;
 use crate::error::ProtocolError;
 use crate::verbs::query::{
@@ -26,7 +26,7 @@ impl Engine {
         let query = ResolvedSidecarHeads::resolve(self.registry.contracts(), request)?;
         let read_owners = match &request.scope {
             SidecarHeadsScope::Owner(owner) => vec![
-                self.authorize_owner_read(authz, owner, AccessKind::Fact)
+                self.authorize_owner_read(authz, owner, MemoryKind::Fact)
                     .await?,
             ],
             SidecarHeadsScope::Readable => self.authorize_row_read(authz).await?,

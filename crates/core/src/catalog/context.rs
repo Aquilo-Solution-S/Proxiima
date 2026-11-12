@@ -1,6 +1,4 @@
-use crate::{GoalId, MemoryId, ToolCtx, ToolError};
-
-use super::handles::MemoryHandleClass;
+use crate::{GoalId, MemoryId, MemoryKind, ToolCtx, ToolError};
 
 #[allow(clippy::unused_self)]
 impl ToolCtx {
@@ -30,7 +28,7 @@ impl ToolCtx {
     pub async fn resolve_memory_with_kind(
         &self,
         raw: &str,
-    ) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
+    ) -> Result<(MemoryId, MemoryKind), ToolError> {
         let memory_id = self.resolve_memory(raw)?;
         self.resolve_memory_id_with_kind(memory_id).await
     }
@@ -38,7 +36,7 @@ impl ToolCtx {
     pub(crate) async fn resolve_memory_id_with_kind(
         &self,
         memory_id: MemoryId,
-    ) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
+    ) -> Result<(MemoryId, MemoryKind), ToolError> {
         self.resolve_memory_ids_with_kind(&[memory_id])
             .await?
             .into_iter()
@@ -54,13 +52,13 @@ impl ToolCtx {
     pub(crate) async fn resolve_memory_ids_with_kind(
         &self,
         ids: &[MemoryId],
-    ) -> Result<Vec<(MemoryId, MemoryHandleClass)>, ToolError> {
+    ) -> Result<Vec<(MemoryId, MemoryKind)>, ToolError> {
         self.engine()
             .memory_kinds(self.authz(), ids)
             .await?
             .into_iter()
             .map(|(id, kind)| {
-                MemoryHandleClass::from_entity_kind(kind)
+                MemoryKind::of(kind)
                     .map(|class| (id, class))
                     .ok_or_else(|| ToolError::InvalidInput("expected a memory".into()))
             })

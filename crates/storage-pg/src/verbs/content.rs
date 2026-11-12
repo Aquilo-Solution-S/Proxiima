@@ -126,7 +126,7 @@ pub fn text_hash(schema_id: &str, text: &[u8]) -> [u8; 32] {
 pub async fn ensure_content_from_payloads(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: Uuid,
-    kind: &str,
+    kind: crate::pg_enums::PgMemoryKind,
     schema_id: &str,
     payloads: &[SidecarPayload],
 ) -> Result<Option<Uuid>, StorageError> {
@@ -134,8 +134,8 @@ pub async fn ensure_content_from_payloads(
         return Ok(None);
     }
     let mut hash = hash_sidecar_payloads(payloads)?;
-    if kind != "fact" {
-        hash = kind_scoped_hash(kind, &hash);
+    if kind != crate::pg_enums::PgMemoryKind::Fact {
+        hash = kind_scoped_hash(kind.label(), &hash);
     }
     Ok(Some(ensure_content(tx, owner_id, schema_id, &hash).await?))
 }

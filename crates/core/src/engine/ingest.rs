@@ -1,6 +1,6 @@
 use super::Engine;
+use crate::MemoryKind;
 use crate::SchemaVersion;
-use crate::access::AccessKind;
 use crate::authz::EngineAuthority;
 use crate::edge::EdgeEndpoint;
 use crate::embedding::EmbeddingSpace;
@@ -116,7 +116,7 @@ impl Engine {
     {
         let owner = self.single_fact_write_owner(authority)?;
         let permit = self
-            .authorize_write(authority, &owner, AccessKind::Fact)
+            .authorize_write(authority, &owner, MemoryKind::Fact)
             .await?;
         self.authorize_fact_ingest_permitted_visible(
             authority,
@@ -225,7 +225,7 @@ impl Engine {
     {
         let owner = self.single_fact_write_owner(authority)?;
         let permit = self
-            .authorize_write(authority, &owner, AccessKind::Fact)
+            .authorize_write(authority, &owner, MemoryKind::Fact)
             .await?;
         normalize_fact_draft(&mut draft)?;
 
@@ -284,7 +284,7 @@ impl Engine {
     {
         let owner = self.single_fact_write_owner(authority)?;
         let permit = self
-            .authorize_write(authority, &owner, AccessKind::Fact)
+            .authorize_write(authority, &owner, MemoryKind::Fact)
             .await?;
         normalize_fact_draft(&mut draft)?;
         let fact_info = self.fact_schema_info(&draft.schema_id, draft.schema_version)?;
@@ -531,7 +531,7 @@ impl Engine {
         let owners = if authz.auth_path() == crate::authz::AuthPath::Denied {
             Vec::new()
         } else {
-            authz.writable_owners(AccessKind::Fact)
+            authz.writable_owners(MemoryKind::Fact)
         };
         match owners.as_slice() {
             [owner] => Ok(*owner),

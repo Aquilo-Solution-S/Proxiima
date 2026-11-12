@@ -495,7 +495,7 @@ async fn set_and_pause(world: &World, pending: PendingWork) -> (GoalId, GoalId) 
         GoalAuthorship, GoalCreateRequest, GoalMotivationRef, GoalTopologyWrite,
         GoalTransitionKind, IdempotencyKey,
     };
-    use proxiima_core::{DerivedMemory, InterpretationSubjectKind, InterpretationV1};
+    use proxiima_core::{DerivedMemory, InterpretationV1, MemoryKind};
     let authz = authenticated_context(world.built.single_owner_authz().expect("single owner"));
     let engine = world.built.host().engine();
     let fact = capture(&world.built, world.owner, "grounding").await;
@@ -507,7 +507,7 @@ async fn set_and_pause(world: &World, pending: PendingWork) -> (GoalId, GoalId) 
             claim: "claim".into(),
             confidence: 80,
             subject_memory_ids: vec![fact],
-            subject_kinds: vec![InterpretationSubjectKind::Fact],
+            subject_kinds: vec![MemoryKind::Fact],
             model_id: "test".into(),
             client_name: "test".into(),
             client_version: "1".into(),

@@ -1,4 +1,5 @@
-use crate::access::{AccessKind, EntityId, Relation};
+use crate::MemoryKind;
+use crate::access::{EntityId, Relation};
 use crate::authz::{
     AuthPath, AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome, MembershipChange,
 };
@@ -429,7 +430,7 @@ impl Engine {
         // ordinary visibility path: absent and foreign rows collapse to the
         // same public NotFound outcome, while an authorized source remains
         // visible because admin roles include read access.
-        let read = authz.readable_owners(AccessKind::Fact);
+        let read = authz.readable_owners(MemoryKind::Fact);
         let (current_owner, _, schema) = self
             .storage()
             .access_admin

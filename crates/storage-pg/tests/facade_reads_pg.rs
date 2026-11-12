@@ -3,7 +3,7 @@
 use proxiima_core::storage_ports::{EmbeddingJobPort, FactIngestPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, EmbeddingJobState, MemoryId, OwnerId, StorageError, UserId};
+use proxiima_core::{EmbeddingJobState, MemoryId, MemoryKind, OwnerId, StorageError, UserId};
 use proxiima_pg_testkit::drop_db;
 use proxiima_storage_pg::ingest_receipt;
 use proxiima_storage_pg::test_fixtures::create_core_db;
@@ -41,7 +41,7 @@ async fn the_receipt_read_uses_the_caller_transaction_under_row_security() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let admitted = pg
             .ingest_fact_atomic(&permit, &sourced("src/webhook", "delivery-1"), None)
             .await?;
@@ -92,7 +92,7 @@ async fn embedding_job_diagnostics_report_each_job_and_its_claim_age() {
         let pg = PgStorage::connect_for_tests(url).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let admitted = pg
             .ingest_fact_atomic(&permit, &sourced("src/jobs", "unit-1"), None)
             .await?;

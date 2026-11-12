@@ -4,8 +4,7 @@ pub mod payloads;
 
 pub use payloads::{
     AgentDerivationV1, AgentNoteV1, GoalChange, GoalChangeColumnsError, GoalChangeKind,
-    GoalChangeV1, InterpretationSubjectKind, InterpretationV1, PendingWork, Speaker, UploadV1,
-    UtteranceV1, WriteActV1,
+    GoalChangeV1, InterpretationV1, PendingWork, Speaker, UploadV1, UtteranceV1, WriteActV1,
 };
 
 use crate::SpiiceRegistry;

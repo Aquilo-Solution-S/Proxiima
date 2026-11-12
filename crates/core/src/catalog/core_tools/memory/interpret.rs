@@ -7,7 +7,7 @@
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
-use crate::{DerivedMemory, InterpretationSubjectKind, InterpretationV1, MemoryId, SeriesHandle};
+use crate::{DerivedMemory, InterpretationV1, MemoryId, MemoryKind, SeriesHandle};
 use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -150,7 +150,7 @@ struct PreparedInterpretation {
     destination: crate::MemoryDestination,
     memory_id: MemoryId,
     subject_memory_ids: Vec<uuid::Uuid>,
-    subject_kinds: Vec<InterpretationSubjectKind>,
+    subject_kinds: Vec<MemoryKind>,
     read_subjects: Vec<crate::storage_ports::other_stores::ReadOrigin>,
     external: Vec<uuid::Uuid>,
     supersedes: Option<MemoryId>,
@@ -194,9 +194,7 @@ async fn prepare_interpretation(
             )
             .await?
             .into_iter()
-            .filter_map(|(id, kind)| {
-                crate::catalog::MemoryHandleClass::from_entity_kind(kind).map(|class| (id, class))
-            })
+            .filter_map(|(id, kind)| crate::MemoryKind::of(kind).map(|class| (id, class)))
             .collect::<Vec<_>>(),
         None => Vec::new(),
     };
@@ -212,7 +210,7 @@ async fn prepare_interpretation(
         let (id, kind) = subject.classified()?;
         match subject {
             super::super::other_stores::ResolvedMemory::Local(..) => {
-                local_subjects.push((id, subject_kind(kind)));
+                local_subjects.push((id, kind));
             }
             super::super::other_stores::ResolvedMemory::Remote(origin) => {
                 read_subjects.push(origin);
@@ -290,17 +288,8 @@ pub(crate) fn reject_self_subject(
 pub(crate) async fn resolve_subject(
     ctx: &ToolCtx,
     handle: &str,
-) -> Result<(MemoryId, InterpretationSubjectKind), ToolError> {
-    let (id, class) = ctx.resolve_memory_with_kind(handle).await?;
-    Ok((id, subject_kind(class)))
-}
-
-fn subject_kind(class: crate::catalog::MemoryHandleClass) -> InterpretationSubjectKind {
-    match class {
-        crate::catalog::MemoryHandleClass::Fact => InterpretationSubjectKind::Fact,
-        crate::catalog::MemoryHandleClass::Abstraction => InterpretationSubjectKind::Abstraction,
-        crate::catalog::MemoryHandleClass::Perspective => InterpretationSubjectKind::Perspective,
-    }
+) -> Result<(MemoryId, MemoryKind), ToolError> {
+    ctx.resolve_memory_with_kind(handle).await
 }
 
 /// Deterministic id folded from owner, model, claim, confidence and

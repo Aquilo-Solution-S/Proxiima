@@ -44,7 +44,7 @@ const TICK: Duration = Duration::from_millis(15);
 
 fn memory_draft(kind: MemoryKind) -> FactWriteCommand {
     FactWriteCommand {
-        schema_id: SchemaId::new(format!("goal-text/{}", kind.as_str())),
+        schema_id: SchemaId::new(format!("goal-text/{}", kind.entity_kind().as_str())),
         schema_version: SchemaVersion::new(1),
         handle: None,
         source_id: None,

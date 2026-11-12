@@ -3,8 +3,8 @@
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::idempotency::{ContentFingerprint, KeyScope, RequestKey};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, ForkCommandPermit, ForkDestinationPermit,
-    ForkMemoryOutcome, ForkMemoryRequest, GoalHandle, MemoryId, MemoryKind, OwnerId, StorageError,
+    EdgeEndpoint, EntityKind, ForkCommandPermit, ForkDestinationPermit, ForkMemoryOutcome,
+    ForkMemoryRequest, GoalHandle, MemoryId, MemoryKind, OwnerId, StorageError,
 };
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -255,7 +255,7 @@ async fn admit_fork(
             let content_row = super::content::ensure_content_from_payloads(
                 tx,
                 target_owner.into_inner(),
-                memory_kind.as_str(),
+                crate::pg_enums::PgMemoryKind::from(memory_kind),
                 schema_id,
                 &payloads,
             )
@@ -447,7 +447,7 @@ async fn check_destination(
     tx: &mut Transaction<'_, Postgres>,
     permit: &ForkCommandPermit,
     roles: &proxiima_core::OwnerRoles,
-    kind: AccessKind,
+    kind: MemoryKind,
 ) -> Result<(), StorageError> {
     let role = match permit.destination() {
         ForkDestinationPermit::Owner(write) => current_role(permit.scope(), roles, *write.owner()),
@@ -468,7 +468,7 @@ async fn check_fork_consent(
     permit: &ForkCommandPermit,
     roles: &proxiima_core::OwnerRoles,
     consent: Option<(GoalHandle, OwnerId)>,
-    kind: AccessKind,
+    kind: MemoryKind,
 ) -> Result<Option<Uuid>, StorageError> {
     let (goal, controller) = consent.ok_or(StorageError::NotFound)?;
     let publication = sqlx::query("SELECT gh.authority_generation,p.cited_upload_id FROM proxiima_core.goal_memory_publication p

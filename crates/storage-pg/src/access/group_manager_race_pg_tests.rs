@@ -7,7 +7,7 @@ use proxiima_core::storage_ports::{
     MembershipWritePermit, OwnerMembershipAdminPort, OwnerWritePermit,
 };
 use proxiima_core::test_fixtures::owner_scope_for_tests;
-use proxiima_core::{AccessKind, GroupId, OwnerId, Relation, UserId};
+use proxiima_core::{GroupId, MemoryKind, OwnerId, Relation, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
 
@@ -28,7 +28,7 @@ async fn managers_removing_each_other_one_refused() {
         let m1 = UserId::new(Uuid::now_v7());
         let m2 = UserId::new(Uuid::now_v7());
         pg.bootstrap_group_admin(group, m1, m1.into_inner()).await?;
-        let permit = OwnerWritePermit::new_for_tests(OwnerId::from(group), AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(OwnerId::from(group), MemoryKind::Fact);
         pg.add_group_member(
             &MembershipWritePermit::new_for_tests(&permit, None, None, None),
             group,
@@ -46,7 +46,7 @@ async fn managers_removing_each_other_one_refused() {
             let pg = pg.clone();
             tokio::spawn(async move {
                 let permit =
-                    OwnerWritePermit::new_for_tests(OwnerId::from(group), AccessKind::Fact);
+                    OwnerWritePermit::new_for_tests(OwnerId::from(group), MemoryKind::Fact);
                 pg.remove_group_member(
                     &MembershipWritePermit::new_for_tests(&permit, None, None, None)
                         .with_caller(caller),
@@ -98,7 +98,7 @@ async fn host_removal_of_last_manager_refused() {
         let manager = UserId::new(Uuid::now_v7());
         pg.bootstrap_group_admin(group, manager, manager.into_inner())
             .await?;
-        let permit = OwnerWritePermit::new_for_tests(OwnerId::from(group), AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(OwnerId::from(group), MemoryKind::Fact);
 
         let refused = pg
             .remove_group_member(

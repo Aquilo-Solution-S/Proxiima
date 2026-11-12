@@ -18,7 +18,7 @@ use crate::catalog::{ActionArgSpec, CoreActionMeta, OwnerNeed, ToolAudience};
 use crate::error::ProtocolError;
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::storage_ports::CitedBlobService;
-use crate::{AccessKind, AuthzContext, OwnerId};
+use crate::{AuthzContext, MemoryKind, OwnerId};
 use crate::{Tool, ToolCtx, ToolError};
 
 use super::memory_spaces::resolve_space_for_write;
@@ -286,7 +286,7 @@ fn narrowed_space(
 ) -> Result<(AuthzContext, OwnerId), ToolError> {
     let (space, authz) = resolve_space_for_write(ctx, space)?;
     let (allowed, denied) = (
-        authz.may_write(&space.owner, AccessKind::Fact),
+        authz.may_write(&space.owner, MemoryKind::Fact),
         "requires Fact write on this owner",
     );
     if !allowed {

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
-use proxiima_core::{AccessKind, ColdObjectStore, OwnerId, StorageError, UserId};
+use proxiima_core::{ColdObjectStore, MemoryKind, OwnerId, StorageError, UserId};
 use uuid::Uuid;
 
 use crate::test_fixtures::{TestNote, create_embedding, fresh_pg};
@@ -62,7 +62,7 @@ async fn note_fact(pg: &crate::PgStorage, owner: OwnerId, body_bytes: usize) -> 
 async fn a_fact_with_a_sidecar_row_over_64_kib_forgets() {
     let (pg, _db) = fresh_pg("forget_64k").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let t = note_fact(&pg, owner, 70 * 1024).await;
 
     MemoryAuthoringPort::forget_memory(&pg, &permit, proxiima_core::MemoryId::new(t))
@@ -82,7 +82,7 @@ async fn forget_makes_no_object_store_call() {
     let cold = Arc::new(CountingCold::default());
     let pg = pg.with_cold(cold.clone());
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let t = note_fact(&pg, owner, 16).await;
 
     MemoryAuthoringPort::forget_memory(&pg, &permit, proxiima_core::MemoryId::new(t))
@@ -97,7 +97,7 @@ async fn forget_makes_no_object_store_call() {
 async fn forget_deletes_the_embeddings_and_keeps_the_row() {
     let (pg, _db) = fresh_pg("forget_embeddings").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let pool = pg.pool_for_tests().clone();
     let t = pg
         .ingest_fact_atomic(&permit, &draft(None), None)
@@ -139,7 +139,7 @@ async fn forget_deletes_the_embeddings_and_keeps_the_row() {
 async fn forgetting_the_series_head_makes_the_previous_version_head() {
     let (pg, _db) = fresh_pg("forget_head").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let first = pg
         .ingest_fact_atomic(&permit, &draft(None), None)
         .await

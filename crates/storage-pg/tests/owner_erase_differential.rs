@@ -132,7 +132,7 @@ use proxiima_core::storage_ports::MemoryAuthoringPort;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::{AuthorizedFactWrite, FactWriteCommand};
 use proxiima_core::{
-    AccessKind, AgentNoteV1, ColdObjectStore, OwnerId, SchemaId, SchemaVersion, SidecarPayload,
+    AgentNoteV1, ColdObjectStore, MemoryKind, OwnerId, SchemaId, SchemaVersion, SidecarPayload,
     StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -214,7 +214,7 @@ fn authorized(owner: OwnerId, mut draft: FactWriteCommand) -> AuthorizedFactWrit
     draft.lexical_language =
         Some(proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT.to_owned());
     AuthorizedFactWrite::new_for_tests(
-        OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+        OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
         draft,
         None,
         Vec::new(),
@@ -287,7 +287,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
     owner_row(pool, owner).await?;
     owner_row(pool, other).await?;
 
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
     // Blobs: one cited by an admission, one mounted — the same object key
     // named by an upload row of each owner.

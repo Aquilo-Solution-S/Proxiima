@@ -1,6 +1,6 @@
 //! Storage is the only writer of the transaction-local owner scope.
 
-use proxiima_core::{AccessKind, OwnerId, OwnerScope, StorageError};
+use proxiima_core::{MemoryKind, OwnerId, OwnerScope, StorageError};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -71,28 +71,28 @@ fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
         ("app.proxiima_scope", "owner".to_owned()),
         (
             "app.owner",
-            uuid_array(scope.readable_owners(AccessKind::Fact)),
+            uuid_array(scope.readable_owners(MemoryKind::Fact)),
         ),
         (
             "app.read_abstraction",
-            uuid_array(scope.readable_owners(AccessKind::Abstraction)),
+            uuid_array(scope.readable_owners(MemoryKind::Abstraction)),
         ),
         (
             "app.read_perspective",
-            uuid_array(scope.readable_owners(AccessKind::Perspective)),
+            uuid_array(scope.readable_owners(MemoryKind::Perspective)),
         ),
         ("app.read_goal", uuid_array(scope.goal_reading_owners())),
         (
             "app.write_owner",
-            uuid_array(scope.writable_owners(AccessKind::Fact)),
+            uuid_array(scope.writable_owners(MemoryKind::Fact)),
         ),
         (
             "app.write_abstraction",
-            uuid_array(scope.writable_owners(AccessKind::Abstraction)),
+            uuid_array(scope.writable_owners(MemoryKind::Abstraction)),
         ),
         (
             "app.write_perspective",
-            uuid_array(scope.writable_owners(AccessKind::Perspective)),
+            uuid_array(scope.writable_owners(MemoryKind::Perspective)),
         ),
         ("app.work_goal", uuid_array(scope.goal_working_owners())),
         ("app.manage_owner", uuid_array(scope.managed_owners())),
@@ -180,7 +180,7 @@ mod tests {
 
     use proxiima_core::storage_ports::OwnerWritePermit;
     use proxiima_core::test_fixtures::owner_scope_for_tests;
-    use proxiima_core::{AccessKind, OwnerId, UserId};
+    use proxiima_core::{MemoryKind, OwnerId, UserId};
     use uuid::Uuid;
 
     use super::{begin_owner_transaction, live_memory_owners_as};
@@ -219,7 +219,7 @@ mod tests {
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
         let theirs = ingest_stamped(
             &admin,
-            &OwnerWritePermit::new_for_tests(other, AccessKind::Fact),
+            &OwnerWritePermit::new_for_tests(other, MemoryKind::Fact),
             &draft(None),
             &[],
             &[],

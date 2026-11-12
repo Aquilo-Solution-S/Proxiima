@@ -6,17 +6,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{GoalId, GroupId, MemoryId, OwnerId, UserId};
-
-/// The three memory kinds, ranked for access. A Goal is intent, not memory,
-/// and is not on this ladder: what a role may do with Goals is
-/// [`Role::goals`] (`AccessKind` in `docs/lean/Causa/Owner.lean`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum AccessKind {
-    Fact,
-    Abstraction,
-    Perspective,
-}
+use crate::{GoalId, GroupId, MemoryId, MemoryKind, OwnerId, UserId};
 
 impl<'de> serde::Deserialize<'de> for Role {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -40,42 +30,6 @@ impl<'de> serde::Deserialize<'de> for Role {
             manage: raw.manage,
             ..role
         })
-    }
-}
-
-impl AccessKind {
-    pub const ALL: [Self; 3] = [Self::Fact, Self::Abstraction, Self::Perspective];
-
-    #[must_use]
-    pub const fn rank(self) -> u8 {
-        match self {
-            Self::Fact => 1,
-            Self::Abstraction => 2,
-            Self::Perspective => 3,
-        }
-    }
-}
-
-impl AccessKind {
-    /// The memory kind of an entity; a Goal is no memory and has none.
-    #[must_use]
-    pub const fn of(kind: crate::EntityKind) -> Option<Self> {
-        match kind {
-            crate::EntityKind::Fact => Some(Self::Fact),
-            crate::EntityKind::Abstraction => Some(Self::Abstraction),
-            crate::EntityKind::Perspective => Some(Self::Perspective),
-            crate::EntityKind::Goal => None,
-        }
-    }
-}
-
-impl From<crate::MemoryKind> for AccessKind {
-    fn from(kind: crate::MemoryKind) -> Self {
-        match kind {
-            crate::MemoryKind::Fact => Self::Fact,
-            crate::MemoryKind::Abstraction => Self::Abstraction,
-            crate::MemoryKind::Perspective => Self::Perspective,
-        }
     }
 }
 
@@ -124,19 +78,32 @@ impl AccessCeiling {
         }
     }
 
+    /// The lowest ceiling that covers `kind`: a memory kind's place on the
+    /// access ladder (`AccessKind.rank` in `docs/lean/Causa/Owner.lean`). A
+    /// Goal is intent, not memory, and is not on this ladder: what a role
+    /// may do with Goals is [`Role::goals`].
     #[must_use]
-    pub const fn allows(self, kind: AccessKind) -> bool {
-        kind.rank() <= self.rank()
+    pub const fn covering(kind: MemoryKind) -> Self {
+        match kind {
+            MemoryKind::Fact => Self::Fact,
+            MemoryKind::Abstraction => Self::Abstraction,
+            MemoryKind::Perspective => Self::Perspective,
+        }
+    }
+
+    #[must_use]
+    pub const fn allows(self, kind: MemoryKind) -> bool {
+        Self::covering(kind).rank() <= self.rank()
     }
 
     /// The highest kind this limit covers; `None` covers none.
     #[must_use]
-    pub const fn top(self) -> Option<AccessKind> {
+    pub const fn top(self) -> Option<MemoryKind> {
         match self {
             Self::None => None,
-            Self::Fact => Some(AccessKind::Fact),
-            Self::Abstraction => Some(AccessKind::Abstraction),
-            Self::Perspective => Some(AccessKind::Perspective),
+            Self::Fact => Some(MemoryKind::Fact),
+            Self::Abstraction => Some(MemoryKind::Abstraction),
+            Self::Perspective => Some(MemoryKind::Perspective),
         }
     }
 }
@@ -328,12 +295,12 @@ impl Role {
     }
 
     #[must_use]
-    pub const fn may_read(self, kind: AccessKind) -> bool {
+    pub const fn may_read(self, kind: MemoryKind) -> bool {
         self.read.allows(kind)
     }
 
     #[must_use]
-    pub const fn may_write(self, kind: AccessKind) -> bool {
+    pub const fn may_write(self, kind: MemoryKind) -> bool {
         self.write.allows(kind)
     }
 
@@ -341,7 +308,7 @@ impl Role {
     /// reading Goals.
     #[must_use]
     pub const fn may_read_entry(self, kind: crate::EntityKind) -> bool {
-        match AccessKind::of(kind) {
+        match MemoryKind::of(kind) {
             Some(kind) => self.may_read(kind),
             None => self.reads_goals(),
         }
@@ -549,12 +516,12 @@ impl OwnerRoles {
     }
 
     #[must_use]
-    pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_read(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.role_for(owner).is_some_and(|role| role.may_read(kind))
     }
 
     #[must_use]
-    pub fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_write(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.role_for(owner)
             .is_some_and(|role| role.may_write(kind))
     }
@@ -584,13 +551,13 @@ impl OwnerRoles {
     /// Owners readable at `kind`, the subject's own id first, then by id: the
     /// order of memory spaces.
     #[must_use]
-    pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.ordered(|role| role.may_read(kind))
     }
 
     /// Owners writable at `kind`, ordered as [`Self::readable_owners`].
     #[must_use]
-    pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn writable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.ordered(|role| role.may_write(kind))
     }
 
@@ -836,10 +803,10 @@ mod tests {
             Some(Role::personal())
         );
         assert_eq!(roles.role_for(&OwnerId::from(other)), None);
-        assert!(!roles.may_read(&OwnerId::from(other), AccessKind::Fact));
+        assert!(!roles.may_read(&OwnerId::from(other), MemoryKind::Fact));
         assert_eq!(roles.role_for(&OwnerId::from(group)), Some(Role::viewer()));
         assert_eq!(
-            roles.readable_owners(AccessKind::Fact).first(),
+            roles.readable_owners(MemoryKind::Fact).first(),
             Some(&OwnerId::from(subject)),
             "the subject's own space comes first"
         );
@@ -853,7 +820,7 @@ mod tests {
 
     #[test]
     fn builtin_roles_match_lean_owner_rules() {
-        for kind in AccessKind::ALL {
+        for kind in MemoryKind::ALL {
             assert!(Role::personal().may_read(kind));
             assert!(Role::personal().may_write(kind));
             assert!(Role::viewer().may_read(kind));
@@ -881,9 +848,9 @@ mod tests {
 
         assert!(roles.administers(&OwnerId::from(subject)));
         assert!(!roles.may_manage(&OwnerId::from(subject)));
-        assert!(!roles.may_read(&OwnerId::from(other), AccessKind::Fact));
+        assert!(!roles.may_read(&OwnerId::from(other), MemoryKind::Fact));
 
-        assert!(roles.may_write(&owner, AccessKind::Perspective));
+        assert!(roles.may_write(&owner, MemoryKind::Perspective));
         assert!(roles.works_goals(&owner));
         assert!(!roles.administers(&owner));
     }
@@ -942,8 +909,8 @@ mod tests {
         assert_eq!(Role::editor().join(Role::viewer()), Role::editor());
         let both = Role::viewer().join(Role::ingest());
         assert!(both.works_goals());
-        assert!(both.may_write(AccessKind::Fact));
-        assert!(!both.may_write(AccessKind::Abstraction));
+        assert!(both.may_write(MemoryKind::Fact));
+        assert!(!both.may_write(MemoryKind::Abstraction));
         assert!(!both.manages());
     }
 

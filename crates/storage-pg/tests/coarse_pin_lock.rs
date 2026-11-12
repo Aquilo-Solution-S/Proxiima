@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, StorageRule,
-    UserId,
+    EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
@@ -448,7 +447,7 @@ async fn concurrent_forget_waits_for_the_bulk_transaction() {
         .await?;
 
         let done = AtomicBool::new(false);
-        let limit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
+        let limit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
         let forget = async {
             let forgot = MemoryAuthoringPort::forget_memory(&pg, &limit, abstraction).await;
             done.store(true, Ordering::SeqCst);

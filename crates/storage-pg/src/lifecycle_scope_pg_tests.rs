@@ -4,7 +4,7 @@
 use proxiima_core::storage_ports::{MemoryInspectPort, MemoryReadPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::query::{MemoryLineageDirection, MemoryLineageRequest};
-use proxiima_core::{AccessKind, OwnerId, UserId};
+use proxiima_core::{MemoryKind, OwnerId, UserId};
 use sqlx::Connection;
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ async fn seed(pg: &crate::PgStorage, permit: &OwnerWritePermit) -> Seeded {
         proxiima_core::EntityKind::Fact,
         proxiima_core::MemoryId::new(parent),
     )];
-    let derive = OwnerWritePermit::new_for_tests(*permit.owner(), AccessKind::Abstraction);
+    let derive = OwnerWritePermit::new_for_tests(*permit.owner(), MemoryKind::Abstraction);
     let child = ingest_stamped(
         pg.pool_for_tests(),
         &derive,
@@ -141,7 +141,7 @@ async fn walk_from(
 async fn a_forgotten_memory_is_absent_from_owner_reads() {
     let (pg, _guard) = fresh_pg("s5_absent").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let scope = owner_scope_for_tests(&[owner]);
     let Seeded { parent, child } = seed(&pg, &permit).await;
 
@@ -195,7 +195,7 @@ async fn a_forgotten_memory_is_absent_from_owner_reads() {
 async fn the_lifecycle_scope_sees_a_forgotten_memory_and_does_not_leak() {
     let (pg, _guard) = fresh_pg("s5_lifecycle").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let scope = owner_scope_for_tests(&[owner]);
     let Seeded { child, .. } = seed(&pg, &permit).await;
     forget_by_hand(&pg, child).await;
@@ -234,7 +234,7 @@ async fn another_owner_does_not_see_a_forgotten_memory_in_lifecycle_scope() {
     let (pg, _guard) = fresh_pg("s5_other_owner").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let stranger = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let Seeded { child, .. } = seed(&pg, &permit).await;
     forget_by_hand(&pg, child).await;
     let (_lifecycle, mut tx) =
@@ -336,7 +336,7 @@ async fn a_transfer_moves_a_forgotten_memory_and_keeps_the_flag() {
         .await
         .expect("destination owner");
     let t = forgotten_note(&pg, owner).await;
-    let permit = OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, dest);
+    let permit = OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, dest);
     assert!(
         pg.transfer_to_owner(
             &permit,
@@ -415,7 +415,7 @@ async fn replaying_a_forgotten_write_answers_its_handle_and_writes_nothing() {
     use proxiima_core::storage_ports::FactIngestPort;
     let (pg, _guard) = fresh_pg("s8_replay").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let write = draft(Some(("s8-source", "s8-key")));
     let first = pg
         .ingest_fact_atomic(&permit, &write, None)
@@ -515,7 +515,7 @@ async fn a_forget_that_loses_the_race_leaves_the_scope() {
 #[tokio::test]
 async fn a_failed_restore_leaves_the_scope() {
     let (_pg, _guard, owner, t, mut tx) = failing_lifecycle_fixture("r1_restore_fail").await;
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let failed = crate::verbs::forget::restore_marked(
         &mut tx,
         &crate::core_pg_sidecars(),

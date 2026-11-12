@@ -13,7 +13,7 @@ use crate::verbs::query::{
     EntityKind, MemorySearchRequest, SearchCursor, SearchMode, SearchOrder, SupersessionStatus,
     TagMatch,
 };
-use crate::{EmbeddingSpace, MemoryId, SchemaId, Tool};
+use crate::{EmbeddingSpace, MemoryId, MemoryKind, SchemaId, Tool};
 use crate::{ToolCtx, ToolError};
 
 use super::citation_of_fact::{FactCitationOutput, fact_citation_output};
@@ -74,26 +74,6 @@ fn default_supersession() -> SearchMemoriesSupersession {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-pub enum SearchMemoriesKind {
-    #[serde(rename = "Fact", alias = "fact", alias = "FACT")]
-    Fact,
-    #[serde(rename = "Abstraction", alias = "abstraction", alias = "ABSTRACTION")]
-    Abstraction,
-    #[serde(rename = "Perspective", alias = "perspective", alias = "PERSPECTIVE")]
-    Perspective,
-}
-
-impl From<SearchMemoriesKind> for EntityKind {
-    fn from(value: SearchMemoriesKind) -> Self {
-        match value {
-            SearchMemoriesKind::Fact => Self::Fact,
-            SearchMemoriesKind::Abstraction => Self::Abstraction,
-            SearchMemoriesKind::Perspective => Self::Perspective,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchMemoriesSupersession {
     #[serde(alias = "HeadsOnly", alias = "headsOnly", alias = "HEADS_ONLY")]
@@ -136,7 +116,7 @@ pub struct SearchMemoriesArgs {
     pub supersession: SearchMemoriesSupersession,
     #[serde(default)]
     #[schemars(description = "Omit for all kinds.")]
-    pub kind: Option<SearchMemoriesKind>,
+    pub kind: Option<MemoryKind>,
     #[serde(default)]
     #[schemars(
         description = "Only this schema, e.g. `core/agent-note-v1`; ids via `proxiima://schemas`."

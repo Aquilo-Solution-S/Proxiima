@@ -18,8 +18,8 @@ use proxiima_core::verbs::query::{
 };
 use proxiima_core::{
     AuthPath, AuthzContext, DerivedMemory, FactPayload, FactWrite, GoalAudienceGrantInput,
-    GoalHandle, GoalPublicationInput, InterpretationSubjectKind, InterpretationV1, MemoryId,
-    MemoryTarget, PublicationUse, Role, SeriesHandle, SimpleTextGoalV1, UserId,
+    GoalHandle, GoalPublicationInput, InterpretationV1, MemoryId, MemoryKind, MemoryTarget,
+    PublicationUse, Role, SeriesHandle, SimpleTextGoalV1, UserId,
 };
 use proxiima_example::NoteV1;
 use proxiima_example::StampV1;
@@ -34,10 +34,7 @@ fn perspective(text: &str, fact: MemoryId, note: MemoryId) -> InterpretationV1 {
         claim: text.to_owned(),
         confidence: 90,
         subject_memory_ids: vec![fact.into_inner(), note.into_inner()],
-        subject_kinds: vec![
-            InterpretationSubjectKind::Fact,
-            InterpretationSubjectKind::Fact,
-        ],
+        subject_kinds: vec![MemoryKind::Fact, MemoryKind::Fact],
         model_id: "test".into(),
         client_name: "test".into(),
         client_version: "1".into(),

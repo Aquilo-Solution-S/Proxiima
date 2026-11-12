@@ -8,7 +8,7 @@ use crate::test_fixtures::{TestGoal, create_core_db};
 use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, ContentFingerprint, EdgeEndpoint, EntityKind, GoalId, IdempotencyKey, KeyScope,
+    ContentFingerprint, EdgeEndpoint, EntityKind, GoalId, IdempotencyKey, KeyScope, MemoryKind,
     OwnerId, RequestKey, SchemaId, SchemaVersion, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -143,7 +143,7 @@ async fn same_first_originsnd_refs_replay() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
         let pool = pg.pool_for_tests();
         let origin = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let callee = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
@@ -168,7 +168,7 @@ async fn changed_perspective_guidance_appends_with_same_origins() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
@@ -204,7 +204,7 @@ async fn perspective_guidance_naming_no_goal_is_refused() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
@@ -263,8 +263,8 @@ async fn replay_metadata_mismatch_never_replays_or_mutates() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
-        let other_permit = OwnerWritePermit::new_for_tests(other_owner, AccessKind::Abstraction);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
+        let other_permit = OwnerWritePermit::new_for_tests(other_owner, MemoryKind::Abstraction);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let handle = Uuid::now_v7();
@@ -325,7 +325,7 @@ async fn same_origins_different_refs_is_conflict() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
         let pool = pg.pool_for_tests();
         let origin = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let callee_a = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
@@ -369,7 +369,7 @@ async fn changed_guidance_appends_and_exact_guidance_replays() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
@@ -428,7 +428,7 @@ async fn keyed_reuse_with_changed_guidance_conflicts() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
@@ -480,8 +480,8 @@ async fn different_first_originsppend_new_t_and_each_key_replays_its_version() {
     let (db_name, pg) = fresh_pg().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
-        let fact_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
+        let fact_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let origin_a = pg
             .ingest_fact_atomic(&fact_permit, &fact_draft(), None)

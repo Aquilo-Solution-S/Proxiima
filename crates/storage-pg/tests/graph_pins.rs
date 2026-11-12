@@ -3,7 +3,6 @@
 
 use std::num::NonZeroU16;
 
-use proxiima_core::MemoryKind;
 use proxiima_core::read_models::MemorySchemaSpec;
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{
@@ -16,7 +15,7 @@ use proxiima_core::verbs::query::{
     EntityKind, MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest, QueryRequest,
 };
 use proxiima_core::{
-    AbstractionPayload, AccessKind, AgentDerivationV1, EdgeKind, EdgeTargetProjection, EntityRef,
+    AbstractionPayload, AgentDerivationV1, EdgeKind, EdgeTargetProjection, EntityRef, MemoryKind,
     OwnerId, PgIdent, SchemaId, SchemaVersion, SidecarPayload, SqlText, UserId,
     project_listed_edge, project_window_edges,
 };
@@ -89,7 +88,7 @@ async fn query_neighbors_edges_and_lineage_use_pins() {
             .await?
             .with_spiices(&registry);
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let leaf = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -118,7 +117,7 @@ async fn query_neighbors_edges_and_lineage_use_pins() {
             client_version: "1".into(),
         });
         let authorized = AuthorizedFactWrite::new_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             derived_cmd,
             Some(AgentDerivationV1::sidecar_table().to_owned()),
             Vec::new(),
@@ -225,7 +224,7 @@ async fn pin_node_loads_are_owner_scoped_and_redact_in_memory() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let a = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -237,7 +236,7 @@ async fn pin_node_loads_are_owner_scoped_and_redact_in_memory() {
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let other_permit = OwnerWritePermit::new_for_tests(other, AccessKind::Fact);
+        let other_permit = OwnerWritePermit::new_for_tests(other, MemoryKind::Fact);
         let foreign = pg
             .ingest_fact_atomic(
                 &other_permit,
@@ -332,9 +331,9 @@ async fn lineage_redacts_foreign_origin_instead_of_dropping() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let other_permit = OwnerWritePermit::new_for_tests(other, AccessKind::Fact);
+        let other_permit = OwnerWritePermit::new_for_tests(other, MemoryKind::Fact);
 
         let own = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -428,7 +427,7 @@ async fn inbound_pin_page_is_newest_heads_and_keyset() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let hub = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
@@ -509,7 +508,7 @@ async fn inbound_heads_only_drops_superseded_pin() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let hub = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
@@ -593,7 +592,7 @@ async fn lineage_diamond_visits_shared_node_once() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let leaf = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -738,7 +737,7 @@ async fn lineage_pages_finish_a_distance_before_the_next() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let leaf = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -865,7 +864,7 @@ async fn the_forgotten_probe_keeps_to_the_readers_kind_permits() {
         use proxiima_core::storage_ports::MemoryAuthoringPort;
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(proxiima_core::GroupId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let grounding = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
@@ -887,7 +886,7 @@ async fn the_forgotten_probe_keeps_to_the_readers_kind_permits() {
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
         let _ = other_grounding;
-        let abstraction_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
+        let abstraction_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
         MemoryAuthoringPort::forget_memory(&pg, &abstraction_permit, abstraction.memory_id).await?;
         MemoryAuthoringPort::forget_memory(&pg, &permit, loose.memory_id).await?;
         let ids = [abstraction.memory_id, loose.memory_id];

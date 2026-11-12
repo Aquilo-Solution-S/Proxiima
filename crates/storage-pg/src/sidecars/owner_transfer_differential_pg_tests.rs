@@ -123,7 +123,7 @@ use crate::verbs::memory_timeseries::ingest_fact_timeseries;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, AgentNoteV1, EntityId, FactPayload, GroupId, MemoryId, OwnerId, SchemaId,
+    AgentNoteV1, EntityId, FactPayload, GroupId, MemoryId, MemoryKind, OwnerId, SchemaId,
     SchemaVersion, SidecarPayload, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -974,10 +974,10 @@ async fn run_transfers(
     corpus: &Corpus,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let permit =
-        OwnerWritePermit::transfer_for_tests(corpus.source, AccessKind::Fact, corpus.destination);
+        OwnerWritePermit::transfer_for_tests(corpus.source, MemoryKind::Fact, corpus.destination);
     let goal_permit = OwnerWritePermit::transfer_for_tests(
         corpus.source,
-        AccessKind::Perspective,
+        MemoryKind::Perspective,
         corpus.destination,
     );
     let mut out = String::new();

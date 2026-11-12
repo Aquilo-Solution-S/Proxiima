@@ -272,7 +272,11 @@ fn memory_filters(
     if let Some(schema_id) = req.schema_id.as_ref() {
         filters.push(MemoryFilter::Schema(schema_id.as_str().to_owned()));
     }
-    if let Some(kind) = req.entity_kind.and_then(PgMemoryKind::of) {
+    if let Some(kind) = req
+        .entity_kind
+        .and_then(proxiima_core::MemoryKind::of)
+        .map(PgMemoryKind::from)
+    {
         filters.push(MemoryFilter::Kind(kind));
     }
     if !req.referenced_goal_handles.is_empty() {

@@ -16,11 +16,10 @@ use proxiima_core::verbs::query::{
     EdgeFilter, EdgeReadRequest, EntityKind, QueryRequest, SupersessionStatus,
 };
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, DerivationIdentity, DerivedMemory, EdgeKind, EntityRef,
-    FactWrite, ForkMemoryRequest, GoalAudienceGrantInput, GoalHandle, GoalPublicationInput,
-    InputContractId, InterpretationSubjectKind, InterpretationV1, MemoryDestination, MemoryId,
-    MemoryTarget, OperatorId, OwnerId, PublicationUse, ReadPin, ReadSet, Role, SeriesHandle,
-    SimpleTextGoalV1, SpiiceRegistry, UserId,
+    AuthPath, AuthzContext, DerivationIdentity, DerivedMemory, EdgeKind, EntityRef, FactWrite,
+    ForkMemoryRequest, GoalAudienceGrantInput, GoalHandle, GoalPublicationInput, InputContractId,
+    InterpretationV1, MemoryDestination, MemoryId, MemoryKind, MemoryTarget, OperatorId, OwnerId,
+    PublicationUse, ReadPin, ReadSet, Role, SeriesHandle, SimpleTextGoalV1, SpiiceRegistry, UserId,
 };
 use proxiima_example::NoteV1;
 use proxiima_storage_pg::test_fixtures::cited_abstraction_from_template;
@@ -35,7 +34,7 @@ fn interpretation(fact: MemoryId, claim: &str) -> InterpretationV1 {
         claim: claim.into(),
         confidence: 90,
         subject_memory_ids: vec![fact.into_inner()],
-        subject_kinds: vec![InterpretationSubjectKind::Fact],
+        subject_kinds: vec![MemoryKind::Fact],
         model_id: "fork-test".into(),
         client_name: "fork-test".into(),
         client_version: "1".into(),
@@ -400,7 +399,7 @@ async fn typed_perspective_fork_is_a_new_series_and_replays_by_key() {
                 claim: "source".into(),
                 confidence: 90,
                 subject_memory_ids: vec![fact.into_inner()],
-                subject_kinds: vec![InterpretationSubjectKind::Fact],
+                subject_kinds: vec![MemoryKind::Fact],
                 model_id: "test".into(),
                 client_name: "test".into(),
                 client_version: "1".into(),
@@ -629,7 +628,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
     let alice_auth = direct(alice);
     let bob_auth = direct(bob);
     let carol_auth = direct(carol);
-    assert!(!bob_auth.may_read(&alice_owner, AccessKind::Perspective));
+    assert!(!bob_auth.may_read(&alice_owner, MemoryKind::Perspective));
     assert_eq!(bob_auth.role_for_owner(&alice_owner), None);
 
     let notebook = host.notebook(&alice_owner).await;

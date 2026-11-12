@@ -15,7 +15,7 @@ use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, GroupId, OwnerId, SchemaId, SchemaVersion, StorageError, StorageRule, UserId,
+    GroupId, MemoryKind, OwnerId, SchemaId, SchemaVersion, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -139,7 +139,7 @@ async fn memory_timeseries_keyless_and_ingest_key_replay() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let second = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
@@ -150,7 +150,7 @@ async fn memory_timeseries_keyless_and_ingest_key_replay() {
         assert_ne!(first.handle, second.handle);
 
         let writer = permit.owner_scope().expect("sealed fixture scope").writer();
-        let second_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let second_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let second_writer = second_permit.owner_scope().expect("second scope").writer();
         assert_ne!(writer, second_writer);
         let sourced = draft(Some(("src/webhook", "delivery-1")));
@@ -235,7 +235,7 @@ async fn a_revision_after_a_future_head_becomes_the_new_head() {
         let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
         let pool = pg.pool_for_tests();
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
 
         // Model a head committed by another process whose clock is an hour
@@ -308,7 +308,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
 
         let file = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
@@ -535,7 +535,7 @@ async fn an_id_first_seen_as_a_user_is_never_registered_as_a_group() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let id = Uuid::now_v7();
         let owner = OwnerId::from(UserId::new(id));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
 
         pg.ingest_fact_atomic(&permit, &draft(None), None).await?;

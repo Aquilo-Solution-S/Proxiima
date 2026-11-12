@@ -218,7 +218,7 @@ async fn member_endpoint_detach_removes_edge_without_parent_read_authority() -> 
         [(OwnerId::from(h.child), Role::admin())],
         AuthPath::HostBearer,
     ));
-    assert!(!child_only.may_read(&h.parent.into(), proxiima_core::AccessKind::Fact));
+    assert!(!child_only.may_read(&h.parent.into(), proxiima_core::MemoryKind::Fact));
     let admin_pool = PgPool::connect(&db_url(&h.name)).await?;
     for relation in [None, Some(Relation::Viewer)] {
         h.engine

@@ -548,7 +548,7 @@ async fn seed_group_membership(
         AuthPath::HostBearer,
     ));
     let permit = engine
-        .authorize_owner_write(&authz, space_owner, proxiima_core::AccessKind::Perspective)
+        .authorize_owner_write(&authz, space_owner, proxiima_core::MemoryKind::Perspective)
         .await
         .expect("seed group membership permit");
     let membership_permit = MembershipWritePermit::new_for_tests(&permit, None, None, None);

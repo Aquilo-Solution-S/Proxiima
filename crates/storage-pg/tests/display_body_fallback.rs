@@ -12,7 +12,7 @@ use proxiima_core::storage_ports::{
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::{AuthorizedFactWrite, FactWriteCommand};
 use proxiima_core::verbs::query::EntityKind;
-use proxiima_core::{AccessKind, OwnerId, SchemaId, SchemaVersion, UserId};
+use proxiima_core::{MemoryKind, OwnerId, SchemaId, SchemaVersion, UserId};
 use proxiima_storage_pg::test_fixtures::fresh_pg;
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ async fn search_and_by_id_reads_fall_back_to_the_memorys_own_text()
         request: None,
     };
     let authorized = AuthorizedFactWrite::new_for_tests(
-        OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+        OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
         draft,
         None,
         Vec::new(),

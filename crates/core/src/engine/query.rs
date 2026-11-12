@@ -1,5 +1,5 @@
 use super::Engine;
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::AuthzContext;
 use crate::error::ProtocolError;
 use crate::read_models::MemorySchemaSpec;
@@ -237,7 +237,7 @@ impl Engine {
         sidecar_table: &str,
         columns: &[(&str, SidecarAtom)],
     ) -> Result<Option<uuid::Uuid>, ProtocolError> {
-        self.authorize_owner_read(authz, &owner, AccessKind::Fact)
+        self.authorize_owner_read(authz, &owner, MemoryKind::Fact)
             .await?;
         self.storage
             .query

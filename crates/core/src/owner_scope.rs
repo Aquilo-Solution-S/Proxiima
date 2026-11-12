@@ -8,7 +8,7 @@
 
 use std::time::SystemTime;
 
-use crate::{AccessKind, GroupId, OwnerId, OwnerRoles, Role, UserId, WriterAttribution};
+use crate::{GroupId, MemoryKind, OwnerId, OwnerRoles, Role, UserId, WriterAttribution};
 
 /// The roles a request holds, until when, and the one owner it is confined
 /// to. The single owner of all three: a context carries one grant, sealed or
@@ -81,11 +81,11 @@ impl ScopeGrant {
         self.live()?.role_for(owner)
     }
 
-    pub(crate) fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub(crate) fn may_read(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.live().is_some_and(|roles| roles.may_read(owner, kind))
     }
 
-    pub(crate) fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub(crate) fn may_write(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.live()
             .is_some_and(|roles| roles.may_write(owner, kind))
     }
@@ -98,12 +98,12 @@ impl ScopeGrant {
         self.live().is_some_and(|roles| roles.administers(owner))
     }
 
-    pub(crate) fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub(crate) fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.live()
             .map_or_else(Vec::new, |roles| roles.readable_owners(kind))
     }
 
-    pub(crate) fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub(crate) fn writable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.live()
             .map_or_else(Vec::new, |roles| roles.writable_owners(kind))
     }
@@ -269,12 +269,12 @@ impl OwnerScope {
     }
 
     #[must_use]
-    pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_read(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.grant.may_read(owner, kind)
     }
 
     #[must_use]
-    pub fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_write(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.grant.may_write(owner, kind)
     }
 
@@ -306,20 +306,20 @@ impl OwnerScope {
     }
 
     #[must_use]
-    pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.grant.readable_owners(kind)
     }
 
     #[must_use]
     pub fn managed_owners(&self) -> Vec<OwnerId> {
-        self.readable_owners(AccessKind::Fact)
+        self.readable_owners(MemoryKind::Fact)
             .into_iter()
             .filter(|owner| self.role_for_owner(owner).is_some_and(Role::manages))
             .collect()
     }
 
     #[must_use]
-    pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn writable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.grant.writable_owners(kind)
     }
 

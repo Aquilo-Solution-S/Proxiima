@@ -22,7 +22,7 @@ use proxiima_core::storage_ports::{
     MembershipWritePermit, OwnerMembershipAdminPort, OwnerWritePermit,
 };
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, Engine, GroupId, OwnerAccessPort, OwnerId, Relation, Role,
+    AuthPath, AuthzContext, Engine, GroupId, MemoryKind, OwnerAccessPort, OwnerId, Relation, Role,
     SpiiceRegistry, UserId,
 };
 use proxiima_mcp::ProxiimaMcpApp;
@@ -574,7 +574,7 @@ async fn membership_permit(owner: OwnerId) -> Result<OwnerWritePermit, Box<dyn s
             AuthPath::HostBearer,
         ));
     Ok(engine
-        .authorize_owner_write(&authz, &owner, AccessKind::Perspective)
+        .authorize_owner_write(&authz, &owner, MemoryKind::Perspective)
         .await?)
 }
 

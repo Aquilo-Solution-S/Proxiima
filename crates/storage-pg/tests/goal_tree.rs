@@ -32,7 +32,7 @@ type History = (String, String, i32, Option<Uuid>, Option<String>);
 
 fn fact_draft(kind: MemoryKind) -> FactWriteCommand {
     FactWriteCommand {
-        schema_id: SchemaId::new(format!("tree/{}", kind.as_str())),
+        schema_id: SchemaId::new(format!("tree/{}", kind.entity_kind().as_str())),
         schema_version: SchemaVersion::new(1),
         handle: None,
         source_id: None,

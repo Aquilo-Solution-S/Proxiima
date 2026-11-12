@@ -22,12 +22,19 @@ pub enum EntityKind {
     Goal,
 }
 
-/// The kinds a memory row can be: an `EntityKind` without the Goal, which is
-/// its own entity. Serialized as the lowercase words the database stores.
+/// The memory layer of a node: a Fact, an Abstraction or a Perspective.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
-#[serde(rename_all = "lowercase")]
 pub enum MemoryKind {
     #[default]
     Fact,
@@ -36,15 +43,7 @@ pub enum MemoryKind {
 }
 
 impl MemoryKind {
-    /// The lowercase word the database stores and the wire carries.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fact => "fact",
-            Self::Abstraction => "abstraction",
-            Self::Perspective => "perspective",
-        }
-    }
+    pub const ALL: [Self; 3] = [Self::Fact, Self::Abstraction, Self::Perspective];
 
     #[must_use]
     pub const fn entity_kind(self) -> EntityKind {
@@ -128,19 +127,30 @@ mod memory_kind_tests {
     use super::*;
 
     #[test]
-    fn memory_kind_keeps_the_words_the_database_stores() {
-        for (kind, word) in [
-            (MemoryKind::Fact, "fact"),
-            (MemoryKind::Abstraction, "abstraction"),
-            (MemoryKind::Perspective, "perspective"),
-        ] {
-            assert_eq!(kind.as_str(), word);
+    fn memory_kind_speaks_the_entity_kind_words() {
+        for kind in MemoryKind::ALL {
             let json = serde_json::to_string(&kind).expect("serializes");
-            assert_eq!(json, format!("\"{word}\""));
+            assert_eq!(json, format!("\"{}\"", kind.entity_kind().as_str()));
             assert_eq!(serde_json::from_str::<MemoryKind>(&json).ok(), Some(kind));
+            assert_eq!(MemoryKind::of(kind.entity_kind()), Some(kind));
         }
         assert_eq!(MemoryKind::default(), MemoryKind::Fact);
-        assert!(serde_json::from_str::<MemoryKind>("\"goal\"").is_err());
         assert_eq!(MemoryKind::of(EntityKind::Goal), None);
+    }
+
+    #[test]
+    fn memory_kind_refuses_a_word_outside_the_wire_spelling() {
+        for bad in [
+            "\"Goal\"",
+            "\"fact\"",
+            "\"FACT\"",
+            "\"perspective\"",
+            "\"Note\"",
+        ] {
+            assert!(
+                serde_json::from_str::<MemoryKind>(bad).is_err(),
+                "{bad} must be refused"
+            );
+        }
     }
 }

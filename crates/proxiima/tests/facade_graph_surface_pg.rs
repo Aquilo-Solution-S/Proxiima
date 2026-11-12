@@ -553,7 +553,7 @@ async fn typed_derivation_authorizes_foreign_origins_and_rejects_invalid_inputs(
                         claim: "Synthetic interpretation".into(),
                         confidence: 60,
                         subject_memory_ids: vec![perspective.memory_id.into_inner()],
-                        subject_kinds: vec![proxiima_core::InterpretationSubjectKind::Perspective],
+                        subject_kinds: vec![proxiima_core::MemoryKind::Perspective],
                         model_id: "fixture".into(),
                         client_name: "fixture".into(),
                         client_version: "1".into(),

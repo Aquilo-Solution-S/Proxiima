@@ -37,7 +37,7 @@ use uuid::Uuid;
 
 fn memory_draft(kind: MemoryKind) -> FactWriteCommand {
     FactWriteCommand {
-        schema_id: SchemaId::new(format!("p5/{}", kind.as_str())),
+        schema_id: SchemaId::new(format!("p5/{}", kind.entity_kind().as_str())),
         schema_version: SchemaVersion::new(1),
         handle: None,
         source_id: None,

@@ -65,14 +65,13 @@ pub use canonical_json::canonical_json_bytes;
 pub use capability::*;
 pub use catalog::contract::*;
 pub use catalog::{
-    CallFn, CoreActionMeta, HostToolCall, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS,
-    MemoryHandleClass, Next, OperatorLabelConflict, OwnerNeed, Replay, RequestBehavior,
-    ScopeGateBehavior, TerminalDispatch, ToolAnnotations, ToolAudience, ToolContent,
-    ToolDescriptor, ToolDescriptorView, ToolEffect, ToolErrorKind, ToolOrigin, ToolReply,
-    ToolSource, UNKNOWN_OPERATOR_LABEL, UnknownFieldPolicy, all_core_actions, all_core_resources,
-    canonical_scope_keys, canonical_scope_keys_excluding, canonical_served_read_keys,
-    core_action_meta, how_to_resource_declaration, how_to_resource_key, provider_safe_tool_name,
-    resolve_operator_label, tool_name_matches,
+    CallFn, CoreActionMeta, HostToolCall, KeyDeclaration, MAX_OPERATOR_LABEL_CHARS, Next,
+    OperatorLabelConflict, OwnerNeed, Replay, RequestBehavior, ScopeGateBehavior, TerminalDispatch,
+    ToolAnnotations, ToolAudience, ToolContent, ToolDescriptor, ToolDescriptorView, ToolEffect,
+    ToolErrorKind, ToolOrigin, ToolReply, ToolSource, UNKNOWN_OPERATOR_LABEL, UnknownFieldPolicy,
+    all_core_actions, all_core_resources, canonical_scope_keys, canonical_scope_keys_excluding,
+    canonical_served_read_keys, core_action_meta, how_to_resource_declaration, how_to_resource_key,
+    provider_safe_tool_name, resolve_operator_label, tool_name_matches,
 };
 pub use citations::*;
 pub use cold::{

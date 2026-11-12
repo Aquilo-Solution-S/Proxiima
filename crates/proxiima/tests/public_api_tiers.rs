@@ -824,7 +824,7 @@ fn host_api_exposes_role_for_authenticated_adapters() {
     // Hosts that only imported `Role` had to take `proxiima-core` to spell them.
     let ceiling = proxiima::AccessCeiling::Fact;
     let role = proxiima::Role::new(ceiling, ceiling).expect("write <= read");
-    assert!(role.may_write(proxiima::AccessKind::Fact));
+    assert!(role.may_write(proxiima::MemoryKind::Fact));
     let user = proxiima::UserId::new(uuid::Uuid::max());
     let group = proxiima::OwnerId::from(proxiima::GroupId::new(uuid::Uuid::nil()));
     let _roles = proxiima::OwnerRoles::for_subject(user, [(group, role)]).expect("group roles");
@@ -1352,7 +1352,7 @@ fn spiice_sdk_names_query_and_ingest_types() {
         requested: &owner,
         resolved: &owner,
         operation: proxiima::spiice::AuthzOperation::Read {
-            kind: proxiima::AccessKind::Fact,
+            kind: proxiima::MemoryKind::Fact,
         },
     };
     TierAuthzHook.veto(&input).expect("read allow");

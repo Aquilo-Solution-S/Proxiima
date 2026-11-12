@@ -8,8 +8,8 @@ use proxiima_storage_pg::{
 use proxiima_core::storage_ports::{FactIngestPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::{FactIngestOutcome, FactWriteCommand};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, GroupId, MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId,
-    SchemaVersion, UserId, memory_store_number, new_memory_uuid,
+    EdgeEndpoint, GroupId, MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId, SchemaVersion,
+    UserId, memory_store_number, new_memory_uuid,
 };
 use proxiima_pg_testkit::{
     DbGuard, FNV_OFFSET_BASIS, TemplateFamily, create_db_from_template,
@@ -572,7 +572,7 @@ impl TestMemory {
         pg: &PgStorage,
         owner: OwnerId,
     ) -> Result<FactIngestOutcome, StorageError> {
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         pg.ingest_fact_atomic(&permit, &self.command, None).await
     }
 }
@@ -931,7 +931,7 @@ impl TestNote {
         command.lexical_language = Some(self.language);
         command.handle = self.handle;
         let authorized = proxiima_core::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             command,
             proxiima_core::AgentNoteV1::sidecar_table().map(str::to_owned),
             Vec::new(),
@@ -1089,7 +1089,7 @@ impl TestDerived {
             _ => proxiima_core::SidecarPayload::abstraction(self.derivation),
         };
         let authorized = proxiima_core::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests(
-            OwnerWritePermit::new_for_tests(owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact),
             command,
             None,
             Vec::new(),
@@ -1112,7 +1112,7 @@ pub async fn create_source_cursor(
     source: &str,
     cursor: Vec<u8>,
 ) -> Result<(), StorageError> {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     crate::verbs::source_cursors::store_source_cursor(
         pool,
         &permit,

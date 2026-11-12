@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::TrustedModelIdError;
 use crate::storage_ports::OwnerWritePermit;
 use crate::text_bounds::check_trimmed_len;
@@ -397,7 +397,7 @@ impl ToolCtx {
     /// Returns [`ToolError::Protocol`] when authorization fails.
     pub async fn owner_write_permit(
         &self,
-        kind: AccessKind,
+        kind: MemoryKind,
     ) -> Result<OwnerWritePermit, ToolError> {
         self.engine
             .authorize_owner_write(&self.authz, &self.owner, kind)

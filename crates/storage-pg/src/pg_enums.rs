@@ -33,16 +33,6 @@ impl PgMemoryKind {
     pub(crate) fn labels(kinds: &[Self]) -> Vec<&'static str> {
         kinds.iter().map(|kind| kind.label()).collect()
     }
-
-    /// The memory kind of an entity kind; a Goal is not a memory.
-    pub(crate) const fn of(kind: EntityKind) -> Option<Self> {
-        match kind {
-            EntityKind::Fact => Some(Self::Fact),
-            EntityKind::Abstraction => Some(Self::Abstraction),
-            EntityKind::Perspective => Some(Self::Perspective),
-            EntityKind::Goal => None,
-        }
-    }
 }
 
 impl From<MemoryKind> for PgMemoryKind {
@@ -67,30 +57,62 @@ impl From<PgMemoryKind> for MemoryKind {
 
 impl From<PgMemoryKind> for EntityKind {
     fn from(value: PgMemoryKind) -> Self {
-        match value {
-            PgMemoryKind::Fact => Self::Fact,
-            PgMemoryKind::Abstraction => Self::Abstraction,
-            PgMemoryKind::Perspective => Self::Perspective,
-        }
+        MemoryKind::from(value).entity_kind()
     }
 }
 
 impl From<PgMemoryKind> for PayloadKind {
     fn from(value: PgMemoryKind) -> Self {
-        match value {
-            PgMemoryKind::Fact => Self::Fact,
-            PgMemoryKind::Abstraction => Self::Abstraction,
-            PgMemoryKind::Perspective => Self::Perspective,
-        }
+        memory_payload(MemoryKind::from(value))
+    }
+}
+
+/// The payload layer a memory of `kind` writes.
+const fn memory_payload(kind: MemoryKind) -> PayloadKind {
+    match kind {
+        MemoryKind::Fact => PayloadKind::Fact,
+        MemoryKind::Abstraction => PayloadKind::Abstraction,
+        MemoryKind::Perspective => PayloadKind::Perspective,
     }
 }
 
 /// The payload layer a schema spec's entity kind writes. A spec names an
 /// `EntityKind`, so a Goal is representable there and refused here.
 pub(crate) fn memory_payload_kind(kind: EntityKind) -> Result<PayloadKind, StorageError> {
-    PgMemoryKind::of(kind)
-        .map(PayloadKind::from)
+    MemoryKind::of(kind)
+        .map(memory_payload)
         .ok_or_else(|| StorageError::Internal("a Goal has no memory payload kind".into()))
+}
+
+/// `proxiima_core.interpretation_subject_kind`: the memory kinds, under the
+/// labels `Fact`, `Abstraction`, `Perspective`. Binds the `subject_kinds`
+/// column of `proxiima_core.interpretation_v1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "proxiima_core.interpretation_subject_kind")]
+pub(crate) enum PgInterpretationSubjectKind {
+    Fact,
+    Abstraction,
+    Perspective,
+}
+
+impl From<MemoryKind> for PgInterpretationSubjectKind {
+    fn from(value: MemoryKind) -> Self {
+        match value {
+            MemoryKind::Fact => Self::Fact,
+            MemoryKind::Abstraction => Self::Abstraction,
+            MemoryKind::Perspective => Self::Perspective,
+        }
+    }
+}
+
+impl From<PgInterpretationSubjectKind> for MemoryKind {
+    fn from(value: PgInterpretationSubjectKind) -> Self {
+        match value {
+            PgInterpretationSubjectKind::Fact => Self::Fact,
+            PgInterpretationSubjectKind::Abstraction => Self::Abstraction,
+            PgInterpretationSubjectKind::Perspective => Self::Perspective,
+        }
+    }
 }
 
 /// `proxiima_core.sketch_kind`: the memory kinds plus `goal`, the kinds a
@@ -129,11 +151,7 @@ impl From<EntityKind> for PgSketchKind {
 
 impl From<PgMemoryKind> for PgSketchKind {
     fn from(value: PgMemoryKind) -> Self {
-        match value {
-            PgMemoryKind::Fact => Self::Fact,
-            PgMemoryKind::Abstraction => Self::Abstraction,
-            PgMemoryKind::Perspective => Self::Perspective,
-        }
+        EntityKind::from(value).into()
     }
 }
 
@@ -287,9 +305,61 @@ mod tests {
         ));
     }
 
+    /// Each binding type decodes the labels of its own SQL type, and the
+    /// database refuses the other type's spelling of the same kind.
+    #[tokio::test]
+    async fn memory_kinds_bind_under_each_sql_types_own_labels()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, db_name) = crate::test_fixtures::fresh_pg("proxiima_spg_kind_labels").await;
+        let result: Result<(), Box<dyn std::error::Error>> = async {
+            let pool = pg.pool_for_tests();
+            for kind in MemoryKind::ALL {
+                let memory: PgMemoryKind =
+                    sqlx::query_scalar("SELECT $1::proxiima_core.memory_kind")
+                        .bind(PgMemoryKind::from(kind))
+                        .fetch_one(pool)
+                        .await?;
+                assert_eq!(MemoryKind::from(memory), kind);
+                let subjects: Vec<PgInterpretationSubjectKind> =
+                    sqlx::query_scalar("SELECT $1::proxiima_core.interpretation_subject_kind[]")
+                        .bind(vec![PgInterpretationSubjectKind::from(kind)])
+                        .fetch_one(pool)
+                        .await?;
+                assert_eq!(
+                    subjects
+                        .into_iter()
+                        .map(MemoryKind::from)
+                        .collect::<Vec<_>>(),
+                    vec![kind]
+                );
+            }
+            assert!(
+                sqlx::query_scalar::<_, PgInterpretationSubjectKind>(
+                    "SELECT 'fact'::proxiima_core.interpretation_subject_kind",
+                )
+                .fetch_one(pool)
+                .await
+                .is_err(),
+                "interpretation_subject_kind spells Fact, not fact"
+            );
+            assert!(
+                sqlx::query_scalar::<_, PgMemoryKind>("SELECT 'Fact'::proxiima_core.memory_kind")
+                    .fetch_one(pool)
+                    .await
+                    .is_err(),
+                "memory_kind spells fact, not Fact"
+            );
+            Ok(())
+        }
+        .await;
+        drop(pg);
+        proxiima_pg_testkit::drop_db(&db_name).await?;
+        result
+    }
+
     #[test]
     fn a_goal_is_a_sketch_kind_but_not_a_memory_kind() {
-        assert_eq!(PgMemoryKind::of(EntityKind::Goal), None);
+        assert_eq!(MemoryKind::of(EntityKind::Goal), None);
         assert_eq!(PgSketchKind::from(EntityKind::Goal).label(), "goal");
     }
 

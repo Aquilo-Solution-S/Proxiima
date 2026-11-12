@@ -45,7 +45,7 @@ pub struct RecallArgs {
     #[schemars(
         description = "Perspective also keeps the Active Goals assigned to the returned Perspectives and the selected owner's unassigned Active Goals."
     )]
-    pub kind: Option<RecallKind>,
+    pub kind: Option<EntityKind>,
     #[serde(default = "default_limit")]
     #[schemars(
         range(min = 1),
@@ -59,18 +59,6 @@ pub struct RecallArgs {
 
 fn default_limit() -> u32 {
     DEFAULT_LIMIT
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-pub enum RecallKind {
-    #[serde(rename = "Fact", alias = "fact")]
-    Fact,
-    #[serde(rename = "Abstraction", alias = "abstraction")]
-    Abstraction,
-    #[serde(rename = "Perspective", alias = "perspective")]
-    Perspective,
-    #[serde(rename = "Goal", alias = "goal")]
-    Goal,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -245,17 +233,12 @@ async fn collect_question(
     engine: &crate::Engine,
     owner: crate::OwnerId,
     query: &str,
-    kind: Option<RecallKind>,
+    kind: Option<EntityKind>,
     limit: u32,
     packet: &mut Packet,
 ) -> Result<bool, ToolError> {
     let query = crate::validate_search_query(query)?;
-    let kind = match kind {
-        Some(RecallKind::Fact) => Some(EntityKind::Fact),
-        Some(RecallKind::Abstraction) => Some(EntityKind::Abstraction),
-        Some(RecallKind::Perspective) => Some(EntityKind::Perspective),
-        Some(RecallKind::Goal) | None => None,
-    };
+    let kind = kind.filter(|kind| *kind != EntityKind::Goal);
     // Recall always intends Hybrid, so every way of not getting it — no
     // route for the owner, or a client whose call failed — is the same
     // fact to the caller: the semantic leg did not run. `degraded` carries it
@@ -517,7 +500,7 @@ impl Packet {
             .collect()
     }
 
-    fn finish(self, filter: Option<RecallKind>, limit: u32) -> Vec<RecallSketch> {
+    fn finish(self, filter: Option<EntityKind>, limit: u32) -> Vec<RecallSketch> {
         let mut rows: Vec<Entry> = self.by_id.into_values().collect();
         if let Some(filter) = filter {
             rows.retain(|entry| kind_matches(filter, entry.kind, entry.is_head));
@@ -540,21 +523,21 @@ impl Packet {
     }
 }
 
-fn kind_matches(filter: RecallKind, kind: EntityKind, is_head: bool) -> bool {
+fn kind_matches(filter: EntityKind, kind: EntityKind, is_head: bool) -> bool {
     match filter {
-        RecallKind::Fact => kind == EntityKind::Fact,
-        RecallKind::Abstraction => kind == EntityKind::Abstraction,
-        RecallKind::Perspective => {
+        EntityKind::Fact => kind == EntityKind::Fact,
+        EntityKind::Abstraction => kind == EntityKind::Abstraction,
+        EntityKind::Perspective => {
             (kind == EntityKind::Perspective && is_head) || kind == EntityKind::Goal
         }
-        RecallKind::Goal => kind == EntityKind::Goal,
+        EntityKind::Goal => kind == EntityKind::Goal,
     }
 }
 
-fn includes_goals(kind: Option<RecallKind>) -> bool {
+fn includes_goals(kind: Option<EntityKind>) -> bool {
     matches!(
         kind,
-        None | Some(RecallKind::Perspective | RecallKind::Goal)
+        None | Some(EntityKind::Perspective | EntityKind::Goal)
     )
 }
 
@@ -597,6 +580,27 @@ mod tests {
     fn empty_cue_is_rejected() {
         let err = require_cue(None, &[]).expect_err("empty");
         assert!(err.to_string().contains("not parameterless"));
+    }
+
+    #[test]
+    fn kind_accepts_only_the_wire_spelling() {
+        let parse = |kind: &str| {
+            serde_json::from_value::<RecallArgs>(
+                serde_json::json!({"question": "what changed", "kind": kind}),
+            )
+        };
+        for kind in [
+            EntityKind::Fact,
+            EntityKind::Abstraction,
+            EntityKind::Perspective,
+            EntityKind::Goal,
+        ] {
+            let args = parse(kind.as_str()).expect("the wire spelling parses");
+            assert_eq!(args.kind, Some(kind));
+        }
+        for bad in ["fact", "goal", "PERSPECTIVE", "Note"] {
+            assert!(parse(bad).is_err(), "{bad} must be refused");
+        }
     }
 
     #[test]

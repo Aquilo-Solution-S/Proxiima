@@ -469,8 +469,8 @@ async fn roles_climb_only_and_take_weakest_path_then_strongest_alternative() -> 
     let role = group_role(&mut conn, person.as_user(), g[2])
         .await?
         .expect("ancestor role");
-    assert!(role.may_read(proxiima_core::AccessKind::Perspective) && role.reads_goals());
-    assert!(!role.may_write(proxiima_core::AccessKind::Fact));
+    assert!(role.may_read(proxiima_core::MemoryKind::Perspective) && role.reads_goals());
+    assert!(!role.may_write(proxiima_core::MemoryKind::Fact));
     drop(conn);
     h.assert_projection().await
 }

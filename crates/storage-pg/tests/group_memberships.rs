@@ -25,7 +25,7 @@ async fn list_group_members_runs_against_v008_schema() {
 
         let permit = proxiima_core::storage_ports::OwnerWritePermit::new_for_tests(
             OwnerId::from(group),
-            proxiima_core::AccessKind::Fact,
+            proxiima_core::MemoryKind::Fact,
         );
         pg.add_group_member(
             &MembershipWritePermit::new_for_tests(&permit, None, None, None),

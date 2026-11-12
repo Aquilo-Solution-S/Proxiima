@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
-use crate::access::{AccessKind, EntityId, Relation};
+use crate::MemoryKind;
+use crate::access::{EntityId, Relation};
 use crate::authz::AuthzContext;
 use crate::error::ProtocolError;
 use crate::{GroupId, OwnerId};
@@ -55,12 +56,12 @@ pub enum AuthzOperation {
     /// An entry read (a citation or prior checked on a write path) gates only
     /// the entry's home owner, with the entry's real kind. A vetoed owner
     /// drops out of the read: its entries read exactly like absent ones.
-    Read { kind: AccessKind },
+    Read { kind: MemoryKind },
     /// Read a Goal of the owner ([`crate::Role::reads_goals`]). An entry
     /// read of a Goal gates its home owner with this.
     GoalRead,
     /// Write `kind` on the owner.
-    Write { kind: AccessKind },
+    Write { kind: MemoryKind },
     /// Set, modify or transition a Goal of the owner
     /// ([`crate::Role::works_goals`]).
     GoalWork,

@@ -35,7 +35,7 @@ use proxiima::spiice::{
     ToolCtx, ToolEffect, ToolError,
 };
 use proxiima::{
-    AccessKind, AppContext, AppInfo, Authz, ForwarderRole, Proxiima, RunningProxiima,
+    AppContext, AppInfo, Authz, ForwarderRole, MemoryKind, Proxiima, RunningProxiima,
     RuntimeBuilder, SpiiceApp,
 };
 use proxiima_pg_testkit::SplitRoleDb;
@@ -113,7 +113,7 @@ impl Tool for Probe {
             let headers = ctx.service::<RequestHeaders>();
             let owner = ctx.owner();
             let editor_write_refusal = ctx
-                .owner_write_permit(AccessKind::Abstraction)
+                .owner_write_permit(MemoryKind::Abstraction)
                 .await
                 .err()
                 .map(|err| err.to_string());
@@ -134,7 +134,7 @@ impl Tool for Probe {
                 principal: ctx.authz().principal().to_string(),
                 readable_owners: ctx
                     .authz()
-                    .readable_owners(AccessKind::Fact)
+                    .readable_owners(MemoryKind::Fact)
                     .into_iter()
                     .map(|owner| owner.to_string())
                     .collect(),

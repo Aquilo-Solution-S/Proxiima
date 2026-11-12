@@ -101,13 +101,13 @@ pub struct ForkMemoryOutcome {
 ///
 /// ```compile_fail
 /// fn forge(command: proxiima_core::GoalCommandPermit, target: proxiima_core::MemoryTarget) {
-///     let _ = proxiima_core::GoalWorkPermit::new(command, proxiima_core::AccessKind::Perspective, target);
+///     let _ = proxiima_core::GoalWorkPermit::new(command, proxiima_core::MemoryKind::Perspective, target);
 /// }
 /// ```
 #[derive(Debug)]
 pub struct GoalWorkPermit {
     command: GoalCommandPermit,
-    kind: crate::AccessKind,
+    kind: crate::MemoryKind,
     target: MemoryTarget,
     /// The authorizing context's read set (#677).
     reads: crate::authz::BoundReadSet,
@@ -118,7 +118,7 @@ impl GoalWorkPermit {
     /// ([`crate::AuthzContext::bound_reads`]).
     pub(crate) const fn new(
         command: GoalCommandPermit,
-        kind: crate::AccessKind,
+        kind: crate::MemoryKind,
         target: MemoryTarget,
         reads: crate::authz::BoundReadSet,
     ) -> Self {
@@ -144,7 +144,7 @@ impl GoalWorkPermit {
         self.command.controller
     }
     #[must_use]
-    pub const fn kind(&self) -> crate::AccessKind {
+    pub const fn kind(&self) -> crate::MemoryKind {
         self.kind
     }
     #[must_use]

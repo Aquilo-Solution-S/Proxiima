@@ -29,8 +29,8 @@ use proxiima_core::storage_ports::{
 };
 use proxiima_core::test_fixtures::{ConstantEmbedding, TestEmbeddingRouter};
 use proxiima_core::{
-    AccessCeiling, AccessKind, AgentNoteV1, AuthPath, EdgeTargetProjection, EntityKind, EntityRef,
-    GoalAccess, GroupId, MemoryId, OwnerId, OwnerRoles, Role, SpiiceRegistry, StorageError,
+    AccessCeiling, AgentNoteV1, AuthPath, EdgeTargetProjection, EntityKind, EntityRef, GoalAccess,
+    GroupId, MemoryId, MemoryKind, OwnerId, OwnerRoles, Role, SpiiceRegistry, StorageError,
     UploadedBlobPayload, UserId,
 };
 use proxiima_core::{PgIdent, SqlText};
@@ -75,7 +75,7 @@ const KINDS: [EntityKind; 4] = [
 /// Whether `role` writes `kind`: a memory kind up to its write limit, a Goal
 /// when the role works Goals.
 fn writes(role: Role, kind: EntityKind) -> bool {
-    AccessKind::of(kind).map_or(role.works_goals(), |kind| role.may_write(kind))
+    MemoryKind::of(kind).map_or(role.works_goals(), |kind| role.may_write(kind))
 }
 
 /// Every preset, plus limits below the top with and without Goal work.
@@ -590,7 +590,7 @@ async fn assert_writes(
         tools,
         &authz,
         group,
-        role.may_read(AccessKind::Perspective).then_some(seeded),
+        role.may_read(MemoryKind::Perspective).then_some(seeded),
     )
     .await;
     assert_eq!(
@@ -726,7 +726,7 @@ async fn assert_upload(
         .await;
     assert_eq!(
         completed.is_ok(),
-        role.may_write(AccessKind::Fact),
+        role.may_write(MemoryKind::Fact),
         "{name} upload: {completed:?}"
     );
 }
@@ -780,7 +780,7 @@ async fn assert_s3_writes(
     .await;
     assert_eq!(
         upload.is_ok(),
-        role.may_write(AccessKind::Fact),
+        role.may_write(MemoryKind::Fact),
         "{name} upload: {upload:?}"
     );
 
@@ -887,11 +887,11 @@ async fn assert_backfill(
         assert_eq!(touched, expected, "{name} backfill: {queued:?}");
         match queued {
             Ok(count) => {
-                assert!(role.may_write(AccessKind::Fact), "{name}");
+                assert!(role.may_write(MemoryKind::Fact), "{name}");
                 assert_eq!(count, kinds.len(), "{name}");
             }
             Err(error) => {
-                assert!(!role.may_write(AccessKind::Fact), "{name}: {error:?}");
+                assert!(!role.may_write(MemoryKind::Fact), "{name}: {error:?}");
                 assert_eq!(error.code, ErrorCode::Forbidden, "{name}: {error:?}");
             }
         }

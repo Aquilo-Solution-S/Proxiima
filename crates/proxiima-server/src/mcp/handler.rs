@@ -1156,7 +1156,7 @@ fn tool_owner_role_allows(
         .is_some();
     if selects_space && let Some(ctx) = auth {
         ctx.authz
-            .readable_owners(proxiima_core::AccessKind::Fact)
+            .readable_owners(proxiima_core::MemoryKind::Fact)
             .iter()
             .any(|owner| ctx.authz.may_run_tool(owner, access))
     } else {

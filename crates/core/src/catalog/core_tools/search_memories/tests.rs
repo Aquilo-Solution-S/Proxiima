@@ -1,7 +1,7 @@
 use super::{
-    LaneArm, MergeKind, OwnerLane, PageCursor, SearchMemoriesArgs, SearchMemoriesKind,
-    SearchMemoriesMode, SearchMemoriesSupersession, cursor_positions, decode_cursor, encode_cursor,
-    truncate_body, validate_body_max_chars, validate_list_caps, validate_score_args,
+    LaneArm, MemoryKind, MergeKind, OwnerLane, PageCursor, SearchMemoriesArgs, SearchMemoriesMode,
+    SearchMemoriesSupersession, cursor_positions, decode_cursor, encode_cursor, truncate_body,
+    validate_body_max_chars, validate_list_caps, validate_score_args,
 };
 use crate::ToolError;
 use crate::verbs::query::{
@@ -385,15 +385,19 @@ fn zero_body_max_chars_is_rejected_not_hydrated_empty() {
 }
 
 #[test]
-fn kind_filter_accepts_all_casings_like_sibling_enums() {
-    // `mode` and `supersession` already take UPPERCASE spellings;
-    // the kind filter must not be the one arg that rejects them.
-    for spelling in ["\"Fact\"", "\"fact\"", "\"FACT\""] {
-        let kind: SearchMemoriesKind = serde_json::from_str(spelling).expect("valid kind");
-        assert!(matches!(kind, SearchMemoriesKind::Fact));
+fn kind_filter_accepts_only_the_wire_spelling() {
+    let parse = |kind: &str| {
+        serde_json::from_value::<SearchMemoriesArgs>(
+            serde_json::json!({"query": "needle", "kind": kind}),
+        )
+    };
+    for kind in MemoryKind::ALL {
+        let args = parse(kind.entity_kind().as_str()).expect("the wire spelling parses");
+        assert_eq!(args.kind, Some(kind));
     }
-    // Folding case must not widen the accepted set.
-    assert!(serde_json::from_str::<SearchMemoriesKind>("\"Note\"").is_err());
+    for bad in ["fact", "FACT", "abstraction", "Goal", "Note"] {
+        assert!(parse(bad).is_err(), "{bad} must be refused");
+    }
 }
 
 #[test]
@@ -462,7 +466,7 @@ mod other_stores {
     use futures::future::BoxFuture;
 
     use super::super::{
-        SearchMemoriesKind, SearchMemoriesMode, SearchMemoriesOutput, SearchMemoriesSupersession,
+        MemoryKind, SearchMemoriesMode, SearchMemoriesOutput, SearchMemoriesSupersession,
         SearchMemoriesTool, SearchMemoryOutput, SearchRanking, UnansweredStore,
         caller_input_schema, merge_store_hits,
     };
@@ -724,7 +728,7 @@ mod other_stores {
             })));
             let mut request = remote_args(mode);
             request.limit = 100;
-            request.kind = Some(SearchMemoriesKind::Fact);
+            request.kind = Some(MemoryKind::Fact);
             request.schema_id = Some("remote/note".into());
             request.tags = vec![" Rust ".into(), "rust".into(), String::new(), "ZED".into()];
             request.tag_match = TagMatch::All;

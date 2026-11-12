@@ -12,8 +12,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use futures_util::stream;
 use proxiima_core::{
-    AccessError, AccessKind, AuthError, AuthPath, Authenticator, AuthzContext, Credentials,
-    ForwarderRole, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, RevalidationConfig, Role, UserId,
+    AccessError, AuthError, AuthPath, Authenticator, AuthzContext, Credentials, ForwarderRole,
+    GroupId, MemoryKind, OwnerAccessPort, OwnerId, OwnerRoles, RevalidationConfig, Role, UserId,
 };
 use tokio::sync::mpsc;
 use tokio::time;
@@ -197,7 +197,7 @@ async fn effective_owners(request: Request<Body>) -> Response {
     };
     let mut owners: Vec<String> = ctx
         .authz
-        .readable_owners(AccessKind::Perspective)
+        .readable_owners(MemoryKind::Perspective)
         .into_iter()
         .map(owner_key)
         .collect();

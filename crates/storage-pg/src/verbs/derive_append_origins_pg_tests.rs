@@ -12,19 +12,18 @@
 use super::{DerivedDraft, DerivedOutcome};
 use crate::PgStorage;
 use crate::test_fixtures::create_core_db;
-use proxiima_core::MemoryKind;
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
+    EdgeEndpoint, EntityKind, MemoryKind, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
 
 fn draft(kind: MemoryKind) -> FactWriteCommand {
     FactWriteCommand {
-        schema_id: SchemaId::new(format!("d2/{}", kind.as_str())),
+        schema_id: SchemaId::new(format!("d2/{}", kind.entity_kind().as_str())),
         schema_version: SchemaVersion::new(1),
         handle: None,
         source_id: None,
@@ -127,7 +126,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let pool = pg.pool_for_tests();
 
         let fact = pg
@@ -262,9 +261,9 @@ async fn a_reference_to_no_readable_live_row_is_refused() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Perspective);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective);
         let stranger = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let stranger_permit = OwnerWritePermit::new_for_tests(stranger, AccessKind::Perspective);
+        let stranger_permit = OwnerWritePermit::new_for_tests(stranger, MemoryKind::Perspective);
         // The serving (runtime-role) pool, so owner RLS applies; the fixture
         // pool is the administrator and would see the foreign row.
         let pool = &pg.pool;

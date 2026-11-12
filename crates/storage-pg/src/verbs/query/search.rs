@@ -1193,7 +1193,9 @@ fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> Sq
 /// which is why the candidate statements can RENDER this rather than bind it
 /// and still keep their eight-parameter contract.
 fn kind_literal(kind: Option<EntityKind>) -> Option<&'static str> {
-    kind.and_then(PgMemoryKind::of).map(PgMemoryKind::label)
+    kind.and_then(proxiima_core::MemoryKind::of)
+        .map(PgMemoryKind::from)
+        .map(PgMemoryKind::label)
 }
 
 /// Every filter admission applies, applied to the CANDIDATE statements too.

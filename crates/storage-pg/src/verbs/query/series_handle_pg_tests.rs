@@ -5,7 +5,7 @@ use proxiima_core::test_fixtures::{authenticated_context, owner_fixture};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::query::SidecarAtom;
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, Engine, FactIngestPort, OwnerId, SchemaId, SchemaVersion,
+    AuthPath, AuthzContext, Engine, FactIngestPort, MemoryKind, OwnerId, SchemaId, SchemaVersion,
     SpiiceRegistry, StorageError,
 };
 use proxiima_pg_testkit::drop_db;
@@ -48,7 +48,7 @@ async fn write_permit(owner: &OwnerId) -> Result<OwnerWritePermit, StorageError>
         .authorize_owner_write(
             &authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer)),
             owner,
-            AccessKind::Fact,
+            MemoryKind::Fact,
         )
         .await
         .map_err(|err| StorageError::Internal(err.to_string()))

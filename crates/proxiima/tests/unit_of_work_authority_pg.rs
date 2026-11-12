@@ -30,9 +30,8 @@ use proxiima_core::verbs::goal_write::{
     IdempotencyKey,
 };
 use proxiima_core::{
-    AgentNoteV1, DerivedMemory, GroupId, InterpretationSubjectKind, InterpretationV1, MemoryId,
-    MemoryTarget, OwnerId, Relation, Role, SeriesHandle, SimpleTextGoalV1, StorageError,
-    StorageRule, UserId,
+    AgentNoteV1, DerivedMemory, GroupId, InterpretationV1, MemoryId, MemoryKind, MemoryTarget,
+    OwnerId, Relation, Role, SeriesHandle, SimpleTextGoalV1, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::db_url;
 use proxiima_storage_pg::{PgPlatformScope, begin_owner_transaction};
@@ -527,7 +526,7 @@ async fn goal_and_host_authority_decision_commit_and_roll_back_together() -> Tes
                     claim: "assignment".into(),
                     confidence: 90,
                     subject_memory_ids: vec![fact.memory_id.into_inner()],
-                    subject_kinds: vec![InterpretationSubjectKind::Fact],
+                    subject_kinds: vec![MemoryKind::Fact],
                     model_id: "test".into(),
                     client_name: "test".into(),
                     client_version: "1".into(),

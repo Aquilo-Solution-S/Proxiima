@@ -7,8 +7,8 @@
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::{authenticated_context, owner_scope_for_tests};
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, EdgeEndpoint, EmbeddingDim, EmbeddingSpace, EntityKind,
-    MemoryId, MemoryKind, OwnerId, OwnerScope, Role, UserId,
+    AuthPath, AuthzContext, EdgeEndpoint, EmbeddingDim, EmbeddingSpace, EntityKind, MemoryId,
+    MemoryKind, OwnerId, OwnerScope, Role, UserId,
 };
 use proxiima_pg_testkit::DbGuard;
 use proxiima_storage_pg::test_fixtures::{TestMemory, TestNote, create_embedding_of, fresh_pg};
@@ -66,7 +66,7 @@ impl World {
     }
 
     async fn forget(&self, owner: OwnerId, memory_id: MemoryId) {
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         MemoryAuthoringPort::forget_memory(&self.pg, &permit, memory_id)
             .await
             .expect("forget");

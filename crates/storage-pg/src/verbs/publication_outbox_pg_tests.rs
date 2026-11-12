@@ -26,7 +26,7 @@ use proxiima_core::verbs::fact_ingest::{
     AuthorizedFactWrite, FactIngestOutcome, FactReceiptDraft, FactWriteCommand,
 };
 use proxiima_core::{
-    AccessKind, EntityId, FactIngestPort, FactPayload, GroupId, MemoryId, OwnerId, SchemaId,
+    EntityId, FactIngestPort, FactPayload, GroupId, MemoryId, MemoryKind, OwnerId, SchemaId,
     SchemaVersion, SidecarPayload, SourceId, StorageError, UserId,
 };
 use proxiima_pg_testkit::drop_db;
@@ -124,7 +124,7 @@ fn fact_command(schema_id: &str, ingest_key: Option<&str>) -> FactWriteCommand {
 
 fn witness(owner: &OwnerId, command: FactWriteCommand) -> AuthorizedFactWrite {
     AuthorizedFactWrite::new_for_tests(
-        OwnerWritePermit::new_for_tests(*owner, AccessKind::Fact),
+        OwnerWritePermit::new_for_tests(*owner, MemoryKind::Fact),
         command,
         None,
         Vec::new(),
@@ -1149,7 +1149,7 @@ async fn eligibility_and_host_write_share_the_transaction_with_source_erase() {
         .await
         .expect("capture");
     let t = fact.memory_id.into_inner();
-    let transfer_permit = OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, group);
+    let transfer_permit = OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, group);
     assert!(
         OwnerTransferPort::transfer_to_owner(
             &pg,
@@ -1380,7 +1380,7 @@ async fn late_eligibility_after_owner_source_and_exact_erases_is_ineligible() {
     assert!(
         OwnerTransferPort::transfer_to_owner(
             &pg,
-            &OwnerWritePermit::transfer_for_tests(source_owner, AccessKind::Fact, destination),
+            &OwnerWritePermit::transfer_for_tests(source_owner, MemoryKind::Fact, destination),
             EntityId::Memory(source_fact),
             destination,
             pg.surfaces(),
@@ -1466,7 +1466,7 @@ async fn source_erase_after_outbox_prune_revokes_transferred_origin_only() {
     .expect("capture");
     let t = fact.memory_id.into_inner();
     let transfer =
-        OwnerWritePermit::transfer_for_tests(original_owner, AccessKind::Fact, current_owner);
+        OwnerWritePermit::transfer_for_tests(original_owner, MemoryKind::Fact, current_owner);
     assert!(
         OwnerTransferPort::transfer_to_owner(
             &pg,
@@ -1592,7 +1592,7 @@ async fn source_and_destination_erase_revoke_physical_and_original_publication_s
     .await
     .expect("unrelated capture");
 
-    let transfer = OwnerWritePermit::transfer_for_tests(original, AccessKind::Fact, destination);
+    let transfer = OwnerWritePermit::transfer_for_tests(original, MemoryKind::Fact, destination);
     for fact in [
         &source_transferred,
         &destination_transferred,
@@ -1838,7 +1838,7 @@ async fn forgetting_a_fact_cancels_its_undelivered_records() {
         .await
         .expect("capture");
 
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     MemoryAuthoringPort::forget_memory(&pg, &permit, outcome.memory_id)
         .await
         .expect("forget through the configured storage port");
@@ -1911,7 +1911,7 @@ async fn forgetting_a_partially_delivered_fact_keeps_the_delivered_lane() {
         AckOutcome::Published
     );
 
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     MemoryAuthoringPort::forget_memory(&pg, &permit, outcome.memory_id)
         .await
         .expect("forget");
@@ -1960,7 +1960,7 @@ async fn a_lane_claimed_before_the_forget_is_a_lost_claim() {
     let claimed = claim_for(&pg, &default).await;
     assert_eq!(ids(&claimed), vec![t]);
 
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     MemoryAuthoringPort::forget_memory(&pg, &permit, outcome.memory_id)
         .await
         .expect("forget commits over the claimed lane");
@@ -2733,7 +2733,7 @@ async fn forget_restore_write_publishes_above_prior_sequences() {
     let pool = pg.pool_for_tests().clone();
     let owner = owner_fixture();
     register_owner(&pool, &owner).await;
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
     let write_to = |series: Option<Uuid>, note: &'static str| {
         let mut command = fact_command(ListenableProbeV1::SCHEMA_ID, None);

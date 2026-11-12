@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::catalog::MemoryHandleClass;
+use crate::MemoryKind;
 use crate::storage_ports::other_stores::{
     OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors, RemoteAncestorsPage,
     RemoteEdge, RemoteGraphRead, RemoteMemory, RemoteOriginRead, RemoteRead, RemoteSearch,
@@ -106,12 +106,12 @@ pub(crate) async fn read_ancestors(
 /// The persistence carrier of one readable reference. Every wire spelling is a UUID.
 #[derive(Debug)]
 pub(crate) enum ResolvedMemory {
-    Local(crate::MemoryId, MemoryHandleClass),
+    Local(crate::MemoryId, MemoryKind),
     Remote(ReadOrigin),
 }
 
 impl ResolvedMemory {
-    pub(crate) fn classified(&self) -> Result<(crate::MemoryId, MemoryHandleClass), ToolError> {
+    pub(crate) fn classified(&self) -> Result<(crate::MemoryId, MemoryKind), ToolError> {
         match self {
             Self::Local(id, kind) => Ok((*id, *kind)),
             Self::Remote(origin) => Ok((
@@ -137,7 +137,7 @@ pub(crate) async fn resolve_references(
 pub(crate) async fn resolve_references_with_retained(
     ctx: &ToolCtx,
     handles: &[String],
-    retained: &[(crate::MemoryId, MemoryHandleClass)],
+    retained: &[(crate::MemoryId, MemoryKind)],
 ) -> Result<Vec<ResolvedMemory>, ToolError> {
     let local_number = ctx.engine().store_number();
     let retained = retained

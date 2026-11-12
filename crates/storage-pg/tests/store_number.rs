@@ -1,6 +1,6 @@
 use proxiima_core::storage_ports::{FactIngestPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, MemoryId, OwnerId, SchemaId, SchemaVersion, SqlText, UserId};
+use proxiima_core::{MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion, SqlText, UserId};
 use proxiima_pg_testkit::{DbGuard, db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
@@ -134,7 +134,7 @@ async fn a_colliding_insert_retries_without_leaving_an_old_head()
 -> Result<(), Box<dyn std::error::Error>> {
     let (pg, guard) = proxiima_storage_pg::test_fixtures::fresh_pg("store_collision").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let existing = pg.ingest_fact_atomic(&permit, &draft(), None).await?;
     let admin = sqlx::PgPool::connect(&db_url(guard.name())).await?;
     let existing_t = existing.memory_id.into_inner();

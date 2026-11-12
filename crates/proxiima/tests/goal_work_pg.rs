@@ -28,7 +28,7 @@ fn interpretation(fact: MemoryId, text: &str) -> InterpretationV1 {
         claim: text.into(),
         confidence: 90,
         subject_memory_ids: vec![fact.into_inner()],
-        subject_kinds: vec![proxiima_core::InterpretationSubjectKind::Fact],
+        subject_kinds: vec![proxiima_core::MemoryKind::Fact],
         model_id: "goal-work-test".into(),
         client_name: "goal-work-test".into(),
         client_version: "1".into(),

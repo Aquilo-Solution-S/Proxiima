@@ -12,8 +12,8 @@ use proxiima_core::verbs::goal_write::{
 use proxiima_core::verbs::query::{EntityKind, QueryRequest};
 use proxiima_core::{
     AuthPath, AuthzContext, DerivedMemory, FactWrite, GoalAudienceGrantInput, GoalHandle,
-    GoalPublicationInput, InterpretationSubjectKind, InterpretationV1, MemoryId, MemoryTarget,
-    OwnerId, OwnerRoles, PublicationUse, Relation, Role, SeriesHandle, SimpleTextGoalV1, UserId,
+    GoalPublicationInput, InterpretationV1, MemoryId, MemoryKind, MemoryTarget, OwnerId,
+    OwnerRoles, PublicationUse, Relation, Role, SeriesHandle, SimpleTextGoalV1, UserId,
 };
 use proxiima_example::NoteV1;
 use proxiima_storage_pg::PgPlatformScope;
@@ -28,7 +28,7 @@ fn interpretation(claim: &str, evidence: MemoryId) -> InterpretationV1 {
         claim: claim.to_owned(),
         confidence: 90,
         subject_memory_ids: vec![evidence.into_inner()],
-        subject_kinds: vec![InterpretationSubjectKind::Fact],
+        subject_kinds: vec![MemoryKind::Fact],
         model_id: "test".into(),
         client_name: "test".into(),
         client_version: "1".into(),
@@ -135,7 +135,7 @@ async fn publication_keeps_exact_version_and_includes_later_invitees() {
     let owner = OwnerId::from(author);
     let writer = direct(author);
     let outsider = direct(reader);
-    assert!(!outsider.may_read(&owner, proxiima_core::AccessKind::Perspective));
+    assert!(!outsider.may_read(&owner, proxiima_core::MemoryKind::Perspective));
     let notebook = h.notebook(&owner).await;
     let mut unit = h
         .engine
@@ -244,7 +244,7 @@ async fn publication_keeps_exact_version_and_includes_later_invitees() {
         vec![first]
     );
     assert!(!page.memories.iter().any(|row| row.id == private));
-    assert!(!outsider.may_read(&owner, proxiima_core::AccessKind::Perspective));
+    assert!(!outsider.may_read(&owner, proxiima_core::MemoryKind::Perspective));
     query.entity_kind = Some(EntityKind::Fact);
     assert!(
         h.engine

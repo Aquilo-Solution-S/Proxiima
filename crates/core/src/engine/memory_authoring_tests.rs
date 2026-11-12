@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::authz::AuthzContext;
 use crate::error::ErrorCode;
 use crate::{
-    AbstractionPayload, AgentDerivationV1, EntityKind, InterpretationSubjectKind, InterpretationV1,
-    OwnerId, SpiiceRegistry, UserId,
+    AbstractionPayload, AgentDerivationV1, EntityKind, InterpretationV1, MemoryKind, OwnerId,
+    SpiiceRegistry, UserId,
 };
 
 use super::*;
@@ -151,7 +151,7 @@ async fn author_derived_toa_with_origins_passes_manifest_validation() {
     let owner = owner();
     let permit = OwnerWritePermit::new(
         owner,
-        crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
+        crate::storage_ports::WriteAuthority::Memory(crate::MemoryKind::Perspective),
         None,
         crate::BoundReadSet::default(),
     );
@@ -180,7 +180,7 @@ async fn a_write_with_no_origins_carries_no_operator_manifest() {
     let owner = owner();
     let permit = OwnerWritePermit::new(
         owner,
-        crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
+        crate::storage_ports::WriteAuthority::Memory(crate::MemoryKind::Perspective),
         None,
         crate::BoundReadSet::default(),
     );
@@ -285,7 +285,7 @@ fn guided_interpretation_keeps_exact_goal_versions_and_deduplicates() {
             claim: "claim".into(),
             confidence: 80,
             subject_memory_ids: vec![uuid::Uuid::now_v7()],
-            subject_kinds: vec![InterpretationSubjectKind::Fact],
+            subject_kinds: vec![MemoryKind::Fact],
             model_id: "fixture".into(),
             client_name: "fixture".into(),
             client_version: "1".into(),
@@ -309,7 +309,7 @@ async fn a_node_write_hands_storage_its_origins_and_references() {
     let owner = owner();
     let permit = OwnerWritePermit::new(
         owner,
-        crate::storage_ports::WriteAuthority::Memory(crate::access::AccessKind::Perspective),
+        crate::storage_ports::WriteAuthority::Memory(crate::MemoryKind::Perspective),
         None,
         crate::BoundReadSet::default(),
     );

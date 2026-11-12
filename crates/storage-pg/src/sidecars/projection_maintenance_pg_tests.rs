@@ -24,7 +24,7 @@ use proxiima_core::storage_ports::{
 };
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, AgentNoteV1, EntityId, FactPayload, GroupId, MemoryId, OwnerId, SchemaId,
+    AgentNoteV1, EntityId, FactPayload, GroupId, MemoryId, MemoryKind, OwnerId, SchemaId,
     SchemaVersion, SidecarPayload, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, unique_db_name};
@@ -287,7 +287,7 @@ async fn a_transfer_moves_the_projection_row_with_the_admission() {
     with_db("proxiima_proj_transfer", async |pg| {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let dest = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, dest);
+        let permit = OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, dest);
         let pool = pg.pool_for_tests();
         let t = write_note(pool, owner, None).await?;
 
@@ -327,7 +327,7 @@ async fn a_transfer_moves_the_projection_row_with_the_admission() {
 async fn forgetting_takes_the_projection_row_and_keeps_the_sidecar_row() {
     with_db("proxiima_proj_forget", async |pg| {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let t = write_note(pool, owner, None).await?;
         assert!(projection_of(pool, t).await?.is_some());
@@ -986,7 +986,7 @@ async fn a_restore_rebuilds_the_projection_in_the_written_language_after_the_sid
         let cold = std::sync::Arc::new(RefusingCold::default());
         let pg = pg.clone().with_cold(cold.clone());
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let t = write_note(pool, owner, Some("german")).await?;
         let (_, default) = memory_language_of(pool, t).await?;

@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegistryError};
 use proxiima::{AppInfo, FactWrite, Proxiima, QueryRequest, ServedSurface, SpiiceApp};
 use proxiima_core::{
-    AccessKind, AgentNoteV1, AuthError, AuthPath, Authenticator, AuthzContext, Credentials,
-    ErrorCode, GroupId, OwnerId, OwnerRoles, PgIdent, SqlText, UserId,
+    AgentNoteV1, AuthError, AuthPath, Authenticator, AuthzContext, Credentials, ErrorCode, GroupId,
+    MemoryKind, OwnerId, OwnerRoles, PgIdent, SqlText, UserId,
 };
 use proxiima_pg_testkit::{
     admin_url, create_db, db_url, drop_db, provision_goal_reader, unique_db_name,
@@ -366,8 +366,8 @@ async fn assert_insecure_single_owner_roundtrip(owner: OwnerId) {
     let authz = built.single_owner_authz().expect("explicitly opted in");
     assert_eq!(authz.auth_path(), AuthPath::HostBearer);
     let scope = authz.owner_scope().expect("sealed host owner scope");
-    assert_eq!(scope.readable_owners(AccessKind::Fact), vec![owner]);
-    assert_eq!(scope.writable_owners(AccessKind::Fact), vec![owner]);
+    assert_eq!(scope.readable_owners(MemoryKind::Fact), vec![owner]);
+    assert_eq!(scope.writable_owners(MemoryKind::Fact), vec![owner]);
 
     let foreign_subject = UserId::new(uuid::Uuid::now_v7());
     let foreign_owner = OwnerId::from(foreign_subject);

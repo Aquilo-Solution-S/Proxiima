@@ -139,7 +139,7 @@ struct InterpretationPayloadRow {
     claim: String,
     confidence: i16,
     subject_memory_ids: Vec<uuid::Uuid>,
-    subject_kinds: Vec<proxiima_core::InterpretationSubjectKind>,
+    subject_kinds: Vec<crate::pg_enums::PgInterpretationSubjectKind>,
     model_id: String,
     client_name: String,
     client_version: String,
@@ -163,7 +163,13 @@ impl PgMemorySidecar for proxiima_core::InterpretationV1 {
             .bind(&self.claim)
             .bind(i16::from(self.confidence))
             .bind(&self.subject_memory_ids)
-            .bind(&self.subject_kinds)
+            .bind(
+                self.subject_kinds
+                    .iter()
+                    .copied()
+                    .map(crate::pg_enums::PgInterpretationSubjectKind::from)
+                    .collect::<Vec<_>>(),
+            )
             .bind(&self.model_id)
             .bind(&self.client_name)
             .bind(&self.client_version)
@@ -212,7 +218,11 @@ impl PgMemoryPayload for proxiima_core::InterpretationV1 {
                             claim: row.claim,
                             confidence,
                             subject_memory_ids: row.subject_memory_ids,
-                            subject_kinds: row.subject_kinds,
+                            subject_kinds: row
+                                .subject_kinds
+                                .into_iter()
+                                .map(proxiima_core::MemoryKind::from)
+                                .collect(),
                             model_id: row.model_id,
                             client_name: row.client_name,
                             client_version: row.client_version,

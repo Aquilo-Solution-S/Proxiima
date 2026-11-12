@@ -10,7 +10,7 @@ use proxiima_core::authz::{
 };
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, Engine, EntityKind, ErrorCode, GroupId, MemoryId, OwnerId,
+    AuthPath, AuthzContext, Engine, EntityKind, ErrorCode, GroupId, MemoryId, MemoryKind, OwnerId,
     ProtocolError, Relation, SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::DbGuard;
@@ -33,7 +33,7 @@ impl AuthorizationHook for VetoOwner {
     }
 }
 
-type Decisions = Vec<(OwnerId, AccessKind, AuthzOutcome)>;
+type Decisions = Vec<(OwnerId, MemoryKind, AuthzOutcome)>;
 
 /// Records every read decision as `(resolved owner, kind, outcome)`.
 #[derive(Debug, Default)]
@@ -181,7 +181,7 @@ async fn a_vetoed_home_owner_hides_the_entry_like_an_absent_one() -> TestResult 
     );
     assert_eq!(
         *decisions.0.lock().expect("decisions lock"),
-        vec![(group_owner, AccessKind::Fact, AuthzOutcome::DeniedVeto)],
+        vec![(group_owner, MemoryKind::Fact, AuthzOutcome::DeniedVeto)],
         "one decision, for the one owner involved, with the entry's real kind"
     );
     Ok(())
@@ -223,7 +223,7 @@ async fn a_batch_decides_each_entry_and_stops_at_the_first_refusal() -> TestResu
     assert_eq!(err.message, "entry not found");
     assert_eq!(
         *vetoed.0.lock().expect("decisions lock"),
-        vec![(group_owner, AccessKind::Fact, AuthzOutcome::DeniedVeto)],
+        vec![(group_owner, MemoryKind::Fact, AuthzOutcome::DeniedVeto)],
         "one decision, and none for the entries after the refusal"
     );
     Ok(())

@@ -9,7 +9,6 @@ pub mod behavior;
 pub mod contract;
 pub mod core_tools;
 pub mod cursor;
-pub mod handles;
 pub(crate) mod schema;
 
 mod context;
@@ -38,7 +37,6 @@ pub use crate::authz::{
     tool_name_matches,
 };
 pub use error::ToolErrorKind;
-pub use handles::MemoryHandleClass;
 pub use ids::parse_wire_uuid;
 pub use manifest::{
     CoreActionMeta, ToolAnnotations, all_core_actions, all_core_resources, canonical_scope_keys,

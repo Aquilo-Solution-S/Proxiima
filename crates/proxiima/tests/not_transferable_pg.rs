@@ -16,7 +16,7 @@ use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::storage_ports::{OwnerTransferPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
-    AccessKind, AuthPath, AuthzContext, EntityId, GroupId, MemoryId, OwnerId, Role, StorageError,
+    AuthPath, AuthzContext, EntityId, GroupId, MemoryId, MemoryKind, OwnerId, Role, StorageError,
     UserId,
 };
 use proxiima_example::{ExampleSpiice, SealedStampV1};
@@ -135,7 +135,7 @@ async fn the_storage_transfer_refuses_a_sealed_stamp_without_the_engine() {
     )
     .await;
     let permit =
-        OwnerWritePermit::transfer_for_tests(sealed.source, AccessKind::Fact, sealed.destination);
+        OwnerWritePermit::transfer_for_tests(sealed.source, MemoryKind::Fact, sealed.destination);
 
     let err = pg
         .transfer_to_owner(

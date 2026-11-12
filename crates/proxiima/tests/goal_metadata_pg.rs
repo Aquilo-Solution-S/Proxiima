@@ -56,7 +56,7 @@ async fn guest_metadata_edit_refuses_forgotten_carried_targets() {
                 claim: "motivation".into(),
                 confidence: 90,
                 subject_memory_ids: vec![fact.into_inner()],
-                subject_kinds: vec![proxiima_core::InterpretationSubjectKind::Fact],
+                subject_kinds: vec![proxiima_core::MemoryKind::Fact],
                 model_id: "test".into(),
                 client_name: "test".into(),
                 client_version: "1".into(),

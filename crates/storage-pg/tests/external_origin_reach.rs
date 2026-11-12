@@ -19,7 +19,7 @@ use proxiima_core::storage_ports::{
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AccessKind, EntityId, GroupId, MemoryId, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
+    EntityId, GroupId, MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion, StorageError, UserId,
 };
 use proxiima_storage_pg::test_fixtures::{create_external_origin, create_group, fresh_pg};
 use proxiima_storage_pg::verbs::forget::erase_memory_series;
@@ -128,7 +128,7 @@ async fn hot_and_forgotten(
 async fn erasing_a_forgotten_admission_deletes_its_external_origins() -> TestResult {
     let (pg, _db) = fresh_pg("proxiima_ext_origin_erase_one").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let (hot, forgotten) = hot_and_forgotten(&pg, &permit).await?;
 
     let mut tx = begin_owner_transaction(
@@ -163,7 +163,7 @@ async fn owner_erase_deletes_a_forgotten_memorys_external_origins() -> TestResul
     let (pg, _db) = fresh_pg("proxiima_ext_origin_erase").await;
     let user = UserId::new(Uuid::now_v7());
     let owner = OwnerId::from(user);
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let (hot, forgotten) = hot_and_forgotten(&pg, &permit).await?;
     assert_eq!(origins_on(&pg, &[hot, forgotten]).await?, 3);
 
@@ -195,11 +195,11 @@ async fn export_carries_hot_and_forgotten_external_origins() -> TestResult {
     let (pg, _db) = fresh_pg("proxiima_ext_origin_export").await;
     let user = UserId::new(Uuid::now_v7());
     let owner = OwnerId::from(user);
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let (hot, forgotten) = hot_and_forgotten(&pg, &permit).await?;
     // Another owner's origins never appear.
     let stranger = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let stranger_permit = OwnerWritePermit::new_for_tests(stranger, AccessKind::Fact);
+    let stranger_permit = OwnerWritePermit::new_for_tests(stranger, MemoryKind::Fact);
     let foreign = pg
         .ingest_fact_atomic(&stranger_permit, &draft(), None)
         .await?
@@ -242,7 +242,7 @@ async fn export_carries_hot_and_forgotten_external_origins() -> TestResult {
 async fn forget_keeps_external_origins() -> TestResult {
     let (pg, _db) = fresh_pg("proxiima_ext_origin_forget").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let (_hot, forgotten) = hot_and_forgotten(&pg, &permit).await?;
     assert_eq!(origins_on(&pg, &[forgotten]).await?, 2, "forget keeps them");
     assert_eq!(
@@ -259,7 +259,7 @@ async fn forget_keeps_external_origins() -> TestResult {
 async fn forget_and_restore_keep_external_origins() -> TestResult {
     let (pg, _db) = fresh_pg("proxiima_ext_origin_restore").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let t = pg
         .ingest_fact_atomic(&permit, &draft(), None)
         .await?
@@ -287,7 +287,7 @@ async fn forget_and_restore_keep_external_origins() -> TestResult {
 async fn transfer_moves_read_access_to_external_origins() -> TestResult {
     let (pg, _db) = fresh_pg("proxiima_ext_origin_transfer").await;
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let group = GroupId::new(Uuid::now_v7());
     create_group(pg.pool_for_tests(), group).await?;
     let destination = OwnerId::from(group);
@@ -298,7 +298,7 @@ async fn transfer_moves_read_access_to_external_origins() -> TestResult {
 
     let moved = pg
         .transfer_to_owner(
-            &OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, destination),
+            &OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, destination),
             EntityId::Memory(written.memory_id),
             destination,
             &surfaces(),
@@ -320,7 +320,7 @@ async fn several_origins_export_byte_identically_across_insert_orders() -> TestR
     let (pg, _db) = fresh_pg("proxiima_ext_origin_order").await;
     let user = UserId::new(Uuid::now_v7());
     let owner = OwnerId::from(user);
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let t = pg
         .ingest_fact_atomic(&permit, &draft(), None)
         .await?

@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use aws_sdk_s3::presigning::PresigningConfig;
-use proxiima_core::{AccessKind, AuthzContext, OwnerId};
+use proxiima_core::{AuthzContext, MemoryKind, OwnerId};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
@@ -92,7 +92,7 @@ pub(super) fn validate_prepare(
 /// write gate uses, not a coarser "any accessible principal" check that a
 /// Goal-only-read role could slip through.
 pub(super) fn ensure_owner_access(ctx: &AuthzContext, owner: &OwnerId) -> Result<(), BlobError> {
-    if ctx.may_read(owner, AccessKind::Fact) {
+    if ctx.may_read(owner, MemoryKind::Fact) {
         Ok(())
     } else {
         Err(BlobError::Denied(
@@ -110,7 +110,7 @@ pub(super) fn ensure_owner_write_access(
     ctx: &AuthzContext,
     owner: &OwnerId,
 ) -> Result<(), BlobError> {
-    if ctx.may_write(owner, AccessKind::Fact) {
+    if ctx.may_write(owner, MemoryKind::Fact) {
         Ok(())
     } else {
         Err(BlobError::Denied(

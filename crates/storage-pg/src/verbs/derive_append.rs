@@ -253,7 +253,8 @@ async fn append_derived_timeseries(
 }
 
 fn derived_kind(draft: &DerivedDraft<'_>) -> Result<PgMemoryKind, StorageError> {
-    PgMemoryKind::of(draft.kind)
+    proxiima_core::MemoryKind::of(draft.kind)
+        .map(PgMemoryKind::from)
         .ok_or_else(|| StorageError::ConstraintViolation("derived write cannot be a Goal".into()))
 }
 
@@ -536,7 +537,7 @@ async fn resolve_derived_content_id(
         return super::content::ensure_content_from_payloads(
             tx,
             owner_id,
-            kind.label(),
+            kind,
             draft.schema_id.as_str(),
             payloads,
         )

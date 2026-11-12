@@ -6,7 +6,7 @@ use proxiima_core::owner_inverse::{
     OwnerExportTarget, OwnerSurfaces,
 };
 use proxiima_core::storage_ports::{OwnerInversePort, OwnerWritePermit, RetentionPort};
-use proxiima_core::{AccessKind, KeepDays, OwnerId, SchemaId, SpiiceRegistry, UserId};
+use proxiima_core::{KeepDays, MemoryKind, OwnerId, SchemaId, SpiiceRegistry, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::create_core_db;
@@ -20,7 +20,7 @@ fn surfaces() -> OwnerSurfaces {
 /// registers the owner with its first row).
 async fn person_with_rows(pg: &PgStorage) -> Result<UserId, Box<dyn std::error::Error>> {
     let person = UserId::new(Uuid::now_v7());
-    let permit = OwnerWritePermit::new_for_tests(OwnerId::from(person), AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(OwnerId::from(person), MemoryKind::Fact);
     for (schema, days) in [("s.mail-v1", 30), ("s.page-v1", 365)] {
         pg.set_retention(
             &permit,

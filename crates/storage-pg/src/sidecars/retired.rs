@@ -189,13 +189,13 @@ mod tests {
         use crate::verbs::fact_embeddings::RouteSpaces;
         use crate::verbs::forget::{Reach, restore_marked};
         use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
-        use proxiima_core::{AccessKind, OwnerId, UserId};
+        use proxiima_core::{MemoryKind, OwnerId, UserId};
 
         static CONTRACT: SpiiceContract = contract(&[retirement(&surface(TABLE), &[])]);
         let frozen = freeze(&CONTRACT).unwrap();
         let (pg, _database) = crate::test_fixtures::fresh_pg("retired_restore").await;
         let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         // This low-level fixture represents a row admitted before retirement;
         // there is intentionally no live payload type or stamped sidecar.
         let mut draft = crate::verbs::forget::forget_pg_tests::draft(None);

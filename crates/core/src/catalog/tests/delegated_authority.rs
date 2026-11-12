@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures::future::BoxFuture;
 use serde::Deserialize;
 
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::catalog::{ActionArgSpec, OwnerNeed, Replay, ToolAudience, ToolEffect};
 use crate::error::ErrorCode;
 use crate::query::QueryRequest;
@@ -307,7 +307,7 @@ async fn phase_allows_bounded_fact_authorization_and_raw_delegated_is_denied() {
         AuthPath::Delegated,
     );
     let write_err = engine
-        .authorize_owner_write(&raw, &owner, AccessKind::Fact)
+        .authorize_owner_write(&raw, &owner, MemoryKind::Fact)
         .await
         .expect_err("raw delegated context must not mint a permit");
     assert_eq!(write_err.code, ErrorCode::Forbidden);
@@ -658,7 +658,7 @@ async fn forwarded_owner_cannot_delegate_even_with_ordinary_membership() {
         .with_authenticated_forwarded_owner(&policy, owner)
         .await
         .unwrap();
-    assert!(forwarded.may_write(&owner, AccessKind::Fact));
+    assert!(forwarded.may_write(&owner, MemoryKind::Fact));
     let (_engine, service, command) =
         runtime(registry(true), store.clone(), access, ServedSurface::All);
     assert!(matches!(

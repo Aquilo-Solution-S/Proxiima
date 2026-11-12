@@ -21,8 +21,9 @@ use async_trait::async_trait;
 use futures_util::Stream;
 use tokio::time::{Instant, Sleep};
 
+use crate::MemoryKind;
 use crate::OwnerScope;
-use crate::access::{AccessKind, OwnerAccessPort, OwnerRoles, Role};
+use crate::access::{OwnerAccessPort, OwnerRoles, Role};
 use crate::auth::{AuthError, Credentials};
 use crate::error::ProtocolError;
 use crate::owner_scope::ScopeGrant;
@@ -926,13 +927,13 @@ impl AuthzContext {
 
     #[must_use]
     pub fn can_access_owner(&self, owner: &OwnerId) -> bool {
-        self.may_read(owner, AccessKind::Fact)
+        self.may_read(owner, MemoryKind::Fact)
     }
 
     /// The owners whose Facts the context reads, in the order of memory
     /// spaces.
     pub(crate) fn accessible_owners(&self) -> impl Iterator<Item = OwnerId> {
-        self.readable_owners(AccessKind::Fact).into_iter()
+        self.readable_owners(MemoryKind::Fact).into_iter()
     }
 
     #[must_use]
@@ -941,14 +942,14 @@ impl AuthzContext {
     }
 
     #[must_use]
-    pub fn may_read(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_read(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.owner_scope
             .grant()
             .is_some_and(|grant| grant.may_read(owner, kind))
     }
 
     #[must_use]
-    pub fn may_write(&self, owner: &OwnerId, kind: AccessKind) -> bool {
+    pub fn may_write(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
         self.owner_scope
             .grant()
             .is_some_and(|grant| grant.may_write(owner, kind))
@@ -963,8 +964,8 @@ impl AuthzContext {
     #[must_use]
     pub fn may_run_tool(&self, owner: &OwnerId, access: OwnerAccess) -> bool {
         match access {
-            OwnerAccess::Read => self.may_read(owner, AccessKind::Fact),
-            OwnerAccess::Write => self.may_write(owner, AccessKind::Fact),
+            OwnerAccess::Read => self.may_read(owner, MemoryKind::Fact),
+            OwnerAccess::Write => self.may_write(owner, MemoryKind::Fact),
             OwnerAccess::GoalWork => self.may_work_goals(owner),
         }
     }
@@ -1022,14 +1023,14 @@ impl AuthzContext {
     }
 
     #[must_use]
-    pub fn readable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.owner_scope
             .grant()
             .map_or_else(Vec::new, |grant| grant.readable_owners(kind))
     }
 
     #[must_use]
-    pub fn writable_owners(&self, kind: AccessKind) -> Vec<OwnerId> {
+    pub fn writable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.owner_scope
             .grant()
             .map_or_else(Vec::new, |grant| grant.writable_owners(kind))

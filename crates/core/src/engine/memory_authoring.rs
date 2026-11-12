@@ -141,8 +141,8 @@ impl From<AuthorDerivedOutcome> for DerivedMemoryOutcome {
 }
 
 /// The access kind of a derived memory's output kind.
-fn access_kind(kind: EntityKind) -> Result<crate::AccessKind, ProtocolError> {
-    crate::AccessKind::of(kind)
+fn access_kind(kind: EntityKind) -> Result<crate::MemoryKind, ProtocolError> {
+    crate::MemoryKind::of(kind)
         .ok_or_else(|| ProtocolError::invalid_argument("kind", "a derived memory is no Goal"))
 }
 

@@ -1,14 +1,13 @@
 //! Export projects pins from memory rows; no reconstructed Edge table.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
-use proxiima_core::MemoryKind;
 use proxiima_core::owner_inverse::{ExportAuthorization, OwnerExportTarget, OwnerSurfaces};
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerInversePort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::query::EntityKind;
 use proxiima_core::{
-    AccessCeiling, AccessKind, EdgeEndpoint, GoalAccess, MemoryId, OwnerId, Role, SchemaId,
+    AccessCeiling, EdgeEndpoint, GoalAccess, MemoryId, MemoryKind, OwnerId, Role, SchemaId,
     SchemaVersion, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -58,7 +57,7 @@ fn citation_surfaces() -> OwnerSurfaces {
 
 fn draft(kind: MemoryKind, refs: Vec<Uuid>, origins: Vec<Uuid>) -> FactWriteCommand {
     FactWriteCommand {
-        schema_id: SchemaId::new(format!("export/{}", kind.as_str())),
+        schema_id: SchemaId::new(format!("export/{}", kind.entity_kind().as_str())),
         schema_version: SchemaVersion::new(1),
         handle: None,
         source_id: None,
@@ -91,7 +90,7 @@ async fn export_edges_are_the_pins_already_on_memory() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let user = UserId::new(Uuid::now_v7());
         let owner = OwnerId::from(user);
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let leaf = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -161,7 +160,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let user = UserId::new(Uuid::now_v7());
         let owner = OwnerId::from(user);
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
 
         let hot = pg
@@ -175,7 +174,7 @@ async fn export_carries_forgotten_rows_and_sketches() {
 
         // A neighbour owner's forgotten admission and sketch must not appear.
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let other_permit = OwnerWritePermit::new_for_tests(other, AccessKind::Fact);
+        let other_permit = OwnerWritePermit::new_for_tests(other, MemoryKind::Fact);
         let neighbour = pg
             .ingest_fact_atomic(&other_permit, &sketched(MemoryKind::Fact, "Not yours"), None)
             .await?;
@@ -401,7 +400,7 @@ async fn export_carries_registered_citation_sidecar_rows() {
             (owner, "core/cited-v1", 7u8, "mine", 4),
             (other, "core/cited-v1", 9u8, "not mine", 11),
         ] {
-            let permit = OwnerWritePermit::new_for_tests(holder, AccessKind::Fact);
+            let permit = OwnerWritePermit::new_for_tests(holder, MemoryKind::Fact);
             pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
                 .await?;
             // Raw INSERT: no write path for blob reachable from test fixtures; only a citation admission writes one, and it adds a memory
@@ -484,7 +483,7 @@ async fn export_carries_owner_scoped_opaque_blob_metadata() {
         let pool = pg.pool_for_tests();
 
         for holder in [owner, other] {
-            let permit = OwnerWritePermit::new_for_tests(holder, AccessKind::Fact);
+            let permit = OwnerWritePermit::new_for_tests(holder, MemoryKind::Fact);
             pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
                 .await?;
         }
@@ -665,11 +664,11 @@ async fn export_carries_the_owners_content_rows() {
         let owner = OwnerId::from(user);
         let pool = pg.pool_for_tests();
         // Writing a Fact registers each owner, which content's FK needs.
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
             .await?;
         let neighbour = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let neighbour_permit = OwnerWritePermit::new_for_tests(neighbour, AccessKind::Fact);
+        let neighbour_permit = OwnerWritePermit::new_for_tests(neighbour, MemoryKind::Fact);
         pg.ingest_fact_atomic(
             &neighbour_permit,
             &draft(MemoryKind::Fact, vec![], vec![]),
@@ -720,7 +719,7 @@ async fn export_carries_goal_controller_grants_only() {
         let subject = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
         for owner in [controller, subject, other] {
-            let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+            let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
             pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
                 .await?;
         }
@@ -781,7 +780,7 @@ async fn export_carries_source_owned_goal_publication_fields() {
         let source_user = UserId::new(Uuid::now_v7());
         let source = OwnerId::from(source_user);
         let controller = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let source_permit = OwnerWritePermit::new_for_tests(source, AccessKind::Fact);
+        let source_permit = OwnerWritePermit::new_for_tests(source, MemoryKind::Fact);
         let memory = pg
             .ingest_fact_atomic(
                 &source_permit,
@@ -791,7 +790,7 @@ async fn export_carries_source_owned_goal_publication_fields() {
             .await?
             .memory_id
             .into_inner();
-        let controller_permit = OwnerWritePermit::new_for_tests(controller, AccessKind::Fact);
+        let controller_permit = OwnerWritePermit::new_for_tests(controller, MemoryKind::Fact);
         pg.ingest_fact_atomic(
             &controller_permit,
             &draft(MemoryKind::Fact, vec![], vec![]),
@@ -867,7 +866,7 @@ async fn a_forgotten_memorys_origins_and_refs_are_edges() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let user = UserId::new(Uuid::now_v7());
         let owner = OwnerId::from(user);
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
 
         let origin = pg
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact, vec![], vec![]), None)
@@ -888,7 +887,7 @@ async fn a_forgotten_memorys_origins_and_refs_are_edges() {
             .await?
             .memory_id
             .into_inner();
-        let abstraction_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Abstraction);
+        let abstraction_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Abstraction);
         MemoryAuthoringPort::forget_memory(&pg, &abstraction_permit, MemoryId::new(derived))
             .await?;
 

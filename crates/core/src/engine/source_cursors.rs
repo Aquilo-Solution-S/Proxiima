@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{Engine, pipeline::WritePermit};
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::AuthzContext;
 use crate::error::ProtocolError;
 use crate::{Cursor, OwnerId};
@@ -22,7 +22,7 @@ impl Engine {
         owner: &OwnerId,
         source: &str,
     ) -> Result<Option<Cursor>, ProtocolError> {
-        let permit = self.authorize_write(authz, owner, AccessKind::Fact).await?;
+        let permit = self.authorize_write(authz, owner, MemoryKind::Fact).await?;
         self.load_source_cursor_authorized(&permit, source).await
     }
 
@@ -56,7 +56,7 @@ impl Engine {
         source: &str,
         cursor: &Cursor,
     ) -> Result<(), ProtocolError> {
-        let permit = self.authorize_write(authz, owner, AccessKind::Fact).await?;
+        let permit = self.authorize_write(authz, owner, MemoryKind::Fact).await?;
         self.store_source_cursor_authorized(&permit, source, cursor)
             .await
     }
@@ -91,7 +91,7 @@ impl Engine {
         source: &str,
     ) -> Result<Option<Duration>, ProtocolError> {
         let owner = self
-            .authorize_owner_read(authz, owner, AccessKind::Fact)
+            .authorize_owner_read(authz, owner, MemoryKind::Fact)
             .await?;
         self.storage
             .source_cursor

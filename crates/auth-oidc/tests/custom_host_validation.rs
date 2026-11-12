@@ -26,9 +26,9 @@ use proxiima_auth_oidc::{
     ValidatedOidcToken,
 };
 use proxiima_core::{
-    AccessError, AccessKind, ActionName, AuthError, AuthPath, Authenticator, AuthzContext,
-    Credentials, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, Role, ScopeKey, ToolName,
-    ToolScope, UserId, WriterAttribution,
+    AccessError, ActionName, AuthError, AuthPath, Authenticator, AuthzContext, Credentials,
+    GroupId, MemoryKind, OwnerAccessPort, OwnerId, OwnerRoles, Role, ScopeKey, ToolName, ToolScope,
+    UserId, WriterAttribution,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -206,7 +206,7 @@ async fn agent_audience_resolves_narrowed_tool_scope() {
     assert_eq!(ctx.auth_path(), AuthPath::HostBearer);
     assert!(ctx.may_write(
         &OwnerId::from(group),
-        proxiima_core::AccessKind::Perspective
+        proxiima_core::MemoryKind::Perspective
     ));
     assert!(allows_leaf(ctx.tool_scope(), "core_goal", "set"));
     assert!(!ctx.tool_scope().allows(&key("core_membership")));
@@ -613,11 +613,11 @@ async fn forwarded_owner_remains_pending_in_single_and_multiple_bindings() {
         assert_eq!(context.trusted_model_id(), Some(FORWARDING_MODEL), "{path}");
         assert!(context.expires_at().is_some(), "{path}");
         assert!(
-            context.readable_owners(AccessKind::Fact).is_empty(),
+            context.readable_owners(MemoryKind::Fact).is_empty(),
             "{path}"
         );
         assert!(
-            context.writable_owners(AccessKind::Fact).is_empty(),
+            context.writable_owners(MemoryKind::Fact).is_empty(),
             "{path}"
         );
         assert!(context.role_for_owner(&owner).is_none(), "{path}");
@@ -625,7 +625,7 @@ async fn forwarded_owner_remains_pending_in_single_and_multiple_bindings() {
             context
                 .owner_scope()
                 .expect("core seals authentication")
-                .readable_owners(AccessKind::Fact)
+                .readable_owners(MemoryKind::Fact)
                 .is_empty(),
             "{path}"
         );
@@ -757,7 +757,7 @@ async fn forwarded_owner_claim_is_ignored_for_an_ordinary_subject() {
                 "{path}"
             );
             assert_eq!(
-                context.readable_owners(AccessKind::Fact),
+                context.readable_owners(MemoryKind::Fact),
                 vec![OwnerId::from(ordinary_subject())],
                 "{path}"
             );
@@ -944,7 +944,7 @@ async fn forwarded_owner_host_shaping_preserves_the_pending_binding() {
     );
     assert!(context.tool_scope().allows(&key("host_forwarded")));
     assert!(!context.tool_scope().allows(&key("other_tool")));
-    assert!(context.readable_owners(AccessKind::Fact).is_empty());
+    assert!(context.readable_owners(MemoryKind::Fact).is_empty());
     for shape in [
         ForwardingShape::Clear,
         ForwardingShape::Change,

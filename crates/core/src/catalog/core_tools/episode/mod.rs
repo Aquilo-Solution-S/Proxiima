@@ -18,7 +18,7 @@ use super::memory::interpret::{
 };
 use super::memory::remember::{self, NoteWriteInput};
 use super::memory::util::dedup_resolved;
-use crate::catalog::MemoryHandleClass;
+use crate::MemoryKind;
 use crate::catalog::validate_trimmed_len;
 use crate::engine::GoalCreatePayloadWriteRequest;
 use crate::error::ErrorCode;
@@ -28,8 +28,8 @@ use crate::verbs::goal_write::{
     GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, IdempotencyKey,
 };
 use crate::{
-    DerivationIdentity, DerivedMemory, FactWrite, InterpretationSubjectKind, InterpretationV1,
-    MemoryId, SeriesHandle, UnitOfWork,
+    DerivationIdentity, DerivedMemory, FactWrite, InterpretationV1, MemoryId, SeriesHandle,
+    UnitOfWork,
 };
 use crate::{Tool, ToolCtx, ToolError};
 
@@ -188,7 +188,7 @@ pub struct EpisodeCommitOutput {
 struct Slot {
     id: MemoryId,
     handle: String,
-    class: MemoryHandleClass,
+    class: MemoryKind,
 }
 
 #[derive(Default)]
@@ -380,7 +380,7 @@ impl EpisodeWrite<'_> {
             self.slots.remember.push(Slot {
                 id: outcome.memory_id,
                 handle,
-                class: MemoryHandleClass::Fact,
+                class: MemoryKind::Fact,
             });
         }
         Ok(())
@@ -478,7 +478,7 @@ impl EpisodeWrite<'_> {
         self.slots.derive = Some(Slot {
             id: outcome.memory_id,
             handle: handle.clone(),
-            class: MemoryHandleClass::Abstraction,
+            class: MemoryKind::Abstraction,
         });
         Ok(handle)
     }
@@ -564,7 +564,7 @@ impl EpisodeWrite<'_> {
             self.slots.stance.push(Slot {
                 id: outcome.memory_id,
                 handle,
-                class: MemoryHandleClass::Perspective,
+                class: MemoryKind::Perspective,
             });
         }
         Ok(())
@@ -652,7 +652,7 @@ async fn resolve_memory_source(
     ctx: &ToolCtx,
     slots: &EpisodeSlots,
     handle: &str,
-) -> Result<(MemoryId, MemoryHandleClass), ToolError> {
+) -> Result<(MemoryId, MemoryKind), ToolError> {
     if let Some(slot) = resolve_local_slot(slots, handle)? {
         return Ok((slot.id, slot.class));
     }
@@ -663,14 +663,9 @@ async fn resolve_stance_subject(
     ctx: &ToolCtx,
     slots: &EpisodeSlots,
     handle: &str,
-) -> Result<(MemoryId, InterpretationSubjectKind), ToolError> {
+) -> Result<(MemoryId, MemoryKind), ToolError> {
     if let Some(slot) = resolve_local_slot(slots, handle)? {
-        let kind = match slot.class {
-            MemoryHandleClass::Fact => InterpretationSubjectKind::Fact,
-            MemoryHandleClass::Abstraction => InterpretationSubjectKind::Abstraction,
-            MemoryHandleClass::Perspective => InterpretationSubjectKind::Perspective,
-        };
-        return Ok((slot.id, kind));
+        return Ok((slot.id, slot.class));
     }
     interpret::resolve_subject(ctx, handle).await
 }
@@ -686,10 +681,10 @@ async fn resolve_goal_evidence(
             // A forgotten replay slot needs no case here: storage refuses it
             // and the unit of work answers "entry not found".
             match slot.class {
-                MemoryHandleClass::Fact | MemoryHandleClass::Abstraction => {
+                MemoryKind::Fact | MemoryKind::Abstraction => {
                     resolved.push(GoalEvidenceRef::new(slot.id));
                 }
-                MemoryHandleClass::Perspective => {
+                MemoryKind::Perspective => {
                     return Err(ToolError::InvalidInput(
                         "Goal evidence must reference a Fact or Abstraction".into(),
                     ));
@@ -714,7 +709,7 @@ fn resolve_goal_motivations(
         .iter()
         .map(|handle| {
             if let Some(slot) = resolve_local_slot(slots, handle)? {
-                if slot.class != MemoryHandleClass::Perspective {
+                if slot.class != MemoryKind::Perspective {
                     return Err(ToolError::InvalidInput(
                         "motivated_by must name a Perspective".into(),
                     ));

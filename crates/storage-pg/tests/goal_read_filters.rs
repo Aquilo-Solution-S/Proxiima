@@ -10,7 +10,7 @@ use proxiima_core::verbs::fact_ingest::{
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::verbs::query::{EntityKind, QueryRequest, SupersessionStatus};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, GoalId, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId,
+    EdgeEndpoint, GoalId, MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion, UserId,
 };
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{TestGoal, create_group, fresh_pg};
@@ -40,7 +40,7 @@ fn schemas() -> Vec<MemorySchemaSpec> {
 }
 
 async fn fact(pg: &PgStorage, owner: OwnerId, schema: &str, targets: &[Uuid]) -> MemoryId {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let draft = FactWriteCommand {
         schema_id: SchemaId::new(schema.into()),
         schema_version: SchemaVersion::new(1),

@@ -16,7 +16,7 @@ use proxiima_core::verbs::goal_write::{
     GoalAtomicContext, GoalAuthorship, GoalDraft, GoalState, GoalTopologyWrite,
 };
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, SimpleTextGoalV1,
+    EdgeEndpoint, EntityKind, MemoryKind, OwnerId, SchemaId, SchemaVersion, SimpleTextGoalV1,
     SpiiceRegistry, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -73,8 +73,8 @@ async fn goal_motivations_require_same_owner_perspectives() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let other = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let owner_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
-        let other_permit = OwnerWritePermit::new_for_tests(other, AccessKind::Fact);
+        let owner_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
+        let other_permit = OwnerWritePermit::new_for_tests(other, MemoryKind::Fact);
         let fact_target = pg.ingest_fact_atomic(&owner_permit, &fact(), None).await?;
         let own_perspective = grounded_perspective(&pg, &owner_permit).await?;
         let other_perspective = grounded_perspective(&pg, &other_permit).await?;
@@ -296,7 +296,7 @@ async fn decomposition_locks_the_union_before_first_goal_persist() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let first = pg.ingest_fact_atomic(&permit, &fact(), None).await?;
         let second = pg.ingest_fact_atomic(&permit, &fact(), None).await?;
         let pool = pg.pool_for_tests();

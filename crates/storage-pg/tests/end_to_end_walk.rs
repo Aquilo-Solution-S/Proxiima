@@ -6,13 +6,12 @@
     clippy::used_underscore_binding
 )]
 
-use proxiima_core::MemoryKind;
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{OwnerTransferPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessKind, EntityId, EntityKind, GroupId, OwnerId, SchemaId, SchemaVersion, UserId,
+    EntityId, EntityKind, GroupId, MemoryKind, OwnerId, SchemaId, SchemaVersion, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
@@ -69,7 +68,7 @@ async fn walk_query_history_and_transfer_over_one_corpus() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
 
         let visit = pg
@@ -169,7 +168,7 @@ async fn walk_query_history_and_transfer_over_one_corpus() {
         }
 
         let dest = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        let transfer_permit = OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, dest);
+        let transfer_permit = OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, dest);
         let transferred = pg
             .transfer_to_owner(
                 &transfer_permit,

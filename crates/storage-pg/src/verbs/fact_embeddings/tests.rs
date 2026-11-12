@@ -17,9 +17,9 @@ mod pg_tests {
     use proxiima_core::verbs::fact_ingest::{FactReceiptDraft, FactWriteCommand};
     use proxiima_core::verbs::schema::MemoryEmbedUnit;
     use proxiima_core::{
-        AccessKind, AuthPath, AuthzContext, Engine, EntityId, EntityKind, FactIngestPort, GroupId,
-        InputContractId, MemoryTarget, OwnerId, ProtocolError, SchemaId, SchemaVersion, SourceId,
-        SpiiceRegistry, StorageError,
+        AuthPath, AuthzContext, Engine, EntityId, EntityKind, FactIngestPort, GroupId,
+        InputContractId, MemoryKind, MemoryTarget, OwnerId, ProtocolError, SchemaId, SchemaVersion,
+        SourceId, SpiiceRegistry, StorageError,
     };
     use proxiima_pg_testkit::drop_db;
     use uuid::Uuid;
@@ -167,7 +167,7 @@ mod pg_tests {
         );
         let authz = authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer));
         engine
-            .authorize_owner_write(&authz, owner, AccessKind::Fact)
+            .authorize_owner_write(&authz, owner, MemoryKind::Fact)
             .await
             .map_err(|err| StorageError::Internal(err.to_string()))
     }
@@ -187,7 +187,7 @@ mod pg_tests {
         body: &str,
     ) -> Result<proxiima_core::verbs::fact_ingest::FactIngestOutcome, StorageError> {
         let authorized = proxiima_core::verbs::fact_ingest::AuthorizedFactWrite::new_for_tests(
-            OwnerWritePermit::new_for_tests(*owner, AccessKind::Fact),
+            OwnerWritePermit::new_for_tests(*owner, MemoryKind::Fact),
             draft.clone(),
             Some(AGENT_NOTE.to_owned()),
             Vec::new(),
@@ -1709,7 +1709,7 @@ mod pg_tests {
             let stale = claims[0].clone();
             let destination = OwnerId::from(GroupId::new(Uuid::now_v7()));
             let transfer_permit =
-                OwnerWritePermit::transfer_for_tests(source, AccessKind::Fact, destination);
+                OwnerWritePermit::transfer_for_tests(source, MemoryKind::Fact, destination);
             let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
             let surfaces = proxiima_core::owner_inverse::OwnerSurfaces::for_registry(&registry);
             let mut wake = proxiima_core::write_wake::WriteWake::subscribe();
@@ -2265,7 +2265,7 @@ mod pg_tests {
                 claim: "a grounded claim".into(),
                 confidence: 80,
                 subject_memory_ids: vec![subject.into_inner()],
-                subject_kinds: vec![proxiima_core::InterpretationSubjectKind::Abstraction],
+                subject_kinds: vec![proxiima_core::MemoryKind::Abstraction],
                 model_id: "test".into(),
                 client_name: "test".into(),
                 client_version: "1".into(),

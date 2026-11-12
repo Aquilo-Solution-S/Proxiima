@@ -24,8 +24,8 @@ use aws_lc_rs::signature::{KeyPair as _, RSA_PKCS1_SHA256, RsaKeyPair};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::DecodingKey;
 use proxiima_core::{
-    AccessError, ActionName, AuthPath, OwnerId, OwnerRoles, Role, ScopeKey, ToolName, UserId,
-    access::AccessKind,
+    AccessError, ActionName, AuthPath, MemoryKind, OwnerId, OwnerRoles, Role, ScopeKey, ToolName,
+    UserId,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -254,7 +254,7 @@ async fn two_binding_routing_uses_matching_audience() {
         .expect("agent binding authenticates");
 
     assert_eq!(ctx.auth_path(), AuthPath::HostBearer);
-    assert!(ctx.may_write(&OwnerId::from(agent_group), AccessKind::Perspective));
+    assert!(ctx.may_write(&OwnerId::from(agent_group), MemoryKind::Perspective));
     assert!(allows_leaf(ctx.tool_scope(), "core_goal", "set"));
     assert!(!ctx.tool_scope().allows(&key("core_membership")));
     assert!(!allows_leaf(

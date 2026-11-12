@@ -2,7 +2,7 @@
 
 use super::Engine;
 use super::memory_authoring::PreparedDerived;
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::ToolEffect;
 use crate::authz::{AuthzContext, SystemAuthority, SystemAuthorityBinding};
 use crate::count_u64;
@@ -862,7 +862,7 @@ impl<'a> UnitOfWork<'a> {
     ) -> Result<Vec<serde_json::Value>, ProtocolError> {
         let write_permit = self
             .engine
-            .authorize_write(self.authz()?, &owner, AccessKind::Fact)
+            .authorize_write(self.authz()?, &owner, MemoryKind::Fact)
             .await?;
         self.ensure_session()
             .await?
@@ -892,7 +892,7 @@ impl<'a> UnitOfWork<'a> {
     ) -> Result<Option<MemoryId>, ProtocolError> {
         let write_permit = self
             .engine
-            .authorize_write(self.authz()?, &owner, AccessKind::Fact)
+            .authorize_write(self.authz()?, &owner, MemoryKind::Fact)
             .await?;
         self.ensure_session()
             .await?
@@ -932,7 +932,7 @@ impl<'a> UnitOfWork<'a> {
                 let owner = command.owner();
                 let permit = self
                     .engine
-                    .authorize_write(*authz, &owner, AccessKind::Fact)
+                    .authorize_write(*authz, &owner, MemoryKind::Fact)
                     .await?;
                 self.engine
                     .validate_write_permit(permit.owner_write_permit())?;
@@ -1044,7 +1044,7 @@ impl<'a> UnitOfWork<'a> {
         let authz = self.authz()?;
         let permit = self
             .engine
-            .authorize_write(authz, &spec.owner, AccessKind::Fact)
+            .authorize_write(authz, &spec.owner, MemoryKind::Fact)
             .await?;
         self.ingest_fact_permitted(authz, permit, spec).await
     }

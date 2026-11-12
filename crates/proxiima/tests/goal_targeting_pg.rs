@@ -12,8 +12,8 @@ use proxiima_core::verbs::goal_write::{
 };
 use proxiima_core::{
     AuthPath, AuthzContext, DerivedMemory, EntityId, FactWrite, GoalTransitionRequest, GroupId,
-    InterpretationSubjectKind, InterpretationV1, MemoryId, MemoryTarget, OwnerId, PendingWork,
-    SeriesHandle, SimpleTextGoalV1, UserId,
+    InterpretationV1, MemoryId, MemoryKind, MemoryTarget, OwnerId, PendingWork, SeriesHandle,
+    SimpleTextGoalV1, UserId,
 };
 use proxiima_example::NoteV1;
 use uuid::Uuid;
@@ -207,7 +207,7 @@ fn interpretation(claim: &str, evidence: MemoryId) -> InterpretationV1 {
         claim: claim.to_owned(),
         confidence: 90,
         subject_memory_ids: vec![evidence.into_inner()],
-        subject_kinds: vec![InterpretationSubjectKind::Fact],
+        subject_kinds: vec![MemoryKind::Fact],
         model_id: "test".to_owned(),
         client_name: "test".to_owned(),
         client_version: "1".to_owned(),

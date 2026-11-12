@@ -31,9 +31,8 @@ use proxiima_core::verbs::goal_write::{
     GoalAuthorship, GoalCreateRequest, GoalTopologyWrite, IdempotencyKey,
 };
 use proxiima_core::{
-    AgentNoteV1, DerivedMemory, GoalId, GroupId, InterpretationSubjectKind, InterpretationV1,
-    MemoryTarget, OwnerId, OwnerRoles, Relation, Role, SeriesHandle, SimpleTextGoalV1,
-    StorageError, UserId,
+    AgentNoteV1, DerivedMemory, GoalId, GroupId, InterpretationV1, MemoryKind, MemoryTarget,
+    OwnerId, OwnerRoles, Relation, Role, SeriesHandle, SimpleTextGoalV1, StorageError, UserId,
 };
 use proxiima_pg_testkit::db_url;
 use proxiima_storage_pg::PgPlatformScope;
@@ -269,7 +268,7 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
                     claim: "armed".into(),
                     confidence: 90,
                     subject_memory_ids: vec![fact.memory_id.into_inner()],
-                    subject_kinds: vec![InterpretationSubjectKind::Fact],
+                    subject_kinds: vec![MemoryKind::Fact],
                     model_id: "test".into(),
                     client_name: "test".into(),
                     client_version: "1".into(),

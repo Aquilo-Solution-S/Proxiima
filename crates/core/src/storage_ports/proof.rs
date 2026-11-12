@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use crate::access::AccessKind;
+use crate::MemoryKind;
 use crate::authz::DelegationRuntimeBinding;
 use crate::error::ProtocolError;
 use crate::{OwnerId, OwnerScope};
@@ -14,7 +14,7 @@ struct DelegatedWriteGuard {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteAuthority {
     /// The owner's memory of this kind and below.
-    Memory(AccessKind),
+    Memory(MemoryKind),
     /// The owner's Goals ([`crate::Role::works_goals`]), and the Facts a Goal
     /// work command declares for its Goal. No row-level memory call runs
     /// under it.
@@ -27,11 +27,11 @@ pub enum WriteAuthority {
 impl WriteAuthority {
     /// The top memory kind a row-level call under this authority reaches.
     #[must_use]
-    pub const fn memory_limit(self) -> Option<AccessKind> {
+    pub const fn memory_limit(self) -> Option<MemoryKind> {
         match self {
             Self::Memory(kind) => Some(kind),
             Self::GoalWork => None,
-            Self::Administration => Some(AccessKind::Perspective),
+            Self::Administration => Some(MemoryKind::Perspective),
         }
     }
 }
@@ -302,7 +302,7 @@ impl OwnerWritePermit {
     /// production mint.
     #[cfg(any(test, feature = "testkit"))]
     #[must_use]
-    pub fn new_for_tests(owner: OwnerId, access_kind: AccessKind) -> Self {
+    pub fn new_for_tests(owner: OwnerId, access_kind: MemoryKind) -> Self {
         Self::with_authority_for_tests(owner, WriteAuthority::Memory(access_kind))
     }
 
@@ -342,7 +342,7 @@ impl OwnerWritePermit {
     #[must_use]
     pub fn transfer_for_tests(
         owner: OwnerId,
-        access_kind: AccessKind,
+        access_kind: MemoryKind,
         destination: OwnerId,
     ) -> Self {
         let subject = uuid::Uuid::now_v7();

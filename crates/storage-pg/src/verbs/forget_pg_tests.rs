@@ -21,7 +21,7 @@ use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerTransferPort, Owner
 use proxiima_core::verbs::fact_ingest::{CitationSpec, FactWriteCommand};
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, OwnerId, SchemaId,
+    ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, MemoryKind, OwnerId, SchemaId,
     SchemaVersion, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -165,7 +165,7 @@ async fn append_in_own_transaction(
     owner: OwnerId,
     draft: FactWriteCommand,
 ) -> Result<proxiima_core::verbs::fact_ingest::FactIngestOutcome, StorageError> {
-    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
     let mut tx = pool
         .begin()
         .await
@@ -252,7 +252,7 @@ async fn forget_non_last_t_rewinds_memory_head() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let mut later = draft(None);
@@ -298,7 +298,7 @@ async fn restore_moves_the_head_back_and_a_live_restore_changes_nothing() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let mut later = draft(None);
@@ -342,7 +342,7 @@ async fn restore_moves_the_head_back_and_a_live_restore_changes_nothing() {
 
         let stranger = OwnerWritePermit::new_for_tests(
             OwnerId::from(UserId::new(Uuid::now_v7())),
-            AccessKind::Fact,
+            MemoryKind::Fact,
         );
         pg.forget_memory(&permit, second.memory_id).await?;
         assert!(matches!(
@@ -372,7 +372,7 @@ async fn series_erase_includes_hot_append_that_wins_the_handle_lock_first() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let mut second_draft = draft(None);
@@ -549,7 +549,7 @@ async fn series_erase_wins_hot_handle_and_append_retries_then_survives() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let first_t = first.memory_id.into_inner();
@@ -620,7 +620,7 @@ async fn a_hard_erase_deletes_the_memorys_other_store_origins() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let erased_t = pg
             .ingest_fact_atomic(&permit, &draft(None), None)
@@ -681,7 +681,7 @@ async fn series_erase_linearizes_with_fully_forgotten_series() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let mut second_draft = draft(None);
@@ -827,7 +827,7 @@ async fn series_erase_does_not_cross_one_reused_handle_in_a_batch() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let reused = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let untouched = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
@@ -921,7 +921,7 @@ async fn non_head_erase_racing_append_preserves_the_greatest_head() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let first = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let mut second_draft = draft(None);
@@ -1029,7 +1029,7 @@ async fn hard_erase_witnesses_each_hot_memory_kind() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let abstraction = pg
@@ -1157,7 +1157,7 @@ async fn witnessed_targets_cannot_be_reused_or_newly_pinned() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let target = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let target_t = target.memory_id.into_inner();
@@ -1265,7 +1265,7 @@ async fn forgetting_every_source_keeps_what_rests_on_them_live() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
 
         let fact = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
@@ -1351,7 +1351,7 @@ async fn redelivering_a_forgotten_ingest_key_is_an_idempotent_replay() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let mut sourced = draft(Some(("src/webhook", "delivery-forgotten")));
         sourced.citation = Some(CitationSpec::v1("core/test-cited-object-v1", [7_u8; 32]).into());
@@ -1432,7 +1432,7 @@ async fn forget_pinless_abstraction_is_refused() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let owner_id = owner.into_inner();
@@ -1497,15 +1497,15 @@ async fn concurrent_forgets_of_both_sources_both_commit() {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let p1 = OwnerWritePermit::new_for_tests(
             OwnerId::from(UserId::new(Uuid::now_v7())),
-            AccessKind::Fact,
+            MemoryKind::Fact,
         );
         let p2 = OwnerWritePermit::new_for_tests(
             OwnerId::from(UserId::new(Uuid::now_v7())),
-            AccessKind::Fact,
+            MemoryKind::Fact,
         );
         let p3 = OwnerWritePermit::new_for_tests(
             OwnerId::from(UserId::new(Uuid::now_v7())),
-            AccessKind::Fact,
+            MemoryKind::Fact,
         );
         let pool = pg.pool_for_tests().clone();
         let f1 = pg.ingest_fact_atomic(&p1, &draft(None), None).await?;
@@ -1623,7 +1623,7 @@ async fn forget_blocks_admit_until_its_lifecycle_lock_is_released() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
         let fact = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let abs = pg.ingest_fact_atomic(&permit,
@@ -1729,7 +1729,7 @@ async fn admission_locks_pins_before_series_head() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
         let origin = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         // T is itself the prior version on H. The next admission uses the
@@ -1758,7 +1758,7 @@ async fn admission_locks_pins_before_series_head() {
 
         let writer_pg = pg.clone();
         let writer = tokio::spawn(async move {
-            let writer_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+            let writer_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
             writer_pg
                 .ingest_fact_atomic(&writer_permit, &append, None)
                 .await
@@ -1838,7 +1838,7 @@ async fn admission_locks_existing_head_without_declared_pins() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
         let prior = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let prior_t = prior.memory_id.into_inner();
@@ -1848,7 +1848,7 @@ async fn admission_locks_existing_head_without_declared_pins() {
 
         let writer_pg = pg.clone();
         let writer = tokio::spawn(async move {
-            let writer_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+            let writer_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
             let mut append = draft(None);
             append.handle = Some(handle);
             writer_pg
@@ -1929,7 +1929,7 @@ async fn citation_reuse_and_series_erase_share_one_lock_order() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
         let mut cited_draft = draft(None);
         cited_draft.citation =
@@ -1986,7 +1986,7 @@ async fn citation_reuse_and_series_erase_share_one_lock_order() {
         writer_draft.refs = vec![first_t];
         let writer_pg = pg.clone();
         let writer = tokio::spawn(async move {
-            let writer_permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+            let writer_permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
             writer_pg
                 .ingest_fact_atomic(&writer_permit, &writer_draft, None)
                 .await
@@ -2073,12 +2073,12 @@ async fn forget_aborts_when_owner_transferred() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let written = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let t = written.memory_id.into_inner();
         let dest = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::transfer_for_tests(owner, AccessKind::Fact, dest);
+        let permit = OwnerWritePermit::transfer_for_tests(owner, MemoryKind::Fact, dest);
         assert!(
             pg.transfer_to_owner(
                 &permit,
@@ -2135,7 +2135,7 @@ async fn stale_source_erase_does_not_lock_transferred_series() {
         let source = OwnerId::from(UserId::new(Uuid::now_v7()));
         let destination = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let source_permit =
-            OwnerWritePermit::transfer_for_tests(source, AccessKind::Fact, destination);
+            OwnerWritePermit::transfer_for_tests(source, MemoryKind::Fact, destination);
         let pool = pg.pool_for_tests();
         let first = pg
             .ingest_fact_atomic(&source_permit, &draft(None), None)
@@ -2167,7 +2167,7 @@ async fn stale_source_erase_does_not_lock_transferred_series() {
 
         let mut append_draft = draft(None);
         append_draft.handle = Some(first.handle);
-        let destination_permit = OwnerWritePermit::new_for_tests(destination, AccessKind::Fact);
+        let destination_permit = OwnerWritePermit::new_for_tests(destination, MemoryKind::Fact);
         let mut destination_append = pool.begin().await?;
         sqlx::query("SET LOCAL lock_timeout = '1s'")
             .execute(destination_append.as_mut())
@@ -2359,7 +2359,7 @@ async fn a_refusing_cold_store_leaves_the_purge_mark_for_retry() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests();
         let written = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let t = written.memory_id.into_inner();
@@ -2444,7 +2444,7 @@ async fn cooling_keeps_the_receipt_and_rewinds_the_head_while_erase_takes_both()
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
 
         // Two versions on one handle, each with its own receipt.
@@ -2671,7 +2671,7 @@ async fn forget_overlapping_drain_leaves_no_orphan_head() {
             .await?
             .with_cold(Arc::new(MemoryColdStore));
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         let pool = pg.pool_for_tests().clone();
         let written = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let t = written.memory_id.into_inner();

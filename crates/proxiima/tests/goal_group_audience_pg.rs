@@ -13,8 +13,8 @@ use proxiima_core::verbs::goal_write::{
 use proxiima_core::verbs::query::{EntityKind, QueryRequest};
 use proxiima_core::{
     AuthPath, AuthzContext, DerivedMemory, FactWrite, GoalAudienceGrantInput, GoalHandle,
-    GoalPublicationInput, GroupId, InterpretationSubjectKind, InterpretationV1, MemoryDestination,
-    MemoryId, MemoryTarget, OwnerId, OwnerRoles, PublicationUse, Relation, Role, SeriesHandle,
+    GoalPublicationInput, GroupId, InterpretationV1, MemoryDestination, MemoryId, MemoryKind,
+    MemoryTarget, OwnerId, OwnerRoles, PublicationUse, Relation, Role, SeriesHandle,
     SimpleTextGoalV1, UserId,
 };
 use proxiima_example::NoteV1;
@@ -30,7 +30,7 @@ fn interpretation(claim: &str, evidence: MemoryId) -> InterpretationV1 {
         claim: claim.to_owned(),
         confidence: 90,
         subject_memory_ids: vec![evidence.into_inner()],
-        subject_kinds: vec![InterpretationSubjectKind::Fact],
+        subject_kinds: vec![MemoryKind::Fact],
         model_id: "test".into(),
         client_name: "test".into(),
         client_version: "1".into(),
