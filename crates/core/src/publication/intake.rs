@@ -204,6 +204,8 @@ impl IntakeError {
 ///
 /// `accept` is called one event at a time, and must return within a few
 /// seconds (the runtime gives up on a call after 5 s and retries the event).
+/// A panic in `accept` is treated like an [`IntakeError`]: the record is
+/// released and delivered again later, and the drain keeps running.
 #[async_trait::async_trait]
 pub trait DurableIntake: Send + Sync + std::fmt::Debug {
     /// Durably record an outcome for `event` and return which one.

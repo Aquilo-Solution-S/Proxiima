@@ -31,9 +31,11 @@
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::FutureExt as _;
 #[cfg(test)]
 use proxiima_core::QuiesceGate;
 use proxiima_core::publication::intake::{DurableIntake, ReceivedEvent};
@@ -137,6 +139,8 @@ enum Failure {
     Intake,
     /// `accept` did not return within the timeout.
     TimedOut,
+    /// `accept` panicked.
+    Panicked,
 }
 
 /// What became of one record that did not fail.
@@ -399,14 +403,24 @@ impl Drain {
             () = cancel.cancelled() => return Ok(Flow::HandBack),
             accepted = tokio::time::timeout(
                 self.settings.accept_timeout,
-                self.intake.accept(&event),
+                AssertUnwindSafe(self.intake.accept(&event)).catch_unwind(),
             ) => accepted,
         };
         match accepted {
             // `Accepted` and `Rejected` are both outcomes the intake made
             // durable.
-            Ok(Ok(_decision)) => {}
-            Ok(Err(_)) => return Err(Failure::Intake),
+            Ok(Ok(Ok(_decision))) => {}
+            Ok(Ok(Err(_))) => return Err(Failure::Intake),
+            // Only the host's code is caught: the panic hook has already
+            // printed its message, and the payload stays out of the log.
+            Ok(Err(_panic)) => {
+                tracing::error!(
+                    consumer = %self.consumer,
+                    "the intake panicked on a record; the record is released and will be \
+                     delivered again"
+                );
+                return Err(Failure::Panicked);
+            }
             Err(_) => return Err(Failure::TimedOut),
         }
         if self.hook.after_accept(&record.event_id).await.is_break() {

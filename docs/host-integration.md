@@ -762,7 +762,8 @@ Implement `DurableIntake` in the host and register it with
 `outbox_consumer`. A captured listenable Fact is committed to the outbox in
 the write transaction. A consumer receives it at least once; deduplicate on
 the event id. `Ok(Accepted)` and `Ok(Rejected)` mark a record published, while
-an intake error releases it for retry. Each record is its own `accept` call; the
+an intake error releases it for retry, and so does an `accept` that panics: the
+drain logs it and carries on. Each record is its own `accept` call; the
 marks for a claimed batch are written in one transaction, at the end of the batch
 or after half the lease, whichever is first. No consumer means Facts are still
 captured until the configured pending bound is reached.

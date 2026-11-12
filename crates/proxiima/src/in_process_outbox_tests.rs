@@ -40,6 +40,10 @@ struct TestIntake {
     refuse: AtomicUsize,
     /// Calls, after the refusals, that never return.
     hang: AtomicUsize,
+    /// Calls, after the refusals, that panic.
+    panic: AtomicUsize,
+    /// Every call on an event whose envelope contains this text panics.
+    panic_on: Option<&'static str>,
     /// Every call, in order: the event id and the `delivered_count` it carried.
     calls: Mutex<Vec<(String, u64)>>,
     /// What a deduplicating intake keeps: one entry per id.
@@ -67,6 +71,13 @@ impl DurableIntake for TestIntake {
             .push((event.id.clone(), event.delivered_count));
         if take(&self.refuse) {
             return Err(IntakeError::new("the intake is down"));
+        }
+        assert!(!take(&self.panic), "the intake panics");
+        if let Some(text) = self.panic_on {
+            assert!(
+                !String::from_utf8_lossy(&event.raw).contains(text),
+                "the intake panics on this record"
+            );
         }
         if take(&self.hang) {
             std::future::pending::<()>().await;
@@ -346,6 +357,73 @@ async fn a_fact_written_while_the_intake_fails_is_delivered_once_it_recovers() {
         );
         assert_eq!(intake.kept(), 1);
         assert_eq!(world.state(t).await, "published");
+    })
+    .catch_unwind()
+    .await;
+    world.finish(outcome).await;
+}
+
+#[tokio::test]
+async fn an_intake_that_panics_once_loses_neither_the_drain_nor_the_record() {
+    let intake = Arc::new(TestIntake {
+        panic: AtomicUsize::new(1),
+        ..TestIntake::default()
+    });
+    let Some(world) = World::new(None).await else {
+        return;
+    };
+    let outcome = AssertUnwindSafe(async {
+        let t = capture(&world.built, world.owner, "the intake panics once").await;
+        let (cancel, task) =
+            world.drain(&intake, Settings::new().accept_timeout, Arc::new(Proceed));
+        wait_for_outbox(&world.pool, t, "published").await;
+        assert!(!task.is_finished(), "the panic did not end the drain");
+        cancel.cancel();
+        task.await.expect("drain joins");
+
+        let id = intake.calls()[0].0.clone();
+        assert_eq!(
+            intake.calls(),
+            vec![(id.clone(), 1), (id, 2)],
+            "the panicked delivery counted as an attempt; the retry says so"
+        );
+        assert_eq!(intake.kept(), 1);
+    })
+    .catch_unwind()
+    .await;
+    world.finish(outcome).await;
+}
+
+#[tokio::test]
+async fn a_record_whose_delivery_always_panics_does_not_hold_back_the_next() {
+    let intake = Arc::new(TestIntake {
+        panic_on: Some("poisoned"),
+        ..TestIntake::default()
+    });
+    let Some(world) = World::new(None).await else {
+        return;
+    };
+    let outcome = AssertUnwindSafe(async {
+        let poisoned = capture(&world.built, world.owner, "poisoned").await;
+        let fine = capture(&world.built, world.owner, "fine").await;
+        let (cancel, task) =
+            world.drain(&intake, Settings::new().accept_timeout, Arc::new(Proceed));
+        wait_for_outbox(&world.pool, fine, "published").await;
+        // The poisoned record is attempted again after the panic: the drain
+        // that survived it is the one making this call.
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while intake.calls().iter().filter(|call| call.1 >= 2).count() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the poisoned record is delivered again");
+        assert!(!task.is_finished(), "the panics did not end the drain");
+        cancel.cancel();
+        task.await.expect("drain joins");
+
+        assert_eq!(world.state(poisoned).await, "pending");
+        assert_eq!(intake.kept(), 1, "only the fine record was kept");
     })
     .catch_unwind()
     .await;
