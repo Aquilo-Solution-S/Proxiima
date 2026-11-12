@@ -1144,3 +1144,53 @@ pub async fn install_sidecar(
         .await
         .map_err(|err| StorageError::Unavailable(err.to_string()))
 }
+
+/// The owner `memory` is stored under, as the administrator sees it: what a
+/// refused or completed transfer leaves behind.
+///
+/// # Errors
+///
+/// Storage errors from the read, and `NotFound` for an unknown memory.
+pub async fn memory_owner(pool: &sqlx::PgPool, memory: MemoryId) -> Result<OwnerId, StorageError> {
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT owner_id FROM proxiima_core.memory_including_forgotten WHERE t = $1",
+    )
+    .bind(memory.into_inner())
+    .fetch_optional(pool)
+    .await
+    .map_err(crate::error::map_err)?
+    .map(OwnerId::new)
+    .ok_or(StorageError::NotFound)
+}
+
+/// The author category a Goal write recorded in its replay identity
+/// (`user`, `system_operator`, `system_tool` or `external`): the part of the
+/// authorship the store keeps. `goal` is the version the write produced.
+///
+/// # Errors
+///
+/// Storage errors from the read, and `NotFound` when the write left no
+/// declaration or its declaration names no author.
+pub async fn goal_authorship_category(
+    pool: &sqlx::PgPool,
+    goal: proxiima_core::GoalId,
+) -> Result<String, StorageError> {
+    fn find(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::Object(map) => map
+                .get("authorship")
+                .and_then(|author| author.as_str().map(str::to_owned))
+                .or_else(|| map.values().find_map(find)),
+            _ => None,
+        }
+    }
+    let declaration = sqlx::query_scalar::<_, sqlx::types::Json<serde_json::Value>>(
+        "SELECT declaration FROM proxiima_core.goal_replay_declaration WHERE goal_t = $1",
+    )
+    .bind(goal.into_inner())
+    .fetch_optional(pool)
+    .await
+    .map_err(crate::error::map_err)?
+    .ok_or(StorageError::NotFound)?;
+    find(&declaration.0).ok_or(StorageError::NotFound)
+}

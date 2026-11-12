@@ -54,6 +54,12 @@ mod mixed_origins;
 #[path = "core_mcp_pg/goal_tree.rs"]
 mod goal_tree;
 
+#[path = "core_mcp_pg/goal_authorship.rs"]
+mod goal_authorship;
+
+#[path = "core_mcp_pg/goal_decompose_bound.rs"]
+mod goal_decompose_bound;
+
 #[path = "core_mcp_pg/group_goal_work.rs"]
 mod group_goal_work;
 

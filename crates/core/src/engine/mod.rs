@@ -56,11 +56,6 @@ pub use unit_of_work::{
 };
 pub use upload::{UploadCompleted, UploadCompletionExpectation};
 
-#[cfg(test)]
-mod membership_storage;
-#[cfg(test)]
-pub(crate) use membership_storage::MembershipStorage;
-
 pub struct Engine {
     registry: SpiiceRegistryFrozen,
     system_authority_binding: crate::authz::SystemAuthorityBinding,

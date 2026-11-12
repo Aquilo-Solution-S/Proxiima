@@ -235,6 +235,16 @@ impl StoragePorts {
 
     #[cfg(test)]
     #[must_use]
+    pub(crate) fn rejecting_with_owner_access_read(
+        owner_access_read: OwnerAccessReadHandle,
+    ) -> Self {
+        let mut ports = Self::rejecting_for_tests();
+        ports.owner_access_read = owner_access_read;
+        ports
+    }
+
+    #[cfg(test)]
+    #[must_use]
     pub(crate) fn rejecting_with_memory_inspect(memory_inspect: MemoryInspectHandle) -> Self {
         let mut ports = Self::rejecting_for_tests();
         ports.memory_inspect = memory_inspect;

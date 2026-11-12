@@ -1588,49 +1588,6 @@ mod tests {
         );
     }
 
-    /// Kind resolution reuses the owner the read admission returned: each
-    /// origin is handed to the owner lookups once, and its kind is loaded in
-    /// one batch.
-    #[tokio::test]
-    async fn kind_resolution_reuses_the_authorized_home_owner() {
-        let owner = owner();
-        let origin = MemoryId::new(uuid::Uuid::now_v7());
-        let reads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let kind_loads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let engine = Engine::compose_or_panic_for_tests(
-            crate::engine::membership_storage::MembershipStorage {
-                observed_entity_reads: reads.clone(),
-                observed_kind_loads: kind_loads.clone(),
-                member: owner,
-                group: crate::GroupId::new(uuid::Uuid::now_v7()),
-                membership_relation: crate::Relation::Viewer,
-                home_owner: Some(owner),
-                entity_readable: true,
-                memory_kind: Some(EntityKind::Fact),
-                goal_evidence: None,
-                observed_fact_writes: Arc::default(),
-                observed_modify_evidence: Arc::default(),
-                observed_goal_authorship: Arc::default(),
-            }
-            .storage_ports(),
-            |_| {},
-        );
-        let authz = AuthzContext::single_owner(&owner, crate::AuthPath::HostBearer);
-        let origins = [EdgeEndpoint::memory(EntityKind::Fact, origin)];
-        engine
-            .derive_memory(
-                &authz,
-                request(owner, &origins).into_typed().expect("typed"),
-            )
-            .await
-            .expect_err("the test storage refuses every write");
-        assert_eq!(
-            *reads.lock().expect("reads"),
-            [crate::EntityId::Memory(origin)]
-        );
-        assert_eq!(*kind_loads.lock().expect("kind loads"), [vec![origin]]);
-    }
-
     /// Public origin declarations carry row IDs, not caller-selected kinds.
     #[test]
     fn no_public_write_input_accepts_an_edge_kind() {

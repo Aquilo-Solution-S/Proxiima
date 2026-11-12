@@ -577,7 +577,7 @@ fn storage_error(context: &str, err: &StorageError) -> ProtocolError {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::access::{AccessCeiling, AccessKind, EntityId, Relation, Role};
+    use crate::access::{AccessCeiling, AccessKind, Relation, Role};
     use crate::authz::{
         AuthPath, AuthorizationHook, AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome,
         AuthzVeto, OwnerResolver,
@@ -586,7 +586,6 @@ mod tests {
     use crate::error::ProtocolError;
     use crate::{GroupId, MemoryId, OwnerId, SpiiceRegistry, UserId};
 
-    use super::super::MembershipStorage;
     use super::Engine;
 
     type ResolvedAuthz = AuthzContext;
@@ -605,73 +604,12 @@ mod tests {
         )
     }
 
-    fn engine_with_ports(storage: MembershipStorage) -> Engine {
-        Engine::compose_or_panic_for_tests(storage.storage_ports(), |_| {})
-    }
-
-    fn engine_from_registry_and_storage(
-        registry: SpiiceRegistry,
-        storage: MembershipStorage,
-    ) -> Engine {
-        Engine::new(
-            registry.freeze_or_panic_for_tests(),
-            storage.storage_ports(),
-        )
-    }
-
     fn owner() -> OwnerId {
         OwnerId::from(UserId::new(uuid::Uuid::now_v7()))
     }
 
     fn group_owner() -> OwnerId {
         OwnerId::from(GroupId::new(uuid::Uuid::now_v7()))
-    }
-
-    fn storage(member: OwnerId, group: GroupId) -> MembershipStorage {
-        storage_with_relation(member, group, Relation::Viewer)
-    }
-
-    fn storage_with_relation(
-        member: OwnerId,
-        group: GroupId,
-        membership_relation: Relation,
-    ) -> MembershipStorage {
-        MembershipStorage {
-            observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            member,
-            group,
-            membership_relation,
-            home_owner: None,
-            entity_readable: false,
-            memory_kind: None,
-            goal_evidence: None,
-            observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
-    }
-
-    fn storage_with_entity(
-        member: OwnerId,
-        group: GroupId,
-        home_owner: Option<OwnerId>,
-        entity_readable: bool,
-    ) -> MembershipStorage {
-        MembershipStorage {
-            observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            member,
-            group,
-            membership_relation: Relation::Viewer,
-            home_owner,
-            entity_readable,
-            memory_kind: None,
-            goal_evidence: None,
-            observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
     }
 
     fn granted_context(owner: &OwnerId) -> ResolvedAuthz {
@@ -810,8 +748,7 @@ mod tests {
     #[tokio::test]
     async fn authorize_write_allows_self_editor() {
         let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage(p, g1));
+        let engine = engine();
         let authz = granted_context(&p);
 
         let permit = engine
@@ -871,7 +808,7 @@ mod tests {
         let p = owner();
         let g1 = GroupId::new(uuid::Uuid::now_v7());
         let g1_owner = OwnerId::from(g1);
-        let engine = engine_with_ports(storage(p, g1));
+        let engine = engine();
         let authz = member_context(&p, g1, Relation::Viewer);
 
         let err = engine
@@ -887,7 +824,7 @@ mod tests {
         let p = owner();
         let g1 = GroupId::new(uuid::Uuid::now_v7());
         let g1_owner = OwnerId::from(g1);
-        let engine = engine_with_ports(storage_with_relation(p, g1, Relation::Editor));
+        let engine = engine();
         let authz = member_context(&p, g1, Relation::Editor);
 
         let permit = engine
@@ -901,10 +838,9 @@ mod tests {
     #[tokio::test]
     async fn authorize_write_veto_denies() {
         let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
         let mut registry = SpiiceRegistry::new();
         registry.add_authorization_hook(Arc::new(VetoHook));
-        let engine = engine_from_registry_and_storage(registry, storage(p, g1));
+        let engine = engine_from_registry(registry);
         let authz = granted_context(&p);
 
         let err = engine
@@ -919,8 +855,7 @@ mod tests {
     #[tokio::test]
     async fn authorize_write_denied_context_forbidden() {
         let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage(p, g1));
+        let engine = engine();
         let authz = AuthzContext::denied_for_owner(&p);
 
         let err = engine
@@ -936,7 +871,7 @@ mod tests {
         let p = owner();
         let g1 = GroupId::new(uuid::Uuid::now_v7());
         let g1_owner = OwnerId::from(g1);
-        let engine = engine_with_ports(storage(p, g1));
+        let engine = engine();
         let authz = member_context(&p, g1, Relation::Viewer);
 
         let read = engine
@@ -997,7 +932,7 @@ mod tests {
         registry.add_authorization_hook(Arc::new(RecordingOwnerHook {
             events: events.clone(),
         }));
-        let engine = engine_from_registry_and_storage(registry, storage(p, g1));
+        let engine = engine_from_registry(registry);
         let authz = member_context(&p, g1, Relation::Viewer);
 
         let read = engine
@@ -1024,7 +959,7 @@ mod tests {
         let g1 = GroupId::new(uuid::Uuid::now_v7());
         let mut registry = SpiiceRegistry::new();
         registry.add_authorization_hook(Arc::new(VetoHook));
-        let engine = engine_from_registry_and_storage(registry, storage(p, g1));
+        let engine = engine_from_registry(registry);
         let authz = member_context(&p, g1, Relation::Viewer);
 
         let read = engine
@@ -1049,7 +984,7 @@ mod tests {
         let g1 = GroupId::new(uuid::Uuid::now_v7());
         let mut registry = SpiiceRegistry::new();
         registry.add_authorization_hook(Arc::new(VetoHook));
-        let engine = engine_from_registry_and_storage(registry, storage(p, g1));
+        let engine = engine_from_registry(registry);
         let authz = member_context(&p, g1, Relation::Viewer);
         let id = MemoryId::new(uuid::Uuid::now_v7());
 
@@ -1155,101 +1090,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorize_entry_read_vetoed_owner_is_not_found() {
-        let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let g1_owner = OwnerId::from(g1);
-        let authz = member_context(&p, g1, Relation::Viewer);
-        let entity = EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7()));
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = SpiiceRegistry::new();
-        registry.add_authorization_hook(Arc::new(VetoOwner(g1_owner)));
-        registry.add_authorization_hook(Arc::new(RecordingOwnerHook {
-            events: events.clone(),
-        }));
-        let vetoed = engine_from_registry_and_storage(
-            registry,
-            storage_with_entity(p, g1, Some(g1_owner), true),
-        );
-        let absent = engine_with_ports(storage_with_entity(p, g1, None, true));
-
-        let vetoed_err = vetoed
-            .authorize_entry_read(&authz, entity)
-            .await
-            .expect_err("a vetoed home owner hides the entry");
-        let absent_err = absent
-            .authorize_entry_read(&authz, entity)
-            .await
-            .expect_err("an absent entry fails closed");
-
-        assert_eq!(vetoed_err.message, super::ENTRY_NOT_FOUND_MESSAGE);
-        assert_eq!(
-            (vetoed_err.code, vetoed_err.message),
-            (absent_err.code, absent_err.message),
-            "a vetoed entry is byte-identical to an absent one"
-        );
-        assert_eq!(
-            *events.lock().expect("recorder lock"),
-            vec![(g1_owner, FACT_READ, AuthzOutcome::DeniedVeto)],
-            "one decision, for the one owner involved, with the entry's real kind"
-        );
-    }
-
-    /// A batch decides each entry on its own, in order, and stops at the
-    /// first refusal: the entries after it are not decided.
-    #[tokio::test]
-    async fn authorize_entry_reads_decide_each_entry_and_stop_at_the_first_refusal() {
-        let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let g1_owner = OwnerId::from(g1);
-        let authz = member_context(&p, g1, Relation::Viewer);
-        let entities = [
-            EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-            EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-            EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-        ];
-        let decisions = |registry: SpiiceRegistry| {
-            engine_from_registry_and_storage(
-                registry,
-                storage_with_entity(p, g1, Some(g1_owner), true),
-            )
-        };
-
-        let allowed_events = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = SpiiceRegistry::new();
-        registry.add_authorization_hook(Arc::new(RecordingOwnerHook {
-            events: allowed_events.clone(),
-        }));
-        let permits = decisions(registry)
-            .authorize_entry_reads(&authz, &entities)
-            .await
-            .expect("every entry is readable");
-        assert_eq!(permits.len(), entities.len());
-        assert_eq!(allowed_events.lock().expect("recorder lock").len(), 3);
-
-        let vetoed_events = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = SpiiceRegistry::new();
-        registry.add_authorization_hook(Arc::new(VetoOwner(g1_owner)));
-        registry.add_authorization_hook(Arc::new(RecordingOwnerHook {
-            events: vetoed_events.clone(),
-        }));
-        let err = decisions(registry)
-            .authorize_entry_reads(&authz, &entities)
-            .await
-            .expect_err("the first entry is vetoed");
-        assert_eq!(err.message, super::ENTRY_NOT_FOUND_MESSAGE);
-        assert_eq!(
-            *vetoed_events.lock().expect("recorder lock"),
-            vec![(g1_owner, FACT_READ, AuthzOutcome::DeniedVeto)],
-            "one decision, and none for the entries after the refusal"
-        );
-    }
-
-    #[tokio::test]
     async fn authorize_read_denied_forbidden() {
         let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage(p, g1));
+        let engine = engine();
         let authz = AuthzContext::denied_for_owner(&p);
 
         let err = engine
@@ -1258,64 +1101,6 @@ mod tests {
             .expect_err("denied context should reject read authorization");
 
         assert_eq!(err.code, ErrorCode::Forbidden);
-    }
-
-    #[tokio::test]
-    async fn authorize_entry_read_ok_when_readable() {
-        let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage_with_entity(p, g1, Some(p), true));
-        let authz = granted_context(&p);
-
-        let permit = engine
-            .authorize_entry_read(
-                &authz,
-                EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-            )
-            .await
-            .expect("readable entity should authorize");
-
-        assert_eq!(permit.owner(), &p);
-        assert_eq!(permit.kind(), crate::EntityKind::Fact);
-    }
-
-    #[tokio::test]
-    async fn authorize_entry_read_absent_is_forbidden() {
-        let p = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage_with_entity(p, g1, None, true));
-        let authz = granted_context(&p);
-
-        let err = engine
-            .authorize_entry_read(
-                &authz,
-                EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-            )
-            .await
-            .expect_err("absent entity should fail closed");
-
-        assert_eq!(err.code, ErrorCode::Forbidden);
-        assert_eq!(err.message, "entry not found");
-    }
-
-    #[tokio::test]
-    async fn authorize_entry_read_unreadable_is_forbidden() {
-        let p = owner();
-        let other = owner();
-        let g1 = GroupId::new(uuid::Uuid::now_v7());
-        let engine = engine_with_ports(storage_with_entity(p, g1, Some(other), false));
-        let authz = granted_context(&p);
-
-        let err = engine
-            .authorize_entry_read(
-                &authz,
-                EntityId::Memory(MemoryId::new(uuid::Uuid::now_v7())),
-            )
-            .await
-            .expect_err("unreadable entity should fail closed");
-
-        assert_eq!(err.code, ErrorCode::Forbidden);
-        assert_eq!(err.message, "entry not found");
     }
 
     #[tokio::test]

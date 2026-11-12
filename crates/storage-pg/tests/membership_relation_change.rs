@@ -437,11 +437,31 @@ async fn a_veto_on_either_change_leaves_the_membership_unchanged() {
             vec![Relation::Admin],
             "a veto on {vetoed:?} must leave the membership unchanged"
         );
-        let seen = h.seen();
+        // A veto on Remove(from) stops before Add(to) is asked; a veto on
+        // Add(to) follows exactly one allowed Remove(from).
+        let expected = match vetoed.0 {
+            MembershipChange::Remove => vec![(
+                MembershipChange::Remove,
+                Relation::Admin,
+                AuthzOutcome::DeniedVeto,
+            )],
+            MembershipChange::Add => vec![
+                (
+                    MembershipChange::Remove,
+                    Relation::Admin,
+                    AuthzOutcome::Allowed,
+                ),
+                (
+                    MembershipChange::Add,
+                    Relation::Viewer,
+                    AuthzOutcome::DeniedVeto,
+                ),
+            ],
+        };
         assert_eq!(
-            seen.last()
-                .map(|(change, relation, outcome)| (*change, *relation, *outcome)),
-            Some((vetoed.0, vetoed.1, AuthzOutcome::DeniedVeto))
+            h.seen(),
+            expected,
+            "observations after a veto on {vetoed:?}"
         );
         h.finish().await;
     }
@@ -456,6 +476,15 @@ async fn a_veto_on_either_change_leaves_the_membership_unchanged() {
         .expect_err("a veto refuses the removal");
     assert_eq!(err.code, ErrorCode::Forbidden);
     assert_eq!(h.relations(member).await, vec![Relation::Viewer]);
+    assert_eq!(
+        h.seen(),
+        vec![(
+            MembershipChange::Remove,
+            Relation::Viewer,
+            AuthzOutcome::DeniedVeto
+        )],
+        "exactly one denied observation"
+    );
     h.finish().await;
 }
 

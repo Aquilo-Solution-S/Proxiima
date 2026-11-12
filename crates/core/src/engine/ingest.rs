@@ -834,17 +834,13 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
     use crate::AuthzContext;
-    use crate::engine::MembershipStorage;
     use crate::error::ErrorCode;
     use crate::ids::UserId;
     use crate::{
-        AuthPath, FactPayload, GroupId, OwnerId, PayloadKeyBuilder, PayloadReference,
-        ReferenceBinding, Relation, SchemaId, SpiiceRegistry,
+        AuthPath, FactPayload, OwnerId, PayloadKeyBuilder, PayloadReference, ReferenceBinding,
+        SchemaId, SpiiceRegistry,
     };
     use serde::{Deserialize, Serialize};
 
@@ -941,162 +937,11 @@ mod tests {
         FactWriteCommand::from_payload("test/references", payload)
     }
 
-    fn reference_engine(
-        owner: OwnerId,
-        home_owner: Option<OwnerId>,
-        entity_readable: bool,
-        memory_kind: Option<EntityKind>,
-        observed_fact_writes: Arc<AtomicUsize>,
-    ) -> Engine {
-        observed_reference_engine(
-            owner,
-            home_owner,
-            entity_readable,
-            memory_kind,
-            observed_fact_writes,
-        )
-        .0
-    }
-
-    /// `reference_engine` plus the two admission-path observations: the
-    /// entities handed to `visible_home_owner` and the id batch of each
-    /// `load_memory_kinds` call. Round-trip counts are a contract of this
-    /// path, so a test can assert them rather than infer them from behaviour.
-    #[allow(clippy::type_complexity)]
-    fn observed_reference_engine(
-        owner: OwnerId,
-        home_owner: Option<OwnerId>,
-        entity_readable: bool,
-        memory_kind: Option<EntityKind>,
-        observed_fact_writes: Arc<AtomicUsize>,
-    ) -> (
-        Engine,
-        Arc<std::sync::Mutex<Vec<crate::EntityId>>>,
-        Arc<std::sync::Mutex<Vec<Vec<MemoryId>>>>,
-    ) {
-        let observed_entity_reads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let observed_kind_loads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let engine = Engine::compose_or_panic_for_tests(
-            MembershipStorage {
-                observed_entity_reads: observed_entity_reads.clone(),
-                observed_kind_loads: observed_kind_loads.clone(),
-                member: owner,
-                group: GroupId::new(uuid::Uuid::now_v7()),
-                membership_relation: Relation::Viewer,
-                home_owner,
-                entity_readable,
-                memory_kind,
-                goal_evidence: None,
-                observed_fact_writes,
-                observed_modify_evidence: Arc::new(std::sync::Mutex::new(None)),
-                observed_goal_authorship: Arc::new(std::sync::Mutex::new(Vec::new())),
-            }
-            .storage_ports(),
+    fn reference_engine() -> Engine {
+        Engine::compose_or_panic_for_tests(
+            crate::StoragePorts::rejecting_for_tests(),
             SpiiceRegistry::add_fact_schema_or_panic_for_tests::<ReferencedTestFact>,
-        );
-        (engine, observed_entity_reads, observed_kind_loads)
-    }
-
-    #[tokio::test]
-    async fn fact_payload_refs_are_the_authorized_links() {
-        let owner = test_owner();
-        let fact = MemoryId::new(uuid::Uuid::now_v7());
-        let goal = crate::GoalId::new(uuid::Uuid::now_v7());
-        let payload = ReferencedTestFact {
-            fact_id: "typed-links".to_owned(),
-            targets: vec![
-                EdgeEndpoint::memory(EntityKind::Fact, fact),
-                EdgeEndpoint::goal(goal),
-                EdgeEndpoint::memory(EntityKind::Fact, fact),
-            ],
-        };
-        let sidecars = [SidecarPayload::fact(payload.clone())];
-        let engine = reference_engine(
-            owner,
-            Some(owner),
-            true,
-            Some(EntityKind::Fact),
-            Arc::new(AtomicUsize::new(0)),
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-
-        let authorized = engine
-            .authorize_fact_ingest(&authz, referenced_draft(&payload), &sidecars)
-            .await
-            .expect("readable typed targets should authorize");
-
-        assert_eq!(
-            authorized.links().references(),
-            &[
-                EdgeEndpoint::memory(EntityKind::Fact, fact),
-                EdgeEndpoint::goal(goal),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn duplicate_additional_refs_are_admitted_once_and_batch_their_kind_load() {
-        let owner = test_owner();
-        let first = MemoryId::new(uuid::Uuid::now_v7());
-        let second = MemoryId::new(uuid::Uuid::now_v7());
-        let third = MemoryId::new(uuid::Uuid::now_v7());
-        // `additional_references` reaches the admission loop exactly as the caller
-        // wrote it — unlike payload references, which `authorize_fact_node_links`
-        // folds before it delegates — so this is the path a duplicate can
-        // actually reach.
-        let payload = ReferencedTestFact {
-            fact_id: "duplicate-refs".to_owned(),
-            targets: Vec::new(),
-        };
-        let sidecars = [SidecarPayload::fact(payload.clone())];
-        let (engine, entity_reads, kind_loads) = observed_reference_engine(
-            owner,
-            Some(owner),
-            true,
-            Some(EntityKind::Fact),
-            Arc::new(AtomicUsize::new(0)),
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-
-        let authorized = engine
-            .authorize_fact_ingest(
-                &authz,
-                referenced_draft(&payload).with_additional_references(vec![
-                    EdgeEndpoint::memory(EntityKind::Fact, first),
-                    EdgeEndpoint::memory(EntityKind::Fact, second),
-                    EdgeEndpoint::memory(EntityKind::Fact, first),
-                    EdgeEndpoint::memory(EntityKind::Fact, third),
-                ]),
-                &sidecars,
-            )
-            .await
-            .expect("readable references of the declared kind should authorize");
-
-        assert!(authorized.links().origins().is_empty());
-        assert_eq!(
-            authorized.links().references(),
-            &[
-                EdgeEndpoint::memory(EntityKind::Fact, first),
-                EdgeEndpoint::memory(EntityKind::Fact, second),
-                EdgeEndpoint::memory(EntityKind::Fact, third),
-            ]
-        );
-        // Four declarations, three distinct endpoints: the repeat is admitted
-        // once, so it costs one entry read rather than two.
-        assert_eq!(
-            entity_reads.lock().expect("entity reads").as_slice(),
-            &[
-                crate::EntityId::Memory(first),
-                crate::EntityId::Memory(second),
-                crate::EntityId::Memory(third),
-            ]
-        );
-        // One owner, so exactly one kind load carrying every distinct target,
-        // rather than one load per declaration.
-        assert_eq!(
-            kind_loads.lock().expect("kind loads").as_slice(),
-            &[vec![first, second, third]]
-        );
+        )
     }
 
     #[tokio::test]
@@ -1109,13 +954,7 @@ mod tests {
             targets: vec![EdgeEndpoint::memory(EntityKind::Fact, typed)],
         };
         let sidecars = [SidecarPayload::fact(payload.clone())];
-        let engine = reference_engine(
-            owner,
-            Some(owner),
-            true,
-            Some(EntityKind::Fact),
-            Arc::new(AtomicUsize::new(0)),
-        );
+        let engine = reference_engine();
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
 
         let error = engine
@@ -1131,106 +970,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorized_sidecars_cannot_change_reference_declaration() {
-        let owner = test_owner();
-        let first = MemoryId::new(uuid::Uuid::now_v7());
-        let second = MemoryId::new(uuid::Uuid::now_v7());
-        let admitted = ReferencedTestFact {
-            fact_id: "bound-sidecars".to_owned(),
-            targets: vec![EdgeEndpoint::memory(EntityKind::Fact, first)],
-        };
-        let admitted_sidecars = [SidecarPayload::fact(admitted.clone())];
-        let observed = Arc::new(AtomicUsize::new(0));
-        let engine = reference_engine(
-            owner,
-            Some(owner),
-            true,
-            Some(EntityKind::Fact),
-            observed.clone(),
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-        let authorized = engine
-            .authorize_fact_ingest(&authz, referenced_draft(&admitted), &admitted_sidecars)
-            .await
-            .expect("the original declaration should authorize");
-
-        let bound = authorized
-            .sidecar_payloads()
-            .first()
-            .expect("authorization binds the typed Fact sidecar")
-            .references();
-        assert_eq!(
-            bound[0].target,
-            EdgeEndpoint::memory(EntityKind::Fact, first)
-        );
-        assert_ne!(
-            bound[0].target,
-            EdgeEndpoint::memory(EntityKind::Fact, second)
-        );
-        assert_eq!(observed.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn fact_reference_wrong_stored_kind_stops_before_port() {
-        let owner = test_owner();
-        let target = MemoryId::new(uuid::Uuid::now_v7());
-        let payload = ReferencedTestFact {
-            fact_id: "wrong-kind".to_owned(),
-            targets: Vec::new(),
-        };
-        let observed = Arc::new(AtomicUsize::new(0));
-        let engine = reference_engine(
-            owner,
-            Some(owner),
-            true,
-            Some(EntityKind::Abstraction),
-            observed.clone(),
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-
-        let error = engine
-            .fact_ingest(
-                &authz,
-                referenced_draft(&payload).with_refs(vec![target.into_inner()]),
-            )
-            .await
-            .expect_err("a raw Fact endpoint must match the stored kind");
-
-        assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert_eq!(observed.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn fact_reference_unreadable_stops_before_port() {
-        let owner = test_owner();
-        let target = MemoryId::new(uuid::Uuid::now_v7());
-        let payload = ReferencedTestFact {
-            fact_id: "unreadable".to_owned(),
-            targets: Vec::new(),
-        };
-        let observed = Arc::new(AtomicUsize::new(0));
-        let engine = reference_engine(
-            owner,
-            Some(owner),
-            false,
-            Some(EntityKind::Fact),
-            observed.clone(),
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-
-        let error = engine
-            .fact_ingest(
-                &authz,
-                referenced_draft(&payload).with_refs(vec![target.into_inner()]),
-            )
-            .await
-            .expect_err("an unreadable target must fail before persistence");
-
-        assert_eq!(error.code, ErrorCode::Forbidden);
-        assert_eq!(observed.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
     async fn uow_session_visible_fact_reference_checks_kind() {
         let owner = test_owner();
         let target = MemoryId::new(uuid::Uuid::now_v7());
@@ -1239,7 +978,7 @@ mod tests {
             targets: vec![EdgeEndpoint::memory(EntityKind::Fact, target)],
         };
         let sidecars = [SidecarPayload::fact(payload.clone())];
-        let engine = reference_engine(owner, None, false, None, Arc::new(AtomicUsize::new(0)));
+        let engine = reference_engine();
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
 
         let error = engine
@@ -1263,8 +1002,7 @@ mod tests {
             fact_id: "wrong-source".to_owned(),
             targets: Vec::new(),
         };
-        let observed = Arc::new(AtomicUsize::new(0));
-        let engine = reference_engine(owner, None, false, None, observed.clone());
+        let engine = reference_engine();
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
         let mut draft = referenced_draft(&payload);
         draft.kind = crate::MemoryKind::Abstraction;
@@ -1275,7 +1013,6 @@ mod tests {
             .expect_err("a non-Fact source must not mint a Fact witness");
 
         assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert_eq!(observed.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
@@ -1285,8 +1022,7 @@ mod tests {
             fact_id: "malformed-goal".to_owned(),
             targets: Vec::new(),
         };
-        let observed = Arc::new(AtomicUsize::new(0));
-        let engine = reference_engine(owner, None, false, None, observed.clone());
+        let engine = reference_engine();
         let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
         let malformed = EdgeEndpoint {
             kind: EntityKind::Fact,
@@ -1302,7 +1038,6 @@ mod tests {
             .expect_err("a malformed Goal endpoint must fail before persistence");
 
         assert_eq!(error.code, ErrorCode::InvalidArgument);
-        assert_eq!(observed.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

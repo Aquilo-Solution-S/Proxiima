@@ -1114,7 +1114,6 @@ fn format_goal_write_output(_ctx: &McpToolCtx, outcome: &GoalWriteOutcome) -> Go
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::MembershipStorage;
     use crate::mcp::McpAuthorContext;
     use crate::{
         AuthPath, AuthzContext, MemoryId, OwnerId, SpiiceRegistry, SpiiceServices, UserId,
@@ -1141,52 +1140,6 @@ mod tests {
         }
     }
 
-    fn operator_recording_ctx() -> (
-        McpToolCtx,
-        std::sync::Arc<std::sync::Mutex<Vec<GoalAuthorship>>>,
-        MemoryId,
-    ) {
-        let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let target = MemoryId::new(uuid::Uuid::now_v7());
-        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let storage = MembershipStorage {
-            observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            member: owner,
-            group: crate::GroupId::new(uuid::Uuid::now_v7()),
-            membership_relation: crate::Relation::Viewer,
-            home_owner: Some(owner),
-            entity_readable: true,
-            memory_kind: Some(crate::EntityKind::Perspective),
-            goal_evidence: None,
-            observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            observed_goal_authorship: observed.clone(),
-        };
-        let engine = std::sync::Arc::new(crate::Engine::compose_or_panic_for_tests(
-            storage.storage_ports(),
-            |_| {},
-        ));
-        let authz = crate::AuthzContext::single_owner(&owner, crate::AuthPath::HostBearer);
-        let ctx = McpToolCtx {
-            owner,
-            authz,
-            registry: std::sync::Arc::new(crate::SpiiceRegistry::new().freeze_or_panic_for_tests()),
-            author: McpAuthorContext {
-                model_id: "test-model".into(),
-                trusted_model_id: None,
-                client_name: "test-client".into(),
-                client_version: "1".into(),
-                caller_self_perspective: Some(target),
-            },
-            caller_self_perspective: Some(target),
-            services: crate::SpiiceServices::default(),
-            engine: Some(engine),
-            judged: proxiima_core::mcp::JudgedKey::default(),
-        };
-        (ctx, observed, target)
-    }
-
     fn valid_goal_payload_args() -> GoalPayloadArgs {
         GoalPayloadArgs {
             schema_id: "core/simple-text-v1".into(),
@@ -1195,88 +1148,6 @@ mod tests {
             text: "test goal body".into(),
             body: serde_json::json!({}),
         }
-    }
-
-    #[tokio::test]
-    async fn direct_goal_actions_forward_operator_authorship() {
-        let (ctx, observed, target) = operator_recording_ctx();
-        let abstraction = crate::new_memory_uuid(0).to_string();
-        let perspective = target.into_inner().to_string();
-
-        let set_error = goal_set(
-            ctx.clone(),
-            GoalSetArgs {
-                payload: valid_goal_payload_args(),
-                evidence: vec![abstraction.clone()],
-                motivated_by: vec![perspective.clone()],
-                space: None,
-                idempotency_key: Some("operator-set-authorship".into()),
-            },
-        )
-        .await
-        .expect_err("recording storage rejects the test write after capture");
-        assert!(
-            matches!(set_error, McpToolError::Protocol(ref error) if error.code == crate::error::ErrorCode::Internal)
-        );
-
-        let modify_error = goal_modify(
-            ctx.clone(),
-            GoalModifyArgs {
-                goal: (crate::GoalId::new(uuid::Uuid::now_v7()))
-                    .into_inner()
-                    .to_string(),
-                payload: valid_goal_payload_args(),
-                evidence: Some(vec![abstraction.clone()]),
-                motivated_by: None,
-                space: None,
-                idempotency_key: Some("operator-modify-authorship".into()),
-            },
-        )
-        .await
-        .expect_err("recording storage rejects the test write after capture");
-        assert!(
-            matches!(modify_error, McpToolError::Protocol(ref error) if error.code == crate::error::ErrorCode::Internal)
-        );
-
-        let decompose_error = goal_decompose(
-            ctx.clone(),
-            GoalDecomposeArgs {
-                parent_goal: (crate::GoalId::new(uuid::Uuid::now_v7()))
-                    .into_inner()
-                    .to_string(),
-                children: vec![ChildGoalInput {
-                    payload: valid_goal_payload_args(),
-                    evidence: vec![abstraction],
-                }],
-                motivated_by: vec![perspective],
-                space: None,
-                idempotency_key: "operator-decompose-authorship".into(),
-            },
-        )
-        .await
-        .expect_err("recording storage rejects the test write after capture");
-        assert!(
-            matches!(decompose_error, McpToolError::Protocol(ref error) if error.code == crate::error::ErrorCode::Internal)
-        );
-
-        let authorships = observed
-            .lock()
-            .expect("goal authorship recorder lock")
-            .clone();
-        let prompts = authorships
-            .iter()
-            .map(|authorship| match authorship {
-                GoalAuthorship::System(SystemOrigin::Operator { prompt_version, .. }) => {
-                    prompt_version.as_str()
-                }
-                other => panic!("expected operator authorship, got {other:?}"),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            prompts,
-            vec!["goal_set", "goal_modify", "goal_decompose"],
-            "direct MCP Goal actions must retain their operator provenance"
-        );
     }
 
     /// `children` valid children under a fresh parent, keyed by `root`;
@@ -1311,7 +1182,8 @@ mod tests {
     /// accepted when few children keep every child key short enough.
     #[tokio::test]
     async fn decompose_root_key_one_over_bound_is_refused_before_children() {
-        let (ctx, observed, target) = operator_recording_ctx();
+        let ctx = test_ctx();
+        let target = MemoryId::new(uuid::Uuid::now_v7());
         for (children, bad_first) in [(50, true), (50, false), (1, true), (1, false)] {
             let err = goal_decompose(
                 ctx.clone(),
@@ -1325,13 +1197,6 @@ mod tests {
                 "{children} children, bad first evidence {bad_first}: {err:?}"
             );
         }
-        assert!(
-            observed
-                .lock()
-                .expect("goal authorship recorder lock")
-                .is_empty(),
-            "no decompose reached the engine"
-        );
     }
 
     #[test]
@@ -1351,31 +1216,6 @@ mod tests {
         );
     }
 
-    /// The bound is exact: a 162-char root with the maximum number of
-    /// children builds every child key and reaches the engine.
-    #[tokio::test]
-    async fn decompose_root_key_at_bound_with_max_children_is_accepted() {
-        let (ctx, observed, target) = operator_recording_ctx();
-        let err = goal_decompose(
-            ctx,
-            decompose_args("k".repeat(162), MAX_CHILD_GOALS, false, target),
-        )
-        .await
-        .expect_err("recording storage rejects the test write after capture");
-        assert!(
-            matches!(err, McpToolError::Protocol(ref error) if error.code == crate::error::ErrorCode::Internal),
-            "{err:?}"
-        );
-        assert_eq!(
-            observed
-                .lock()
-                .expect("goal authorship recorder lock")
-                .len(),
-            1,
-            "all 50 child keys were built and the decompose reached storage"
-        );
-    }
-
     #[tokio::test]
     async fn goal_evidence_rejects_prefixed_ids_before_storage() {
         let ctx = test_ctx();
@@ -1385,6 +1225,29 @@ mod tests {
                 .await
                 .expect_err("bare UUID required");
             assert!(matches!(err, McpToolError::InvalidInput(_)), "{err}");
+        }
+    }
+
+    /// The authorship every direct Goal action hands storage: a system
+    /// operator that carries the request's model and the action's prompt
+    /// version, and a different operator per prompt version.
+    #[test]
+    fn operator_authorship_carries_the_model_and_the_prompt_version() {
+        let ctx = test_ctx();
+        let mut operators = std::collections::HashSet::new();
+        for prompt in ["goal_set", "goal_modify", "goal_decompose"] {
+            let GoalAuthorship::System(SystemOrigin::Operator {
+                operator_id,
+                prompt_version,
+                model_id,
+                ..
+            }) = system_operator_authorship(&ctx, prompt)
+            else {
+                panic!("{prompt}: expected operator authorship");
+            };
+            assert_eq!(prompt_version.as_str(), prompt);
+            assert_eq!(model_id.as_str(), ctx.author.model_id);
+            assert!(operators.insert(operator_id), "{prompt}: operator reused");
         }
     }
 }

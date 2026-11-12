@@ -695,103 +695,9 @@ fn with_parent_caller<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use super::super::MembershipStorage;
-    use crate::access::{Relation, Role};
-    use crate::authz::{
-        AuthPath, AuthorizationHook, AuthzContext, AuthzInput, AuthzOperation, MembershipChange,
-    };
-    use crate::{EntityId, ErrorCode, GroupId, MemoryId, OwnerId, SpiiceRegistry, UserId};
+    use crate::authz::{AuthPath, AuthzContext};
+    use crate::{ErrorCode, GroupId, OwnerId, SpiiceRegistry, UserId};
     use uuid::Uuid;
-
-    /// The destination gate has two paths and they must never merge.
-    ///
-    /// When the request context already carries a resolved role for the
-    /// destination, that role is the answer — including when the answer is
-    /// no. Falling through to the membership re-read on a refusal would let
-    /// a stored Admin row overrule a host that deliberately handed out a
-    /// narrowed role, and the narrowed served surface is the only reason
-    /// resolving the destination out of band is safe at all.
-    ///
-    /// The control is what gives the refusals meaning. The SAME storage,
-    /// holding a real Admin membership on the destination the whole time,
-    /// is consulted when the context is silent — consent is granted, the
-    /// transfer gets past the gate, and it dies further down on the
-    /// double's rejecting write with `Internal`. So `Forbidden` below can
-    /// only mean the lookup never ran.
-    #[tokio::test]
-    async fn a_carried_role_that_cannot_manage_never_falls_through_to_the_membership_row() {
-        let subject = UserId::new(Uuid::now_v7());
-        let destination_group = GroupId::new(Uuid::now_v7());
-        let destination = OwnerId::from(destination_group);
-        let entity = EntityId::Memory(MemoryId::new(Uuid::now_v7()));
-
-        let engine = || {
-            crate::Engine::new(
-                SpiiceRegistry::new().freeze_or_panic_for_tests(),
-                MembershipStorage {
-                    observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    member: OwnerId::from(subject),
-                    group: destination_group,
-                    // Real, sufficient, receiving-side consent, sitting
-                    // in storage for every case in this test.
-                    membership_relation: Relation::Admin,
-                    home_owner: Some(OwnerId::from(subject)),
-                    entity_readable: true,
-                    memory_kind: None,
-                    goal_evidence: None,
-                    observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
-                        0,
-                    )),
-                    observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                    observed_goal_authorship: std::sync::Arc::new(
-                        std::sync::Mutex::new(Vec::new()),
-                    ),
-                }
-                .storage_ports(),
-            )
-        };
-
-        let silent = AuthzContext::for_subject(subject, AuthPath::HostBearer);
-        let control = engine()
-            .transfer_to_owner(&silent, entity, destination)
-            .await
-            .expect_err("the storage double rejects the transfer write itself");
-        assert_eq!(
-            control.code,
-            ErrorCode::Internal,
-            "a context silent about the destination must reach the membership row and be \
-             consented — otherwise the refusals below prove nothing"
-        );
-
-        // Present but insufficient. `Role::personal()` is the sharp one: it
-        // may write Goals, so only `manages()` separates it from Admin.
-        for role in [
-            Role::viewer(),
-            Role::ingest(),
-            Role::editor(),
-            Role::personal(),
-        ] {
-            let carried = AuthzContext::for_subject_with_role(
-                subject,
-                [(destination, role)],
-                AuthPath::HostBearer,
-            );
-            let err = engine()
-                .transfer_to_owner(&carried, entity, destination)
-                .await
-                .expect_err("a carried role that cannot manage must refuse");
-            assert_eq!(
-                err.code,
-                ErrorCode::Forbidden,
-                "carried role {role:?} must refuse outright; Internal here would mean the \
-                 gate fell through to the membership lookup and the stored Admin row \
-                 overruled the narrowed role"
-            );
-        }
-    }
 
     #[test]
     fn access_admin_bootstrap_group_admin_is_not_mcp_exposed() {
@@ -833,364 +739,6 @@ mod tests {
             .await
             .expect_err("non-operator caller must not bootstrap group admin");
         assert_eq!(err.code, ErrorCode::Forbidden);
-    }
-
-    #[derive(Debug)]
-    struct RecordingMembershipHook {
-        changes: Arc<Mutex<Vec<MembershipChange>>>,
-    }
-
-    impl AuthorizationHook for RecordingMembershipHook {
-        fn observe(&self, input: &AuthzInput<'_>, _outcome: crate::authz::AuthzOutcome) {
-            if let AuthzOperation::Membership { change, .. } = &input.operation {
-                self.changes.lock().expect("changes lock").push(*change);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn access_admin_membership_hook_records_add_and_remove_direction() {
-        let group = GroupId::new(Uuid::now_v7());
-        let admin = UserId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let changes = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = SpiiceRegistry::new();
-        registry.add_authorization_hook(Arc::new(RecordingMembershipHook {
-            changes: changes.clone(),
-        }));
-        let engine = crate::Engine::new(
-            registry.freeze_or_panic_for_tests(),
-            MembershipStorage {
-                observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                member: OwnerId::from(member),
-                group,
-                membership_relation: Relation::Viewer,
-                home_owner: None,
-                entity_readable: false,
-                memory_kind: None,
-                goal_evidence: None,
-                observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            }
-            .storage_ports(),
-        );
-        let authz = AuthzContext::for_subject_with_role(
-            admin,
-            [(OwnerId::from(group), Role::admin())],
-            AuthPath::HostBearer,
-        );
-
-        let add_err = engine
-            .add_member(&authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("test storage rejects membership writes after hook observation");
-        assert_eq!(add_err.code, ErrorCode::Internal);
-
-        let remove_err = engine
-            .remove_member(&authz, group, member.into())
-            .await
-            .expect_err("test storage rejects membership writes after hook observation");
-        assert_eq!(remove_err.code, ErrorCode::Internal);
-
-        assert_eq!(
-            *changes.lock().expect("changes lock"),
-            vec![MembershipChange::Add, MembershipChange::Remove]
-        );
-    }
-
-    /// Records every membership change it is asked about, with the outcome the
-    /// engine reported, and vetoes one `(change, relation)` pair when told to.
-    #[derive(Debug)]
-    struct RelationHook {
-        veto: Option<(MembershipChange, Relation)>,
-        seen: Arc<Mutex<Vec<(MembershipChange, Relation, crate::authz::AuthzOutcome)>>>,
-    }
-
-    impl AuthorizationHook for RelationHook {
-        fn veto(&self, input: &AuthzInput<'_>) -> Result<(), crate::authz::AuthzVeto> {
-            match (&input.operation, self.veto) {
-                (
-                    AuthzOperation::Membership {
-                        change, relation, ..
-                    },
-                    Some((c, r)),
-                ) if *change == c && *relation == r => {
-                    Err(crate::authz::AuthzVeto("vetoed".into()))
-                }
-                _ => Ok(()),
-            }
-        }
-
-        fn observe(&self, input: &AuthzInput<'_>, outcome: crate::authz::AuthzOutcome) {
-            if let AuthzOperation::Membership {
-                change, relation, ..
-            } = &input.operation
-            {
-                self.seen
-                    .lock()
-                    .expect("seen lock")
-                    .push((*change, *relation, outcome));
-            }
-        }
-    }
-
-    type SeenChanges = Arc<Mutex<Vec<(MembershipChange, Relation, crate::authz::AuthzOutcome)>>>;
-
-    /// An engine over the rejecting membership double, so `Internal` means the
-    /// storage call was reached, and the recording hook.
-    fn relation_engine(
-        group: GroupId,
-        member: UserId,
-        veto: Option<(MembershipChange, Relation)>,
-    ) -> (crate::Engine, SeenChanges) {
-        let seen = SeenChanges::default();
-        let mut registry = SpiiceRegistry::new();
-        registry.add_authorization_hook(Arc::new(RelationHook {
-            veto,
-            seen: seen.clone(),
-        }));
-        let engine = crate::Engine::new(
-            registry.freeze_or_panic_for_tests(),
-            membership_storage_with_home(member, group, None).storage_ports(),
-        );
-        (engine, seen)
-    }
-
-    fn admin_of(group: GroupId) -> AuthzContext {
-        AuthzContext::for_subject_with_role(
-            UserId::new(Uuid::now_v7()),
-            [(OwnerId::from(group), Role::admin())],
-            AuthPath::HostBearer,
-        )
-    }
-
-    #[tokio::test]
-    async fn access_admin_replace_runs_remove_then_add_before_the_storage_call() {
-        use crate::authz::AuthzOutcome::{Allowed, DeniedVeto};
-
-        let group = GroupId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let authz = admin_of(group);
-
-        // No veto: both changes are observed in order, then storage is reached
-        // (the double rejects the write with `Internal`).
-        let (engine, seen) = relation_engine(group, member, None);
-        let err = engine
-            .replace_member_relation(
-                &authz,
-                group,
-                member.into(),
-                Relation::Admin,
-                Relation::Viewer,
-            )
-            .await
-            .expect_err("the double does not implement the replacement, so the default refuses");
-        assert_eq!(err.code, ErrorCode::Internal);
-        assert!(
-            err.message.contains("replace_group_member_relation"),
-            "the refusal names the missing port method: {}",
-            err.message
-        );
-        assert_eq!(
-            *seen.lock().expect("seen lock"),
-            vec![
-                (MembershipChange::Remove, Relation::Admin, Allowed),
-                (MembershipChange::Add, Relation::Viewer, Allowed),
-            ]
-        );
-
-        // A veto on `Remove(from)` stops before `Add(to)` is asked and before storage.
-        let (engine, seen) = relation_engine(
-            group,
-            member,
-            Some((MembershipChange::Remove, Relation::Admin)),
-        );
-        let err = engine
-            .replace_member_relation(
-                &authz,
-                group,
-                member.into(),
-                Relation::Admin,
-                Relation::Viewer,
-            )
-            .await
-            .expect_err("a veto on Remove(from) must refuse");
-        assert_eq!(err.code, ErrorCode::Forbidden);
-        assert_eq!(
-            *seen.lock().expect("seen lock"),
-            vec![(MembershipChange::Remove, Relation::Admin, DeniedVeto)]
-        );
-
-        // A veto on `Add(to)` refuses after `Remove(from)` was allowed, still before storage.
-        let (engine, seen) = relation_engine(
-            group,
-            member,
-            Some((MembershipChange::Add, Relation::Viewer)),
-        );
-        let err = engine
-            .replace_member_relation(
-                &authz,
-                group,
-                member.into(),
-                Relation::Admin,
-                Relation::Viewer,
-            )
-            .await
-            .expect_err("a veto on Add(to) must refuse");
-        assert_eq!(err.code, ErrorCode::Forbidden);
-        assert_eq!(
-            *seen.lock().expect("seen lock"),
-            vec![
-                (MembershipChange::Remove, Relation::Admin, Allowed),
-                (MembershipChange::Add, Relation::Viewer, DeniedVeto),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn access_admin_replace_refuses_the_same_relation_before_hooks_and_storage() {
-        let group = GroupId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let (engine, seen) = relation_engine(group, member, None);
-
-        let err = engine
-            .replace_member_relation(
-                &admin_of(group),
-                group,
-                member.into(),
-                Relation::Editor,
-                Relation::Editor,
-            )
-            .await
-            .expect_err("from == to is not a change");
-        assert_eq!(
-            err.code,
-            ErrorCode::InvalidArgument,
-            "Internal here would mean the call reached storage: {}",
-            err.message
-        );
-        assert!(
-            seen.lock().expect("seen lock").is_empty(),
-            "no hook is asked about a change that is not one"
-        );
-    }
-
-    #[tokio::test]
-    async fn access_admin_remove_relation_runs_one_remove() {
-        use crate::authz::AuthzOutcome::{Allowed, DeniedVeto};
-
-        let group = GroupId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let authz = admin_of(group);
-
-        let (engine, seen) = relation_engine(group, member, None);
-        let err = engine
-            .remove_member_relation(&authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("the double rejects the write");
-        assert_eq!(err.code, ErrorCode::Internal);
-        assert_eq!(
-            *seen.lock().expect("seen lock"),
-            vec![(MembershipChange::Remove, Relation::Viewer, Allowed)]
-        );
-
-        let (engine, seen) = relation_engine(
-            group,
-            member,
-            Some((MembershipChange::Remove, Relation::Viewer)),
-        );
-        let err = engine
-            .remove_member_relation(&authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("a veto must refuse");
-        assert_eq!(err.code, ErrorCode::Forbidden);
-        assert_eq!(
-            *seen.lock().expect("seen lock"),
-            vec![(MembershipChange::Remove, Relation::Viewer, DeniedVeto)]
-        );
-    }
-
-    /// `authorize_owner_admin` passes any role that administers; only
-    /// `require_group_manage` separates an administering role that does not
-    /// manage from Admin. The control is the same engine with Admin reaching storage.
-    #[tokio::test]
-    async fn access_admin_relation_methods_require_manage_not_just_write() {
-        use crate::access::AccessCeiling;
-
-        let group = GroupId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let write_only = Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective)
-            .expect("write==read is a valid role")
-            .with_goals(crate::GoalAccess::Works)
-            .administering();
-        let write_only_authz = AuthzContext::for_subject_with_role(
-            UserId::new(Uuid::now_v7()),
-            [(OwnerId::from(group), write_only)],
-            AuthPath::HostBearer,
-        );
-        let (engine, seen) = relation_engine(group, member, None);
-
-        let denied = engine
-            .replace_member_relation(
-                &write_only_authz,
-                group,
-                member.into(),
-                Relation::Admin,
-                Relation::Viewer,
-            )
-            .await
-            .expect_err("write-without-manage must not replace a relation");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-        let denied = engine
-            .remove_member_relation(&write_only_authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("write-without-manage must not remove a relation");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-        assert!(
-            seen.lock().expect("seen lock").is_empty(),
-            "the manage gate refuses before any hook runs"
-        );
-
-        let admin = admin_of(group);
-        let past_gate = engine
-            .replace_member_relation(
-                &admin,
-                group,
-                member.into(),
-                Relation::Admin,
-                Relation::Viewer,
-            )
-            .await
-            .expect_err("the double rejects the write after the gate opens");
-        assert_eq!(past_gate.code, ErrorCode::Internal);
-        let past_gate = engine
-            .remove_member_relation(&admin, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("the double rejects the write after the gate opens");
-        assert_eq!(past_gate.code, ErrorCode::Internal);
-    }
-
-    fn membership_storage_with_home(
-        member: UserId,
-        group: GroupId,
-        home_owner: Option<OwnerId>,
-    ) -> MembershipStorage {
-        MembershipStorage {
-            observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            member: OwnerId::from(member),
-            group,
-            membership_relation: Relation::Viewer,
-            home_owner,
-            entity_readable: true,
-            memory_kind: None,
-            goal_evidence: None,
-            observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
     }
 
     #[tokio::test]
@@ -1240,321 +788,79 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn access_admin_transfer_collapses_missing_and_foreign_to_not_found() {
-        let caller = UserId::new(Uuid::now_v7());
-        let source_group = GroupId::new(Uuid::now_v7());
-        let destination = OwnerId::from(GroupId::new(Uuid::now_v7()));
-        let entity = EntityId::Memory(MemoryId::new(Uuid::now_v7()));
-        let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
+    /// Stored membership that would consent: an Admin row on `group`.
+    #[derive(Debug)]
+    struct AdminOn(GroupId);
 
-        let missing = crate::Engine::new(
-            SpiiceRegistry::new().freeze_or_panic_for_tests(),
-            membership_storage_with_home(caller, source_group, None).storage_ports(),
-        )
-        .transfer_to_owner(&authz, entity, destination)
-        .await
-        .expect_err("an absent entity must not be transferable");
+    #[async_trait::async_trait]
+    impl crate::OwnerAccessReadPort for AdminOn {
+        async fn resolve_membership(
+            &self,
+            _owner_scope: Option<&crate::OwnerScope>,
+            _member: &OwnerId,
+        ) -> Result<Vec<crate::MembershipRow>, crate::StorageError> {
+            Ok(vec![crate::MembershipRow {
+                group: self.0,
+                role: crate::Role::admin(),
+            }])
+        }
 
-        let foreign_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        let mut foreign_storage =
-            membership_storage_with_home(caller, source_group, Some(foreign_owner));
-        // The storage double models a real row outside the caller's read set.
-        // The old bare home-owner lookup returned it and leaked Forbidden;
-        // the visibility lookup must collapse it to the same miss as above.
-        foreign_storage.entity_readable = false;
-        let foreign = crate::Engine::new(
-            SpiiceRegistry::new().freeze_or_panic_for_tests(),
-            foreign_storage.storage_ports(),
-        )
-        .transfer_to_owner(&authz, entity, destination)
-        .await
-        .expect_err("a foreign entity must be indistinguishable from absent");
+        async fn visible_home_owner(
+            &self,
+            _owner_scope: Option<&crate::OwnerScope>,
+            _entity: crate::EntityId,
+            _read_owners: &[OwnerId],
+        ) -> Result<
+            Option<(OwnerId, crate::EntityKind, Option<crate::SchemaId>)>,
+            crate::StorageError,
+        > {
+            Ok(None)
+        }
 
-        assert_eq!(missing.code, ErrorCode::NotFound);
-        assert_eq!(foreign.code, ErrorCode::NotFound);
-        assert_eq!(missing.message, foreign.message);
-    }
-
-    #[tokio::test]
-    async fn access_admin_membership_and_transfer_require_manage_not_just_write() {
-        use crate::access::AccessCeiling;
-
-        let group = GroupId::new(Uuid::now_v7());
-        let group_owner = OwnerId::from(group);
-        let caller = UserId::new(Uuid::now_v7());
-        let member = UserId::new(Uuid::now_v7());
-        let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
-
-        // Administers (satisfies `authorize_owner_admin`) but manage == false.
-        let write_only = Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective)
-            .expect("write==read is a valid role")
-            .with_goals(crate::GoalAccess::Works)
-            .administering();
-        let write_only_authz = AuthzContext::for_subject_with_role(
-            caller,
-            [(group_owner, write_only)],
-            AuthPath::HostBearer,
-        );
-        let destination = GroupId::new(Uuid::now_v7());
-        let destination_owner = OwnerId::from(destination);
-        let admin_authz = AuthzContext::for_subject_with_role(
-            caller,
-            [
-                (group_owner, Role::admin()),
-                (destination_owner, Role::admin()),
-            ],
-            AuthPath::HostBearer,
-        );
-
-        // add_member: write-without-manage is denied before touching storage.
-        let engine = crate::Engine::new(
-            SpiiceRegistry::new().freeze_or_panic_for_tests(),
-            membership_storage_with_home(member, group, Some(group_owner)).storage_ports(),
-        );
-        let denied = engine
-            .add_member(&write_only_authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("write-without-manage must not add members");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-
-        // remove_member: same gate, fails closed before enumerating members.
-        let denied = engine
-            .remove_member(&write_only_authz, group, member.into())
-            .await
-            .expect_err("write-without-manage must not remove members");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-
-        // transfer OUT of a group-owned entity: same manage gate on the
-        // source side.
-        let denied = engine
-            .transfer_to_owner(&write_only_authz, entity, destination_owner)
-            .await
-            .expect_err("write-without-manage must not transfer a group entity");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-
-        // Admin on the source but nothing at all on the destination: the
-        // receiving side refuses. `MembershipStorage` reports no membership
-        // for this caller, so the out-of-band destination lookup finds
-        // nothing either — neither path consents.
-        let source_only_authz = AuthzContext::for_subject_with_role(
-            caller,
-            [(group_owner, Role::admin())],
-            AuthPath::HostBearer,
-        );
-        let denied = engine
-            .transfer_to_owner(&source_only_authz, entity, destination_owner)
-            .await
-            .expect_err("no authority on the destination must refuse the transfer");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-
-        // Full admin on the SOURCE, write-without-manage on the
-        // DESTINATION. `authorize_write(.., Admin)` is satisfied on both
-        // sides — write == Goal is all it asks — so the destination's
-        // `require_group_manage` is the only thing standing between this
-        // caller and a transfer into a group that never consented. Delete
-        // that one call and this assertion sees `Internal` (the stub
-        // storage refusing the write) instead of `Forbidden`.
-        let write_only_destination_authz = AuthzContext::for_subject_with_role(
-            caller,
-            [
-                (group_owner, Role::admin()),
-                (destination_owner, write_only),
-            ],
-            AuthPath::HostBearer,
-        );
-        let denied = engine
-            .transfer_to_owner(&write_only_destination_authz, entity, destination_owner)
-            .await
-            .expect_err("write-without-manage on the destination is not receiving-side consent");
-        assert_eq!(
-            denied.code,
-            ErrorCode::Forbidden,
-            "the destination manage gate must refuse before storage is touched: {}",
-            denied.message
-        );
-        assert!(
-            denied.message.contains("requires manage on this owner"),
-            "refusal must name the manage bit: {}",
-            denied.message
-        );
-
-        // manage == true (Role::admin) passes the manage gate and reaches storage,
-        // which this stub rejects with an Internal error — proving the gate opened.
-        let past_gate = engine
-            .add_member(&admin_authz, group, member.into(), Relation::Viewer)
-            .await
-            .expect_err("stub storage rejects the write after the gate opens");
-        assert_eq!(past_gate.code, ErrorCode::Internal);
-
-        let past_gate = engine
-            .transfer_to_owner(&admin_authz, entity, destination_owner)
-            .await
-            .expect_err("stub storage rejects the transfer after the gate opens");
-        assert_eq!(past_gate.code, ErrorCode::Internal);
-    }
-
-    /// The served surface narrows every request to ONE owner, so a
-    /// transfer's context can never name both sides. This is that context:
-    /// `Role::admin()` on the source group and literally nothing on the
-    /// destination — the exact shape
-    /// `AuthzContext::narrowed_to_owner(source)` produces. The destination's
-    /// consent comes from the membership rows instead, so an Admin row for
-    /// this caller on the destination group opens the gate and a
-    /// non-manage row does not.
-    #[tokio::test]
-    async fn access_admin_transfer_resolves_a_narrowed_destination_out_of_band() {
-        let source = GroupId::new(Uuid::now_v7());
-        let source_owner = OwnerId::from(source);
-        let destination = GroupId::new(Uuid::now_v7());
-        let destination_owner = OwnerId::from(destination);
-        let caller = UserId::new(Uuid::now_v7());
-        let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
-
-        // Exactly what the middleware hands the engine: one owner, one role.
-        let narrowed = AuthzContext::for_subject_with_role(
-            caller,
-            [(source_owner, Role::admin())],
-            AuthPath::HostBearer,
-        );
-        assert!(
-            narrowed.role_for_owner(&destination_owner).is_none(),
-            "a narrowed context must carry no role for the destination"
-        );
-
-        let storage_with_relation = |relation: Relation| {
-            crate::Engine::new(
-                SpiiceRegistry::new().freeze_or_panic_for_tests(),
-                MembershipStorage {
-                    observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                    member: OwnerId::from(caller),
-                    group: destination,
-                    membership_relation: relation,
-                    home_owner: Some(source_owner),
-                    entity_readable: true,
-                    memory_kind: None,
-                    goal_evidence: None,
-                    observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
-                        0,
-                    )),
-                    observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                    observed_goal_authorship: std::sync::Arc::new(
-                        std::sync::Mutex::new(Vec::new()),
-                    ),
-                }
-                .storage_ports(),
-            )
-        };
-
-        // An Admin row on the destination is the receiving side's consent:
-        // the gate opens and the stub storage refuses the write instead.
-        let past_gate = storage_with_relation(Relation::Admin)
-            .transfer_to_owner(&narrowed, entity, destination_owner)
-            .await
-            .expect_err("stub storage rejects the transfer after the gate opens");
-        assert_eq!(
-            past_gate.code,
-            ErrorCode::Internal,
-            "an Admin membership row on the destination must open the gate: {}",
-            past_gate.message
-        );
-
-        // Every other relation maps to a role without `manage`, so none of
-        // them is consent.
-        for relation in [Relation::Editor, Relation::Viewer, Relation::Ingest] {
-            let denied = storage_with_relation(relation)
-                .transfer_to_owner(&narrowed, entity, destination_owner)
-                .await
-                .unwrap_err();
-            assert_eq!(
-                denied.code,
-                ErrorCode::Forbidden,
-                "{relation:?} on the destination is not receiving-side consent: {}",
-                denied.message
-            );
+        async fn home_owner(
+            &self,
+            _owner_scope: Option<&crate::OwnerScope>,
+            _entity: crate::EntityId,
+        ) -> Result<Option<OwnerId>, crate::StorageError> {
+            Ok(None)
         }
     }
 
-    /// A delegated grant decodes `manage = false`, so it must not reach the
-    /// out-of-band lookup and borrow its own subject's Admin membership.
+    /// Against a stored Admin row that admits an ordinary context, only the
+    /// forwarded-owner exclusion refuses a forwarded one. (A real forwarded
+    /// context is also refused earlier, at the source gate, so a transfer
+    /// cannot show this rule alone.)
     #[tokio::test]
-    async fn access_admin_transfer_refuses_a_delegated_context_before_the_membership_lookup() {
-        let source = GroupId::new(Uuid::now_v7());
-        let source_owner = OwnerId::from(source);
-        let destination = GroupId::new(Uuid::now_v7());
+    async fn a_forwarded_context_is_refused_as_a_destination_out_of_band() {
         let caller = UserId::new(Uuid::now_v7());
-        let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
-
-        // Admin on the destination in storage — the authority the grant
-        // must NOT be able to borrow.
+        let destination = GroupId::new(Uuid::now_v7());
         let engine = crate::Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
-            MembershipStorage {
-                observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                member: OwnerId::from(caller),
-                group: destination,
-                membership_relation: Relation::Admin,
-                home_owner: Some(source_owner),
-                entity_readable: true,
-                memory_kind: None,
-                goal_evidence: None,
-                observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            }
-            .storage_ports(),
-        );
-        let delegated = AuthzContext::for_subject_with_role(
-            caller,
-            [(source_owner, Role::admin())],
-            AuthPath::Delegated,
-        );
-
-        let denied = engine
-            .transfer_to_owner(&delegated, entity, OwnerId::from(destination))
-            .await
-            .expect_err("a raw delegated context is not Engine authority");
-        assert_eq!(denied.code, ErrorCode::Forbidden);
-    }
-
-    #[tokio::test]
-    async fn a_forwarded_context_transfers_nothing() {
-        let caller = UserId::new(Uuid::now_v7());
-        let source = OwnerId::from(caller);
-        let destination = GroupId::new(Uuid::now_v7());
-        let mut storage = membership_storage_with_home(caller, destination, Some(source));
-        storage.membership_relation = Relation::Admin;
-        let engine = crate::Engine::new(
-            SpiiceRegistry::new().freeze_or_panic_for_tests(),
-            storage.storage_ports(),
+            crate::StoragePorts::rejecting_with_owner_access_read(std::sync::Arc::new(AdminOn(
+                destination,
+            ))),
         );
         let ordinary = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         engine
             .authorize_transfer_destination_out_of_band(&ordinary, &destination.into())
             .await
-            .expect("ordinary membership supplies receiving-side consent");
+            .expect("the stored Admin row consents for an ordinary context");
         let forwarded = AuthzContext::from_verified_forwarded_owner(
             caller,
-            source,
+            OwnerId::from(caller),
             crate::WriterAttribution {
                 by: Uuid::now_v7(),
                 via: None,
             },
         )
         .seal_verified_scope()
-        .unwrap();
+        .expect("a forwarded context seals");
+
         let refusal = engine
             .authorize_transfer_destination_out_of_band(&forwarded, &destination.into())
             .await
             .expect_err("a forwarded context cannot borrow ordinary membership");
-        assert_eq!(refusal.code, ErrorCode::Forbidden);
-        let entity = EntityId::Memory(MemoryId::new(Uuid::now_v7()));
-        let refusal = engine
-            .transfer_to_owner(&forwarded, entity, destination.into())
-            .await
-            .expect_err("a forwarded context cannot transfer a memory");
+
         assert_eq!(refusal.code, ErrorCode::Forbidden);
     }
 }

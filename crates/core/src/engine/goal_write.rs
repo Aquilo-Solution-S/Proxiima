@@ -792,38 +792,11 @@ pub(in crate::engine) fn map_goal_storage_error(err: StorageError) -> ProtocolEr
 mod tests {
     use super::*;
 
-    use super::super::MembershipStorage;
-    use crate::access::Relation;
     use crate::error::ErrorCode;
     use crate::verbs::goal_write::{
         GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, SystemOrigin,
     };
-    use crate::{
-        AuthPath, Engine, GoalId, GoalPayload, GroupId, OwnerId, SchemaId, SchemaVersion,
-        SpiiceRegistry, ToolId, UserId,
-    };
-
-    #[derive(Debug, serde::Serialize, serde::Deserialize)]
-    struct TestGoalPayload;
-
-    impl GoalPayload for TestGoalPayload {
-        const SCHEMA_ID: &'static str = "test/goal";
-        const SCHEMA_VERSION: u32 = 1;
-
-        fn goal_key(&self) -> Vec<u8> {
-            b"test-goal".to_vec()
-        }
-    }
-
-    impl crate::PayloadProjection for TestGoalPayload {
-        const KEY_FIELDS: &'static [crate::KeyField<Self>] = &[];
-        fn display(&self) -> crate::PayloadDisplay {
-            crate::PayloadDisplay::default()
-        }
-        fn durable(&self) -> Result<crate::DurablePayload, String> {
-            Ok(crate::DurablePayloadBuilder::new().finish())
-        }
-    }
+    use crate::{Engine, GoalId, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry, ToolId};
 
     fn engine() -> Engine {
         Engine::new(
@@ -855,34 +828,6 @@ mod tests {
 
     fn owner() -> crate::OwnerId {
         OwnerId::from(crate::UserId::new(uuid::Uuid::now_v7()))
-    }
-
-    fn storage_with_memory(
-        member: OwnerId,
-        home_owner: OwnerId,
-        entity_readable: bool,
-        memory_kind: EntityKind,
-    ) -> MembershipStorage {
-        MembershipStorage {
-            observed_entity_reads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            observed_kind_loads: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            member,
-            group: GroupId::new(uuid::Uuid::now_v7()),
-            membership_relation: Relation::Viewer,
-            home_owner: Some(home_owner),
-            entity_readable,
-            memory_kind: Some(memory_kind),
-            goal_evidence: None,
-            observed_fact_writes: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            observed_modify_evidence: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            observed_goal_authorship: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
-    }
-
-    fn engine_with_ports(storage: MembershipStorage) -> Engine {
-        Engine::compose_or_panic_for_tests(storage.storage_ports(), |registry| {
-            registry.add_goal_schema_or_panic_for_tests::<TestGoalPayload>();
-        })
     }
 
     fn goal_id() -> GoalId {
@@ -924,115 +869,6 @@ mod tests {
     }
 
     fn assert_forbidden(err: &ProtocolError) {
-        assert_eq!(err.code, ErrorCode::Forbidden);
-    }
-
-    #[tokio::test]
-    async fn author_self_perspective_denies_foreign_write_owner() {
-        let owner = owner();
-        let foreign = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let memory_id = memory_id();
-        let engine = engine_with_ports(storage_with_memory(
-            owner,
-            foreign,
-            true,
-            EntityKind::Perspective,
-        ));
-
-        let err = engine
-            .author_self_perspective_authorized(
-                &AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-                Some(memory_id),
-            )
-            .await
-            .expect_err("foreign author Self perspective must require write authority");
-
-        assert_forbidden(&err);
-    }
-
-    #[tokio::test]
-    async fn author_self_perspective_allows_writable_perspective() {
-        let owner = owner();
-        let memory_id = memory_id();
-        let engine = engine_with_ports(storage_with_memory(
-            owner,
-            owner,
-            true,
-            EntityKind::Perspective,
-        ));
-
-        engine
-            .author_self_perspective_authorized(
-                &AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-                Some(memory_id),
-            )
-            .await
-            .expect("writable Perspective should authorize");
-    }
-
-    #[tokio::test]
-    async fn create_goal_from_payload_write_rejects_foreign_perspective_target() {
-        let owner = owner();
-        let foreign = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let target = memory_id();
-        let engine = engine_with_ports(storage_with_memory(
-            owner,
-            foreign,
-            false,
-            EntityKind::Perspective,
-        ));
-        let req = GoalCreatePayloadWriteRequest {
-            owner,
-            topology: topology(target),
-            payload: payload_write(),
-            request_id: request_id("create-unreadable-target"),
-            authorship: tool_authorship(),
-            author_self_perspective_id: None,
-        };
-
-        let err = engine
-            .create_goal_from_payload_write(
-                &AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-                &req,
-            )
-            .await
-            .expect_err("foreign target Perspective must be rejected before write");
-
-        assert_eq!(err.code, ErrorCode::Forbidden);
-    }
-
-    #[tokio::test]
-    async fn decompose_goal_rejects_foreign_perspective_target() {
-        let owner = owner();
-        let foreign = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-        let target = memory_id();
-        let engine = engine_with_ports(storage_with_memory(
-            owner,
-            foreign,
-            false,
-            EntityKind::Perspective,
-        ));
-        let req = GoalDecomposeRequest {
-            owner,
-            parent_goal_id: goal_id(),
-            authorship: tool_authorship(),
-            topology: topology(target),
-            children: vec![ChildGoalDraft {
-                payload: payload_write(),
-                evidence: Vec::new(),
-                request_id: request_id("decompose-unreadable-target"),
-            }],
-            author_self_perspective_id: None,
-        };
-
-        let err = engine
-            .decompose_goal(
-                &AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-                &req,
-            )
-            .await
-            .expect_err("foreign target Perspective must be rejected before write");
-
         assert_eq!(err.code, ErrorCode::Forbidden);
     }
 
@@ -1095,58 +931,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn modify_goal_authorizes_stored_evidence_without_erasing_carry_intent() {
-        let owner = owner();
-        let evidence = vec![memory_id(), memory_id()];
-        let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut storage = storage_with_memory(owner, owner, true, EntityKind::Abstraction);
-        storage.goal_evidence = Some(evidence.clone());
-        storage.observed_modify_evidence = observed.clone();
-        let observed_reads = storage.observed_entity_reads.clone();
-        let observed_kind_loads = storage.observed_kind_loads.clone();
-        let engine = engine_with_ports(storage);
-        let req = GoalModifyRequest {
-            owner,
-            prior_goal_id: goal_id(),
-            replacement: payload_write(),
-            authorship: GoalAuthorship::User,
-            request_id: request_id("modify-carry-evidence"),
-            evidence: None,
-            motivated_by: None,
-            author_self_perspective_id: None,
-        };
-
-        let err = engine
-            .modify_goal(
-                &AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-                &req,
-            )
-            .await
-            .expect_err("test storage rejects writes after recording the request");
-        assert_eq!(err.code, ErrorCode::Internal);
-        assert_eq!(
-            *observed.lock().expect("modify evidence recorder lock"),
-            None,
-            "the storage command must preserve omitted-evidence carry intent"
-        );
-        assert_eq!(
-            *observed_reads.lock().expect("entity read recorder lock"),
-            evidence
-                .into_iter()
-                .map(EntityId::Memory)
-                .collect::<Vec<_>>(),
-            "the Engine must still read-admit the exact stored evidence vector"
-        );
-        assert!(
-            observed_kind_loads
-                .lock()
-                .expect("kind load recorder lock")
-                .is_empty(),
-            "evidence kind is the in-tx check, not a second pre-tx load"
-        );
-    }
-
-    #[tokio::test]
     async fn mark_goal_achieved_denies_denied_context() {
         let owner = owner();
         let req = GoalMarkAchievedRequest {
@@ -1184,135 +968,5 @@ mod tests {
             .await
             .expect_err("denied context must fail before target lookup or storage");
         assert_forbidden(&err);
-    }
-
-    /// Records the write need each gate reports to a host hook.
-    #[derive(Debug, Default)]
-    struct WriteNeeds(std::sync::Mutex<Vec<crate::authz::AuthzOperation>>);
-
-    impl WriteNeeds {
-        fn take(&self) -> Vec<crate::authz::AuthzOperation> {
-            std::mem::take(&mut *self.0.lock().expect("write need recorder lock"))
-        }
-    }
-
-    impl crate::authz::AuthorizationHook for WriteNeeds {
-        fn observe(&self, input: &crate::authz::AuthzInput<'_>, _: crate::authz::AuthzOutcome) {
-            use crate::authz::AuthzOperation;
-            if matches!(
-                input.operation,
-                AuthzOperation::Write { .. }
-                    | AuthzOperation::GoalWork
-                    | AuthzOperation::OwnerAdmin
-            ) {
-                self.0
-                    .lock()
-                    .expect("write need recorder lock")
-                    .push(input.operation.clone());
-            }
-        }
-    }
-
-    /// A host hook judges each Goal write under the need it declares: set,
-    /// modify and transition are Goal work, achieve and decompose are owner
-    /// administration, and none of them is a memory write.
-    #[tokio::test]
-    async fn a_hook_sees_each_goal_write_under_its_declared_need() {
-        use crate::authz::AuthzOperation;
-
-        let owner = owner();
-        let needs = std::sync::Arc::new(WriteNeeds::default());
-        let hook = needs.clone();
-        let engine = Engine::compose_or_panic_for_tests(
-            storage_with_memory(owner, owner, true, EntityKind::Perspective).storage_ports(),
-            |registry| {
-                registry.add_goal_schema_or_panic_for_tests::<TestGoalPayload>();
-                registry.add_authorization_hook(hook);
-            },
-        );
-        let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-
-        let _ = engine
-            .create_goal_from_payload_write(
-                &authz,
-                &GoalCreatePayloadWriteRequest {
-                    owner,
-                    topology: topology(memory_id()),
-                    payload: payload_write(),
-                    request_id: request_id("create"),
-                    authorship: tool_authorship(),
-                    author_self_perspective_id: None,
-                },
-            )
-            .await;
-        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "set");
-
-        let _ = engine
-            .modify_goal(
-                &authz,
-                &GoalModifyRequest {
-                    owner,
-                    prior_goal_id: goal_id(),
-                    replacement: payload_write(),
-                    authorship: GoalAuthorship::User,
-                    request_id: request_id("modify"),
-                    evidence: None,
-                    motivated_by: None,
-                    author_self_perspective_id: None,
-                },
-            )
-            .await;
-        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "modify");
-
-        let _ = engine
-            .transition_goal(
-                &authz,
-                &GoalTransitionRequest {
-                    owner,
-                    prior_goal_id: goal_id(),
-                    transition: GoalTransitionKind::Pause {
-                        pending: crate::PendingWork::Keep,
-                    },
-                    authorship: GoalAuthorship::User,
-                    request_id: request_id("transition"),
-                    author_self_perspective_id: None,
-                },
-            )
-            .await;
-        assert_eq!(needs.take(), [AuthzOperation::GoalWork], "transition");
-
-        let _ = engine
-            .mark_goal_achieved(
-                &authz,
-                &GoalMarkAchievedRequest {
-                    owner,
-                    prior_goal_id: goal_id(),
-                    authorship: tool_authorship(),
-                    request_id: request_id("achieved"),
-                    evidence: vec![GoalEvidenceRef::new(memory_id())],
-                    author_self_perspective_id: None,
-                },
-            )
-            .await;
-        assert_eq!(needs.take(), [AuthzOperation::OwnerAdmin], "achieve");
-
-        let _ = engine
-            .decompose_goal(
-                &authz,
-                &GoalDecomposeRequest {
-                    owner,
-                    parent_goal_id: goal_id(),
-                    authorship: tool_authorship(),
-                    topology: topology(memory_id()),
-                    children: vec![ChildGoalDraft {
-                        payload: payload_write(),
-                        evidence: Vec::new(),
-                        request_id: request_id("decompose-child"),
-                    }],
-                    author_self_perspective_id: None,
-                },
-            )
-            .await;
-        assert_eq!(needs.take(), [AuthzOperation::OwnerAdmin], "decompose");
     }
 }
