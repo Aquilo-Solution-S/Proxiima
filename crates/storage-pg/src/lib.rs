@@ -22,9 +22,8 @@ pub mod __private {
     pub use ::uuid;
 }
 
-use proxiima_core::StorageError;
-use proxiima_core::env_value;
 use proxiima_core::storage_ports::{StoragePorts, StoragePortsBuilder};
+use proxiima_core::{Setting, StorageError};
 use sqlx::{PgConnection, PgPool};
 use std::sync::Arc;
 pub use verbs::fact_embeddings::{
@@ -70,6 +69,7 @@ mod ports;
 pub mod projection;
 mod rls_guard;
 pub mod search_candidates;
+pub mod settings;
 pub mod sidecars;
 mod store_wide;
 pub mod vector_index;
@@ -985,15 +985,15 @@ impl std::fmt::Debug for StorageMaintenanceLock {
 /// parse as `T`.
 fn env_int_or<T: std::str::FromStr>(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    setting: &Setting,
     default: T,
 ) -> Result<T, StorageError> {
-    let Some(value) = env_value(lookup, key) else {
+    let Some(value) = setting.read(lookup) else {
         return Ok(default);
     };
     value
         .parse()
-        .map_err(|_| StorageError::Unavailable(format!("invalid integer {key}={value}")))
+        .map_err(|_| StorageError::Unavailable(format!("invalid integer {setting}={value}")))
 }
 
 impl PgStorage {

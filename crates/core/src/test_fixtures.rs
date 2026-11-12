@@ -417,3 +417,78 @@ pub fn probe_registry() -> proxiima_core::SpiiceRegistryFrozen {
     registry.add_fact_schema_or_panic_for_tests::<UnlistenableProbeV1>();
     registry.freeze_or_panic_for_tests()
 }
+
+/// Check every row of `settings` that declares a default against the reader
+/// `resolve` stands for.
+///
+/// For each such row, `resolve` runs on `base` without the row, on `base`
+/// with the row set to its declared default, and on `base` with the row set
+/// to another value derived from its kind. The first two must be equal: the
+/// declared default is what the reader does when the row is unset. The third
+/// must differ from the first, which proves `resolve` reads the row under
+/// `base`; otherwise the equality would prove nothing. `base` is the smallest
+/// environment under which every row of the crate is read.
+///
+/// # Panics
+/// Panics, naming the row, when either comparison fails or a numeric or
+/// boolean default does not parse as its kind.
+pub fn assert_declared_defaults<R: PartialEq + std::fmt::Debug>(
+    settings: &[proxiima_core::Setting],
+    base: &[(&str, &str)],
+    resolve: impl Fn(&dyn Fn(&str) -> Option<String>) -> R,
+) {
+    for setting in settings {
+        let Some(default) = setting.default() else {
+            continue;
+        };
+        let with = |value: Option<&str>| {
+            let mut pairs: Vec<(&str, &str)> = base
+                .iter()
+                .copied()
+                .filter(|(name, _)| *name != setting.name())
+                .collect();
+            pairs.extend(value.map(|value| (setting.name(), value)));
+            resolve(&proxiima_core::env_from_pairs(&pairs))
+        };
+        let unset = with(None);
+        assert_eq!(
+            with(Some(default)),
+            unset,
+            "{setting}={default} must behave exactly like leaving {setting} unset"
+        );
+        let other = other_value(setting, default);
+        assert_ne!(
+            with(Some(&other)),
+            unset,
+            "{setting}={other} resolves as if unset: the reader does not read {setting} \
+             under this environment, so its default is not checked"
+        );
+    }
+}
+
+/// A value of `setting`'s kind other than `default`: the other boolean
+/// word, the next number, or for a kind with no arithmetic a different text.
+fn other_value(setting: &proxiima_core::Setting, default: &str) -> String {
+    use proxiima_core::SettingKind;
+    match setting.kind() {
+        SettingKind::Boolean => {
+            let value = proxiima_core::parse_bool_word(default)
+                .unwrap_or_else(|| panic!("{setting} default {default:?} is not a boolean"));
+            (!value).to_string()
+        }
+        SettingKind::Integer | SettingKind::Seconds | SettingKind::Milliseconds => {
+            let value: u64 = default
+                .parse()
+                .unwrap_or_else(|_| panic!("{setting} default {default:?} is not a number"));
+            (value + 1).to_string()
+        }
+        SettingKind::Text
+        | SettingKind::Secret
+        | SettingKind::Url
+        | SettingKind::List
+        | SettingKind::Json
+        | SettingKind::Path
+        | SettingKind::SocketAddress
+        | SettingKind::Choice => format!("{default}-other"),
+    }
+}

@@ -85,7 +85,7 @@ static SWEEP_DONE: AtomicBool = AtomicBool::new(false);
 static CATALOG_READY: AtomicBool = AtomicBool::new(false);
 
 /// `PROXIIMA_TEST_PG_URL`, trimmed; `None` when it is unset, empty or
-/// whitespace-only — the rule `proxiima_core::env_value` states for every
+/// whitespace-only — the rule `proxiima_core::Setting::read` states for every
 /// configuration variable in the workspace. Applied by hand rather than by
 /// calling it, because this is a deliberately minimal test-support crate
 /// (sqlx/tokio/tracing/url/uuid) and one env var does not justify a

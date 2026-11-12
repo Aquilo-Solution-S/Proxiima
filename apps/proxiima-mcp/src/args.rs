@@ -9,10 +9,11 @@ const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 
 /// `DATABASE_URL`, or the dev default when it is not configured.
 ///
-/// Read through [`proxiima_core::env_value`] so `DATABASE_URL=` falls back to
+/// Read through [`proxiima::Setting::read`] so `DATABASE_URL=` falls back to
 /// the default instead of handing an empty connection string to the pool.
 fn database_url_from_env() -> String {
-    proxiima_core::env_value(&proxiima_core::process_env, "DATABASE_URL")
+    proxiima::settings::DATABASE_URL
+        .read(&proxiima_core::process_env)
         .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
 }
 

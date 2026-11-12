@@ -94,7 +94,7 @@ impl CitedBlobStore {
     ) -> Result<Self, BlobError> {
         if let Some(endpoint_url) = &config.endpoint_url {
             validate_endpoint_url(
-                "PROXIIMA_S3_ENDPOINT_URL",
+                &crate::settings::PROXIIMA_S3_ENDPOINT_URL,
                 endpoint_url,
                 &config.plaintext_hosts,
             )?;
@@ -102,7 +102,10 @@ impl CitedBlobStore {
         // Checked at the consuming boundary too, not only in `from_env`: a
         // host may build this struct directly, and an out-of-range TTL must
         // fail here rather than panic inside a request.
-        validate_presign_ttl("PROXIIMA_S3_UPLOAD_TTL_SECONDS", config.upload_ttl_seconds)?;
+        validate_presign_ttl(
+            &crate::settings::PROXIIMA_S3_UPLOAD_TTL_SECONDS,
+            config.upload_ttl_seconds,
+        )?;
         let max_blob_bytes = config.max_blob_bytes.unwrap_or(DEFAULT_MAX_BLOB_BYTES);
         let store_id = config.object_store_id()?;
 

@@ -6,6 +6,7 @@
 
 mod config;
 mod error;
+pub mod settings;
 mod store;
 
 pub use config::{S3KeyPair, S3RuntimeConfig};

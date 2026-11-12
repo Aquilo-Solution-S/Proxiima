@@ -1,99 +1,104 @@
 # Configuration
 
-This page is the canonical inventory of settings read by the shipped source.
-Defaults and validation limits live in the linked Rust reader. `DATABASE_URL`
-is the serving connection; `PROXIIMA_PLATFORM_DATABASE_URL` is the required
-migration and maintenance connection (`PROXIIMA_MIGRATION_DATABASE_URL`, when
-set, takes over the migrations). Both roles use owner RLS. A serving host
-holds two pools of `PROXIIMA_PG_MAX_CONNECTIONS` each (runtime and platform),
-plus a migration pool of the same size during boot and the migrate step; size the server's
-`max_connections` for every host on it plus operator connections
-([behind a connection pooler](operate.md#behind-a-connection-pooler)). The settings gate checks every `PROXIIMA_*` row.
+This page lists every setting the canonical host `proxiima-mcp` and the
+library crates it links read, with its kind of value and default. Each crate
+declares its settings once, in a `settings!` block; the table below is
+rendered from those declarations by a test in `apps/proxiima-mcp`, which
+rewrites it and fails when it differs. Settings that only development tools,
+scripts and tests read are listed in
+[contributing](contributing.md#development-settings).
 
-| Setting | Purpose | When needed | Reader |
-|---|---|---|---|
-| DATABASE_URL | serving database connection | required for the canonical host | [MCP args](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/args.rs) |
-| PROXIIMA_PLATFORM_DATABASE_URL | platform database connection | required for migrate, boot and maintenance | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MIGRATION_DATABASE_URL | direct/session-mode connection of the migrate step and of schema validation at boot and maintenance; same role and database as `PROXIIMA_PLATFORM_DATABASE_URL`, which it defaults to | platform URL behind a transaction-mode pooler ([behind a connection pooler](operate.md#behind-a-connection-pooler)) | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_STORE_NUMBER | immutable host-assigned store number, persisted by the migrate step and checked by every boot | required for migrate, boot and maintenance | `RuntimeBuilder::store_number` |
-| PROXIIMA_MCP_BIND | MCP listener address | serving MCP | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_EXPOSE_NETWORK | non-loopback exposure gate | public listener | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_ALLOWED_ORIGINS | CORS origin allowlist (no port = any port; an explicit port also matches a browser Origin that omits it when it is the scheme default, HTTP 80 or HTTPS 443) | browser clients | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_ALLOWED_HOSTS | Host allowlist | non-loopback listener | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_PUBLIC_URL | public OAuth URL | OIDC/public serving | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_OIDC_ISSUER | OIDC issuer | OIDC serving | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_AUDIENCE | token audience: this resource server, never an OAuth client id | OIDC serving | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_JWKS_URI | explicit JWKS endpoint | pinned discovery override | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_JWKS_JSON | pinned JWKS document | issuer network unavailable | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS | OIDC request timeout | tune issuer requests | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_ALLOWED_SUBJECTS | subject allowlist | restrict principals | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_OIDC_SUBJECT_MAP_JSON | issuer-aware subject map | OIDC identity binding | [OIDC](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/auth.rs) |
-| PROXIIMA_STREAM_MAX_LIFETIME | authenticated stream lifetime | long-lived MCP streams | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_REST_ENABLED | REST projection switch | serving `/v1` | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_REQUEST_HEADERS | forwarded request-header names | tools need selected headers | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_FORWARDER_SUBJECTS | subjects requiring a verified owner claim | forwarded owner access | `ForwarderPolicy` |
-| PROXIIMA_FORWARDER_ROLE | non-managing forwarding ceiling | forwarded owner access | `ForwarderPolicy` |
-| PROXIIMA_HEALTH_ENDPOINTS | health route switch | probes need HTTP health | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MAX_REQUEST_BODY_BYTES | request body ceiling | listener sizing | [MCP runtime](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MCP_SSE_KEEP_ALIVE_SECS | SSE ping interval | proxy idle timeout | [MCP transport](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MCP_SESSION_IDLE_SECS | session idle timeout | session serving | [MCP transport](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MCP_SSE_RETRY_SECS | SSE retry hint | client reconnect tuning | [MCP transport](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MCP_SESSIONS | server-side session switch | stateful MCP clients | [MCP transport](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_MCP_JSON_RESPONSE | JSON response switch | stateless MCP clients | [MCP transport](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_TOOL_PROFILE | served-surface profile | deployment commands plus mandatory reads | `served_surface_from_env` |
-| PROXIIMA_TOOL_ALLOW | served-surface additions | extend deployment commands | `served_surface_from_env` |
-| PROXIIMA_TOOL_DENY | served-surface removals | narrow commands; mandatory reads cannot be denied | `served_surface_from_env` |
-| PROXIIMA_EMBED_BASE_URL | embedding endpoint; redirects are refused, so configure the provider's final endpoint directly | enable embeddings | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_API_KEY | embedding bearer | hosted embedding endpoint | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_MODEL | embedding model | enable embeddings | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_DIM | embedding vector width | non-default model width | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_MATRYOSHKA | nested-prefix request switch | Matryoshka model | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_MAX_INPUT_CHARS | embedding input ceiling | provider input tuning | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_QUERY_INSTRUCTION | memory query template | instruction-tuned model | [MCP app](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/src/lib.rs) |
-| PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS | provider request timeout | embedding worker tuning | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
-| PROXIIMA_EMBED_BATCH_SIZE | provider batch size | embedding worker tuning | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
-| PROXIIMA_EMBED_DRAIN_CONCURRENCY | batches one drain pass sends at once, 1 to 64, default 1 | indexing throughput the provider can take | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
-| PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS | first idle wait of the embedding worker; doubles while drains find nothing, up to 60 s or this value if longer; a write committed in the process wakes it at once | embedding worker tuning | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
-| PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS | stale claim timeout | embedding worker recovery | [embedding policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/llm.rs) |
-| PROXIIMA_MISSING_MIGRATION_POLICY | missing-version policy (`reject` or `allow`) | releases intentionally share a database | `missing_migration_policy_from_lookup` |
-| PROXIIMA_RUNTIME_GRANTS | runtime grants of the migrate step; serving never grants | owner-RLS deployment | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs) |
-| PROXIIMA_PG_MAX_CONNECTIONS | size of each pool: runtime, platform, and the migration pool of boot and the migrate step | pool tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
-| PROXIIMA_PG_STATEMENT_TIMEOUT_MS | statement timeout of every pool, sent as a startup option | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
-| PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS | pool acquire timeout | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
-| PROXIIMA_PG_IDLE_TIMEOUT_SECS | idle connection timeout | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
-| PROXIIMA_PG_MAX_LIFETIME_SECS | connection lifetime | database tuning | [pool config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/pool_config.rs) |
-| PROXIIMA_PG_HNSW_EF_SEARCH | HNSW search breadth | semantic search tuning | [PG tuning](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/tuning.rs) |
-| PROXIIMA_PG_HNSW_ITERATIVE_SCAN | iterative scan mode | filtered semantic search | [PG tuning](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/tuning.rs) |
-| PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES | iterative scan bound | filtered semantic search | [PG tuning](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/tuning.rs) |
-| PROXIIMA_PUBLICATION_SOURCE | CloudEvent source identity | listenable Fact publication | [outbox config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/config.rs) |
-| PROXIIMA_OUTBOX_MAX_PENDING | pending outbox ceiling | outbox backpressure tuning | [outbox config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/config.rs) |
-| PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES | captured payload ceiling | outbox export sizing | [outbox config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/config.rs) |
-| PROXIIMA_OUTBOX_HTTP_URL | HTTP outbox receiver | HTTP delivery | [HTTP outbox](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/outbox_http.rs) |
-| PROXIIMA_OUTBOX_HTTP_TOKEN_FILE | HTTP bearer token file | authenticated HTTP delivery | [HTTP outbox](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/outbox_http.rs) |
-| PROXIIMA_OUTBOX_HTTP_CA_FILE | HTTP CA bundle | private receiver CA | [HTTP outbox](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/outbox_http.rs) |
-| PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS | published-record retention | reclaim delivered records | [outbox config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/config.rs) |
-| PROXIIMA_OBJECT_PURGE_INTERVAL_SECS | object-purge drain cadence; `0` turns it off | in-process expired-upload sweep and purge drain | [runtime config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/config.rs) |
-| PROXIIMA_S3_MAX_BLOB_BYTES | cited blob size ceiling | S3 blob storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_BUCKET | S3 bucket | enable S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_REGION | S3 region | S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_ACCESS_KEY_ID | S3 access key | S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_SECRET_ACCESS_KEY | S3 secret key | S3 storage | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_ENDPOINT_URL | object I/O endpoint | non-AWS S3 storage | `S3RuntimeConfig::from_lookup` |
-| PROXIIMA_S3_STORE_ID | object store identity | processes reach one store by different endpoints, or stores share an endpoint and bucket | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_PLAINTEXT_HOSTS | plaintext host allowlist | named internal HTTP sidecar | [network policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/net.rs) |
-| PROXIIMA_S3_FORCE_PATH_STYLE | S3 path-style switch | path-style endpoint | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_S3_UPLOAD_TTL_SECONDS | upload URL lifetime | cited blob uploads | [S3 config](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/blob-s3/src/config.rs) |
-| PROXIIMA_DEV_POSTGRES_PORT | Compose Postgres host port | local Compose | [dev Compose](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docker-compose.dev.yml) |
-| PROXIIMA_DEV_S3_PORT | Compose S3 host port | local Compose | [dev Compose](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docker-compose.dev.yml) |
-| PROXIIMA_TEST_PG_URL | test Postgres admin URL | pg-testkit tests | [PG testkit](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/pg-testkit/src/lib.rs) |
-| PROXIIMA_TEST_PGBOUNCER_URL | transaction-mode PgBouncer in front of the test server; the storage fixtures route serving pools through it | PgBouncer test lane | [PG testkit](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/pg-testkit/src/lib.rs) |
-| PROXIIMA_PG_TESTKIT_CHILD | pg-testkit child-process marker | split-template tests | [split-template test](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/pg-testkit/tests/split_template.rs) |
-| PROXIIMA_PG_TESTKIT_TEMPLATE | pg-testkit template database name | split-template tests | [split-template test](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/pg-testkit/tests/split_template.rs) |
-| PROXIIMA_DIFFERENTIAL_DIR | differential dump directory | differential test inspection | [differential tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/owner_erase_differential.rs) |
-| PROXIIMA_SCHEMA_PG_URL | schema dump admin URL | schema regeneration | [schema script](https://github.com/Aquilo-Solution-S/proxiima/blob/main/scripts/regen-schema-sql.sh) |
-| PROXIIMA_PG_DUMP | pg_dump executable | schema regeneration | [schema script](https://github.com/Aquilo-Solution-S/proxiima/blob/main/scripts/regen-schema-sql.sh) |
-| PROXIIMA_RESET_CONFIRM | reset confirmation token | development database reset | [dev migrate](https://github.com/Aquilo-Solution-S/proxiima/blob/main/tools/dev-migrate/src/main.rs) |
+`DATABASE_URL` is the serving connection; `PROXIIMA_PLATFORM_DATABASE_URL` is
+the required migration and maintenance connection
+(`PROXIIMA_MIGRATION_DATABASE_URL`, when set, takes over the migrations). Both
+roles use owner RLS. A serving host holds two pools of
+`PROXIIMA_PG_MAX_CONNECTIONS` each (runtime and platform), plus a migration
+pool of the same size during boot and the migrate step; size the server's
+`max_connections` for every host on it plus operator connections
+([behind a connection pooler](operate.md#behind-a-connection-pooler)).
+
+An empty or whitespace-only value is unset. At startup the host logs a warning
+naming each `PROXIIMA_*` environment variable that no setting declares; the
+variable is ignored.
+
+<!-- settings:begin -->
+
+| Setting | Purpose | When needed | Type | Default |
+|---|---|---|---|---|
+| DATABASE_URL | serving database connection | required for migrate, boot and maintenance | URL |  |
+| PROXIIMA_PLATFORM_DATABASE_URL | platform database connection | required for migrate, boot and maintenance | URL |  |
+| PROXIIMA_MIGRATION_DATABASE_URL | direct/session-mode connection of the migrate step and of schema validation at boot and maintenance; same role and database as `PROXIIMA_PLATFORM_DATABASE_URL`, which serves both when this is unset | platform URL behind a transaction-mode pooler ([behind a connection pooler](operate.md#behind-a-connection-pooler)) | URL |  |
+| PROXIIMA_STORE_NUMBER | immutable host-assigned store number, 0 to 65535, persisted by the migrate step and checked by every boot | required for migrate, boot and maintenance | integer |  |
+| PROXIIMA_MISSING_MIGRATION_POLICY | missing-version policy: `reject` or `allow` | releases intentionally share a database | choice | `reject` |
+| PROXIIMA_RUNTIME_GRANTS | runtime grants of the migrate step; serving never grants | owner-RLS deployment | boolean | `false` |
+| PROXIIMA_MCP_BIND | MCP listener address; no listener when unset | serving MCP | socket address |  |
+| PROXIIMA_EXPOSE_NETWORK | non-loopback exposure gate | public listener | boolean | `false` |
+| PROXIIMA_REST_ENABLED | REST projection switch | serving `/v1` | boolean | `false` |
+| PROXIIMA_ALLOWED_ORIGINS | CORS origin allowlist (no port = any port; an explicit port also matches a browser Origin that omits it when it is the scheme default, HTTP 80 or HTTPS 443) | browser clients | comma-separated list |  |
+| PROXIIMA_ALLOWED_HOSTS | Host allowlist; when unset, the host of `PROXIIMA_PUBLIC_URL` and the allowed origins; loopback is always allowed | non-loopback listener | comma-separated list |  |
+| PROXIIMA_STREAM_MAX_LIFETIME | authenticated stream lifetime | long-lived MCP streams | seconds | `3600` |
+| PROXIIMA_REQUEST_HEADERS | forwarded request-header names | tools need selected headers | comma-separated list |  |
+| PROXIIMA_FORWARDER_SUBJECTS | user UUIDs of subjects requiring a verified owner claim; set with `PROXIIMA_FORWARDER_ROLE` | forwarded owner access | comma-separated list |  |
+| PROXIIMA_FORWARDER_ROLE | non-managing forwarding ceiling: `viewer`, `ingest` or `editor` | forwarded owner access | choice |  |
+| PROXIIMA_HEALTH_ENDPOINTS | health route switch | probes need HTTP health | boolean | `false` |
+| PROXIIMA_MAX_REQUEST_BODY_BYTES | request body ceiling in bytes, at least 1 | listener sizing | integer | `4194304` |
+| PROXIIMA_MCP_SSE_KEEP_ALIVE_SECS | SSE ping interval; `0` sends none | proxy idle timeout | seconds | `15` |
+| PROXIIMA_MCP_SESSION_IDLE_SECS | session idle timeout; `0` turns it off | session serving | seconds | `300` |
+| PROXIIMA_MCP_SSE_RETRY_SECS | SSE retry hint; `0` sends none | client reconnect tuning | seconds | `3` |
+| PROXIIMA_MCP_SESSIONS | server-side session switch | stateful MCP clients | boolean | `true` |
+| PROXIIMA_MCP_JSON_RESPONSE | JSON response switch | stateless MCP clients | boolean | `false` |
+| PROXIIMA_PUBLIC_URL | public OAuth URL: `http` or `https`, with a host and no credentials, query or fragment | OIDC/public serving | URL |  |
+| PROXIIMA_OIDC_ISSUER | OIDC issuer; setting it turns on OIDC authentication | OIDC serving | URL |  |
+| PROXIIMA_OIDC_AUDIENCE | token audience: this resource server, never an OAuth client id | OIDC serving | text |  |
+| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | boolean | `false` |
+| PROXIIMA_OIDC_JWKS_URI | explicit JWKS endpoint; discovered from the issuer when unset | pinned discovery override | URL |  |
+| PROXIIMA_OIDC_JWKS_JSON | pinned JWKS document; nothing is fetched from the issuer; excludes `PROXIIMA_OIDC_JWKS_URI` | issuer network unavailable | JSON |  |
+| PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS | OIDC discovery and JWKS request timeout, 1 to 300 seconds | tune issuer requests | seconds | `10` |
+| PROXIIMA_OIDC_ALLOWED_SUBJECTS | subject allowlist, in addition to the subject map | restrict principals | comma-separated list |  |
+| PROXIIMA_OIDC_SUBJECT_MAP_JSON | issuer-aware subject map: a JSON array of `{iss, sub, user_id}` objects | required with `PROXIIMA_OIDC_ISSUER` | JSON |  |
+| PROXIIMA_PUBLICATION_SOURCE | CloudEvent source identity: an absolute URI or URN | listenable Fact publication | text |  |
+| PROXIIMA_OUTBOX_MAX_PENDING | pending outbox ceiling, at least 1 | outbox backpressure tuning | integer | `100000` |
+| PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES | captured payload ceiling in bytes, at least 1 | outbox export sizing | integer | `524288` |
+| PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS | published-record retention, at least 60 seconds; `0` keeps published records forever | reclaim delivered records | seconds | `604800` |
+| PROXIIMA_OUTBOX_HTTP_URL | HTTP outbox receiver: `https`, or `http` to loopback or a host in `PROXIIMA_PLAINTEXT_HOSTS` | HTTP delivery | URL |  |
+| PROXIIMA_OUTBOX_HTTP_TOKEN_FILE | HTTP bearer token file, re-read on every delivery | authenticated HTTP delivery | file path |  |
+| PROXIIMA_OUTBOX_HTTP_CA_FILE | HTTP CA bundle (PEM); when set, the only trusted roots | private receiver CA | file path |  |
+| PROXIIMA_OBJECT_PURGE_INTERVAL_SECS | object-purge drain cadence; `0` turns it off | in-process expired-upload sweep and purge drain | seconds | `60` |
+| PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS | provider request timeout, 1 to 3600 seconds | embedding worker tuning | seconds | `120` |
+| PROXIIMA_EMBED_BATCH_SIZE | texts per provider request, 1 to 1024 | embedding worker tuning | integer | `32` |
+| PROXIIMA_EMBED_DRAIN_CONCURRENCY | batches one drain pass sends at once, 1 to 64 | indexing throughput the provider can take | integer | `1` |
+| PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS | first idle wait of the embedding worker, 1 to 3600 seconds; doubles while drains find nothing, up to 60 s or this value if longer; a write committed in the process wakes it at once | embedding worker tuning | seconds | `5` |
+| PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS | stale claim timeout, 1 to 86400 seconds and longer than the request timeout | embedding worker recovery | seconds | `900` |
+| PROXIIMA_PLAINTEXT_HOSTS | exact host names, besides loopback, that outbound endpoints may reach over plaintext HTTP | named internal HTTP sidecar | comma-separated list |  |
+| PROXIIMA_PG_MAX_CONNECTIONS | size of each pool, at least 1: runtime, platform, and the migration pool of boot and the migrate step | pool tuning | integer | `5` |
+| PROXIIMA_PG_STATEMENT_TIMEOUT_MS | statement timeout of every pool, sent as a startup option; `0` sends none | database tuning | milliseconds | `300000` |
+| PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS | pool acquire timeout | database tuning | seconds | `5` |
+| PROXIIMA_PG_IDLE_TIMEOUT_SECS | idle connection timeout | database tuning | seconds | `600` |
+| PROXIIMA_PG_MAX_LIFETIME_SECS | connection lifetime | database tuning | seconds | `1800` |
+| PROXIIMA_PG_HNSW_EF_SEARCH | HNSW search breadth, 1 to 1000 | semantic search tuning | integer | `100` |
+| PROXIIMA_PG_HNSW_ITERATIVE_SCAN | iterative scan mode: `off`, `strict_order` or `relaxed_order` | filtered semantic search | choice | `relaxed_order` |
+| PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES | iterative scan bound, 1 to 2147483647 | filtered semantic search | integer | `20000` |
+| PROXIIMA_S3_BUCKET | S3 bucket of cited blobs | enable S3 storage | text |  |
+| PROXIIMA_S3_REGION | S3 region | S3 storage | text |  |
+| PROXIIMA_S3_ACCESS_KEY_ID | S3 access key | S3 storage | text |  |
+| PROXIIMA_S3_SECRET_ACCESS_KEY | S3 secret key | S3 storage | secret |  |
+| PROXIIMA_S3_ENDPOINT_URL | object I/O endpoint, also signed into upload URLs; AWS endpoint resolution when unset | non-AWS S3 storage | URL |  |
+| PROXIIMA_S3_STORE_ID | object store identity, 1 to 64 of `[A-Za-z0-9._-]`; derived from the endpoint and bucket when unset | processes reach one store by different endpoints, or stores share an endpoint and bucket | text |  |
+| PROXIIMA_S3_FORCE_PATH_STYLE | S3 path-style switch | path-style endpoint | boolean | `false` |
+| PROXIIMA_S3_UPLOAD_TTL_SECONDS | upload URL lifetime, at most 604800 seconds (7 days) | cited blob uploads | seconds | `900` |
+| PROXIIMA_S3_MAX_BLOB_BYTES | cited blob size ceiling in bytes | S3 blob storage | integer | `104857600` |
+| PROXIIMA_TOOL_PROFILE | served-surface profile: `memory` (fail-closed) or `full` (adds owner transfer and membership changes); every profile serves the declared reads | deployment commands plus mandatory reads | choice | `memory` |
+| PROXIIMA_TOOL_ALLOW | canonical tool ids added to the profile | extend deployment commands | comma-separated list |  |
+| PROXIIMA_TOOL_DENY | canonical tool ids removed from the profile | narrow commands; mandatory reads cannot be denied | comma-separated list |  |
+| PROXIIMA_EMBED_BASE_URL | embedding endpoint; redirects are refused, so configure the provider's final endpoint directly | enable embeddings | URL |  |
+| PROXIIMA_EMBED_API_KEY | embedding bearer | hosted embedding endpoint | secret |  |
+| PROXIIMA_EMBED_MODEL | embedding model | enable embeddings | text |  |
+| PROXIIMA_EMBED_DIM | embedding vector width, one the store indexes | non-default model width | integer | `1024` |
+| PROXIIMA_EMBED_MATRYOSHKA | nested-prefix request switch | Matryoshka model | boolean | `false` |
+| PROXIIMA_EMBED_MAX_INPUT_CHARS | embedding input ceiling in characters, at least 1 | provider input tuning | integer | `16384` |
+| PROXIIMA_EMBED_QUERY_INSTRUCTION | template every search query is embedded in; holds `{query}`, and `\n` is a newline | instruction-tuned model | text |  |
+
+<!-- settings:end -->
 
 Removed names are documented only in release notes; they are not settings and
 must not be reintroduced as compatibility aliases.

@@ -3,7 +3,7 @@ use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use http::request::Parts;
 use proxiima_core::AuthzContext;
-use proxiima_core::{SpiiceServiceError, SpiiceServices};
+use proxiima_core::{Setting, SpiiceServiceError, SpiiceServices};
 use proxiima_mcp_server::McpAuthContext;
 
 use crate::bundle::SpiiceBundle;
@@ -37,6 +37,16 @@ pub trait SpiiceApp: SpiiceBundle {
     #[must_use]
     fn configure(builder: RuntimeBuilder) -> RuntimeBuilder {
         builder
+    }
+
+    /// The settings the host reads itself, declared with
+    /// [`settings!`](crate::settings!). [`crate::Proxiima::from_env`] warns
+    /// about a `PROXIIMA_*` variable that neither the facade
+    /// ([`crate::settings::all`]) nor this list declares. Concatenated for
+    /// tuples.
+    #[must_use]
+    fn settings() -> Vec<&'static Setting> {
+        Vec::new()
     }
 
     /// Routes served behind bearer authentication, beside `/mcp`.
@@ -129,6 +139,10 @@ macro_rules! impl_spiice_app_tuple {
                 let builder = $first::configure(builder);
                 $(let builder = $rest::configure(builder);)*
                 builder
+            }
+
+            fn settings() -> Vec<&'static Setting> {
+                [$first::settings(), $($rest::settings()),*].concat()
             }
 
             fn mount_http(router: Router, ctx: AppContext) -> Router {

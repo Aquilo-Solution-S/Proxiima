@@ -186,6 +186,14 @@ A host that sets options in code, beyond `SpiiceApp::configure`, passes them to
 `Proxiima::configure(|b| b.owner(owner))`; they win over the environment layer
 and over `SpiiceApp::configure`.
 
+A host that reads settings of its own declares them once with
+`proxiima::settings!` and returns them from `SpiiceApp::settings`.
+`from_env()` logs a warning naming each `PROXIIMA_*` variable that neither the
+facade (`proxiima::settings::all`) nor the host declares; a host that reads the
+process environment through a lookup calls `proxiima::settings::warn_unknown_env`
+itself. `proxiima::settings::markdown_table` renders the host's operator table
+from the facade's rows and its own.
+
 `Proxiima::migrate` is the host's migrate step and the only path that changes
 the schema: it resolves the configuration as `build()` does, applies every
 pending core and spiice migration, initializes the store number, and applies

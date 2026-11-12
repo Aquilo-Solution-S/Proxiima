@@ -1,4 +1,5 @@
 pub mod args;
+pub mod settings;
 
 pub use args::{
     ArgsError, DEFAULT_BIND, DEFAULT_DATABASE_URL, MAINTAIN_BLOBS_USAGE, MAINTAIN_USAGE,
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use proxiima::spiice::SpiiceBundle;
 use proxiima::{
     AppContext, AppInfo, EmbeddingRuntimePolicy, Proxiima, ProxiimaError, RunningProxiima,
-    RuntimeBuilder, SpiiceApp, SpiiceServiceError, SpiiceServices,
+    RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices,
     embedding_runtime_policy_from_lookup,
 };
 use proxiima_core::llm::{
@@ -33,18 +34,14 @@ use proxiima_storage_pg::{
     EmbeddingReconcileScope, PgStorage,
 };
 
-const PROXIIMA_EMBED_MODEL: &str = "PROXIIMA_EMBED_MODEL";
-const PROXIIMA_EMBED_BASE_URL: &str = "PROXIIMA_EMBED_BASE_URL";
-const PROXIIMA_EMBED_API_KEY: &str = "PROXIIMA_EMBED_API_KEY";
-const PROXIIMA_EMBED_MATRYOSHKA: &str = "PROXIIMA_EMBED_MATRYOSHKA";
-const PROXIIMA_EMBED_DIM: &str = "PROXIIMA_EMBED_DIM";
-const PROXIIMA_EMBED_MAX_INPUT_CHARS: &str = "PROXIIMA_EMBED_MAX_INPUT_CHARS";
+use settings::{
+    PROXIIMA_EMBED_API_KEY, PROXIIMA_EMBED_BASE_URL, PROXIIMA_EMBED_DIM, PROXIIMA_EMBED_MATRYOSHKA,
+    PROXIIMA_EMBED_MAX_INPUT_CHARS, PROXIIMA_EMBED_MODEL, PROXIIMA_EMBED_QUERY_INSTRUCTION,
+    PROXIIMA_TOOL_ALLOW, PROXIIMA_TOOL_DENY, PROXIIMA_TOOL_PROFILE,
+};
+
 const DEFAULT_EMBED_MAX_INPUT_CHARS: NonZeroU32 =
     NonZeroU32::new(16_384).expect("embedding input default is positive");
-const PROXIIMA_EMBED_QUERY_INSTRUCTION: &str = "PROXIIMA_EMBED_QUERY_INSTRUCTION";
-const PROXIIMA_TOOL_PROFILE: &str = "PROXIIMA_TOOL_PROFILE";
-const PROXIIMA_TOOL_ALLOW: &str = "PROXIIMA_TOOL_ALLOW";
-const PROXIIMA_TOOL_DENY: &str = "PROXIIMA_TOOL_DENY";
 
 /// Tool/action scope keys advertised by the `memory` profile. Flat entries
 /// reference the owning tool's `McpTool::NAME`; grouped tools contribute
@@ -135,6 +132,10 @@ impl SpiiceApp for ProxiimaMcpApp {
         )
     }
 
+    fn settings() -> Vec<&'static Setting> {
+        settings::SETTINGS.iter().collect()
+    }
+
     fn services(_ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {
         Ok(SpiiceServices::default())
     }
@@ -200,7 +201,9 @@ enum LogSink {
 }
 
 /// Install the log output of this process, filtered by `RUST_LOG` (default
-/// `info`).
+/// `info`), and warn through it about each `PROXIIMA_*` variable of the
+/// process environment that no setting declares: every command reads the
+/// process environment through a lookup, which cannot list its names.
 fn init_logging(sink: LogSink) {
     // rmcp 3.x logs idle-session keep-alive expiry and the resulting
     // session-cleanup race at ERROR; both are clean lifecycle events
@@ -218,6 +221,7 @@ fn init_logging(sink: LogSink) {
         LogSink::Stderr => builder.with_writer(std::io::stderr).try_init(),
     }
     .ok();
+    proxiima::settings::warn_unknown_env(settings::SETTINGS);
 }
 
 /// The [`CliError`] of a subcommand's argument failure: a request for help
@@ -731,7 +735,8 @@ fn query_instructions_from_env(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<QueryInstructions, CliError> {
     let mut instructions = QueryInstructions::default();
-    if let Some(instruction) = query_instruction_from_env(lookup, PROXIIMA_EMBED_QUERY_INSTRUCTION)?
+    if let Some(instruction) =
+        query_instruction_from_env(lookup, &PROXIIMA_EMBED_QUERY_INSTRUCTION)?
     {
         instructions = instructions.with_instruction(QueryTask::DEFAULT, instruction);
     }
@@ -742,9 +747,9 @@ fn query_instructions_from_env(
 /// such as Qwen3's need one, and an environment value cannot easily hold it.
 fn query_instruction_from_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &'static str,
+    key: &Setting,
 ) -> Result<Option<QueryInstruction>, CliError> {
-    proxiima_core::env_value(lookup, key)
+    key.read(lookup)
         .map(|raw| {
             QueryInstruction::new(raw.replace("\\n", "\n"))
                 .map_err(|err| CliError::Runtime(ProxiimaError::Config(format!("{key}: {err}"))))
@@ -790,9 +795,9 @@ fn served_surface_from_env(
     registered: &RegisteredKeys,
 ) -> Result<ServedSurface, CliError> {
     resolve_served_surface(
-        proxiima_core::env_value(lookup, PROXIIMA_TOOL_PROFILE).as_deref(),
-        proxiima_core::env_value(lookup, PROXIIMA_TOOL_ALLOW).as_deref(),
-        proxiima_core::env_value(lookup, PROXIIMA_TOOL_DENY).as_deref(),
+        PROXIIMA_TOOL_PROFILE.read(lookup).as_deref(),
+        PROXIIMA_TOOL_ALLOW.read(lookup).as_deref(),
+        PROXIIMA_TOOL_DENY.read(lookup).as_deref(),
         registered,
     )
 }
@@ -812,10 +817,10 @@ fn resolve_served_surface(
         None => ToolProfile::Memory,
     };
     let registered_ids = registered.all.as_slice();
-    let allow = parse_tool_id_csv(allow_raw, PROXIIMA_TOOL_ALLOW)?;
-    let deny = parse_tool_id_csv(deny_raw, PROXIIMA_TOOL_DENY)?;
-    reject_unknown_tool_ids(&allow, registered_ids, PROXIIMA_TOOL_ALLOW)?;
-    reject_unknown_tool_ids(&deny, registered_ids, PROXIIMA_TOOL_DENY)?;
+    let allow = parse_tool_id_csv(allow_raw, &PROXIIMA_TOOL_ALLOW)?;
+    let deny = parse_tool_id_csv(deny_raw, &PROXIIMA_TOOL_DENY)?;
+    reject_unknown_tool_ids(&allow, registered_ids, &PROXIIMA_TOOL_ALLOW)?;
+    reject_unknown_tool_ids(&deny, registered_ids, &PROXIIMA_TOOL_DENY)?;
     reject_served_read_denials(&deny, &registered.served_reads)?;
 
     if profile == ToolProfile::Full && allow.is_empty() && deny.is_empty() {
@@ -865,7 +870,7 @@ fn keep_set_keys(ids: impl IntoIterator<Item = &'static str>) -> BTreeSet<ScopeK
 /// # Errors
 ///
 /// A config error naming the entry that is not a scope key.
-fn parse_tool_id_csv(raw: Option<&str>, env_var: &str) -> Result<Vec<ScopeKey>, CliError> {
+fn parse_tool_id_csv(raw: Option<&str>, env_var: &Setting) -> Result<Vec<ScopeKey>, CliError> {
     raw.map_or_else(
         || Ok(Vec::new()),
         |raw| {
@@ -891,7 +896,7 @@ fn parse_tool_id_csv(raw: Option<&str>, env_var: &str) -> Result<Vec<ScopeKey>, 
 fn reject_unknown_tool_ids(
     ids: &[ScopeKey],
     registered_ids: &[ScopeKey],
-    env_var: &str,
+    env_var: &Setting,
 ) -> Result<(), CliError> {
     let registered: HashSet<&ScopeKey> = registered_ids.iter().collect();
     for id in ids {
@@ -943,15 +948,13 @@ fn embedding_client_from_env(
     // or not embeddings are configured.
     let plaintext_hosts = proxiima_core::PlaintextHosts::from_lookup(&lookup)
         .map_err(|err| CliError::Runtime(ProxiimaError::Config(err.to_string())))?;
-    let api_key = proxiima_core::env_value(&lookup, PROXIIMA_EMBED_API_KEY);
-    let base_url = proxiima_core::env_value(&lookup, PROXIIMA_EMBED_BASE_URL);
+    let api_key = PROXIIMA_EMBED_API_KEY.read(&lookup);
+    let base_url = PROXIIMA_EMBED_BASE_URL.read(&lookup);
     let model = embedding_model_from_env(&lookup);
-    let matryoshka_is_set = proxiima_core::env_value(&lookup, PROXIIMA_EMBED_MATRYOSHKA).is_some();
-    let dim_is_set = proxiima_core::env_value(&lookup, PROXIIMA_EMBED_DIM).is_some();
-    let max_input_is_set =
-        proxiima_core::env_value(&lookup, PROXIIMA_EMBED_MAX_INPUT_CHARS).is_some();
-    let query_instruction_is_set =
-        proxiima_core::env_value(&lookup, PROXIIMA_EMBED_QUERY_INSTRUCTION).is_some();
+    let matryoshka_is_set = PROXIIMA_EMBED_MATRYOSHKA.read(&lookup).is_some();
+    let dim_is_set = PROXIIMA_EMBED_DIM.read(&lookup).is_some();
+    let max_input_is_set = PROXIIMA_EMBED_MAX_INPUT_CHARS.read(&lookup).is_some();
+    let query_instruction_is_set = PROXIIMA_EMBED_QUERY_INSTRUCTION.read(&lookup).is_some();
 
     if base_url.is_none()
         && model.is_none()
@@ -975,10 +978,10 @@ fn embedding_client_from_env(
         ))
     })?;
 
-    let matryoshka = parse_bool_env(&lookup, PROXIIMA_EMBED_MATRYOSHKA)?;
+    let matryoshka = parse_bool_env(&lookup, &PROXIIMA_EMBED_MATRYOSHKA)?;
     let dim = embedding_dim_from_env(&lookup)?.width_u32();
 
-    let max_input_chars = parse_positive_u32_env(&lookup, PROXIIMA_EMBED_MAX_INPUT_CHARS)?
+    let max_input_chars = parse_positive_u32_env(&lookup, &PROXIIMA_EMBED_MAX_INPUT_CHARS)?
         .unwrap_or(DEFAULT_EMBED_MAX_INPUT_CHARS);
     let caps = proxiima_core::models::EmbedCaps::new(dim, matryoshka)
         .with_max_input_chars(max_input_chars);
@@ -1000,9 +1003,9 @@ fn embedding_client_from_env(
 /// reject every input, and the omitted variable uses the finite default.
 fn parse_positive_u32_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &'static str,
+    key: &Setting,
 ) -> Result<Option<NonZeroU32>, CliError> {
-    let Some(raw) = proxiima_core::env_value(lookup, key) else {
+    let Some(raw) = key.read(lookup) else {
         return Ok(None);
     };
     raw.parse::<NonZeroU32>().map(Some).map_err(|_| {
@@ -1014,9 +1017,9 @@ fn parse_positive_u32_env(
 
 fn parse_bool_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &'static str,
+    key: &Setting,
 ) -> Result<bool, CliError> {
-    match proxiima_core::env_value(lookup, key) {
+    match key.read(lookup) {
         None => Ok(false),
         Some(raw) => proxiima_core::parse_bool_word(&raw).ok_or_else(|| {
             CliError::Runtime(ProxiimaError::Config(format!(
@@ -1027,14 +1030,14 @@ fn parse_bool_env(
 }
 
 fn embedding_model_from_env(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
-    proxiima_core::env_value(&lookup, PROXIIMA_EMBED_MODEL)
+    PROXIIMA_EMBED_MODEL.read(&lookup)
 }
 
 /// `PROXIIMA_EMBED_DIM`, or 1024 when unset.
 fn embedding_dim_from_env(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<proxiima_core::llm::EmbeddingDim, CliError> {
-    let Some(raw) = proxiima_core::env_value(lookup, PROXIIMA_EMBED_DIM) else {
+    let Some(raw) = PROXIIMA_EMBED_DIM.read(lookup) else {
         return Ok(proxiima_core::llm::EmbeddingDim::D1024);
     };
     let width = raw.parse::<usize>().map_err(|_| {
@@ -1104,6 +1107,18 @@ mod tests {
 
     use super::*;
     use proxiima_core::ToolName;
+
+    const PROXIIMA_EMBED_API_KEY: &str = settings::PROXIIMA_EMBED_API_KEY.name();
+    const PROXIIMA_EMBED_BASE_URL: &str = settings::PROXIIMA_EMBED_BASE_URL.name();
+    const PROXIIMA_EMBED_DIM: &str = settings::PROXIIMA_EMBED_DIM.name();
+    const PROXIIMA_EMBED_MATRYOSHKA: &str = settings::PROXIIMA_EMBED_MATRYOSHKA.name();
+    const PROXIIMA_EMBED_MAX_INPUT_CHARS: &str = settings::PROXIIMA_EMBED_MAX_INPUT_CHARS.name();
+    const PROXIIMA_EMBED_MODEL: &str = settings::PROXIIMA_EMBED_MODEL.name();
+    const PROXIIMA_EMBED_QUERY_INSTRUCTION: &str =
+        settings::PROXIIMA_EMBED_QUERY_INSTRUCTION.name();
+    const PROXIIMA_TOOL_ALLOW: &str = settings::PROXIIMA_TOOL_ALLOW.name();
+    const PROXIIMA_TOOL_DENY: &str = settings::PROXIIMA_TOOL_DENY.name();
+    const PROXIIMA_TOOL_PROFILE: &str = settings::PROXIIMA_TOOL_PROFILE.name();
 
     fn key(text: &str) -> ScopeKey {
         ScopeKey::parse(text).expect("a scope key")
@@ -1759,14 +1774,17 @@ mod tests {
     #[tokio::test]
     async fn app_construction_rejects_invalid_embedding_runtime_policy() {
         for (key, value) in [
-            (proxiima_core::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, "0"),
-            (proxiima_core::PROXIIMA_EMBED_BATCH_SIZE, "bad"),
             (
-                proxiima_core::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+                proxiima_core::env::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS.name(),
+                "0",
+            ),
+            (proxiima_core::env::PROXIIMA_EMBED_BATCH_SIZE.name(), "bad"),
+            (
+                proxiima_core::env::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS.name(),
                 "3601",
             ),
             (
-                proxiima_core::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+                proxiima_core::env::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS.name(),
                 "120",
             ),
         ] {
@@ -2316,7 +2334,7 @@ mod tests {
         for raw in ["0", "-1", "lots", "16k", ""] {
             let lookup =
                 |key: &str| (key == PROXIIMA_EMBED_MAX_INPUT_CHARS).then(|| raw.to_string());
-            let parsed = parse_positive_u32_env(&lookup, PROXIIMA_EMBED_MAX_INPUT_CHARS);
+            let parsed = parse_positive_u32_env(&lookup, &settings::PROXIIMA_EMBED_MAX_INPUT_CHARS);
             if raw.is_empty() {
                 // An empty value is an unset value everywhere else here.
                 assert!(matches!(parsed, Ok(None)), "empty must read as unset");
@@ -2391,7 +2409,7 @@ mod tests {
             assert!(
                 parse_bool_env(
                     &|key: &str| (key == PROXIIMA_EMBED_MATRYOSHKA).then(|| raw.to_string()),
-                    PROXIIMA_EMBED_MATRYOSHKA
+                    &settings::PROXIIMA_EMBED_MATRYOSHKA
                 )
                 .expect("parses")
             );
@@ -2399,14 +2417,14 @@ mod tests {
         assert!(
             !parse_bool_env(
                 &|key: &str| (key == PROXIIMA_EMBED_MATRYOSHKA).then(|| "false".to_string()),
-                PROXIIMA_EMBED_MATRYOSHKA
+                &settings::PROXIIMA_EMBED_MATRYOSHKA
             )
             .expect("parses")
         );
         assert!(
             parse_bool_env(
                 &|key: &str| (key == PROXIIMA_EMBED_MATRYOSHKA).then(|| "maybe".to_string()),
-                PROXIIMA_EMBED_MATRYOSHKA
+                &settings::PROXIIMA_EMBED_MATRYOSHKA
             )
             .is_err()
         );

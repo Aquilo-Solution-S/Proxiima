@@ -11,9 +11,11 @@ concepts and integration; avoid a second invariant or configuration ledger.
   first; `lake build` and `scripts/check-lean-axioms.py` check the kernel, not
   a Rust refinement proof.
 - Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers,
-  policies and views: `crates/storage-pg/definitions/`. Settings:
-  [configuration](docs/configuration.md), checked bidirectionally by
-  `scripts/check-settings.py`. Action/resource schemas: the live catalog.
+  policies and views: `crates/storage-pg/definitions/`. Settings: each
+  crate's `settings!` block, read only through `Setting::read`;
+  [configuration](docs/configuration.md) is rendered from the blocks and kept
+  current by a regenerating test in `apps/proxiima-mcp`. Action/resource
+  schemas: the live catalog.
 - Keep work within existing crates/packages. Adding a binary, crate, service,
   migration, protocol surface, or registration path requires an explicit task;
   the pre-push review enforces this boundary. Example: a retrieval fix does
@@ -119,8 +121,8 @@ Never weaken, delete, or ignore a surviving behavioral assertion to pass.
 
 - English repository artifacts. Documentation review favors technical facts,
   signatures, tables, and links over repeated explanations: a second defaults
-  table would drift from rustdoc. Link and settings gates enforce their own
-  boundaries.
+  table would drift from rustdoc. The link gate and the settings table test
+  enforce their own boundaries.
 - Mermaid diagrams are inline and rendered by `pymdownx.superfences` in the
   strict MkDocs build. Keep diagrams conceptual; schemas remain generated.
 - Subjects use Conventional Commits: `docs(<scope>): …`,

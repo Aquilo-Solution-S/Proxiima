@@ -302,8 +302,8 @@ pub use proxiima_core::{
     EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRuntimePolicy, Engine,
     EngineAuthority, ForwarderRole, GoalAccess, GroupId, MemoryId, OwnerAccessPort, OwnerId,
     OwnerIdParseError, OwnerRoles, Relation, ResourceKey, Role, SchemaId, ScopeKey, ScopeKeyError,
-    ServedSurface, SourceId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices,
-    StorageError, ToolName, ToolScope, UserId, env_value, provider_safe_tool_name,
+    ServedSurface, Setting, SettingKind, SourceId, SpiiceRegistryFrozen, SpiiceServiceError,
+    SpiiceServices, StorageError, ToolName, ToolScope, UserId, provider_safe_tool_name,
 };
 #[cfg(feature = "openai-compat-embed")]
 pub use proxiima_llm_openai_compat::{OpenAiCompatConfig, OpenAiCompatEmbeddingClient};

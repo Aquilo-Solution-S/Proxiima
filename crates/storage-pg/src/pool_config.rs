@@ -2,8 +2,13 @@
 
 use std::time::Duration;
 
-use proxiima_core::StorageError;
+use proxiima_core::{Setting, StorageError};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+
+use crate::settings::{
+    PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS, PROXIIMA_PG_IDLE_TIMEOUT_SECS, PROXIIMA_PG_MAX_CONNECTIONS,
+    PROXIIMA_PG_MAX_LIFETIME_SECS, PROXIIMA_PG_STATEMENT_TIMEOUT_MS,
+};
 
 /// Per pool. A serving host holds two pools (runtime and platform), so the
 /// default host opens at most ten backends. A store's work rarely needs more
@@ -89,28 +94,28 @@ impl PgPoolConfig {
         let defaults = Self::default();
         let (max_connections, max_connections_configured) = env_int_with_presence(
             lookup,
-            "PROXIIMA_PG_MAX_CONNECTIONS",
+            &PROXIIMA_PG_MAX_CONNECTIONS,
             defaults.max_connections,
         )?;
         let (statement_timeout_ms, statement_timeout_configured) = env_int_with_presence(
             lookup,
-            "PROXIIMA_PG_STATEMENT_TIMEOUT_MS",
+            &PROXIIMA_PG_STATEMENT_TIMEOUT_MS,
             u64::try_from(defaults.statement_timeout.as_millis())
                 .expect("default statement timeout fits u64 milliseconds"),
         )?;
         let (acquire_timeout_secs, acquire_timeout_configured) = env_int_with_presence(
             lookup,
-            "PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS",
+            &PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS,
             defaults.acquire_timeout.as_secs(),
         )?;
         let (idle_timeout_secs, idle_timeout_configured) = env_int_with_presence(
             lookup,
-            "PROXIIMA_PG_IDLE_TIMEOUT_SECS",
+            &PROXIIMA_PG_IDLE_TIMEOUT_SECS,
             defaults.idle_timeout.as_secs(),
         )?;
         let (max_lifetime_secs, max_lifetime_configured) = env_int_with_presence(
             lookup,
-            "PROXIIMA_PG_MAX_LIFETIME_SECS",
+            &PROXIIMA_PG_MAX_LIFETIME_SECS,
             defaults.max_lifetime.as_secs(),
         )?;
         let config = Self {
@@ -183,16 +188,16 @@ impl PgPoolConfig {
 /// presence question: an explicit default still outranks spiice configuration.
 fn env_int_with_presence<T: std::str::FromStr>(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    setting: &Setting,
     default: T,
 ) -> Result<(T, bool), StorageError> {
-    let Some(value) = proxiima_core::env_value(lookup, key) else {
+    let Some(value) = setting.read(lookup) else {
         return Ok((default, false));
     };
     value
         .parse()
         .map(|parsed| (parsed, true))
-        .map_err(|_| StorageError::Unavailable(format!("invalid integer {key}={value}")))
+        .map_err(|_| StorageError::Unavailable(format!("invalid integer {setting}={value}")))
 }
 
 #[cfg(test)]

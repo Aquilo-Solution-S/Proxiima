@@ -9,8 +9,8 @@ use proxiima_core::storage_ports::OwnerDropProofHandle;
 use proxiima_core::storage_ports::publication::ConsumerName;
 use proxiima_core::{
     Authenticator, EmbeddingClient, EmbeddingRouter, EmbeddingRuntimePolicy, OwnerAccessPort,
-    OwnerId, RequestHeaders, RevalidationConfig, ServedSurface, SpiiceServiceError, SpiiceServices,
-    is_loopback_host,
+    OwnerId, RequestHeaders, RevalidationConfig, ServedSurface, Setting, SpiiceServiceError,
+    SpiiceServices, is_loopback_host,
 };
 use proxiima_mcp_server::{
     McpHostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
@@ -23,6 +23,7 @@ use crate::config::{
     publication_config_from_lookup, s3_from_lookup,
 };
 use crate::owner_access::{ForwarderPolicy, LateOwnerAccess, forwarder_from_lookup};
+use crate::settings;
 
 /// What an authenticator built at boot receives
 /// ([`RuntimeBuilder::authenticator_with_platform_scope`]).
@@ -779,8 +780,7 @@ impl RuntimeBuilder {
         self,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ProxiimaError> {
-        let lookup = |key: &str| proxiima_core::env_value(&lookup, key);
-        let mut builder = self.apply_storage_lookup(lookup)?;
+        let mut builder = self.apply_storage_lookup(&lookup)?;
         builder.apply_serving_lookup(&lookup)?;
         Ok(builder)
     }
@@ -801,27 +801,28 @@ impl RuntimeBuilder {
         mut self,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ProxiimaError> {
-        let lookup = |key: &str| proxiima_core::env_value(&lookup, key);
         if self.store_number.is_none() {
-            self.store_number = lookup("PROXIIMA_STORE_NUMBER")
+            self.store_number = settings::PROXIIMA_STORE_NUMBER
+                .read(&lookup)
                 .map(|value| parse_store_number(&value))
                 .transpose()?;
         }
         if self.database_url.is_none() {
-            self.database_url = lookup("DATABASE_URL");
+            self.database_url = settings::DATABASE_URL.read(&lookup);
         }
         if self.platform_database_url.is_none() {
-            self.platform_database_url = lookup("PROXIIMA_PLATFORM_DATABASE_URL");
+            self.platform_database_url = settings::PROXIIMA_PLATFORM_DATABASE_URL.read(&lookup);
         }
         if self.migration_database_url.is_none() {
-            self.migration_database_url = lookup("PROXIIMA_MIGRATION_DATABASE_URL");
+            self.migration_database_url = settings::PROXIIMA_MIGRATION_DATABASE_URL.read(&lookup);
         }
         if self.missing_migration_policy.is_none() {
             self.missing_migration_policy = missing_migration_policy_from_lookup(&lookup)?;
         }
         if self.runtime_grants.is_none() {
-            self.runtime_grants = lookup("PROXIIMA_RUNTIME_GRANTS")
-                .map(|raw| parse_bool_value("PROXIIMA_RUNTIME_GRANTS", &raw))
+            self.runtime_grants = settings::PROXIIMA_RUNTIME_GRANTS
+                .read(&lookup)
+                .map(|raw| parse_bool_value(&settings::PROXIIMA_RUNTIME_GRANTS, &raw))
                 .transpose()?;
         }
         if self.pg_pool_config.is_none() {
@@ -848,7 +849,7 @@ impl RuntimeBuilder {
             self.s3 = s3_from_lookup(lookup)?;
         }
         if self.mcp_bind.is_none()
-            && let Some(raw) = lookup("PROXIIMA_MCP_BIND")
+            && let Some(raw) = settings::PROXIIMA_MCP_BIND.read(lookup)
         {
             self.mcp_bind = Some(raw.parse().map_err(|_| {
                 ProxiimaError::Config(format!(
@@ -857,27 +858,32 @@ impl RuntimeBuilder {
             })?);
         }
         if self.expose_network.is_none() {
-            self.expose_network = lookup("PROXIIMA_EXPOSE_NETWORK")
-                .map(|raw| parse_bool_value("PROXIIMA_EXPOSE_NETWORK", &raw))
+            self.expose_network = settings::PROXIIMA_EXPOSE_NETWORK
+                .read(lookup)
+                .map(|raw| parse_bool_value(&settings::PROXIIMA_EXPOSE_NETWORK, &raw))
                 .transpose()?;
         }
         if self.rest_enabled.is_none() {
-            self.rest_enabled = lookup("PROXIIMA_REST_ENABLED")
-                .map(|raw| parse_bool_value("PROXIIMA_REST_ENABLED", &raw))
+            self.rest_enabled = settings::PROXIIMA_REST_ENABLED
+                .read(lookup)
+                .map(|raw| parse_bool_value(&settings::PROXIIMA_REST_ENABLED, &raw))
                 .transpose()?;
         }
         self.apply_served_path_lookup(lookup)?;
         if self.allowed_origins.is_none() {
-            self.allowed_origins =
-                lookup("PROXIIMA_ALLOWED_ORIGINS").map(|raw| parse_allowed_origins(&raw));
+            self.allowed_origins = settings::PROXIIMA_ALLOWED_ORIGINS
+                .read(lookup)
+                .map(|raw| parse_allowed_origins(&raw));
         }
         if self.allowed_hosts.is_none() {
-            self.allowed_hosts =
-                lookup("PROXIIMA_ALLOWED_HOSTS").map(|raw| parse_allowed_hosts(&raw));
+            self.allowed_hosts = settings::PROXIIMA_ALLOWED_HOSTS
+                .read(lookup)
+                .map(|raw| parse_allowed_hosts(&raw));
         }
         if self.stream_max_lifetime.is_none() {
-            self.stream_max_lifetime = lookup("PROXIIMA_STREAM_MAX_LIFETIME")
-                .map(|raw| parse_duration_seconds("PROXIIMA_STREAM_MAX_LIFETIME", &raw))
+            self.stream_max_lifetime = settings::PROXIIMA_STREAM_MAX_LIFETIME
+                .read(lookup)
+                .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
         }
         // Unconditional: the block is read (and validated) on every boot.
@@ -907,19 +913,22 @@ impl RuntimeBuilder {
         lookup: &impl Fn(&str) -> Option<String>,
     ) -> Result<(), ProxiimaError> {
         if self.request_headers.is_none() {
-            self.request_headers = lookup("PROXIIMA_REQUEST_HEADERS")
+            self.request_headers = settings::PROXIIMA_REQUEST_HEADERS
+                .read(lookup)
                 .map(|raw| raw.split(',').map(ToOwned::to_owned).collect());
         }
         if self.forwarder.is_none() {
             self.forwarder = forwarder_from_lookup(lookup)?;
         }
         if self.health_endpoints.is_none() {
-            self.health_endpoints = lookup("PROXIIMA_HEALTH_ENDPOINTS")
-                .map(|raw| parse_bool_value("PROXIIMA_HEALTH_ENDPOINTS", &raw))
+            self.health_endpoints = settings::PROXIIMA_HEALTH_ENDPOINTS
+                .read(lookup)
+                .map(|raw| parse_bool_value(&settings::PROXIIMA_HEALTH_ENDPOINTS, &raw))
                 .transpose()?;
         }
         if self.max_request_body_bytes.is_none() {
-            self.max_request_body_bytes = lookup("PROXIIMA_MAX_REQUEST_BODY_BYTES")
+            self.max_request_body_bytes = settings::PROXIIMA_MAX_REQUEST_BODY_BYTES
+                .read(lookup)
                 .map(|raw| {
                     raw.parse::<usize>().map_err(|_| {
                         ProxiimaError::Config(format!(
@@ -932,11 +941,11 @@ impl RuntimeBuilder {
         if self.mcp_transport.is_none() {
             self.mcp_transport = mcp_transport_from_lookup(lookup)?;
         }
-        if self.oidc_env.is_none() && lookup("PROXIIMA_OIDC_ISSUER").is_some() {
+        if self.oidc_env.is_none() && settings::PROXIIMA_OIDC_ISSUER.read(lookup).is_some() {
             self.oidc_env = Some(
                 oidc_env_keys()
                     .iter()
-                    .filter_map(|key| lookup(key).map(|value| (*key, value)))
+                    .filter_map(|setting| setting.read(lookup).map(|value| (setting.name(), value)))
                     .collect(),
             );
         }
@@ -1068,7 +1077,7 @@ impl RuntimeBuilder {
             return Err(ProxiimaError::Config(format!(
                 "{} is set and the host also registered an outbox consumer named \
                  `http`; rename the host consumer or unset the variable",
-                crate::outbox_http::ENV_URL
+                settings::PROXIIMA_OUTBOX_HTTP_URL
             )));
         }
         self.outbox_consumers.0.insert(name, http);
@@ -1648,7 +1657,8 @@ fn parse_allowed_hosts(raw: &str) -> Vec<String> {
 pub fn missing_migration_policy_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<MissingMigrationPolicy>, ProxiimaError> {
-    proxiima_core::env_value(lookup, "PROXIIMA_MISSING_MIGRATION_POLICY")
+    settings::PROXIIMA_MISSING_MIGRATION_POLICY
+        .read(lookup)
         .map(|raw| match raw.as_str() {
             "reject" => Ok(MissingMigrationPolicy::Reject),
             "allow" => Ok(MissingMigrationPolicy::Allow),
@@ -1693,7 +1703,7 @@ fn dedup_hosts(hosts: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn parse_duration_seconds(key: &str, raw: &str) -> Result<Duration, ProxiimaError> {
+pub(crate) fn parse_duration_seconds(key: &Setting, raw: &str) -> Result<Duration, ProxiimaError> {
     let trimmed = raw.trim();
     let seconds = trimmed.parse::<u64>().map_err(|_| {
         ProxiimaError::Config(format!("{key} must be integer seconds, got {raw:?}"))
@@ -1704,14 +1714,14 @@ pub(crate) fn parse_duration_seconds(key: &str, raw: &str) -> Result<Duration, P
 /// The variables the environment layer captures for the OIDC authenticator
 /// built at resolve.
 #[cfg(feature = "auth-oidc")]
-fn oidc_env_keys() -> &'static [&'static str] {
+fn oidc_env_keys() -> &'static [Setting] {
     &crate::auth::OIDC_ENV_KEYS
 }
 
 /// Only the issuer: its presence is what a build without `auth-oidc` refuses.
 #[cfg(not(feature = "auth-oidc"))]
-fn oidc_env_keys() -> &'static [&'static str] {
-    &["PROXIIMA_OIDC_ISSUER"]
+fn oidc_env_keys() -> &'static [Setting] {
+    &[settings::PROXIIMA_OIDC_ISSUER]
 }
 
 /// The `PROXIIMA_MCP_*` transport block: `None` when none is set, else
@@ -1720,52 +1730,58 @@ fn oidc_env_keys() -> &'static [&'static str] {
 fn mcp_transport_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<McpTransportConfig>, ProxiimaError> {
-    const KEEP_ALIVE: &str = "PROXIIMA_MCP_SSE_KEEP_ALIVE_SECS";
-    const SESSION_IDLE: &str = "PROXIIMA_MCP_SESSION_IDLE_SECS";
-    const RETRY: &str = "PROXIIMA_MCP_SSE_RETRY_SECS";
-    const SESSIONS: &str = "PROXIIMA_MCP_SESSIONS";
-    const JSON_RESPONSE: &str = "PROXIIMA_MCP_JSON_RESPONSE";
+    use settings::{
+        PROXIIMA_MCP_JSON_RESPONSE as JSON_RESPONSE,
+        PROXIIMA_MCP_SESSION_IDLE_SECS as SESSION_IDLE, PROXIIMA_MCP_SESSIONS as SESSIONS,
+        PROXIIMA_MCP_SSE_KEEP_ALIVE_SECS as KEEP_ALIVE, PROXIIMA_MCP_SSE_RETRY_SECS as RETRY,
+    };
     if [KEEP_ALIVE, SESSION_IDLE, RETRY, SESSIONS, JSON_RESPONSE]
         .iter()
-        .all(|key| lookup(key).is_none())
+        .all(|setting| setting.read(lookup).is_none())
     {
         return Ok(None);
     }
-    let optional_secs = |key: &str| -> Result<Option<Option<Duration>>, ProxiimaError> {
-        lookup(key)
-            .map(|raw| parse_duration_seconds(key, &raw))
+    let optional_secs = |setting: &Setting| -> Result<Option<Option<Duration>>, ProxiimaError> {
+        setting
+            .read(lookup)
+            .map(|raw| parse_duration_seconds(setting, &raw))
             .transpose()
             .map(|parsed| parsed.map(|duration| (!duration.is_zero()).then_some(duration)))
     };
     let mut transport = McpTransportConfig::default();
-    if let Some(keep_alive) = optional_secs(KEEP_ALIVE)? {
+    if let Some(keep_alive) = optional_secs(&KEEP_ALIVE)? {
         transport.sse_keep_alive = keep_alive;
     }
-    if let Some(idle) = optional_secs(SESSION_IDLE)? {
+    if let Some(idle) = optional_secs(&SESSION_IDLE)? {
         transport.session_idle_timeout = idle;
     }
-    if let Some(retry) = optional_secs(RETRY)? {
+    if let Some(retry) = optional_secs(&RETRY)? {
         transport.sse_retry = retry;
     }
-    if let Some(raw) = lookup(SESSIONS) {
-        transport.legacy_session_mode = parse_bool_value(SESSIONS, &raw)?;
+    if let Some(raw) = SESSIONS.read(lookup) {
+        transport.legacy_session_mode = parse_bool_value(&SESSIONS, &raw)?;
     }
-    if let Some(raw) = lookup(JSON_RESPONSE) {
-        transport.json_response = parse_bool_value(JSON_RESPONSE, &raw)?;
+    if let Some(raw) = JSON_RESPONSE.read(lookup) {
+        transport.json_response = parse_bool_value(&JSON_RESPONSE, &raw)?;
     }
     Ok(Some(transport))
 }
 
 fn embedding_runtime_policy_env_is_set(lookup: &impl Fn(&str) -> Option<String>) -> bool {
+    use proxiima_core::env::{
+        PROXIIMA_EMBED_BATCH_SIZE, PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+        PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+        PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+    };
     [
-        proxiima_core::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
-        proxiima_core::PROXIIMA_EMBED_BATCH_SIZE,
-        proxiima_core::PROXIIMA_EMBED_DRAIN_CONCURRENCY,
-        proxiima_core::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
-        proxiima_core::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+        PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+        PROXIIMA_EMBED_BATCH_SIZE,
+        PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+        PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+        PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
     ]
     .iter()
-    .any(|key| proxiima_core::env_value(lookup, key).is_some())
+    .any(|setting| setting.read(lookup).is_some())
 }
 
 /// `PROXIIMA_MIGRATION_DATABASE_URL` is another way to reach the platform
@@ -2048,6 +2064,45 @@ mod tests {
 
     fn owner(id: uuid::Uuid) -> OwnerId {
         OwnerId::from(GroupId::new(id))
+    }
+
+    /// Every declared default of the facade is what its readers do unset.
+    ///
+    /// The builder records which fields the environment set, so the
+    /// comparison is of the resolved [`RuntimeConfig`], whose fields are the
+    /// effective values (its `Debug` prints every one; the URLs, which carry
+    /// no default, are redacted). The two OIDC rows with defaults are read
+    /// by the authenticator, which needs a reachable issuer and an owner
+    /// port to build; their two readers are compared directly instead.
+    #[cfg(feature = "auth-oidc")]
+    #[test]
+    fn declared_defaults_are_what_the_readers_do_unset() {
+        let base = [
+            ("DATABASE_URL", "postgres://localhost/proxiima"),
+            (
+                "PROXIIMA_PLATFORM_DATABASE_URL",
+                "postgres://localhost/platform",
+            ),
+            ("PROXIIMA_STORE_NUMBER", "0"),
+        ];
+        let id = uuid::Uuid::now_v7();
+        proxiima_core::test_fixtures::assert_declared_defaults(
+            settings::SETTINGS,
+            &base,
+            |lookup| {
+                let config = RuntimeBuilder::default()
+                    .owner(owner(id))
+                    .served_surface(ServedSurface::All)
+                    .apply_lookup(lookup)
+                    .and_then(RuntimeBuilder::resolve)
+                    .map(|(config, _)| config);
+                format!(
+                    "{config:?} {:?} {:?}",
+                    crate::auth::oidc_http_timeout(&lookup),
+                    crate::auth::oidc_require_access_token_typ(&lookup),
+                )
+            },
+        );
     }
 
     struct NoopParticipant;
@@ -2579,11 +2634,17 @@ mod tests {
     fn embedding_runtime_policy_env_is_typed_and_programmatic_override_wins() {
         let env_policy = RuntimeBuilder::default()
             .apply_lookup(lookup(&[
-                (proxiima_core::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, "30"),
-                (proxiima_core::PROXIIMA_EMBED_BATCH_SIZE, "12"),
-                (proxiima_core::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS, "7"),
                 (
-                    proxiima_core::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+                    proxiima_core::env::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS.name(),
+                    "30",
+                ),
+                (proxiima_core::env::PROXIIMA_EMBED_BATCH_SIZE.name(), "12"),
+                (
+                    proxiima_core::env::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS.name(),
+                    "7",
+                ),
+                (
+                    proxiima_core::env::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS.name(),
                     "90",
                 ),
             ]))
@@ -2633,7 +2694,7 @@ mod tests {
     fn drain_concurrency_alone_sets_the_embedding_policy_block() {
         let builder = RuntimeBuilder::default()
             .apply_lookup(lookup(&[(
-                proxiima_core::PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                proxiima_core::env::PROXIIMA_EMBED_DRAIN_CONCURRENCY.name(),
                 "4",
             )]))
             .expect("explicit drain concurrency");
@@ -2647,7 +2708,7 @@ mod tests {
         assert!(
             RuntimeBuilder::default()
                 .apply_lookup(lookup(&[(
-                    proxiima_core::PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+                    proxiima_core::env::PROXIIMA_EMBED_DRAIN_CONCURRENCY.name(),
                     "0"
                 )]))
                 .is_err()

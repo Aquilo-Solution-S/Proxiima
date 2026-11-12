@@ -128,11 +128,16 @@ fn mint(signing: &RsaKeyPair, sub: &str) -> String {
 
 /// `proxiima-mcp migrate`, end to end through the binary: a server refuses a
 /// fresh database and names the migrate step, `migrate` brings the database
-/// current, and a server then starts on it.
+/// current, and a server then starts on it. A misspelled `PROXIIMA_*`
+/// variable in the environment is named in a warning, its value is not, and
+/// neither command is refused for it.
 #[tokio::test]
 async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::io::BufRead as _;
+
+    const UNKNOWN: &str = "PROXIIMA_STORE_NUMBR";
+    const UNKNOWN_VALUE: &str = "unknown-setting-value";
 
     let db = proxiima_pg_testkit::SplitRoleDb::create("proxiima_mcp_migrate_cli", &[]).await?;
     let (signing, _) = keypair();
@@ -162,6 +167,7 @@ async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
                 ("PROXIIMA_OIDC_JWKS_JSON", &jwks),
                 ("PROXIIMA_OIDC_SUBJECT_MAP_JSON", &subject_map),
                 ("PROXIIMA_PUBLIC_URL", "https://proxiima.test"),
+                (UNKNOWN, UNKNOWN_VALUE),
             ]);
         command
     };
@@ -176,14 +182,19 @@ async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
 
     let migrated = command("migrate").output()?;
     let stdout = String::from_utf8(migrated.stdout)?;
-    assert!(
-        migrated.status.success(),
-        "{}",
-        String::from_utf8_lossy(&migrated.stderr)
-    );
+    let stderr = String::from_utf8(migrated.stderr)?;
+    assert!(migrated.status.success(), "{stderr}");
     assert!(
         stdout.contains("migrate: the database is current"),
         "{stdout}"
+    );
+    assert!(
+        stderr.contains(UNKNOWN),
+        "the unknown name is logged: {stderr}"
+    );
+    assert!(
+        !stderr.contains(UNKNOWN_VALUE),
+        "its value is not: {stderr}"
     );
 
     let mut server = command("serve")
@@ -193,18 +204,27 @@ async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
         .spawn()?;
     let output = server.stdout.take().ok_or("server stdout")?;
     let listening = tokio::task::spawn_blocking(move || {
-        std::io::BufReader::new(output)
+        let mut before = Vec::new();
+        for line in std::io::BufReader::new(output)
             .lines()
             .map_while(Result::ok)
-            .any(|line| line.contains("proxiima-mcp listening"))
+        {
+            if line.contains("proxiima-mcp listening") {
+                return Some(before);
+            }
+            before.push(line);
+        }
+        None
     });
     let listening = tokio::time::timeout(std::time::Duration::from_mins(1), listening).await;
     server.kill()?;
     server.wait()?;
-    assert!(
-        matches!(listening, Ok(Ok(true))),
-        "the server starts on the migrated database: {listening:?}"
-    );
+    let Ok(Ok(Some(log))) = listening else {
+        panic!("the server starts on the migrated database: {listening:?}");
+    };
+    let log = log.join("\n");
+    assert!(log.contains(UNKNOWN), "the unknown name is logged: {log}");
+    assert!(!log.contains(UNKNOWN_VALUE), "its value is not: {log}");
     Ok(())
 }
 

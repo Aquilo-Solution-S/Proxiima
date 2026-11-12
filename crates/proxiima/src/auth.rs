@@ -17,24 +17,19 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use proxiima_core::{Authenticator, env_value};
+use proxiima_core::{Authenticator, Setting};
 use proxiima_mcp_server::{AuthorizationServers, ResourceServerMetadata};
 
 use crate::OwnerAccessPort;
 use crate::config::parse_bool_value;
 use crate::runtime_config::ProxiimaError;
-
-const SUBJECT_MAP_JSON: &str = "PROXIIMA_OIDC_SUBJECT_MAP_JSON";
-
-/// Where verification keys come from: fetched from the issuer (discovered, or
-/// at `JWKS_URI`), or pinned in configuration (`JWKS_JSON`). At most one.
-const JWKS_URI: &str = "PROXIIMA_OIDC_JWKS_URI";
-const JWKS_JSON: &str = "PROXIIMA_OIDC_JWKS_JSON";
-
-/// Complete-request timeout for OIDC discovery and JWKS HTTP requests.
-const ALLOWED_SUBJECTS: &str = "PROXIIMA_OIDC_ALLOWED_SUBJECTS";
-const OIDC_HTTP_TIMEOUT_SECONDS: &str = "PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS";
-const OIDC_REQUIRE_ACCESS_TOKEN_TYP: &str = "PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP";
+use crate::settings::{
+    PROXIIMA_OIDC_ALLOWED_SUBJECTS as ALLOWED_SUBJECTS, PROXIIMA_OIDC_AUDIENCE,
+    PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS as OIDC_HTTP_TIMEOUT_SECONDS, PROXIIMA_OIDC_ISSUER,
+    PROXIIMA_OIDC_JWKS_JSON as JWKS_JSON, PROXIIMA_OIDC_JWKS_URI as JWKS_URI,
+    PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP as OIDC_REQUIRE_ACCESS_TOKEN_TYP,
+    PROXIIMA_OIDC_SUBJECT_MAP_JSON as SUBJECT_MAP_JSON, PROXIIMA_PUBLIC_URL,
+};
 
 /// How much clock skew a token may carry, in seconds.
 const LEEWAY_SECS: u64 = 60;
@@ -42,10 +37,10 @@ const LEEWAY_SECS: u64 = 60;
 /// Every variable [`oidc_from_lookup`] reads. The runtime environment layer
 /// captures exactly these, so the authenticator it builds at resolve sees
 /// the environment the builder was given.
-pub(crate) const OIDC_ENV_KEYS: [&str; 9] = [
-    "PROXIIMA_OIDC_ISSUER",
-    "PROXIIMA_OIDC_AUDIENCE",
-    "PROXIIMA_PUBLIC_URL",
+pub(crate) const OIDC_ENV_KEYS: [Setting; 9] = [
+    PROXIIMA_OIDC_ISSUER,
+    PROXIIMA_OIDC_AUDIENCE,
+    PROXIIMA_PUBLIC_URL,
     JWKS_URI,
     JWKS_JSON,
     ALLOWED_SUBJECTS,
@@ -118,17 +113,17 @@ pub fn oidc_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
     owner_access: Arc<dyn OwnerAccessPort>,
 ) -> Result<Option<OidcBundle>, ProxiimaError> {
-    let Some(issuer) = env_value(lookup, "PROXIIMA_OIDC_ISSUER") else {
+    let Some(issuer) = PROXIIMA_OIDC_ISSUER.read(lookup) else {
         return Ok(None);
     };
-    let audience = env_value(lookup, "PROXIIMA_OIDC_AUDIENCE").ok_or_else(|| {
+    let audience = PROXIIMA_OIDC_AUDIENCE.read(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_OIDC_AUDIENCE".into())
     })?;
-    let public_url = public_url(&env_value(lookup, "PROXIIMA_PUBLIC_URL").ok_or_else(|| {
+    let public_url = public_url(&PROXIIMA_PUBLIC_URL.read(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_PUBLIC_URL".into())
     })?)?;
-    let jwks_uri = env_value(lookup, JWKS_URI);
-    let jwks_json = env_value(lookup, JWKS_JSON);
+    let jwks_uri = JWKS_URI.read(lookup);
+    let jwks_json = JWKS_JSON.read(lookup);
     // Both is an error rather than a precedence rule: one says fetch keys
     // from the issuer, the other says never contact it.
     if jwks_uri.is_some() && jwks_json.is_some() {
@@ -221,7 +216,7 @@ fn public_url(raw: &str) -> Result<String, ProxiimaError> {
 fn allowed_subjects(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<HashSet<String>>, ProxiimaError> {
-    let Some(raw) = env_value(lookup, ALLOWED_SUBJECTS) else {
+    let Some(raw) = ALLOWED_SUBJECTS.read(lookup) else {
         return Ok(None);
     };
     let subjects = raw
@@ -238,20 +233,22 @@ fn allowed_subjects(
     Ok(Some(subjects))
 }
 
-fn oidc_require_access_token_typ(
+pub(crate) fn oidc_require_access_token_typ(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<bool, ProxiimaError> {
-    let Some(raw) = proxiima_core::env_value(lookup, OIDC_REQUIRE_ACCESS_TOKEN_TYP) else {
+    let Some(raw) = OIDC_REQUIRE_ACCESS_TOKEN_TYP.read(lookup) else {
         return Ok(false);
     };
-    parse_bool_value(OIDC_REQUIRE_ACCESS_TOKEN_TYP, &raw)
+    parse_bool_value(&OIDC_REQUIRE_ACCESS_TOKEN_TYP, &raw)
 }
 
-fn oidc_http_timeout(lookup: &impl Fn(&str) -> Option<String>) -> Result<Duration, ProxiimaError> {
-    let Some(raw) = env_value(lookup, OIDC_HTTP_TIMEOUT_SECONDS) else {
+pub(crate) fn oidc_http_timeout(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Duration, ProxiimaError> {
+    let Some(raw) = OIDC_HTTP_TIMEOUT_SECONDS.read(lookup) else {
         return Ok(proxiima_auth_oidc::DEFAULT_HTTP_REQUEST_TIMEOUT);
     };
-    let timeout = crate::runtime_config::parse_duration_seconds(OIDC_HTTP_TIMEOUT_SECONDS, &raw)?;
+    let timeout = crate::runtime_config::parse_duration_seconds(&OIDC_HTTP_TIMEOUT_SECONDS, &raw)?;
     let seconds = timeout.as_secs();
     if seconds == 0 || seconds > proxiima_auth_oidc::MAX_HTTP_REQUEST_TIMEOUT.as_secs() {
         return Err(ProxiimaError::Config(format!(
@@ -267,7 +264,7 @@ fn oidc_http_timeout(lookup: &impl Fn(&str) -> Option<String>) -> Result<Duratio
 fn subject_map(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<proxiima_auth_oidc::OidcSubjectMap, ProxiimaError> {
-    let json = env_value(lookup, SUBJECT_MAP_JSON).ok_or_else(|| {
+    let json = SUBJECT_MAP_JSON.read(lookup).ok_or_else(|| {
         ProxiimaError::Config(format!(
             "PROXIIMA_OIDC_ISSUER set without {SUBJECT_MAP_JSON}"
         ))
@@ -344,7 +341,9 @@ mod tests {
         oidc_from_lookup(&recording, owner_access()).expect("valid env");
         for key in asked.into_inner().unwrap() {
             assert!(
-                super::OIDC_ENV_KEYS.contains(&key.as_str()),
+                super::OIDC_ENV_KEYS
+                    .iter()
+                    .any(|setting| setting.name() == key),
                 "{key} is read but not in OIDC_ENV_KEYS"
             );
         }
@@ -554,8 +553,11 @@ mod tests {
         use uuid::Uuid;
 
         use super::env;
-        use crate::auth::{JWKS_JSON, JWKS_URI, oidc_from_lookup};
+        use crate::auth::oidc_from_lookup;
         use crate::runtime_config::ProxiimaError;
+
+        const JWKS_JSON: &str = crate::auth::JWKS_JSON.name();
+        const JWKS_URI: &str = crate::auth::JWKS_URI.name();
 
         const KID: &str = "spiice-call-1";
         const FLEET: &str = "spiice-fleet";

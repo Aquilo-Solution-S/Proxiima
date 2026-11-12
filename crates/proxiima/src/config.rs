@@ -1,10 +1,18 @@
 use std::time::Duration;
 
 use proxiima_blob_s3::S3RuntimeConfig;
+use proxiima_core::Setting;
 use proxiima_core::publication::{PublicationConfig, PublicationLimits, PublicationSource};
 use proxiima_storage_pg::{PgPoolConfig, PgTuning};
 
 use crate::ProxiimaError;
+use crate::settings::{
+    PROXIIMA_OBJECT_PURGE_INTERVAL_SECS as ENV_OBJECT_PURGE_INTERVAL_SECS,
+    PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES as ENV_OUTBOX_MAX_PAYLOAD_BYTES,
+    PROXIIMA_OUTBOX_MAX_PENDING as ENV_OUTBOX_MAX_PENDING,
+    PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS as ENV_OUTBOX_PUBLISHED_RETENTION_SECS,
+    PROXIIMA_PUBLICATION_SOURCE as ENV_PUBLICATION_SOURCE,
+};
 
 /// Read the `PROXIIMA_S3_*` block through the blob crate's parser.
 /// One parser for the block; the facade must not re-read it.
@@ -36,20 +44,6 @@ pub(crate) fn pg_pool_config_from_lookup(
     PgPoolConfig::from_lookup(lookup).map_err(|error| ProxiimaError::Config(error.to_string()))
 }
 
-/// Environment key naming this deployment's `CloudEvents` producer identity.
-pub(crate) const ENV_PUBLICATION_SOURCE: &str = "PROXIIMA_PUBLICATION_SOURCE";
-/// Environment key bounding the un-published outbox backlog.
-pub(crate) const ENV_OUTBOX_MAX_PENDING: &str = "PROXIIMA_OUTBOX_MAX_PENDING";
-/// Environment key bounding one sealed envelope.
-pub(crate) const ENV_OUTBOX_MAX_PAYLOAD_BYTES: &str = "PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES";
-/// Environment key retiring records that were already DELIVERED.
-pub(crate) const ENV_OUTBOX_PUBLISHED_RETENTION_SECS: &str =
-    "PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS";
-
-/// Environment key for how often the runtime sweeps expired uploads and
-/// drains object purge debt; `0` turns the in-process drain off.
-pub(crate) const ENV_OBJECT_PURGE_INTERVAL_SECS: &str = "PROXIIMA_OBJECT_PURGE_INTERVAL_SECS";
-
 /// How often the object-purge feature runs when nothing says otherwise.
 pub(crate) const DEFAULT_OBJECT_PURGE_INTERVAL: Duration = Duration::from_mins(1);
 
@@ -62,7 +56,7 @@ pub(crate) const DEFAULT_OBJECT_PURGE_INTERVAL: Duration = Duration::from_mins(1
 pub(crate) fn object_purge_interval_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<Duration>, ProxiimaError> {
-    let Some(raw) = lookup(ENV_OBJECT_PURGE_INTERVAL_SECS) else {
+    let Some(raw) = ENV_OBJECT_PURGE_INTERVAL_SECS.read(lookup) else {
         return Ok(None);
     };
     let seconds: u64 = raw.parse().map_err(|_| {
@@ -100,7 +94,7 @@ pub(crate) const DEFAULT_PUBLISHED_RETENTION: Duration = Duration::from_hours(24
 pub(crate) fn published_retention_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<Duration>, ProxiimaError> {
-    let Some(raw) = lookup(ENV_OUTBOX_PUBLISHED_RETENTION_SECS) else {
+    let Some(raw) = ENV_OUTBOX_PUBLISHED_RETENTION_SECS.read(lookup) else {
         return Ok(None);
     };
     let seconds: u64 = raw.parse().map_err(|_| {
@@ -148,7 +142,8 @@ pub(crate) fn published_retention_from_lookup(
 pub(crate) fn publication_config_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<PublicationConfig, ProxiimaError> {
-    let source = lookup(ENV_PUBLICATION_SOURCE)
+    let source = ENV_PUBLICATION_SOURCE
+        .read(lookup)
         .map(|raw| {
             PublicationSource::new(raw).map_err(|error| {
                 ProxiimaError::Config(format!("{ENV_PUBLICATION_SOURCE}: {error}"))
@@ -157,9 +152,9 @@ pub(crate) fn publication_config_from_lookup(
         .transpose()?;
     let defaults = PublicationLimits::default();
     let limits = PublicationLimits {
-        max_pending: parse_positive(lookup, ENV_OUTBOX_MAX_PENDING)?
+        max_pending: parse_positive(lookup, &ENV_OUTBOX_MAX_PENDING)?
             .unwrap_or(defaults.max_pending),
-        max_payload_bytes: parse_positive(lookup, ENV_OUTBOX_MAX_PAYLOAD_BYTES)?
+        max_payload_bytes: parse_positive(lookup, &ENV_OUTBOX_MAX_PAYLOAD_BYTES)?
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(defaults.max_payload_bytes),
     };
@@ -171,9 +166,9 @@ pub(crate) fn publication_config_from_lookup(
 /// every listenable write instead of none.
 fn parse_positive(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    key: &Setting,
 ) -> Result<Option<u64>, ProxiimaError> {
-    let Some(raw) = lookup(key) else {
+    let Some(raw) = key.read(lookup) else {
         return Ok(None);
     };
     let value: u64 = raw.parse().map_err(|_| {
@@ -187,7 +182,7 @@ fn parse_positive(
     Ok(Some(value))
 }
 
-pub(crate) fn parse_bool_value(key: &str, raw: &str) -> Result<bool, ProxiimaError> {
+pub(crate) fn parse_bool_value(key: &Setting, raw: &str) -> Result<bool, ProxiimaError> {
     proxiima_core::parse_bool_word(raw)
         .ok_or_else(|| ProxiimaError::Config(format!("{key} must be a boolean, got {raw:?}")))
 }
@@ -195,7 +190,14 @@ pub(crate) fn parse_bool_value(key: &str, raw: &str) -> Result<bool, ProxiimaErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings;
     use proxiima_core::env_from_pairs as env;
+
+    const ENV_PUBLICATION_SOURCE: &str = settings::PROXIIMA_PUBLICATION_SOURCE.name();
+    const ENV_OUTBOX_MAX_PENDING: &str = settings::PROXIIMA_OUTBOX_MAX_PENDING.name();
+    const ENV_OUTBOX_MAX_PAYLOAD_BYTES: &str = settings::PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES.name();
+    const ENV_OUTBOX_PUBLISHED_RETENTION_SECS: &str =
+        settings::PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS.name();
 
     /// The retention knob leaves the default when unset, spells "off" as `0`,
     /// and refuses a horizon so short that delivery and deletion would be the

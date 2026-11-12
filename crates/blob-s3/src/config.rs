@@ -1,11 +1,16 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use proxiima_core::{
-    EndpointUrlError, EndpointUrlPolicy, PlaintextHosts, env_value, process_env,
+    EndpointUrlError, EndpointUrlPolicy, PlaintextHosts, Setting, process_env,
     validate_endpoint_url_for_hosts,
 };
 
 use crate::BlobError;
+use crate::settings::{
+    PROXIIMA_S3_ACCESS_KEY_ID, PROXIIMA_S3_BUCKET, PROXIIMA_S3_ENDPOINT_URL,
+    PROXIIMA_S3_FORCE_PATH_STYLE, PROXIIMA_S3_MAX_BLOB_BYTES, PROXIIMA_S3_REGION,
+    PROXIIMA_S3_SECRET_ACCESS_KEY, PROXIIMA_S3_STORE_ID, PROXIIMA_S3_UPLOAD_TTL_SECONDS,
+};
 
 pub(crate) const DEFAULT_UPLOAD_TTL_SECONDS: u64 = 900;
 pub(crate) const DEFAULT_MAX_BLOB_BYTES: u64 = 100 * 1024 * 1024;
@@ -16,7 +21,7 @@ pub(crate) const DEFAULT_MAX_BLOB_BYTES: u64 = 100 * 1024 * 1024;
 pub(crate) const MAX_PRESIGN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 /// Reject a TTL no presigned URL could carry, naming the variable.
-pub(crate) fn validate_presign_ttl(key: &str, seconds: u64) -> Result<(), BlobError> {
+pub(crate) fn validate_presign_ttl(key: &Setting, seconds: u64) -> Result<(), BlobError> {
     if seconds == 0 {
         return Err(BlobError::Config(format!(
             "{key} must be greater than zero"
@@ -119,7 +124,7 @@ impl S3RuntimeConfig {
     /// [`Self::from_env`] turns that into an error because its caller has
     /// already decided S3 is required.
     ///
-    /// Every value is read through [`proxiima_core::env_value`], so a variable
+    /// Every value is read through [`proxiima_core::Setting::read`], so a variable
     /// set to the empty string (or to whitespace) reads as unset rather than
     /// as a value that fails to parse.
     ///
@@ -133,23 +138,23 @@ impl S3RuntimeConfig {
         // whether or not this lane is configured.
         let plaintext_hosts = PlaintextHosts::from_lookup(lookup)
             .map_err(|error| BlobError::Config(error.to_string()))?;
-        let Some(bucket) = env_value(lookup, "PROXIIMA_S3_BUCKET") else {
+        let Some(bucket) = PROXIIMA_S3_BUCKET.read(lookup) else {
             return Ok(None);
         };
-        let region = env_value(lookup, "PROXIIMA_S3_REGION").ok_or_else(|| {
+        let region = PROXIIMA_S3_REGION.read(lookup).ok_or_else(|| {
             BlobError::Config(
                 "missing PROXIIMA_S3_REGION (required with PROXIIMA_S3_BUCKET)".to_string(),
             )
         })?;
         let key_pair = S3KeyPair::new(
-            required_key(lookup, "PROXIIMA_S3_ACCESS_KEY_ID")?,
-            required_key(lookup, "PROXIIMA_S3_SECRET_ACCESS_KEY")?,
+            required_key(lookup, &PROXIIMA_S3_ACCESS_KEY_ID)?,
+            required_key(lookup, &PROXIIMA_S3_SECRET_ACCESS_KEY)?,
         );
-        let endpoint_url = env_value(lookup, "PROXIIMA_S3_ENDPOINT_URL");
+        let endpoint_url = PROXIIMA_S3_ENDPOINT_URL.read(lookup);
         if let Some(endpoint_url) = &endpoint_url {
-            validate_endpoint_url("PROXIIMA_S3_ENDPOINT_URL", endpoint_url, &plaintext_hosts)?;
+            validate_endpoint_url(&PROXIIMA_S3_ENDPOINT_URL, endpoint_url, &plaintext_hosts)?;
         }
-        let store_id = env_value(lookup, "PROXIIMA_S3_STORE_ID");
+        let store_id = PROXIIMA_S3_STORE_ID.read(lookup);
         if let Some(store_id) = &store_id {
             proxiima_core::ObjectStoreId::operator(store_id)
                 .map_err(|error| BlobError::Config(format!("PROXIIMA_S3_STORE_ID: {error}")))?;
@@ -160,10 +165,10 @@ impl S3RuntimeConfig {
             key_pair,
             endpoint_url,
             plaintext_hosts,
-            force_path_style: parse_bool_env(lookup, "PROXIIMA_S3_FORCE_PATH_STYLE")?,
+            force_path_style: parse_bool_env(lookup, &PROXIIMA_S3_FORCE_PATH_STYLE)?,
             upload_ttl_seconds: parse_presign_ttl_env(
                 lookup,
-                "PROXIIMA_S3_UPLOAD_TTL_SECONDS",
+                &PROXIIMA_S3_UPLOAD_TTL_SECONDS,
                 DEFAULT_UPLOAD_TTL_SECONDS,
             )?,
             // Left `None` when unset rather than defaulted here: the field's
@@ -171,7 +176,7 @@ impl S3RuntimeConfig {
             // construction, and `CitedBlobStore::new` applies it for direct
             // constructors too. Defaulting in the parser as well was the
             // second of two application points for one value.
-            max_blob_bytes: parse_optional_u64_env(lookup, "PROXIIMA_S3_MAX_BLOB_BYTES")?,
+            max_blob_bytes: parse_optional_u64_env(lookup, &PROXIIMA_S3_MAX_BLOB_BYTES)?,
             store_id,
         }))
     }
@@ -182,7 +187,7 @@ impl S3RuntimeConfig {
     /// "configured" for a bucket [`Self::from_env`] then rejects as missing.
     #[must_use]
     pub fn present_in_env() -> bool {
-        env_value(&process_env, "PROXIIMA_S3_BUCKET").is_some()
+        PROXIIMA_S3_BUCKET.read(&process_env).is_some()
     }
 
     /// The identity upload rows and purge debt record for this store.
@@ -228,14 +233,20 @@ impl S3RuntimeConfig {
     }
 }
 
-fn required_key(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Result<String, BlobError> {
-    env_value(lookup, key).ok_or_else(|| {
+fn required_key(
+    lookup: &impl Fn(&str) -> Option<String>,
+    key: &Setting,
+) -> Result<String, BlobError> {
+    key.read(lookup).ok_or_else(|| {
         BlobError::Config(format!("missing {key} (required with PROXIIMA_S3_BUCKET)"))
     })
 }
 
-fn parse_bool_env(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Result<bool, BlobError> {
-    let Some(value) = env_value(lookup, key) else {
+fn parse_bool_env(
+    lookup: &impl Fn(&str) -> Option<String>,
+    key: &Setting,
+) -> Result<bool, BlobError> {
+    let Some(value) = key.read(lookup) else {
         return Ok(false);
     };
     proxiima_core::parse_bool_word(&value)
@@ -244,10 +255,10 @@ fn parse_bool_env(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Result
 
 fn parse_u64_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    key: &Setting,
     default: u64,
 ) -> Result<u64, BlobError> {
-    let Some(value) = env_value(lookup, key) else {
+    let Some(value) = key.read(lookup) else {
         return Ok(default);
     };
     value
@@ -257,7 +268,7 @@ fn parse_u64_env(
 
 fn parse_presign_ttl_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    key: &Setting,
     default: u64,
 ) -> Result<u64, BlobError> {
     let seconds = parse_u64_env(lookup, key, default)?;
@@ -267,9 +278,9 @@ fn parse_presign_ttl_env(
 
 fn parse_optional_u64_env(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    key: &Setting,
 ) -> Result<Option<u64>, BlobError> {
-    let Some(value) = env_value(lookup, key) else {
+    let Some(value) = key.read(lookup) else {
         return Ok(None);
     };
     value
@@ -284,7 +295,7 @@ fn parse_optional_u64_env(
 /// `plaintext_hosts` (local object store/dev, or a sidecar on a network with
 /// no route out), unlike production S3 endpoints which must be TLS.
 pub(crate) fn validate_endpoint_url(
-    key: &str,
+    key: &Setting,
     raw: &str,
     plaintext_hosts: &PlaintextHosts,
 ) -> Result<(), BlobError> {
@@ -571,7 +582,7 @@ mod tests {
     #[test]
     fn non_loopback_http_endpoint_is_rejected() {
         let err = validate_endpoint_url(
-            "PROXIIMA_S3_ENDPOINT_URL",
+            &PROXIIMA_S3_ENDPOINT_URL,
             "http://s3.example.com",
             &PlaintextHosts::none(),
         )
@@ -585,7 +596,7 @@ mod tests {
     #[test]
     fn schemeless_endpoint_is_rejected() {
         let err = validate_endpoint_url(
-            "PROXIIMA_S3_ENDPOINT_URL",
+            &PROXIIMA_S3_ENDPOINT_URL,
             "s3.example.com",
             &PlaintextHosts::none(),
         )

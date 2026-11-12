@@ -18,17 +18,16 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use proxiima_core::env::PROXIIMA_PLAINTEXT_HOSTS;
 use proxiima_core::publication::intake::{DurableIntake, Intake, IntakeError, ReceivedEvent};
 use proxiima_core::storage_ports::publication::ConsumerName;
-use proxiima_core::{
-    EndpointUrlPolicy, PROXIIMA_PLAINTEXT_HOSTS, PlaintextHosts, validate_endpoint_url_for_hosts,
-};
+use proxiima_core::{EndpointUrlPolicy, PlaintextHosts, validate_endpoint_url_for_hosts};
 
 use crate::ProxiimaError;
-
-pub(crate) const ENV_URL: &str = "PROXIIMA_OUTBOX_HTTP_URL";
-pub(crate) const ENV_TOKEN_FILE: &str = "PROXIIMA_OUTBOX_HTTP_TOKEN_FILE";
-pub(crate) const ENV_CA_FILE: &str = "PROXIIMA_OUTBOX_HTTP_CA_FILE";
+use crate::settings::{
+    PROXIIMA_OUTBOX_HTTP_CA_FILE as ENV_CA_FILE, PROXIIMA_OUTBOX_HTTP_TOKEN_FILE as ENV_TOKEN_FILE,
+    PROXIIMA_OUTBOX_HTTP_URL as ENV_URL,
+};
 
 /// The consumer name the built-in sink registers under.
 pub(crate) const CONSUMER: &str = "http";
@@ -150,11 +149,11 @@ impl HttpIntake {
     ) -> Result<Option<Self>, ProxiimaError> {
         let plaintext_hosts = PlaintextHosts::from_lookup(lookup)
             .map_err(|err| ProxiimaError::Config(err.to_string()))?;
-        let Some(url) = lookup(ENV_URL) else {
+        let Some(url) = ENV_URL.read(lookup) else {
             return Ok(None);
         };
-        let token_file = lookup(ENV_TOKEN_FILE).map(PathBuf::from);
-        let ca_file = lookup(ENV_CA_FILE).map(PathBuf::from);
+        let token_file = ENV_TOKEN_FILE.read(lookup).map(PathBuf::from);
+        let ca_file = ENV_CA_FILE.read(lookup).map(PathBuf::from);
         Self::new(&url, token_file, ca_file.as_deref(), &plaintext_hosts).map(Some)
     }
 

@@ -162,6 +162,7 @@ mod retention_http;
 mod runtime;
 mod runtime_config;
 mod runtime_grants;
+pub mod settings;
 pub mod spiice;
 #[cfg(feature = "testkit")]
 pub mod testkit;
@@ -171,6 +172,8 @@ mod workers;
 pub use host::*;
 pub use object_maintenance::{ObjectMaintenanceOutcome, object_maintenance_pass};
 pub use proxiima_core::authz::SystemAuthority;
+/// Declares a host's own settings ([`SpiiceApp::settings`]).
+pub use proxiima_core::settings;
 
 /// One Owner per embedded host: a Group principal.
 ///

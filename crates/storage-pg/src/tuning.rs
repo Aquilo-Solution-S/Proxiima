@@ -9,7 +9,11 @@
 
 use std::ops::RangeInclusive;
 
-use proxiima_core::{StorageError, env_value};
+use proxiima_core::{Setting, StorageError};
+
+use crate::settings::{
+    PROXIIMA_PG_HNSW_EF_SEARCH, PROXIIMA_PG_HNSW_ITERATIVE_SCAN, PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES,
+};
 
 pub(crate) const DEFAULT_HNSW_EF_SEARCH: u32 = 100;
 pub(crate) const DEFAULT_HNSW_MAX_SCAN_TUPLES: u32 = 20_000;
@@ -50,10 +54,10 @@ impl HnswIterativeScan {
 
     fn from_lookup(
         lookup: &impl Fn(&str) -> Option<String>,
-        key: &str,
+        setting: &Setting,
         default: Self,
     ) -> Result<Self, StorageError> {
-        let Some(value) = env_value(lookup, key) else {
+        let Some(value) = setting.read(lookup) else {
             return Ok(default);
         };
         match value.to_ascii_lowercase().as_str() {
@@ -61,7 +65,7 @@ impl HnswIterativeScan {
             "strict_order" => Ok(Self::StrictOrder),
             "relaxed_order" => Ok(Self::RelaxedOrder),
             _ => Err(StorageError::Unavailable(format!(
-                "invalid {key}={value}; expected off, strict_order, or relaxed_order"
+                "invalid {setting}={value}; expected off, strict_order, or relaxed_order"
             ))),
         }
     }
@@ -118,7 +122,7 @@ impl PgTuning {
     /// The environment can therefore move a deployment OFF the defaults but
     /// not back ONTO them; only non-default values are expressible.
     ///
-    /// Every value goes through [`proxiima_core::env_value`], so a variable
+    /// Every value goes through [`proxiima_core::Setting::read`], so a variable
     /// set to the empty string (or to whitespace) reads as unset rather
     /// than as a value that fails to parse. A malformed value is an error
     /// rather than a silent fallback, so a typo cannot quietly ship the
@@ -140,18 +144,18 @@ impl PgTuning {
         Ok(Self {
             hnsw_ef_search: env_int_in_range(
                 lookup,
-                "PROXIIMA_PG_HNSW_EF_SEARCH",
+                &PROXIIMA_PG_HNSW_EF_SEARCH,
                 defaults.hnsw_ef_search,
                 &HNSW_EF_SEARCH_RANGE,
             )?,
             hnsw_iterative_scan: HnswIterativeScan::from_lookup(
                 lookup,
-                "PROXIIMA_PG_HNSW_ITERATIVE_SCAN",
+                &PROXIIMA_PG_HNSW_ITERATIVE_SCAN,
                 defaults.hnsw_iterative_scan,
             )?,
             hnsw_max_scan_tuples: env_int_in_range(
                 lookup,
-                "PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES",
+                &PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES,
                 defaults.hnsw_max_scan_tuples,
                 &HNSW_MAX_SCAN_TUPLES_RANGE,
             )?,
@@ -166,19 +170,19 @@ impl PgTuning {
 /// an arm the operator did not ask for and report it as the one they did.
 fn env_int_in_range<T>(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &str,
+    setting: &Setting,
     default: T,
     range: &RangeInclusive<T>,
 ) -> Result<T, StorageError>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
-    let value = crate::env_int_or(lookup, key, default)?;
+    let value = crate::env_int_or(lookup, setting, default)?;
     if range.contains(&value) {
         return Ok(value);
     }
     Err(StorageError::Unavailable(format!(
-        "out-of-range {key}={value}; expected {}..={}",
+        "out-of-range {setting}={value}; expected {}..={}",
         range.start(),
         range.end()
     )))

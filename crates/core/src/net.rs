@@ -3,9 +3,7 @@
 use std::collections::BTreeSet;
 use std::net::IpAddr;
 
-/// Environment variable naming the hosts that may use plaintext HTTP in
-/// addition to loopback. Comma-separated exact host names; empty by default.
-pub const PROXIIMA_PLAINTEXT_HOSTS: &str = "PROXIIMA_PLAINTEXT_HOSTS";
+use crate::env::PROXIIMA_PLAINTEXT_HOSTS;
 
 /// Plaintext policy for an outbound HTTP endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +68,7 @@ impl PlaintextHosts {
     pub fn from_lookup(
         lookup: &impl Fn(&str) -> Option<String>,
     ) -> Result<Self, PlaintextHostsError> {
-        match crate::env_value(lookup, PROXIIMA_PLAINTEXT_HOSTS) {
+        match PROXIIMA_PLAINTEXT_HOSTS.read(lookup) {
             Some(raw) => Self::parse(&raw),
             None => Ok(Self::none()),
         }
@@ -418,7 +416,7 @@ mod tests {
     fn lookup_reads_the_setting_and_blank_names_nothing() {
         let env = |value: Option<&'static str>| {
             move |key: &str| {
-                (key == PROXIIMA_PLAINTEXT_HOSTS)
+                (key == PROXIIMA_PLAINTEXT_HOSTS.name())
                     .then_some(value)
                     .flatten()
                     .map(str::to_string)

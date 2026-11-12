@@ -152,10 +152,6 @@ jobs:
         run: python3 -m mkdocs build --strict
       - name: markdown local links
         run: python3 scripts/check-doc-links.py
-      - name: settings inventory
-        run: |
-          python3 scripts/check-settings.py --self-test
-          python3 scripts/check-settings.py
       - name: install git-cliff
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.release == 'true' }}
         # taiki-e/install-action@v2; same generator as the tag workflow.

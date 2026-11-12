@@ -50,8 +50,20 @@ const RESET_FLAG: &str = "--reset";
 const RESET_DEPENDENT_LANES_FLAG: &str = "--reset-dependent-lanes";
 // Keep the destructive-reset confirmation versioned so stale operator scripts
 // do not silently opt in to a future baseline reset.
-const RESET_CONFIRM_ENV: &str = "PROXIIMA_RESET_CONFIRM";
 const RESET_CONFIRM_VALUE: &str = "reset-my-dev-db";
+
+/// The settings this tool reads besides the facade's; documented with the
+/// other development settings in `docs/contributing.md`.
+mod settings {
+    proxiima::settings! {
+        PROXIIMA_RESET_CONFIRM: Text {
+            purpose: "reset confirmation token, spelled exactly `reset-my-dev-db`",
+            when_needed: "development database reset",
+        }
+    }
+}
+
+use settings::PROXIIMA_RESET_CONFIRM as RESET_CONFIRM_ENV;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -205,18 +217,21 @@ fn resolve_database_url(
     if let Some(url) = &args.database_url {
         return Ok(url.clone());
     }
-    proxiima_core::env_value(lookup, "DATABASE_URL").ok_or_else(|| {
-        "database URL required: pass --database-url <URL> or set DATABASE_URL, \
+    proxiima::settings::DATABASE_URL
+        .read(lookup)
+        .ok_or_else(|| {
+            "database URL required: pass --database-url <URL> or set DATABASE_URL, \
          e.g. postgres://proxiima:proxiima@localhost/proxiima"
-            .into()
-    })
+                .into()
+        })
 }
 
 /// `PROXIIMA_STORE_NUMBER`, which initializes the store.
 fn store_number(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<u16, Box<dyn std::error::Error>> {
-    let raw = proxiima_core::env_value(lookup, "PROXIIMA_STORE_NUMBER")
+    let raw = proxiima::settings::PROXIIMA_STORE_NUMBER
+        .read(lookup)
         .ok_or("PROXIIMA_STORE_NUMBER is required to initialize the store")?;
     Ok(proxiima::parse_store_number(&raw)?)
 }
@@ -320,7 +335,7 @@ SELECT DISTINCT
 fn require_reset_confirmation(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if lookup(RESET_CONFIRM_ENV).as_deref() == Some(RESET_CONFIRM_VALUE) {
+    if lookup(RESET_CONFIRM_ENV.name()).as_deref() == Some(RESET_CONFIRM_VALUE) {
         return Ok(());
     }
     Err(format!(
@@ -593,6 +608,8 @@ mod tests {
     use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls, unique_db_name};
     use sqlx::migrate::MigrateError;
     use std::error::Error as _;
+
+    const RESET_CONFIRM_ENV: &str = super::RESET_CONFIRM_ENV.name();
 
     fn parsed(argv: &[&str]) -> Result<Args, String> {
         parse_args(argv.iter().map(|arg| (*arg).to_string()))

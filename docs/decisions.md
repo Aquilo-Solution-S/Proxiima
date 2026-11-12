@@ -17,7 +17,7 @@ Source: [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/mai
 
 | Fact | Owner |
 |---|---|
-| Settings | [Configuration](configuration.md) and its completeness check |
+| Settings | Each crate's `settings!` block; [Configuration](configuration.md) is rendered from them |
 | Types, defaults, limits | Rustdoc |
 | Tool and resource schemas | Live catalog: `tools/list`, `proxiima://tools`, OpenAPI |
 | Tables | SQL migrations |

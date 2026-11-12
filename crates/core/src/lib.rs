@@ -73,7 +73,7 @@ pub use cursor::*;
 pub use edge::*;
 pub use engine::*;
 pub use entity::*;
-pub use env::{env_from_pairs, env_value, parse_bool_word, process_env};
+pub use env::{Setting, SettingKind, env_from_pairs, parse_bool_word, process_env};
 pub use error::*;
 pub use goal::{SimpleTextGoalV1, TaskGoalV1, TaskPriority};
 pub use ids::*;

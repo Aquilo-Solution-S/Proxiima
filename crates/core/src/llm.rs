@@ -3,6 +3,12 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
+use crate::env::{
+    PROXIIMA_EMBED_BATCH_SIZE, PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+    PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+    PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS, Setting,
+};
+
 mod query;
 mod route;
 mod space;
@@ -92,13 +98,6 @@ impl LlmError {
     }
 }
 
-pub const PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS: &str = "PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS";
-pub const PROXIIMA_EMBED_DRAIN_CONCURRENCY: &str = "PROXIIMA_EMBED_DRAIN_CONCURRENCY";
-pub const PROXIIMA_EMBED_BATCH_SIZE: &str = "PROXIIMA_EMBED_BATCH_SIZE";
-pub const PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS: &str = "PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS";
-pub const PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS: &str =
-    "PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS";
-
 pub const DEFAULT_EMBED_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
 pub const DEFAULT_EMBED_BATCH_SIZE: usize = 32;
 pub const DEFAULT_EMBED_DRAIN_CONCURRENCY: usize = 1;
@@ -184,7 +183,7 @@ impl EmbeddingRuntimePolicy {
         stale_claim_timeout: Duration,
     ) -> Result<Self, EmbeddingRuntimePolicyError> {
         validate_duration(
-            PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+            &PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
             request_timeout,
             MAX_EMBED_REQUEST_TIMEOUT,
         )?;
@@ -195,12 +194,12 @@ impl EmbeddingRuntimePolicy {
             });
         }
         validate_duration(
-            PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+            &PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
             worker_interval,
             MAX_EMBED_WORKER_INTERVAL,
         )?;
         validate_duration(
-            PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+            &PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
             stale_claim_timeout,
             MAX_EMBED_STALE_CLAIM_TIMEOUT,
         )?;
@@ -233,24 +232,24 @@ impl EmbeddingRuntimePolicy {
         let defaults = Self::default();
         let request_timeout = parse_duration_setting(
             lookup,
-            PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
+            &PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
             defaults.request_timeout,
         )?;
         let batch_size =
-            parse_count_setting(lookup, PROXIIMA_EMBED_BATCH_SIZE, defaults.batch_size)?;
+            parse_count_setting(lookup, &PROXIIMA_EMBED_BATCH_SIZE, defaults.batch_size)?;
         let drain_concurrency = parse_count_setting(
             lookup,
-            PROXIIMA_EMBED_DRAIN_CONCURRENCY,
+            &PROXIIMA_EMBED_DRAIN_CONCURRENCY,
             defaults.drain_concurrency,
         )?;
         let worker_interval = parse_duration_setting(
             lookup,
-            PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
+            &PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
             defaults.worker_interval,
         )?;
         let stale_claim_timeout = parse_duration_setting(
             lookup,
-            PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
+            &PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
             defaults.stale_claim_timeout,
         )?;
         Self::new(
@@ -325,10 +324,11 @@ impl EmbeddingRuntimePolicy {
 }
 
 fn validate_duration(
-    field: &'static str,
+    setting: &Setting,
     value: Duration,
     max: Duration,
 ) -> Result<(), EmbeddingRuntimePolicyError> {
+    let field = setting.name();
     if value.subsec_nanos() != 0 {
         return Err(EmbeddingRuntimePolicyError::NonIntegralSeconds { field });
     }
@@ -345,27 +345,33 @@ fn validate_duration(
 
 fn parse_count_setting(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &'static str,
+    setting: &Setting,
     default: usize,
 ) -> Result<usize, EmbeddingRuntimePolicyError> {
-    let Some(raw) = crate::env_value(lookup, key) else {
+    let Some(raw) = setting.read(lookup) else {
         return Ok(default);
     };
     raw.parse::<usize>()
-        .map_err(|_| EmbeddingRuntimePolicyError::MalformedCount { key, value: raw })
+        .map_err(|_| EmbeddingRuntimePolicyError::MalformedCount {
+            key: setting.name(),
+            value: raw,
+        })
 }
 
 fn parse_duration_setting(
     lookup: &impl Fn(&str) -> Option<String>,
-    key: &'static str,
+    setting: &Setting,
     default: Duration,
 ) -> Result<Duration, EmbeddingRuntimePolicyError> {
-    let Some(raw) = crate::env_value(lookup, key) else {
+    let Some(raw) = setting.read(lookup) else {
         return Ok(default);
     };
-    let seconds = raw
-        .parse::<u64>()
-        .map_err(|_| EmbeddingRuntimePolicyError::MalformedSeconds { key, value: raw })?;
+    let seconds =
+        raw.parse::<u64>()
+            .map_err(|_| EmbeddingRuntimePolicyError::MalformedSeconds {
+                key: setting.name(),
+                value: raw,
+            })?;
     Ok(Duration::from_secs(seconds))
 }
 
@@ -606,13 +612,22 @@ mod tests {
         DEFAULT_EMBED_WORKER_INTERVAL, EmbeddingClient, EmbeddingConfigurationFault,
         EmbeddingInputRefusal, EmbeddingRuntimePolicy, EmbeddingRuntimePolicyError, LlmError,
         MAX_EMBED_BATCH_SIZE, MAX_EMBED_DRAIN_CONCURRENCY, MAX_EMBED_REQUEST_TIMEOUT,
-        MAX_EMBED_STALE_CLAIM_TIMEOUT, MIN_EMBED_INPUT_CAP_CHARS, PROXIIMA_EMBED_BATCH_SIZE,
-        PROXIIMA_EMBED_DRAIN_CONCURRENCY, PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS,
-        PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS, PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS,
-        embed_in_chunks, embed_in_chunks_after_failure, embed_in_chunks_after_failure_with_timeout,
+        MAX_EMBED_STALE_CLAIM_TIMEOUT, MIN_EMBED_INPUT_CAP_CHARS, embed_in_chunks,
+        embed_in_chunks_after_failure, embed_in_chunks_after_failure_with_timeout,
         embed_in_chunks_with_timeout, embed_many_with_timeout, embed_with_timeout,
     };
+    use crate::env as settings;
     use crate::env_from_pairs as lookup;
+
+    const PROXIIMA_EMBED_BATCH_SIZE: &str = settings::PROXIIMA_EMBED_BATCH_SIZE.name();
+    const PROXIIMA_EMBED_DRAIN_CONCURRENCY: &str =
+        settings::PROXIIMA_EMBED_DRAIN_CONCURRENCY.name();
+    const PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS: &str =
+        settings::PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS.name();
+    const PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS: &str =
+        settings::PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS.name();
+    const PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS: &str =
+        settings::PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS.name();
     use async_trait::async_trait;
     use std::sync::Mutex;
     use std::time::Duration;

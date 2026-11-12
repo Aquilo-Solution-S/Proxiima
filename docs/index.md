@@ -75,8 +75,8 @@ the current actions and resources from `tools/list`, `proxiima://tools`, or
 The kernel states the principles. Rust code and tests define observable
 behavior. When a principle changes, change the kernel first and then bring
 code, tests, and prose into agreement. Migrations own table shape; rustdoc
-owns types, defaults, and limits; [Configuration](configuration.md) owns
-settings descriptions.
+owns types, defaults, and limits; each crate's `settings!` block owns its
+settings, which [Configuration](configuration.md) renders.
 
 The [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean)
 state the domainless rules. This site presents their current concepts and

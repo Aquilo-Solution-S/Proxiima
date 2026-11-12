@@ -125,8 +125,6 @@ cd ../..
 python3 scripts/check-migrations.py --self-test
 python3 scripts/check-migrations.py
 python3 scripts/check-doc-links.py
-python3 scripts/check-settings.py --self-test
-python3 scripts/check-settings.py
 python3 scripts/check-upgrade-notes.py --self-test
 python3 scripts/check-release-version.py --self-test
 python3 scripts/check-release-version.py
@@ -185,6 +183,38 @@ its versioned bucket `proxiima-dev`; region `us-east-1` works for both. Report
 a run without `--run-ignored all` as not running that lane. Do not hide a failing
 required check. Fix it, record a precise `.local` ledger entry with command
 and output, or escalate the blocker.
+
+### Settings
+
+A crate declares each setting it reads once, in its `settings!` block
+(`proxiima_core::settings!`), and reads it only through `Setting::read`.
+[Configuration](configuration.md) is rendered from the declarations of the
+facade and the canonical host: when a row changes, the test
+`the_operator_page_is_the_rendered_settings_table` in `apps/proxiima-mcp`
+rewrites the page and fails; commit the rewritten page. A declared default is
+the literal value that behaves exactly like leaving the variable unset; each
+crate's `declared_defaults_are_what_the_reader…_unset` test checks every one
+against the crate's readers through
+`proxiima_core::test_fixtures::assert_declared_defaults`.
+
+### Development settings
+
+These names are read only by development tools, scripts and tests, never by
+a shipped host, so they are not on the operator page.
+
+| Setting | Purpose | Reader |
+|---|---|---|
+| `PROXIIMA_TEST_PG_URL` | admin URL of the test Postgres server | `pg-testkit`; schema script fallback |
+| `PROXIIMA_TEST_PGBOUNCER_URL` | transaction-mode PgBouncer in front of the test server; the storage fixtures route serving pools through it | `pg-testkit` |
+| `PROXIIMA_PG_TESTKIT_CHILD` | child-process marker | `pg-testkit` split-template and admin URL tests |
+| `PROXIIMA_PG_TESTKIT_TEMPLATE` | template database name | `pg-testkit` split-template test |
+| `PROXIIMA_DIFFERENTIAL_DIR` | directory the owner differential tests dump their actuals to | storage-pg differential tests |
+| `PROXIIMA_SCALE_EMBEDDINGS`, `PROXIIMA_SCALE_QUERIES`, `PROXIIMA_SCALE_ERASE_MEMORIES` | size of the scale harness run ([operate](operate.md)) | `crates/storage-pg/tests/scale_run.rs` |
+| `PROXIIMA_DEV_POSTGRES_PORT` | host port of the Compose Postgres (default 5434) | `docker-compose.dev.yml` |
+| `PROXIIMA_DEV_S3_PORT` | host port of the Compose S3 store (default 9100) | `docker-compose.dev.yml` |
+| `PROXIIMA_SCHEMA_PG_URL` | admin URL of the schema dump | `scripts/regen-schema-sql.sh` |
+| `PROXIIMA_PG_DUMP` | `pg_dump` command of the schema dump | `scripts/regen-schema-sql.sh` |
+| `PROXIIMA_RESET_CONFIRM` | reset confirmation token, spelled exactly `reset-my-dev-db` | `tools/dev-migrate --reset` (declared in its own `settings!` block) |
 
 ## Review and release
 

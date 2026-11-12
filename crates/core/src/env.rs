@@ -1,41 +1,271 @@
-//! One rule for reading a configuration value out of an environment lookup.
+//! Configuration settings and the one rule for reading them.
 //!
-//! Every configuration reader in the workspace wants the same thing: trim the
-//! value, and treat what is left of an empty one as "not configured". That rule
-//! was written three times — in the facade's auth module, in the binary's arg
-//! parsing, and in the blob store's config — and bypassed by
-//! `RuntimeBuilder::apply_lookup`, which read nine variables raw. The result was
-//! one process answering two ways about the same variable: `PROXIIMA_EMBED_*`
-//! read an empty value as unset while `PROXIIMA_EXPOSE_NETWORK=` aborted boot
-//! with `must be a boolean, got ""`, and `DATABASE_URL=` reached the pool as an
-//! empty connection string.
+//! Each crate that reads a setting declares it once, in its
+//! [`settings!`](crate::settings!) block, as a [`Setting`]: name, purpose,
+//! when it is needed, kind of value and default. A setting is read only
+//! through [`Setting::read`], which trims the value and treats an empty one
+//! as "not configured". The operator page `docs/configuration.md` is
+//! rendered from these declarations. This crate's own block is
+//! [`SETTINGS`].
 
-/// Read `key` through `lookup`, trimmed, treating an empty result as unset.
+/// One configuration setting: its name, what it is for, when an operator
+/// needs it, the kind of value it takes, and its default.
 ///
-/// This is the rule for configuration variables: an operator who writes
-/// `FOO=` or leaves whitespace has not configured `FOO`, and gets the same
-/// behaviour as leaving it out. Returning `None` rather than `Some("")` keeps
-/// that decision in one place instead of at each parse site, where forgetting
-/// it turns "unset" into a parse error that names a value the operator never
-/// typed.
+/// Declared once, in its crate's [`settings!`](crate::settings!) block, and
+/// read only through [`Self::read`]. Reading by bare name is private to
+/// this crate:
 ///
-/// `lookup` is any environment source — `|key| std::env::var(key).ok()` for the
-/// process environment, or an injected map in tests and embedded hosts.
+/// ```compile_fail,E0603
+/// let _ = proxiima_core::env::env_value(&proxiima_core::process_env, "PATH");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Setting {
+    name: &'static str,
+    purpose: &'static str,
+    when_needed: &'static str,
+    kind: SettingKind,
+    default: Option<&'static str>,
+}
+
+impl Setting {
+    /// The constructor [`settings!`](crate::settings!) expands to; not for
+    /// direct use.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn __declare(
+        name: &'static str,
+        purpose: &'static str,
+        when_needed: &'static str,
+        kind: SettingKind,
+        default: Option<&'static str>,
+    ) -> Self {
+        Self {
+            name,
+            purpose,
+            when_needed,
+            kind,
+            default,
+        }
+    }
+
+    /// The environment variable name.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// What the setting configures.
+    #[must_use]
+    pub const fn purpose(&self) -> &'static str {
+        self.purpose
+    }
+
+    /// When an operator needs to set it.
+    #[must_use]
+    pub const fn when_needed(&self) -> &'static str {
+        self.when_needed
+    }
+
+    /// The kind of value it takes.
+    #[must_use]
+    pub const fn kind(&self) -> SettingKind {
+        self.kind
+    }
+
+    /// The literal value an unset setting means: setting the variable to
+    /// this text behaves exactly like leaving it unset. `None` when unset
+    /// means "not configured" or a value derived from other settings, which
+    /// the purpose then states. Each crate's test checks its declared
+    /// defaults against its readers (`test_fixtures::assert_declared_defaults`
+    /// under the `testkit` feature).
+    #[must_use]
+    pub const fn default(&self) -> Option<&'static str> {
+        self.default
+    }
+
+    /// Read this setting through `lookup`, trimmed, treating an empty result
+    /// as unset.
+    ///
+    /// An operator who writes `FOO=` or leaves whitespace has not configured
+    /// `FOO`, and gets the same behaviour as leaving it out. Returning `None`
+    /// rather than `Some("")` keeps that decision here instead of at each
+    /// parse site, where forgetting it turns "unset" into a parse error that
+    /// names a value the operator never typed.
+    ///
+    /// `lookup` is any environment source: [`process_env`] for the process
+    /// environment, or [`env_from_pairs`] and other injected maps in tests
+    /// and embedded hosts.
+    ///
+    /// ```
+    /// proxiima_core::settings! {
+    ///     EXAMPLE_MODE: Text {
+    ///         purpose: "example mode",
+    ///         when_needed: "never",
+    ///     }
+    /// }
+    ///
+    /// let set = proxiima_core::env_from_pairs(&[("EXAMPLE_MODE", "  fast  ")]);
+    /// let blank = proxiima_core::env_from_pairs(&[("EXAMPLE_MODE", "   ")]);
+    /// let missing = proxiima_core::env_from_pairs(&[]);
+    /// assert_eq!(EXAMPLE_MODE.read(&set).as_deref(), Some("fast"));
+    /// assert_eq!(EXAMPLE_MODE.read(&blank), None);
+    /// assert_eq!(EXAMPLE_MODE.read(&missing), None);
+    /// ```
+    #[must_use]
+    pub fn read(&self, lookup: &impl Fn(&str) -> Option<String>) -> Option<String> {
+        env_value(lookup, self.name)
+    }
+}
+
+/// A setting displays as its name, so an error message can name it.
+impl std::fmt::Display for Setting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+/// The kind of value a [`Setting`] takes, as the operator page states it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingKind {
+    /// Free text.
+    Text,
+    /// A credential.
+    Secret,
+    /// A URL.
+    Url,
+    /// A boolean word ([`parse_bool_word`]).
+    Boolean,
+    /// A non-negative whole number.
+    Integer,
+    /// A whole number of seconds.
+    Seconds,
+    /// A whole number of milliseconds.
+    Milliseconds,
+    /// Comma-separated entries.
+    List,
+    /// A JSON document.
+    Json,
+    /// A file path.
+    Path,
+    /// A socket address, `host:port`.
+    SocketAddress,
+    /// One of the words its purpose names.
+    Choice,
+}
+
+impl SettingKind {
+    /// The kind as the operator page names it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Secret => "secret",
+            Self::Url => "URL",
+            Self::Boolean => "boolean",
+            Self::Integer => "integer",
+            Self::Seconds => "seconds",
+            Self::Milliseconds => "milliseconds",
+            Self::List => "comma-separated list",
+            Self::Json => "JSON",
+            Self::Path => "file path",
+            Self::SocketAddress => "socket address",
+            Self::Choice => "choice",
+        }
+    }
+}
+
+/// Declares a crate's settings: one `pub const` [`Setting`] per row, named
+/// as its environment variable, and `pub const SETTINGS: &[Setting]` with
+/// every row in declaration order.
+///
+/// A row names the variable and its [`SettingKind`], then its purpose, when
+/// it is needed and, when unset stands for a literal value, that value as an
+/// operator would write it ([`Setting::default`]). A doc comment on a row is appended to the
+/// constant's documentation, which starts with the purpose.
 ///
 /// ```
-/// use proxiima_core::env_value;
+/// proxiima_core::settings! {
+///     EXAMPLE_TIMEOUT_SECONDS: Seconds {
+///         purpose: "request timeout",
+///         when_needed: "slow upstream",
+///         default: "30",
+///     }
+///     EXAMPLE_TOKEN: Secret {
+///         purpose: "upstream bearer token",
+///         when_needed: "authenticated upstream",
+///     }
+/// }
 ///
-/// let env = |key: &str| match key {
-///     "SET" => Some("  value  ".to_string()),
-///     "BLANK" => Some("   ".to_string()),
-///     _ => None,
-/// };
-/// assert_eq!(env_value(&env, "SET").as_deref(), Some("value"));
-/// assert_eq!(env_value(&env, "BLANK"), None);
-/// assert_eq!(env_value(&env, "MISSING"), None);
+/// assert_eq!(EXAMPLE_TIMEOUT_SECONDS.name(), "EXAMPLE_TIMEOUT_SECONDS");
+/// assert_eq!(EXAMPLE_TIMEOUT_SECONDS.default(), Some("30"));
+/// assert_eq!(EXAMPLE_TOKEN.default(), None);
+/// assert_eq!(SETTINGS, &[EXAMPLE_TIMEOUT_SECONDS, EXAMPLE_TOKEN]);
 /// ```
-#[must_use]
-pub fn env_value(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
+#[macro_export]
+macro_rules! settings {
+    (@default) => { ::core::option::Option::None };
+    (@default $default:literal) => { ::core::option::Option::Some($default) };
+    ($(
+        $(#[$meta:meta])*
+        $name:ident: $kind:ident {
+            purpose: $purpose:literal,
+            when_needed: $when_needed:literal,
+            $(default: $default:literal,)?
+        }
+    )+) => {
+        $(
+            #[doc = $purpose]
+            $(#[$meta])*
+            pub const $name: $crate::env::Setting = $crate::env::Setting::__declare(
+                ::core::stringify!($name),
+                $purpose,
+                $when_needed,
+                $crate::env::SettingKind::$kind,
+                $crate::settings!(@default $($default)?),
+            );
+        )+
+
+        /// Every setting this crate reads, in declaration order.
+        pub const SETTINGS: &[$crate::env::Setting] = &[$($name),+];
+    };
+}
+
+settings! {
+    PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS: Seconds {
+        purpose: "provider request timeout, 1 to 3600 seconds",
+        when_needed: "embedding worker tuning",
+        default: "120",
+    }
+    PROXIIMA_EMBED_BATCH_SIZE: Integer {
+        purpose: "texts per provider request, 1 to 1024",
+        when_needed: "embedding worker tuning",
+        default: "32",
+    }
+    PROXIIMA_EMBED_DRAIN_CONCURRENCY: Integer {
+        purpose: "batches one drain pass sends at once, 1 to 64",
+        when_needed: "indexing throughput the provider can take",
+        default: "1",
+    }
+    PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS: Seconds {
+        purpose: "first idle wait of the embedding worker, 1 to 3600 seconds; doubles while drains find nothing, up to 60 s or this value if longer; a write committed in the process wakes it at once",
+        when_needed: "embedding worker tuning",
+        default: "5",
+    }
+    PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS: Seconds {
+        purpose: "stale claim timeout, 1 to 86400 seconds and longer than the request timeout",
+        when_needed: "embedding worker recovery",
+        default: "900",
+    }
+    PROXIIMA_PLAINTEXT_HOSTS: List {
+        purpose: "exact host names, besides loopback, that outbound endpoints may reach over plaintext HTTP",
+        when_needed: "named internal HTTP sidecar",
+    }
+}
+
+/// Read `key` through `lookup`, trimmed, treating an empty result as unset:
+/// the rule [`Setting::read`] states. Private to this crate, so a setting
+/// is read only through its declaration.
+fn env_value(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
     lookup(key).and_then(|value| {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -44,26 +274,22 @@ pub fn env_value(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Option<
 
 /// The process environment as a lookup, for callers with no injected source.
 ///
-/// [`env_value`] takes a lookup so that hosts and tests can supply their own;
-/// the overwhelmingly common argument is still the real environment, and it
-/// was written out as `|key| std::env::var(key).ok()` at eight call sites
-/// across five crates. The closure cannot drift — anything else fails to
-/// typecheck — so this is not a correctness fix. It is one grep-able name for
-/// "the process environment enters the program here", which is the question
-/// asked when auditing what a deployment can influence.
+/// [`Setting::read`] takes a lookup so that hosts and tests can supply their
+/// own; the common argument is still the real environment. This is one
+/// grep-able name for "the process environment enters the program here",
+/// which is the question asked when auditing what a deployment can
+/// influence.
 ///
 /// Pass it by name, not by call: it is an ordinary `fn` item and coerces
 /// wherever an `impl Fn(&str) -> Option<String>` is wanted.
 ///
 /// ```
-/// use proxiima_core::{env_value, process_env};
-///
-/// let _configured = env_value(&process_env, "PATH").is_some();
+/// let _path = proxiima_core::process_env("PATH");
 /// ```
 ///
-/// Note this is the *raw* reader: it does not trim and does not treat an
-/// empty value as unset. Those are [`env_value`]'s job, and every
-/// configuration read should go through it.
+/// Note this is the *raw* lookup: it does not trim and does not treat an
+/// empty value as unset. Those are [`Setting::read`]'s job, and every
+/// configuration read goes through it.
 #[must_use]
 pub fn process_env(key: &str) -> Option<String> {
     std::env::var(key).ok()
@@ -74,11 +300,9 @@ pub fn process_env(key: &str) -> Option<String> {
 /// tests. When a key appears more than once, the later pair wins.
 ///
 /// ```
-/// use proxiima_core::{env_from_pairs, env_value};
-///
-/// let env = env_from_pairs(&[("MODE", "a"), ("MODE", "b")]);
-/// assert_eq!(env_value(&env, "MODE").as_deref(), Some("b"));
-/// assert_eq!(env_value(&env, "MISSING"), None);
+/// let env = proxiima_core::env_from_pairs(&[("MODE", "a"), ("MODE", "b")]);
+/// assert_eq!(env("MODE").as_deref(), Some("b"));
+/// assert_eq!(env("MISSING"), None);
 /// ```
 pub fn env_from_pairs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |key| {
@@ -114,7 +338,14 @@ pub fn parse_bool_word(raw: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_from_pairs as env, env_value, parse_bool_word};
+    use super::{env_from_pairs as env, parse_bool_word};
+
+    crate::settings! {
+        FOO: Text {
+            purpose: "test setting",
+            when_needed: "never",
+        }
+    }
 
     #[test]
     fn boolean_words_are_the_documented_set() {
@@ -131,23 +362,35 @@ mod tests {
 
     #[test]
     fn whitespace_only_is_unset() {
-        assert_eq!(env_value(&env(&[("FOO", " \t\n ")]), "FOO"), None);
+        assert_eq!(FOO.read(&env(&[("FOO", " \t\n ")])), None);
     }
 
     /// Trailing newline from a here-doc or secret mount is trimmed, not rejected.
     #[test]
     fn surrounding_whitespace_is_trimmed_not_rejected() {
-        assert_eq!(
-            env_value(&env(&[("FOO", "900\n")]), "FOO").as_deref(),
-            Some("900")
-        );
+        assert_eq!(FOO.read(&env(&[("FOO", "900\n")])).as_deref(), Some("900"));
     }
 
     #[test]
     fn interior_whitespace_is_preserved() {
-        assert_eq!(
-            env_value(&env(&[("FOO", " a b ")]), "FOO").as_deref(),
-            Some("a b")
-        );
+        assert_eq!(FOO.read(&env(&[("FOO", " a b ")])).as_deref(), Some("a b"));
+    }
+
+    /// Every declared default of this crate is what its readers do unset.
+    #[test]
+    fn declared_defaults_are_what_the_readers_do_unset() {
+        crate::test_fixtures::assert_declared_defaults(super::SETTINGS, &[], |lookup| {
+            (
+                crate::EmbeddingRuntimePolicy::from_lookup(&lookup),
+                crate::PlaintextHosts::from_lookup(&lookup),
+            )
+        });
+    }
+
+    #[test]
+    fn a_declaration_names_its_variable_and_lists_its_rows() {
+        assert_eq!(FOO.name(), "FOO");
+        assert_eq!(FOO.to_string(), "FOO");
+        assert_eq!(SETTINGS, &[FOO]);
     }
 }

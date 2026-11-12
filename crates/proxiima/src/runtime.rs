@@ -68,8 +68,14 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         }
     }
 
+    /// Resolve the environment layer from the process environment.
+    ///
+    /// Logs one warning for each `PROXIIMA_*` variable that neither the
+    /// facade nor [`SpiiceApp::settings`] declares
+    /// ([`crate::settings::warn_unknown_env`]).
     #[must_use]
     pub fn from_env(mut self) -> Self {
+        crate::settings::warn_unknown_env(A::settings());
         self.use_env = true;
         self.injected_env = None;
         self

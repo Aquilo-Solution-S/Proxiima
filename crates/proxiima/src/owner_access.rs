@@ -15,9 +15,9 @@ use proxiima_core::{
 };
 
 use crate::ProxiimaError;
-
-const FORWARDER_SUBJECTS: &str = "PROXIIMA_FORWARDER_SUBJECTS";
-const FORWARDER_ROLE: &str = "PROXIIMA_FORWARDER_ROLE";
+use crate::settings::{
+    PROXIIMA_FORWARDER_ROLE as FORWARDER_ROLE, PROXIIMA_FORWARDER_SUBJECTS as FORWARDER_SUBJECTS,
+};
 
 /// Trusted forwarder subjects and their fixed role for a verified owner claim.
 ///
@@ -102,7 +102,7 @@ impl OwnerRegistry for proxiima_storage_pg::PgOwnerAccessResolver {
 pub(crate) fn forwarder_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
 ) -> Result<Option<ForwarderPolicy>, ProxiimaError> {
-    match (lookup(FORWARDER_SUBJECTS), lookup(FORWARDER_ROLE)) {
+    match (FORWARDER_SUBJECTS.read(lookup), FORWARDER_ROLE.read(lookup)) {
         (None, None) => Ok(None),
         (Some(_), None) => Err(ProxiimaError::Config(format!(
             "{FORWARDER_SUBJECTS} set without {FORWARDER_ROLE}"
@@ -247,6 +247,9 @@ mod tests {
     use proxiima_core::{OwnerId, OwnerRoles};
 
     use super::*;
+
+    const FORWARDER_SUBJECTS: &str = super::FORWARDER_SUBJECTS.name();
+    const FORWARDER_ROLE: &str = super::FORWARDER_ROLE.name();
 
     #[derive(Debug)]
     struct Members(OwnerRoles);

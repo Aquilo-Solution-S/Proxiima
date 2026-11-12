@@ -21,7 +21,6 @@ docs:
   - 'mkdocs.yml'
   - 'requirements-docs.txt'
   - 'scripts/check-doc-*.py'
-  - 'scripts/check-settings.py'
   - '**/*.rs'
   - '**/*.sh'
   - '**/*.yml'
