@@ -4085,6 +4085,134 @@ async fn concurrent_erases_of_a_mounted_object_destroy_its_bytes_exactly_once() 
     result.expect("concurrent refcounted object purge failed");
 }
 
+/// Advisory locks held by the backends parked on a row lock, as
+/// `(owner fences, object keys, other)`; the test database has no other
+/// session that waits on a row.
+async fn parked_backend_advisory_locks(
+    pool: &sqlx::PgPool,
+    owner: OwnerId,
+    shared_key: &str,
+) -> Result<(i64, i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE l.classid::bigint = f.hi AND l.objid::bigint = f.lo),
+                count(*) FILTER (WHERE l.classid::bigint = k.hi AND l.objid::bigint = k.lo),
+                count(*) FILTER (WHERE NOT (l.classid::bigint = f.hi AND l.objid::bigint = f.lo)
+                                   AND NOT (l.classid::bigint = k.hi AND l.objid::bigint = k.lo))
+           FROM pg_locks l,
+                LATERAL (SELECT (h >> 32) & 4294967295 AS hi, h & 4294967295 AS lo
+                           FROM hashtextextended('proxiima-owner-fence:' || $1::text, 0) h) f,
+                LATERAL (SELECT (h >> 32) & 4294967295 AS hi, h & 4294967295 AS lo
+                           FROM hashtextextended('proxiima-object-key:' || $2, 0) h) k
+          WHERE l.locktype = 'advisory'
+            AND l.granted
+            AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND l.pid IN (SELECT pid FROM pg_stat_activity
+                           WHERE datname = current_database()
+                             AND wait_event_type = 'Lock'
+                             AND wait_event = 'transactionid')",
+    )
+    .bind(owner.into_inner())
+    .bind(shared_key)
+    .fetch_one(pool)
+    .await
+}
+
+/// One owner with `unshared` uploads nobody else names and one object a group
+/// mounted. Returns the owner, the destination, the shared object key and a
+/// memory of the owner that stays behind.
+async fn owner_with_unshared_uploads_and_one_mounted_object(
+    pg: &PgStorage,
+    cold: &CountingColdStore,
+    unshared: u8,
+) -> Result<(OwnerId, OwnerId, String, Uuid), Box<dyn std::error::Error>> {
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+    let pool = pg.pool_for_tests();
+    let dest = registered_destination(pool).await?;
+    for n in 0..unshared {
+        seed_cited_blob(pool, owner, &[100 + n; 32]).await?;
+    }
+    let (blob_id, upload_id) = seed_cited_blob(pool, owner, &[99_u8; 32]).await?;
+    let object_key = format!("objects/{upload_id}");
+    cold.put(&object_key, b"the mounted bytes");
+    let mine = cite(pg, &permit, "mounted-mine", blob_id).await?;
+    let kept = cite(pg, &permit, "mounted-kept", blob_id).await?;
+    assert!(
+        pg.transfer_to_owner(
+            &transfer_permit(&permit, dest),
+            EntityId::Memory(mine.memory_id),
+            dest,
+            &contract_sidecar_tables(),
+            &[]
+        )
+        .await?
+    );
+    Ok((owner, dest, object_key, kept.memory_id.into_inner()))
+}
+
+/// A whole-owner erase fences the owner and only the keys another owner's
+/// upload also names: any number of unshared uploads adds no lock.
+#[tokio::test]
+async fn an_owner_erase_locks_only_the_object_keys_another_owner_names() {
+    /// The advisory locks a parked erase of an owner holds, given how many
+    /// uploads nobody else names the owner has.
+    async fn locks_held_with(unshared: u8) -> Result<(i64, i64, i64), Box<dyn std::error::Error>> {
+        let (db_name, pg, cold) = fresh_pg_with_counting_cold().await;
+        let result: Result<(i64, i64, i64), Box<dyn std::error::Error>> = async {
+            let pool = pg.pool_for_tests();
+            let (owner, _dest, shared_key, kept) =
+                owner_with_unshared_uploads_and_one_mounted_object(&pg, &cold, unshared).await?;
+            let mut gate = pool.begin().await?;
+            sqlx::query("SELECT t FROM proxiima_core.memory WHERE t = $1 FOR NO KEY UPDATE")
+                .bind(kept)
+                .fetch_one(&mut *gate)
+                .await?;
+            let user_id = owner.as_user();
+            let erase = tokio::spawn({
+                let pg = pg.clone();
+                async move {
+                    let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
+                        user_id,
+                        drop_event_id: "exact-locks".into(),
+                    });
+                    pg.erase_personal_owner(&auth, user_id, &contract_sidecar_tables())
+                        .await
+                }
+            });
+            let held = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let held = parked_backend_advisory_locks(pool, owner, &shared_key).await?;
+                    if held != (0, 0, 0) {
+                        return Ok::<_, sqlx::Error>(held);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await??;
+            gate.rollback().await?;
+            let outcome = erase.await??;
+            assert!(matches!(outcome, OwnerEraseOutcome::Completed { .. }));
+            Ok(held)
+        }
+        .await;
+        let _ = drop_db(&db_name).await;
+        result
+    }
+
+    let none = locks_held_with(0)
+        .await
+        .expect("erase with no unshared upload");
+    let many = locks_held_with(6)
+        .await
+        .expect("erase with six unshared uploads");
+    assert_eq!(many, none, "unshared uploads add no lock");
+    assert_eq!(
+        (many.0, many.1),
+        (1, 1),
+        "the erase holds the owner fence and the one shared key"
+    );
+}
+
 /// The same guarantee, on the source-scope arm.
 ///
 /// `enqueue_blob_object_keys` has two arms and they refcount differently: the

@@ -2,6 +2,8 @@
 
 #[path = "schema_evolution_pg/cleanup.rs"]
 mod cleanup;
+#[path = "schema_evolution_pg/erase_race.rs"]
+mod erase_race;
 #[path = "schema_evolution_pg/erasure.rs"]
 mod erasure;
 #[path = "fixtures/split_core_db.rs"]

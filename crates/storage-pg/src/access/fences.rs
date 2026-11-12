@@ -263,7 +263,9 @@ async fn lock_scope_fence(
 /// Only `blob_uploads` keys are many-to-one, so only they are in this
 /// namespace.
 ///
-/// Takers: owner and source-scope erase (every key they might owe), upload
+/// Takers: whole-owner erase (only keys another owner's upload also names; the
+/// rest are covered by the owner fence every other taker holds), source-scope
+/// erase (every key its blobs imply), upload
 /// abort, the stage locator write, blob GC, and the two transfer legs that
 /// re-home an upload row over an object — the in-place move and the mount.
 ///

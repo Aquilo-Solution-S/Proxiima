@@ -2486,7 +2486,9 @@ BEGIN
                WHERE g.t = ANY (ids)
           ) rows;
         EXIT WHEN version_locked AND owners <@ held;
-        PERFORM proxiima_core.lock_owner_fences(owners, false);
+        IF owners <> '{}'::uuid[] THEN
+            PERFORM proxiima_core.lock_owner_fences(owners, false);
+        END IF;
         held := held || owners;
         FOREACH target IN ARRAY ids LOOP
             PERFORM pg_advisory_xact_lock(

@@ -1303,3 +1303,221 @@ async fn a_fork_keeps_the_host_read_set() {
     assert_eq!(reads, [seen.into_inner()]);
     host.pool.close().await;
 }
+
+// ---- fork against an in-flight owner erase ----------------------------------
+
+/// Backends holding (`granted`) or waiting for (`!granted`) the owner's fence
+/// in `mode`.
+async fn fence_locks(pool: &sqlx::PgPool, owner: OwnerId, mode: &str, granted: bool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM pg_locks l,
+                LATERAL (SELECT hashtextextended('proxiima-owner-fence:' || $1::text, 0) AS key) k
+          WHERE l.locktype = 'advisory' AND l.granted = $2 AND l.mode = $3
+            AND l.classid::bigint = ((k.key >> 32) & 4294967295)
+            AND l.objid::bigint = (k.key & 4294967295)",
+    )
+    .bind(owner.into_inner())
+    .bind(granted)
+    .bind(mode)
+    .fetch_one(pool)
+    .await
+    .expect("fence probe")
+}
+
+async fn object_key_waiters(pool: &sqlx::PgPool, object_key: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM pg_locks l,
+                LATERAL (SELECT hashtextextended('proxiima-object-key:' || $1, 0) AS key) k
+          WHERE l.locktype = 'advisory' AND NOT l.granted
+            AND l.classid::bigint = ((k.key >> 32) & 4294967295)
+            AND l.objid::bigint = (k.key & 4294967295)",
+    )
+    .bind(object_key)
+    .fetch_one(pool)
+    .await
+    .expect("object key probe")
+}
+
+async fn advisory_waiters(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted
+            AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("advisory waiter probe")
+}
+
+async fn eventually<F, Fut>(what: &str, mut probe: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    tokio::time::timeout(std::time::Duration::from_mins(1), async {
+        while !probe().await {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {what}"));
+}
+
+struct ForkRace {
+    host: std::sync::Arc<ExampleEngine>,
+    source: CitedAbstraction,
+    alice: UserId,
+    bob_auth: AuthzContext,
+    bob_owner: OwnerId,
+    erase: std::sync::Arc<proxiima_storage_pg::PgStorage>,
+    surfaces: OwnerSurfaces,
+}
+
+impl ForkRace {
+    async fn new(prefix: &str) -> Self {
+        let host = std::sync::Arc::new(ExampleEngine::new(prefix, |_| {}).await);
+        let alice = UserId::new(Uuid::now_v7());
+        let bob = UserId::new(Uuid::now_v7());
+        let alice_auth = direct(alice);
+        let source = cited_abstraction_source(&host, &alice_auth, OwnerId::from(alice)).await;
+        publish_cited_fork(&host, &alice_auth, source.memory, bob).await;
+        let mut registry = SpiiceRegistry::new();
+        proxiima_example::ExampleSpiice::register(&mut registry).expect("example registry");
+        let registry = registry.freeze_or_panic_for_tests();
+        let erase =
+            example_engine::storage_over(host.db.runtime_url(), host.db.platform_url(), &registry)
+                .await;
+        Self {
+            host,
+            source,
+            alice,
+            bob_auth: direct(bob),
+            bob_owner: OwnerId::from(bob),
+            erase: std::sync::Arc::new(erase),
+            surfaces: OwnerSurfaces::for_registry(&registry),
+        }
+    }
+
+    fn fork(
+        &self,
+    ) -> tokio::task::JoinHandle<
+        Result<proxiima_core::ForkMemoryOutcome, proxiima_core::ProtocolError>,
+    > {
+        let host = self.host.clone();
+        let auth = self.bob_auth.clone();
+        let request = ForkMemoryRequest {
+            source: self.source.memory,
+            destination: MemoryDestination::Owner(self.bob_owner),
+            request_id: IdempotencyKey::new("fork-vs-erase").expect("fork key"),
+        };
+        tokio::spawn(async move { host.engine.fork_memory(&auth, &request).await })
+    }
+
+    fn erase_alice(
+        &self,
+    ) -> tokio::task::JoinHandle<
+        Result<proxiima_core::owner_inverse::OwnerEraseOutcome, proxiima_core::StorageError>,
+    > {
+        let (pg, surfaces, alice) = (self.erase.clone(), self.surfaces.clone(), self.alice);
+        tokio::spawn(async move {
+            let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
+                user_id: alice,
+                drop_event_id: "fork-vs-erase".into(),
+            });
+            pg.erase_personal_owner(&auth, alice, &surfaces).await
+        })
+    }
+
+    fn alice_owner(&self) -> OwnerId {
+        OwnerId::from(self.alice)
+    }
+
+    async fn mounts(&self) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM proxiima_core.blob_uploads WHERE mounted_from_upload_id = $1",
+        )
+        .bind(self.source.upload)
+        .fetch_one(&self.host.pool)
+        .await
+        .expect("mount count")
+    }
+
+    async fn owed_to_purge(&self) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM proxiima_core.cold_purge_pending WHERE object_key = $1",
+        )
+        .bind(format!("objects/{}", self.source.upload))
+        .fetch_one(&self.host.pool)
+        .await
+        .expect("purge debt")
+    }
+}
+
+/// A fork from an owner being erased waits on that owner's fence, then finds
+/// nothing to mount.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fork_from_an_owner_being_erased_waits_and_finds_nothing() {
+    let race = ForkRace::new("proxiima_fork_vs_erase_a").await;
+    let pool = &race.host.pool;
+    let mut gate = pool.begin().await.expect("gate");
+    sqlx::query("SELECT t FROM proxiima_core.memory WHERE owner_id = $1 LIMIT 1 FOR NO KEY UPDATE")
+        .bind(race.alice_owner().into_inner())
+        .fetch_one(&mut *gate)
+        .await
+        .expect("park the erase on a row");
+    let erase = race.erase_alice();
+    eventually("the erase to hold the fence", || async {
+        fence_locks(pool, race.alice_owner(), "ExclusiveLock", true).await == 1
+    })
+    .await;
+    let fork = race.fork();
+    eventually("the fork to wait on the source owner's fence", || async {
+        fence_locks(pool, race.alice_owner(), "ShareLock", false).await >= 1
+    })
+    .await;
+    gate.rollback().await.expect("release the erase");
+    erase.await.expect("join").expect("the erase completes");
+    assert!(
+        fork.await.expect("join").is_err(),
+        "the source is gone, so there is nothing to fork"
+    );
+    assert_eq!(race.mounts().await, 0, "nothing was mounted");
+}
+
+/// An erase of the source owner queued behind a fork waits for it; the
+/// mounted object survives for the forking owner.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_owner_erase_waits_for_a_fork_and_the_mounted_object_survives() {
+    let race = ForkRace::new("proxiima_fork_vs_erase_b").await;
+    let pool = &race.host.pool;
+    let object_key = format!("objects/{}", race.source.upload);
+    // Park the fork on the object key, after it took its fences.
+    let mut barrier = pool.begin().await.expect("barrier");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('proxiima-object-key:' || $1, 0))")
+        .bind(&object_key)
+        .execute(&mut *barrier)
+        .await
+        .expect("hold the object key");
+    let fork = race.fork();
+    eventually("the fork to wait on the object key", || async {
+        object_key_waiters(pool, &object_key).await >= 1
+    })
+    .await;
+    let erase = race.erase_alice();
+    // The erase queues at its first advisory lock the fork holds (the
+    // owner-kind lock, taken before the fence): the fork's wait on the object
+    // key and the erase's wait are the two ungranted advisory locks.
+    eventually("the erase to queue behind the fork", || async {
+        advisory_waiters(pool).await >= 2
+    })
+    .await;
+    barrier.rollback().await.expect("release the fork");
+    fork.await.expect("join").expect("the fork completes");
+    erase.await.expect("join").expect("the erase completes");
+    assert_eq!(race.mounts().await, 1, "the forking owner's mount stays");
+    assert_eq!(
+        race.owed_to_purge().await,
+        0,
+        "the object another owner's row names is not owed to purge"
+    );
+}

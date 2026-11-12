@@ -1,6 +1,6 @@
 //! Copying, moving and mounting a memory's cited blobs.
 
-use super::fences::lock_object_keys_tx;
+use super::fences::{lock_object_keys_tx, lock_owner_fence_shared_tx};
 use super::transfer::{BLOB_SURFACE, dedupe_leg, dedupe_lookup_sql};
 use super::upload_keys::blob_upload_object_keys;
 use crate::error::map_err;
@@ -55,6 +55,9 @@ pub(super) async fn load_cited_blob_source(
     owner_id: uuid::Uuid,
     uploads: CitedBlobUploads,
 ) -> Result<(String, Vec<u8>, Option<uuid::Uuid>), StorageError> {
+    // The source owner's fence first: an erase of that owner locks only the
+    // keys another owner also names, relying on this fence for the rest.
+    lock_owner_fence_shared_tx(tx, &proxiima_core::OwnerId::from(owner_id)).await?;
     let object_keys = blob_upload_object_keys(tx, &[blob_id]).await?;
     lock_object_keys_tx(tx, &object_keys).await?;
     let Some((schema_id, content_hash)) = sqlx::query_as::<_, (String, Vec<u8>)>(
@@ -358,3 +361,7 @@ pub(super) async fn mount_blob_for_destination(
     }
     Ok(dest_blob_id)
 }
+
+#[cfg(test)]
+#[path = "cited_blobs_pg_tests.rs"]
+mod cited_blobs_pg_tests;

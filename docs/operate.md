@@ -428,13 +428,16 @@ index answering.
 Whole-owner erase is one transaction that holds the owner's exclusive fence,
 which excludes every writer that holds a lock on one of the owner's memories or
 Goals, so it takes no lock per memory or per Goal version. Its advisory locks
-are the owner fence, two per upload object key, and one per published Fact the
-owner received by transfer (it excludes an origin check that cannot see the
-owner's row), independent of the number of memories and Goal versions; the
+are the owner fence, one per upload object key that another owner's upload also
+names (a mounted object), and one per published Fact the owner received by
+transfer (it excludes an origin check that cannot see the owner's row),
+independent of the number of memories, Goal versions and unshared uploads; the
 scale test asserts that the count at a tenth of the size equals the count at
-full size. A source-scoped erase holds
-the fence only shared and keeps its lock per selected memory, Goal version and
-origin Fact, as does a series erase. PostgreSQL sizes the lock table, shared by
+full size. A source-scoped erase holds the fence only shared and keeps its lock
+per selected memory, Goal version and origin Fact, as does a series erase.
+A single transaction that inserts memories takes one advisory lock per inserted
+memory, so split a bulk load into transactions well below the lock table's
+size. PostgreSQL sizes the lock table, shared by
 all sessions, for `max_locks_per_transaction` x (`max_connections` +
 `max_prepared_transactions`) entries. When a transaction fills it, PostgreSQL
 answers `out of shared memory` (SQLSTATE 53200) and the transaction rolls back
@@ -442,6 +445,12 @@ whole; that surfaces as `StorageError::Unavailable`. Raise
 `max_locks_per_transaction` (a restart) until that product is well above twice
 the number of object keys, received published Facts, memories and Goal versions
 of the largest owner whose source-scoped erase must succeed.
+
+A whole-owner or source-scoped erase waits for a running schema evolution. Each
+attempt waits at most the fence lock timeout (5 s), and the erase retries a
+bounded number of times; if the evolution is still running after that, the
+erase fails with `StorageError::Retryable` and can be run again once the
+evolution has finished.
 
 ## Backup and restore
 

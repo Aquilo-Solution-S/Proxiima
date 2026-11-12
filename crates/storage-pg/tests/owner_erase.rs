@@ -2853,3 +2853,352 @@ async fn a_forged_exclusive_owner_hint_still_acquires_the_exclusive_fence() {
     let _ = drop_db(&db_name).await;
     result.expect("a forged hint acquires the exclusive fence");
 }
+
+/// The lock functions pin their own search path: a caller whose path puts a
+/// schema of its own first cannot swap the advisory-lock functions for ones
+/// that take nothing.
+#[tokio::test]
+async fn the_lock_functions_ignore_a_callers_search_path() {
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let row_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let other = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let permit = OwnerWritePermit::new_for_tests(row_owner, AccessKind::Fact);
+        let memory = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        let t = memory.memory_id.into_inner();
+
+        let mut tx = pool.begin().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(tx.as_mut())
+            .await?;
+        sqlx::raw_sql(
+            "CREATE SCHEMA decoy;
+             CREATE FUNCTION decoy.pg_advisory_xact_lock(bigint) RETURNS void
+                 LANGUAGE sql AS 'SELECT';
+             CREATE FUNCTION decoy.pg_advisory_xact_lock_shared(bigint) RETURNS void
+                 LANGUAGE sql AS 'SELECT';
+             SET LOCAL search_path = decoy, pg_catalog;
+             SELECT set_config('app.proxiima_scope', 'platform', true);",
+        )
+        .execute(tx.as_mut())
+        .await?;
+        sqlx::query("SELECT proxiima_core.lock_owner_fences(ARRAY[$1]::uuid[], true)")
+            .bind(other.into_inner())
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1]::uuid[])")
+            .bind(t)
+            .execute(tx.as_mut())
+            .await?;
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, other).await?,
+            ["ExclusiveLock"],
+            "the exclusive fence is really held"
+        );
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, row_owner).await?,
+            ["ShareLock"],
+            "the row owner's shared fence is really held"
+        );
+        let version_locks: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint
+               FROM pg_locks l, LATERAL (SELECT hashtextextended('proxiima-forget:' || $2::text, 0) AS key) k
+              WHERE l.locktype = 'advisory' AND l.granted AND l.pid = $1
+                AND l.classid::bigint = ((k.key >> 32) & 4294967295)
+                AND l.objid::bigint = (k.key & 4294967295)",
+        )
+        .bind(pid)
+        .bind(t)
+        .fetch_one(pool)
+        .await?;
+        assert_eq!(version_locks, 1, "the version lock is really held");
+        tx.rollback().await?;
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("the lock functions resolve their own locks");
+}
+
+/// Two fresh user owners, the smaller id first: a transfer takes its two
+/// fences in that order.
+fn ordered_owners() -> (OwnerId, OwnerId) {
+    let mut ids = [Uuid::now_v7(), Uuid::now_v7()];
+    ids.sort_unstable();
+    (
+        OwnerId::from(UserId::new(ids[0])),
+        OwnerId::from(UserId::new(ids[1])),
+    )
+}
+
+async fn install_memory_before_insert_gate(pool: &PgPool, key: i64) -> Result<(), sqlx::Error> {
+    let mut sql = SqlText::new(
+        "CREATE OR REPLACE FUNCTION public.test_pin_race_gate()
+         RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             PERFORM pg_advisory_xact_lock(",
+    );
+    sql.push_i64(key);
+    sql.push(
+        ");
+             RETURN NEW;
+         END
+         $$;
+         CREATE TRIGGER a0_test_pin_race_gate BEFORE INSERT ON proxiima_core.memory
+         FOR EACH ROW EXECUTE FUNCTION public.test_pin_race_gate();",
+    );
+    sqlx::raw_sql(sql).execute(pool).await?;
+    Ok(())
+}
+
+/// Which side the database chose when the cycle closed.
+#[derive(Debug, PartialEq)]
+enum Victim {
+    Writer,
+    Transfer,
+}
+
+/// The cycle, taken by hand so the victim's error is visible. The writer of Y
+/// holds Y's fence shared and then pins a memory of X, so it asks for X's
+/// fence; the transfer of X and Y holds X's fence exclusively and asks for Y's.
+/// Both orderings of the fences are the ones the real paths take.
+#[tokio::test]
+async fn a_late_pin_and_a_transfer_of_its_owners_deadlock_and_the_loser_retries() {
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests().clone();
+        let (x, y) = ordered_owners();
+        let pinned = pg
+            .ingest_fact_atomic(
+                &OwnerWritePermit::new_for_tests(x, AccessKind::Fact),
+                &draft(None),
+                None,
+            )
+            .await?
+            .memory_id
+            .into_inner();
+
+        let writer_attempt = |pool: PgPool,
+                              parked: Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>| async move {
+            let mut tx = pool.begin().await?;
+            sqlx::query("SELECT proxiima_core.lock_owner_fences(ARRAY[$1], false)")
+                .bind(y.into_inner())
+                .execute(tx.as_mut())
+                .await?;
+            if let Some((fenced, go)) = parked {
+                fenced.send(()).expect("fence observed");
+                go.await.expect("go");
+            }
+            sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1])")
+                .bind(pinned)
+                .execute(tx.as_mut())
+                .await?;
+            tx.commit().await
+        };
+        let transfer_attempt = |pool: PgPool| async move {
+            let mut tx = pool.begin().await?;
+            sqlx::query("SELECT proxiima_core.lock_owner_fences(ARRAY[$1, $2], true)")
+                .bind(x.into_inner())
+                .bind(y.into_inner())
+                .execute(tx.as_mut())
+                .await?;
+            tx.commit().await
+        };
+
+        let (fenced_tx, fenced) = tokio::sync::oneshot::channel();
+        let (go_tx, go) = tokio::sync::oneshot::channel();
+        let writer = tokio::spawn(writer_attempt(pool.clone(), Some((fenced_tx, go))));
+        fenced.await?;
+        let transfer = tokio::spawn(transfer_attempt(pool.clone()));
+        wait_for_ungranted_advisory_label(&pool, &owner_fence_key(y)).await?;
+        go_tx.send(()).expect("writer is parked");
+
+        let (written, transferred) = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(writer, transfer)
+        })
+        .await?;
+        let (written, transferred) = (written?, transferred?);
+        let victim = match (&written, &transferred) {
+            (Err(_), Ok(())) => Victim::Writer,
+            (Ok(()), Err(_)) => Victim::Transfer,
+            other => panic!("exactly one side loses the cycle: {other:?}"),
+        };
+        let error = written.err().or(transferred.err()).expect("a victim");
+        assert!(
+            matches!(
+                proxiima_storage_pg::map_err(error),
+                StorageError::Retryable(_)
+            ),
+            "a deadlock victim is retryable"
+        );
+        // Which side the database aborts depends on whose deadlock check
+        // runs once the cycle is closed. The loser reruns on a fresh
+        // transaction and now goes through.
+        match victim {
+            Victim::Writer => writer_attempt(pool.clone(), None).await?,
+            Victim::Transfer => transfer_attempt(pool.clone()).await?,
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a late pin and a transfer deadlock, the loser retries");
+}
+
+/// The same cycle through the real paths: the Fact admission of Y is parked
+/// after it took Y's fence, the transfer of a memory from X to Y takes X's
+/// fence and queues for Y's, and the admission's pin trigger then asks for X's.
+/// The database aborts one side; both ports retry it, so both finish.
+#[tokio::test]
+async fn a_writer_pinning_late_and_a_transfer_both_finish_after_the_cycle() {
+    const WRITER_GATE: i64 = 7_514_030;
+
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let (x, y) = ordered_owners();
+        let permit = OwnerWritePermit::new_for_tests(x, AccessKind::Fact);
+        let pinned = pg
+            .ingest_fact_atomic(&permit, &draft(None), None)
+            .await?
+            .memory_id
+            .into_inner();
+        let moved = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        install_memory_before_insert_gate(pool, WRITER_GATE).await?;
+        let mut gate = hold_session_advisory_lock(pool, WRITER_GATE).await?;
+
+        let writer_pg = pg.clone();
+        let writer = tokio::spawn(async move {
+            let mut command = draft(None);
+            command.refs = vec![pinned];
+            writer_pg
+                .ingest_fact_atomic(
+                    &OwnerWritePermit::new_for_tests(y, AccessKind::Fact),
+                    &command,
+                    None,
+                )
+                .await
+        });
+        wait_for_ungranted_advisory_key(pool, WRITER_GATE).await?;
+        let transfer_pg = pg.clone();
+        let transfer = tokio::spawn(async move {
+            transfer_pg
+                .transfer_to_owner(
+                    &OwnerWritePermit::transfer_for_tests(x, AccessKind::Fact, y),
+                    EntityId::Memory(moved.memory_id),
+                    y,
+                    &contract_sidecar_tables(),
+                    &[],
+                )
+                .await
+        });
+        wait_for_ungranted_advisory_label(pool, &owner_fence_key(y)).await?;
+        release_session_advisory_lock(&mut gate, WRITER_GATE).await?;
+        drop(gate);
+
+        let (written, transferred) = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(writer, transfer)
+        })
+        .await?;
+        let written = written??;
+        assert!(transferred??, "the transfer commits");
+        let owner_of = |t: Uuid| async move {
+            sqlx::query_scalar::<_, Uuid>("SELECT owner_id FROM proxiima_core.memory WHERE t = $1")
+                .bind(t)
+                .fetch_one(pool)
+                .await
+        };
+        assert_eq!(
+            owner_of(moved.memory_id.into_inner()).await?,
+            y.into_inner()
+        );
+        assert_eq!(
+            owner_of(written.memory_id.into_inner()).await?,
+            y.into_inner()
+        );
+        assert_eq!(
+            owner_of(pinned).await?,
+            x.into_inner(),
+            "the pinned memory stays with X"
+        );
+        let refs: Vec<Uuid> =
+            sqlx::query_scalar("SELECT refs FROM proxiima_core.memory WHERE t = $1")
+                .bind(written.memory_id.into_inner())
+                .fetch_one(pool)
+                .await?;
+        assert_eq!(refs, [pinned]);
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a writer pinning late and a transfer both finish");
+}
+
+/// The other order: the transfer already holds both fences, so the writer
+/// queues for Y's fence holding nothing, and no cycle can form.
+#[tokio::test]
+async fn a_writer_pinning_late_queues_behind_a_transfer_that_went_first() {
+    const TRANSFER_GATE: i64 = 7_514_032;
+
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let (x, y) = ordered_owners();
+        let permit = OwnerWritePermit::new_for_tests(x, AccessKind::Fact);
+        let pinned = pg
+            .ingest_fact_atomic(&permit, &draft(None), None)
+            .await?
+            .memory_id
+            .into_inner();
+        let moved = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        install_transfer_update_gate(pool, TRANSFER_GATE).await?;
+        let mut gate = hold_session_advisory_lock(pool, TRANSFER_GATE).await?;
+
+        let transfer_pg = pg.clone();
+        let transfer = tokio::spawn(async move {
+            transfer_pg
+                .transfer_to_owner(
+                    &OwnerWritePermit::transfer_for_tests(x, AccessKind::Fact, y),
+                    EntityId::Memory(moved.memory_id),
+                    y,
+                    &contract_sidecar_tables(),
+                    &[],
+                )
+                .await
+        });
+        wait_for_ungranted_advisory_key(pool, TRANSFER_GATE).await?;
+        let writer_pg = pg.clone();
+        let writer = tokio::spawn(async move {
+            let mut command = draft(None);
+            command.refs = vec![pinned];
+            writer_pg
+                .ingest_fact_atomic(
+                    &OwnerWritePermit::new_for_tests(y, AccessKind::Fact),
+                    &command,
+                    None,
+                )
+                .await
+        });
+        wait_for_ungranted_advisory_label(pool, &owner_fence_key(y)).await?;
+        assert!(!writer.is_finished());
+        release_session_advisory_lock(&mut gate, TRANSFER_GATE).await?;
+        drop(gate);
+
+        assert!(tokio::time::timeout(Duration::from_secs(30), transfer).await???);
+        let written = tokio::time::timeout(Duration::from_secs(30), writer).await???;
+        let owner: Uuid =
+            sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory WHERE t = $1")
+                .bind(written.memory_id.into_inner())
+                .fetch_one(pool)
+                .await?;
+        assert_eq!(owner, y.into_inner());
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a writer pinning late queues behind a transfer that went first");
+}

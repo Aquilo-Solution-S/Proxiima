@@ -80,6 +80,19 @@ async fn begin_bulk_erase_tx(
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
+    // A schema evolution locks these four tables in this order before it
+    // touches a row or a fence. Taking ROW EXCLUSIVE on them first, in the
+    // same order, makes the erase wait for a running evolution (up to the
+    // lock timeout above) before it holds the owner fence, instead of holding
+    // the fence while the evolution waits for it, and before it selects the
+    // rows it will delete, so an evolution cannot replace them in between.
+    sqlx::query(
+        "LOCK TABLE proxiima_core.memory, proxiima_core.goal_head, proxiima_core.goal, \
+         proxiima_core.blob IN ROW EXCLUSIVE MODE",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(map_err)?;
     sqlx::query("SET LOCAL statement_timeout = 0")
         .execute(&mut *tx)
         .await
@@ -1050,40 +1063,43 @@ async fn lock_selected_lifecycle_targets(tx: &mut Tx<'_>) -> Result<(), StorageE
     super::forget::lock_lifecycle_targets_tx(tx, &ids).await
 }
 
-/// Every upload object key this scope MIGHT owe, fenced before the retain
-/// decision that will settle each one.
+/// The upload object keys this scope must fence before it decides what it
+/// owes.
 ///
-/// The set is a superset by construction: source scope narrows `selected_blobs`
-/// later (a blob a surviving Fact still cites is dropped from it), and an owner
-/// erase never asks whether it owes a key before this point. Over-locking is
-/// the same trade `cited_blobs_locked_for_erase` makes one level down — which
-/// keys are orphans is not known until the deletes have run, and a lock taken
-/// after the question is answered is a lock taken too late.
-///
-/// This is what makes `enqueue_blob_object_keys`' anti-join true at decision
-/// time. Two owners erasing a shared mounted object concurrently each saw the
-/// other's row under READ COMMITTED, each withheld, and the object was
-/// destroyed zero times. Holding the key to commit makes the second wait and
-/// then observe the first's deletes.
+/// A key only this owner's rows imply needs no lock: every other taker of such
+/// a key holds this owner's fence, which an owner erase holds exclusively. The
+/// keys that matter are the shared ones, those a `blob_uploads` row of another
+/// owner also implies (a mount over this owner's object, or the reverse). Two
+/// owners erasing a shared mounted object concurrently each saw the other's
+/// row under READ COMMITTED, each withheld, and the object was destroyed zero
+/// times; holding the key to commit makes the second wait and then observe the
+/// first's deletes. Source scope holds the fence only shared, so it fences
+/// every key its blobs imply, a superset narrowed by the retain decision
+/// later.
 async fn lock_selected_object_keys(
     tx: &mut Tx<'_>,
     owner: OwnerId,
     scope: SelectionScope<'_>,
 ) -> Result<(), StorageError> {
     let owner_id = owner.into_inner();
-    // The recorded keys and every row's canonical object, derived: a row
-    // still recording `pending/<u>` after its canonical PUT implies
-    // `objects/<u>`, which is the key a concurrent stage fences.
     let keys: Vec<String> = match scope {
-        SelectionScope::Owner => sqlx::query_scalar(
-            "SELECT DISTINCT key FROM (
-                 SELECT object_key AS key FROM proxiima_core.blob_uploads WHERE owner_id = $1
-                 UNION
-                 SELECT 'objects/' || coalesce(mounted_from_upload_id, upload_id)::text
-                   FROM proxiima_core.blob_uploads WHERE owner_id = $1
-             ) keys
-             ORDER BY key",
-        )
+        SelectionScope::Owner => sqlx::query_scalar(concat!(
+            "SELECT DISTINCT k.object_key
+               FROM proxiima_core.blob_uploads u ",
+            upload_implied_keys_sql!(),
+            "
+              WHERE u.owner_id = $1
+                AND k.object_key IS NOT NULL
+                AND EXISTS (
+                        SELECT 1
+                          FROM proxiima_core.blob_uploads other
+                         WHERE other.owner_id <> $1
+                           AND ",
+            other_upload_implies_key_sql!(),
+            "
+                    )
+              ORDER BY k.object_key",
+        ))
         .bind(owner_id)
         .fetch_all(&mut **tx)
         .await

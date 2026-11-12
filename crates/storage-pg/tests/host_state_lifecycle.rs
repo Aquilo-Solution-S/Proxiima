@@ -3343,3 +3343,201 @@ async fn an_origin_check_that_cannot_see_the_physical_owner_waits_for_its_erase(
 async fn an_erase_waits_for_an_origin_check_that_cannot_see_the_physical_owner() {
     hidden_physical_owner_check(false).await;
 }
+
+/// What a writer of Y pins in a memory of X.
+#[derive(Clone, Copy)]
+enum Pin {
+    /// A Fact of Y naming it in `refs`, written by the runtime role under a
+    /// scope that cannot read it.
+    RuntimeMemoryRef,
+    /// A Goal of Y naming it as evidence, written as the platform lane.
+    GoalEvidence,
+}
+
+/// Insert the pinning row in a fresh transaction and leave it open.
+async fn begin_pinning_insert(
+    pg: &PgStorage,
+    runtime: &PgPool,
+    writer: OwnerId,
+    pin: Pin,
+    target: MemoryId,
+) -> Result<Transaction<'static, Postgres>, sqlx::Error> {
+    let handle = Uuid::now_v7();
+    let (writer_id, target) = (writer.into_inner(), target.into_inner());
+    match pin {
+        Pin::RuntimeMemoryRef => {
+            let scope = owner_scope_for_tests(&[writer]);
+            let mut tx = proxiima_storage_pg::begin_owner_transaction(runtime, &scope)
+                .await
+                .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            // Raw INSERT on purpose: the pin must reach the trigger under the runtime role, which the ports do not expose with a foreign target.
+            sqlx::query(
+                "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
+                 VALUES ($1, 'fact', 'core/upload-v1', $2, $1)",
+            )
+            .bind(handle)
+            .bind(writer_id)
+            .execute(tx.as_mut())
+            .await?;
+            sqlx::query(
+                "INSERT INTO proxiima_core.memory
+                    (handle, t, kind, owner_id, schema_id, refs, occurred_at, \"by\", via)
+                 VALUES ($1, $1, 'fact', $2, 'core/upload-v1', $3, now(),
+                         '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+            )
+            .bind(handle)
+            .bind(writer_id)
+            .bind(vec![target])
+            .execute(tx.as_mut())
+            .await?;
+            Ok(tx)
+        }
+        Pin::GoalEvidence => {
+            let mut tx = pg.pool_for_tests().begin().await?;
+            // Raw INSERT on purpose: a Goal whose evidence names a memory of another owner, which the Goal write path refuses before the trigger.
+            sqlx::query(
+                "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
+                 VALUES ($1, 'test/goal-v1', $2, $1)",
+            )
+            .bind(handle)
+            .bind(writer_id)
+            .execute(tx.as_mut())
+            .await?;
+            sqlx::query(
+                "INSERT INTO proxiima_core.goal
+                    (handle, t, owner_id, schema_id, title, state, request_id, \"by\", evidence_t)
+                 VALUES ($1, $1, $2, 'test/goal-v1', 'pins', 'Active', 'pin-race', $2, $3)",
+            )
+            .bind(handle)
+            .bind(writer_id)
+            .bind(vec![target])
+            .execute(tx.as_mut())
+            .await?;
+            Ok(tx)
+        }
+    }
+}
+
+async fn pin_writer_against_erase(pin: Pin, erase_first: bool) {
+    let (db_name, pg, lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let (runtime_url, _) = proxiima_pg_testkit::split_role_urls(&db_name).await?;
+        let runtime = PgPool::connect(&runtime_url).await?;
+        let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let writer = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let target = ingest(&pg, erased, "source-a", "pinned").await;
+        {
+            let mut connection = pool.acquire().await?;
+            proxiima_storage_pg::access::owner_registry::ensure_owner_row(&mut connection, &writer)
+                .await?;
+        }
+        let erase = |pg: Arc<PgStorage>| {
+            tokio::spawn(async move {
+                pg.erase_personal_owner(&erase_auth(erased, None), erased.as_user(), pg.surfaces())
+                    .await
+            })
+        };
+        let write = |pg: Arc<PgStorage>,
+                     runtime: PgPool,
+                     hold: Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>| {
+            tokio::spawn(async move {
+                let tx = begin_pinning_insert(&pg, &runtime, writer, pin, target).await?;
+                if let Some((inserted, release)) = hold {
+                    inserted.send(()).expect("insert observed");
+                    release.await.expect("release");
+                }
+                tx.commit().await?;
+                Ok::<(), sqlx::Error>(())
+            })
+        };
+
+        if erase_first {
+            let gate = Arc::new(CallbackGate::default());
+            lifecycle.set_erase_gate(Some(gate.clone()));
+            let erasing = erase(pg.clone());
+            gate.entered.notified().await;
+            let writing = write(pg.clone(), runtime.clone(), None);
+            assert!(
+                wait_for_owner_fence_waiters(pool, erased, 1).await,
+                "the writer waits in the trigger on the erasing owner's fence"
+            );
+            assert!(!writing.is_finished());
+            gate.release.notify_one();
+            assert!(matches!(
+                erasing.await??,
+                OwnerEraseOutcome::Completed { .. }
+            ));
+            lifecycle.set_erase_gate(None);
+            let refused = writing
+                .await?
+                .expect_err("the pin of an erased memory is refused");
+            let refused = proxiima_storage_pg::map_err(refused);
+            match pin {
+                Pin::RuntimeMemoryRef => assert!(
+                    matches!(
+                        refused,
+                        StorageError::Refused {
+                            rule: proxiima_core::StorageRule::ReferencePinMissing,
+                            ..
+                        }
+                    ),
+                    "{refused:?}"
+                ),
+                Pin::GoalEvidence => assert!(
+                    refused.to_string().contains("names erased target"),
+                    "{refused:?}"
+                ),
+            }
+            assert_eq!(memory_rows_of(pool, writer).await, 0);
+        } else {
+            let (release, released) = tokio::sync::oneshot::channel();
+            let (inserted_tx, inserted) = tokio::sync::oneshot::channel();
+            let writing = write(pg.clone(), runtime.clone(), Some((inserted_tx, released)));
+            inserted.await?;
+            let erasing = erase(pg.clone());
+            assert!(
+                wait_for_owner_fence_waiters(pool, erased, 1).await,
+                "the erase waits for the fence the writer's trigger took shared"
+            );
+            assert!(!erasing.is_finished());
+            release.send(()).expect("writer is waiting for release");
+            writing.await??;
+            assert!(matches!(
+                erasing.await??,
+                OwnerEraseOutcome::Completed { .. }
+            ));
+            assert_eq!(erased_witness_count(pool, &[target]).await, 1);
+            assert_eq!(memory_rows_of(pool, erased).await, 0);
+        }
+        runtime.close().await;
+        Ok(())
+    }
+    .await;
+    lifecycle.set_erase_gate(None);
+    close_pg(&db_name).await;
+    result.expect("a pin of an erasing owner's memory meets the erase on its fence");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_runtime_writer_that_cannot_read_a_memory_can_pin_it_and_waits_for_its_erase() {
+    pin_writer_against_erase(Pin::RuntimeMemoryRef, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_erase_waits_for_a_runtime_writer_pinning_a_memory_it_cannot_read() {
+    pin_writer_against_erase(Pin::RuntimeMemoryRef, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_goal_evidence_pin_of_an_erasing_owners_memory_waits_and_is_refused() {
+    pin_writer_against_erase(Pin::GoalEvidence, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_erase_waits_for_a_goal_pinning_its_memory_as_evidence() {
+    pin_writer_against_erase(Pin::GoalEvidence, false).await;
+}

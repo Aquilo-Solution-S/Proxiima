@@ -600,6 +600,38 @@ async fn advisory_locks_of_waiting_backends(pool: &PgPool) -> sqlx::Result<i64> 
     .await
 }
 
+/// `count` completed uploads of `owner`, each over its own blob and object.
+async fn seed_unshared_uploads(pool: &PgPool, owner: OwnerId, count: usize) -> sqlx::Result<()> {
+    let count = i32::try_from(count).expect("count fits");
+    sqlx::query(
+        "WITH b AS (
+             INSERT INTO proxiima_core.blob (owner_id, schema_id, content_hash)
+             SELECT $1, 'core/uploaded-blob-v1', sha256(i::text::bytea)
+               FROM generate_series(1, $2) AS i
+             RETURNING blob_id, content_hash
+         )
+         INSERT INTO proxiima_core.blob_uploads
+             (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
+              status, blob_id, sha256, content_hash, expires_at, completed_at)
+         SELECT $1, 'bucket', 's3:test/bucket', 'placeholder', 'f.bin', 'application/octet-stream', 3,
+                'completed', blob_id, content_hash, content_hash, now() + interval '1 day', now()
+           FROM b",
+    )
+    .bind(owner.into_inner())
+    .bind(count)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE proxiima_core.blob_uploads
+            SET object_key = 'objects/' || upload_id::text
+          WHERE owner_id = $1",
+    )
+    .bind(owner.into_inner())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// One whole-owner erase of `memories` Facts. Returns the advisory locks the
 /// erase held when it reached its first Memory delete, and its wall time,
 /// which includes one poll interval for that observation.
@@ -614,6 +646,9 @@ async fn erase_owner_of(memories: usize) -> Result<(i64, u128), Box<dyn std::err
     create_user(&admin, neighbour_user).await?;
     seed_facts(&admin, owner, memories, Shape::Plain).await?;
     seed_facts(&admin, neighbour, survivors, Shape::Plain).await?;
+    // Uploads nobody else names: the erase owes their objects without a lock.
+    let uploads = memories.div_ceil(5);
+    seed_unshared_uploads(&admin, owner, uploads).await?;
 
     // A row lock on one Fact parks the erase at its delete, after every lock
     // it takes up front. NO KEY UPDATE conflicts with DELETE and with nothing
@@ -712,6 +747,8 @@ async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
             "advisory_locks_held": advisory,
             "advisory_locks_held_at_tenth": small_locks,
             "tenth_memories": tenth,
+            "unshared_uploads": memories.div_ceil(5),
+            "unshared_uploads_at_tenth": tenth.div_ceil(5),
             "wall_ms": wall_ms,
             "wall_ms_at_tenth": small_ms,
             "max_locks_per_transaction": max_locks_per_transaction,
