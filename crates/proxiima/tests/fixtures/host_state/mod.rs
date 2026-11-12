@@ -493,11 +493,12 @@ async fn dispatch(
         } => create(tx, permit, invocation_id, Some(saved_by)).await,
         FixtureHostCommand::InsertDeferredInvalid { invocation_id, .. } => {
             sqlx::query(
-                "INSERT INTO host_fixture.deferred_reference (invocation_id, execution_id) \
-                 VALUES ($1, $2)",
+                "INSERT INTO host_fixture.deferred_reference (invocation_id, execution_id, owner_id) \
+                 VALUES ($1, $2, $3)",
             )
             .bind(invocation_id.into_inner())
             .bind(Uuid::now_v7())
+            .bind(permit.owner().into_inner())
             .execute(&mut **tx)
             .await
             .map_err(|err| StorageError::Internal(err.to_string()))?;

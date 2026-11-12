@@ -136,7 +136,8 @@ SELECT proxiima_core.assert_owner_rls_census('my_spiice');
 The installer adds the foreign key to the memory, the declaration triggers,
 the surface registration and owner row security; serving boot refuses a
 sidecar whose triggers differ from its registration. Declare the owner-RLS
-class of every other table with `install_owner_rls_table`, and close the
+class of every other table with `install_owner_rls_table`
+([owner policy](host-integration.md#owner-policy)), and close the
 migration with the schema census. The example spiice's `fixtures/` directory
 shows a baseline; [the SQL contract](host-integration.md#sql-contract) lists
 what a migration may name.

@@ -1507,11 +1507,7 @@ SELECT proxiima_core.install_sidecar('facade_surface', 'abstraction_v1', 'facade
         statements.push_text(statement).push(";\n");
     }
     statements.push(
-        "ALTER TABLE facade_surface.projection ENABLE ROW LEVEL SECURITY;\n\
-         ALTER TABLE facade_surface.projection FORCE ROW LEVEL SECURITY;\n\
-         CREATE POLICY proxiima_owner_read ON facade_surface.projection FOR SELECT TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
-         CREATE POLICY proxiima_owner_write ON facade_surface.projection FOR ALL TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])) WITH CHECK (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
-         CREATE POLICY proxiima_platform ON facade_surface.projection FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')",
+        "SELECT proxiima_core.install_owner_rls_table('facade_surface', 'projection', 'owner_id')",
     );
     // Search candidate functions are installed by Proxiima's composed
     // definitions phase. A consumer migration owns tables, projections,

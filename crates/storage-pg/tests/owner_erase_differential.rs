@@ -668,6 +668,12 @@ pub const DROPPED_TABLES: &[&str] = &[
     // Added after the baseline by 0042: which spiice tables are Follows
     // sidecars, host-written schema metadata about no owner.
     "owner_follows",
+    // Added after the baseline by 0068: the class each installer applied to a
+    // spiice table, schema metadata about no owner.
+    "owner_rls_table",
+    // Added by 0068: the text of the owner policies core created on each
+    // spiice table, deployment metadata about no owner.
+    "owner_rls_installed",
     // Added after the baseline by 0049: coordination relations about no
     // owner (an always-empty fence and the maintenance leases).
     "export_erase_fence",

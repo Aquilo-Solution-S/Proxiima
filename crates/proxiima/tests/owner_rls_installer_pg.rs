@@ -833,7 +833,7 @@ async fn automatic_follows_installation_precedes_spiice_lanes_and_serves_skip_bo
         .await
         .expect("platform transaction");
     sidecars
-        .ensure_owner_follows(&mut transaction)
+        .ensure_owner_rls(&mut transaction)
         .await
         .expect("post-lane owner index and marks exist");
     transaction.rollback().await.expect("rollback");
@@ -1117,5 +1117,429 @@ async fn a_registered_follows_table_missing_after_migrations_refuses_the_run() {
         matches!(refused, Err(proxiima::MigrationError::SidecarOwnerRls(_))),
         "registered sidecars must exist when all migration lanes finish: {refused:?}"
     );
+    pg.clone_pool_for_backend().close().await;
+}
+
+const RECORDED: &str = "SELECT schema_name || '.' || table_name, class::text, owner_column
+   FROM proxiima_core.owner_rls_table ORDER BY 1";
+
+fn sqlstate(error: &sqlx::Error) -> Option<String> {
+    error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .map(std::borrow::Cow::into_owned)
+}
+
+async fn migration_storage(db: &proxiima::testkit::SplitRoleDb) -> proxiima::PgMigrationStorage {
+    proxiima::PgMigrationStorage::connect_with_config(
+        db.platform_url(),
+        proxiima::PgPoolConfig::default(),
+        proxiima::PgTuning::default(),
+    )
+    .await
+    .expect("migration storage")
+}
+
+/// A fresh install records every table the example installs, passes the
+/// boot check, and leaves the Follows table to its mark.
+#[tokio::test]
+async fn a_fresh_example_install_records_its_tables_and_boots() {
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima_example::ExampleSpiice;
+
+    let db = example_engine::migrated_db("proxiima_owner_rls_fresh").await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let mut tx = conn.begin().await.expect("transaction");
+    platform_scope(&mut tx).await;
+    let recorded: Vec<(String, String, String)> = sqlx::query_as(RECORDED)
+        .fetch_all(&mut *tx)
+        .await
+        .expect("records");
+    tx.rollback().await.expect("rollback");
+    let mut tables: Vec<&str> = recorded.iter().map(|row| row.0.as_str()).collect();
+    tables.sort_unstable();
+    assert_eq!(
+        tables,
+        [
+            "proxiima_example.digest_v1",
+            "proxiima_example.note_v1",
+            "proxiima_example.notebooks",
+            "proxiima_example.settings",
+        ]
+    );
+    let pg = migration_storage(&db).await;
+    proxiima::preflight_without_migrations(
+        &pg,
+        ExampleSpiice::migrators(),
+        &example_engine::frozen_sidecars(),
+    )
+    .await
+    .expect("a fresh install boots");
+    pg.clone_pool_for_backend().close().await;
+}
+
+/// The installer records the class and the owner column of each call, and a
+/// second call replaces the record.
+#[tokio::test]
+async fn the_installer_records_the_class_and_replaces_it_on_a_second_install() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_record").await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let mut tx = conn.begin().await.expect("transaction");
+    sqlx::query(
+        "CREATE TABLE proxiima_example.probe (
+             t uuid PRIMARY KEY REFERENCES proxiima_core.memory (t), owner uuid)",
+    )
+    .execute(&mut *tx)
+    .await
+    .expect("probe table");
+    platform_scope(&mut tx).await;
+    for (class, column) in [("owner_id", "owner"), ("memory_owner", "owner_id")] {
+        sqlx::query("SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'probe', $1::proxiima_core.owner_rls_class, $2)")
+            .bind(class)
+            .bind(column)
+            .execute(&mut *tx)
+            .await
+            .expect("install");
+        let row: (String, String) = sqlx::query_as(
+            "SELECT class::text, owner_column FROM proxiima_core.owner_rls_table
+              WHERE schema_name = 'proxiima_example' AND table_name = 'probe'",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("record");
+        assert_eq!(row, (class.to_owned(), column.to_owned()));
+    }
+    sqlx::query(r#"CREATE TABLE proxiima_example."Mixed_Notes" (owner_id uuid NOT NULL)"#)
+        .execute(&mut *tx)
+        .await
+        .expect("mixed-case table");
+    sqlx::query(r"SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'Mixed_Notes', 'owner_id')")
+        .execute(&mut *tx)
+        .await
+        .expect("a mixed-case table installs");
+    sqlx::query("SELECT proxiima_core.reinstall_owner_rls()")
+        .execute(&mut *tx)
+        .await
+        .expect("a mixed-case record reinstalls");
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM proxiima_core.owner_rls_table
+          WHERE schema_name = 'proxiima_example' AND table_name = 'Mixed_Notes'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("record");
+    assert_eq!(
+        recorded, 1,
+        "recorded with its exact name, kept by reinstall"
+    );
+    tx.rollback().await.expect("rollback");
+    conn.close().await.expect("close");
+}
+
+/// Only the platform scope reads or writes the record, and only it may
+/// reinstall.
+#[tokio::test]
+async fn the_record_is_platform_scope_only() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_scope").await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let mut tx = conn.begin().await.expect("transaction");
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'owner', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("owner scope");
+    sqlx::query("SELECT set_config('app.owner', $1, true)")
+        .bind(format!("{{{}}}", Uuid::now_v7()))
+        .execute(&mut *tx)
+        .await
+        .expect("owner");
+    let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM proxiima_core.owner_rls_table")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("count");
+    assert_eq!(visible, 0, "an owner scope reads no record");
+    let mut savepoint = tx.begin().await.expect("savepoint");
+    let refused = sqlx::query(
+        "INSERT INTO proxiima_core.owner_rls_table VALUES
+         ('proxiima_example', 'settings', 'owner_id', 'owner_id')
+         ON CONFLICT (schema_name, table_name) DO UPDATE SET class = 'owner_id'",
+    )
+    .execute(&mut *savepoint)
+    .await
+    .expect_err("an owner scope writes no record");
+    assert_eq!(sqlstate(&refused), Some("42501".to_owned()));
+    savepoint.rollback().await.expect("rollback to savepoint");
+    sqlx::query("SELECT set_config('app.proxiima_scope', '', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("no scope");
+    let reinstall = sqlx::query("SELECT proxiima_core.reinstall_owner_rls()")
+        .execute(&mut *tx)
+        .await
+        .expect_err("reinstall outside platform scope");
+    assert_eq!(sqlstate(&reinstall), Some("PX001".to_owned()));
+    tx.rollback().await.expect("rollback");
+    conn.close().await.expect("close");
+}
+
+/// A recorded table whose owner policies were replaced by an older generation
+/// has the generated policies again after a plain migration run.
+#[tokio::test]
+async fn a_migration_run_reinstalls_the_policies_of_recorded_tables() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_reinstall").await;
+    let pg = migration_storage(&db).await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let generated = policies(&mut conn).await;
+    sqlx::raw_sql(
+        "ALTER POLICY proxiima_owner_read ON proxiima_example.notebooks
+         USING (owner_id = ANY(COALESCE(
+             NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])));
+         ALTER POLICY proxiima_owner_write ON proxiima_example.notebooks
+         USING (owner_id = ANY(COALESCE(
+             NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])));",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("older generation predicates");
+    assert_ne!(policies(&mut conn).await, generated, "precondition: stale");
+    migrate_example(&pg).await;
+    assert_eq!(policies(&mut conn).await, generated);
+    conn.close().await.expect("close");
+    pg.clone_pool_for_backend().close().await;
+}
+
+/// A recorded table dropped and recreated under its name with hand-written
+/// policies has the generated policies again after a migration run.
+#[tokio::test]
+async fn a_recreated_recorded_table_gets_the_generated_policies_back() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_recreated").await;
+    let pg = migration_storage(&db).await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let generated = policies(&mut conn).await;
+    sqlx::raw_sql(
+        "ALTER TABLE proxiima_example.settings RENAME TO settings_old;
+         CREATE TABLE proxiima_example.settings (LIKE proxiima_example.settings_old);
+         DROP TABLE proxiima_example.settings_old;
+         ALTER TABLE proxiima_example.settings ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE proxiima_example.settings FORCE ROW LEVEL SECURITY;
+         CREATE POLICY proxiima_owner_read ON proxiima_example.settings FOR SELECT USING (true);
+         CREATE POLICY proxiima_owner_write ON proxiima_example.settings FOR ALL USING (true);
+         CREATE POLICY proxiima_platform ON proxiima_example.settings FOR ALL TO CURRENT_USER
+             USING (current_setting('app.proxiima_scope', true) = 'platform')
+             WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform');",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("recreated table with hand-written policies");
+    assert_ne!(
+        policies(&mut conn).await,
+        generated,
+        "precondition: hand-written"
+    );
+    migrate_example(&pg).await;
+    assert_eq!(policies(&mut conn).await, generated);
+    conn.close().await.expect("close");
+    pg.clone_pool_for_backend().close().await;
+}
+
+async fn migrate_example(pg: &proxiima::PgMigrationStorage) {
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima_example::ExampleSpiice;
+
+    proxiima::run_core_and_spiice_migrations(
+        pg,
+        ExampleSpiice::migrators(),
+        &example_engine::frozen_sidecars(),
+    )
+    .await
+    .expect("the migration run");
+}
+
+/// The refusal of owner policies other than the ones core installed, as
+/// serving boot reports it: the tables it names.
+async fn altered_policy_refusal(pg: &proxiima::PgMigrationStorage) -> Option<String> {
+    use proxiima::MigrationError;
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima_example::ExampleSpiice;
+
+    match proxiima::preflight_without_migrations(
+        pg,
+        ExampleSpiice::migrators(),
+        &example_engine::frozen_sidecars(),
+    )
+    .await
+    {
+        Ok(_) => None,
+        Err(MigrationError::SidecarOwnerRls(StorageError::MigrationRequired { details })) => {
+            Some(details)
+        }
+        Err(other) => panic!("expected the altered-policy refusal: {other:?}"),
+    }
+}
+
+/// A recorded or Follows table whose owner policy was edited after core
+/// created it is refused by name, and a migration run repairs it.
+#[tokio::test]
+async fn serving_refuses_an_owner_policy_core_did_not_install_until_a_run_repairs_it() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_edited").await;
+    let pg = migration_storage(&db).await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    assert_eq!(
+        altered_policy_refusal(&pg).await,
+        None,
+        "a finished run serves"
+    );
+    let generated = policies(&mut conn).await;
+    for (table, other) in [
+        ("notebooks", "proxiima_example.settings"),
+        ("stamp_v1", "proxiima_example.notebooks"),
+    ] {
+        sqlx::raw_sql(match table {
+            "notebooks" => {
+                "ALTER POLICY proxiima_owner_read ON proxiima_example.notebooks
+                 USING (owner_id IS NOT NULL)"
+            }
+            _ => {
+                "ALTER POLICY proxiima_owner_read ON proxiima_example.stamp_v1
+                 USING (owner_id IS NOT NULL)"
+            }
+        })
+        .execute(&mut conn)
+        .await
+        .expect("hand-written predicate");
+        let details = altered_policy_refusal(&pg)
+            .await
+            .unwrap_or_else(|| panic!("{table} is refused"));
+        assert!(
+            details.contains(&format!("proxiima_example.{table}")),
+            "{details}"
+        );
+        assert!(!details.contains(other), "{details}");
+        migrate_example(&pg).await;
+        assert_eq!(
+            altered_policy_refusal(&pg).await,
+            None,
+            "{table} serves after a run"
+        );
+        assert_eq!(policies(&mut conn).await, generated);
+    }
+    conn.close().await.expect("close");
+    pg.clone_pool_for_backend().close().await;
+}
+
+/// A run whose lanes committed and whose final transaction failed leaves
+/// predicates core did not install; a composition that does not include the
+/// failed source refuses them too, and a run that finishes serves again.
+#[tokio::test]
+async fn serving_refuses_the_policies_a_failed_run_left_in_any_composition() {
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima::{MigrationError, NamedMigrator};
+    use proxiima_example::ExampleSpiice;
+    use std::borrow::Cow;
+
+    let db = example_engine::migrated_db("proxiima_owner_rls_unfinished").await;
+    let pg = migration_storage(&db).await;
+    let sidecars = example_engine::frozen_sidecars();
+    // A consumer migration that rewrites the predicates of a recorded table
+    // and leaves it unable to take its class again: the lane commits, the
+    // reinstall of the final transaction raises.
+    let lineup = || {
+        let mut sources = ExampleSpiice::migrators();
+        sources.push(NamedMigrator::spiice(
+            "owner-rls-drift",
+            sqlx::migrate::Migrator {
+                migrations: Cow::Owned(vec![sqlx::migrate::Migration::new(
+                    20_261_201_000_000,
+                    Cow::Borrowed("rename the owner column"),
+                    sqlx::migrate::MigrationType::Simple,
+                    "ALTER TABLE proxiima_example.notebooks RENAME COLUMN owner_id TO owner_x"
+                        .into_sql_str(),
+                    false,
+                )]),
+                ..sqlx::migrate::Migrator::DEFAULT
+            },
+        ));
+        sources
+    };
+    let failed = proxiima::run_core_and_spiice_migrations(&pg, lineup(), &sidecars).await;
+    assert!(
+        matches!(&failed, Err(MigrationError::SidecarOwnerRls(_))),
+        "the final transaction fails: {failed:?}"
+    );
+    let details = altered_policy_refusal(&pg)
+        .await
+        .expect("the composition without the failed source refuses");
+    assert!(details.contains("proxiima_example.notebooks"), "{details}");
+
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    sqlx::query("ALTER TABLE proxiima_example.notebooks RENAME COLUMN owner_x TO owner_id")
+        .execute(&mut conn)
+        .await
+        .expect("repair the cause");
+    proxiima::run_core_and_spiice_migrations(&pg, lineup(), &sidecars)
+        .await
+        .expect("a run that finishes");
+    assert_eq!(altered_policy_refusal(&pg).await, None);
+    conn.close().await.expect("close");
+    pg.clone_pool_for_backend().close().await;
+}
+
+/// Owner policies no installer recorded are refused by table name, and one
+/// installer call repairs them.
+#[tokio::test]
+async fn hand_written_owner_policies_are_refused_until_an_installer_records_them() {
+    use proxiima::spiice::SpiiceBundle;
+    use proxiima_example::ExampleSpiice;
+
+    let db = example_engine::migrated_db("proxiima_owner_rls_unrecorded").await;
+    let pg = migration_storage(&db).await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    sqlx::raw_sql(
+        "CREATE TABLE proxiima_example.handmade (owner_id uuid NOT NULL);
+         ALTER TABLE proxiima_example.handmade ENABLE ROW LEVEL SECURITY;
+         CREATE POLICY proxiima_owner_read ON proxiima_example.handmade
+             FOR SELECT USING (owner_id IS NOT NULL);",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("hand-written policy");
+    let sidecars = example_engine::frozen_sidecars();
+    let refused =
+        proxiima::preflight_without_migrations(&pg, ExampleSpiice::migrators(), &sidecars).await;
+    let Err(proxiima::MigrationError::SidecarOwnerRls(StorageError::MigrationRequired { details })) =
+        refused
+    else {
+        panic!("expected a refusal naming the table: {refused:?}");
+    };
+    assert!(details.contains("proxiima_example.handmade"), "{details}");
+    assert!(!details.contains("proxiima_example.notebooks"), "{details}");
+    sqlx::raw_sql(
+        "BEGIN;
+         SELECT set_config('app.proxiima_scope', 'platform', true);
+         SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'handmade', 'owner_id');
+         COMMIT;",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("the repair is one installer call");
+    proxiima::preflight_without_migrations(&pg, ExampleSpiice::migrators(), &sidecars)
+        .await
+        .expect("the recorded table boots");
+    conn.close().await.expect("close");
     pg.clone_pool_for_backend().close().await;
 }

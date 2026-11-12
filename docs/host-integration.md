@@ -284,7 +284,8 @@ is test support, exported only with the `testkit` feature; test templates use
 
 The runner derives Follows owner RLS from this registry before and after the
 spiice migration lanes, including runs with no pending SQL. Serving
-preflight checks the generated marks and owner indexes without changing them.
+preflight checks the generated marks, owner indexes and
+[owner policy records](#owner-policy) without changing them.
 Normal boot supplies this registry automatically. See
 [sidecar owner modes](build-a-spiice.md#2-persist-the-typed-payload).
 
@@ -656,11 +657,39 @@ in `proxiima_core` is internal. What code outside core may name:
 
 | Need | Contract |
 |---|---|
-| Install a memory sidecar from a migration | `proxiima_core.install_sidecar(schema, table, spiice id)`: the foreign key to the memory, the declaration triggers, the surface registration and owner row security, in one call. `class` overrides the row-security class, `memory_key` names a key column other than `t`. Platform scope only; names are plain lower-case identifiers |
-| Owner row security for any other table | `proxiima_core.install_owner_rls_table`, or `install_owner_rls` for a whole schema; `assert_owner_rls_census` closes the migration |
+| Install a memory sidecar from a migration | `proxiima_core.install_sidecar(schema, table, spiice id)`: the foreign key to the memory, the declaration triggers, the surface registration and its [owner policy](#owner-policy), in one call. `class` overrides the row-security class, `memory_key` names a key column other than `t`. Platform scope only; names are plain lower-case identifiers |
+| Owner row security for any other table | `proxiima_core.install_owner_rls_table`, or `install_owner_rls` for a whole schema; see [owner policy](#owner-policy) |
 | Memory rows in a view or trigger function | The view `proxiima_core.memory_version`: `t`, `handle`, `kind`, `owner_id`, `schema_id`, `origins`, `refs`, `forgotten_at`, `head` |
 | Lexical text in a spiice's own query | The pure functions `lexical_scrub`, `lexical_tsv`, `lexical_config`, `lexical_join`, `lexical_text_array` and `memory_entity_kind` |
 | A read on a transaction the caller holds | The functions below, in `proxiima::spiice` |
+
+### Owner policy
+
+Core is the only installer of the owner policy. `install_sidecar`,
+`install_owner_rls_table` and `install_owner_rls` generate the three policies of
+a table and record its class and owner column in the same call. Every migration
+run, including one with nothing pending, ends by reinstalling the generated
+policies of every recorded table, so whatever a migration or a hand edit wrote
+on a recorded table is overwritten. Reinstalling takes an ACCESS EXCLUSIVE lock
+on each recorded table, as the Follows sync does, in one transaction bounded by
+the runner's five-second lock timeout: a long-open transaction on one of them
+fails the run, and the next run retries. Serving boot takes no lock; it only
+validates. A Follows table is governed by its mark and has no record; when its
+mark is removed it has neither, and is refused like any other unrecorded table.
+
+Serving boot and the end of a migration run refuse a table of a composed schema
+that carries owner policies but has no record and no mark, naming each table.
+The repair is one installer call for it in a new migration; a migration never
+carries owner policy text. `assert_owner_rls_census` closes the migration.
+
+Core records the policies it generated, as Postgres prints them, when it
+creates them. Serving boot and the end of every migration run refuse, by name,
+a table of a composed schema whose owner policies differ from that record or
+have none; the repair is a migration run, which reinstalls and records them
+again. After a Postgres major upgrade, or a change that alters how a predicate
+prints (a renamed column the predicate reads), serving refuses until one
+migration run has completed. Policy DDL run after a binary has booted is not
+seen until its next boot.
 
 `memory_version` is read-only: it joins a memory to its series head, so
 PostgreSQL refuses a write through it whatever a role was granted. The serving

@@ -687,6 +687,8 @@ pub async fn dump_database(
                 | "memory_external_origin"
                 | "publication_counter"
                 | "owner_follows"
+                | "owner_rls_table"
+                | "owner_rls_installed"
                 | "export_erase_fence"
                 | "maintenance_lease"
                 | "vector_index_debt"

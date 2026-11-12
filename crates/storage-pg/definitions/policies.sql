@@ -153,6 +153,11 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.owner_rls_class_predicates(caller text, class_label text, target_schema text, target_table text, class proxiima_core.owner_rls_class, owner_column text) FROM PUBLIC;
 
+-- owner_rls_installed comes first: owner_rls_apply_policies records every table
+-- it writes, so this table needs its own policies before any other call.
+SELECT proxiima_core.owner_rls_apply_class(
+    'policies.sql', 'class ownerless', 'proxiima_core', 'owner_rls_installed', 'ownerless', NULL);
+
 -- agent_derivation_v1
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class fk_parent', 'proxiima_core', 'agent_derivation_v1', 'fk_parent', NULL);
 
@@ -554,6 +559,11 @@ SELECT proxiima_core.owner_rls_apply_class(
     'policies.sql', 'class ownerless', 'proxiima_core', 'owner_follows', 'ownerless', NULL);
 
 ALTER POLICY proxiima_owner_read ON proxiima_core.owner_follows USING (((current_setting('app.proxiima_scope'::text, true) = 'owner'::text) AND (cardinality(COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[])) > 0)));
+
+-- owner_rls_table: the installers record each table's class; only the
+-- platform scope reads or writes it.
+SELECT proxiima_core.owner_rls_apply_class(
+    'policies.sql', 'class ownerless', 'proxiima_core', 'owner_rls_table', 'ownerless', NULL);
 
 -- export_erase_fence and maintenance_lease: platform coordination state about
 -- no owner. Only the platform scope reaches them.

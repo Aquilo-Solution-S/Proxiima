@@ -177,12 +177,7 @@ async fn failing_late_historical_lane_rolls_back_catalog_and_ledgers() {
 /// has, which the replay's role rebinding does not reproduce: its search
 /// functions owned by the historical search role itself, and a policy whose
 /// TO list names an operator role spelled with the historical product word.
-async fn stage_released_role_shapes(
-    database: &str,
-    old_core: &str,
-    old_example: &str,
-    platform: &str,
-) {
+async fn stage_released_role_shapes(database: &str, old_core: &str, platform: &str) {
     use sqlx::Connection as _;
 
     let historical_search = proxiima_storage_pg::historical_catalog_name("proxiima_search");
@@ -204,7 +199,10 @@ async fn stage_released_role_shapes(
          GRANT USAGE ON SCHEMA {old_core} TO {historical_search};
          REASSIGN OWNED BY proxiima_search TO {historical_search};
          ALTER DEFAULT PRIVILEGES FOR ROLE {historical_search} GRANT EXECUTE ON FUNCTIONS TO {platform};
-         CREATE POLICY rename_operator ON {old_example}.settings TO {operator_role} USING (true);",
+         CREATE TABLE public.rename_operator_probe ();
+         ALTER TABLE public.rename_operator_probe OWNER TO {platform};
+         ALTER TABLE public.rename_operator_probe ENABLE ROW LEVEL SECURITY;
+         CREATE POLICY rename_operator ON public.rename_operator_probe TO {operator_role} USING (true);",
         &[
             ("{historical_search}", &name(&historical_search)),
             ("{operator_role}", &name(&operator_role)),
@@ -213,7 +211,6 @@ async fn stage_released_role_shapes(
                 &SqlText::from(&PgIdent::quoted(platform).expect("the platform role name")),
             ),
             ("{old_core}", &name(old_core)),
-            ("{old_example}", &name(old_example)),
         ],
     );
     sqlx::raw_sql(shapes)
@@ -265,7 +262,7 @@ async fn assert_released_role_shapes_upgraded(connection: &mut sqlx::PgConnectio
         "SELECT r.rolname::text FROM pg_policy p, unnest(p.polroles) role_oid
            JOIN pg_roles r ON r.oid = role_oid
           WHERE p.polname = 'rename_operator'
-            AND p.polrelid = 'proxiima_example.settings'::regclass",
+            AND p.polrelid = 'public.rename_operator_probe'::regclass",
     )
     .fetch_all(&mut *connection)
     .await
@@ -414,7 +411,7 @@ async fn installed_historical_example_upgrades_in_place_with_its_real_ledger() {
         .fetch_one(&pool)
         .await
         .expect("platform role");
-    stage_released_role_shapes(db.name(), &old_core, &old_example, &platform).await;
+    stage_released_role_shapes(db.name(), &old_core, &platform).await;
 
     proxiima::preflight_without_migrations(
         &pg,

@@ -650,7 +650,7 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
             .await
             .map_err(execute_error)?;
         sidecars
-            .ensure_owner_follows(&mut snapshot)
+            .ensure_owner_rls(&mut snapshot)
             .await
             .map_err(MigrationError::SidecarOwnerRls)?;
         sidecars
@@ -1244,7 +1244,11 @@ async fn run_sources_on_connection(
         .await
         .map_err(MigrationError::SearchDefinitions)?;
     sidecars
-        .ensure_owner_follows(&mut transaction)
+        .reinstall_owner_rls(&mut transaction)
+        .await
+        .map_err(MigrationError::SidecarOwnerRls)?;
+    sidecars
+        .ensure_owner_rls(&mut transaction)
         .await
         .map_err(MigrationError::SidecarOwnerRls)?;
     transaction.commit().await.map_err(execute_error)
@@ -1345,7 +1349,11 @@ async fn run_evolution_sources(
         .await
         .map_err(MigrationError::SearchDefinitions)?;
     sidecars
-        .ensure_owner_follows(&mut transaction)
+        .reinstall_owner_rls(&mut transaction)
+        .await
+        .map_err(MigrationError::SidecarOwnerRls)?;
+    sidecars
+        .ensure_owner_rls(&mut transaction)
         .await
         .map_err(MigrationError::SidecarOwnerRls)?;
     transaction.commit().await.map_err(execute_error)

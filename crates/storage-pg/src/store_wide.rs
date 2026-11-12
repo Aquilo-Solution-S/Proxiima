@@ -51,6 +51,17 @@ pub const STORE_WIDE_TABLES: &[(&str, &str)] = &[
          to give those tables the follows owner RLS.",
     ),
     (
+        "proxiima_core.owner_rls_table",
+        "Which class and owner column the installers applied to each spiice table: schema \
+         metadata written by the installers at migration, identical for every owner, and the \
+         relation boot reads to reinstall the generated owner policies.",
+    ),
+    (
+        "proxiima_core.owner_rls_installed",
+        "The text of the owner policies core created on each spiice table: platform deployment \
+         metadata that boot compares with the catalog, not owner data or a spiice surface.",
+    ),
+    (
         "proxiima_core.schema_evolution",
         "Completed schema-evolution declarations: platform-owned deployment metadata that \
          fences completed source schemas and is not owner data or a spiice surface.",
