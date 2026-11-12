@@ -3,28 +3,30 @@ use proxiima_core::goal_collaboration::{
     GoalPublicationInput, GoalWorkBindingInput, PublicationUse,
 };
 use proxiima_core::storage_ports::OwnerWritePermit;
-use proxiima_core::{OwnerId, StorageError, UserId};
+use proxiima_core::{OwnerId, StorageError};
 use sqlx::{FromRow as _, Row};
 use std::time::SystemTime;
 
 pub(crate) mod source_reads;
 
+use crate::access::RegisteredOwner;
 use crate::access::role_columns::RoleColumns;
 use crate::{PgStorage, error::map_err, owner_scope::begin_owner_transaction};
 
 /// Lock lifecycle owners before the existing tree/kind authority gateway.
-/// The returned roles are current facts, not a replacement `OwnerScope`.
+/// `subjects` are owners of either kind, registered or not, whose owner-kind
+/// keys join the gateway's one sorted acquisition. The returned roles are current facts, not a replacement `OwnerScope`.
 pub(crate) async fn fenced_roles(
     storage: &PgStorage,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     scope: &proxiima_core::OwnerScope,
     owners: &[OwnerId],
-    extra_people: &[UserId],
+    subjects: &[OwnerId],
 ) -> Result<proxiima_core::OwnerRoles, StorageError> {
     if scope.goal_principal().is_none() {
         return Err(StorageError::NotFound);
     }
-    membership_roles(storage, tx, scope, owners, extra_people).await
+    membership_roles(storage, tx, scope, owners, subjects).await
 }
 
 /// The subject's current membership roles, with the owner fences of
@@ -34,23 +36,23 @@ pub(crate) async fn membership_roles(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     scope: &proxiima_core::OwnerScope,
     owners: &[OwnerId],
-    extra_people: &[UserId],
+    subjects: &[OwnerId],
 ) -> Result<proxiima_core::OwnerRoles, StorageError> {
     if scope.is_expired() {
         return Err(StorageError::NotFound);
     }
     crate::access::fences::lock_owner_fences_shared_tx(tx, owners).await?;
-    let mut people = extra_people.to_vec();
-    people.push(scope.subject());
+    let people = vec![scope.subject()];
     let mut authority = storage
         .platform_scope
-        .authority_on(
+        .authority_on_subjects(
             tx,
             crate::AuthorityTargets {
                 owners: owners.to_vec(),
                 people,
                 groups: Vec::new(),
             },
+            subjects,
         )
         .await?;
     let roles = authority
@@ -152,12 +154,16 @@ pub(crate) async fn role_for_goal(
         return Err(StorageError::NotFound);
     }
     let owner_role = current_role(scope, roles, controller).map(on_goal_route);
-    let grant = sqlx::query("SELECT read_ceiling, write_ceiling, goal_access, administers, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2 AND controller_generation=$3 AND (expires_at IS NULL OR expires_at > statement_timestamp())")
-        .bind(goal.into_inner()).bind(scope.subject().into_inner())
-        .bind(controller_generation).fetch_optional(&mut **tx).await.map_err(map_err)?;
-    let grant_role = grant
-        .map(|grant| RoleColumns::from_row(&grant).map_err(map_err)?.role())
-        .transpose()?;
+    // The caller holds a grant directly and through each group it names; the
+    // roles join.
+    let grants = sqlx::query("SELECT read_ceiling, write_ceiling, goal_access, administers, manage FROM proxiima_core.goal_grants_of($1) WHERE goal_handle=$2 AND controller_generation=$3")
+        .bind(scope.subject().into_inner()).bind(goal.into_inner())
+        .bind(controller_generation).fetch_all(&mut **tx).await.map_err(map_err)?;
+    let mut grant_role: Option<proxiima_core::Role> = None;
+    for grant in &grants {
+        let held = RoleColumns::from_row(grant).map_err(map_err)?.role()?;
+        grant_role = Some(grant_role.map_or(held, |joined| joined.join(held)));
+    }
     Ok(match (owner_role, grant_role) {
         (Some(owner), Some(grant)) => Some(owner.join(grant)),
         (owner, grant) => owner.or(grant),
@@ -342,10 +348,8 @@ impl GoalCollaborationPort for PgStorage {
             "SELECT DISTINCT owner_id FROM proxiima_core.goal_visible_memory_ids()
              UNION
              SELECT DISTINCT g.owner_id FROM proxiima_core.goal g
-               JOIN proxiima_core.goal_access_grant a ON a.goal_handle = g.handle
-              WHERE a.subject_id = $1",
+               JOIN proxiima_core.goal_grants_held() a ON a.goal_handle = g.handle",
         )
-        .bind(scope.subject().into_inner())
         .fetch_all(&mut *tx)
         .await
         .map_err(map_err)?;
@@ -376,7 +380,7 @@ impl GoalCollaborationPort for PgStorage {
         let ambient = scope
             .role_for_owner(&owner)
             .is_some_and(|role| role.read_ceiling().top().is_some() || role.manages());
-        let grant: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2 AND controller_generation=$3 AND (expires_at IS NULL OR expires_at>statement_timestamp()))")
+        let grant: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.goal_grants_of($2) WHERE goal_handle=$1 AND controller_generation=$3)")
             .bind(goal.into_inner()).bind(scope.subject().into_inner())
             .bind(row.get::<i64,_>("authority_generation")).fetch_one(&mut *tx).await.map_err(map_err)?;
         let mut admins = scope.managed_owners();
@@ -443,8 +447,19 @@ impl GoalCollaborationPort for PgStorage {
                 "Goal grant exceeds actor authority".into(),
             ));
         }
-        crate::access::owner_registry::ensure_owner_row(&mut tx, &OwnerId::from(input.subject))
-            .await?;
+        // The subject's owner-kind key is held from the gateway's acquisition,
+        // so the kind cannot change between this read and the commit.
+        match crate::access::registered_owner_held(&mut tx, input.subject).await? {
+            Some(RegisteredOwner::Group(_)) if columns.manage => {
+                return Err(StorageError::ConstraintViolation(
+                    "a Goal grant to a group carries no manage".into(),
+                ));
+            }
+            Some(RegisteredOwner::Group(_)) => {}
+            Some(RegisteredOwner::Personal(_)) | None => {
+                crate::access::owner_registry::ensure_owner_row(&mut tx, &input.subject).await?;
+            }
+        }
         let result = sqlx::query("INSERT INTO proxiima_core.goal_access_grant (goal_handle,subject_id,read_ceiling,write_ceiling,goal_access,administers,manage,controller_generation,expires_at,granted_by) SELECT $1,$2,$3,$4,$5,$6,$7,authority_generation,$8,$9 FROM proxiima_core.goal_head WHERE handle=$1 AND owner_id=$10 ON CONFLICT (goal_handle,subject_id) DO UPDATE SET read_ceiling=EXCLUDED.read_ceiling, write_ceiling=EXCLUDED.write_ceiling, goal_access=EXCLUDED.goal_access, administers=EXCLUDED.administers, manage=EXCLUDED.manage, controller_generation=EXCLUDED.controller_generation, expires_at=EXCLUDED.expires_at, granted_by=EXCLUDED.granted_by")
             .bind(input.goal.into_inner()).bind(input.subject.into_inner()).bind(columns.read_ceiling).bind(columns.write_ceiling).bind(columns.goal_access).bind(columns.administers).bind(columns.manage).bind(expires_at).bind(permit.subject().into_inner()).bind(permit.controller().into_inner()).execute(&mut *tx).await.map_err(map_err)?;
         require_rows(result.rows_affected(), "grant")?;
@@ -454,7 +469,7 @@ impl GoalCollaborationPort for PgStorage {
     async fn revoke_access(
         &self,
         goal: GoalHandle,
-        subject: UserId,
+        subject: OwnerId,
         permit: &GoalCommandPermit,
     ) -> Result<(), StorageError> {
         if goal != permit.goal() {

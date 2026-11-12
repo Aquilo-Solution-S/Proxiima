@@ -66,11 +66,10 @@ pub(crate) async fn count_memories_on_connection(
              UNION
              SELECT h.handle
                FROM proxiima_core.goal_head h
-               JOIN proxiima_core.goal_access_grant a
+               JOIN proxiima_core.goal_grants_held() a
                  ON a.goal_handle = h.handle
                 AND a.controller_generation = h.authority_generation
-              WHERE h.owner_id=ANY($1::uuid[]) AND a.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
-                AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
+              WHERE h.owner_id=ANY($1::uuid[]) AND a.reads_goal
          ) SELECT count(*)::bigint FROM candidates",
     )
     .bind(&owner_ids)

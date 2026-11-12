@@ -58,7 +58,7 @@ impl GoalCollaborationPort for RejectingStorage {
     async fn revoke_access(
         &self,
         _: GoalHandle,
-        _: crate::UserId,
+        _: crate::OwnerId,
         _: &GoalCommandPermit,
     ) -> Result<(), StorageError> {
         Err(StorageError::Internal(

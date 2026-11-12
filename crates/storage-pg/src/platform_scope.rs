@@ -172,7 +172,19 @@ impl PgPlatformScope {
         transaction: &'session mut Transaction<'connection, Postgres>,
         targets: crate::AuthorityTargets,
     ) -> Result<crate::PgAuthoritySession<'session, 'connection>, StorageError> {
-        crate::PgAuthoritySession::new(self, transaction, targets).await
+        self.authority_on_subjects(transaction, targets, &[]).await
+    }
+
+    /// [`Self::authority_on`] with `subjects`: owners of either kind, registered
+    /// or not, whose owner-kind keys are taken in the same sorted acquisition
+    /// as the targets'. No kind is checked and no fact is read for them.
+    pub(crate) async fn authority_on_subjects<'session, 'connection>(
+        &self,
+        transaction: &'session mut Transaction<'connection, Postgres>,
+        targets: crate::AuthorityTargets,
+        subjects: &[proxiima_core::OwnerId],
+    ) -> Result<crate::PgAuthoritySession<'session, 'connection>, StorageError> {
+        crate::PgAuthoritySession::new(self, transaction, targets, subjects).await
     }
 
     /// Begin the owner-export snapshot: a `REPEATABLE READ READ ONLY`

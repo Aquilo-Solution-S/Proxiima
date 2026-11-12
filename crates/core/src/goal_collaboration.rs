@@ -45,7 +45,10 @@ impl PublicationUse {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GoalAudienceGrantInput {
     pub goal: GoalHandle,
-    pub subject: UserId,
+    /// A person or a group, by owner id. Storage reads which it is where the
+    /// grant commits; a group's members hold the grant as their own role
+    /// allows, and a group grant carries no `manage`.
+    pub subject: OwnerId,
     pub role: Role,
     pub expires_at: Option<SystemTime>,
 }
@@ -548,7 +551,7 @@ pub trait GoalCollaborationPort: Send + Sync {
     async fn revoke_access(
         &self,
         goal: GoalHandle,
-        subject: UserId,
+        subject: OwnerId,
         permit: &GoalCommandPermit,
     ) -> Result<(), StorageError> {
         Err(StorageError::Internal(

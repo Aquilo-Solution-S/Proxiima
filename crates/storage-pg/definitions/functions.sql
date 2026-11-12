@@ -2960,12 +2960,13 @@ GRANT USAGE, CREATE ON SCHEMA proxiima_core TO proxiima_goal_reader;
 GRANT SELECT ON proxiima_core.memory, proxiima_core.memory_head,
     proxiima_core.goal, proxiima_core.goal_head,
     proxiima_core.goal_access_grant, proxiima_core.goal_memory_publication,
-    proxiima_core.goal_work_binding TO proxiima_goal_reader;
+    proxiima_core.goal_work_binding, proxiima_core.group_role_projection TO proxiima_goal_reader;
 DO $goal_reader_policies$
 DECLARE table_name text;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY['memory', 'memory_head', 'goal', 'goal_head',
-        'goal_access_grant', 'goal_memory_publication', 'goal_work_binding'] LOOP
+        'goal_access_grant', 'goal_memory_publication', 'goal_work_binding',
+        'group_role_projection'] LOOP
         EXECUTE format('DROP POLICY IF EXISTS proxiima_goal_reader ON proxiima_core.%I', table_name);
         EXECUTE format('CREATE POLICY proxiima_goal_reader ON proxiima_core.%I FOR SELECT TO proxiima_goal_reader USING (true)', table_name);
     END LOOP;
@@ -2973,6 +2974,42 @@ END
 $goal_reader_policies$;
 DO $save_goal_role$ BEGIN PERFORM set_config('app.goal_installer_role', current_user, true); END $save_goal_role$;
 SET LOCAL ROLE proxiima_goal_reader;
+
+-- The one reading of "what Goal grants does the bound person hold". A grant
+-- names a person or a group by owner id; the person holds it directly or as
+-- a member of the group, and then holds the grant's role met with the
+-- member's own role. A group grant reads the Goal only where the member's own
+-- role reads Goals. Expiry is filtered here; callers join goal_head for the
+-- controller generation they need. The grant row is never rewritten by
+-- membership: removing the member ends the route at the next statement.
+CREATE OR REPLACE FUNCTION proxiima_core.goal_grants_held()
+RETURNS TABLE(goal_handle uuid, subject_id uuid, controller_generation bigint,
+              read_ceiling proxiima_core.memory_ceiling, write_ceiling proxiima_core.memory_ceiling,
+              goal_access proxiima_core.goal_access, administers boolean, manage boolean,
+              reads_goal boolean)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+    WITH holder AS (
+        SELECT NULLIF(current_setting('app.goal_subject', true), '')::uuid AS person
+    )
+    SELECT a.goal_handle, a.subject_id, a.controller_generation,
+           a.read_ceiling, a.write_ceiling, a.goal_access, a.administers, a.manage, true
+      FROM proxiima_core.goal_access_grant a, holder
+     WHERE a.subject_id = holder.person
+       AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
+    UNION ALL
+    SELECT a.goal_handle, a.subject_id, a.controller_generation,
+           LEAST(a.read_ceiling, m.read_ceiling), LEAST(a.write_ceiling, m.write_ceiling),
+           LEAST(a.goal_access, m.goal_access), a.administers AND m.administers,
+           a.manage AND m.manage, m.goal_access >= 'reads'
+      FROM proxiima_core.goal_access_grant a
+      JOIN holder ON true
+      JOIN proxiima_core.group_role_projection m
+        ON m.member_user_id = holder.person AND m.group_id = a.subject_id
+     WHERE (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.goal_grants_held() FROM PUBLIC;
 
 -- One exact visibility projection, selected through the subject index. The
 -- result contains no unpublished current-head identity or ancestor payload.
@@ -2983,12 +3020,10 @@ SET search_path TO 'pg_catalog', 'pg_temp'
 AS $function$
     WITH audience_routes AS (
         SELECT a.goal_handle, a.read_ceiling, h.owner_id, h.authority_generation
-          FROM proxiima_core.goal_access_grant a
+          FROM proxiima_core.goal_grants_held() a
           JOIN proxiima_core.goal_head h ON h.handle = a.goal_handle
            AND h.authority_generation = a.controller_generation
          WHERE current_setting('app.proxiima_scope', true) = 'owner'
-           AND a.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
-           AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
         UNION ALL
         SELECT h.handle,
                CASE
@@ -3082,16 +3117,16 @@ AS $function$
     SELECT EXISTS (
         SELECT 1 FROM proxiima_core.goal g
           JOIN proxiima_core.goal_head h ON h.handle = g.handle
-          JOIN proxiima_core.goal_access_grant a ON a.goal_handle = h.handle
+          JOIN proxiima_core.goal_grants_held() a ON a.goal_handle = h.handle
            AND a.controller_generation = h.authority_generation
          WHERE current_setting('app.proxiima_scope', true) = 'owner'
            AND g.t = candidate_t
-           AND a.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
-           AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
+           AND a.reads_goal
     )
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_read_admitted(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION proxiima_core.goal_memory_read_routes(),
+GRANT EXECUTE ON FUNCTION proxiima_core.goal_grants_held(),
+    proxiima_core.goal_memory_read_routes(),
     proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(),
     proxiima_core.goal_memory_read_admitted(uuid),
     proxiima_core.goal_read_admitted(uuid) TO proxiima_search;
@@ -3099,11 +3134,33 @@ GRANT EXECUTE ON FUNCTION proxiima_core.goal_memory_read_routes(),
 -- grant, as for proxiima_search. No platform function becomes callable.
 DO $grant_goal_installer$
 BEGIN
-    EXECUTE format('GRANT EXECUTE ON FUNCTION proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO %I', current_setting('app.goal_installer_role'));
+    EXECUTE format('GRANT EXECUTE ON FUNCTION proxiima_core.goal_grants_held(), proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO %I', current_setting('app.goal_installer_role'));
 END
 $grant_goal_installer$;
 DO $restore_goal_role$ BEGIN EXECUTE format('SET LOCAL ROLE %I', current_setting('app.goal_installer_role')); END $restore_goal_role$;
 REVOKE CREATE ON SCHEMA proxiima_core FROM proxiima_goal_reader;
+
+-- The same reading for a person the caller names. The platform transactions
+-- that act for a person bind them as a parameter; the runtime role cannot
+-- call this, so it cannot ask about anyone but the person its scope is bound
+-- to. One body: this binds the person and calls goal_grants_held().
+CREATE OR REPLACE FUNCTION proxiima_core.goal_grants_of(p_person uuid)
+RETURNS TABLE(goal_handle uuid, subject_id uuid, controller_generation bigint,
+              read_ceiling proxiima_core.memory_ceiling, write_ceiling proxiima_core.memory_ceiling,
+              goal_access proxiima_core.goal_access, administers boolean, manage boolean,
+              reads_goal boolean)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
+AS $function$
+DECLARE
+    previous_subject text := current_setting('app.goal_subject', true);
+BEGIN
+    PERFORM set_config('app.goal_subject', p_person::text, true);
+    RETURN QUERY SELECT * FROM proxiima_core.goal_grants_held();
+    PERFORM set_config('app.goal_subject', COALESCE(previous_subject, ''), true);
+END
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.goal_grants_of(uuid) FROM PUBLIC;
 
 -- The host's follows rule for a pg_sidecar!(owner: follows) table: the
 -- owner_id class predicate AND the memory_owner class predicate. The
@@ -3231,7 +3288,7 @@ BEGIN
     IF FOUND THEN
         IF relation.schema_name <> 'proxiima_core'
            OR relation.relname <> ALL(ARRAY['memory', 'memory_head', 'goal', 'goal_head',
-               'goal_access_grant', 'goal_memory_publication', 'goal_work_binding'])
+               'goal_access_grant', 'goal_memory_publication', 'goal_work_binding', 'group_role_projection'])
            OR candidate_policy.polcmd <> 'r' OR NOT candidate_policy.polpermissive
            OR candidate_policy.polroles IS DISTINCT FROM ARRAY[to_regrole('proxiima_goal_reader')::oid]
            OR pg_get_expr(candidate_policy.polqual, relation.oid) IS DISTINCT FROM 'true'

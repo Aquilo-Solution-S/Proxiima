@@ -312,7 +312,9 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.goal_head USING ((owner_id = 
 -- connection; neither network inputs nor spiices may supply scope SQL.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'goal_access_grant', 'ownerless', NULL);
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_access_grant USING (
-    proxiima_core.goal_access_grant.subject_id = NULLIF(current_setting('app.goal_subject', true), '')::uuid
+    EXISTS (SELECT 1 FROM proxiima_core.goal_grants_held() held
+             WHERE held.goal_handle = proxiima_core.goal_access_grant.goal_handle
+               AND held.subject_id = proxiima_core.goal_access_grant.subject_id)
     OR EXISTS (SELECT 1 FROM proxiima_core.goal_head h
                WHERE h.handle = proxiima_core.goal_access_grant.goal_handle
                  AND h.owner_id = ANY (COALESCE(NULLIF(current_setting('app.read_goal', true), '')::uuid[], '{}'::uuid[])))

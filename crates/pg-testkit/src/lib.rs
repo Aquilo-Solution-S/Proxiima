@@ -1589,7 +1589,7 @@ pub async fn provision_goal_reader(
            GRANT EXECUTE ON FUNCTIONS TO {runtime};
          DO $grant_goal_reader$ DECLARE function_name text;
          BEGIN
-           FOREACH function_name IN ARRAY ARRAY['goal_memory_read_routes()', 'goal_visible_memory_ids()', 'goal_visible_memory_heads()', 'goal_memory_read_admitted(uuid)', 'goal_read_admitted(uuid)'] LOOP
+           FOREACH function_name IN ARRAY ARRAY['goal_grants_held()', 'goal_memory_read_routes()', 'goal_visible_memory_ids()', 'goal_visible_memory_heads()', 'goal_memory_read_admitted(uuid)', 'goal_read_admitted(uuid)'] LOOP
              IF to_regprocedure('proxiima_core.' || function_name) IS NOT NULL THEN
                EXECUTE format('GRANT EXECUTE ON FUNCTION proxiima_core.%s TO {runtime}', function_name);
              END IF;

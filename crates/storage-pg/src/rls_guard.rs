@@ -289,6 +289,7 @@ fn assert_relation_policies(
                             | "goal_access_grant"
                             | "goal_memory_publication"
                             | "goal_work_binding"
+                            | "group_role_projection"
                     )
                     && policy.command == "r"
                     && policy.goal_reader_role
@@ -591,6 +592,8 @@ async fn definers(
                         AND p.proallargtypes = ARRAY['uuid'::regtype::oid, 'uuid'::regtype::oid, 'uuid'::regtype::oid, 'uuid'::regtype::oid, 'uuid'::regtype::oid]
                         AND p.proargmodes = ARRAY['t', 't', 't', 't', 't']::\"char\"[]
                         AND p.proargnames = ARRAY['memory_t', 'memory_handle', 'owner_id', 'goal_handle', 'controller_owner']::text[])
+                    OR (p.proname = 'goal_grants_held' AND p.pronargs = 0 AND p.proretset AND p.prorettype = 'record'::regtype AND p.proallargtypes = ARRAY['uuid'::regtype::oid, 'uuid'::regtype::oid, 'bigint'::regtype::oid, to_regtype('proxiima_core.memory_ceiling')::oid, to_regtype('proxiima_core.memory_ceiling')::oid, to_regtype('proxiima_core.goal_access')::oid, 'boolean'::regtype::oid, 'boolean'::regtype::oid, 'boolean'::regtype::oid]
+                        AND p.proargmodes = ARRAY['t', 't', 't', 't', 't', 't', 't', 't', 't']::\"char\"[] AND p.proargnames = ARRAY['goal_handle', 'subject_id', 'controller_generation', 'read_ceiling', 'write_ceiling', 'goal_access', 'administers', 'manage', 'reads_goal']::text[])
                     OR (p.proname IN ('goal_visible_memory_ids', 'goal_visible_memory_heads') AND p.pronargs = 0
                         AND p.proretset AND p.prorettype = 'record'::regtype
                         AND p.proallargtypes = ARRAY['uuid'::regtype::oid, 'uuid'::regtype::oid, 'uuid'::regtype::oid]

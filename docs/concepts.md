@@ -538,7 +538,8 @@ flowchart TB
 
 A publication delegates access to the Goal’s managed audience: members of
 its owning Group participate through their existing Roles, alongside explicit
-Goal guests. This includes people invited later. The two routes combine;
+Goal guests. A guest is a person or a Group; a Group's members hold its grant
+as far as their own Roles allow. This includes people invited later. The two routes combine;
 removing a guest grant does not remove an existing Group Role. A source-owner or Goal-controller transfer invalidates
 that delegation; transferring back does not revive it. Forking a published
 version into another owner requires explicit source-owner fork permission

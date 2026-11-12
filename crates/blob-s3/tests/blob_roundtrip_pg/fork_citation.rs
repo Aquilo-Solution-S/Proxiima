@@ -172,7 +172,7 @@ async fn prepare_fork(
             source_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: destination.as_user(),
+                subject: destination,
                 role: Role::editor(),
                 expires_at: None,
             },

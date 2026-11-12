@@ -337,7 +337,7 @@ async fn publish_cited_fork(
             auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: recipient,
+                subject: recipient.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -684,7 +684,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &alice_auth,
             &GoalAudienceGrantInput {
                 goal: read_goal,
-                subject: bob,
+                subject: bob.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -901,7 +901,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &alice_auth,
             &GoalAudienceGrantInput {
                 goal: editor_goal,
-                subject: bob,
+                subject: bob.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -924,7 +924,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &alice_auth,
             &GoalAudienceGrantInput {
                 goal: editor_goal,
-                subject: carol,
+                subject: carol.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -1098,7 +1098,7 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
             &alice_auth,
             &GoalAudienceGrantInput {
                 goal: viewer_goal,
-                subject: bob,
+                subject: bob.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },

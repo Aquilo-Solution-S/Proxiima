@@ -1536,7 +1536,7 @@ async fn delete_delegated_authority_grants(
     Ok(result.rows_affected())
 }
 
-/// Remove the erased person's access under the membership pseudoroot held by
+/// Remove the erased subject's access, a person's or a group's, under the membership pseudoroot held by
 /// erase and Goal authority commands. Issuer attribution belongs to the Goal
 /// or source owner, like memory authorship: personal erasure cannot revoke
 /// another owner's sharing decisions or delete their provenance.

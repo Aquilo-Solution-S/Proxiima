@@ -494,7 +494,7 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
         &admin,
         // SQL-POLICY: fixed-fragment — fixture role identifier is quoted.
         &format!(
-            "GRANT EXECUTE ON FUNCTION proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO {}",
+            "GRANT EXECUTE ON FUNCTION proxiima_core.goal_grants_held(), proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO {}",
             quoted_ident(&runtime)
         ),
     )

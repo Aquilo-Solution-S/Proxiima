@@ -33,6 +33,15 @@ publication, work bindings, and `fork_memory` through typed command ports.
 Collaboration commands require an ordinary verified caller; restricted owner
 forwarding and background delegation do not acquire unrelated Goal rights.
 
+A grant's subject is a person or a Group, named by owner id (the MCP
+`subject` argument is one UUID). A Group's members hold the grant as far as
+their own Role allows, resolved when they ask: a member's Role caps the
+grant's ceilings, and a member whose Role reads no Goals does not read the
+Goal. Removing a member from the Group, or changing the edge above them, ends
+that access at the next statement and leaves the grant row as it was. A grant
+to a Group carries no `manage`, and storage refuses one that does. A person
+who is invited directly and through a Group holds the join of both.
+
 An existing Goal's title and progress use the existing `modify_goal`,
 `transition_goal`, and `mark_goal_achieved` methods. A Goal guest needs a
 grant that works Goals (`GoalAccess::Works`); every guest reads the Goal it

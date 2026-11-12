@@ -247,7 +247,7 @@ async fn goal_audience_fixture(
             source,
             &GoalAudienceGrantInput {
                 goal,
-                subject: bob,
+                subject: bob.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },

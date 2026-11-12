@@ -254,12 +254,11 @@ fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
     let owner = owner_head_page_sql(filters, fetch_limit);
     let columns = goal_columns();
     let mut guests = format!(
-        "SELECT {columns} FROM proxiima_core.goal_access_grant a \
+        "SELECT {columns} FROM proxiima_core.goal_grants_held() a \
          JOIN proxiima_core.goal_head h ON h.handle=a.goal_handle \
          JOIN proxiima_core.goal g ON g.t=h.t \
-         WHERE a.subject_id=NULLIF(current_setting('app.goal_subject',true),'')::uuid \
+         WHERE a.reads_goal \
            AND a.controller_generation=h.authority_generation \
-           AND (a.expires_at IS NULL OR a.expires_at>statement_timestamp()) \
            AND g.owner_id=ANY($1::uuid[])"
     );
     append_goal_filters(&mut guests, filters, GoalFilter::head_predicate);

@@ -101,6 +101,7 @@ impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
         platform: &crate::PgPlatformScope,
         tx: &'session mut Transaction<'connection, Postgres>,
         targets: AuthorityTargets,
+        subjects: &[OwnerId],
     ) -> Result<Self, StorageError> {
         platform.bind_transaction(tx).await?;
         let isolation: String = sqlx::query_scalar("SHOW transaction_isolation")
@@ -121,6 +122,7 @@ impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
             .map(|id| id.into_inner())
             .chain(people.iter().map(|id| id.into_inner()))
             .chain(owners.iter().map(|id| id.into_inner()))
+            .chain(subjects.iter().map(|id| id.into_inner()))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -518,6 +520,16 @@ fn group_memberships(rows: Vec<(Uuid, Relation)>) -> Vec<DirectGroupMembership> 
             relation,
         })
         .collect()
+}
+
+/// The registered kind of `owner`. The caller holds the owner's kind key from
+/// the gateway's acquisition (`subjects` of `authority_on_subjects`), so the
+/// kind cannot change before the transaction ends.
+pub(crate) async fn registered_owner_held(
+    conn: &mut PgConnection,
+    owner: OwnerId,
+) -> Result<Option<RegisteredOwner>, StorageError> {
+    owner_kind(conn, owner).await
 }
 
 async fn owner_kind(

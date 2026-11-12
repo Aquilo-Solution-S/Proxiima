@@ -227,7 +227,7 @@ async fn publication_keeps_exact_version_and_includes_later_invitees() {
             &writer,
             &GoalAudienceGrantInput {
                 goal,
-                subject: reader,
+                subject: reader.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -255,7 +255,7 @@ async fn publication_keeps_exact_version_and_includes_later_invitees() {
             .is_empty()
     );
     h.engine
-        .revoke_goal_access(&writer, goal, reader)
+        .revoke_goal_access(&writer, goal, reader.into())
         .await
         .expect("revoke audience route");
     query.entity_kind = Some(EntityKind::Perspective);
@@ -314,7 +314,7 @@ async fn transfer_invalidates_publication_until_fresh_source_publish() {
             &authz,
             &GoalAudienceGrantInput {
                 goal,
-                subject: reader,
+                subject: reader.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -449,7 +449,7 @@ async fn independent_goal_routes_revoke_one_without_revoking_the_other() {
                 &owner_auth,
                 &GoalAudienceGrantInput {
                     goal,
-                    subject,
+                    subject: subject.into(),
                     role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                     expires_at: None,
                 },
@@ -477,7 +477,7 @@ async fn independent_goal_routes_revoke_one_without_revoking_the_other() {
         1
     );
     h.engine
-        .revoke_goal_access(&owner_auth, goal, first)
+        .revoke_goal_access(&owner_auth, goal, first.into())
         .await
         .expect("revoke first");
     assert!(
@@ -498,7 +498,7 @@ async fn independent_goal_routes_revoke_one_without_revoking_the_other() {
         1
     );
     h.engine
-        .revoke_goal_access(&owner_auth, goal, second)
+        .revoke_goal_access(&owner_auth, goal, second.into())
         .await
         .expect("revoke second");
     assert!(
@@ -572,7 +572,7 @@ async fn owning_group_role_reads_foreign_publication_without_guest_grant() {
             &goal_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: reader,
+                subject: reader.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -590,7 +590,7 @@ async fn owning_group_role_reads_foreign_publication_without_guest_grant() {
         1
     );
     h.engine
-        .revoke_goal_access(&goal_auth, goal, reader)
+        .revoke_goal_access(&goal_auth, goal, reader.into())
         .await
         .expect("remove guest grant");
     assert_eq!(
@@ -618,7 +618,7 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
             &owner_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: reader,
+                subject: reader.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },

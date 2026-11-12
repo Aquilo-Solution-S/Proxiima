@@ -89,7 +89,7 @@ async fn guest_metadata_edit_refuses_forgotten_carried_targets() {
             &author_authz,
             &GoalAudienceGrantInput {
                 goal: goal.goal_handle,
-                subject: guest,
+                subject: guest.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -186,7 +186,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &alice_authz,
             &GoalAudienceGrantInput {
                 goal,
-                subject: bob,
+                subject: bob.into(),
                 role: Role::editor().managing(),
                 expires_at: None,
             },
@@ -198,7 +198,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &alice_authz,
             &GoalAudienceGrantInput {
                 goal,
-                subject: carol,
+                subject: carol.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -211,7 +211,7 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
             &direct(bob),
             &GoalAudienceGrantInput {
                 goal,
-                subject: carol,
+                subject: carol.into(),
                 role: Role::editor().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -254,7 +254,7 @@ async fn a_goal_grant_carries_no_administration_and_a_manager_grants_what_it_hol
     let (goal, _) = goal(&h, OwnerId::from(alice), &alice_authz).await;
     let grant = |subject: UserId, role: Role| GoalAudienceGrantInput {
         goal,
-        subject,
+        subject: subject.into(),
         role,
         expires_at: None,
     };
@@ -361,7 +361,7 @@ async fn g4_guest_edits_metadata_and_revocation_rechecks_replay() {
             &owner_authz,
             &GoalAudienceGrantInput {
                 goal: handle,
-                subject: guest,
+                subject: guest.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -374,7 +374,7 @@ async fn g4_guest_edits_metadata_and_revocation_rechecks_replay() {
             &owner_authz,
             &GoalAudienceGrantInput {
                 goal: handle,
-                subject: viewer,
+                subject: viewer.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -475,7 +475,7 @@ async fn g4_guest_edits_metadata_and_revocation_rechecks_replay() {
         .expect("guest achieve");
 
     h.engine
-        .revoke_goal_access(&owner_authz, handle, guest)
+        .revoke_goal_access(&owner_authz, handle, guest.into())
         .await
         .expect("revoke guest");
     let replay = h
@@ -552,7 +552,7 @@ async fn g4_guest_cannot_discover_open_child_on_achievement_or_abandonment() {
             &owner_authz,
             &GoalAudienceGrantInput {
                 goal: parent_handle,
-                subject: guest,
+                subject: guest.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -619,7 +619,7 @@ async fn g4_guest_cannot_create_decompose_edit_unrelated_or_change_motivation() 
             &owner_authz,
             &GoalAudienceGrantInput {
                 goal: parent_handle,
-                subject: guest,
+                subject: guest.into(),
                 role: Role::editor(),
                 expires_at: None,
             },

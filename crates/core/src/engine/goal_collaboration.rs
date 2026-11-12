@@ -4,7 +4,7 @@ use crate::authz::{AuthzContext, AuthzInput, AuthzOperation, AuthzOutcome};
 use crate::error::ProtocolError;
 use crate::{
     EntityId, GoalAudienceGrantInput, GoalCommandPermit, GoalHandle, GoalPublicationInput,
-    GoalWorkBindingInput, MemoryId, OwnerId, UserId,
+    GoalWorkBindingInput, MemoryId, OwnerId,
 };
 
 impl Engine {
@@ -115,7 +115,7 @@ impl Engine {
         Ok(GoalCommandPermit::new(scope.clone(), goal, controller))
     }
 
-    /// Grant a person bounded access to one Goal's publications and work.
+    /// Grant a person or a group bounded access to one Goal's publications and work.
     ///
     /// # Errors
     /// Refuses restricted authentication, host vetoes, stale authority, and
@@ -136,7 +136,7 @@ impl Engine {
             .map_err(super::goal_write::map_goal_storage_error)
     }
 
-    /// Remove one person's Goal route; independent routes remain effective.
+    /// Remove one subject's Goal route; independent routes remain effective.
     ///
     /// # Errors
     /// Refuses absent Goals, host vetoes, and callers without fresh Goal
@@ -145,7 +145,7 @@ impl Engine {
         &self,
         authz: &AuthzContext,
         goal: GoalHandle,
-        subject: UserId,
+        subject: OwnerId,
     ) -> Result<(), ProtocolError> {
         let permit = self
             .goal_command_permit(authz, goal, GoalCollaborationChange::RevokeAccess)

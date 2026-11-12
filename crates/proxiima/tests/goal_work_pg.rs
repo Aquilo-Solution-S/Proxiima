@@ -96,7 +96,7 @@ async fn external_goal_editor_can_create_and_revise_bound_perspective() {
             &owner_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: writer_user,
+                subject: writer_user.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -108,7 +108,7 @@ async fn external_goal_editor_can_create_and_revise_bound_perspective() {
             &owner_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: viewer_user,
+                subject: viewer_user.into(),
                 role: Role::viewer().with_goals(proxiima_core::GoalAccess::Reads),
                 expires_at: None,
             },
@@ -161,7 +161,7 @@ async fn external_goal_editor_can_create_and_revise_bound_perspective() {
     let bound: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM proxiima_core.goal_work_binding w JOIN proxiima_core.memory_head h ON h.handle=w.memory_handle WHERE w.goal_handle=$1 AND h.t=$2 AND w.source_owner=$3)").bind(goal.into_inner()).bind(second.into_inner()).bind(owner.into_inner()).fetch_one(&h.pool).await.expect("binding");
     assert!(bound);
     h.engine
-        .revoke_goal_access(&owner_auth, goal, writer_user)
+        .revoke_goal_access(&owner_auth, goal, writer_user.into())
         .await
         .expect("revoke writer");
     assert!(
@@ -183,7 +183,7 @@ async fn external_goal_editor_can_create_and_revise_bound_perspective() {
             &owner_auth,
             &GoalAudienceGrantInput {
                 goal,
-                subject: writer_user,
+                subject: writer_user.into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -302,7 +302,7 @@ async fn identity_goal(
                 owner_auth,
                 &GoalAudienceGrantInput {
                     goal,
-                    subject,
+                    subject: subject.into(),
                     role: Role::editor(),
                     expires_at: None,
                 },
@@ -665,7 +665,7 @@ async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
             &admin_auth,
             &GoalAudienceGrantInput {
                 goal: set.goal_handle,
-                subject: viewer_user,
+                subject: viewer_user.into(),
                 role: Role::viewer()
                     .with_goals(proxiima_core::GoalAccess::Reads)
                     .managing(),
@@ -688,7 +688,7 @@ async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
             &viewer_auth,
             &GoalAudienceGrantInput {
                 goal: set.goal_handle,
-                subject: UserId::new(Uuid::now_v7()),
+                subject: UserId::new(Uuid::now_v7()).into(),
                 role: Role::editor(),
                 expires_at: None,
             },
@@ -722,7 +722,7 @@ async fn viewer_member_sets_a_group_goal_naming_only_what_it_reads() {
             &without_goals,
             &GoalAudienceGrantInput {
                 goal: set.goal_handle,
-                subject: UserId::new(Uuid::now_v7()),
+                subject: UserId::new(Uuid::now_v7()).into(),
                 role: Role::new(
                     proxiima_core::AccessCeiling::None,
                     proxiima_core::AccessCeiling::None,

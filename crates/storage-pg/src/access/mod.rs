@@ -9,6 +9,7 @@ pub(crate) mod transfer;
 pub mod upload_completion;
 pub mod upload_keys;
 
+pub(crate) use authority::registered_owner_held;
 pub use authority::{
     AuthorityTargets, DirectGroupMembership, DirectUserMembership, GroupContainment,
     PgAuthorityGroup, PgAuthorityPerson, PgAuthoritySession, RegisteredOwner,

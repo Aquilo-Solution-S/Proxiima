@@ -16,7 +16,7 @@ use crate::verbs::goal_write::{
 use crate::verbs::schema::PayloadKind;
 use crate::{
     GoalHandle, InputContractId, ModelId, OperatorId, PendingWork, PromptVersion, SchemaId,
-    SchemaVersion, ToolId, UserId,
+    SchemaVersion, ToolId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,8 @@ pub const CORE_GOAL_ACTIONS: &[CoreActionMeta] = &[
 pub struct GoalAccessArgs {
     /// Stable Goal series UUID.
     pub goal_handle: String,
-    /// Person UUID.
+    /// Person or group UUID. A group's members hold the grant as their own
+    /// role allows, and a group grant carries no `manage`.
     pub subject: String,
     /// The published memory the guest reads, by kind. The guest reads the
     /// Goal itself whatever this is.
@@ -477,8 +478,8 @@ fn collaboration_goal(raw: &str) -> Result<GoalHandle, McpToolError> {
     Ok(GoalHandle::new(crate::mcp::ids::parse_wire_uuid(raw)?))
 }
 
-fn collaboration_subject(raw: &str) -> Result<UserId, McpToolError> {
-    Ok(UserId::new(crate::mcp::ids::parse_wire_uuid(raw)?))
+fn collaboration_subject(raw: &str) -> Result<crate::OwnerId, McpToolError> {
+    Ok(crate::OwnerId::new(crate::mcp::ids::parse_wire_uuid(raw)?))
 }
 
 fn collaboration_role(a: &GoalAccessArgs) -> Result<crate::Role, McpToolError> {
