@@ -46,6 +46,14 @@ proxiima::settings! {
         purpose: "template every search query is embedded in; holds `{query}`, and `\\n` is a newline",
         when_needed: "instruction-tuned model",
     }
+    OTEL_EXPORTER_OTLP_ENDPOINT: Url {
+        purpose: "metrics are exported over OTLP to this endpoint; the OpenTelemetry SDK reads it and the other standard `OTEL_EXPORTER_OTLP_*` variables from the process environment",
+        when_needed: "export metrics",
+    }
+    OTEL_SERVICE_NAME: Text {
+        purpose: "`service.name` of the exported metrics; unset, `service.name` in `OTEL_RESOURCE_ATTRIBUTES` names the service, else `proxiima-mcp`",
+        when_needed: "name this deployment in its metrics",
+    }
 }
 
 #[cfg(test)]

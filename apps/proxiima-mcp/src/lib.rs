@@ -1,5 +1,6 @@
 pub mod args;
 pub mod settings;
+mod telemetry;
 
 pub use args::{
     ArgsError, DEFAULT_BIND, DEFAULT_DATABASE_URL, MAINTAIN_BLOBS_USAGE, MAINTAIN_USAGE,
@@ -269,7 +270,18 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     }
     let config = parse_args(args).map_err(cli_error(usage))?;
     init_logging(LogSink::Stdout);
+    // Installed before the runtime starts, which records through the global
+    // meter, and shut down after the runtime has, so its last interval is
+    // exported.
+    let metrics = telemetry::install(&proxiima_core::process_env)?;
+    let served = serve(config).await;
+    if let Some(metrics) = metrics {
+        metrics.shutdown();
+    }
+    served
+}
 
+async fn serve(config: McpConfig) -> Result<(), CliError> {
     let running = run_with_handle(config).await?;
     let addr = running
         .mcp_addr()

@@ -126,16 +126,71 @@ fn mint(signing: &RsaKeyPair, sub: &str) -> String {
     format!("{}.{}", signing_input, URL_SAFE_NO_PAD.encode(signature))
 }
 
+/// What the server printed before its listening line; `None` when its output
+/// ended without one.
+fn lines_before_listening(output: std::process::ChildStdout) -> Option<Vec<String>> {
+    use std::io::BufRead as _;
+    let mut before = Vec::new();
+    for line in std::io::BufReader::new(output)
+        .lines()
+        .map_while(Result::ok)
+    {
+        if line.contains("proxiima-mcp listening") {
+            return Some(before);
+        }
+        before.push(line);
+    }
+    None
+}
+
+/// Answer every request `listener` receives with 200 until one is an OTLP
+/// metrics export whose body names `metric`: an instrument name is a plain
+/// string in the protobuf payload.
+async fn accept_export_naming(
+    listener: &tokio::net::TcpListener,
+    metric: &str,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let mut stream = tokio::io::BufReader::new(stream);
+        let mut request_line = String::new();
+        stream.read_line(&mut request_line).await?;
+        let mut length = 0;
+        loop {
+            let mut header = String::new();
+            stream.read_line(&mut header).await?;
+            let Some((name, value)) = header.trim_end().split_once(':') else {
+                break;
+            };
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse().map_err(std::io::Error::other)?;
+            }
+        }
+        let mut body = vec![0; length];
+        stream.read_exact(&mut body).await?;
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+            .await?;
+        if request_line.starts_with("POST /v1/metrics ")
+            && body
+                .windows(metric.len())
+                .any(|window| window == metric.as_bytes())
+        {
+            return Ok(());
+        }
+    }
+}
+
 /// `proxiima-mcp migrate`, end to end through the binary: a server refuses a
 /// fresh database and names the migrate step, `migrate` brings the database
-/// current, and a server then starts on it. A misspelled `PROXIIMA_*`
-/// variable in the environment is named in a warning, its value is not, and
-/// neither command is refused for it.
+/// current, and a server then starts on it and pushes its metrics to the
+/// OTLP endpoint its environment names. A misspelled `PROXIIMA_*` variable in
+/// the environment is named in a warning, its value is not, and neither
+/// command is refused for it.
 #[tokio::test]
 async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
 -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::BufRead as _;
-
     const UNKNOWN: &str = "PROXIIMA_STORE_NUMBR";
     const UNKNOWN_VALUE: &str = "unknown-setting-value";
 
@@ -197,26 +252,26 @@ async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
         "its value is not: {stderr}"
     );
 
+    let collector = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let mut server = command("serve")
         .args(["--bind", "127.0.0.1:0"])
+        .env(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            format!("http://{}", collector.local_addr()?),
+        )
+        // Milliseconds. A database gauge appears once its first read is in.
+        .env("OTEL_METRIC_EXPORT_INTERVAL", "200")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()?;
     let output = server.stdout.take().ok_or("server stdout")?;
-    let listening = tokio::task::spawn_blocking(move || {
-        let mut before = Vec::new();
-        for line in std::io::BufReader::new(output)
-            .lines()
-            .map_while(Result::ok)
-        {
-            if line.contains("proxiima-mcp listening") {
-                return Some(before);
-            }
-            before.push(line);
-        }
-        None
-    });
+    let listening = tokio::task::spawn_blocking(move || lines_before_listening(output));
     let listening = tokio::time::timeout(std::time::Duration::from_mins(1), listening).await;
+    let pushed = tokio::time::timeout(
+        std::time::Duration::from_mins(1),
+        accept_export_naming(&collector, "proxiima.embedding.jobs"),
+    )
+    .await;
     server.kill()?;
     server.wait()?;
     let Ok(Ok(Some(log))) = listening else {
@@ -225,6 +280,10 @@ async fn migrate_brings_a_fresh_database_current_for_a_serving_start()
     let log = log.join("\n");
     assert!(log.contains(UNKNOWN), "the unknown name is logged: {log}");
     assert!(!log.contains(UNKNOWN_VALUE), "its value is not: {log}");
+    assert!(
+        matches!(pushed, Ok(Ok(()))),
+        "the server exports a runtime metric to the endpoint: {pushed:?}"
+    );
     Ok(())
 }
 

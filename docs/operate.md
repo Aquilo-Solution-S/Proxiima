@@ -305,6 +305,13 @@ The two database gauges report what one background worker
 unless a read is outstanding. They report no data point before the first read
 has finished, and none after a failed read rather than the previous number.
 
+`proxiima-mcp` exports them over OTLP (HTTP/protobuf) when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set
+([configuration](configuration.md)) and installs no provider otherwise. The
+standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_*`,
+`OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_RESOURCE_ATTRIBUTES`) configure the rest.
+The export is a push: there is no scrape endpoint.
+
 Accepted memory writes enqueue embedding work atomically without calling the
 provider. Only typed input refusals (413, 422 or a local input cap) enter chunk
 rescue and can become permanent job failures. Transient failures keep jobs

@@ -40,6 +40,10 @@ tracing = { version = "0.1.40", default-features = false, features = ["std"] }
 # Metric instruments only: a library records through the API and the host installs
 # the meter provider, so no SDK or exporter is a dependency of a library crate.
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"] }
+# The host that serves exports over OTLP: HTTP/protobuf from the exporter's own
+# reader thread, so the blocking client; `reqwest-rustls` is its TLS.
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["metrics", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 rmcp = { version = "3.4", default-features = false, features = ["server", "transport-streamable-http-server"] }
 schemars = { version = "1", features = ["uuid1", "preserve_order"] }
