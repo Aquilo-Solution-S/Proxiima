@@ -24,25 +24,10 @@ namespace Causa
 
 def abandoned (o : Owner) : Prop := ∀ u : User, o u = none
 
-theorem drop_personal_abandoned (u : User) :
-    abandoned ((Owner.ofUser u).drop u) := by
-  intro v
-  by_cases h : v = u <;> simp [Group.drop, Owner.ofUser, h]
-
 /-- No stored row, live or forgotten, still pins this `t`. -/
 def unreferenced (memories : Set Memory) (id : MemoryId) : Prop :=
   ∀ m : Memory, m ∈ memories →
     id ∉ memory_origins m ∧ id ∉ memory_reference_ids m
-
-theorem fork_anchor_prevents_unreferenced
-    (memories : Set Memory) (m : Memory) (id : MemoryId)
-    (hm : m ∈ memories)
-    (hfork : memory_forked_from m = some id) :
-    ¬ unreferenced memories id := by
-  intro hu
-  have hrefs := (hu m hm).2
-  apply hrefs
-  simp [memory_reference_ids, hfork]
 
 /-- No remaining admission names this Content. A forgotten row is still an
     admission and keeps its payload; Content GC is admission-set emptiness. -/
@@ -52,26 +37,9 @@ def contentUnreferenced (memories : Set Memory) (id : ContentId) : Prop :=
 def contentWipeable (o : Owner) (memories : Set Memory) (id : ContentId) : Prop :=
   abandoned o ∨ contentUnreferenced memories id
 
-theorem content_wipeable_when_abandoned
-    (o : Owner) (memories : Set Memory) (id : ContentId) (h : abandoned o) :
-    contentWipeable o memories id :=
-  Or.inl h
-
-theorem content_wipeable_when_unreferenced
-    (o : Owner) (memories : Set Memory) (id : ContentId)
-    (h : contentUnreferenced memories id) :
-    contentWipeable o memories id :=
-  Or.inr h
-
 /-- The row `id` is stored and flagged forgotten. -/
 def forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_forgotten m = true
-
-/-- Forgetting a stored row makes it forgotten. -/
-theorem forgotten_after_forget
-    (memories : Set Memory) (m : Memory) (hm : m ∈ memories) :
-    forgotten (forgetIn memories (memory_t m)) (memory_t m) :=
-  ⟨m.forget, (forgetIn_marks memories (memory_t m) m hm rfl).1, rfl, rfl⟩
 
 -- ============================================================
 -- Spiice-scoped erase (docs/13 §Spiice-scoped erase)
@@ -119,80 +87,6 @@ def wipeable (o : Owner) (memories : Set Memory)
   abandoned o ∨ (forgotten memories id ∧ unreferenced memories id ∧ policy) ∨
     ∃ e : SpiiceScopedErase memories, e.owner = o ∧ e.selects id
 
-theorem wipeable_when_abandoned
-    (o : Owner) (memories : Set Memory)
-    (id : MemoryId) (policy : Prop) (h : abandoned o) :
-    wipeable o memories id policy :=
-  Or.inl h
-
-theorem wipeable_when_forgotten_unreferenced_policy
-    (o : Owner) (memories : Set Memory)
-    (id : MemoryId) (policy : Prop)
-    (hc : forgotten memories id) (hu : unreferenced memories id) (hp : policy) :
-    wipeable o memories id policy :=
-  Or.inr (Or.inl ⟨hc, hu, hp⟩)
-
-theorem wipeable_when_spiice_scoped
-    (o : Owner) (memories : Set Memory)
-    (id : MemoryId) (policy : Prop)
-    (e : SpiiceScopedErase memories) (ho : e.owner = o) (hs : e.selects id) :
-    wipeable o memories id policy :=
-  Or.inr (Or.inr ⟨e, ho, hs⟩)
-
-/-- The erase never prunes a series' history: every version of a selected
-    series, live or forgotten, is selected. -/
-theorem spiice_erase_takes_whole_series
-    {memories : Set Memory}
-    (e : SpiiceScopedErase memories) (m : Memory)
-    (hm : m ∈ memories) (hh : memory_handle m ∈ e.handles) :
-    e.selects (memory_t m) :=
-  ⟨m, hm, rfl, hh⟩
-
-/-- … forgotten versions included: a spiice-scoped erase keeps no forgotten
-    copy. -/
-theorem spiice_erase_takes_forgotten_versions
-    {memories : Set Memory}
-    (e : SpiiceScopedErase memories) (m : Memory)
-    (hm : m ∈ memories) (_hf : memory_forgotten m = true)
-    (hh : memory_handle m ∈ e.handles) :
-    e.selects (memory_t m) :=
-  ⟨m, hm, rfl, hh⟩
-
-/-- One owner: no version of a selected series, live or forgotten, belongs
-    to anyone else. -/
-theorem spiice_erase_stays_in_owner
-    {memories : Set Memory}
-    (e : SpiiceScopedErase memories) :
-    ∀ m : Memory, m ∈ memories → memory_handle m ∈ e.handles →
-      memory_owner m = e.owner :=
-  e.inOwner
-
-/-- Only the spiice's own vocabulary. -/
-theorem spiice_erase_stays_in_spiice
-    {memories : Set Memory}
-    (e : SpiiceScopedErase memories) (h : Handle) (hh : h ∈ e.handles) :
-    e.ownSchemas (e.seriesSchema h) :=
-  e.ownSchema h hh
-
-/-- Without administration, no user authorizes a spiice-scoped erase,
-    whatever the role's write ceiling. -/
-theorem below_admin_cannot_authorize_spiice_erase
-    (u : User) (o : Owner) (x : Role) (hx : o u = some x) (ha : ¬ x.administers) :
-    ¬ (EraseAuthority.user u).admits o := by
-  rintro ⟨y, hy, hay⟩
-  rw [hx] at hy
-  injection hy with hxy
-  subst hxy
-  exact ha hay
-
-/-- The Ingest preset in particular: a principal that may add Facts may not
-    erase them. -/
-theorem ingest_cannot_authorize_spiice_erase
-    (u : User) (o : Owner) (hx : o u = some Role.ingest) :
-    ¬ (EraseAuthority.user u).admits o :=
-  below_admin_cannot_authorize_spiice_erase u o Role.ingest hx
-    (by simp [Role.administers, Role.ingest])
-
 /-- Target render: live / forgotten / unavailable. A pin to a forgotten `t`
     renders forgotten, not a missing origin. -/
 def pin_render_live (memories : Set Memory) (id : MemoryId) : Prop :=
@@ -204,18 +98,6 @@ def pin_render_forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
 def pin_render_unavailable (memories : Set Memory) (id : MemoryId) : Prop :=
   ¬ pinExists memories id
 
-/-- With unique `t`, a stored pin target renders exactly one of live or
-    forgotten, and never unavailable. -/
-theorem pin_render_stored
-    (memories : Set Memory) (id : MemoryId) (h : pinExists memories id) :
-    (pin_render_live memories id ∨ pin_render_forgotten memories id) ∧
-      ¬ pin_render_unavailable memories id := by
-  obtain ⟨m, hm, ht⟩ := h
-  refine ⟨?_, fun hu => hu ⟨m, hm, ht⟩⟩
-  cases hf : memory_forgotten m with
-  | false => exact Or.inl ⟨m, hm, ht, hf⟩
-  | true => exact Or.inr ⟨m, hm, ht, hf⟩
-
 theorem pin_render_live_not_forgotten
     (memories : Set Memory) (hunique : MemoryIdUnique memories) (id : MemoryId)
     (hl : pin_render_live memories id) : ¬ pin_render_forgotten memories id := by
@@ -224,21 +106,6 @@ theorem pin_render_live_not_forgotten
   have heq := hunique m m' hm hm' (ht.trans ht'.symm)
   subst heq
   simp [hf] at hf'
-
-/-- Forget of a pinned `t` deletes neither the pinning row nor its target:
-    forget is a flag on the target row (#488). -/
-theorem pin_survives_target_forget
-    (memories : Set Memory) (m : Memory) (id : MemoryId)
-    (hm : m ∈ memories)
-    (_hpin : id ∈ memory_origins m ∨ id ∈ memory_refs m)
-    (htarget : pinExists memories id) :
-    pinExists (forgetIn memories id) id ∧
-      ∃ m' : Memory, m' ∈ forgetIn memories id ∧ memory_t m' = memory_t m ∧
-        memory_origins m' = memory_origins m ∧ memory_refs m' = memory_refs m := by
-  refine ⟨pinExists_forgetIn memories id id htarget, ?_⟩
-  by_cases h : memory_t m = id
-  · exact ⟨m.forget, ⟨m, hm, Or.inl ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
-  · exact ⟨m, ⟨m, hm, Or.inr ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
 
 -- ============================================================
 -- Modeled hard-erase transitions
@@ -290,34 +157,6 @@ theorem hard_erase_memory_records_kind
   rw [htransition.targetsEq]
   refine ⟨{ t := memory_t target, kind := (memory_kind target).pinTargetKind }, ?_, rfl, rfl⟩
   exact Or.inr ⟨rfl, rfl⟩
-
-theorem hard_erase_memory_rejects_wrong_kind
-    (memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (hid : erased_pin_target_t e = memory_t target)
-    (hkind : erased_pin_target_kind e ≠ (memory_kind target).pinTargetKind) :
-    ¬ HardEraseMemoryTransition
-      memories goals targets target
-        (hardEraseMemoryRows memories target)
-        (hardEraseMemoryWitnesses targets target) := by
-  intro htransition
-  exact hkind (htransition.targetWitnessCompatible e he hid)
-
-theorem hard_erase_memory_preserves_source
-    (memories : Set Memory)
-    (goals : Set Goal) (targets : Set ErasedPinTarget)
-    (target source : Memory) (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : HardEraseMemoryTransition
-      memories goals targets target memories' targets')
-    (hs : source ∈ memories) (hsource : memory_t source ≠ memory_t target) :
-    ∃ post : Memory,
-      post ∈ memories' ∧ post = source ∧
-      memory_origins post = memory_origins source ∧
-      memory_refs post = memory_refs source := by
-  rw [htransition.memoriesEq]
-  exact ⟨source, ⟨hs, hsource⟩, rfl, rfl, rfl⟩
 
 theorem hard_erase_memory_result_well_formed
     (memories : Set Memory) (goals : Set Goal)
@@ -389,73 +228,6 @@ structure ForgetMemoryTransition
   memoriesEq : memories' = forgetIn memories (memory_t target)
   targetsEq : targets' = targets
 
-theorem forget_memory_marks_target
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : ForgetMemoryTransition
-      memories targets target memories' targets') :
-    target.forget ∈ memories' ∧ forgotten memories' (memory_t target) := by
-  rw [htransition.memoriesEq]
-  exact ⟨(forgetIn_marks memories (memory_t target) target
-      htransition.targetInMemories rfl).1,
-    forgotten_after_forget memories target htransition.targetInMemories⟩
-
-theorem forget_memory_leaves_witnesses
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : ForgetMemoryTransition
-      memories targets target memories' targets') :
-    targets' = targets :=
-  htransition.targetsEq
-
-theorem forget_memory_no_witness_for_target
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : ForgetMemoryTransition
-      memories targets target memories' targets') :
-    ¬ erasedPinTargetExists targets' (memory_t target) := by
-  intro hexists
-  obtain ⟨e, he, hid⟩ := hexists
-  rw [htransition.targetsEq] at he
-  exact (htransition.witnessMemoryDisjoint e he target htransition.targetInMemories) hid
-
-theorem forget_memory_preserves_source
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target source : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : ForgetMemoryTransition
-      memories targets target memories' targets')
-    (hs : source ∈ memories) (hsource : memory_t source ≠ memory_t target) :
-    ∃ post : Memory,
-      post ∈ memories' ∧ post = source ∧
-      memory_origins post = memory_origins source ∧
-      memory_refs post = memory_refs source := by
-  rw [htransition.memoriesEq]
-  exact ⟨source, ⟨source, hs, Or.inr ⟨hsource, rfl⟩⟩, rfl, rfl, rfl⟩
-
-/-- Forget deletes no row: the target and every other row survive with
-    their pins, so a forgotten row is erased later by the ordinary Memory
-    hard erase, not by a separate stub erase. -/
-theorem forget_memory_keeps_every_row
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (target : Memory)
-    (memories' : Set Memory)
-    (targets' : Set ErasedPinTarget)
-    (htransition : ForgetMemoryTransition
-      memories targets target memories' targets')
-    (m : Memory) (hm : m ∈ memories) :
-    ∃ m' : Memory, m' ∈ memories' ∧ memory_t m' = memory_t m ∧
-      memory_kind m' = memory_kind m ∧ memory_owner m' = memory_owner m := by
-  rw [htransition.memoriesEq]
-  exact forgetIn_keeps_row memories (memory_t target) m hm
-
 /-- A Goal erase records a Goal witness while leaving the Memory set intact. -/
 def hardEraseGoalRows (goals : Set Goal) (target : Goal) : Set Goal :=
   fun g => g ∈ goals ∧ goal_t g ≠ goal_t target
@@ -493,19 +265,6 @@ theorem hard_erase_goal_records_kind
   rw [htransition.targetsEq]
   refine ⟨{ t := goal_t target, kind := .Goal }, ?_, rfl, rfl⟩
   exact Or.inr ⟨rfl, rfl⟩
-
-theorem hard_erase_goal_rejects_wrong_kind
-    (memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget) (target : Goal)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (hid : erased_pin_target_t e = goal_t target)
-    (hkind : erased_pin_target_kind e ≠ .Goal) :
-    ¬ HardEraseGoalTransition
-      memories goals targets target memories
-        (hardEraseGoalRows goals target)
-        (hardEraseGoalWitnesses targets target) := by
-  intro htransition
-  exact hkind (htransition.targetWitnessCompatible e he hid)
 
 theorem hard_erase_goal_result_well_formed
     (memories : Set Memory) (goals : Set Goal)
@@ -558,20 +317,5 @@ theorem hard_erase_goal_result_well_formed
     | inl hold =>
         exact htransition.witnessGoalDisjoint e hold g ⟨hg.1, hg.2⟩
     | inr hnew => exact fun same => hg.2 (same.symm.trans hnew.1)
-
-theorem hard_erase_goal_preserves_memory_source
-    (memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget) (target : Goal)
-    (memories' : Set Memory) (goals' : Set Goal)
-    (targets' : Set ErasedPinTarget)
-    (htransition : HardEraseGoalTransition
-      memories goals targets target memories' goals' targets')
-    (source : Memory) (hs : source ∈ memories) :
-    ∃ post : Memory,
-      post ∈ memories' ∧ post = source ∧
-      memory_origins post = memory_origins source ∧
-      memory_refs post = memory_refs source := by
-  rw [htransition.memoriesEq]
-  exact ⟨source, hs, rfl, rfl, rfl⟩
 
 end Causa

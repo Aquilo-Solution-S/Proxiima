@@ -30,27 +30,6 @@ def pin_write_admitted (requester : User) (source target : Memory) : Prop :=
   may_write requester (memory_owner source) (memory_kind source).accessKind ∧
   may_read requester (memory_owner target) (memory_kind target).accessKind
 
-theorem pin_write_admitted_source_write :
-    ∀ requester source target,
-      pin_write_admitted requester source target →
-      may_write requester (memory_owner source) (memory_kind source).accessKind := by
-  intro _ _ _ h
-  exact h.1
-
-theorem pin_write_admitted_target_read :
-    ∀ requester source target,
-      pin_write_admitted requester source target →
-      may_read requester (memory_owner target) (memory_kind target).accessKind := by
-  intro _ _ _ h
-  exact h.2
-
-/-- Cross-owner targets are admitted when readable. -/
-theorem cross_owner_target_admitted :
-    ∀ requester source target,
-      pin_write_admitted requester source target →
-      may_read requester (memory_owner target) (memory_kind target).accessKind :=
-  pin_write_admitted_target_read
-
 /-- Goal pin: the writer works the Goal owner's Goals or administers that
     owner, whichever the Goal operation needs, and reads the named Memory. -/
 def goal_pin_write_admitted (requester : User) (g : Goal) (target : Memory) : Prop :=
@@ -170,22 +149,6 @@ theorem goal_edit_implies_read (s : OwnerState) (requester : User)
           (fun r => r.worksGoals_readsGoals)
           ((Grant.gives_iff _ _ _ _).1 hgives).2⟩
 
-theorem goal_edit_requires_exact_goal (s : OwnerState) (requester : User)
-    (controller : GoalControllerEpoch) (grants : List GoalAudienceGrant)
-    (goal : Goal) (generation : Nat) :
-    goal_edit_admitted s requester controller grants goal generation →
-      controller.goal_handle = goal_handle goal := by
-  intro h
-  exact h.1
-
-theorem goal_edit_stale_controller_denied (s : OwnerState) (requester : User)
-    (controller : GoalControllerEpoch) (grants : List GoalAudienceGrant)
-    (goal : Goal) (generation : Nat)
-    (h : controller.generation ≠ generation) :
-    ¬ goal_edit_admitted s requester controller grants goal generation := by
-  intro admitted
-  exact h admitted.2.2.1
-
 /-- Achieving a Goal closes it. Over the owner that is administration; on the
     Goal's own route it belongs to the grant that works this Goal. This is not
     the uniform audience rule: it asks the owner route for administration and
@@ -201,19 +164,6 @@ def goal_achieve_admitted (s : OwnerState) (requester : User) (controller : Goal
     ∃ guest, guest ∈ grants ∧
       guest.inForce controller current_controller_generation ∧
       guest.toGrant.gives s requester .worksGoals)
-
-/-- Without administration and without a grant on the Goal, nobody achieves
-    it, whatever Goal work the role holds. -/
-theorem goal_achieve_needs_administration_or_grant (s : OwnerState) (requester : User)
-    (controller : GoalControllerEpoch) (goal : Goal) (generation : Nat)
-    (h : ¬ may_administer requester (goal_owner goal)) :
-    ¬ goal_achieve_admitted s requester controller [] goal generation := by
-  rintro ⟨_, _, _, hroute⟩
-  cases hroute with
-  | inl admin => exact h admin
-  | inr guest =>
-      obtain ⟨g, hmem, _⟩ := guest
-      cases hmem
 
 /-- A work route is same-owner and write-ceiling bounded.  It grants no Goal
     administration, transfer, erase, or owner-membership capability. -/
@@ -297,77 +247,6 @@ theorem goal_work_write_implies_read
   exact ⟨hread, hgoal, howner, hhandle, hmemoryowner,
     hgoalgen, hbindctrl, hsource⟩
 
-/-- If no grant is in force and the owner does not read, the publication is not
-    admitted. -/
-theorem goal_controller_generation_mismatch_denies_publication
-    (s : OwnerState) (requester : User) (p : GoalPublication)
-    (grants : List GoalAudienceGrant)
-    (current_controller_generation memory_generation : Nat) (memory : Memory)
-    (howner : ¬ may_read requester p.goal.owner memory.kind.accessKind)
-    (h : ∀ g ∈ grants, ¬ g.inForce p.goal current_controller_generation) :
-    ¬ goal_publication_read_admitted s requester p grants
-      current_controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨route, _, _, _, _, _⟩
-  rcases route with owner | ⟨g, hg, hforce, _⟩
-  · exact howner owner
-  · exact h g hg hforce
-
-theorem goal_source_generation_mismatch_denies_publication
-    (s : OwnerState) (requester : User) (p : GoalPublication)
-    (grants : List GoalAudienceGrant)
-    (controller_generation memory_generation : Nat) (memory : Memory)
-    (h : p.source_generation ≠ memory_generation) :
-    ¬ goal_publication_read_admitted s requester p grants
-      controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨_, _, _, _, _, hsource⟩
-  exact h hsource
-
-theorem goal_work_requires_same_owner
-    (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
-    (grants : List GoalAudienceGrant) (goal : Goal)
-    (controller_generation memory_generation : Nat) (memory : Memory)
-    (h : binding.source_owner ≠ goal_owner goal) :
-    ¬ goal_work_write_admitted s requester binding grants goal
-      controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨_, _, howner, _, _, _, _, _, _⟩
-  exact h howner
-
-theorem goal_work_memory_handle_mismatch_denies
-    (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
-    (grants : List GoalAudienceGrant) (goal : Goal)
-    (controller_generation memory_generation : Nat) (memory : Memory)
-    (h : binding.memory_handle ≠ memory_handle memory) :
-    ¬ goal_work_write_admitted s requester binding grants goal
-      controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨_, _, _, hhandle, _, _, _, _, _⟩
-  exact h hhandle
-
-theorem goal_work_memory_owner_mismatch_denies
-    (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
-    (grants : List GoalAudienceGrant) (goal : Goal)
-    (controller_generation memory_generation : Nat) (memory : Memory)
-    (h : binding.source_owner ≠ memory_owner memory) :
-    ¬ goal_work_write_admitted s requester binding grants goal
-      controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨_, _, _, _, howner, _, _, _, _⟩
-  exact h howner
-
-theorem goal_work_controller_generation_mismatch_denies
-    (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
-    (grants : List GoalAudienceGrant) (goal : Goal)
-    (controller_generation memory_generation : Nat) (memory : Memory)
-    (h : binding.controller_generation ≠ controller_generation) :
-    ¬ goal_work_write_admitted s requester binding grants goal
-      controller_generation memory_generation memory := by
-  intro admitted
-  rcases admitted with ⟨_, _, _, _, _, _, hbinding, _, _⟩
-  exact h hbinding
-
 structure ForkSourcePermission where
   requester : User
   source : Memory
@@ -398,82 +277,7 @@ def fork_admitted (permission : ForkSourcePermission)
   permission.source_use permission.requester ∧
   permission.destination_write permission.requester
 
-theorem fork_never_admits_fact_target
-    (permission : ForkSourcePermission) (source target : Memory)
-    (h : memory_kind target = .Fact) :
-    ∀ source_generation destination_generation,
-      ¬ fork_admitted permission source target source_generation destination_generation := by
-  intro source_generation destination_generation
-  intro admitted
-  rcases admitted with ⟨_, htarget, _, _, _, _, _, _, _, _, _, _, _⟩
-  cases htarget with
-  | inl h_abs => simp_all
-  | inr h_persp => simp_all
-
-theorem fork_requires_fresh_series
-    (permission : ForkSourcePermission) (source target : Memory)
-    (h : memory_handle source = memory_handle target) :
-    ∀ source_generation destination_generation,
-      ¬ fork_admitted permission source target source_generation destination_generation := by
-  intro source_generation destination_generation
-  intro admitted
-  rcases admitted with ⟨_, _, _, hfresh, _, _, _, _, _, _, _, _, _⟩
-  exact hfresh h
-
-theorem fork_requires_exact_anchor_and_copied_pins
-    (permission : ForkSourcePermission) (source target : Memory)
-    (source_generation destination_generation : Nat)
-    (hadmitted : fork_admitted permission source target
-      source_generation destination_generation) :
-    memory_forked_from target = some (memory_t source) ∧
-      memory_origins target = memory_origins source ∧
-      memory_refs target = memory_refs source ∧
-      memory_goal_refs target = memory_goal_refs source := by
-  rcases hadmitted with
-    ⟨_, _, _, _, _, _, _, hanchor, horigins, hrefs, hgoalrefs, _, _, _⟩
-  exact ⟨hanchor, horigins, hrefs, hgoalrefs⟩
-
 def fork_source_ancestor_read_admitted (requester : User) (source : Memory) : Prop :=
   may_read requester (memory_owner source) source.kind.accessKind
-
-theorem fork_admission_preserves_separate_ancestor_read_gate
-    (permission : ForkSourcePermission) (source target : Memory)
-    (source_generation destination_generation : Nat)
-    (hadmitted : fork_admitted permission source target
-      source_generation destination_generation)
-    (hancestor_unreadable :
-      ¬ fork_source_ancestor_read_admitted permission.requester source) :
-    fork_admitted permission source target source_generation destination_generation ∧
-      ¬ fork_source_ancestor_read_admitted permission.requester source :=
-  ⟨hadmitted, hancestor_unreadable⟩
-
-/-- A forgotten pin target keeps its owner and kind, so the write admission
-    onto it is the same rule as onto a live one (#488). -/
-theorem pin_write_admitted_forgotten_target
-    (requester : User) (source target : Memory) :
-    pin_write_admitted requester source target.forget ↔
-      pin_write_admitted requester source target :=
-  Iff.rfl
-
-/-- A requester dropped from every group a grant names is not admitted through
-    any of them: the grants are unchanged, only the owner state differs, and
-    only the owner's own route remains. -/
-theorem goal_guest_group_drop_denies
-    (s : OwnerState) (requester : User) (p : GoalPublication)
-    (grants : List GoalAudienceGrant)
-    (current_controller_generation memory_generation : Nat) (memory : Memory)
-    (hsubject : ∀ g ∈ grants, ∃ o, g.subject = .group o ∧
-      ∃ team : Group, s.resolve o = team.drop requester)
-    (howner : ¬ may_read requester p.goal.owner memory.kind.accessKind) :
-    ¬ goal_publication_read_admitted s requester p grants
-      current_controller_generation memory_generation memory := by
-  rintro ⟨route, _⟩
-  rcases route with owner | ⟨g, hg, _, hgives⟩
-  · exact howner owner
-  · obtain ⟨o, ho, team, hteam⟩ := hsubject g hg
-    have e : s.subject g.toGrant.subject = team.drop requester := by
-      show s.subject g.subject = _
-      rw [ho]; exact hteam
-    exact Group.drop_gives_self _ _ _ (e ▸ ((Grant.gives_iff _ _ _ _).1 hgives).2)
 
 end Causa

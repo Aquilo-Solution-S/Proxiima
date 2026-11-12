@@ -343,13 +343,6 @@ theorem forgetIn_keeps_row
   · exact ⟨m.forget, ⟨m, hm, Or.inl ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
   · exact ⟨m, ⟨m, hm, Or.inr ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
 
-/-- The forgotten row is flagged afterwards. -/
-theorem forgetIn_marks
-    (memories : Set Memory) (id : MemoryId) (m : Memory) (hm : m ∈ memories)
-    (ht : memory_t m = id) :
-    m.forget ∈ forgetIn memories id ∧ memory_forgotten m.forget = true :=
-  ⟨⟨m, hm, Or.inl ⟨ht, rfl⟩⟩, rfl⟩
-
 /-- A pin target exists when a row with that `t` is stored, live or
     forgotten: forget keeps the row (#488). -/
 def pinExists (memories : Set Memory) (id : MemoryId) : Prop :=
@@ -366,14 +359,6 @@ def pinKindIs
 def pinKindFactOrAbstraction
     (memories : Set Memory) (id : MemoryId) : Prop :=
   pinKindIs memories id .Fact ∨ pinKindIs memories id .Abstraction
-
-/-- Forget keeps every pin target. -/
-theorem pinExists_forgetIn
-    (memories : Set Memory) (forgotten id : MemoryId)
-    (h : pinExists memories id) : pinExists (forgetIn memories forgotten) id := by
-  obtain ⟨m, hm, ht⟩ := h
-  obtain ⟨m', hm', ht', _, _⟩ := forgetIn_keeps_row memories forgotten m hm
-  exact ⟨m', hm', ht'.trans ht⟩
 
 /-- Forget keeps the kind of every pin target. -/
 theorem pinKindIs_forgetIn

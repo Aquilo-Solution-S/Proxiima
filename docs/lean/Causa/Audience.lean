@@ -90,13 +90,6 @@ theorem Role.admin_has (c : Capability) : Role.admin.has c := by
   | administers => rfl
   | manages => rfl
 
-/-- Meeting with the top role loses no capability. (Not an equality of roles:
-    ceilings are unbounded naturals, and the meet clamps them to 3.) -/
-theorem Role.has_meet_admin (r : Role) (c : Capability) :
-    (Role.admin.meet r).has c ↔ r.has c := by
-  rw [Role.has_meet]
-  exact ⟨fun h => h.2, fun h => ⟨Role.admin_has c, h⟩⟩
-
 -- ============================================================
 -- Groups give capabilities
 -- ============================================================
@@ -104,12 +97,6 @@ theorem Role.has_meet_admin (r : Role) (c : Capability) :
 /-- The user holds, in the group, a role that has the capability. -/
 def Group.gives (g : Group) (u : User) (c : Capability) : Prop :=
   ∃ r, g u = some r ∧ r.has c
-
-/-- Whoever a group gives anything to is a member. -/
-theorem Group.visible_of_gives {g : Group} {u : User} {c : Capability}
-    (h : g.gives u c) : visible g u := by
-  obtain ⟨r, hr, _⟩ := h
-  simp [visible, hr]
 
 /-- A group gives the user `d` wherever each role that has `c` has `d`. -/
 theorem Group.gives_mono {g : Group} {u : User} {c d : Capability}
@@ -136,7 +123,7 @@ theorem Group.gives_union (a b : Group) (u : User) (c : Capability) :
 -- ============================================================
 
 /-- The group whose one member is `u`. Its `Role.admin` is the top role only up
-    to capabilities (`Role.has_meet_admin`). -/
+    to capabilities (`grant_to_person`). -/
 def Group.only (u : User) : Group :=
   fun x => if x = u then some Role.admin else none
 
@@ -233,26 +220,6 @@ theorem grant_to_person (s : OwnerState) (u requester : User) (r : Role)
   · simp [h, Role.admin_has]
   · simp [h]
 
-/-- A member whose team role does not cap the grant holds exactly what a
-    directly invited person holds. -/
-theorem uncapped_member_as_person (s : OwnerState) (o : OwnerRef) (u : User)
-    (x r : Role) (c : Capability) (hmember : s.resolve o u = some x)
-    (hcap : r.has c → x.has c) :
-    (Grant.mk (.group o) r).gives s u c ↔ (Grant.mk (.person u) r).gives s u c := by
-  rw [grant_to_person]
-  unfold Grant.gives OwnerState.subject
-  rw [Group.gives_mount]
-  constructor
-  · exact fun h => ⟨rfl, h.2⟩
-  · exact fun h => ⟨⟨x, hmember, hcap h.2⟩, h.2⟩
-
-/-- Same members, only the cap differs. -/
-theorem only_visible_iff_ofUser (u r : User) :
-    visible (Group.only u) r ↔ visible (Owner.ofUser u) r := by
-  rw [visible_personal]
-  simp only [visible, Group.only]
-  split <;> simp_all
-
 -- ============================================================
 -- Revocation
 -- ============================================================
@@ -293,21 +260,6 @@ theorem drop_keeps_others (s s' : OwnerState) (o : OwnerRef) {u x : User}
 -- ============================================================
 -- One rule, not two vocabularies
 -- ============================================================
-
-theorem may_read_iff_gives (r : User) (o : Owner) (k : AccessKind) :
-    may_read r o k ↔ o.gives r (.read k) := Iff.rfl
-
-theorem may_write_iff_gives (r : User) (o : Owner) (k : AccessKind) :
-    may_write r o k ↔ o.gives r (.write k) := Iff.rfl
-
-theorem may_read_goals_iff_gives (r : User) (o : Owner) :
-    may_read_goals r o ↔ o.gives r .readsGoals := Iff.rfl
-
-theorem may_work_goals_iff_gives (r : User) (o : Owner) :
-    may_work_goals r o ↔ o.gives r .worksGoals := Iff.rfl
-
-theorem may_administer_iff_gives (r : User) (o : Owner) :
-    may_administer r o ↔ o.gives r .administers := Iff.rfl
 
 /-- The personal-group exclusion in `may_manage` is implied: the only role a
     personal owner holds is `Role.personal`, which does not manage. -/

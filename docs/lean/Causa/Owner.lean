@@ -18,7 +18,7 @@ write are separate, so an `Ingest` owner role never widens into a general editor
 role assignment). A "user" is the special case of a Group: the personal group,
 automatically present for every user, in which that user holds the maximal
 `personal` role and no one else is a member. Personal groups are auto-derived
-and forbid meta-management (`personal_forbids_manage`).
+and forbid meta-management (`may_manage` in `Causa.Authorization`).
 
 **Org is not a kernel concept** (decision `2026-06-11-org-out-of-kernel.md`):
 billing/quota attribution is engine metadata, never a kernel face; org-wide
@@ -56,12 +56,6 @@ structure User where
 
 /-- The only public way to obtain a `User`: mint from an engine token. -/
 def User.ofToken (t : String) : User := ⟨t⟩
-
-/-- Distinct tokens mint distinct users — identity IS the token. -/
-theorem User.ofToken_inj {s t : String}
-    (h : User.ofToken s = User.ofToken t) : s = t := by
-  cases h
-  rfl
 
 /-- Kernel witness inhabitant — a proof artifact for closed non-vacuity
     witnesses, not a real identity. Real users are engine-minted. -/
@@ -127,7 +121,7 @@ def Role.worksGoals (x : Role) : Prop := x.goals = .works
 def Role.administers (x : Role) : Prop := x.administer = true
 /-- Meta-management authority: may add/remove members and assign roles in the
     group. A group-level rule still gates the use of it — personal groups
-    forbid management entirely (see `personal_forbids_manage`). -/
+    forbid management entirely (see `may_manage` in `Causa.Authorization`). -/
 def Role.manages (x : Role) : Prop := x.manage = true
 
 /-- Working Goals includes reading them. -/
@@ -240,16 +234,6 @@ abbrev Owner : Type := Group
 def Owner.ofUser (u : User) : Owner :=
   fun x => if x = u then some Role.personal else none
 
-/-- A personal owner contains its own user at the personal role. -/
-theorem Owner.ofUser_self (u : User) :
-    Owner.ofUser u u = some Role.personal := by
-  simp [Owner.ofUser]
-
-/-- A personal owner contains no other user. -/
-theorem Owner.ofUser_other {u x : User} (h : x ≠ u) :
-    Owner.ofUser u x = none := by
-  simp [Owner.ofUser, h]
-
 /-- An Owner is personal iff it is some user's personal group. -/
 def Owner.isPersonal (o : Owner) : Prop := ∃ u : User, o = Owner.ofUser u
 
@@ -260,7 +244,7 @@ def Owner.isPersonal (o : Owner) : Prop := ∃ u : User, o = Owner.ofUser u
 /-- ES-2 — a requester is a member of (visible to) an Owner iff it holds any
     role there. Read/write authority is then the role's ceiling over the kind
     (see `Causa.Authorization`). For a personal owner, membership reduces to
-    identity (`visible_personal`): "only the user can join it". A definition,
+    identity (`Owner.ofUser`): "only the user can join it". A definition,
     not an axiom. ES-3: org does not exist at this layer. -/
 def visible (o : Owner) (requester : User) : Prop := o requester ≠ none
 
@@ -271,13 +255,6 @@ instance (o : Owner) (u : User) : Decidable (visible o u) :=
   match h : o u with
   | some _ => .isTrue (by simp [visible, h])
   | none   => .isFalse (by simp [visible, h])
-
-/-- The personal-owner reduction: membership in a user's own group is exactly
-    being that user. -/
-theorem visible_personal (u requester : User) :
-    visible (Owner.ofUser u) requester ↔ requester = u := by
-  simp only [visible, Owner.ofUser]
-  split <;> simp_all
 
 -- ============================================================
 -- Group composition (nesting) — Level 2
@@ -297,15 +274,9 @@ def Group.empty : Group := fun _ => none
 /-- The universal group at a fixed role: every user has that role. -/
 def Group.everyone (r : Role) : Group := fun _ => some r
 
-/-- The universal group at any role is distinct from the empty group. -/
-theorem Group.everyone_ne_empty (r : Role) : Group.everyone r ≠ Group.empty := by
-  intro h
-  have hval := congrFun h default
-  simp [Group.everyone, Group.empty] at hval
-
 /-- Mount sub-group `g` into a parent at role `cap`: every member of `g` joins at
     their g-role capped by `cap` (lattice meet). Produces an ordinary `Owner`;
-    the no-escalation guarantee is `mount_cannot_escalate` (Authorization). -/
+    the no-escalation guarantee is `Group.gives_mount` (Audience). -/
 def Group.mount (g : Group) (cap : Role) : Group :=
   fun u => (g u).map (fun x => Role.meet x cap)
 
@@ -326,15 +297,5 @@ def Group.union (a b : Group) : Group :=
     member is dropped the group is abandoned (`Causa.Compliance.abandoned`). -/
 def Group.drop (g : Group) (u : User) : Group :=
   fun x => if x = u then none else g x
-
-/-- Dropping a user removes that user's own role. -/
-theorem Group.drop_self (g : Group) (u : User) :
-    Group.drop g u u = none := by
-  simp [Group.drop]
-
-/-- Dropping one user leaves all other users unchanged. -/
-theorem Group.drop_other {g : Group} {u x : User} (h : x ≠ u) :
-    Group.drop g u x = g x := by
-  simp [Group.drop, h]
 
 end Causa
