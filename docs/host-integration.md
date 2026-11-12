@@ -322,6 +322,19 @@ composition's frozen sidecars has written the marks and indexes, serving boot
 refuses with `ProxiimaError::MigrationRequired`, and
 `preflight_without_migrations` with `MigrationError::SidecarOwnerRls`.
 
+### Metrics
+
+The runtime records through the OpenTelemetry metrics API and installs no
+provider. The host installs its meter provider with
+`opentelemetry::global::set_meter_provider` before it calls `build()` or
+`run()`: the runtime takes its meter when it starts its features, and a
+provider set later does not reach it. The global provider belongs to one
+version of the `opentelemetry` crate, so the host depends on the version that
+the workspace `Cargo.toml` names on its `opentelemetry` line, which is the one
+Proxiima links. Without a provider nothing is recorded and no database query
+is made on behalf of metrics. [Operate](operate.md#metrics) lists the
+instruments.
+
 ## Authentication and owner scope
 
 An ordinary bearer-authenticated write follows this path from credential to

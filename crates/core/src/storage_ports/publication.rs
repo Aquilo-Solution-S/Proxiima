@@ -442,6 +442,16 @@ pub trait PublicationConsumerPort: Send + Sync {
     /// Returns storage errors from the read.
     async fn registered(&self) -> Result<Vec<ConsumerName>, StorageError>;
 
+    /// Every registered consumer, in name order, with the number of its
+    /// delivery lanes not yet published: what it is still owed. A consumer
+    /// owed nothing appears with `0`. Owner-agnostic: counts only.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors from the read, and an internal error for a
+    /// stored consumer name that is not a valid [`ConsumerName`].
+    async fn pending_by_consumer(&self) -> Result<Vec<(ConsumerName, u64)>, StorageError>;
+
     /// Stop owing records to `consumer`: removes its registration and every
     /// delivery it has not been given, and marks published each record no
     /// other consumer still owes. The only call that cancels an undelivered

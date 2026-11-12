@@ -39,6 +39,7 @@ sqlx = { workspace = true }
 # The vector index wire (`vector_index_http`).
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+opentelemetry = { workspace = true }
 tokio = { workspace = true, features = ["net", "signal", "time"] }
 tokio-util = { workspace = true }
 tower = { workspace = true }
@@ -72,6 +73,8 @@ proxiima-core = { path = "../core", features = ["testkit"] }
 proxiima-pg-testkit = { path = "../pg-testkit" }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 tokio = { workspace = true, features = ["io-util", "test-util"] }
+# A local meter provider with an in-memory exporter, for the metrics tests only.
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["testing"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

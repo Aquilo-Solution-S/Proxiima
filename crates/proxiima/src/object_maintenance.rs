@@ -199,7 +199,7 @@ impl ObjectPurgeHealth {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn record(&self, snapshot: ObjectPurgeSnapshot) {
+    pub(crate) fn record(&self, snapshot: ObjectPurgeSnapshot) {
         *self
             .0
             .lock()

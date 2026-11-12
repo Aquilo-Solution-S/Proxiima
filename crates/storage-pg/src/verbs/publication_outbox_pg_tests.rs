@@ -2574,6 +2574,42 @@ async fn retiring_a_consumer_settles_what_only_it_still_owed() {
     let _ = drop_db(&db).await;
 }
 
+/// Every registered consumer is listed with the lanes it is still owed: a
+/// delivered lane is not counted, and a consumer owed nothing reads `0`.
+#[tokio::test]
+async fn pending_by_consumer_counts_each_registered_consumers_unpublished_lanes() {
+    let (pg, db) = fresh_pg("pub_pending_by_consumer").await;
+    let pool = pg.pool_for_tests().clone();
+    let owner = owner_fixture();
+    register_owner(&pool, &owner).await;
+    let default = ConsumerName::default();
+    let audit = consumer("audit");
+    pg.register(&audit).await.expect("register");
+    for note in ["first", "second"] {
+        ingest_listenable(&pg, &owner, &probe(note), None)
+            .await
+            .expect("capture");
+    }
+    // Registered after the capture, so it is owed nothing.
+    let late = consumer("late");
+    pg.register(&late).await.expect("register");
+    for record in claim_for(&pg, &default).await {
+        assert_eq!(
+            pg.mark_published(&default, record.id, record.claim)
+                .await
+                .expect("mark"),
+            AckOutcome::Published
+        );
+    }
+
+    assert_eq!(
+        pg.pending_by_consumer().await.expect("counts"),
+        vec![(audit, 2), (default, 0), (late, 0)]
+    );
+    drop(pg);
+    let _ = drop_db(&db).await;
+}
+
 /// With no consumer registered there is nobody to owe the event to: the
 /// record is published at capture rather than held against the pending
 /// ceiling forever.

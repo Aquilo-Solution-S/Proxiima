@@ -759,6 +759,36 @@ impl PublicationConsumerPort for PgStorage {
         crate::owner_scope::finish_transaction(tx, result).await
     }
 
+    async fn pending_by_consumer(&self) -> Result<Vec<(ConsumerName, u64)>, StorageError> {
+        let mut tx = self.platform_transaction().await?;
+        // The predicate sits in the join condition, so a consumer owed
+        // nothing still yields its row, and the count reads the partial
+        // index `publication_delivery_pending_idx`.
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT consumer.name, count(lane.t)
+               FROM proxiima_core.publication_consumer consumer
+               LEFT JOIN proxiima_core.publication_delivery lane
+                 ON lane.consumer = consumer.name AND lane.state <> 'published'
+              GROUP BY consumer.name
+              ORDER BY consumer.name",
+        )
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_err)?;
+        // As in `registered`: a refusal here means a row was written around
+        // the CHECK constraint.
+        let result = rows
+            .into_iter()
+            .map(|(name, pending)| {
+                Ok((
+                    ConsumerName::new(name).map_err(internal)?,
+                    int_to_u64(pending, "pending outbox deliveries")?,
+                ))
+            })
+            .collect();
+        crate::owner_scope::finish_transaction(tx, result).await
+    }
+
     /// One transaction: block every lane write, drop the consumer (its lanes
     /// go with it, by cascade), settle the records it was the last to owe.
     ///

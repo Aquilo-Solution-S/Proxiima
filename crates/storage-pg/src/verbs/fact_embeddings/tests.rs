@@ -1205,6 +1205,40 @@ mod pg_tests {
         result
     }
 
+    /// The backlog read alone answers what the full observability read
+    /// reports, with jobs in every status.
+    #[tokio::test]
+    async fn the_job_backlog_read_matches_the_observability_backlog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, db_name) = fresh_pg("proxiima_spg_embed").await;
+        let platform = pg.platform_scope_for_host();
+        let result: Result<(), Box<dyn std::error::Error>> = async {
+            let owner = owner_fixture();
+            let permit = owner_fact_write_permit(&owner).await?;
+            for note in ["one", "two", "three", "four"] {
+                pg.ingest_fact_atomic(&permit, &fact_draft(note), Some("stub-fact-embed"))
+                    .await?;
+            }
+            let pool = pg.pool_for_tests();
+            let claims = claim_pending_embedding_jobs(pool, 3, &[], &[]).await?;
+            assert_eq!(claims.len(), 3);
+            fail_embedding_job_permanently(pool, &claims[0], "rejected forever").await?;
+            fail_embedding_job(pool, &claims[1], "transient").await?;
+
+            let backlog = pg.embedding_job_backlog().await?;
+            assert_eq!(backlog, local_observability(pool, &platform).await?.backlog);
+            assert!(
+                backlog.pending > 0 && backlog.processing > 0 && backlog.failed > 0,
+                "every status holds a job: {backlog:?}"
+            );
+            Ok(())
+        }
+        .await;
+        drop(pg);
+        drop_db(&db_name).await?;
+        result
+    }
+
     #[tokio::test]
     async fn permanently_failed_earlier_candidate_does_not_starve_later_missing_one()
     -> Result<(), Box<dyn std::error::Error>> {

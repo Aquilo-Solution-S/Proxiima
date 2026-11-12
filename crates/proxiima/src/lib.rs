@@ -152,6 +152,7 @@ mod health;
 pub mod host;
 mod in_process_outbox;
 mod mcp_edge;
+mod metrics;
 mod migrations;
 mod object_maintenance;
 mod outbox_http;

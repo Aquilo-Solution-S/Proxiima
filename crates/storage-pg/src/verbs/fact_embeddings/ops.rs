@@ -24,6 +24,43 @@ const ANN_CANARY_SESSION_SQL: &str = concat!(
 use super::usize_count;
 use crate::sidecars::int_to_u64;
 
+/// The three job counts of [`EmbeddingJobBacklog`], as select-list columns:
+/// the one definition of which statuses are pending, processing and failed,
+/// shared by the observability statement and the backlog statement.
+macro_rules! job_backlog_columns {
+    () => {
+        "(SELECT count(*)::bigint
+            FROM proxiima_core.embedding_jobs
+           WHERE status = 'pending')
+             AS pending,
+         (SELECT count(*)::bigint
+            FROM proxiima_core.embedding_jobs
+           WHERE status = 'processing')
+             AS processing,
+         (SELECT count(*)::bigint
+            FROM proxiima_core.embedding_jobs
+           WHERE status IN ('failed', 'failed_permanent'))
+             AS failed"
+    };
+}
+
+#[derive(sqlx::FromRow)]
+struct EmbeddingJobBacklogRow {
+    pending: i64,
+    processing: i64,
+    failed: i64,
+}
+
+impl EmbeddingJobBacklogRow {
+    fn backlog(&self) -> Result<EmbeddingJobBacklog, StorageError> {
+        Ok(EmbeddingJobBacklog {
+            pending: int_to_u64(self.pending, "pending embedding jobs")?,
+            processing: int_to_u64(self.processing, "processing embedding jobs")?,
+            failed: int_to_u64(self.failed, "failed embedding jobs")?,
+        })
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct EmbeddingAnnObservabilityRow {
     embedding_rows: i64,
@@ -32,9 +69,8 @@ struct EmbeddingAnnObservabilityRow {
     embedding_table_bytes: i64,
     embedding_total_relation_bytes: i64,
     hnsw_index_bytes: i64,
-    pending_jobs: i64,
-    processing_jobs: i64,
-    failed_jobs: i64,
+    #[sqlx(flatten)]
+    backlog: EmbeddingJobBacklogRow,
     stale_processing_jobs: i64,
     orphan_embeddings: i64,
     orphan_heads: i64,
@@ -86,7 +122,7 @@ async fn embedding_ann_observability_on_connection(
     stale_claim_timeout_seconds: i64,
     vectors: crate::VectorStorage,
 ) -> Result<EmbeddingAnnObservability, StorageError> {
-    let row = sqlx::query_as::<_, EmbeddingAnnObservabilityRow>(
+    let row = sqlx::query_as::<_, EmbeddingAnnObservabilityRow>(concat!(
         "WITH source_entities AS MATERIALIZED (
              SELECT 'goal'::text AS entity_kind,
                     t AS entity_id
@@ -141,18 +177,9 @@ async fn embedding_ann_observability_on_connection(
                WHERE i.indrelid = 'proxiima_core.embeddings'::regclass
                  AND am.amname = 'hnsw')
                  AS hnsw_index_bytes,
-             (SELECT count(*)::bigint
-                FROM proxiima_core.embedding_jobs
-               WHERE status = 'pending')
-                 AS pending_jobs,
-             (SELECT count(*)::bigint
-                FROM proxiima_core.embedding_jobs
-               WHERE status = 'processing')
-                 AS processing_jobs,
-             (SELECT count(*)::bigint
-                FROM proxiima_core.embedding_jobs
-               WHERE status IN ('failed', 'failed_permanent'))
-                 AS failed_jobs,
+             ",
+        job_backlog_columns!(),
+        ",
              (SELECT count(*)::bigint
                 FROM proxiima_core.embedding_jobs
                WHERE status = 'processing'
@@ -164,8 +191,8 @@ async fn embedding_ann_observability_on_connection(
                  AS stale_processing_jobs,
              (SELECT count FROM orphan_embeddings) AS orphan_embeddings,
              (SELECT count FROM orphan_heads) AS orphan_heads,
-             (SELECT count FROM orphan_jobs) AS orphan_jobs",
-    )
+             (SELECT count FROM orphan_jobs) AS orphan_jobs"
+    ))
     .bind(stale_claim_timeout_seconds)
     .fetch_one(&mut *pool)
     .await
@@ -177,6 +204,25 @@ async fn embedding_ann_observability_on_connection(
         crate::VectorStorage::HostIndex => None,
     };
     observability_from_row(&row, canary)
+}
+
+/// The three job counts alone: one statement, no orphan scans.
+///
+/// # Errors
+///
+/// Maps SQL failures through the shared mapper.
+pub(crate) async fn embedding_job_backlog(
+    pool: &PgPool,
+    platform: &crate::PgPlatformScope,
+) -> Result<EmbeddingJobBacklog, StorageError> {
+    let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;
+    let row =
+        sqlx::query_as::<_, EmbeddingJobBacklogRow>(concat!("SELECT ", job_backlog_columns!()))
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_err);
+    let result = row.and_then(|row| row.backlog());
+    crate::owner_scope::finish_transaction(tx, result).await
 }
 
 fn observability_from_row(
@@ -193,11 +239,7 @@ fn observability_from_row(
             "embedding total relation bytes",
         )?,
         hnsw_index_bytes: int_to_u64(row.hnsw_index_bytes, "hnsw index bytes")?,
-        backlog: EmbeddingJobBacklog {
-            pending: int_to_u64(row.pending_jobs, "pending embedding jobs")?,
-            processing: int_to_u64(row.processing_jobs, "processing embedding jobs")?,
-            failed: int_to_u64(row.failed_jobs, "failed embedding jobs")?,
-        },
+        backlog: row.backlog.backlog()?,
         stale_processing_jobs: int_to_u64(
             row.stale_processing_jobs,
             "stale processing embedding jobs",

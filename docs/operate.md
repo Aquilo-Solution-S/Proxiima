@@ -275,15 +275,35 @@ spiice's) that ends before shutdown, by panicking or returning, is logged at
 ERROR when it ends and adds the line `ended-workers: <label>, …` until the
 process restarts; nothing restarts it, and serving and the other workers
 continue. The probe shows only labels fixed in code: `outbox-publisher`,
-`embedding-drain`, `object-purge`, `outbox-prune`, or a spiice worker's
-declared name, each once, with a count where several workers of that label
+`embedding-drain`, `object-purge`, `outbox-prune`, `metrics-sampler`, or a
+spiice worker's declared name, each once, with a count where several workers of that label
 ended (`outbox-publisher x2`). The log line carries the label as `worker`
-and, for an outbox drain, the consumer name as `instance`. Readiness returns
-503 only when the
+and, for an outbox drain, the consumer name as `instance`; the counter
+`proxiima.worker.ended` carries the same two as attributes and is the source
+to alert on. Readiness returns 503 only when the
 database is unavailable or shutdown has started; liveness continues to answer.
-These routes sit outside bearer and Host guards; expose them according to
-deployment policy.
+`/healthz` and `/readyz` answer without a token, for the orchestrator that
+probes the pod address. An ingress routes only the MCP paths and does not
+forward them.
 An authenticated graph-resource read checks the served owner path.
+
+### Metrics
+
+The runtime reports four instruments through the OpenTelemetry API, once the
+host has installed a meter provider
+([host integration](host-integration.md#metrics)).
+
+| Instrument | Kind | Unit | Attributes | Meaning |
+|---|---|---|---|---|
+| `proxiima.worker.ended` | counter | `{worker}` | `worker`, `instance` (an outbox drain's consumer) | Background workers that ended before shutdown |
+| `proxiima.object_purge.debt` | gauge | `{object}` | `state`: `due`, `deferred`, `stuck` | The purge queue as the last pass left it; absent until a pass has run |
+| `proxiima.outbox.pending` | gauge | `{record}` | `consumer` | Deliveries not yet published to each registered consumer; `0` when it is owed nothing |
+| `proxiima.embedding.jobs` | gauge | `{job}` | `status`: `pending`, `processing`, `failed` | Embedding jobs by status; `failed` includes permanently failed jobs |
+
+The two database gauges report what one background worker
+(`metrics-sampler`) last read, and each collection asks it to read again
+unless a read is outstanding. They report no data point before the first read
+has finished, and none after a failed read rather than the previous number.
 
 Accepted memory writes enqueue embedding work atomically without calling the
 provider. Only typed input refusals (413, 422 or a local input cap) enter chunk

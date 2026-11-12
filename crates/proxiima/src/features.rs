@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use proxiima_core::engine::EmbeddingDrainOutcome;
 use proxiima_core::quiesce::GateWorker;
-use proxiima_core::storage_ports::publication::{PublicationOutboxPort, PublicationRetentionPort};
+use proxiima_core::storage_ports::publication::{
+    PublicationConsumerPort, PublicationOutboxPort, PublicationRetentionPort,
+};
 use proxiima_core::write_wake::WriteWake;
 use proxiima_core::{
     Engine, FeatureControlError, FeatureStatus, QuiesceGate, SpiiceServices, StorageError,
@@ -23,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::RuntimeConfig;
 use crate::bundle::SpiiceBundle;
 use crate::in_process_outbox::{Drain, Proceed, Settings};
+use crate::metrics::{Metrics, SAMPLER_LABEL, Sample};
 use crate::object_maintenance::ObjectPurgeHealth;
 use crate::workers::{Backoff, EndedWorkers, Pass, SpiiceWorkerContext, Wake, WorkerPass, Workers};
 
@@ -330,6 +333,15 @@ pub(crate) struct FeatureInputs<'a> {
     pub(crate) publication: PublicationHandles,
     /// The object store and what draining it needs; `None` without one.
     pub(crate) objects: Option<ObjectPurgeHandles>,
+    pub(crate) metrics: MetricsHandles,
+}
+
+/// What the metrics instruments read: the purge snapshot the object-purge
+/// worker writes, and the storage the sampler counts queues in.
+pub(crate) struct MetricsHandles {
+    pub(crate) purge_health: ObjectPurgeHealth,
+    pub(crate) storage: proxiima_storage_pg::PgStorage,
+    pub(crate) consumers: Arc<dyn PublicationConsumerPort>,
 }
 
 /// What the object-purge feature runs over, when an object store is wired.
@@ -437,6 +449,28 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
 
     let (publisher, publisher_decision, prune_decision) = start_publisher(inputs, &mut workers);
     let (object_purge, object_purge_decision) = start_object_purge(inputs, &mut workers);
+    // The meter comes from the provider installed now: the host installs it
+    // before it builds the runtime, and a provider set later does not reach
+    // a meter taken earlier.
+    let metrics = Metrics::new(
+        &opentelemetry::global::meter("proxiima"),
+        inputs.metrics.purge_health.clone(),
+    );
+    let sampled = &inputs.metrics;
+    let (storage, consumers) = (sampled.storage.clone(), sampled.consumers.clone());
+    workers.spawn(
+        SAMPLER_LABEL,
+        None,
+        metrics.sampler(inputs.cancel.child_token(), move || {
+            let (storage, consumers) = (storage.clone(), consumers.clone());
+            async move {
+                Ok(Sample {
+                    outbox: consumers.pending_by_consumer().await?,
+                    embedding: storage.embedding_job_backlog().await?,
+                })
+            }
+        }),
+    );
     let report = BootReport {
         decisions: [
             mcp,
@@ -453,7 +487,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         embedding,
         publisher,
         object_purge,
-        supervisor: workers.supervise(inputs.cancel.clone(), inputs.ended.clone()),
+        supervisor: workers.supervise(inputs.cancel.clone(), inputs.ended.clone(), metrics),
     }
 }
 

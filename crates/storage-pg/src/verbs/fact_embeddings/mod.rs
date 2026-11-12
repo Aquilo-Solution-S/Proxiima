@@ -25,7 +25,9 @@ pub(crate) use jobs::{
     fail_embedding_job_permanently, list_facts_missing_embedding, reclaim_stale_embedding_jobs,
     release_embedding_jobs_on_connection, renew_embedding_jobs,
 };
-pub(crate) use ops::{embedding_ann_observability, sweep_orphan_embedding_rows};
+pub(crate) use ops::{
+    embedding_ann_observability, embedding_job_backlog, sweep_orphan_embedding_rows,
+};
 #[cfg(test)]
 use reconcile::reconcile_embeddings;
 #[cfg(any(test, feature = "testkit"))]

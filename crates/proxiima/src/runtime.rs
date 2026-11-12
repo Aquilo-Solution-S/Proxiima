@@ -431,6 +431,11 @@ impl Runtime {
                 authority: system_authority.clone(),
                 health: host.object_purge_health.clone(),
             });
+        let metrics = crate::features::MetricsHandles {
+            purge_health: host.object_purge_health.clone(),
+            storage: booted.storage.clone(),
+            consumers: booted.outbox_consumers.clone(),
+        };
         #[cfg(test)]
         let (counted_outbox, outbox_claims_for_tests) =
             crate::in_process_outbox::CountingOutbox::wrap(booted.outbox.clone());
@@ -457,6 +462,7 @@ impl Runtime {
                     retention: booted.outbox_retention,
                 },
                 objects,
+                metrics,
             },
         );
         Self {

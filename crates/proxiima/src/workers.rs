@@ -17,6 +17,8 @@ use proxiima_core::{Engine, SpiiceServices};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
+use crate::metrics::Metrics;
+
 /// What one pass of a worker found, which decides how long the worker waits
 /// before the next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,14 +241,15 @@ impl Workers {
     }
 
     /// Watch every worker until all have ended. One that ends before
-    /// `cancel` is logged as an error at once and its label recorded in
-    /// `ended`; the others keep running. The returned task finishes once
-    /// every worker has ended, so a caller that cancelled `cancel` awaits it
-    /// to join them.
+    /// `cancel` is logged as an error at once, its label recorded in `ended`
+    /// and counted in `metrics`; the others keep running. The returned task
+    /// finishes once every worker has ended, so a caller that cancelled
+    /// `cancel` awaits it to join them.
     pub(crate) fn supervise(
         self,
         cancel: CancellationToken,
         ended: EndedWorkers,
+        metrics: Metrics,
     ) -> JoinHandle<()> {
         let Self {
             mut running,
@@ -274,6 +277,7 @@ impl Workers {
                              without it, and /readyz lists it until the process restarts"
                         );
                         ended.record(label);
+                        metrics.worker_ended(label, instance.as_deref());
                     }
                     (true, Some(error)) => {
                         tracing::warn!(
@@ -647,7 +651,7 @@ mod tests {
             let cancel = cancel.clone();
             async move { cancel.cancelled().await }
         });
-        let supervisor = workers.supervise(cancel.clone(), ended.clone());
+        let supervisor = workers.supervise(cancel.clone(), ended.clone(), Metrics::unobserved());
 
         tokio::time::timeout(Duration::from_secs(1), async {
             while ended.0.lock().unwrap().len() < 2 {
@@ -749,7 +753,7 @@ mod tests {
         for consumer in ["billing-export", "search-index"] {
             workers.spawn("outbox-publisher", Some(consumer.to_owned()), async {});
         }
-        let supervisor = workers.supervise(cancel.clone(), ended.clone());
+        let supervisor = workers.supervise(cancel.clone(), ended.clone(), Metrics::unobserved());
         supervisor.await.expect("both drains have ended");
 
         assert_eq!(

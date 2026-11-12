@@ -1515,6 +1515,19 @@ impl PgStorage {
         .await
     }
 
+    /// The embedding job counts alone: the `backlog` of
+    /// [`Self::embedding_ann_observability`] from one cheap statement that
+    /// runs no orphan scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors from the count read.
+    pub async fn embedding_job_backlog(
+        &self,
+    ) -> Result<proxiima_core::EmbeddingJobBacklog, StorageError> {
+        verbs::fact_embeddings::embedding_job_backlog(&self.pool, &self.platform_scope).await
+    }
+
     /// Try to take the embedding-maintenance lease.
     ///
     /// Returns `None` when another embedding maintenance pass holds a live
