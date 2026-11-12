@@ -4,8 +4,8 @@ pub mod settings;
 pub use args::{
     ArgsError, DEFAULT_BIND, DEFAULT_DATABASE_URL, MAINTAIN_BLOBS_USAGE, MAINTAIN_USAGE,
     MIGRATE_USAGE, MaintainBlobsConfig, MaintainConfig, McpConfig, MigrateConfig, ReconcileScope,
-    STORAGE_MAINTENANCE_USAGE, StorageMaintenanceConfig, USAGE, parse_args, parse_maintain_args,
-    parse_maintain_blobs_args, parse_migrate_args, parse_storage_maintenance_args,
+    STORAGE_MAINTENANCE_USAGE, StorageMaintenanceConfig, parse_args, parse_maintain_args,
+    parse_maintain_blobs_args, parse_migrate_args, parse_storage_maintenance_args, usage,
 };
 
 use proxiima_blob_s3::{BlobError, CitedBlobStore, S3RuntimeConfig};
@@ -226,9 +226,9 @@ fn init_logging(sink: LogSink) {
 
 /// The [`CliError`] of a subcommand's argument failure: a request for help
 /// is answered with that subcommand's `usage`.
-fn cli_error(usage: &'static str) -> impl Fn(ArgsError) -> CliError {
+fn cli_error(usage: fn() -> String) -> impl Fn(ArgsError) -> CliError {
     move |err| match err {
-        ArgsError::Help => CliError::Help(usage),
+        ArgsError::Help => CliError::Help(usage()),
         other @ ArgsError::Invalid(_) => CliError::Args(other),
     }
 }
@@ -240,33 +240,34 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     let mut args: Vec<String> = args.into_iter().collect();
     if args.first().is_some_and(|arg| arg == "migrate") {
         args.remove(0);
-        let config = parse_migrate_args(args).map_err(cli_error(MIGRATE_USAGE))?;
+        let config = parse_migrate_args(args).map_err(cli_error(|| MIGRATE_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
         return run_migrate(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-embeddings") {
         args.remove(0);
-        let config = parse_maintain_args(args).map_err(cli_error(MAINTAIN_USAGE))?;
+        let config = parse_maintain_args(args).map_err(cli_error(|| MAINTAIN_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
         return run_maintain(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-storage") {
         args.remove(0);
-        let config =
-            parse_storage_maintenance_args(args).map_err(cli_error(STORAGE_MAINTENANCE_USAGE))?;
+        let config = parse_storage_maintenance_args(args)
+            .map_err(cli_error(|| STORAGE_MAINTENANCE_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
         return run_maintain_storage(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-blobs") {
         args.remove(0);
-        let config = parse_maintain_blobs_args(args).map_err(cli_error(MAINTAIN_BLOBS_USAGE))?;
+        let config = parse_maintain_blobs_args(args)
+            .map_err(cli_error(|| MAINTAIN_BLOBS_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
         return run_maintain_blobs(config, &proxiima_core::process_env).await;
     }
     if args.first().is_some_and(|arg| arg == "serve") {
         args.remove(0);
     }
-    let config = parse_args(args).map_err(cli_error(USAGE))?;
+    let config = parse_args(args).map_err(cli_error(usage))?;
     init_logging(LogSink::Stdout);
 
     let running = run_with_handle(config).await?;
@@ -1072,7 +1073,7 @@ fn maintenance_embedding_space(
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("help requested")]
-    Help(&'static str),
+    Help(String),
     #[error(transparent)]
     Args(#[from] ArgsError),
     #[error(transparent)]
@@ -1090,10 +1091,10 @@ impl CliError {
     }
 
     #[must_use]
-    pub fn help_text(&self) -> Option<&'static str> {
+    pub fn help_text(&self) -> Option<String> {
         match self {
-            Self::Help(usage) => Some(usage),
-            Self::Args(args) if args.is_help() => Some(USAGE),
+            Self::Help(usage) => Some(usage.clone()),
+            Self::Args(args) if args.is_help() => Some(usage()),
             Self::Args(_) | Self::Runtime(_) => None,
         }
     }
@@ -1130,9 +1131,9 @@ mod tests {
 
     #[test]
     fn an_argument_failure_asks_for_its_own_usage_or_is_reported() {
-        let error = cli_error("sub usage")(ArgsError::Help);
-        assert_eq!(error.help_text(), Some("sub usage"));
-        let error = cli_error("sub usage")(ArgsError::Invalid("bad flag".into()));
+        let error = cli_error(|| "sub usage".to_owned())(ArgsError::Help);
+        assert_eq!(error.help_text(), Some("sub usage".to_owned()));
+        let error = cli_error(|| "sub usage".to_owned())(ArgsError::Invalid("bad flag".into()));
         assert!(!error.is_help());
         assert_eq!(error.to_string(), "bad flag");
     }

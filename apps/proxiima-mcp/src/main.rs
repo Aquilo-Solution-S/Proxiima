@@ -5,7 +5,7 @@ async fn main() -> ExitCode {
     match proxiima_mcp::run(std::env::args().skip(1)).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) if err.is_help() => {
-            println!("{}", err.help_text().unwrap_or(proxiima_mcp::USAGE));
+            println!("{}", err.help_text().unwrap_or_else(proxiima_mcp::usage));
             ExitCode::SUCCESS
         }
         Err(err) => {

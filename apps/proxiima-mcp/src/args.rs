@@ -17,7 +17,17 @@ fn database_url_from_env() -> String {
         .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
 }
 
-pub const USAGE: &str = "\
+/// The top-level help: the usage text, then every setting the canonical host
+/// declares, rendered from its `settings!` blocks.
+#[must_use]
+pub fn usage() -> String {
+    format!(
+        "{USAGE}\nEnvironment:\n{}",
+        proxiima::settings::plain_text(proxiima::settings::all().chain(crate::settings::SETTINGS))
+    )
+}
+
+const USAGE: &str = "\
 Usage:
   proxiima-mcp [serve] [OPTIONS]
   proxiima-mcp migrate [OPTIONS]
@@ -36,54 +46,6 @@ Optional:
   --database-url <URL>     Postgres URL (defaults to DATABASE_URL or proxiima_dev)
   --bind <ADDR:PORT>       Bind address override (loopback only)
   -h, --help               Print this message
-
-Environment:
-  PROXIIMA_STORE_NUMBER          Required immutable host-assigned store number (0..65535)
-  PROXIIMA_MCP_BIND              Bind address; allows non-loopback with
-                                PROXIIMA_EXPOSE_NETWORK=true
-                                (e.g. 0.0.0.0:8080)
-  PROXIIMA_EXPOSE_NETWORK        Permit non-loopback MCP exposure
-  PROXIIMA_ALLOWED_ORIGINS       Comma-separated CORS origin allowlist
-  PROXIIMA_ALLOWED_HOSTS         Comma-separated inbound Host allowlist
-                                (hostnames or host:port). Defaults to the
-                                host of PROXIIMA_PUBLIC_URL + the allowed
-                                origins; loopback is always permitted
-  PROXIIMA_PUBLIC_URL            Public base URL for OAuth discovery
-  PROXIIMA_OIDC_ISSUER           OIDC issuer / authorization server
-  PROXIIMA_OIDC_AUDIENCE         Expected token audience
-  PROXIIMA_OIDC_JWKS_URI         Optional explicit JWKS endpoint
-  PROXIIMA_OIDC_JWKS_JSON        Optional pinned JWKS document; nothing is
-                                fetched from the issuer (excludes JWKS_URI)
-  PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS
-                                Discovery/JWKS complete-request timeout
-                                (default 10; range 1..=300 seconds)
-  PROXIIMA_OIDC_ALLOWED_SUBJECTS Optional comma-separated sub allowlist
-                                (in addition to the subject map below, never
-                                an identity source by itself)
-  PROXIIMA_OIDC_SUBJECT_MAP_JSON Issuer-aware (iss,sub)->user_id identity map:
-                                a JSON array of {iss, sub, user_id} objects.
-                                Required when PROXIIMA_OIDC_ISSUER is set.
-  PROXIIMA_TOOL_PROFILE          Tool profile: memory (fail-closed default) or
-                                full (opt-in; adds core_transfer/core_membership);
-                                every profile admits reads for every audience
-  PROXIIMA_TOOL_ALLOW            Comma-separated canonical tool ids added to profile
-  PROXIIMA_TOOL_DENY             Comma-separated canonical tool ids removed from
-                                profile; naming a read fails startup
-  PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS
-                                Complete /embeddings request timeout
-                                (default 120; range 1..=3600)
-  PROXIIMA_EMBED_BATCH_SIZE      Texts per provider request
-                                (default 32; range 1..=1024)
-  PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS
-                                Idle worker poll interval
-                                (default 5; range 1..=3600)
-  PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS
-                                Processing-claim crash timeout
-                                (default 900; range 1..=86400; must be
-                                greater than request timeout)
-  PROXIIMA_EMBED_QUERY_INSTRUCTION
-                                Template every search query is embedded in;
-                                holds {query}, \n is a newline (default: none)
 
 Migration:
   migrate                  Apply pending migrations, initialize the store
@@ -110,22 +72,7 @@ Endpoint:
   id. The server binds that owner to Mcp-Session-Id.
 
 Tools:
-  core_search_memories
-  core_recall
-  core_think
-  core_memory_spaces
-  core_remember
-  core_episode_commit
-  core_forget
-  core_restore
-  core_record_utterance
-  core_derive
-  core_interpret
-  core_goal
-  core_fact
-  core_membership
-  core_transfer
-  core_upload
+  The MCP tools/list call returns the tools this server serves the caller.
 ";
 
 pub const MIGRATE_USAGE: &str = "\

@@ -222,6 +222,52 @@ pub fn markdown_table<'a>(rows: impl IntoIterator<Item = &'a Setting>) -> String
     std::iter::once(header.to_owned()).chain(body).collect()
 }
 
+/// `rows` as terminal text, in order: the name, kind and default on one
+/// line, then the purpose and when the setting is needed, indented below.
+///
+/// ```
+/// proxiima::settings! {
+///     EXAMPLE_MODE: Text {
+///         purpose: "example mode",
+///         when_needed: "never",
+///         default: "fast",
+///     }
+///     EXAMPLE_PATH: Path {
+///         purpose: "example path",
+///         when_needed: "always",
+///     }
+/// }
+///
+/// let expected = "  EXAMPLE_MODE  [text]  default: fast
+///       example mode
+///       Needed: never
+///   EXAMPLE_PATH  [file path]
+///       example path
+///       Needed: always
+/// ";
+/// assert_eq!(proxiima::settings::plain_text(SETTINGS), expected);
+/// ```
+pub fn plain_text<'a>(rows: impl IntoIterator<Item = &'a Setting>) -> String {
+    use std::fmt::Write as _;
+
+    let mut text = String::new();
+    for row in rows {
+        let default = row
+            .default()
+            .map(|value| format!("  default: {value}"))
+            .unwrap_or_default();
+        let _ = write!(
+            text,
+            "  {}  [{}]{default}\n      {}\n      Needed: {}\n",
+            row.name(),
+            row.kind().label(),
+            row.purpose(),
+            row.when_needed(),
+        );
+    }
+    text
+}
+
 /// Log one warning for each `PROXIIMA_*` variable of the process
 /// environment that neither this facade nor `host` declares. Names only,
 /// never values. A host may define names of its own, so an unknown name is
