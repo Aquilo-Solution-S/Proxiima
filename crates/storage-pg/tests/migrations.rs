@@ -1814,9 +1814,10 @@ async fn memory_is_append_only_and_head_t_only() {
     result.expect("append-only / head freeze test failed");
 }
 
-/// The final reference arrays remain append-only after the migration reset.
+/// The reference pins of a row, its fork anchor among them, remain
+/// append-only after the migration reset.
 #[tokio::test]
-async fn memory_reference_arrays_remain_append_only() {
+async fn memory_reference_pins_remain_append_only() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     create_db(&db_name)
         .await
@@ -1846,13 +1847,17 @@ async fn memory_reference_arrays_remain_append_only() {
                     "UPDATE proxiima_core.memory SET goal_refs = ARRAY[$1]::uuid[] WHERE t = $2",
                 ),
             ),
+            (
+                "forked_from",
+                sqlx::query("UPDATE proxiima_core.memory SET forked_from = $1 WHERE t = $2"),
+            ),
         ] {
             let err = query
                 .bind(target)
                 .bind(t)
                 .execute(pool)
                 .await
-                .expect_err("reference arrays must remain append-only");
+                .expect_err("reference pins must remain append-only");
             assert!(
                 err.to_string().contains("append-only"),
                 "{column} refusal: {err}"

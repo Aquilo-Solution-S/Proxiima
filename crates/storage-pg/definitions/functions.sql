@@ -2553,6 +2553,7 @@ BEGIN
        OR NEW.origins IS DISTINCT FROM OLD.origins OR NEW.refs IS DISTINCT FROM OLD.refs
        OR NEW.goal_refs IS DISTINCT FROM OLD.goal_refs OR NEW.guided_by IS DISTINCT FROM OLD.guided_by
        OR NEW.reads IS DISTINCT FROM OLD.reads
+       OR NEW.forked_from IS DISTINCT FROM OLD.forked_from
        OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
        OR NEW.sidecar_tables IS DISTINCT FROM OLD.sidecar_tables THEN
         RAISE EXCEPTION 'append-only: % does not accept UPDATE', TG_TABLE_NAME
