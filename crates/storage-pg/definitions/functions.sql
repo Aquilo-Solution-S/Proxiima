@@ -2672,6 +2672,21 @@ BEGIN
             'schema_id and content_hash', TG_TABLE_NAME
             USING ERRCODE = 'PX002';
     END IF;
+    IF NEW.content_id IS DISTINCT FROM OLD.content_id
+       AND NOT EXISTS (
+               SELECT 1
+                 FROM proxiima_core.content old_content
+                 JOIN proxiima_core.content new_content
+                   ON new_content.schema_id = old_content.schema_id
+                  AND new_content.content_hash = old_content.content_hash
+                WHERE old_content.content_id = OLD.content_id
+                  AND new_content.content_id = NEW.content_id
+           ) THEN
+        RAISE EXCEPTION
+            'append-only: %.content_id may only be repointed at a content row naming the same '
+            'schema_id and content_hash', TG_TABLE_NAME
+            USING ERRCODE = 'PX002';
+    END IF;
     RETURN NEW;
 END;
 $function$;

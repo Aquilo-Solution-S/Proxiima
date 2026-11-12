@@ -9,6 +9,7 @@ use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
     TestGoal, TestMemory, create_content, create_group, create_user, insert_delegated_grant,
+    repoint_content,
 };
 use uuid::Uuid;
 
@@ -1868,6 +1869,77 @@ async fn memory_reference_pins_remain_append_only() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("memory reference append-only test failed");
+}
+
+/// A memory row's content is repointed only at a content row with the same
+/// schema and hash, whatever the owner.
+#[tokio::test]
+async fn memory_content_is_repointed_only_at_the_same_payload() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_db(&db_name)
+        .await
+        .expect("PG is required for migrations tests");
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
+        apply_current_migrations(&pg).await?;
+        let pool = pg.pool_for_tests();
+        let user = UserId::new(Uuid::now_v7());
+        let other = UserId::new(Uuid::now_v7());
+        create_user(pool, user).await?;
+        create_user(pool, other).await?;
+        let owner = OwnerId::from(user);
+        let t = TestMemory::fact()
+            .create(&pg, owner)
+            .await?
+            .memory_id
+            .into_inner();
+        let schema = "core/test-fact-v1";
+        let x = create_content(pool, owner, schema, [1_u8; 32]).await?;
+        let repoint = "UPDATE proxiima_core.memory SET content_id = $1 WHERE t = $2";
+
+        let err = sqlx::query(repoint)
+            .bind(x)
+            .bind(t)
+            .execute(pool)
+            .await
+            .expect_err("a row without content takes none");
+        assert!(err.to_string().contains("append-only"), "attach: {err}");
+
+        repoint_content(pool, "t = ANY($1)", &[t], Some(x)).await?;
+
+        let other_hash = create_content(pool, owner, schema, [2_u8; 32]).await?;
+        let err = sqlx::query(repoint)
+            .bind(other_hash)
+            .bind(t)
+            .execute(pool)
+            .await
+            .expect_err("another hash is refused");
+        assert!(err.to_string().contains("append-only"), "other hash: {err}");
+
+        let err = sqlx::query("UPDATE proxiima_core.memory SET content_id = NULL WHERE t = $1")
+            .bind(t)
+            .execute(pool)
+            .await
+            .expect_err("detaching content is refused");
+        assert!(err.to_string().contains("append-only"), "detach: {err}");
+
+        let same = create_content(pool, OwnerId::from(other), schema, [1_u8; 32]).await?;
+        sqlx::query(repoint)
+            .bind(same)
+            .bind(t)
+            .execute(pool)
+            .await?;
+        let now: Option<Uuid> =
+            sqlx::query_scalar("SELECT content_id FROM proxiima_core.memory WHERE t = $1")
+                .bind(t)
+                .fetch_one(pool)
+                .await?;
+        assert_eq!(now, Some(same));
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("memory content append-only test failed");
 }
 
 /// The final Fact occurrence constraint remains immutable and complete.

@@ -137,7 +137,7 @@ use proxiima_core::{
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::{create_core_db, insert_delegated_grant};
+use proxiima_storage_pg::test_fixtures::{create_core_db, insert_delegated_grant, repoint_content};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -460,10 +460,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
     // ctid`, an UPDATE writes a new tuple at the end of the heap, and this
     // row and `k3`'s are the two that survive a `src-a` source-scope erase —
     // so which of them is updated first IS the order the baseline pins.
-    sqlx::query("UPDATE proxiima_core.memory SET content_id = NULL WHERE t = $1")
-        .bind(tn)
-        .execute(pool)
-        .await?;
+    repoint_content(pool, "t = ANY($1)", &[tn], None).await?;
 
     // Content: one body shared by both `src-a` versions (owner erase GCs it,
     // source erase of `src-a` GCs it too), one shared across sources (source
@@ -492,24 +489,12 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
     .bind(vec![13u8; 32])
     .execute(pool)
     .await?;
-    sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = ANY($1::uuid[])")
-        .bind(vec![t1, t2])
-        .bind(shared_a)
-        .execute(pool)
-        .await?;
-    sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
-        .bind(t3)
-        .bind(cross_source)
-        .execute(pool)
-        .await?;
+    repoint_content(pool, "t = ANY($1::uuid[])", &[t1, t2], Some(shared_a)).await?;
+    repoint_content(pool, "t = ANY($1)", &[t3], Some(cross_source)).await?;
     // `cross_source` is also named by a `src-a` admission, so a source-scope
     // erase of `src-a` must leave it: the anti-join, not the selection set,
     // is what decides.
-    sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
-        .bind(t1)
-        .bind(cross_source)
-        .execute(pool)
-        .await?;
+    repoint_content(pool, "t = ANY($1)", &[t1], Some(cross_source)).await?;
     sqlx::query("DELETE FROM proxiima_core.content WHERE content_id = ANY($1::uuid[])")
         .bind(&minted_content)
         .execute(pool)

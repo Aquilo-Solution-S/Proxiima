@@ -616,6 +616,44 @@ pub async fn create_content(
     Ok(content_id)
 }
 
+/// Point memory rows at a content row of the corpus's choosing. The
+/// append-only trigger refuses that update, so this switches the trigger
+/// off for the one statement. For a corpus that declares its own content
+/// graph; a test of the write path writes payloads instead.
+///
+/// `rows` is the `WHERE` clause over `proxiima_core.memory`; `$1` is `ids`.
+///
+/// # Errors
+///
+/// Storage errors from the update.
+pub async fn repoint_content(
+    pool: &sqlx::PgPool,
+    rows: &'static str,
+    ids: &[Uuid],
+    content_id: Option<Uuid>,
+) -> Result<(), StorageError> {
+    let unavailable = |err: sqlx::Error| StorageError::Unavailable(err.to_string());
+    let mut update =
+        proxiima_core::SqlText::new("UPDATE proxiima_core.memory SET content_id = $2 WHERE ");
+    update.push(rows);
+    let mut tx = pool.begin().await.map_err(unavailable)?;
+    sqlx::query("ALTER TABLE proxiima_core.memory DISABLE TRIGGER memory_append_only")
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    sqlx::query(update)
+        .bind(ids)
+        .bind(content_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    sqlx::query("ALTER TABLE proxiima_core.memory ENABLE TRIGGER memory_append_only")
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    tx.commit().await.map_err(unavailable)
+}
+
 fn unit_vector(width: usize) -> Vec<f32> {
     let mut values = vec![0.0; width];
     values[0] = 1.0;

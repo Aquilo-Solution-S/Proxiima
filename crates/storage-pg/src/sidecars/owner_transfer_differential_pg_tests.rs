@@ -118,7 +118,7 @@ use std::collections::BTreeMap;
 
 use crate::PgStorage;
 use crate::core_pg_sidecars;
-use crate::test_fixtures::create_core_db;
+use crate::test_fixtures::{create_core_db, repoint_content};
 use crate::verbs::memory_timeseries::ingest_fact_timeseries;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
@@ -488,22 +488,20 @@ pub async fn seed(pool: &PgPool) -> Result<Corpus, Box<dyn std::error::Error>> {
     // Every live row of the in-place series names `shared`; its forgotten
     // tail names `solo`, which nothing else does — so the transfer must re-home
     // one and remap-then-GC the other.
-    sqlx::query(
-        "UPDATE proxiima_core.memory SET content_id = $2
-          WHERE handle = (SELECT handle FROM proxiima_core.memory WHERE t = $1)",
+    repoint_content(
+        pool,
+        "handle = (SELECT handle FROM proxiima_core.memory WHERE t = ANY($1))",
+        &[transferred[0].into_inner()],
+        Some(shared),
     )
-    .bind(transferred[0].into_inner())
-    .bind(shared)
-    .execute(pool)
     .await?;
-    sqlx::query(
-        "UPDATE proxiima_core.memory SET content_id = $2
-          WHERE handle = (SELECT handle FROM proxiima_core.memory WHERE t = $1)
+    repoint_content(
+        pool,
+        "handle = (SELECT handle FROM proxiima_core.memory WHERE t = ANY($1))
             AND forgotten_at IS NOT NULL",
+        &[transferred[0].into_inner()],
+        Some(solo),
     )
-    .bind(transferred[0].into_inner())
-    .bind(solo)
-    .execute(pool)
     .await?;
 
     // ── The source's OTHER series: never named by a transfer ────────────
@@ -518,11 +516,7 @@ pub async fn seed(pool: &PgPool) -> Result<Corpus, Box<dyn std::error::Error>> {
     )
     .await?;
     embed(pool, kept.into_inner(), source).await?;
-    sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
-        .bind(kept.into_inner())
-        .bind(shared)
-        .execute(pool)
-        .await?;
+    repoint_content(pool, "t = ANY($1)", &[kept.into_inner()], Some(shared)).await?;
 
     // ── The bystander: names the mount blob from a live series ──────────
     let (bystander_t, _) = write_note(

@@ -25,7 +25,7 @@ use proxiima_core::{FactPayload, SqlText};
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{
     add_member, create_content, create_core_db, create_embedding, create_group, create_user,
-    enqueue_embedding_job,
+    enqueue_embedding_job, repoint_content,
 };
 use proxiima_storage_pg::verbs::forget::{MemoryColdStore, erase_memory_series};
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
@@ -373,11 +373,7 @@ async fn transfer_moves_same_memory_t_and_sidecar() {
             "a transfer must not create a hard-erase witness"
         );
         let content_id = create_content(pool, owner, "core/test-fact-v1", [7_u8; 32]).await?;
-        sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
-            .bind(t)
-            .bind(content_id)
-            .execute(pool)
-            .await?;
+        repoint_content(pool, "t = ANY($1)", &[t], Some(content_id)).await?;
 
         let first = pg
             .transfer_to_owner(
@@ -597,11 +593,13 @@ async fn transfer_rehomes_forgotten_versions() {
             .expect("citation-bearing write returns its object");
         let personal_content_id =
             create_content(pool, owner, "core/test-fact-v1", [11_u8; 32]).await?;
-        sqlx::query("UPDATE proxiima_core.memory SET content_id = $2 WHERE t = $1")
-            .bind(first.memory_id.into_inner())
-            .bind(personal_content_id)
-            .execute(pool)
-            .await?;
+        repoint_content(
+            pool,
+            "t = ANY($1)",
+            &[first.memory_id.into_inner()],
+            Some(personal_content_id),
+        )
+        .await?;
         // Vectors the forget deletes with the rest of the derived state.
         create_embedding(&pg, owner, first.memory_id, "transfer-hydrate-model", 3).await?;
         MemoryAuthoringPort::forget_memory(&pg, &permit, first.memory_id).await?;
