@@ -100,9 +100,9 @@
 
 use proxiima_core::StorageError;
 
-use crate::pg_ident::PgIdent;
 use crate::projection::Artifact;
 use crate::sidecars::PgSidecarRegistryFrozen;
+use proxiima_core::{PgIdent, SqlText};
 
 /// The qualified name of the one function every declaration trigger runs.
 pub const DECLARATION_TRIGGER_FUNCTION_NAME: &str = "proxiima_core.assert_memory_declares_sidecar";
@@ -183,11 +183,9 @@ fn relation_of(sidecar_table: &str) -> Result<(&str, &str), StorageError> {
 ///
 /// [`StorageError::Internal`] when the table is not schema-qualified, or when
 /// the derived name exceeds `PostgreSQL`'s 63-byte identifier limit.
-fn sidecar_trigger_name(sidecar_table: &str, suffix: &str) -> Result<String, StorageError> {
+fn sidecar_trigger_name(sidecar_table: &str, suffix: &str) -> Result<PgIdent, StorageError> {
     let (_, relation) = relation_of(sidecar_table)?;
-    Ok(PgIdent::column(&format!("{relation}_{suffix}"))?
-        .as_str()
-        .to_owned())
+    PgIdent::column(&format!("{relation}_{suffix}"))
 }
 
 /// The name of the presence constraint trigger guarding `sidecar_table`.
@@ -196,13 +194,9 @@ fn sidecar_trigger_name(sidecar_table: &str, suffix: &str) -> Result<String, Sto
 /// # Errors
 ///
 /// As [`sidecar_trigger_name`].
-fn presence_trigger_name(sidecar_table: &str) -> Result<String, StorageError> {
+fn presence_trigger_name(sidecar_table: &str) -> Result<PgIdent, StorageError> {
     let (schema, relation) = relation_of(sidecar_table)?;
-    Ok(
-        PgIdent::column(&format!("{PRESENCE_TRIGGER_PREFIX}_{schema}_{relation}"))?
-            .as_str()
-            .to_owned(),
-    )
+    PgIdent::column(&format!("{PRESENCE_TRIGGER_PREFIX}_{schema}_{relation}"))
 }
 
 /// The declaration trigger for one registered memory-sidecar table, and the
@@ -235,22 +229,32 @@ pub fn declaration_trigger(
     let trigger = sidecar_trigger_name(sidecar_table, DECLARATION_TRIGGER_SUFFIX)?;
     let key = PgIdent::column(memory_key_column)?;
 
-    // SQL-POLICY: PgIdent
     // The relation, the derived trigger name and the key column are all
     // validated identifiers; the key column is spliced as a trigger
     // argument literal, and `PgIdent` admits no quote to close it with.
     // Everything else is fixed text, identical for every table.
-    let forward = format!(
-        "CREATE OR REPLACE TRIGGER {trigger}
-    BEFORE INSERT ON {table}
-    FOR EACH ROW
-    EXECUTE FUNCTION {DECLARATION_TRIGGER_FUNCTION_NAME}('{key}');",
-        table = table.as_str(),
-        key = key.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    let inverse = format!("DROP TRIGGER IF EXISTS {trigger} ON {};", table.as_str());
+    let mut forward = SqlText::new("CREATE OR REPLACE TRIGGER ");
+    forward
+        .push_ident(&trigger)
+        .push("\n    BEFORE INSERT ON ")
+        .push_ident(&table)
+        .push("\n    FOR EACH ROW\n    EXECUTE FUNCTION ")
+        .push(DECLARATION_TRIGGER_FUNCTION_NAME)
+        .push("('")
+        .push_ident(&key)
+        .push("');");
+    let inverse = drop_trigger_on(&trigger, &table);
     Ok(Artifact { forward, inverse })
+}
+
+/// `DROP TRIGGER IF EXISTS trigger ON relation;`
+fn drop_trigger_on(trigger: &PgIdent, relation: &PgIdent) -> SqlText {
+    let mut sql = SqlText::new("DROP TRIGGER IF EXISTS ");
+    sql.push_ident(trigger)
+        .push(" ON ")
+        .push_ident(relation)
+        .push(";");
+    sql
 }
 
 /// The one relation every presence trigger is installed on.
@@ -375,22 +379,26 @@ pub fn delete_guard_trigger(
     let trigger = sidecar_trigger_name(sidecar_table, DELETE_GUARD_TRIGGER_SUFFIX)?;
     let key = PgIdent::column(memory_key_column)?;
 
-    // SQL-POLICY: PgIdent
     // Relation, derived trigger name and key column are all validated
     // identifiers; the surface and the key are spliced into the argument
     // list as literals, and `PgIdent` admits no quote to close either with.
-    let forward = format!(
-        "DROP TRIGGER IF EXISTS {trigger} ON {table};
-CREATE CONSTRAINT TRIGGER {trigger}
-    AFTER DELETE ON {table}
-    DEFERRABLE INITIALLY DEFERRED
-    FOR EACH ROW
-    EXECUTE FUNCTION {DELETE_GUARD_FUNCTION_NAME}('{table}', '{key}');",
-        table = table.as_str(),
-        key = key.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    let inverse = format!("DROP TRIGGER IF EXISTS {trigger} ON {};", table.as_str());
+    let mut forward = SqlText::new("DROP TRIGGER IF EXISTS ");
+    forward
+        .push_ident(&trigger)
+        .push(" ON ")
+        .push_ident(&table)
+        .push(";\nCREATE CONSTRAINT TRIGGER ")
+        .push_ident(&trigger)
+        .push("\n    AFTER DELETE ON ")
+        .push_ident(&table)
+        .push("\n    DEFERRABLE INITIALLY DEFERRED\n    FOR EACH ROW\n    EXECUTE FUNCTION ")
+        .push(DELETE_GUARD_FUNCTION_NAME)
+        .push("('")
+        .push_ident(&table)
+        .push("', '")
+        .push_ident(&key)
+        .push("');");
+    let inverse = drop_trigger_on(&trigger, &table);
     Ok(Artifact { forward, inverse })
 }
 
@@ -514,25 +522,35 @@ pub fn presence_trigger(
     let trigger = presence_trigger_name(sidecar_table)?;
     let key = PgIdent::column(memory_key_column)?;
 
-    // SQL-POLICY: PgIdent
     // The surface, the derived trigger name and the key column are all
     // validated identifiers; the surface and the key are spliced as literals
     // — into the `WHEN` comparison and the trigger argument list — and
     // `PgIdent` admits no quote to close either with. Everything else is
     // fixed text, identical for every guarded table.
-    let forward = format!(
-        "DROP TRIGGER IF EXISTS {trigger} ON {MEMORY_TABLE};
-CREATE CONSTRAINT TRIGGER {trigger}
-    AFTER INSERT OR UPDATE OF sidecar_tables ON {MEMORY_TABLE}
-    DEFERRABLE INITIALLY DEFERRED
-    FOR EACH ROW
-    WHEN ('{table}' = ANY (NEW.sidecar_tables))
-    EXECUTE FUNCTION {PRESENCE_TRIGGER_FUNCTION_NAME}('{table}', '{key}');",
-        table = table.as_str(),
-        key = key.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    let inverse = format!("DROP TRIGGER IF EXISTS {trigger} ON {MEMORY_TABLE};");
+    let mut forward = SqlText::new("DROP TRIGGER IF EXISTS ");
+    forward
+        .push_ident(&trigger)
+        .push(" ON ")
+        .push(MEMORY_TABLE)
+        .push(";\nCREATE CONSTRAINT TRIGGER ")
+        .push_ident(&trigger)
+        .push("\n    AFTER INSERT OR UPDATE OF sidecar_tables ON ")
+        .push(MEMORY_TABLE)
+        .push("\n    DEFERRABLE INITIALLY DEFERRED\n    FOR EACH ROW\n    WHEN ('")
+        .push_ident(&table)
+        .push("' = ANY (NEW.sidecar_tables))\n    EXECUTE FUNCTION ")
+        .push(PRESENCE_TRIGGER_FUNCTION_NAME)
+        .push("('")
+        .push_ident(&table)
+        .push("', '")
+        .push_ident(&key)
+        .push("');");
+    let mut inverse = SqlText::new("DROP TRIGGER IF EXISTS ");
+    inverse
+        .push_ident(&trigger)
+        .push(" ON ")
+        .push(MEMORY_TABLE)
+        .push(";");
     Ok(Artifact { forward, inverse })
 }
 
@@ -573,17 +591,19 @@ pub fn key_repoint_trigger(
     let trigger = sidecar_trigger_name(sidecar_table, KEY_REPOINT_TRIGGER_SUFFIX)?;
     let key = PgIdent::column(memory_key_column)?;
 
-    // SQL-POLICY: PgIdent
-    let forward = format!(
-        "CREATE OR REPLACE TRIGGER {trigger}
-    BEFORE UPDATE OF {key} ON {table}
-    FOR EACH ROW
-    EXECUTE FUNCTION {DECLARATION_TRIGGER_FUNCTION_NAME}('{key}');",
-        table = table.as_str(),
-        key = key.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    let inverse = format!("DROP TRIGGER IF EXISTS {trigger} ON {};", table.as_str());
+    let mut forward = SqlText::new("CREATE OR REPLACE TRIGGER ");
+    forward
+        .push_ident(&trigger)
+        .push("\n    BEFORE UPDATE OF ")
+        .push_ident(&key)
+        .push(" ON ")
+        .push_ident(&table)
+        .push("\n    FOR EACH ROW\n    EXECUTE FUNCTION ")
+        .push(DECLARATION_TRIGGER_FUNCTION_NAME)
+        .push("('")
+        .push_ident(&key)
+        .push("');");
+    let inverse = drop_trigger_on(&trigger, &table);
     Ok(Artifact { forward, inverse })
 }
 
@@ -637,22 +657,24 @@ fn expected_declaration_triggers(
             ))
         })?;
         let declaration = sidecar_trigger_name(table, DECLARATION_TRIGGER_SUFFIX)?;
+        let declaration = declaration.as_str();
         declared.push(ExpectedTrigger {
             definition: format!(
                 "CREATE TRIGGER {declaration} BEFORE INSERT ON {table} FOR EACH ROW \
                  EXECUTE FUNCTION {DECLARATION_TRIGGER_FUNCTION_NAME}('{key}')"
             ),
             relation: table.to_owned(),
-            name: declaration,
+            name: declaration.to_owned(),
         });
         let repoint = sidecar_trigger_name(table, KEY_REPOINT_TRIGGER_SUFFIX)?;
+        let repoint = repoint.as_str();
         declared.push(ExpectedTrigger {
             definition: format!(
                 "CREATE TRIGGER {repoint} BEFORE UPDATE OF {key} ON {table} FOR EACH ROW \
                  EXECUTE FUNCTION {DECLARATION_TRIGGER_FUNCTION_NAME}('{key}')"
             ),
             relation: table.to_owned(),
-            name: repoint,
+            name: repoint.to_owned(),
         });
         let owner_pinned = registry.is_owner_pinned_memory_sidecar_table(table)
             || registry.retired_fact_surface(table).is_some_and(|surface| {
@@ -663,6 +685,7 @@ fn expected_declaration_triggers(
             });
         if !owner_pinned {
             let orphan = sidecar_trigger_name(table, DELETE_GUARD_TRIGGER_SUFFIX)?;
+            let orphan = orphan.as_str();
             declared.push(ExpectedTrigger {
                 definition: format!(
                     "CREATE CONSTRAINT TRIGGER {orphan} AFTER DELETE ON {table} DEFERRABLE \
@@ -670,9 +693,10 @@ fn expected_declaration_triggers(
                      EXECUTE FUNCTION {DELETE_GUARD_FUNCTION_NAME}('{table}', '{key}')"
                 ),
                 relation: table.to_owned(),
-                name: orphan,
+                name: orphan.to_owned(),
             });
             let presence = presence_trigger_name(table)?;
+            let presence = presence.as_str();
             declared.push(ExpectedTrigger {
                 definition: format!(
                     "CREATE CONSTRAINT TRIGGER {presence} AFTER INSERT OR UPDATE OF \
@@ -681,7 +705,7 @@ fn expected_declaration_triggers(
                      EXECUTE FUNCTION {PRESENCE_TRIGGER_FUNCTION_NAME}('{table}', '{key}')"
                 ),
                 relation: MEMORY_TABLE.to_owned(),
-                name: presence,
+                name: presence.to_owned(),
             });
         }
     }
@@ -749,7 +773,6 @@ pub async fn ensure_declaration_triggers(
         "SET LOCAL search_path = pg_catalog",
         "SET LOCAL quote_all_identifiers = off",
     ] {
-        // SQL-POLICY: fixed-fragment — a literal from the array above.
         sqlx::query(pin)
             .execute(&mut *tx)
             .await
@@ -928,26 +951,20 @@ pub(crate) fn unprojected_rows_sql(
     sidecar_table: &str,
     memory_key_column: &str,
     projection_table: &str,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let sidecar = PgIdent::table(sidecar_table)?;
     let projection = PgIdent::table(projection_table)?;
     let key = PgIdent::column(memory_key_column)?;
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "SELECT count(*)
-  FROM {sidecar} c
-  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.{key}
- WHERE m.schema_id = $1
-   AND NOT EXISTS (
-           SELECT 1
-             FROM {projection} p
-            WHERE p.memory_id = c.{key}
-              AND p.schema_id = $1
-       )",
-        sidecar = sidecar.as_str(),
-        projection = projection.as_str(),
-        key = key.as_str()
-    ))
+    let mut sql = SqlText::new("SELECT count(*)\n  FROM ");
+    sql.push_ident(&sidecar)
+        .push(" c\n  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.")
+        .push_ident(&key)
+        .push("\n WHERE m.schema_id = $1\n   AND NOT EXISTS (\n           SELECT 1\n             FROM ")
+        .push_ident(&projection)
+        .push(" p\n            WHERE p.memory_id = c.")
+        .push_ident(&key)
+        .push("\n              AND p.schema_id = $1\n       )");
+    Ok(sql)
 }
 
 /// Rows of one registered memory-sidecar table that no memory declares.
@@ -959,22 +976,15 @@ pub(crate) fn unprojected_rows_sql(
 pub(crate) fn undeclared_rows_sql(
     sidecar_table: &str,
     memory_key_column: &str,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let sidecar = PgIdent::table(sidecar_table)?;
     let key = PgIdent::column(memory_key_column)?;
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "SELECT count(*)
-  FROM {sidecar} c
- WHERE NOT EXISTS (
-           SELECT 1
-             FROM proxiima_core.memory_including_forgotten m
-            WHERE m.t = c.{key}
-              AND m.sidecar_tables @> ARRAY[$1::text]
-       )",
-        sidecar = sidecar.as_str(),
-        key = key.as_str()
-    ))
+    let mut sql = SqlText::new("SELECT count(*)\n  FROM ");
+    sql.push_ident(&sidecar)
+        .push(" c\n WHERE NOT EXISTS (\n           SELECT 1\n             FROM proxiima_core.memory_including_forgotten m\n            WHERE m.t = c.")
+        .push_ident(&key)
+        .push("\n              AND m.sidecar_tables @> ARRAY[$1::text]\n       )");
+    Ok(sql)
 }
 
 /// Memory rows that stamp one registered memory-sidecar table and have no
@@ -994,22 +1004,17 @@ pub(crate) fn undeclared_rows_sql(
 pub(crate) fn missing_stamped_rows_sql(
     sidecar_table: &str,
     memory_key_column: &str,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let sidecar = PgIdent::table(sidecar_table)?;
     let key = PgIdent::column(memory_key_column)?;
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "SELECT count(*)
-  FROM proxiima_core.memory_including_forgotten m
- WHERE m.sidecar_tables @> ARRAY[$1::text]
-   AND NOT EXISTS (
-           SELECT 1
-             FROM {sidecar} c
-            WHERE c.{key} = m.t
-       )",
-        sidecar = sidecar.as_str(),
-        key = key.as_str()
-    ))
+    let mut sql = SqlText::new(
+        "SELECT count(*)\n  FROM proxiima_core.memory_including_forgotten m\n WHERE m.sidecar_tables @> ARRAY[$1::text]\n   AND NOT EXISTS (\n           SELECT 1\n             FROM ",
+    );
+    sql.push_ident(&sidecar)
+        .push(" c\n            WHERE c.")
+        .push_ident(&key)
+        .push(" = m.t\n       )");
+    Ok(sql)
 }
 
 #[cfg(test)]
@@ -1100,13 +1105,13 @@ mod tests {
                 .count(),
             2
         );
-        assert!(
-            triggers
-                .iter()
-                .any(|trigger| trigger.relation == "proxiima_core.memory"
-                    && trigger.name
-                        == super::presence_trigger_name("test_retired.follow_v1").unwrap())
-        );
+        assert!(triggers.iter().any(|trigger| {
+            trigger.relation == "proxiima_core.memory"
+                && trigger.name
+                    == super::presence_trigger_name("test_retired.follow_v1")
+                        .unwrap()
+                        .as_str()
+        }));
     }
 
     /// The generator is a function of the DECLARATION, key column included.
@@ -1118,9 +1123,10 @@ mod tests {
         assert!(
             artifact
                 .forward
+                .as_str()
                 .contains("assert_memory_declares_sidecar('note_memory_id')"),
             "{}",
-            artifact.forward
+            artifact.forward.as_str()
         );
     }
 

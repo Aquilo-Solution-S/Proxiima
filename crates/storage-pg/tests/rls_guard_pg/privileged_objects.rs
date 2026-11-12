@@ -1,11 +1,12 @@
 //! Catalog refusals for objects that can change whose RLS/SQL authority applies.
 
+use proxiima_core::SqlText;
 use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId};
 use proxiima_storage_pg::{PgPlatformScope, assert_runtime_rls, begin_owner_transaction};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{SyntheticVerifier, cleanup, execute, quoted_ident, runtime_pool, setup};
+use super::{SyntheticVerifier, cleanup, execute, runtime_pool, setup};
 
 async fn assert_guards_refuse_named(
     runtime: &PgPool,
@@ -39,13 +40,13 @@ async fn assert_guards_accept(runtime: &PgPool, platform: &PgPool, schema: &str)
 #[tokio::test]
 async fn platform_guard_completes_with_one_connection() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
-    let name = quoted_ident(&schema);
     for row_owner in [Uuid::now_v7(), Uuid::now_v7()] {
-        // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
         // Raw INSERT: no write path for the memory table reachable from test fixtures; the test creates it
-        sqlx::query(AssertSqlSafe(format!(
-            "INSERT INTO {name}.memory(id, owner_id) VALUES ($1, $1)"
-        )))
+        sqlx::query(ddl!(
+            "INSERT INTO ",
+            id(&schema),
+            ".memory(id, owner_id) VALUES ($1, $1)"
+        ))
         .bind(row_owner)
         .execute(&admin)
         .await
@@ -72,17 +73,14 @@ async fn platform_guard_completes_with_one_connection() {
         .await
         .expect("platform validation must release the connection")
         .unwrap();
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
-    let count: i64 =
-        sqlx::query_scalar(AssertSqlSafe(format!("SELECT count(*) FROM {name}.memory")))
-            .fetch_one(&mut *transaction)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar(ddl!("SELECT count(*) FROM ", id(&schema), ".memory"))
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
     assert_eq!(count, 2, "the validated scope enables the platform policy");
     transaction.commit().await.unwrap();
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
     let unscoped_count: i64 =
-        sqlx::query_scalar(AssertSqlSafe(format!("SELECT count(*) FROM {name}.memory")))
+        sqlx::query_scalar(ddl!("SELECT count(*) FROM ", id(&schema), ".memory"))
             .fetch_one(&platform)
             .await
             .unwrap();
@@ -100,14 +98,14 @@ async fn platform_guard_completes_with_one_connection() {
 async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scoped() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     let platform = runtime_pool(&database, &owner, &password).await;
-    let name = quoted_ident(&schema);
     let owners = [Uuid::now_v7(), Uuid::now_v7()];
     for row_owner in owners {
-        // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
         // Raw INSERT: no write path for the memory table reachable from test fixtures; the test creates it
-        sqlx::query(AssertSqlSafe(format!(
-            "INSERT INTO {name}.memory(id, owner_id) VALUES ($1, $2)"
-        )))
+        sqlx::query(ddl!(
+            "INSERT INTO ",
+            id(&schema),
+            ".memory(id, owner_id) VALUES ($1, $2)"
+        ))
         .bind(row_owner)
         .bind(row_owner)
         .execute(&admin)
@@ -116,23 +114,32 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
     }
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("CREATE VIEW {name}.memory_view AS SELECT owner_id FROM {name}.memory"),
-    )
-    .await;
-    execute(
-        &admin,
-        &format!(
-            "ALTER VIEW {name}.memory_view OWNER TO {}",
-            quoted_ident(&owner)
+        ddl!(
+            "CREATE VIEW ",
+            id(&schema),
+            ".memory_view AS SELECT owner_id FROM ",
+            id(&schema),
+            ".memory"
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "GRANT SELECT ON {name}.memory_view TO {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "ALTER VIEW ",
+            id(&schema),
+            ".memory_view OWNER TO ",
+            id(&owner)
+        ),
+    )
+    .await;
+    execute(
+        &admin,
+        ddl!(
+            "GRANT SELECT ON ",
+            id(&schema),
+            ".memory_view TO ",
+            id(&runtime_role)
         ),
     )
     .await;
@@ -142,19 +149,15 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
         .execute(&mut *forged)
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
-    let direct: i64 =
-        sqlx::query_scalar(AssertSqlSafe(format!("SELECT count(*) FROM {name}.memory")))
+    let direct: i64 = sqlx::query_scalar(ddl!("SELECT count(*) FROM ", id(&schema), ".memory"))
+        .fetch_one(&mut *forged)
+        .await
+        .unwrap();
+    let through_view: i64 =
+        sqlx::query_scalar(ddl!("SELECT count(*) FROM ", id(&schema), ".memory_view"))
             .fetch_one(&mut *forged)
             .await
             .unwrap();
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
-    let through_view: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
-        "SELECT count(*) FROM {name}.memory_view"
-    )))
-    .fetch_one(&mut *forged)
-    .await
-    .unwrap();
     assert_eq!(
         direct, 0,
         "the runtime cannot use the platform table policy"
@@ -175,8 +178,11 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
 
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER VIEW {name}.memory_view SET (security_invoker = true)"),
+        ddl!(
+            "ALTER VIEW ",
+            id(&schema),
+            ".memory_view SET (security_invoker = true)"
+        ),
     )
     .await;
     assert_guards_accept(&runtime, &platform, &schema).await;
@@ -193,20 +199,21 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
     let mut scoped = begin_owner_transaction(&runtime, authz.owner_scope().unwrap())
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
-    let visible: Vec<Uuid> = sqlx::query_scalar(AssertSqlSafe(format!(
-        "SELECT owner_id FROM {name}.memory_view"
-    )))
-    .fetch_all(&mut *scoped)
-    .await
-    .unwrap();
+    let visible: Vec<Uuid> =
+        sqlx::query_scalar(ddl!("SELECT owner_id FROM ", id(&schema), ".memory_view"))
+            .fetch_all(&mut *scoped)
+            .await
+            .unwrap();
     assert_eq!(visible, vec![owners[0]]);
     scoped.rollback().await.unwrap();
 
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER VIEW {name}.memory_view OWNER TO CURRENT_USER"),
+        ddl!(
+            "ALTER VIEW ",
+            id(&schema),
+            ".memory_view OWNER TO CURRENT_USER"
+        ),
     )
     .await;
     let refused = PgPlatformScope::new(platform.clone(), &[&schema])
@@ -227,18 +234,24 @@ async fn platform_definer_view_leaks_forged_scope_but_invoker_view_is_owner_scop
 async fn catalog_census_refuses_materialized_views_and_foreign_tables_without_runtime_grants() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     let platform = runtime_pool(&database, &owner, &password).await;
-    let name = quoted_ident(&schema);
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("CREATE MATERIALIZED VIEW {name}.cached_memory AS SELECT owner_id FROM {name}.memory WITH NO DATA"),
+        ddl!(
+            "CREATE MATERIALIZED VIEW ",
+            id(&schema),
+            ".cached_memory AS SELECT owner_id FROM ",
+            id(&schema),
+            ".memory WITH NO DATA"
+        ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "ALTER MATERIALIZED VIEW {name}.cached_memory OWNER TO {}",
-            quoted_ident(&owner)
+        ddl!(
+            "ALTER MATERIALIZED VIEW ",
+            id(&schema),
+            ".cached_memory OWNER TO ",
+            id(&owner)
         ),
     )
     .await;
@@ -252,8 +265,7 @@ async fn catalog_census_refuses_materialized_views_and_foreign_tables_without_ru
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("DROP MATERIALIZED VIEW {name}.cached_memory"),
+        ddl!("DROP MATERIALIZED VIEW ", id(&schema), ".cached_memory"),
     )
     .await;
 
@@ -266,15 +278,20 @@ async fn catalog_census_refuses_materialized_views_and_foreign_tables_without_ru
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("CREATE FOREIGN TABLE {name}.remote_memory(id uuid, owner_id uuid) SERVER fixture_server"),
+        ddl!(
+            "CREATE FOREIGN TABLE ",
+            id(&schema),
+            ".remote_memory(id uuid, owner_id uuid) SERVER fixture_server"
+        ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "ALTER FOREIGN TABLE {name}.remote_memory OWNER TO {}",
-            quoted_ident(&owner)
+        ddl!(
+            "ALTER FOREIGN TABLE ",
+            id(&schema),
+            ".remote_memory OWNER TO ",
+            id(&owner)
         ),
     )
     .await;
@@ -286,8 +303,11 @@ async fn catalog_census_refuses_materialized_views_and_foreign_tables_without_ru
         "unsupported foreign table",
     )
     .await;
-    // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-    execute(&admin, &format!("DROP FOREIGN TABLE {name}.remote_memory")).await;
+    execute(
+        &admin,
+        ddl!("DROP FOREIGN TABLE ", id(&schema), ".remote_memory"),
+    )
+    .await;
     assert_guards_accept(&runtime, &platform, &schema).await;
     runtime.close().await;
     platform.close().await;
@@ -295,26 +315,28 @@ async fn catalog_census_refuses_materialized_views_and_foreign_tables_without_ru
 }
 
 async fn install_definer(admin: &PgPool, schema: &str, owner: &str, runtime_role: &str) {
-    let name = quoted_ident(schema);
     execute(
         admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("CREATE FUNCTION {name}.owner_reader() RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, {name}, pg_temp AS 'SELECT 1'"),
+        ddl!("CREATE FUNCTION ", id(schema), ".owner_reader() RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, ", id(schema), ", pg_temp AS 'SELECT 1'"),
     )
     .await;
     execute(
         admin,
-        &format!(
-            "ALTER FUNCTION {name}.owner_reader() OWNER TO {}",
-            quoted_ident(owner)
+        ddl!(
+            "ALTER FUNCTION ",
+            id(schema),
+            ".owner_reader() OWNER TO ",
+            id(owner)
         ),
     )
     .await;
     execute(
         admin,
-        &format!(
-            "REVOKE ALL ON FUNCTION {name}.owner_reader() FROM PUBLIC, {}",
-            quoted_ident(runtime_role)
+        ddl!(
+            "REVOKE ALL ON FUNCTION ",
+            id(schema),
+            ".owner_reader() FROM PUBLIC, ",
+            id(runtime_role)
         ),
     )
     .await;
@@ -328,31 +350,31 @@ async fn install_definer(admin: &PgPool, schema: &str, owner: &str, runtime_role
 async fn definer_function_guards_check_owner_search_path_and_execute_grants() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     let platform = runtime_pool(&database, &owner, &password).await;
-    let name = quoted_ident(&schema);
-    let function = format!("{name}.owner_reader()");
+    let function = ddl!("", id(&schema), ".owner_reader()");
     let bypass = format!("rls_definer_bypass_{}", Uuid::now_v7().simple());
     let inherited = format!("rls_definer_exec_{}", Uuid::now_v7().simple());
     let set_only = format!("rls_definer_set_{}", Uuid::now_v7().simple());
     execute(
         &admin,
-        &format!(
-            "CREATE ROLE {} NOSUPERUSER BYPASSRLS",
-            quoted_ident(&bypass)
-        ),
+        ddl!("CREATE ROLE ", id(&bypass), " NOSUPERUSER BYPASSRLS"),
     )
     .await;
     install_definer(&admin, &schema, &owner, &runtime_role).await;
     assert_guards_accept(&runtime, &platform, &schema).await;
 
     for unsafe_owner in [
-        "CURRENT_USER".to_owned(),
-        quoted_ident(&bypass),
-        quoted_ident(&runtime_role),
+        SqlText::new("CURRENT_USER"),
+        ddl!("", id(&bypass)),
+        ddl!("", id(&runtime_role)),
     ] {
         execute(
             &admin,
-            // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-            &format!("ALTER FUNCTION {function} OWNER TO {unsafe_owner}"),
+            ddl!(
+                "ALTER FUNCTION ",
+                text(&function),
+                " OWNER TO ",
+                text(&unsafe_owner)
+            ),
         )
         .await;
         assert_guards_refuse_named(
@@ -365,49 +387,52 @@ async fn definer_function_guards_check_owner_search_path_and_execute_grants() {
         .await;
         execute(
             &admin,
-            &format!(
-                "ALTER FUNCTION {function} OWNER TO {}",
-                quoted_ident(&owner)
-            ),
+            ddl!("ALTER FUNCTION ", text(&function), " OWNER TO ", id(&owner)),
         )
         .await;
     }
 
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER FUNCTION {function} RESET search_path"),
+        ddl!("ALTER FUNCTION ", text(&function), " RESET search_path"),
     )
     .await;
     assert_guards_refuse_named(&runtime, &platform, &schema, "owner_reader", "search_path").await;
     let writable = format!("writable_{}", Uuid::now_v7().simple());
-    let writable_name = quoted_ident(&writable);
     execute(
         &admin,
-        &format!(
-            "CREATE SCHEMA {writable_name} AUTHORIZATION {}",
-            quoted_ident(&owner)
+        ddl!(
+            "CREATE SCHEMA ",
+            id(&writable),
+            " AUTHORIZATION ",
+            id(&owner)
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "GRANT CREATE ON SCHEMA {writable_name} TO {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "GRANT CREATE ON SCHEMA ",
+            id(&writable),
+            " TO ",
+            id(&runtime_role)
         ),
     )
     .await;
     for unsafe_path in [
-        "pg_temp".to_owned(),
-        format!("pg_catalog, {name}"),
-        format!("pg_temp, pg_catalog, {name}"),
-        format!("pg_catalog, {writable_name}, pg_temp"),
+        SqlText::new("pg_temp"),
+        ddl!("pg_catalog, ", id(&schema)),
+        ddl!("pg_temp, pg_catalog, ", id(&schema)),
+        ddl!("pg_catalog, ", id(&writable), ", pg_temp"),
     ] {
         execute(
             &admin,
-            // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-            &format!("ALTER FUNCTION {function} SET search_path = {unsafe_path}"),
+            ddl!(
+                "ALTER FUNCTION ",
+                text(&function),
+                " SET search_path = ",
+                text(&unsafe_path)
+            ),
         )
         .await;
         assert_guards_refuse_named(&runtime, &platform, &schema, "owner_reader", "search_path")
@@ -415,50 +440,67 @@ async fn definer_function_guards_check_owner_search_path_and_execute_grants() {
     }
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER FUNCTION {function} SET search_path = pg_catalog, {name}, pg_temp"),
+        ddl!(
+            "ALTER FUNCTION ",
+            text(&function),
+            " SET search_path = pg_catalog, ",
+            id(&schema),
+            ", pg_temp"
+        ),
     )
     .await;
     assert_guards_accept(&runtime, &platform, &schema).await;
 
-    for grantee in ["PUBLIC".to_owned(), quoted_ident(&runtime_role)] {
+    for grantee in [SqlText::new("PUBLIC"), ddl!("", id(&runtime_role))] {
         execute(
             &admin,
-            &format!("GRANT EXECUTE ON FUNCTION {function} TO {grantee}"),
+            ddl!(
+                "GRANT EXECUTE ON FUNCTION ",
+                text(&function),
+                " TO ",
+                text(&grantee)
+            ),
         )
         .await;
         assert_guards_refuse_named(&runtime, &platform, &schema, "owner_reader", "EXECUTE").await;
         execute(
             &admin,
-            &format!("REVOKE EXECUTE ON FUNCTION {function} FROM {grantee}"),
+            ddl!(
+                "REVOKE EXECUTE ON FUNCTION ",
+                text(&function),
+                " FROM ",
+                text(&grantee)
+            ),
         )
         .await;
     }
     for (grantee, inherit) in [(&inherited, true), (&set_only, false)] {
         execute(
             &admin,
-            // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-            &format!(
-                "CREATE ROLE {} NOSUPERUSER NOBYPASSRLS",
-                quoted_ident(grantee)
-            ),
+            ddl!("CREATE ROLE ", id(grantee), " NOSUPERUSER NOBYPASSRLS"),
         )
         .await;
         let inherit_clause = if inherit { "TRUE" } else { "FALSE" };
         execute(
             &admin,
-            &format!(
-                "GRANT {} TO {} WITH INHERIT {inherit_clause}, SET TRUE",
-                quoted_ident(grantee),
-                quoted_ident(&runtime_role)
+            ddl!(
+                "GRANT ",
+                id(grantee),
+                " TO ",
+                id(&runtime_role),
+                " WITH INHERIT ",
+                lit(inherit_clause),
+                ", SET TRUE"
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "GRANT EXECUTE ON FUNCTION {function} TO {}",
-                quoted_ident(grantee)
+            ddl!(
+                "GRANT EXECUTE ON FUNCTION ",
+                text(&function),
+                " TO ",
+                id(grantee)
             ),
         )
         .await;
@@ -473,19 +515,17 @@ async fn definer_function_guards_check_owner_search_path_and_execute_grants() {
         assert_guards_refuse_named(&runtime, &platform, &schema, "owner_reader", "EXECUTE").await;
         execute(
             &admin,
-            &format!(
-                "REVOKE EXECUTE ON FUNCTION {function} FROM {}",
-                quoted_ident(grantee)
+            ddl!(
+                "REVOKE EXECUTE ON FUNCTION ",
+                text(&function),
+                " FROM ",
+                id(grantee)
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "REVOKE {} FROM {}",
-                quoted_ident(grantee),
-                quoted_ident(&runtime_role)
-            ),
+            ddl!("REVOKE ", id(grantee), " FROM ", id(&runtime_role)),
         )
         .await;
     }
@@ -497,39 +537,53 @@ async fn definer_function_guards_check_owner_search_path_and_execute_grants() {
         .await
         .unwrap();
     for role in [&bypass, &inherited, &set_only] {
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        execute(&control, &format!("DROP ROLE {}", quoted_ident(role))).await;
+        execute(&control, ddl!("DROP ROLE ", id(role))).await;
     }
     control.close().await;
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "definer matrix shares an isolated database"
+)]
 async fn trigger_definer_executes_without_a_direct_grant_and_exempts_only_execute_acl() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     let platform = runtime_pool(&database, &owner, &password).await;
-    let name = quoted_ident(&schema);
-    let function = format!("{name}.owner_bridge()");
+    let function = ddl!("", id(&schema), ".owner_bridge()");
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("CREATE FUNCTION {function} RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, {name}, pg_temp AS $$ BEGIN RETURN NEW; END $$"),
-    )
-    .await;
-    execute(
-        &admin,
-        &format!(
-            "ALTER FUNCTION {function} OWNER TO {}",
-            quoted_ident(&owner)
+        ddl!(
+            "CREATE FUNCTION ",
+            text(&function),
+            " RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, ",
+            id(&schema),
+            ", pg_temp AS $$ BEGIN RETURN NEW; END $$"
         ),
     )
     .await;
-    // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-    execute(&admin, &format!("CREATE TRIGGER owner_bridge BEFORE INSERT ON {name}.sidecar FOR EACH ROW EXECUTE FUNCTION {function}")).await;
     execute(
         &admin,
-        &format!(
-            "REVOKE ALL ON FUNCTION {function} FROM PUBLIC, {}",
-            quoted_ident(&runtime_role)
+        ddl!("ALTER FUNCTION ", text(&function), " OWNER TO ", id(&owner)),
+    )
+    .await;
+    execute(
+        &admin,
+        ddl!(
+            "CREATE TRIGGER owner_bridge BEFORE INSERT ON ",
+            id(&schema),
+            ".sidecar FOR EACH ROW EXECUTE FUNCTION ",
+            text(&function)
+        ),
+    )
+    .await;
+    execute(
+        &admin,
+        ddl!(
+            "REVOKE ALL ON FUNCTION ",
+            text(&function),
+            " FROM PUBLIC, ",
+            id(&runtime_role)
         ),
     )
     .await;
@@ -557,10 +611,11 @@ async fn trigger_definer_executes_without_a_direct_grant_and_exempts_only_execut
         .await
         .unwrap();
     // Raw INSERT: no write path for the sidecar table reachable from test fixtures; the test creates it
-    // SQL-POLICY: fixed-fragment — fixture-generated, quoted schema identifier.
-    sqlx::query(AssertSqlSafe(format!(
-        "INSERT INTO {name}.sidecar(id, owner_id) VALUES ($1, $1)"
-    )))
+    sqlx::query(ddl!(
+        "INSERT INTO ",
+        id(&schema),
+        ".sidecar(id, owner_id) VALUES ($1, $1)"
+    ))
     .bind(row_owner)
     .execute(&mut *transaction)
     .await
@@ -568,31 +623,39 @@ async fn trigger_definer_executes_without_a_direct_grant_and_exempts_only_execut
     transaction.commit().await.unwrap();
     execute(
         &admin,
-        &format!(
-            "GRANT EXECUTE ON FUNCTION {function} TO PUBLIC, {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "GRANT EXECUTE ON FUNCTION ",
+            text(&function),
+            " TO PUBLIC, ",
+            id(&runtime_role)
         ),
     )
     .await;
     assert_guards_accept(&runtime, &platform, &schema).await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER FUNCTION {function} RESET search_path"),
+        ddl!("ALTER FUNCTION ", text(&function), " RESET search_path"),
     )
     .await;
     assert_guards_refuse_named(&runtime, &platform, &schema, "owner_bridge", "search_path").await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture identifiers and closed SQL clauses.
-        &format!("ALTER FUNCTION {function} SET search_path = pg_catalog, {name}, pg_temp"),
+        ddl!(
+            "ALTER FUNCTION ",
+            text(&function),
+            " SET search_path = pg_catalog, ",
+            id(&schema),
+            ", pg_temp"
+        ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "ALTER FUNCTION {function} OWNER TO {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "ALTER FUNCTION ",
+            text(&function),
+            " OWNER TO ",
+            id(&runtime_role)
         ),
     )
     .await;
@@ -610,68 +673,82 @@ async fn trigger_definer_executes_without_a_direct_grant_and_exempts_only_execut
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "definer matrix shares an isolated database"
+)]
 async fn definer_search_path_refuses_set_only_access_to_a_trusted_schema_owner() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     let platform = runtime_pool(&database, &owner, &password).await;
     let suffix = Uuid::now_v7().simple().to_string();
     let schema_owner = format!("rls_namespace_owner_{suffix}");
     let external_schema = format!("rls_external_{suffix}");
-    let external_name = quoted_ident(&external_schema);
-    let function = format!("{}.path_bridge()", quoted_ident(&schema));
+    let function = ddl!("", id(&schema), ".path_bridge()");
     execute(
         &admin,
-        &format!(
-            "CREATE ROLE {} NOSUPERUSER NOBYPASSRLS",
-            quoted_ident(&schema_owner)
+        ddl!(
+            "CREATE ROLE ",
+            id(&schema_owner),
+            " NOSUPERUSER NOBYPASSRLS"
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "GRANT {} TO {} WITH INHERIT TRUE, SET TRUE",
-            quoted_ident(&schema_owner),
-            quoted_ident(&owner)
+        ddl!(
+            "GRANT ",
+            id(&schema_owner),
+            " TO ",
+            id(&owner),
+            " WITH INHERIT TRUE, SET TRUE"
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "CREATE SCHEMA {external_name} AUTHORIZATION {}",
-            quoted_ident(&schema_owner)
+        ddl!(
+            "CREATE SCHEMA ",
+            id(&external_schema),
+            " AUTHORIZATION ",
+            id(&schema_owner)
         ),
     )
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture schemas and fixed trigger definition.
-        &format!("CREATE FUNCTION {function} RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, {external_name}, pg_temp AS $$ BEGIN RETURN NEW; END $$"),
-    )
-    .await;
-    execute(
-        &admin,
-        &format!(
-            "ALTER FUNCTION {function} OWNER TO {}",
-            quoted_ident(&owner)
+        ddl!(
+            "CREATE FUNCTION ",
+            text(&function),
+            " RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, ",
+            id(&external_schema),
+            ", pg_temp AS $$ BEGIN RETURN NEW; END $$"
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "REVOKE ALL ON FUNCTION {function} FROM PUBLIC, {}",
-            quoted_ident(&runtime_role)
+        ddl!("ALTER FUNCTION ", text(&function), " OWNER TO ", id(&owner)),
+    )
+    .await;
+    execute(
+        &admin,
+        ddl!(
+            "REVOKE ALL ON FUNCTION ",
+            text(&function),
+            " FROM PUBLIC, ",
+            id(&runtime_role)
         ),
     )
     .await;
     assert_guards_accept(&runtime, &platform, &schema).await;
     execute(
         &admin,
-        &format!(
-            "GRANT {} TO {} WITH INHERIT FALSE, SET TRUE",
-            quoted_ident(&schema_owner),
-            quoted_ident(&runtime_role)
+        ddl!(
+            "GRANT ",
+            id(&schema_owner),
+            " TO ",
+            id(&runtime_role),
+            " WITH INHERIT FALSE, SET TRUE"
         ),
     )
     .await;
@@ -702,12 +779,7 @@ async fn definer_search_path_refuses_set_only_access_to_a_trusted_schema_owner()
     let control = PgPool::connect(&proxiima_pg_testkit::admin_url())
         .await
         .unwrap();
-    execute(
-        &control,
-        // SQL-POLICY: fixed-fragment — uniquely generated, quoted fixture role.
-        &format!("DROP ROLE {}", quoted_ident(&schema_owner)),
-    )
-    .await;
+    execute(&control, ddl!("DROP ROLE ", id(&schema_owner))).await;
     control.close().await;
 }
 
@@ -730,12 +802,7 @@ async fn runtime_guard_refuses_a_writable_core_view_until_the_grants_are_restric
             "core view proxiima_core.",
         ),
     ] {
-        execute(
-            &admin,
-            // SQL-POLICY: fixed-fragment — closed grant clauses and a quoted fixture role.
-            &format!("{grant} {}", quoted_ident(&runtime_role)),
-        )
-        .await;
+        execute(&admin, ddl!("", lit(grant), " ", id(&runtime_role))).await;
         let refused = assert_runtime_rls(&runtime, &schemas)
             .await
             .expect_err("a core view the runtime role may write must refuse boot")
@@ -763,10 +830,9 @@ async fn runtime_guard_accepts_a_writable_view_outside_the_core_schema() {
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture role.
-        &format!(
-            "GRANT ALL ON proxiima_example.writable_probe TO {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "GRANT ALL ON proxiima_example.writable_probe TO ",
+            id(&runtime_role)
         ),
     )
     .await;
@@ -805,13 +871,16 @@ async fn restricting_view_grants_leaves_select_for_everyone_and_the_owner_untouc
         "CREATE VIEW proxiima_core.restrict_probe AS SELECT 1 AS one",
     )
     .await;
-    let (runtime_name, platform_name) = (quoted_ident(&runtime_role), quoted_ident(&platform_role));
     for grant in [
-        format!("GRANT ALL ON {view} TO PUBLIC, {runtime_name}"),
-        format!("GRANT INSERT ON {view} TO {platform_name}"),
+        ddl!(
+            "GRANT ALL ON ",
+            lit(view),
+            " TO PUBLIC, ",
+            id(&runtime_role)
+        ),
+        ddl!("GRANT INSERT ON ", lit(view), " TO ", id(&platform_role)),
     ] {
-        // SQL-POLICY: fixed-fragment — quoted fixture roles.
-        execute(&admin, &grant).await;
+        execute(&admin, grant).await;
     }
     let owner: String = sqlx::query_scalar("SELECT current_user::text")
         .fetch_one(&admin)
@@ -855,7 +924,6 @@ async fn runtime_guard_refuses_a_column_write_grant_on_a_core_view_until_the_gra
         super::setup_full_schema().await;
     let schemas = ["proxiima_core", "proxiima_example"];
     let view = "proxiima_core.column_grant_probe";
-    let runtime_name = quoted_ident(&runtime_role);
     execute(
         &admin,
         "CREATE VIEW proxiima_core.column_grant_probe WITH (security_invoker = true) \
@@ -864,8 +932,7 @@ async fn runtime_guard_refuses_a_column_write_grant_on_a_core_view_until_the_gra
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture role.
-        &format!("GRANT SELECT ON {view} TO {runtime_name}"),
+        ddl!("GRANT SELECT ON ", lit(view), " TO ", id(&runtime_role)),
     )
     .await;
     assert_runtime_rls(&runtime, &schemas).await.unwrap();
@@ -876,8 +943,7 @@ async fn runtime_guard_refuses_a_column_write_grant_on_a_core_view_until_the_gra
     ] {
         execute(
             &admin,
-            // SQL-POLICY: fixed-fragment — closed grant clauses, fixed view and a quoted fixture role.
-            &format!("{grant} {view} TO {runtime_name}"),
+            ddl!("", lit(grant), " ", lit(view), " TO ", id(&runtime_role)),
         )
         .await;
         let refused = assert_runtime_rls(&runtime, &schemas)
@@ -912,14 +978,14 @@ async fn restricting_view_grants_takes_a_passed_on_grant_with_it_when_run_by_the
     let (database, admin, runtime, platform, platform_role, runtime_role, _password) =
         super::setup_full_schema().await;
     let view = "proxiima_core.passed_on_probe";
-    let (runtime_name, platform_name) = (quoted_ident(&runtime_role), quoted_ident(&platform_role));
     let middle = format!("rls_middle_{}", Uuid::now_v7().simple());
-    let middle_name = quoted_ident(&middle);
 
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture role.
-        &format!("GRANT CREATE ON SCHEMA proxiima_core TO {platform_name}"),
+        ddl!(
+            "GRANT CREATE ON SCHEMA proxiima_core TO ",
+            id(&platform_role)
+        ),
     )
     .await;
     execute(
@@ -928,39 +994,35 @@ async fn restricting_view_grants_takes_a_passed_on_grant_with_it_when_run_by_the
          AS SELECT t, schema_id FROM proxiima_core.memory",
     )
     .await;
+    execute(&admin, ddl!("CREATE ROLE ", id(&middle), " NOLOGIN")).await;
     execute(
-        &admin,
-        // SQL-POLICY: fixed-fragment — uniquely generated, quoted fixture role.
-        &format!("CREATE ROLE {middle_name} NOLOGIN"),
+        &platform,
+        ddl!("GRANT SELECT ON ", lit(view), " TO ", id(&runtime_role)),
     )
     .await;
     execute(
         &platform,
-        // SQL-POLICY: fixed-fragment — fixed view and quoted fixture roles.
-        &format!("GRANT SELECT ON {view} TO {runtime_name}"),
-    )
-    .await;
-    execute(
-        &platform,
-        // SQL-POLICY: fixed-fragment — fixed view and quoted fixture roles.
-        &format!("GRANT UPDATE ON {view} TO {middle_name} WITH GRANT OPTION"),
+        ddl!(
+            "GRANT UPDATE ON ",
+            lit(view),
+            " TO ",
+            id(&middle),
+            " WITH GRANT OPTION"
+        ),
     )
     .await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — quoted fixture role.
-        &format!("GRANT USAGE ON SCHEMA proxiima_core TO {middle_name}"),
+        ddl!("GRANT USAGE ON SCHEMA proxiima_core TO ", id(&middle)),
     )
     .await;
     let mut connection = admin.acquire().await.unwrap();
     for statement in [
-        // SQL-POLICY: fixed-fragment — quoted fixture roles and a fixed view.
-        format!("SET ROLE {middle_name}"),
-        // SQL-POLICY: fixed-fragment — quoted fixture roles and a fixed view.
-        format!("GRANT UPDATE ON {view} TO {runtime_name}"),
-        "RESET ROLE".to_owned(),
+        ddl!("SET ROLE ", id(&middle)),
+        ddl!("GRANT UPDATE ON ", lit(view), " TO ", id(&runtime_role)),
+        SqlText::new("RESET ROLE"),
     ] {
-        sqlx::query(AssertSqlSafe(statement))
+        sqlx::query(statement)
             .execute(&mut *connection)
             .await
             .unwrap();
@@ -996,11 +1058,6 @@ async fn restricting_view_grants_takes_a_passed_on_grant_with_it_when_run_by_the
     let control = PgPool::connect(&proxiima_pg_testkit::admin_url())
         .await
         .unwrap();
-    execute(
-        &control,
-        // SQL-POLICY: fixed-fragment — uniquely generated, quoted fixture role.
-        &format!("DROP ROLE {middle_name}"),
-    )
-    .await;
+    execute(&control, ddl!("DROP ROLE ", id(&middle))).await;
     control.close().await;
 }

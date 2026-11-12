@@ -1,11 +1,12 @@
 //! The narrowly scoped candidate authority is the only runtime definer exception.
 
+use proxiima_core::SqlText;
 use proxiima_storage_pg::assert_runtime_rls;
 use proxiima_storage_pg::search_candidates::ARGUMENT_TYPES;
 use proxiima_storage_pg::test_fixtures::fresh_pg;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
-use super::{assert_rls_refusal, execute, quoted_ident};
+use super::{assert_rls_refusal, execute};
 
 async fn assert_refused(runtime: &PgPool, reason: &str) {
     let error = assert_runtime_rls(runtime, &["proxiima_core"])
@@ -45,14 +46,14 @@ async fn runtime_cannot_assume_or_replace_candidate_authority() {
         .await
         .expect_err("runtime cannot assume the candidate role");
     assert_rls_refusal(&error);
-    // SQL-POLICY: fixed-fragment — the signature is the fixed candidate contract.
-    let replacement = format!(
-        "CREATE OR REPLACE FUNCTION proxiima_core.search_lexical_candidates({ARGUMENT_TYPES}) \
+    let mut replacement =
+        SqlText::new("CREATE OR REPLACE FUNCTION proxiima_core.search_lexical_candidates(");
+    replacement.push(ARGUMENT_TYPES).push(
+        ") \
          RETURNS TABLE(t uuid, schema_id text, lexical_score real) \
-         LANGUAGE sql AS 'SELECT NULL::uuid, NULL::text, NULL::real WHERE false'"
+         LANGUAGE sql AS 'SELECT NULL::uuid, NULL::text, NULL::real WHERE false'",
     );
-    // SQL-POLICY: fixed-fragment — the replacement above has no caller-controlled SQL.
-    let error = sqlx::query(AssertSqlSafe(replacement))
+    let error = sqlx::query(replacement)
         .execute(&runtime)
         .await
         .expect_err("runtime cannot replace a candidate function");
@@ -64,31 +65,43 @@ async fn candidate_definers_reject_public_execution_and_hijacked_paths() {
     let (pg, _database) = fresh_pg("candidate_definer_catalog").await;
     let admin = pg.pool_for_tests();
     let runtime = pg.clone_pool_for_backend();
-    let signature = format!("proxiima_core.search_lexical_candidates({ARGUMENT_TYPES})");
-    // SQL-POLICY: fixed-fragment — fixed function name and identity arguments.
+    let signature = ddl!(
+        "proxiima_core.search_lexical_candidates(",
+        lit(ARGUMENT_TYPES),
+        ")"
+    );
     execute(
         admin,
-        &format!("GRANT EXECUTE ON FUNCTION {signature} TO PUBLIC"),
+        ddl!("GRANT EXECUTE ON FUNCTION ", text(&signature), " TO PUBLIC"),
     )
     .await;
     assert_refused(&runtime, "PUBLIC EXECUTE").await;
-    // SQL-POLICY: fixed-fragment — fixed function name and identity arguments.
     execute(
         admin,
-        &format!("REVOKE EXECUTE ON FUNCTION {signature} FROM PUBLIC"),
+        ddl!(
+            "REVOKE EXECUTE ON FUNCTION ",
+            text(&signature),
+            " FROM PUBLIC"
+        ),
     )
     .await;
-    // SQL-POLICY: fixed-fragment — fixed function identity and path values.
     execute(
         admin,
-        &format!("ALTER FUNCTION {signature} SET search_path = pg_temp, pg_catalog"),
+        ddl!(
+            "ALTER FUNCTION ",
+            text(&signature),
+            " SET search_path = pg_temp, pg_catalog"
+        ),
     )
     .await;
     assert_refused(&runtime, "search_path").await;
-    // SQL-POLICY: fixed-fragment — restores the generated function's exact path.
     execute(
         admin,
-        &format!("ALTER FUNCTION {signature} SET search_path = pg_catalog, pg_temp"),
+        ddl!(
+            "ALTER FUNCTION ",
+            text(&signature),
+            " SET search_path = pg_catalog, pg_temp"
+        ),
     )
     .await;
     assert_runtime_rls(&runtime, &["proxiima_core"])
@@ -105,12 +118,11 @@ async fn candidate_policy_is_read_only_and_requires_a_projection_shape() {
         "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'proxiima_core.memory'::regclass",
     ).fetch_one(admin).await.unwrap();
     execute(admin, "CREATE TABLE proxiima_core.document_search(memory_id uuid PRIMARY KEY REFERENCES proxiima_core.memory(t), search_tsv tsvector NOT NULL)").await;
-    // SQL-POLICY: fixed-fragment — quoted catalog role name is the existing table owner.
     execute(
         admin,
-        &format!(
-            "ALTER TABLE proxiima_core.document_search OWNER TO {}",
-            quoted_ident(&platform)
+        ddl!(
+            "ALTER TABLE proxiima_core.document_search OWNER TO ",
+            id(&platform)
         ),
     )
     .await;

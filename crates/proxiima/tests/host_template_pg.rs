@@ -87,12 +87,12 @@ const LEDGER_TABLES: [&str; 3] = [
 const NOTES: i64 = 20_990_101_000_010;
 const SEED: &str = "INSERT INTO public.hosttpl_notes VALUES (1, 'seeded by the host migration')";
 
-fn migration(version: i64, sql: &str) -> Migration {
+fn migration(version: i64, sql: &'static str) -> Migration {
     Migration::new(
         version,
         Cow::Owned(format!("host {version}")),
         MigrationType::Simple,
-        sqlx::AssertSqlSafe(sql.to_owned()).into_sql_str(),
+        sql.into_sql_str(),
         false,
     )
 }
@@ -506,7 +506,7 @@ fn a_lineup_the_runner_refuses_gets_no_template() {
 }
 
 /// A single-migration host on a ledger of its own.
-fn single(source: &'static str, sql: &str) -> Vec<NamedMigrator> {
+fn single(source: &'static str, sql: &'static str) -> Vec<NamedMigrator> {
     vec![NamedMigrator::spiice(
         source,
         migrator(vec![migration(NOTES, sql)]),

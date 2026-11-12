@@ -2,7 +2,7 @@ use sqlx::{PgConnection, Postgres, Transaction};
 
 use super::PgSidecarRegistryFrozen;
 use crate::error::map_err;
-use proxiima_core::StorageError;
+use proxiima_core::{PgIdent, SqlText, StorageError};
 
 impl PgSidecarRegistryFrozen {
     /// Synchronize sidecars whose owner follows memory in the caller's migration transaction.
@@ -45,16 +45,18 @@ impl PgSidecarRegistryFrozen {
             .iter()
             .map(|name| crate::rename_bootstrap::historical_catalog_name(name))
             .collect::<Vec<_>>();
-        // SQL-POLICY: fixed-fragment — namespace from embedded historical definitions.
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT {}core.sync_owner_follows($1, $2)",
+        let schema = PgIdent::name(&format!(
+            "{}core",
             crate::rename_bootstrap::historical_namespace_prefix()
-        )))
-        .bind(schemas)
-        .bind(tables)
-        .execute(&mut **tx)
-        .await
-        .map_err(map_err)?;
+        ))?;
+        let mut call = SqlText::new("SELECT ");
+        call.push_ident(&schema).push(".sync_owner_follows($1, $2)");
+        sqlx::query(call)
+            .bind(schemas)
+            .bind(tables)
+            .execute(&mut **tx)
+            .await
+            .map_err(map_err)?;
         Ok(())
     }
 

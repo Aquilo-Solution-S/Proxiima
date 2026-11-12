@@ -56,10 +56,14 @@ fn the_installer_section_is_the_non_sidecar_tables_then_the_census() {
     assert!(calls[1].contains("install_owner_rls_table('proxiima_example', 'settings'"));
     assert!(calls[2].contains("assert_owner_rls_census('proxiima_example')"));
     assert_eq!(
-        proxiima_example::baseline_sql_with_owner_rls(&calls),
+        proxiima_example::baseline_sql_with_owner_rls(&calls).as_str(),
         proxiima_example::BASELINE_SQL
             .replace("-- owner-rls: begin\n", "")
             .replace("-- owner-rls: end\n", "")
     );
-    assert!(!proxiima_example::baseline_sql_without_installer().contains("install_owner_rls"));
+    assert!(
+        !proxiima_example::baseline_sql_without_installer()
+            .as_str()
+            .contains("install_owner_rls")
+    );
 }

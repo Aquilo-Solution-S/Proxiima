@@ -45,13 +45,13 @@ pub use search::{
     substring_sql_for_tests,
 };
 #[cfg(any(test, feature = "testkit"))]
-pub use series_handle::owned_head_handle_sql_for_tests;
+pub use series_handle::explain_owned_head_handle_for_tests;
 pub(crate) use series_handle::{owned_head_handle, owned_head_memory_id, push_atom};
 pub(crate) use sidecar_heads::sidecar_heads_by_key_on_connection;
 
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
-pub fn set_hnsw_search_sql_for_tests(tuning: &crate::tuning::PgTuning) -> String {
+pub fn set_hnsw_search_sql_for_tests(tuning: &crate::tuning::PgTuning) -> proxiima_core::SqlText {
     crate::pgvector::set_hnsw_search_sql(tuning)
 }

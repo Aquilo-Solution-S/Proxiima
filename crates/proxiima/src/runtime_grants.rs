@@ -22,7 +22,7 @@
 //! role membership; no DML on `public` beyond the ledgers' `SELECT` (host
 //! tables may live there). All statements are `GRANT` / `REVOKE` /
 //! `ALTER DEFAULT PRIVILEGES`, or the view restriction, which only revokes:
-//! idempotent. Every identifier is [`quote_ident`]ed.
+//! idempotent. Every identifier is a quoted [`PgIdent`].
 //!
 //! Not issued: `GRANT SET ON PARAMETER app.proxiima_scope` — superuser-only,
 //! and unused by this release (the scope is bound transaction-locally).
@@ -33,8 +33,9 @@
 
 use std::str::FromStr;
 
+use proxiima_core::{PgIdent, SqlText};
+use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
-use sqlx::{AssertSqlSafe, PgPool};
 
 use crate::ProxiimaError;
 use crate::migrations::NamedMigrator;
@@ -148,11 +149,8 @@ impl RuntimeGrants {
             runtime_schema_usage,
         })
         .collect();
-        for statement in grant_statements(&self.runtime_role, &schemas, &ledgers) {
-            // SQL-POLICY: fixed-fragment — fixed privilege lists; the role is
-            // the parsed `DATABASE_URL` user and schema/table names are read
-            // from the catalog above, each passed through `quote_ident`.
-            sqlx::raw_sql(AssertSqlSafe(statement.sql))
+        for statement in grant_statements(&self.runtime_role, &schemas, &ledgers)? {
+            sqlx::raw_sql(statement.sql)
                 .execute(&mut *tx)
                 .await
                 .map_err(|error| failed(statement.class, &statement.object, error))?;
@@ -176,42 +174,55 @@ impl RuntimeGrants {
         connection: &mut sqlx::PgConnection,
         schemas: &[String],
     ) -> Result<(), ProxiimaError> {
-        let statements: Vec<String> = sqlx::query_scalar(
-            "SELECT format('DO %L', format(
-                 'DECLARE original_role name := current_user;
-                  BEGIN
-                    SET LOCAL ROLE %I;
-                    GRANT EXECUTE ON FUNCTION %I.%I(%s) TO %I;
-                    EXECUTE format(''SET LOCAL ROLE %%I'', original_role);
-                  END',
-                 owner_role.rolname, n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), $2::text))
-               FROM pg_proc p
-               JOIN pg_namespace n ON n.oid = p.pronamespace
-               JOIN pg_roles owner_role ON owner_role.oid = p.proowner
-              WHERE n.nspname = ANY($1::text[])
-                AND owner_role.rolname IN ('proxiima_search','proxiima_goal_reader')
-                AND p.prosecdef AND p.prokind = 'f'
-              ORDER BY n.nspname, p.proname, p.oid",
+        let fail = |error| {
+            failed(
+                "GRANT EXECUTE ON FUNCTION",
+                "isolated read functions",
+                error,
+            )
+        };
+        let schemas_json = serde_json::to_string(schemas).map_err(|error| {
+            ProxiimaError::Config(format!("runtime grants: schema list: {error}"))
+        })?;
+        sqlx::query(
+            "SELECT set_config('proxiima.grant_schemas', $1, true),
+                    set_config('proxiima.grant_role', $2, true)",
         )
-        .bind(schemas)
+        .bind(schemas_json)
         .bind(&self.runtime_role)
-        .fetch_all(&mut *connection)
+        .execute(&mut *connection)
         .await
-        .map_err(|error| failed("candidate function lookup", "composed schemas", error))?;
-        for statement in statements {
-            // SQL-POLICY: fixed-fragment — PostgreSQL format quotes catalog signatures,
-            // the runtime identifier and the DO body; only the two fixed read-only owners are admitted.
-            sqlx::raw_sql(AssertSqlSafe(statement))
-                .execute(&mut *connection)
-                .await
-                .map_err(|error| {
-                    failed(
-                        "GRANT EXECUTE ON FUNCTION",
-                        "isolated read functions",
-                        error,
-                    )
-                })?;
-        }
+        .map_err(fail)?;
+        sqlx::raw_sql(
+            "DO $grant$
+             DECLARE
+               original_role name := current_user;
+               function_row record;
+             BEGIN
+               FOR function_row IN
+                 SELECT owner_role.rolname AS owner_name, n.nspname AS schema_name,
+                        p.proname AS function_name,
+                        pg_get_function_identity_arguments(p.oid) AS args
+                   FROM pg_proc p
+                   JOIN pg_namespace n ON n.oid = p.pronamespace
+                   JOIN pg_roles owner_role ON owner_role.oid = p.proowner
+                  WHERE n.nspname IN (SELECT jsonb_array_elements_text(
+                                        current_setting('proxiima.grant_schemas')::jsonb))
+                    AND owner_role.rolname IN ('proxiima_search','proxiima_goal_reader')
+                    AND p.prosecdef AND p.prokind = 'f'
+                  ORDER BY n.nspname, p.proname, p.oid
+               LOOP
+                 EXECUTE format('SET LOCAL ROLE %I', function_row.owner_name);
+                 EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(%s) TO %I',
+                                function_row.schema_name, function_row.function_name,
+                                function_row.args, current_setting('proxiima.grant_role'));
+                 EXECUTE format('SET LOCAL ROLE %I', original_role);
+               END LOOP;
+             END $grant$",
+        )
+        .execute(&mut *connection)
+        .await
+        .map_err(fail)?;
         Ok(())
     }
 }
@@ -238,11 +249,6 @@ pub(crate) fn ledger_names(migrators: &[NamedMigrator]) -> Vec<String> {
     ledgers.sort();
     ledgers.dedup();
     ledgers
-}
-
-/// A `PostgreSQL` identifier, quoted, embedded `"` doubled.
-fn quote_ident(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 fn url_user(url: &str, variable: &str) -> Result<String, ProxiimaError> {
@@ -274,17 +280,36 @@ struct GrantStatement {
     class: &'static str,
     /// The schema or table it targets, for the failure message.
     object: String,
-    sql: String,
+    sql: SqlText,
 }
 
 impl GrantStatement {
-    fn new(class: &'static str, object: &str, sql: String) -> Self {
+    /// A statement from a program literal; `names` fill its placeholders in
+    /// one pass.
+    fn new(
+        class: &'static str,
+        object: &str,
+        template: &'static str,
+        names: &[(&'static str, &PgIdent)],
+    ) -> Self {
+        let parts: Vec<(&'static str, SqlText)> = names
+            .iter()
+            .map(|&(placeholder, name)| (placeholder, SqlText::from(name)))
+            .collect();
+        let parts: Vec<(&'static str, &SqlText)> = parts
+            .iter()
+            .map(|(placeholder, text)| (*placeholder, text))
+            .collect();
         Self {
             class,
             object: object.to_owned(),
-            sql,
+            sql: SqlText::fill(template, &parts),
         }
     }
+}
+
+fn quoted(name: &str) -> Result<PgIdent, ProxiimaError> {
+    PgIdent::quoted(name).map_err(|error| ProxiimaError::Config(format!("runtime grants: {error}")))
 }
 
 /// The statements, in order, for existing `schemas` and `ledgers`. Ledgers
@@ -294,34 +319,36 @@ fn grant_statements(
     runtime_role: &str,
     schemas: &[String],
     ledgers: &[Ledger],
-) -> Vec<GrantStatement> {
-    let runtime = quote_ident(runtime_role);
+) -> Result<Vec<GrantStatement>, ProxiimaError> {
+    let runtime = quoted(runtime_role)?;
     let mut statements = Vec::new();
     for name in schemas {
-        let schema = quote_ident(name);
+        let schema = quoted(name)?;
+        let schema_statement = |class, template| {
+            GrantStatement::new(
+                class,
+                name,
+                template,
+                &[("{schema}", &schema), ("{runtime}", &runtime)],
+            )
+        };
         statements.extend([
-            GrantStatement::new(
+            schema_statement(
                 "GRANT USAGE ON SCHEMA",
-                name,
-                format!("GRANT USAGE ON SCHEMA {schema} TO {runtime}"),
+                "GRANT USAGE ON SCHEMA {schema} TO {runtime}",
             ),
-            GrantStatement::new(
+            schema_statement(
                 "REVOKE CREATE ON SCHEMA FROM PUBLIC",
-                name,
-                format!("REVOKE CREATE ON SCHEMA {schema} FROM PUBLIC"),
+                "REVOKE CREATE ON SCHEMA {schema} FROM PUBLIC",
             ),
-            GrantStatement::new(
+            schema_statement(
                 "REVOKE CREATE ON SCHEMA FROM runtime",
-                name,
-                format!("REVOKE CREATE ON SCHEMA {schema} FROM {runtime}"),
+                "REVOKE CREATE ON SCHEMA {schema} FROM {runtime}",
             ),
-            GrantStatement::new(
+            schema_statement(
                 "GRANT DML ON ALL TABLES",
-                name,
-                format!(
-                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} \
-                     TO {runtime}"
-                ),
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} \
+                 TO {runtime}",
             ),
         ]);
         if name == CORE_SCHEMA {
@@ -329,32 +356,24 @@ fn grant_statements(
             statements.push(GrantStatement::new(
                 "RESTRICT core view grants",
                 name,
-                "SELECT proxiima_core.restrict_view_grants()".to_owned(),
+                "SELECT proxiima_core.restrict_view_grants()",
+                &[],
             ));
         }
         statements.extend([
-            GrantStatement::new(
+            schema_statement(
                 "GRANT ON ALL SEQUENCES",
-                name,
-                format!(
-                    "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA {schema} TO {runtime}"
-                ),
+                "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA {schema} TO {runtime}",
             ),
-            GrantStatement::new(
+            schema_statement(
                 "ALTER DEFAULT PRIVILEGES ON TABLES",
-                name,
-                format!(
-                    "ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} \
-                     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {runtime}"
-                ),
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} \
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {runtime}",
             ),
-            GrantStatement::new(
+            schema_statement(
                 "ALTER DEFAULT PRIVILEGES ON SEQUENCES",
-                name,
-                format!(
-                    "ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} \
-                     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {runtime}"
-                ),
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} \
+                 GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {runtime}",
             ),
         ]);
     }
@@ -369,33 +388,42 @@ fn grant_statements(
         statements.push(GrantStatement::new(
             "GRANT USAGE ON ledger SCHEMA",
             name,
-            format!("GRANT USAGE ON SCHEMA {} TO {runtime}", quote_ident(name)),
+            "GRANT USAGE ON SCHEMA {schema} TO {runtime}",
+            &[("{schema}", &quoted(name)?), ("{runtime}", &runtime)],
         ));
     }
     for Ledger { schema, table, .. } in ledgers {
         let object = format!("{schema}.{table}");
-        let ledger = format!("{}.{}", quote_ident(schema), quote_ident(table));
+        let ledger_statement = |class, template| {
+            Ok::<_, ProxiimaError>(GrantStatement::new(
+                class,
+                &object,
+                template,
+                &[
+                    ("{ledger_schema}", &quoted(schema)?),
+                    ("{ledger_table}", &quoted(table)?),
+                    ("{runtime}", &runtime),
+                ],
+            ))
+        };
         statements.extend([
-            GrantStatement::new(
+            ledger_statement(
                 "REVOKE writes ON ledger",
-                &object,
-                format!("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON {ledger} FROM {runtime}"),
-            ),
-            GrantStatement::new(
+                "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON {ledger_schema}.{ledger_table} \
+                 FROM {runtime}",
+            )?,
+            ledger_statement(
                 "GRANT SELECT ON ledger",
-                &object,
-                format!("GRANT SELECT ON {ledger} TO {runtime}"),
-            ),
+                "GRANT SELECT ON {ledger_schema}.{ledger_table} TO {runtime}",
+            )?,
         ]);
     }
-    statements
+    Ok(statements)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Ledger, ProxiimaError, RuntimeGrants, grant_statements, ledger_names, quote_ident,
-    };
+    use super::{Ledger, ProxiimaError, RuntimeGrants, grant_statements, ledger_names};
 
     fn owned(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -415,9 +443,8 @@ mod tests {
 
     #[test]
     fn identifiers_are_quoted_and_embedded_quotes_doubled() {
-        assert_eq!(quote_ident("proxiima_core"), "\"proxiima_core\"");
-        assert_eq!(quote_ident("a\"; DROP"), "\"a\"\"; DROP\"");
-        let statements = grant_statements("rt\"x", &owned(&["proxiima_core"]), &[]);
+        let statements =
+            grant_statements("rt\"x", &owned(&["proxiima_core"]), &[]).expect("statements");
         assert!(
             sql(&statements).contains(&"GRANT USAGE ON SCHEMA \"proxiima_core\" TO \"rt\"\"x\"")
         );
@@ -434,7 +461,8 @@ mod tests {
                 ledger("public", "_sqlx_migrations"),
                 ledger("public", "_sqlx_migrations_proxiima_fixture"),
             ],
-        );
+        )
+        .expect("statements");
         let sql = sql(&statements);
         for schema in &schemas {
             for expected in [
@@ -494,7 +522,8 @@ mod tests {
 
     #[test]
     fn core_views_are_restricted_right_after_the_core_blanket_grant_and_only_there() {
-        let statements = grant_statements("runtime", &owned(&["proxiima_core", "proxiima_x"]), &[]);
+        let statements = grant_statements("runtime", &owned(&["proxiima_core", "proxiima_x"]), &[])
+            .expect("statements");
         let issued = sql(&statements);
         let restrict = "SELECT proxiima_core.restrict_view_grants()";
         assert_eq!(issued.iter().filter(|s| **s == restrict).count(), 1);
@@ -503,7 +532,8 @@ mod tests {
             .position(|s| s.contains("ALL TABLES IN SCHEMA \"proxiima_core\""))
             .expect("core blanket grant");
         assert_eq!(issued[blanket + 1], restrict);
-        let without_core = grant_statements("runtime", &owned(&["proxiima_x"]), &[]);
+        let without_core =
+            grant_statements("runtime", &owned(&["proxiima_x"]), &[]).expect("statements");
         assert!(
             sql(&without_core)
                 .iter()
@@ -517,7 +547,7 @@ mod tests {
             runtime_schema_usage: true,
             ..ledger("public", "_sqlx_migrations")
         };
-        let statements = grant_statements("runtime", &[], &[usable]);
+        let statements = grant_statements("runtime", &[], &[usable]).expect("statements");
         assert_eq!(
             sql(&statements),
             [
@@ -533,7 +563,8 @@ mod tests {
             "runtime",
             &owned(&["proxiima_x"]),
             &[ledger("proxiima_x", "_ledger")],
-        );
+        )
+        .expect("statements");
         let sql = sql(&statements);
         let schema_dml = sql
             .iter()

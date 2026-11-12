@@ -547,10 +547,10 @@ macro_rules! pg_sidecar {
                         )+],
                         stamp_owner,
                     )?;
-                    // SQL-POLICY: PgIdent — `sql` is built by memory_insert_sql
-                    // from macro-literal table/column names validated as PgIdent;
-                    // every value below is bound.
-                    let result = $crate::__private::sqlx::query($crate::__private::sqlx::AssertSqlSafe(sql))
+                    // `sql` is built by memory_insert_sql from macro-literal
+                    // table/column names validated as PgIdent; every value
+                    // below is bound.
+                    let result = $crate::__private::sqlx::query(sql)
                         .bind(memory_id.into_inner())
                         $(
                             .bind($crate::pg_sidecar_bind!($column_kind, self, $field))
@@ -636,7 +636,7 @@ macro_rules! pg_sidecar {
                             ::std::stringify!($key_column),
                             columns,
                         )?;
-                        ctx.fetch_all_by_memory_ids_owner_pinned::<$row_ty>(&sql, memory_ids).await?
+                        ctx.fetch_all_by_memory_ids_owner_pinned::<$row_ty>(sql, memory_ids).await?
                     } else {
                         // Follows and None hydrate like an ordinary sidecar:
                         // the row is reached through the memory, not the
@@ -646,7 +646,7 @@ macro_rules! pg_sidecar {
                             ::std::stringify!($key_column),
                             columns,
                         )?;
-                        ctx.fetch_all_by_memory_ids::<$row_ty>(&sql, memory_ids).await?
+                        ctx.fetch_all_by_memory_ids::<$row_ty>(sql, memory_ids).await?
                     };
                     rows.into_iter()
                         .map(|row| {

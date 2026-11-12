@@ -450,8 +450,7 @@ async fn a_projection_row_cannot_claim_a_schema_its_memory_is_not() {
             .expect("the generator emits a valid statement");
 
         // A real, declared schema id — and not this memory's.
-        // SQL-POLICY: generated
-        let wrong = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+        let wrong = sqlx::query(sql.clone())
             .bind(t.into_inner())
             .bind(None::<&str>)
             .bind("core/interpretation-v1")
@@ -472,8 +471,7 @@ async fn a_projection_row_cannot_claim_a_schema_its_memory_is_not() {
         // The control: the same statement with the memory's own id writes.
         // Without it, a guard that rejected EVERYTHING would pass the half
         // above.
-        // SQL-POLICY: generated
-        let right = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let right = sqlx::query(sql)
             .bind(t.into_inner())
             .bind(None::<&str>)
             .bind(AgentNoteV1::SCHEMA_ID)
@@ -583,12 +581,12 @@ async fn a_sidecar_keyed_on_its_own_column_name_still_files_its_projection_row()
         let sql = crate::projection::projection_insert_sql(&contract, schema)
             .expect("the generator emits a valid statement");
         assert!(
-            sql.contains(&format!("c.{RENAMED_KEY}")),
-            "the generator reads the declared key column: {sql}"
+            sql.as_str().contains(&format!("c.{RENAMED_KEY}")),
+            "the generator reads the declared key column: {}",
+            sql.as_str()
         );
 
-        // SQL-POLICY: generated
-        let filed = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let filed = sqlx::query(sql)
             .bind(t.into_inner())
             .bind(Some("german"))
             .bind(AgentNoteV1::SCHEMA_ID)

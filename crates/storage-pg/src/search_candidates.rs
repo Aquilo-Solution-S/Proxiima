@@ -5,9 +5,8 @@
 //! ordinary memory RLS authorizes every id before the function returns it.
 
 use proxiima_core::spiice::SpiiceContract;
-use proxiima_core::{StorageError, verbs::query::SearchOrder};
+use proxiima_core::{PgIdent, SqlText, StorageError, verbs::query::SearchOrder};
 
-use crate::pg_ident::PgIdent;
 use crate::projection::Artifact;
 use crate::verbs::query::RankedCandidates;
 use crate::verbs::query::SubstringCandidates;
@@ -24,8 +23,8 @@ const PARAMETERS: &str = "query_text text, candidate_limit bigint, requested_tag
 /// definition source.
 #[derive(Debug, Clone)]
 pub(crate) struct CandidateDefinition {
-    pub(crate) signature: String,
-    pub(crate) body: String,
+    pub(crate) signature: SqlText,
+    pub(crate) body: SqlText,
     pub(crate) kind: CandidateKind,
     pub(crate) artifact: Artifact,
 }
@@ -49,8 +48,8 @@ impl CandidateKind {
 ///
 /// # Errors
 /// Refuses a projection table that is not a qualified `PostgreSQL` identifier.
-pub fn function_name(table: &str, substring: bool) -> Result<String, StorageError> {
-    let _ = PgIdent::table(table)?;
+pub fn function_name(table: &str, substring: bool) -> Result<PgIdent, StorageError> {
+    PgIdent::table(table)?;
     let (schema, _) = table.split_once('.').ok_or_else(|| {
         StorageError::Internal("candidate projection must be schema-qualified".into())
     })?;
@@ -59,25 +58,27 @@ pub fn function_name(table: &str, substring: bool) -> Result<String, StorageErro
     } else {
         "search_lexical_candidates"
     };
-    let qualified = format!("{schema}.{name}");
-    let _ = PgIdent::table(&qualified)?;
-    Ok(qualified)
+    PgIdent::table(&format!("{schema}.{name}"))
 }
 
-pub(crate) fn call_sql(table: &str, substring: bool) -> Result<String, StorageError> {
+/// The statement that calls the candidate function for `table`.
+///
+/// # Errors
+/// As [`function_name`].
+pub(crate) fn call_sql(table: &str, substring: bool) -> Result<SqlText, StorageError> {
     let name = function_name(table, substring)?;
-    let columns = if substring {
+    let mut sql = SqlText::new("SELECT ");
+    sql.push(if substring {
         "t, lexical_score"
     } else {
         "t, schema_id, lexical_score"
-    };
-    // SQL-POLICY: PgIdent — the function name is derived from the checked schema.
-    Ok(format!(
-        "SELECT {columns} FROM {name}(\
-         $1::text, $2::bigint, $3::text[], $4::timestamptz, $5::timestamptz, \
+    });
+    sql.push(" FROM ").push_ident(&name).push(
+        "($1::text, $2::bigint, $3::text[], $4::timestamptz, $5::timestamptz, \
          $6::uuid, $7::uuid[], $8::text[], $9::boolean, $10::boolean, \
-         $11::boolean, $12::text, $13::boolean)"
-    ))
+         $11::boolean, $12::text, $13::boolean)",
+    );
+    Ok(sql)
 }
 
 /// Generate the lexical and declared substring functions for one spiice.
@@ -138,6 +139,10 @@ fn candidate_artifacts_for_projection(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the statement text is the length of the function"
+)]
 fn candidate_definitions_for_projection(
     table: &str,
     cap: u32,
@@ -162,7 +167,7 @@ fn candidate_definitions_for_projection(
                     .filter(|leg| leg.table.starts_with("proxiima_core."))
                     .map(|leg| leg.table.clone()),
             );
-            (substring_execution(&template), tables)
+            (substring_execution(&template)?, tables)
         } else {
             let Some(template) = crate::verbs::query::projection_ranked_candidates(projections)?
             else {
@@ -177,24 +182,55 @@ fn candidate_definitions_for_projection(
             CandidateKind::Lexical
         };
         let returns = kind.result_columns();
-        // SQL-POLICY: PgIdent — name and all body identifiers are checked by the renderer.
-        let body = format!(
+        let mut cap_sql = SqlText::new("");
+        cap_sql.push_u64(u64::from(cap));
+        let cap = cap_sql;
+        // The name and all body identifiers are checked by the renderer.
+        let mut body = SqlText::new(
             "\nBEGIN\n\
                  PERFORM proxiima_core.assert_search_scope(requested_owners);\n\
-                 IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > {cap} THEN\n\
-                     RAISE EXCEPTION 'candidate limit must be between 1 and {cap}' USING ERRCODE = 'PX002';\n\
-                 END IF;\n\
-                 {template}\n\
-             END\n",
+                 IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > ",
         );
-        let function_ddl = format!(
-            "CREATE OR REPLACE FUNCTION {name}({PARAMETERS})\n\
-             RETURNS TABLE({returns})\n\
+        body.push_text(&cap)
+            .push(
+                " THEN\n\
+                     RAISE EXCEPTION 'candidate limit must be between 1 and ",
+            )
+            .push_text(&cap)
+            .push(
+                "' USING ERRCODE = 'PX002';\n\
+                 END IF;\n\
+                 ",
+            )
+            .push_text(&template)
+            .push(
+                "\n\
+             END\n",
+            );
+        let mut function_ddl = SqlText::new("CREATE OR REPLACE FUNCTION ");
+        function_ddl
+            .push_ident(&name)
+            .push("(")
+            .push(PARAMETERS)
+            .push(
+                ")\n\
+             RETURNS TABLE(",
+            )
+            .push(returns)
+            .push(
+                ")\n\
              LANGUAGE plpgsql SECURITY DEFINER\n\
              SET search_path TO pg_catalog, pg_temp\n\
-             AS $candidate_function${body}$candidate_function$;",
-        );
-        let signature = format!("{name}({ARGUMENT_TYPES})");
+             AS $candidate_function$",
+            )
+            .push_text(&body)
+            .push("$candidate_function$;");
+        let mut signature = SqlText::new("");
+        signature
+            .push_ident(&name)
+            .push("(")
+            .push(ARGUMENT_TYPES)
+            .push(")");
         let mut read_tables = vec![
             "proxiima_core.memory",
             "proxiima_core.memory_head",
@@ -223,10 +259,15 @@ fn candidate_definitions_for_projection(
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
         )?;
+        let mut drop_function = SqlText::new("DROP FUNCTION IF EXISTS ");
+        drop_function
+            .push_ident(&name)
+            .push("(")
+            .push(ARGUMENT_TYPES)
+            .push(");");
         let artifact = Artifact {
             forward: installed,
-            // SQL-POLICY: PgIdent — the inverse uses the generated checked function name.
-            inverse: format!("DROP FUNCTION IF EXISTS {name}({ARGUMENT_TYPES});"),
+            inverse: drop_function,
         };
         definitions.push(CandidateDefinition {
             signature,
@@ -242,102 +283,162 @@ const USING_ARGUMENTS: &str = "USING query_text, candidate_limit, requested_tags
      until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, \
      requested_kind, tag_all;";
 
-fn quoted(sql: &str) -> String {
-    sql.replace('\'', "''")
-}
-
 /// EXECUTE plans each search using its actual values. A generic plan cannot
 /// hide the tag/text condition behind optional-filter switches.
-fn execution(query: &RankedCandidates) -> String {
-    format!(
-        "RETURN QUERY EXECUTE '{}' || CASE WHEN recency THEN ' ORDER BY {recency}' ELSE ' ORDER BY {relevance}' END || ' LIMIT $2' {USING_ARGUMENTS}",
-        quoted(&query.body),
-        recency = RankedCandidates::order_sql(SearchOrder::Recency),
-        relevance = RankedCandidates::order_sql(SearchOrder::Relevance),
-    )
+fn execution(query: &RankedCandidates) -> SqlText {
+    let mut sql = SqlText::new("RETURN QUERY EXECUTE ");
+    sql.push_sql_literal(&query.body)
+        .push(" || CASE WHEN recency THEN ' ORDER BY ")
+        .push(RankedCandidates::order_sql(SearchOrder::Recency))
+        .push("' ELSE ' ORDER BY ")
+        .push(RankedCandidates::order_sql(SearchOrder::Relevance))
+        .push("' END || ' LIMIT $2' ")
+        .push(USING_ARGUMENTS);
+    sql
 }
 
 /// The substring arm plans one statement per request over only the legs whose
 /// schemas the request names: each leg is `m.schema_id = ANY($8)` and
 /// `= ANY(<its own schemas>)`, so a leg the request does not name matches no
 /// row, and planning it (about 2 ms of row-security expansion) buys nothing.
-fn substring_execution(candidates: &SubstringCandidates) -> String {
+fn substring_execution(candidates: &SubstringCandidates) -> Result<SqlText, StorageError> {
     let (open, between, close) = SubstringCandidates::frame();
-    let legs = candidates
-        .legs
-        .iter()
-        .map(|leg| {
-            let schemas = leg
-                .schemas
-                .iter()
-                .map(|schema| format!("'{}'", schema.replace('\'', "''")))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "IF requested_schemas && ARRAY[{schemas}]::text[] THEN \
-                 legs := legs || '{}'::text; END IF;",
-                quoted(&format!("({})", leg.sql))
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "DECLARE legs text[] := ARRAY[]::text[];\n\
-         BEGIN\n{legs}\n\
-         IF cardinality(legs) = 0 THEN RETURN; END IF;\n\
-         RETURN QUERY EXECUTE '{}' || array_to_string(legs, '{}') || '{}' || CASE WHEN recency THEN ' ORDER BY {recency}' ELSE ' ORDER BY {relevance}' END || ' LIMIT $2' {USING_ARGUMENTS}\n\
-         END;",
-        quoted(open),
-        quoted(between),
-        quoted(close),
-        recency = SubstringCandidates::order_sql(SearchOrder::Recency),
-        relevance = SubstringCandidates::order_sql(SearchOrder::Relevance),
+    let mut sql = SqlText::new(
+        "DECLARE legs text[] := ARRAY[]::text[];
+BEGIN
+",
+    );
+    for (index, leg) in candidates.legs.iter().enumerate() {
+        if index > 0 {
+            sql.push("\n");
+        }
+        sql.push("IF requested_schemas && ARRAY[");
+        for (n, schema) in leg.schemas.iter().enumerate() {
+            if n > 0 {
+                sql.push(", ");
+            }
+            sql.push_literal(schema)?;
+        }
+        let mut wrapped = SqlText::new("(");
+        wrapped.push_text(&leg.sql).push(")");
+        sql.push("]::text[] THEN legs := legs || ")
+            .push_sql_literal(&wrapped)
+            .push("::text; END IF;");
+    }
+    sql.push(
+        "
+IF cardinality(legs) = 0 THEN RETURN; END IF;
+RETURN QUERY EXECUTE ",
     )
+    .push_sql_literal(&SqlText::new(open))
+    .push(" || array_to_string(legs, ")
+    .push_sql_literal(&SqlText::new(between))
+    .push(") || ")
+    .push_sql_literal(&SqlText::new(close))
+    .push(" || CASE WHEN recency THEN ' ORDER BY ")
+    .push(SubstringCandidates::order_sql(SearchOrder::Recency))
+    .push("' ELSE ' ORDER BY ")
+    .push(SubstringCandidates::order_sql(SearchOrder::Relevance))
+    .push("' END || ' LIMIT $2' ")
+    .push(USING_ARGUMENTS)
+    .push("\nEND;");
+    Ok(sql)
 }
 
 /// Install only generated functions while assuming the non-inheritable owner.
 /// CREATE is temporary; subsequent definition passes use the same path.
 pub(crate) fn installation_sql(
     schema: &str,
-    function_ddl: &str,
-    signature: &str,
+    function_ddl: &SqlText,
+    signature: &SqlText,
     read_tables: &[&str],
     candidate_tables: &[&str],
-) -> Result<String, StorageError> {
-    let schema = PgIdent::column(schema)?;
-    let read_tables = read_tables
-        .iter()
-        .map(|table| PgIdent::table(table))
-        .collect::<Result<Vec<_>, _>>()?;
-    let grants = read_tables
-        .iter()
-        .map(|table| table.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let policies = candidate_tables.iter().map(|table| {
+) -> Result<SqlText, StorageError> {
+    let schema = PgIdent::name(schema)?;
+    let mut grants = SqlText::new("");
+    for (index, table) in read_tables.iter().enumerate() {
+        if index > 0 {
+            grants.push(", ");
+        }
+        grants.push_ident(&PgIdent::table(table)?);
+    }
+    let mut policies = SqlText::new("");
+    for (index, table) in candidate_tables.iter().enumerate() {
         let table = PgIdent::table(table)?;
-        // SQL-POLICY: PgIdent — the candidate table is contract-derived.
-        Ok(format!(
-            "DROP POLICY IF EXISTS proxiima_search_candidates ON {table};\n\
-             CREATE POLICY proxiima_search_candidates ON {table} FOR SELECT TO proxiima_search USING (true);",
-            table = table.as_str()
-        ))
-    }).collect::<Result<Vec<_>, StorageError>>()?.join("\n");
-    // SQL-POLICY: PgIdent — checked schema/tables; function DDL and signature are private generated fragments.
-    Ok(format!(
+        if index > 0 {
+            policies.push("\n");
+        }
+        // The candidate table is contract-derived.
+        policies
+            .push("DROP POLICY IF EXISTS proxiima_search_candidates ON ")
+            .push_ident(&table)
+            .push(";\nCREATE POLICY proxiima_search_candidates ON ")
+            .push_ident(&table)
+            .push(" FOR SELECT TO proxiima_search USING (true);");
+    }
+    let mut sql = SqlText::new(
         "DO $install_candidate$\n\
          DECLARE original_role name := current_user;\n\
          BEGIN\n\
-             GRANT USAGE, CREATE ON SCHEMA {schema} TO proxiima_search;\n\
-             GRANT SELECT ON {grants} TO proxiima_search;\n\
-             {policies}\n\
+             GRANT USAGE, CREATE ON SCHEMA ",
+    );
+    sql.push_ident(&schema)
+        .push(
+            " TO proxiima_search;\n\
+             GRANT SELECT ON ",
+        )
+        .push_text(&grants)
+        .push(
+            " TO proxiima_search;\n\
+             ",
+        )
+        .push_text(&policies)
+        .push(
+            "\n\
              SET LOCAL ROLE proxiima_search;\n\
-             EXECUTE $generated_function${function_ddl}$generated_function$;\n\
-             REVOKE ALL ON FUNCTION {signature} FROM PUBLIC;\n\
+             EXECUTE $generated_function$",
+        )
+        .push_text(function_ddl)
+        .push(
+            "$generated_function$;\n\
+             REVOKE ALL ON FUNCTION ",
+        )
+        .push_text(signature)
+        .push(
+            " FROM PUBLIC;\n\
              EXECUTE format('SET LOCAL ROLE %I', original_role);\n\
-             REVOKE CREATE ON SCHEMA {schema} FROM proxiima_search;\n\
+             REVOKE CREATE ON SCHEMA ",
+        )
+        .push_ident(&schema)
+        .push(
+            " FROM proxiima_search;\n\
          END\n\
          $install_candidate$;",
-        schema = schema.as_str(),
-    ))
+        );
+    Ok(sql)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::call_sql;
+
+    /// The call text is the statement the plan pins were written against: the
+    /// checked function name is the only part that is not a literal.
+    #[test]
+    fn the_call_names_the_checked_candidate_function() {
+        assert_eq!(
+            call_sql("proxiima_fixture.note_projection", false)
+                .unwrap()
+                .as_str(),
+            "SELECT t, schema_id, lexical_score FROM proxiima_fixture.search_lexical_candidates($1::text, $2::bigint, $3::text[], $4::timestamptz, $5::timestamptz, $6::uuid, $7::uuid[], $8::text[], $9::boolean, $10::boolean, $11::boolean, $12::text, $13::boolean)"
+        );
+        assert_eq!(
+            call_sql("proxiima_fixture.note_projection", true)
+                .unwrap()
+                .as_str(),
+            "SELECT t, lexical_score FROM proxiima_fixture.search_substring_candidates($1::text, $2::bigint, $3::text[], $4::timestamptz, $5::timestamptz, $6::uuid, $7::uuid[], $8::text[], $9::boolean, $10::boolean, $11::boolean, $12::text, $13::boolean)"
+        );
+        assert!(call_sql("unqualified", false).is_err());
+        assert!(call_sql("a.b; DROP TABLE x", false).is_err());
+    }
 }

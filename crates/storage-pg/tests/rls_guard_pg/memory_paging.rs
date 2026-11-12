@@ -143,8 +143,7 @@ fn expected(
 
 async fn page(connection: &mut PgConnection, req: &QueryRequest, owners: &[Uuid]) -> Vec<Uuid> {
     let sql = memory_page_sql_for_tests(req).unwrap();
-    // SQL-POLICY: fixed-fragment — production builder uses only closed predicates and bind numbers.
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owners);
+    let mut query = sqlx::query(sql).bind(owners);
     if let Some(schema) = &req.schema_id {
         query = query.bind(schema.as_str());
     }

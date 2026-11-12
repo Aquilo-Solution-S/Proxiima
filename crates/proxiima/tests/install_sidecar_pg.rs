@@ -10,7 +10,7 @@ use proxiima::testkit::SplitRoleDb;
 use proxiima_storage_pg::integrity::{
     declaration_trigger, delete_guard_trigger, key_repoint_trigger, presence_trigger,
 };
-use sqlx::{Connection, PgConnection, Postgres, Transaction};
+use sqlx::{Connection, PgConnection, Postgres, SqlSafeStr, Transaction};
 
 const SCHEMA: &str = "some_schema";
 const SPIICE: &str = "some-spiice";
@@ -35,11 +35,12 @@ async fn migrated_platform() -> (SplitRoleDb, PgConnection) {
     (db, conn)
 }
 
-async fn create(tx: &mut PgConnection, ddl: &str) {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(ddl.to_owned()))
+async fn create(tx: &mut PgConnection, ddl: impl SqlSafeStr) {
+    let ddl = ddl.into_sql_str();
+    sqlx::raw_sql(ddl.clone())
         .execute(tx)
         .await
-        .unwrap_or_else(|error| panic!("{ddl}: {error}"));
+        .unwrap_or_else(|error| panic!("{}: {error}", ddl.as_str()));
 }
 
 async fn install(conn: &mut PgConnection, table: &str, spiice: &str) -> Result<(), sqlx::Error> {
@@ -199,11 +200,11 @@ async fn one_call_installs_the_key_surface_triggers_and_policies() {
         delete_guard_trigger(table, "t").expect("delete guard"),
     ];
     for artifact in &generated {
-        create(&mut tx, &artifact.inverse).await;
+        create(&mut tx, artifact.inverse.clone()).await;
     }
     assert_eq!(trigger_defs(&mut tx, "thing_v1").await, []);
     for artifact in &generated {
-        create(&mut tx, &artifact.forward).await;
+        create(&mut tx, artifact.forward.clone()).await;
     }
     assert_eq!(
         trigger_defs(&mut tx, "thing_v1").await,

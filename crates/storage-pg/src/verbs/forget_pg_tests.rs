@@ -106,7 +106,7 @@ pub(crate) async fn ingest_stamped(
     permit: &OwnerWritePermit,
     draft: &FactWriteCommand,
     tables: &[String],
-    sidecar_rows: &[&str],
+    sidecar_rows: &[&'static str],
 ) -> Result<proxiima_core::verbs::fact_ingest::FactIngestOutcome, StorageError> {
     let mut tx = pool
         .begin()
@@ -148,9 +148,7 @@ pub(crate) async fn ingest_stamped(
     )
     .await?;
     for sql in sidecar_rows {
-        // SQL-POLICY: fixed-fragment — a literal from the test that asked
-        // for the stamp, with the new `t` bound.
-        sqlx::query(sqlx::AssertSqlSafe(*sql))
+        sqlx::query(*sql)
             .bind(outcome.memory_id.into_inner())
             .execute(&mut *tx)
             .await

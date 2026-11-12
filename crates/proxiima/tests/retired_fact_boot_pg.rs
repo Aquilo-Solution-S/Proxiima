@@ -340,8 +340,7 @@ impl Fixture {
             proxiima_storage_pg::integrity::delete_guard_trigger(TABLE, "memory_t").unwrap(),
             proxiima_storage_pg::integrity::key_repoint_trigger(TABLE, "memory_t").unwrap(),
         ] {
-            // SQL-POLICY: generated integrity DDL over fixed fixture identifiers.
-            sqlx::raw_sql(sqlx::AssertSqlSafe(artifact.forward))
+            sqlx::raw_sql(artifact.forward)
                 .execute(&pool)
                 .await
                 .unwrap();

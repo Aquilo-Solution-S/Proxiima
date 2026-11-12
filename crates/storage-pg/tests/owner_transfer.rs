@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use proxiima_core::FactPayload;
 use proxiima_core::owner_inverse::{
     EraseAuthorization, ExportAuthorization, OwnerEraseOutcome, OwnerEraseTarget,
     OwnerExportTarget, OwnerSurfaces,
@@ -22,6 +21,7 @@ use proxiima_core::{
     GroupId, OwnerId, Relation, SchemaId, SchemaVersion, SidecarPayload, SpiiceRegistry,
     StorageError, UserId,
 };
+use proxiima_core::{FactPayload, SqlText};
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{
     add_member, create_content, create_core_db, create_embedding, create_group, create_user,
@@ -1227,7 +1227,7 @@ async fn transfer_serializes_source_citation_before_moving_a_blob() {
             .cited_object_id
             .ok_or("citation-bearing target did not return its blob")?;
 
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        let mut probe_sql = SqlText::new(
             "CREATE SEQUENCE public.transfer_citation_probe;
              GRANT USAGE, SELECT ON SEQUENCE public.transfer_citation_probe
              TO proxiima_test_runtime, proxiima_test_platform;
@@ -1235,7 +1235,10 @@ async fn transfer_serializes_source_citation_before_moving_a_blob() {
              LANGUAGE plpgsql AS $$
              BEGIN
                  PERFORM nextval('public.transfer_citation_probe');
-                 PERFORM pg_advisory_xact_lock({PROBE_LOCK});
+                 PERFORM pg_advisory_xact_lock(",
+        );
+        probe_sql.push_i64(PROBE_LOCK).push(
+            ");
                  RETURN NEW;
              END
              $$;
@@ -1243,9 +1246,8 @@ async fn transfer_serializes_source_citation_before_moving_a_blob() {
              BEFORE INSERT ON proxiima_core.memory
              FOR EACH ROW
              EXECUTE FUNCTION public.block_source_citation_insert();",
-        )))
-        .execute(pool)
-        .await?;
+        );
+        sqlx::raw_sql(probe_sql).execute(pool).await?;
 
         let mut blocker = pool.acquire().await?;
         sqlx::query("SELECT pg_advisory_lock($1)")
@@ -1393,16 +1395,26 @@ async fn transfer_serializes_destination_citation_dedupe() {
             .await?;
         let source_blob = source_row.cited_object_id.ok_or("source blob missing")?;
 
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        let mut probe_sql = SqlText::new(
             "CREATE SEQUENCE public.destination_blob_probe;
              GRANT USAGE, SELECT ON SEQUENCE public.destination_blob_probe
              TO proxiima_test_runtime, proxiima_test_platform;
              CREATE FUNCTION public.block_destination_blob_insert() RETURNS trigger
              LANGUAGE plpgsql AS $$
              BEGIN
-                 IF NEW.owner_id = '{destination}'::uuid THEN
+                 IF NEW.owner_id = ",
+        );
+        probe_sql
+            .push("'")
+            .push_uuid(destination.into_inner())
+            .push("'");
+        probe_sql.push(
+            "::uuid THEN
                      PERFORM nextval('public.destination_blob_probe');
-                     PERFORM pg_advisory_xact_lock({PROBE_LOCK});
+                     PERFORM pg_advisory_xact_lock(",
+        );
+        probe_sql.push_i64(PROBE_LOCK).push(
+            ");
                  END IF;
                  RETURN NEW;
              END
@@ -1411,10 +1423,8 @@ async fn transfer_serializes_destination_citation_dedupe() {
              BEFORE INSERT ON proxiima_core.blob
              FOR EACH ROW
              EXECUTE FUNCTION public.block_destination_blob_insert();",
-            destination = destination.into_inner(),
-        )))
-        .execute(pool)
-        .await?;
+        );
+        sqlx::raw_sql(probe_sql).execute(pool).await?;
         sqlx::query(
             "GRANT EXECUTE ON FUNCTION public.block_destination_blob_insert()
              TO proxiima_test_runtime, proxiima_test_platform",
@@ -2730,23 +2740,25 @@ async fn absent_destination_append_waits_before_owner_insert() {
         })
         .await??;
 
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        let mut probe_sql = SqlText::new(
             "CREATE SEQUENCE public.absent_owner_insert_probe;
              CREATE FUNCTION public.note_absent_owner_insert() RETURNS trigger
              LANGUAGE plpgsql AS $$
              BEGIN
                  PERFORM nextval('public.absent_owner_insert_probe');
-                 PERFORM pg_advisory_xact_lock({PROBE_LOCK});
+                 PERFORM pg_advisory_xact_lock(",
+        );
+        probe_sql.push_i64(PROBE_LOCK).push(
+            ");
                  RETURN NEW;
              END
              $$;
              CREATE TRIGGER note_absent_owner_insert
              AFTER INSERT ON proxiima_core.owners
              FOR EACH ROW
-             EXECUTE FUNCTION public.note_absent_owner_insert();"
-        )))
-        .execute(&pool)
-        .await?;
+             EXECUTE FUNCTION public.note_absent_owner_insert();",
+        );
+        sqlx::raw_sql(probe_sql).execute(&pool).await?;
         sqlx::query(
             "GRANT USAGE, SELECT ON SEQUENCE public.absent_owner_insert_probe
              TO proxiima_test_runtime, proxiima_test_platform",

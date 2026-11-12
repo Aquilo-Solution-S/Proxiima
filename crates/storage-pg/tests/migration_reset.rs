@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proxiima_core::StorageError;
+use proxiima_core::{SqlText, StorageError};
 use proxiima_pg_testkit::{
     DbGuard, admin_url_or_skip, create_db, split_role_urls, split_role_urls_without_pgvector,
 };
@@ -10,7 +10,6 @@ use proxiima_storage_pg::{
     PgMigrationStorage, PgPoolConfig, PgTuning, VectorStorage, core_migrator_for, definitions,
     ensure_core_schema_current,
 };
-use sqlx::AssertSqlSafe;
 
 const BASELINE: &str = include_str!("../fixtures/0057_baseline.sql");
 
@@ -21,7 +20,7 @@ const KINDS: [VectorStorage; 2] = [VectorStorage::Local, VectorStorage::HostInde
 /// included.
 fn definition_files(vectors: VectorStorage) -> Vec<String> {
     let mut files = vec![
-        definitions::relation_roles_sql(),
+        definitions::relation_roles_sql().as_str().to_owned(),
         definitions::FUNCTIONS.to_owned(),
         definitions::POLICIES.to_owned(),
     ];
@@ -31,12 +30,14 @@ fn definition_files(vectors: VectorStorage) -> Vec<String> {
     files
 }
 
-fn definitions_record_sql(checksum: &str, release: &str) -> String {
-    format!(
+fn definitions_record_sql(checksum: &'static str, release: &'static str) -> SqlText {
+    let mut sql = SqlText::new(
         "CREATE OR REPLACE FUNCTION proxiima_core.definitions_applied()
          RETURNS TABLE(checksum text, release text) LANGUAGE sql IMMUTABLE
-         AS $$ SELECT '{checksum}', '{release}' $$"
-    )
+         AS $$ SELECT '",
+    );
+    sql.push(checksum).push("', '").push(release).push("' $$");
+    sql
 }
 
 fn declared_names(source: &str, keyword: &str) -> BTreeMap<String, usize> {
@@ -238,10 +239,10 @@ async fn definitions_pass_is_idempotent() {
         migration.run_migrations().await.expect("first migration");
         let pool = migration.clone_pool_for_backend();
         let before = catalog_snapshot(&pool).await;
-        sqlx::raw_sql(AssertSqlSafe(definitions_record_sql(
+        sqlx::raw_sql(definitions_record_sql(
             "deadbeef",
             proxiima_core::RELEASE_VERSION,
-        )))
+        ))
         .execute(&pool)
         .await
         .expect("force definitions pass");
@@ -269,10 +270,10 @@ async fn definitions_preserve_spiice_trigger() {
     .execute(&pool)
     .await
     .expect("spiice trigger");
-    sqlx::raw_sql(AssertSqlSafe(definitions_record_sql(
+    sqlx::raw_sql(definitions_record_sql(
         "deadbeef",
         proxiima_core::RELEASE_VERSION,
-    )))
+    ))
     .execute(&pool)
     .await
     .expect("force definitions pass");
@@ -465,10 +466,10 @@ async fn same_release_checksum_drift_reapplies_definitions() {
     };
     migration.run_migrations().await.expect("first migration");
     let pool = migration.clone_pool_for_backend();
-    sqlx::raw_sql(AssertSqlSafe(definitions_record_sql(
+    sqlx::raw_sql(definitions_record_sql(
         "deadbeef",
         proxiima_core::RELEASE_VERSION,
-    )))
+    ))
     .execute(&pool)
     .await
     .expect("drift record");

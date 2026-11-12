@@ -9,7 +9,7 @@
 
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;
-use proxiima_core::{AccessKind, MemoryId, OwnerId, UserId};
+use proxiima_core::{AccessKind, MemoryId, OwnerId, PgIdent, SqlText, UserId};
 use proxiima_pg_testkit::DbGuard;
 use proxiima_storage_pg::test_fixtures::{TestMemory, fresh_pg};
 use proxiima_storage_pg::{PgStorage, begin_owner_transaction};
@@ -158,11 +158,9 @@ async fn no_write_goes_through_the_view() {
     ];
     for (verb, sql) in statements {
         let mut tx = w.tx(w.owner).await;
-        // SQL-POLICY: fixed-fragment (a literal from the table above)
         let runtime = refusal(sqlx::query(sql).bind(t).execute(&mut *tx).await);
         tx.rollback().await.unwrap();
         let mut admin = w.pg.pool_for_tests().begin().await.unwrap();
-        // SQL-POLICY: fixed-fragment (a literal from the table above)
         let privileged = refusal(sqlx::query(sql).bind(t).execute(&mut *admin).await);
         admin.rollback().await.unwrap();
         // 55000: the view is not updatable, whatever the role was granted.
@@ -220,19 +218,20 @@ fn plan_nodes<'a>(plan: &'a Value, out: &mut Vec<&'a Value>) {
 }
 
 /// The plan of `sql` on the owner's transaction with sequential scans
-/// discouraged, as a flat list of nodes.
-async fn plan_of(w: &World, sql: &str) -> Vec<Value> {
+/// discouraged, as a flat list of nodes. `sql` takes the id as `$1`.
+async fn plan_of(w: &World, sql: &'static str, id: Uuid) -> Vec<Value> {
     let mut tx = w.tx(w.owner).await;
     sqlx::query("SET LOCAL enable_seqscan = off")
         .execute(&mut *tx)
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment (EXPLAIN of a statement the caller formatted from a Uuid)
-    let explained: Value =
-        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (FORMAT JSON) {sql}")))
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
+    let mut explain = SqlText::new("EXPLAIN (FORMAT JSON) ");
+    explain.push(sql);
+    let explained: Value = sqlx::query_scalar(explain)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
     tx.rollback().await.unwrap();
     let mut nodes = Vec::new();
     plan_nodes(&explained[0]["Plan"], &mut nodes);
@@ -253,18 +252,18 @@ async fn a_lookup_by_id_through_the_view_uses_the_memory_index() {
     let (memory_id, _) = w.write(w.owner, TestMemory::fact()).await;
     let id = memory_id.into_inner();
 
-    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
     let nodes = plan_of(
         &w,
-        &format!("SELECT owner_id FROM proxiima_core.memory_version WHERE t = '{id}'"),
+        "SELECT owner_id FROM proxiima_core.memory_version WHERE t = $1",
+        id,
     )
     .await;
     assert_eq!(scans(&nodes, "memory"), ["Index Scan"], "{nodes:#?}");
 
-    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
     let nodes = plan_of(
         &w,
-        &format!("SELECT owner_id FROM proxiima_core.memory_version WHERE t = '{id}' AND head"),
+        "SELECT owner_id FROM proxiima_core.memory_version WHERE t = $1 AND head",
+        id,
     )
     .await;
     assert_eq!(scans(&nodes, "memory"), ["Index Scan"], "{nodes:#?}");
@@ -285,14 +284,14 @@ async fn seen_through(
     ids: &[MemoryId],
 ) -> Vec<Uuid> {
     let raw: Vec<Uuid> = ids.iter().map(|id| id.into_inner()).collect();
-    // SQL-POLICY: fixed-fragment (a view name from the constants above)
-    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT t FROM {view} WHERE t = ANY($1) ORDER BY t"
-    )))
-    .bind(&raw)
-    .fetch_all(&mut **tx)
-    .await
-    .expect("view read")
+    let mut sql = SqlText::new("SELECT t FROM ");
+    sql.push_ident(&PgIdent::table(view).expect("view name"))
+        .push(" WHERE t = ANY($1) ORDER BY t");
+    sqlx::query_scalar(sql)
+        .bind(&raw)
+        .fetch_all(&mut **tx)
+        .await
+        .expect("view read")
 }
 
 fn raw(ids: &[MemoryId]) -> Vec<Uuid> {
@@ -348,7 +347,6 @@ async fn the_serving_role_cannot_write_or_lock_through_the_core_views() {
         "SELECT t FROM proxiima_core.memory_including_forgotten WHERE t = $1 FOR SHARE",
     ] {
         let mut tx = w.tx(w.owner).await;
-        // SQL-POLICY: fixed-fragment (a literal of the list above)
         let refused = sqlx::query(sql).bind(t).execute(&mut *tx).await;
         tx.rollback().await.unwrap();
         assert_eq!(refusal(refused), "42501", "{sql}");
@@ -370,18 +368,16 @@ async fn a_lookup_by_id_through_the_live_view_walks_the_index_the_table_read_doe
     let (memory_id, _) = w.write(w.owner, TestMemory::fact()).await;
     let id = memory_id.into_inner();
 
-    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
     let through_view = plan_of(
         &w,
-        &format!("SELECT owner_id FROM proxiima_core.live_memory WHERE t = '{id}'"),
+        "SELECT owner_id FROM proxiima_core.live_memory WHERE t = $1",
+        id,
     )
     .await;
-    // SQL-POLICY: fixed-fragment (a Uuid formatted into the literal)
     let on_table = plan_of(
         &w,
-        &format!(
-            "SELECT owner_id FROM proxiima_core.memory WHERE t = '{id}' AND forgotten_at IS NULL"
-        ),
+        "SELECT owner_id FROM proxiima_core.memory WHERE t = $1 AND forgotten_at IS NULL",
+        id,
     )
     .await;
     assert_eq!(

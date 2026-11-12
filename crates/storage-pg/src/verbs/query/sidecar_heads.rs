@@ -3,12 +3,12 @@
 use proxiima_core::verbs::query::{
     ResolvedSidecarHeads, SidecarAtom, SidecarHead, SidecarHeadsPage,
 };
-use proxiima_core::{MemoryId, OwnerId, StorageError};
+use proxiima_core::{MemoryId, OwnerId, SqlBuilder, StorageError};
 use sqlx::postgres::PgRow;
-use sqlx::{PgConnection, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
+use sqlx::{PgConnection, Row, TypeInfo, ValueRef};
 
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
+use proxiima_core::PgIdent;
 
 use super::push_atom;
 
@@ -25,8 +25,7 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
         .map(|column| PgIdent::column(column))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // SQL-POLICY: QueryBuilder-bound-values
-    let mut sql = QueryBuilder::<Postgres>::new(
+    let mut sql = SqlBuilder::new(
         "WITH goal_visible AS MATERIALIZED (
              SELECT DISTINCT ON (memory_handle) memory_t, memory_handle, owner_id
                FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($1::uuid[])
@@ -46,7 +45,6 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
     sql.push(
         "::uuid[]) UNION ALL SELECT v.memory_t, v.memory_handle, v.owner_id FROM goal_visible v",
     );
-    // SQL-POLICY: fixed-fragment — fixed latest-visible projection.
     sql.push(
         "), visible AS (
              SELECT DISTINCT ON (handle) t, handle, owner_id
@@ -55,28 +53,22 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
          ) SELECT visible.t",
     );
     for column in &columns {
-        // SQL-POLICY: PgIdent — every column comes from the frozen contract.
-        sql.push(", s.").push(column.as_str());
+        sql.push(", s.").push_ident(column);
     }
-    // SQL-POLICY: PgIdent — table and memory key come from the frozen contract.
-    sql.push(" FROM ").push(table.as_str());
+    sql.push(" FROM ").push_ident(&table);
     sql.push(" s JOIN visible ON visible.t = s.");
-    // SQL-POLICY: PgIdent
-    sql.push(memory_key.as_str());
+    sql.push_ident(&memory_key);
     sql.push(" JOIN proxiima_core.live_memory m ON m.t = visible.t WHERE m.schema_id = ");
     sql.push_bind(query.schema_id().as_str());
     sql.push(" AND m.kind = 'fact'");
     for (column, value) in columns.iter().zip(query.key_prefix()) {
-        // SQL-POLICY: PgIdent — positional prefix values cannot name columns.
-        sql.push(" AND s.").push(column.as_str());
+        sql.push(" AND s.").push_ident(column);
         sql.push(" = ");
         push_atom(&mut sql, value);
     }
     if let Some(after) = query.after() {
-        // SQL-POLICY: QueryBuilder-bound-values
         sql.push(" AND m.t < ").push_bind(after.into_inner());
     }
-    // SQL-POLICY: QueryBuilder-bound-values
     sql.push(" ORDER BY m.t DESC LIMIT ");
     sql.push_bind(i64::from(query.limit()) + 1);
     let mut rows = sql

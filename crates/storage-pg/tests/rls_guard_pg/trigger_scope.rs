@@ -349,7 +349,6 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
         ),
     ] {
         contend(&mut tx, &mut holder, target).await;
-        // SQL-POLICY: fixed-fragment — one of the two literal DELETEs above.
         let outcome = sqlx::query(statement).bind(target).execute(&mut *tx).await;
         release(&mut holder).await;
         assert_refusal_restores_scope(
@@ -359,7 +358,6 @@ async fn trigger_bridge_restores_caller_scope_on_return_and_refusal() {
             outcome,
         )
         .await;
-        // SQL-POLICY: fixed-fragment — one of the two literal DELETEs above.
         let deleted = sqlx::query(statement)
             .bind(target)
             .execute(&mut *tx)

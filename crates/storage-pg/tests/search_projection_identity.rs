@@ -273,8 +273,7 @@ async fn project(
     let sql =
         proxiima_storage_pg::projection::projection_insert_sql(&proxiima_core::SPIICE_0, schema)
             .expect("the generator emits a valid statement");
-    // SQL-POLICY: generated
-    sqlx::query(sqlx::AssertSqlSafe(sql))
+    sqlx::query(sql)
         .bind(t)
         .bind(language)
         .bind(schema_id)

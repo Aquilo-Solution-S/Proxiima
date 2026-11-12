@@ -66,7 +66,7 @@ fn corrected_finalizer(migration: &Migration) -> Migration {
 
     let sql = keep_policy_roles(migration.sql.as_str(), "pg_temp.rename_spiice_word");
     Migration {
-        // SQL-POLICY: fixed-fragment — the embedded finalizer with its policy capture narrowed.
+        // the embedded finalizer with its policy capture narrowed.
         sql: sqlx::AssertSqlSafe(sql).into_sql_str(),
         ..migration.clone()
     }
@@ -402,7 +402,7 @@ async fn hand_over_historical_search_role(
 ) -> Result<(), StorageError> {
     let historical = format!("{}search", historical_namespace_prefix());
     let core = format!("{}core", historical_namespace_prefix());
-    // SQL-POLICY: fixed-fragment — role and schema names derive only from embedded historical SQL.
+    // role and schema names derive only from embedded historical SQL.
     let sql = format!(
         r"DO $handover$
 DECLARE
@@ -466,7 +466,7 @@ async fn execute_replay_sql(
     connection: &mut PgConnection,
     sql: String,
 ) -> Result<(), StorageError> {
-    // SQL-POLICY: fixed-fragment — only immutable embedded catalog SQL and its inverse.
+    // only immutable embedded catalog SQL and its inverse.
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
         .execute(connection)
         .await

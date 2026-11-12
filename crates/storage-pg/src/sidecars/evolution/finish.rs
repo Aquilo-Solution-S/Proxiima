@@ -1,4 +1,4 @@
-use proxiima_core::StorageError;
+use proxiima_core::{PgIdent, SqlText, StorageError};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -112,14 +112,75 @@ pub(super) async fn checkpoint_data_constraints(
     restore_data_constraints(tx, &constraints).await
 }
 
+/// A deferrable catalog constraint, its names parsed where they leave the
+/// catalog.
+struct DataConstraint {
+    schema: PgIdent,
+    name: PgIdent,
+    initially_deferred: bool,
+}
+
+impl DataConstraint {
+    fn new(schema: &str, name: &str, initially_deferred: bool) -> Result<Self, StorageError> {
+        Ok(Self {
+            schema: PgIdent::quoted(schema)?,
+            name: PgIdent::quoted(name)?,
+            initially_deferred,
+        })
+    }
+
+    /// `public.finish_probe_a`, the constraint the finish tests create.
+    #[cfg(test)]
+    fn probe(initially_deferred: bool) -> Self {
+        Self::new("public", "finish_probe_a", initially_deferred).expect("plain names")
+    }
+
+    async fn set_immediate(&self, tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
+        self.set(tx, " IMMEDIATE").await
+    }
+
+    /// Put back the timing the constraint was declared with.
+    async fn restore(&self, tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
+        self.set(
+            tx,
+            if self.initially_deferred {
+                " DEFERRED"
+            } else {
+                " IMMEDIATE"
+            },
+        )
+        .await
+    }
+
+    async fn set(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        mode: &'static str,
+    ) -> Result<(), StorageError> {
+        let mut sql = SqlText::new("SET CONSTRAINTS ");
+        sql.push_ident(&self.schema)
+            .push(".")
+            .push_ident(&self.name)
+            .push(mode);
+        sqlx::query(sql).execute(&mut **tx).await.map_err(|err| {
+            refused(format!(
+                "migration constraint {}.{}: {err}",
+                self.schema.as_str(),
+                self.name.as_str()
+            ))
+        })?;
+        Ok(())
+    }
+}
+
 async fn data_constraints(
     tx: &mut Transaction<'_, Postgres>,
     registry: &PgSidecarRegistryFrozen,
-) -> Result<Vec<(String, bool)>, StorageError> {
+) -> Result<Vec<DataConstraint>, StorageError> {
     let mut schemas = registry.spiice_schema_names().to_vec();
     schemas.push("proxiima_core".to_owned());
-    sqlx::query_as(
-        "SELECT DISTINCT format('%I.%I', n.nspname, c.conname), c.condeferred
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT DISTINCT n.nspname, c.conname, c.condeferred
            FROM pg_constraint c
            JOIN pg_namespace n ON n.oid=c.connamespace
           WHERE c.condeferrable AND n.nspname=ANY($1::text[])
@@ -128,41 +189,28 @@ async fn data_constraints(
     .bind(schemas)
     .fetch_all(&mut **tx)
     .await
-    .map_err(map_err)
+    .map_err(map_err)?;
+    rows.iter()
+        .map(|(schema, name, deferred)| DataConstraint::new(schema, name, *deferred))
+        .collect()
 }
 
 async fn enforce_data_constraints(
     tx: &mut Transaction<'_, Postgres>,
-    constraints: &[(String, bool)],
+    constraints: &[DataConstraint],
 ) -> Result<(), StorageError> {
-    for (qualified, _) in constraints {
-        // SQL-POLICY: generated — PostgreSQL format('%I') quotes catalog identifiers.
-        let statement = format!("SET CONSTRAINTS {qualified} IMMEDIATE");
-        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| refused(format!("migration constraint {qualified}: {err}")))?;
+    for constraint in constraints {
+        constraint.set_immediate(tx).await?;
     }
     Ok(())
 }
 
 async fn restore_data_constraints(
     tx: &mut Transaction<'_, Postgres>,
-    constraints: &[(String, bool)],
+    constraints: &[DataConstraint],
 ) -> Result<(), StorageError> {
-    for (qualified, initially_deferred) in constraints {
-        let mode = if *initially_deferred {
-            "DEFERRED"
-        } else {
-            "IMMEDIATE"
-        };
-        // SQL-POLICY: generated — catalog identifiers are quoted by PostgreSQL;
-        // mode is selected from the two fixed constraint-timing keywords.
-        let statement = format!("SET CONSTRAINTS {qualified} {mode}");
-        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
-            .execute(&mut **tx)
-            .await
-            .map_err(|err| refused(format!("migration constraint {qualified}: {err}")))?;
+    for constraint in constraints {
+        constraint.restore(tx).await?;
     }
     Ok(())
 }
@@ -230,16 +278,9 @@ async fn remove_source_sidecars(
         let proxiima_core::spiice::KeyShape::MemoryT { column } = surface.key else {
             return Err(refused("source sidecar lacks a declared Memory key"));
         };
-        let table = crate::pg_ident::PgIdent::table(&table)?;
-        let column = crate::pg_ident::PgIdent::column(column)?;
-        // SQL-POLICY: PgIdent
-        let statement = format!(
-            "DELETE FROM {} WHERE {}=ANY($1::uuid[])",
-            table.as_str(),
-            column.as_str()
-        );
-        // SQL-POLICY: PgIdent
-        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+        let table = PgIdent::table(&table)?;
+        let column = PgIdent::column(column)?;
+        sqlx::query(delete_by_key_sql(&table, &column))
             .bind(memories)
             .execute(&mut **tx)
             .await
@@ -311,15 +352,9 @@ async fn remove_goal_sidecars(
             let proxiima_core::spiice::KeyShape::GoalT { column } = surface.key else {
                 continue;
             };
-            let table = crate::pg_ident::PgIdent::table(surface.table)?;
-            let column = crate::pg_ident::PgIdent::column(column)?;
-            let sql = format!(
-                "DELETE FROM {} WHERE {}=ANY($1::uuid[])",
-                table.as_str(),
-                column.as_str()
-            );
-            // SQL-POLICY: PgIdent
-            sqlx::query(sqlx::AssertSqlSafe(sql))
+            let table = PgIdent::table(surface.table)?;
+            let column = PgIdent::column(column)?;
+            sqlx::query(delete_by_key_sql(&table, &column))
                 .bind(&ids)
                 .execute(&mut **tx)
                 .await
@@ -327,4 +362,72 @@ async fn remove_goal_sidecars(
         }
     }
     Ok(())
+}
+
+fn delete_by_key_sql(table: &PgIdent, column: &PgIdent) -> SqlText {
+    let mut sql = SqlText::new("DELETE FROM ");
+    sql.push_ident(table)
+        .push(" WHERE ")
+        .push_ident(column)
+        .push("=ANY($1::uuid[])");
+    sql
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DataConstraint, enforce_data_constraints, restore_data_constraints};
+    use crate::test_fixtures::fresh_pg;
+
+    async fn probe_tx(pool: &sqlx::PgPool) -> sqlx::Transaction<'static, sqlx::Postgres> {
+        let mut tx = pool.begin().await.expect("begin");
+        sqlx::query(
+            "CREATE TABLE public.finish_probe (a int, \
+             CONSTRAINT finish_probe_a UNIQUE (a) DEFERRABLE INITIALLY DEFERRED)",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("create the probe table");
+        tx
+    }
+
+    /// `SET CONSTRAINTS` follows the catalog name it is given: enforce checks
+    /// at once, restore puts back the timing the constraint was declared with.
+    #[tokio::test]
+    async fn constraint_timing_follows_the_named_constraint() {
+        let (pg, _db) = fresh_pg("finish_constraints").await;
+        let pool = pg.pool_for_tests();
+
+        let mut tx = probe_tx(pool).await;
+        sqlx::query("INSERT INTO public.finish_probe VALUES (1), (1)")
+            .execute(&mut *tx)
+            .await
+            .expect("a deferred constraint lets the duplicate in");
+        let err = enforce_data_constraints(&mut tx, &[DataConstraint::probe(true)])
+            .await
+            .expect_err("enforce checks the duplicate now");
+        assert!(err.to_string().contains("finish_probe_a"), "{err}");
+        drop(tx);
+
+        let mut tx = probe_tx(pool).await;
+        enforce_data_constraints(&mut tx, &[DataConstraint::probe(true)])
+            .await
+            .expect("nothing to violate yet");
+        restore_data_constraints(&mut tx, &[DataConstraint::probe(true)])
+            .await
+            .expect("restore the declared deferral");
+        sqlx::query("INSERT INTO public.finish_probe VALUES (1), (1)")
+            .execute(&mut *tx)
+            .await
+            .expect("deferred again, so the duplicate waits for commit");
+        drop(tx);
+
+        let mut tx = probe_tx(pool).await;
+        restore_data_constraints(&mut tx, &[DataConstraint::probe(false)])
+            .await
+            .expect("restore an immediate constraint");
+        sqlx::query("INSERT INTO public.finish_probe VALUES (1), (1)")
+            .execute(&mut *tx)
+            .await
+            .expect_err("immediate means the duplicate fails in its statement");
+    }
 }

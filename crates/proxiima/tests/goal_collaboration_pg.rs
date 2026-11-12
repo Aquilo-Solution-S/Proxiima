@@ -642,7 +642,6 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
         "INSERT INTO proxiima_core.goal_memory_publication (goal_handle, memory_t, source_owner, source_generation, controller_generation, permitted_use, published_by) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 0, 0, 'read', gen_random_uuid())",
         "INSERT INTO proxiima_core.goal_work_binding (goal_handle, memory_handle, source_owner, source_generation, controller_generation, bound_by) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 0, 0, gen_random_uuid())",
     ] {
-        // SQL-POLICY: fixed-fragment (closed literal DML fixture statements)
         assert!(sqlx::query(statement).execute(&runtime).await.is_err());
     }
     for statement in [
@@ -654,7 +653,6 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
         "DELETE FROM proxiima_core.goal_work_binding",
     ] {
         assert_eq!(
-            // SQL-POLICY: fixed-fragment (closed literal DML fixture statements)
             sqlx::query(statement)
                 .execute(&runtime)
                 .await

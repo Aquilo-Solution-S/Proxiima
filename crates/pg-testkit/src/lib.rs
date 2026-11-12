@@ -29,8 +29,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool};
+use sqlx::{Connection, PgConnection, PgPool};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -48,8 +49,27 @@ const SQLSTATE_DATABASE_ACCESSED: &str = "55006";
 const SQLSTATE_UNDEFINED_DATABASE: &str = "3D000";
 /// Untracked leftovers (pre-harness leaks) older than this are swept at boot.
 const UNTRACKED_GRACE: time::Duration = time::Duration::minutes(5);
-const SPLIT_PLATFORM_ROLE: &str = "proxiima_test_platform";
-const SPLIT_RUNTIME_ROLE: &str = "proxiima_test_runtime";
+/// The fixture role names as macros, so SQL text that mentions them stays one
+/// program literal (`concat!`).
+macro_rules! split_platform_role {
+    () => {
+        "proxiima_test_platform"
+    };
+}
+macro_rules! split_runtime_role {
+    () => {
+        "proxiima_test_runtime"
+    };
+}
+/// The schemas `split_roles` prepares, read from the session setting it
+/// sets on the target connection.
+macro_rules! prepared_schemas {
+    () => {
+        "string_to_array(current_setting('proxiima_test.schemas'), ',')"
+    };
+}
+const SPLIT_PLATFORM_ROLE: &str = split_platform_role!();
+const SPLIT_RUNTIME_ROLE: &str = split_runtime_role!();
 const SPLIT_ROLE_PASSWORD: &str = "proxiima_test_fixture_password";
 /// The SCRAM-SHA-256 verifier of [`SPLIT_ROLE_PASSWORD`] with a fixed salt
 /// (`proxiima-fixture!`, 4096 iterations). Fixture provisioning sets the
@@ -355,10 +375,18 @@ fn redacted_db_url(name: &str) -> String {
 }
 
 /// `<prefix>_<uuid v7>`: a database name no other call returns, whose time
-/// the sweep reads to tell a leftover from a clone in flight.
+/// the sweep reads to tell a leftover from a clone in flight. A prefix that
+/// would push the name past the 63 bytes `PostgreSQL` keeps is cut, so the
+/// uuid always survives.
 #[must_use]
 pub fn unique_db_name(prefix: &str) -> String {
-    format!("{}_{}", prefix, Uuid::now_v7().simple())
+    const UUID_BYTES: usize = 32;
+    let room = 63 - UUID_BYTES - 1;
+    let mut end = prefix.len().min(room);
+    while !prefix.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}_{}", &prefix[..end], Uuid::now_v7().simple())
 }
 
 /// Feed `bytes` into the 64-bit FNV-1a state `hash`, starting from
@@ -382,12 +410,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// Returns any database connection or `CREATE DATABASE` error.
 pub async fn create_db(name: &str) -> Result<(), sqlx::Error> {
     let mut conn = connect_admin().await?;
-    sqlx::raw_sql(AssertSqlSafe(format!(
-        "CREATE DATABASE {}",
-        quoted_ident(name)
-    )))
-    .execute(&mut conn)
-    .await?;
+    let mut sql = SqlText::new("CREATE DATABASE ");
+    sql.push_ident(&ident(name)?);
+    sqlx::raw_sql(sql).execute(&mut conn).await?;
     record_new_db(&mut conn, name).await?;
     conn.close().await?;
     Ok(())
@@ -479,16 +504,8 @@ async fn split_roles(
             schemas.push(schema);
         }
     }
-    let schema_list = schemas
-        .iter()
-        .map(|schema| sql_literal(schema))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let spiice_ledger_list = schemas[1..]
-        .iter()
-        .map(|schema| sql_literal(schema))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let schema_names = schemas.join(",");
+    let spiice_names = schemas[1..].join(",");
     let mut control = connect_admin().await?;
     let lock_key = advisory_lock_key("_proxiima_test.split_roles");
     sqlx::query("SELECT pg_advisory_lock($1)")
@@ -496,62 +513,72 @@ async fn split_roles(
         .execute(&mut control)
         .await?;
     let result = async {
+        let platform = ident(SPLIT_PLATFORM_ROLE)?;
+        let runtime = ident(SPLIT_RUNTIME_ROLE)?;
         for role in [SPLIT_PLATFORM_ROLE, SPLIT_RUNTIME_ROLE] {
-            let statement = format!(
+            let mut statement = SqlText::new(
                 "DO $$ BEGIN
-                   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {name}) THEN
-                     CREATE ROLE {role} LOGIN PASSWORD {password}
+                   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '",
+            );
+            statement
+                .push(role)
+                .push("') THEN\n                     CREATE ROLE ")
+                .push_ident(&ident(role)?)
+                .push(" LOGIN PASSWORD '")
+                .push(SPLIT_ROLE_SCRAM_VERIFIER)
+                .push(
+                    "'
                        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
                    ELSE
-                     ALTER ROLE {role} LOGIN PASSWORD {password}
+                     ALTER ROLE ",
+                )
+                .push_ident(&ident(role)?)
+                .push(" LOGIN PASSWORD '")
+                .push(SPLIT_ROLE_SCRAM_VERIFIER)
+                .push(
+                    "'
                        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
                    END IF;
                  END $$",
-                name = sql_literal(role),
-                role = quoted_ident(role),
-                password = sql_literal(SPLIT_ROLE_SCRAM_VERIFIER),
-            );
-            // SQL-POLICY: fixed-fragment — generated role identifiers and a local fixture password.
-            sqlx::raw_sql(AssertSqlSafe(statement))
-                .execute(&mut control)
-                .await?;
+                );
+            sqlx::raw_sql(statement).execute(&mut control).await?;
         }
         ensure_goal_reader_role(&mut control).await?;
-        let search_membership = format!(
+        let search_membership = SqlText::fill(
             "GRANT proxiima_search TO {platform} WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
              REVOKE proxiima_search FROM {runtime};
              GRANT proxiima_goal_reader TO {platform} WITH ADMIN FALSE, INHERIT FALSE, SET TRUE;
              REVOKE proxiima_goal_reader FROM {runtime}",
-            platform = quoted_ident(SPLIT_PLATFORM_ROLE),
-            runtime = quoted_ident(SPLIT_RUNTIME_ROLE),
+            &[
+                ("{platform}", &SqlText::from(&platform)),
+                ("{runtime}", &SqlText::from(&runtime)),
+            ],
         );
-        // SQL-POLICY: fixed-fragment — closed fixture role identifiers only.
-        sqlx::raw_sql(AssertSqlSafe(search_membership))
+        sqlx::raw_sql(search_membership)
             .execute(&mut control)
             .await?;
         // Neither fixture role may inherit membership from the other.
-        for (member, role) in [(SPLIT_RUNTIME_ROLE, SPLIT_PLATFORM_ROLE), (SPLIT_PLATFORM_ROLE, SPLIT_RUNTIME_ROLE)] {
-            let statement = format!(
-                "REVOKE {role} FROM {member}",
-                role = quoted_ident(role),
-                member = quoted_ident(member),
-            );
-            // SQL-POLICY: fixed-fragment — generated role identifiers only.
-            sqlx::raw_sql(AssertSqlSafe(statement))
-                .execute(&mut control)
-                .await?;
+        for (member, role) in [(&runtime, &platform), (&platform, &runtime)] {
+            let mut statement = SqlText::new("REVOKE ");
+            statement.push_ident(role).push(" FROM ").push_ident(member);
+            sqlx::raw_sql(statement).execute(&mut control).await?;
         }
-        let statement = format!(
-            "GRANT CREATE ON DATABASE {} TO {}",
-            quoted_ident(database),
-            quoted_ident(SPLIT_PLATFORM_ROLE),
-        );
-        // SQL-POLICY: fixed-fragment — generated database and role identifiers only.
-        sqlx::raw_sql(AssertSqlSafe(statement))
-            .execute(&mut control)
-            .await?;
+        let mut statement = SqlText::new("GRANT CREATE ON DATABASE ");
+        statement
+            .push_ident(&ident(database)?)
+            .push(" TO ")
+            .push_ident(&platform);
+        sqlx::raw_sql(statement).execute(&mut control).await?;
 
         let mut target = PgConnection::connect(&db_url(database)).await?;
+        sqlx::query(
+            "SELECT set_config('proxiima_test.schemas', $1, false),
+                    set_config('proxiima_test.spiice_schemas', $2, false)",
+        )
+        .bind(&schema_names)
+        .bind(&spiice_names)
+        .execute(&mut target)
+        .await?;
         // Several HTTP test binaries share one isolated database. Once its
         // grants/defaults are prepared, never repeat ownership DDL alongside
         // a host's migration transaction (SQLx's ledger lock has another order).
@@ -564,7 +591,7 @@ async fn split_roles(
             // Reconcile grants on templates prepared before GoalReader was
             // introduced. This preserves the existing template path while
             // making the runtime EXECUTE contract deterministic.
-            let runtime_grants = format!(
+            sqlx::raw_sql(concat!(
                 "DO $$ DECLARE function_row record; BEGIN
                    FOR function_row IN
                      SELECT n.nspname, p.proname,
@@ -572,43 +599,40 @@ async fn split_roles(
                        FROM pg_proc p
                        JOIN pg_namespace n ON n.oid = p.pronamespace
                        JOIN pg_roles owner_role ON owner_role.oid = p.proowner
-                      WHERE n.nspname IN ({schema_list})
+                      WHERE n.nspname = ANY(",
+                prepared_schemas!(),
+                ")
                         AND owner_role.rolname IN ('proxiima_search', 'proxiima_goal_reader')
                         AND p.prosecdef
                    LOOP
                      EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(%s) TO %I',
                                     function_row.nspname, function_row.proname,
-                                    function_row.args, '{SPLIT_RUNTIME_ROLE}');
+                                    function_row.args, '",
+                split_runtime_role!(),
+                "');
                    END LOOP;
-                 END $$",
-            );
-            sqlx::raw_sql(AssertSqlSafe(runtime_grants))
-                .execute(&mut target)
-                .await?;
+                 END $$"
+            ))
+            .execute(&mut target)
+            .await?;
             target.close().await?;
             return Ok(());
         }
         for extension in extensions.iter().copied() {
-            let statement = format!(
-                "CREATE EXTENSION IF NOT EXISTS {}",
-                quoted_ident(extension)
-            );
-            // SQL-POLICY: fixed-fragment — extension names are the closed lists above.
-            sqlx::raw_sql(AssertSqlSafe(statement))
-                .execute(&mut target)
-                .await?;
+            let mut statement = SqlText::new("CREATE EXTENSION IF NOT EXISTS ");
+            statement.push_ident(&ident(extension)?);
+            sqlx::raw_sql(statement).execute(&mut target).await?;
         }
-        let public_grants = format!(
+        let public_grants = SqlText::fill(
             "GRANT USAGE ON SCHEMA public TO {runtime}, {platform}, proxiima_search, proxiima_goal_reader;
              GRANT CREATE ON SCHEMA public TO {platform}",
-            runtime = quoted_ident(SPLIT_RUNTIME_ROLE),
-            platform = quoted_ident(SPLIT_PLATFORM_ROLE),
+            &[
+                ("{runtime}", &SqlText::from(&runtime)),
+                ("{platform}", &SqlText::from(&platform)),
+            ],
         );
-        // SQL-POLICY: fixed-fragment — generated role identifiers only.
-        sqlx::raw_sql(AssertSqlSafe(public_grants))
-            .execute(&mut target)
-            .await?;
-        let global_defaults = format!(
+        sqlx::raw_sql(public_grants).execute(&mut target).await?;
+        let global_defaults = SqlText::fill(
             "ALTER DEFAULT PRIVILEGES FOR ROLE {platform}
                GRANT USAGE ON SCHEMAS TO {runtime};
              ALTER DEFAULT PRIVILEGES FOR ROLE {platform}
@@ -621,13 +645,12 @@ async fn split_roles(
                GRANT EXECUTE ON FUNCTIONS TO {runtime};
              ALTER DEFAULT PRIVILEGES FOR ROLE proxiima_goal_reader
                GRANT EXECUTE ON FUNCTIONS TO {runtime}",
-            runtime = quoted_ident(SPLIT_RUNTIME_ROLE),
-            platform = quoted_ident(SPLIT_PLATFORM_ROLE),
+            &[
+                ("{runtime}", &SqlText::from(&runtime)),
+                ("{platform}", &SqlText::from(&platform)),
+            ],
         );
-        // SQL-POLICY: fixed-fragment — generated role identifiers only.
-        sqlx::raw_sql(AssertSqlSafe(global_defaults))
-            .execute(&mut target)
-            .await?;
+        sqlx::raw_sql(global_defaults).execute(&mut target).await?;
         sqlx::raw_sql(
             "CREATE TABLE IF NOT EXISTS public._sqlx_migrations (
                  version bigint PRIMARY KEY,
@@ -640,9 +663,9 @@ async fn split_roles(
         )
         .execute(&mut target)
         .await?;
-        let transfer = format!(
+        sqlx::raw_sql(concat!(
             "DO $$ DECLARE r record; s text; BEGIN
-               FOREACH s IN ARRAY ARRAY[{spiice_ledger_list}]::text[] LOOP
+               FOREACH s IN ARRAY string_to_array(current_setting('proxiima_test.spiice_schemas'), ',') LOOP
                  EXECUTE format('CREATE TABLE IF NOT EXISTS public.%I (
                      version bigint PRIMARY KEY,
                      description text NOT NULL,
@@ -653,59 +676,57 @@ async fn split_roles(
                    )', '_sqlx_migrations_' || s);
                END LOOP;
                FOR r IN SELECT n.nspname FROM pg_namespace n
-                  WHERE n.nspname IN ({schema_list}) LOOP
-                 EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, '{SPLIT_PLATFORM_ROLE}');
+                  WHERE n.nspname = ANY(", prepared_schemas!(), ") LOOP
+                 EXECUTE format('ALTER SCHEMA %I OWNER TO %I', r.nspname, '", split_platform_role!(), "');
                END LOOP;
                FOR r IN SELECT n.nspname, c.relname, c.relkind
                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE n.nspname IN ({schema_list})
+                  WHERE n.nspname = ANY(", prepared_schemas!(), ")
                     AND c.relkind IN ('r','p','v','S') LOOP
                  IF r.relkind = 'S' THEN
-                   EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', r.nspname, r.relname, '{SPLIT_PLATFORM_ROLE}');
+                   EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', r.nspname, r.relname, '", split_platform_role!(), "');
                  ELSIF r.relkind = 'v' THEN
-                   EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', r.nspname, r.relname, '{SPLIT_PLATFORM_ROLE}');
+                   EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', r.nspname, r.relname, '", split_platform_role!(), "');
                  ELSE
-                   EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', r.nspname, r.relname, '{SPLIT_PLATFORM_ROLE}');
+                   EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', r.nspname, r.relname, '", split_platform_role!(), "');
                  END IF;
                END LOOP;
                FOR r IN SELECT n.nspname, t.typname
                    FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-                  WHERE n.nspname IN ({schema_list}) AND t.typtype IN ('e','d') LOOP
-                 EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.nspname, r.typname, '{SPLIT_PLATFORM_ROLE}');
+                  WHERE n.nspname = ANY(", prepared_schemas!(), ") AND t.typtype IN ('e','d') LOOP
+                 EXECUTE format('ALTER TYPE %I.%I OWNER TO %I', r.nspname, r.typname, '", split_platform_role!(), "');
                END LOOP;
                FOR r IN SELECT n.nspname, p.proname,
                                 pg_get_function_identity_arguments(p.oid) AS args
                    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                    JOIN pg_roles owner_role ON owner_role.oid = p.proowner
-                  WHERE n.nspname IN ({schema_list})
+                  WHERE n.nspname = ANY(", prepared_schemas!(), ")
                     AND owner_role.rolname NOT IN ('proxiima_search', 'proxiima_goal_reader') LOOP
                  EXECUTE format('ALTER FUNCTION %I.%I(%s) OWNER TO %I',
-                                r.nspname, r.proname, r.args, '{SPLIT_PLATFORM_ROLE}');
+                                r.nspname, r.proname, r.args, '", split_platform_role!(), "');
                END LOOP;
                FOR r IN SELECT n.nspname, p.proname,
                                 pg_get_function_identity_arguments(p.oid) AS args
                    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                    JOIN pg_roles owner_role ON owner_role.oid = p.proowner
-                  WHERE n.nspname IN ({schema_list})
+                  WHERE n.nspname = ANY(", prepared_schemas!(), ")
                     AND owner_role.rolname IN ('proxiima_search', 'proxiima_goal_reader') AND p.prosecdef LOOP
                  EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(%s) TO %I',
-                                r.nspname, r.proname, r.args, '{SPLIT_RUNTIME_ROLE}');
+                                r.nspname, r.proname, r.args, '", split_runtime_role!(), "');
                END LOOP;
                FOR r IN SELECT n.nspname, c.relname
                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                   WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
                     AND starts_with(c.relname, '_sqlx_migrations') LOOP
-                 EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', r.nspname, r.relname, '{SPLIT_PLATFORM_ROLE}');
+                 EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', r.nspname, r.relname, '", split_platform_role!(), "');
                  EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I.%I FROM %I',
-                                r.nspname, r.relname, '{SPLIT_RUNTIME_ROLE}');
-                 EXECUTE format('GRANT SELECT ON %I.%I TO %I', r.nspname, r.relname, '{SPLIT_RUNTIME_ROLE}');
+                                r.nspname, r.relname, '", split_runtime_role!(), "');
+                 EXECUTE format('GRANT SELECT ON %I.%I TO %I', r.nspname, r.relname, '", split_runtime_role!(), "');
                END LOOP;
-             END $$",
-        );
-        // SQL-POLICY: fixed-fragment — validated schema literals and closed role names; catalog identifiers use PostgreSQL format %I.
-        sqlx::raw_sql(AssertSqlSafe(transfer))
-            .execute(&mut target)
-            .await?;
+             END $$"
+        ))
+        .execute(&mut target)
+        .await?;
         for schema in &schemas {
             // The blanket grant below also covers core views, which are read-only.
             let restrict_core_views = if *schema == "proxiima_core" {
@@ -715,9 +736,10 @@ async fn split_roles(
             } else {
                 ""
             };
-            let statement = format!(
+            let schema = ident(schema)?;
+            let statement = SqlText::fill(
                 "DO $$ BEGIN
-                   IF to_regnamespace('{schema_name}') IS NOT NULL THEN
+                   IF to_regnamespace('{schema}') IS NOT NULL THEN
                      EXECUTE 'GRANT USAGE ON SCHEMA {schema} TO {runtime}';
                      EXECUTE 'REVOKE CREATE ON SCHEMA {schema} FROM PUBLIC';
                      EXECUTE 'REVOKE CREATE ON SCHEMA {schema} FROM {runtime}';
@@ -728,15 +750,14 @@ async fn split_roles(
                      EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE {platform} IN SCHEMA {schema} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {runtime}';
                    END IF;
                  END $$",
-                schema = quoted_ident(schema),
-                schema_name = schema,
-                runtime = quoted_ident(SPLIT_RUNTIME_ROLE),
-                platform = quoted_ident(SPLIT_PLATFORM_ROLE),
+                &[
+                    ("{restrict_core_views}", &SqlText::new(restrict_core_views)),
+                    ("{schema}", &SqlText::from(&schema)),
+                    ("{runtime}", &SqlText::from(&runtime)),
+                    ("{platform}", &SqlText::from(&platform)),
+                ],
             );
-            // SQL-POLICY: fixed-fragment — schema and role identifiers are closed fixture values.
-            sqlx::raw_sql(AssertSqlSafe(statement))
-                .execute(&mut target)
-                .await?;
+            sqlx::raw_sql(statement).execute(&mut target).await?;
         }
         for role in [SPLIT_PLATFORM_ROLE, SPLIT_RUNTIME_ROLE] {
             let attributes: (bool, bool, bool, bool, bool) = sqlx::query_as(
@@ -752,11 +773,11 @@ async fn split_roles(
                 )));
             }
         }
-        sqlx::raw_sql(AssertSqlSafe(
+        sqlx::raw_sql(
             "CREATE SCHEMA IF NOT EXISTS _proxiima_test;
              CREATE TABLE _proxiima_test.split_roles_ready (singleton boolean PRIMARY KEY);
-             INSERT INTO _proxiima_test.split_roles_ready VALUES (true)".to_owned(),
-        ))
+             INSERT INTO _proxiima_test.split_roles_ready VALUES (true)",
+        )
         .execute(&mut target)
         .await?;
         target.close().await?;
@@ -1218,12 +1239,9 @@ where
         }
 
         let staging = unique_db_name("proxiima_tmpl_build");
-        sqlx::raw_sql(AssertSqlSafe(format!(
-            "CREATE DATABASE {}",
-            quoted_ident(&staging)
-        )))
-        .execute(&mut conn)
-        .await?;
+        let mut create = SqlText::new("CREATE DATABASE ");
+        create.push_ident(&ident(&staging)?);
+        sqlx::raw_sql(create).execute(&mut conn).await?;
         record_new_db(&mut conn, &staging).await?;
 
         let build_result: Result<(), sqlx::Error> = async {
@@ -1234,13 +1252,12 @@ where
             let outcome = build(pool.clone()).await;
             pool.close().await;
             outcome?;
-            sqlx::raw_sql(AssertSqlSafe(format!(
-                "ALTER DATABASE {} RENAME TO {}",
-                quoted_ident(&staging),
-                quoted_ident(template)
-            )))
-            .execute(&mut conn)
-            .await?;
+            let mut rename = SqlText::new("ALTER DATABASE ");
+            rename
+                .push_ident(&ident(&staging)?)
+                .push(" RENAME TO ")
+                .push_ident(&ident(template)?);
+            sqlx::raw_sql(rename).execute(&mut conn).await?;
             unrecord_db(&mut conn, &staging).await?;
             Ok(())
         }
@@ -1323,18 +1340,15 @@ pub async fn create_db_from_template(prefix: &str, template: &str) -> Result<Str
 /// As [`create_db_from_template`].
 pub async fn create_named_db_from_template(name: &str, template: &str) -> Result<(), sqlx::Error> {
     let mut conn = connect_admin().await?;
-    let statement = format!(
-        "CREATE DATABASE {} TEMPLATE {}",
-        quoted_ident(name),
-        quoted_ident(template)
-    );
+    let mut statement = SqlText::new("CREATE DATABASE ");
+    statement
+        .push_ident(&ident(name)?)
+        .push(" TEMPLATE ")
+        .push_ident(&ident(template)?);
     let mut last_error = None;
 
     for _ in 0..DROP_RETRIES {
-        match sqlx::raw_sql(AssertSqlSafe(statement.clone()))
-            .execute(&mut conn)
-            .await
-        {
+        match sqlx::raw_sql(statement.clone()).execute(&mut conn).await {
             Ok(_) => {
                 record_new_db(&mut conn, name).await?;
                 conn.close().await?;
@@ -1567,11 +1581,11 @@ pub async fn provision_goal_reader(
         .await?;
     let result = async {
         ensure_goal_reader_role(&mut conn).await?;
-        let statement = format!(
-            "GRANT proxiima_goal_reader TO {platform} WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
-            platform = quoted_ident(platform_role),
-        );
-        sqlx::raw_sql(AssertSqlSafe(statement))
+        let mut statement = SqlText::new("GRANT proxiima_goal_reader TO ");
+        statement
+            .push_ident(&ident(platform_role)?)
+            .push(" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
+        sqlx::raw_sql(statement)
             .execute(&mut conn)
             .await
             .map(|_| ())
@@ -1584,20 +1598,29 @@ pub async fn provision_goal_reader(
     result?;
     unlock.map(|_| ())?;
     let mut target_connection = target.acquire().await?;
-    let defaults = format!(
+    let runtime = ident(runtime_role)?;
+    let mut defaults = SqlText::new(
         "ALTER DEFAULT PRIVILEGES FOR ROLE proxiima_goal_reader
-           GRANT EXECUTE ON FUNCTIONS TO {runtime};
+           GRANT EXECUTE ON FUNCTIONS TO ",
+    );
+    defaults
+        .push_ident(&runtime)
+        .push(
+            ";
          DO $grant_goal_reader$ DECLARE function_name text;
          BEGIN
            FOREACH function_name IN ARRAY ARRAY['goal_grants_held()', 'goal_memory_read_routes()', 'goal_visible_memory_ids()', 'goal_visible_memory_heads()', 'goal_memory_read_admitted(uuid)', 'goal_read_admitted(uuid)'] LOOP
              IF to_regprocedure('proxiima_core.' || function_name) IS NOT NULL THEN
-               EXECUTE format('GRANT EXECUTE ON FUNCTION proxiima_core.%s TO {runtime}', function_name);
+               EXECUTE format('GRANT EXECUTE ON FUNCTION proxiima_core.%s TO ",
+        )
+        .push_ident(&runtime)
+        .push(
+            "', function_name);
              END IF;
            END LOOP;
          END $grant_goal_reader$",
-        runtime = quoted_ident(runtime_role),
-    );
-    sqlx::raw_sql(AssertSqlSafe(defaults))
+        );
+    sqlx::raw_sql(defaults)
         .execute(&mut *target_connection)
         .await
         .map(|_| ())
@@ -1641,13 +1664,9 @@ async fn unrecord_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Er
 }
 
 async fn drop_db_on(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Error> {
-    let quoted_name = quoted_ident(name);
-    match sqlx::raw_sql(AssertSqlSafe(format!(
-        "DROP DATABASE IF EXISTS {quoted_name} WITH (FORCE)"
-    )))
-    .execute(&mut *conn)
-    .await
-    {
+    let mut drop = SqlText::new("DROP DATABASE IF EXISTS ");
+    drop.push_ident(&ident(name)?).push(" WITH (FORCE)");
+    match sqlx::raw_sql(drop).execute(&mut *conn).await {
         Ok(_) => {}
         Err(err) if is_sqlstate(&err, SQLSTATE_UNDEFINED_DATABASE) => {}
         Err(err) => return Err(err),
@@ -1791,14 +1810,9 @@ async fn drop_unleased_on(conn: &mut PgConnection, name: &str) -> Result<bool, s
 /// `DROP DATABASE` without `FORCE`: a database somebody is connected to is
 /// kept (`false`), also when they connected after the caller looked.
 async fn drop_unused_db_on(conn: &mut PgConnection, name: &str) -> Result<bool, sqlx::Error> {
-    // SQL-POLICY: fixed-fragment — a quoted database identifier; DDL takes no bind parameter.
-    match sqlx::raw_sql(AssertSqlSafe(format!(
-        "DROP DATABASE IF EXISTS {}",
-        quoted_ident(name)
-    )))
-    .execute(&mut *conn)
-    .await
-    {
+    let mut drop = SqlText::new("DROP DATABASE IF EXISTS ");
+    drop.push_ident(&ident(name)?);
+    match sqlx::raw_sql(drop).execute(&mut *conn).await {
         Ok(_) => {}
         Err(err) if is_sqlstate(&err, SQLSTATE_DATABASE_ACCESSED) => return Ok(false),
         Err(err) if is_sqlstate(&err, SQLSTATE_UNDEFINED_DATABASE) => {}
@@ -1835,14 +1849,9 @@ fn name_is_stale_clone(name: &str, older_than: OffsetDateTime) -> bool {
     created < older_than
 }
 
-/// `input` as a quoted `PostgreSQL` identifier, embedded `"` doubled.
-#[must_use]
-pub fn quoted_ident(input: &str) -> String {
-    format!("\"{}\"", input.replace('"', "\"\""))
-}
-
-fn sql_literal(input: &str) -> String {
-    format!("'{}'", input.replace('\'', "''"))
+/// `name` as a quoted identifier, or the protocol error that refuses it.
+fn ident(name: &str) -> Result<PgIdent, sqlx::Error> {
+    PgIdent::quoted(name).map_err(|error| sqlx::Error::Protocol(error.to_string()))
 }
 
 fn advisory_lock_key(input: &str) -> i64 {
@@ -1987,8 +1996,8 @@ mod tests {
     use super::{
         ADMIN_URL_UNSET, ADMIN_URL_VAR, BUILTIN_FAMILIES, MAX_FAMILY_PREFIX_BYTES,
         RESERVED_PREFIXES, SPLIT_ROLE_PASSWORD, TemplateFamily, TemplateFamilyError, connect_admin,
-        create_db, db_url, db_url_from_admin, drop_unused_db_on, name_is_stale_clone, quoted_ident,
-        redacted_url, role_url_from_admin, template_family, trimmed_url, unique_db_name,
+        create_db, db_url, db_url_from_admin, drop_unused_db_on, name_is_stale_clone, redacted_url,
+        role_url_from_admin, template_family, trimmed_url, unique_db_name,
     };
 
     /// Provisioning twice leaves the fixture roles with one, fixed SCRAM
@@ -2042,11 +2051,6 @@ mod tests {
         let result = db_url_from_admin("postgres://user:private-secret@[broken", "isolated_test");
         let error = result.expect_err("invalid IPv6 address");
         assert!(!error.to_string().contains("private-secret"));
-    }
-
-    #[test]
-    fn quoted_ident_escapes_embedded_quotes() {
-        assert_eq!(quoted_ident("a\"b"), "\"a\"\"b\"");
     }
 
     #[test]
@@ -2149,14 +2153,14 @@ mod tests {
 
         let name = unique_db_name("record_fails");
         let mut admin = connect_admin().await.expect("admin");
-        // SQL-POLICY: fixed-fragment — a quoted generated database identifier.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE DATABASE {name} ALLOW_CONNECTIONS false",
-            name = quoted_ident(&name)
-        )))
-        .execute(&mut admin)
-        .await
-        .expect("create");
+        let mut create = super::SqlText::new("CREATE DATABASE ");
+        create
+            .push_ident(&super::ident(&name).expect("name"))
+            .push(" ALLOW_CONNECTIONS false");
+        sqlx::raw_sql(create)
+            .execute(&mut admin)
+            .await
+            .expect("create");
 
         let recorded = super::record_new_db(&mut admin, &name).await;
         let left = super::database_exists_on(&mut admin, &name)

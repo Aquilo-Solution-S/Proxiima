@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+proxiima-core = { path = "../core" }
 sqlx = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }

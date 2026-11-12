@@ -279,14 +279,12 @@ async fn fence_declared_scopes(
     let owner_id = owner.into_inner();
     for scope in scopes {
         crate::access::fences::lock_scope_fence_shared_tx(tx, scope.kind, owner, scope.id).await?;
-        // SQL-POLICY: generated
-        let registered: bool =
-            sqlx::query_scalar(sqlx::AssertSqlSafe(std::sync::Arc::clone(&scope.probe_sql)))
-                .bind(owner_id)
-                .bind(scope.id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_err)?;
+        let registered: bool = sqlx::query_scalar(scope.probe_sql.clone())
+            .bind(owner_id)
+            .bind(scope.id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_err)?;
         if !registered {
             return Err(StorageError::ScopeMissing {
                 kind: scope.kind.as_str().to_owned(),

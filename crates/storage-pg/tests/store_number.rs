@@ -1,6 +1,6 @@
 use proxiima_core::storage_ports::{FactIngestPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::{AccessKind, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId};
+use proxiima_core::{AccessKind, MemoryId, OwnerId, SchemaId, SchemaVersion, SqlText, UserId};
 use proxiima_pg_testkit::{DbGuard, db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
@@ -146,21 +146,25 @@ async fn a_colliding_insert_retries_without_leaving_an_old_head()
             .fetch_one(&admin)
             .await?;
     assert_eq!(occurred_at, existing.memory_id.created_at());
-    // SQL-POLICY: fixed-fragment — the only interpolation is a typed UUID.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+    let mut collision_sql = SqlText::new(
         "CREATE SEQUENCE proxiima_core.collision_attempt;
          GRANT USAGE ON SEQUENCE proxiima_core.collision_attempt TO PUBLIC;
          CREATE FUNCTION proxiima_core.force_one_collision() RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
-             IF nextval('proxiima_core.collision_attempt') = 1 THEN NEW.t := '{}'; END IF;
+             IF nextval('proxiima_core.collision_attempt') = 1 THEN NEW.t := ",
+    );
+    collision_sql
+        .push("'")
+        .push_uuid(existing.memory_id.into_inner())
+        .push("'");
+    collision_sql.push(
+        "; END IF;
              RETURN NEW;
          END; $$;
          CREATE TRIGGER force_collision BEFORE INSERT ON proxiima_core.memory
              FOR EACH ROW EXECUTE FUNCTION proxiima_core.force_one_collision();",
-        existing.memory_id.into_inner()
-    )))
-    .execute(&admin)
-    .await?;
+    );
+    sqlx::raw_sql(collision_sql).execute(&admin).await?;
     let mut colliding = draft();
     colliding.source_id = Some("collision-source".into());
     colliding.ingest_key = Some("succeeds-after-collision".into());
@@ -186,17 +190,22 @@ async fn a_colliding_insert_retries_without_leaving_an_old_head()
         .bind(owner.into_inner()).fetch_one(&admin).await?;
     assert_eq!(keyed_t, outcome.memory_id.into_inner());
     // A second collision refuses rather than entering the outer transient retry.
-    // SQL-POLICY: fixed-fragment — the only interpolation is a typed UUID.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+    let mut collision_sql = SqlText::new(
         "CREATE OR REPLACE FUNCTION proxiima_core.force_one_collision() RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
              PERFORM nextval('proxiima_core.collision_attempt');
-             NEW.t := '{}';
+             NEW.t := ",
+    );
+    collision_sql
+        .push("'")
+        .push_uuid(existing.memory_id.into_inner())
+        .push("'");
+    collision_sql.push(
+        ";
              RETURN NEW;
-         END; $$;", existing.memory_id.into_inner()
-    )))
-    .execute(&admin)
-    .await?;
+         END; $$;",
+    );
+    sqlx::raw_sql(collision_sql).execute(&admin).await?;
     colliding.ingest_key = Some("refused-after-two-collisions".into());
     let refused = pg
         .ingest_fact_atomic(&permit, &colliding, None)

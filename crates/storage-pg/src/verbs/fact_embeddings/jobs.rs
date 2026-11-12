@@ -231,8 +231,6 @@ pub async fn claim_pending_embedding_jobs<'e, E: PgExecutor<'e>>(
         blocked_models.push(space.model_id());
         blocked_dims.push(crate::pgvector::Lane::of(space.dim()).width);
     }
-    // SQL-POLICY: fixed-fragment — the compile-time claim constant above;
-    // every value is bound.
     let rows = sqlx::query_as::<_, EmbeddingJobClaimRow>(CLAIM_EMBEDDING_JOBS_SQL)
         .bind(limit)
         .bind(&skip_owner_ids)

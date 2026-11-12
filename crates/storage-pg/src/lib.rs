@@ -59,7 +59,6 @@ pub use error::{MAX_TRANSACTION_ATTEMPTS, is_transient_conflict};
 pub mod integrity;
 mod pg_enums;
 pub use pg_enums::{PublicationDeliveryState, PublicationRecordState, PublicationStateParseError};
-mod pg_ident;
 mod pgvector;
 #[doc(hidden)]
 pub mod pin_fields;
@@ -479,10 +478,7 @@ async fn ensure_pgvector_runtime_compatible_on(
     let mut tx = sqlx::Connection::begin(&mut *conn)
         .await
         .map_err(|err| StorageError::Unavailable(format!("begin pgvector preflight: {err}")))?;
-    // SQL-POLICY: fixed-fragment — the settings statement interpolates
-    // nothing but this deployment's own tuning integers and enum spellings,
-    // exactly as the semantic branch's own call site does.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(set_hnsw_search_sql(tuning)))
+    sqlx::raw_sql(set_hnsw_search_sql(tuning))
         .execute(tx.as_mut())
         .await
         .map_err(|err| {

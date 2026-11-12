@@ -1,7 +1,8 @@
+use proxiima_core::SqlText;
 use proxiima_pg_testkit::{
     DbGuard, SplitRoleDb, create_db, db_url, split_role_urls_for, unique_db_name,
 };
-use sqlx::{AssertSqlSafe, Connection, PgConnection};
+use sqlx::{Connection, PgConnection};
 
 async fn admin_database() -> (DbGuard, PgConnection) {
     let name = unique_db_name("proxiima_test_split_roles");
@@ -14,7 +15,7 @@ async fn admin_database() -> (DbGuard, PgConnection) {
 }
 
 async fn assert_ledger_access(
-    ledger: &str,
+    ledger: &'static str,
     runtime: &mut PgConnection,
     platform: &mut PgConnection,
 ) {
@@ -28,38 +29,42 @@ async fn assert_ledger_access(
     .expect("ledger ownership");
     assert!(platform_owns, "platform must own {ledger}");
 
-    let preserved = format!(
+    let mut preserved = SqlText::new(
         "SELECT version = 17 AND description = 'before split'
                 AND installed_on = '2020-01-01 00:00:00+00'::timestamptz
                 AND success AND checksum = decode('abcd', 'hex')
-                AND execution_time = 42 FROM {ledger}"
+                AND execution_time = 42 FROM ",
     );
-    // SQL-POLICY: fixed-fragment — ledger is one of the closed, quoted fixture table names below.
-    let rows: Vec<bool> = sqlx::query_scalar(AssertSqlSafe(preserved))
+    preserved.push(ledger);
+    let rows: Vec<bool> = sqlx::query_scalar(preserved)
         .fetch_all(&mut *runtime)
         .await
         .expect("runtime reads existing ledger");
     assert_eq!(rows, [true], "cutover must preserve {ledger}");
 
-    let insert = format!(
-        "INSERT INTO {ledger} (version, description, success, checksum, execution_time)
-         VALUES (18, 'after split', true, decode('cdef', 'hex'), 43)"
+    let mut insert = SqlText::new("INSERT INTO ");
+    insert.push(ledger).push(
+        " (version, description, success, checksum, execution_time)
+         VALUES (18, 'after split', true, decode('cdef', 'hex'), 43)",
     );
-    // SQL-POLICY: fixed-fragment — ledger is one of the closed, quoted fixture table names below.
-    sqlx::query(AssertSqlSafe(insert))
+    sqlx::query(insert)
         .execute(&mut *platform)
         .await
         .expect("platform records the next migration");
 
-    // SQL-POLICY: fixed-fragment — closed DML forms and quoted fixture table names only.
-    for statement in [
-        format!("INSERT INTO {ledger} SELECT * FROM {ledger} WHERE false"),
-        format!("UPDATE {ledger} SET description = 'runtime mutation'"),
-        format!("DELETE FROM {ledger}"),
-        format!("TRUNCATE {ledger}"),
-    ] {
-        // SQL-POLICY: fixed-fragment — closed DML forms and quoted fixture table names only.
-        let error = sqlx::query(AssertSqlSafe(statement))
+    let statements = [
+        ("INSERT INTO ", " SELECT * FROM ", " WHERE false"),
+        ("UPDATE ", " SET description = 'runtime mutation'", ""),
+        ("DELETE FROM ", "", ""),
+        ("TRUNCATE ", "", ""),
+    ];
+    for (head, middle, tail) in statements {
+        let mut statement = SqlText::new(head);
+        statement.push(ledger).push(middle);
+        if !tail.is_empty() {
+            statement.push(ledger).push(tail);
+        }
+        let error = sqlx::query(statement)
             .execute(&mut *runtime)
             .await
             .expect_err("runtime ledger writes must be refused");
@@ -71,9 +76,9 @@ async fn assert_ledger_access(
             "runtime must have read-only access to {ledger}: {error}"
         );
     }
-    let count = format!("SELECT count(*) FROM {ledger}");
-    // SQL-POLICY: fixed-fragment — ledger is one of the closed, quoted fixture table names below.
-    let count: i64 = sqlx::query_scalar(AssertSqlSafe(count))
+    let mut count = SqlText::new("SELECT count(*) FROM ");
+    count.push(ledger);
+    let count: i64 = sqlx::query_scalar(count)
         .fetch_one(&mut *runtime)
         .await
         .expect("runtime reads both migrations");

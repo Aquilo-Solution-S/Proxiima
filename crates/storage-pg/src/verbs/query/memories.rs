@@ -2,21 +2,20 @@
 //! `IncludeSuperseded` = every hot `t` of those handles.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 use proxiima_core::read_models::MemorySchemaSpec;
 use proxiima_core::verbs::query::{
     EntityKind, MemoryRow, QueryCursor, QueryRequest, QueryResponse, SupersessionStatus,
 };
 use proxiima_core::verbs::schema::PayloadKind;
-use proxiima_core::{MemoryId, OwnerId, SchemaId, SidecarPayload, StorageError};
+use proxiima_core::{MemoryId, OwnerId, SchemaId, SidecarPayload, SqlText, StorageError};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::error::map_err;
 use crate::pg_enums::{PgMemoryKind, memory_payload_kind};
-use crate::pg_ident::PgIdent;
 use crate::sidecars::{PgSidecarKey, PgSidecarReadCtx, PgSidecarRegistryFrozen};
+use proxiima_core::PgIdent;
 
 use super::edges::query_edges;
 use super::goals::query_goals_on_connection;
@@ -107,8 +106,7 @@ async fn fetch_memory_page_on_connection(
     } else {
         owner_sql
     };
-    // SQL-POLICY: fixed-fragment
-    let mut q = sqlx::query_as::<_, MemoryRowDb>(sqlx::AssertSqlSafe(sql)).bind(owner_ids);
+    let mut q = sqlx::query_as::<_, MemoryRowDb>(sql).bind(owner_ids);
     for filter in filters {
         q = match filter {
             MemoryFilter::Schema(schema_id) => q.bind(schema_id),
@@ -151,11 +149,13 @@ enum MemoryFilter {
     },
 }
 
+/// One schema's tag lookup. The identifiers are validated when the spec is
+/// built and are the values the predicate splices.
 struct TagSpec {
     schema_id: String,
-    table: String,
-    key_column: String,
-    tag_column: String,
+    table: PgIdent,
+    key_column: PgIdent,
+    tag_column: PgIdent,
 }
 
 impl MemoryFilter {
@@ -165,27 +165,53 @@ impl MemoryFilter {
     /// Head kind/schema are immutable and checked against every inserted
     /// memory version. Filtering the ordered head stream avoids visiting
     /// versions that cannot be in this page.
-    fn predicate(&self, placeholder: usize, heads_only: bool) -> String {
+    fn predicate(&self, placeholder: usize, heads_only: bool) -> SqlText {
         let alias = if heads_only { "h" } else { "m" };
+        let at = placeholder as u64;
+        let mut sql = SqlText::new("");
         match self {
-            Self::NoMatches => " AND FALSE".to_owned(),
-            Self::Schema(_) => format!(" AND {alias}.schema_id = ${placeholder}"),
-            Self::Kind(kind) => {
-                let kind = kind.label();
-                format!(" AND {alias}.kind = '{kind}'::proxiima_core.memory_kind")
+            Self::NoMatches => {
+                sql.push(" AND FALSE");
             }
-            Self::Ids(_) => format!(" AND {alias}.t = ANY(${placeholder}::uuid[])"),
-            Self::ReferencedGoalHandles(_) => format!(
-                " AND m.kind = 'fact' \
+            Self::Schema(_) => {
+                sql.push(" AND ")
+                    .push(alias)
+                    .push(".schema_id = $")
+                    .push_u64(at);
+            }
+            Self::Kind(kind) => {
+                sql.push(" AND ")
+                    .push(alias)
+                    .push(".kind = '")
+                    .push(kind.label())
+                    .push("'::proxiima_core.memory_kind");
+            }
+            Self::Ids(_) => {
+                sql.push(" AND ")
+                    .push(alias)
+                    .push(".t = ANY($")
+                    .push_u64(at)
+                    .push("::uuid[])");
+            }
+            Self::ReferencedGoalHandles(_) => {
+                sql.push(
+                    " AND m.kind = 'fact' \
                  AND m.goal_refs && ARRAY(SELECT g.t FROM proxiima_core.goal g \
-                 WHERE g.handle = ANY(${placeholder}::uuid[]) \
-                   AND g.owner_id = ANY($1::uuid[]))"
-            ),
-            Self::Cursor(_) => format!(" AND {alias}.t < ${placeholder}"),
+                 WHERE g.handle = ANY($",
+                )
+                .push_u64(at)
+                .push(
+                    "::uuid[]) \
+                   AND g.owner_id = ANY($1::uuid[]))",
+                );
+            }
+            Self::Cursor(_) => {
+                sql.push(" AND ").push(alias).push(".t < $").push_u64(at);
+            }
             Self::Tags {
                 specs, tag_match, ..
             } => {
-                let tags_placeholder = placeholder + specs.len();
+                let tags_placeholder = (placeholder + specs.len()) as u64;
                 let op = match tag_match {
                     proxiima_core::verbs::query::TagMatch::Any => "&&",
                     proxiima_core::verbs::query::TagMatch::All => "@>",
@@ -193,21 +219,33 @@ impl MemoryFilter {
                 // Keep each lookup correlated to its memory key. Pulling
                 // this up can rescan the sidecar's RLS visibility relation
                 // per page; OFFSET 0 preserves the one-key probe.
-                let arms = specs
-                    .iter()
-                    .enumerate()
-                    .map(|(index, spec)| {
-                        format!(
-                            "({alias}.schema_id = ${} AND EXISTS (SELECT 1 FROM {} c WHERE c.{} = {alias}.t AND c.{} {op} ${tags_placeholder}::text[] OFFSET 0))",
-                            placeholder + index,
-                            spec.table, spec.key_column, spec.tag_column
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" OR ");
-                format!(" AND ({arms})")
+                sql.push(" AND (");
+                for (index, spec) in specs.iter().enumerate() {
+                    if index > 0 {
+                        sql.push(" OR ");
+                    }
+                    sql.push("(")
+                        .push(alias)
+                        .push(".schema_id = $")
+                        .push_u64((placeholder + index) as u64)
+                        .push(" AND EXISTS (SELECT 1 FROM ")
+                        .push_ident(&spec.table)
+                        .push(" c WHERE c.")
+                        .push_ident(&spec.key_column)
+                        .push(" = ")
+                        .push(alias)
+                        .push(".t AND c.")
+                        .push_ident(&spec.tag_column)
+                        .push(" ")
+                        .push(op)
+                        .push(" $")
+                        .push_u64(tags_placeholder)
+                        .push("::text[] OFFSET 0))");
+                }
+                sql.push(")");
             }
         }
+        sql
     }
 
     /// Whether this filter takes a bind (and so a placeholder number).
@@ -270,14 +308,11 @@ fn memory_filters(
             let Some(key_column) = sidecars.memory_key_column(table) else {
                 continue;
             };
-            PgIdent::table(table)?;
-            PgIdent::column(key_column)?;
-            PgIdent::column(tag_column)?;
             specs.push(TagSpec {
                 schema_id: spec.schema_id.as_str().to_owned(),
-                table: table.clone(),
-                key_column: key_column.to_owned(),
-                tag_column: tag_column.clone(),
+                table: PgIdent::table(table)?,
+                key_column: PgIdent::column(key_column)?,
+                tag_column: PgIdent::column(tag_column)?,
             });
         }
         filters.push(if specs.is_empty() {
@@ -434,7 +469,7 @@ async fn load_row_payloads_batch_on_connection(
     Ok(result)
 }
 
-fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64) -> String {
+fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64) -> SqlText {
     let reference_filter = filters
         .iter()
         .any(|filter| matches!(filter, MemoryFilter::ReferencedGoalHandles(_)));
@@ -448,18 +483,17 @@ fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64)
     } else {
         ""
     };
-    // SQL-POLICY: fixed-fragment — head_join is chosen between two literals.
-    let mut sql = format!(
+    let mut sql = SqlText::new(
         "SELECT m.t AS memory_id, m.handle, \
                 proxiima_core.memory_created_at(m.t) AS created_at, \
                 m.owner_id, m.schema_id, m.sidecar_tables, \
                 m.kind AS kind, m.origins, m.refs, m.goal_refs, m.guided_by, m.reads, m.occurred_at, m.\"by\", m.via \
-         FROM proxiima_core.live_memory m \
-         {head_join}\
-         WHERE m.owner_id = ANY($1::uuid[])",
+         FROM proxiima_core.live_memory m ",
     );
+    sql.push(head_join)
+        .push("WHERE m.owner_id = ANY($1::uuid[])");
     append_memory_filters(&mut sql, filters, false);
-    let _ = write!(sql, " ORDER BY m.t DESC LIMIT {fetch_limit}");
+    sql.push(" ORDER BY m.t DESC LIMIT ").push_u64(fetch_limit);
     sql
 }
 
@@ -467,8 +501,8 @@ fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64)
 /// Owners' primary key deduplicates the requested set. Both RLS checks and
 /// every filter precede the per-owner limit; an invisible or missing memory
 /// never consumes a slot. No limit is applied to heads before that lookup.
-fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> String {
-    let mut sql = String::from(
+fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> SqlText {
+    let mut sql = SqlText::new(
         "SELECT page.* \
          FROM proxiima_core.owners o CROSS JOIN LATERAL ( \
            SELECT m.t AS memory_id, m.handle, \
@@ -483,25 +517,33 @@ fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> String {
     // planner inputs. Without these barriers a pulled-up join can hydrate all
     // matching versions before sorting. With no ordering index the head sort
     // still happens before memory hydration (the pre-activation schema).
-    let _ = write!(
-        sql,
+    sql.push(
         " ORDER BY h.t DESC OFFSET 0) h \
            CROSS JOIN LATERAL ( \
              SELECT m.* FROM proxiima_core.live_memory m \
              WHERE m.handle = h.handle AND m.t = h.t AND m.owner_id = o.owner_id \
              OFFSET 0 \
            ) m \
-           ORDER BY h.t DESC LIMIT {fetch_limit} \
+           ORDER BY h.t DESC LIMIT ",
+    )
+    .push_u64(fetch_limit)
+    .push(
+        " \
          ) page WHERE o.owner_id = ANY($1::uuid[]) \
-         ORDER BY page.memory_id DESC LIMIT {fetch_limit}"
-    );
+         ORDER BY page.memory_id DESC LIMIT ",
+    )
+    .push_u64(fetch_limit);
     sql
 }
 
 /// Merge two bounded sorted streams. Owner heads keep their existing cheap
 /// plan; the second stream contains only exact Goal-authorised admissions.
-fn merge_goal_heads_sql(owner_sql: &str, filters: &[MemoryFilter], fetch_limit: u64) -> String {
-    let mut goal_sql = String::from(
+fn merge_goal_heads_sql(
+    owner_sql: &SqlText,
+    filters: &[MemoryFilter],
+    fetch_limit: u64,
+) -> SqlText {
+    let mut goal_sql = SqlText::new(
         "WITH visible AS MATERIALIZED (SELECT * FROM proxiima_core.goal_visible_memory_ids()), \
          latest AS (SELECT DISTINCT ON (memory_handle) memory_t, memory_handle, owner_id \
                     FROM visible ORDER BY memory_handle, memory_t DESC) \
@@ -514,22 +556,25 @@ fn merge_goal_heads_sql(owner_sql: &str, filters: &[MemoryFilter], fetch_limit: 
                            WHERE own_head.handle = m.handle AND own_head.t > m.t)",
     );
     append_memory_filters(&mut goal_sql, filters, false);
-    let _ = write!(goal_sql, " ORDER BY m.t DESC LIMIT {fetch_limit}");
-    format!(
-        "SELECT * FROM (({owner_sql}) UNION ({goal_sql})) admitted ORDER BY memory_id DESC LIMIT {fetch_limit}"
-    )
+    goal_sql
+        .push(" ORDER BY m.t DESC LIMIT ")
+        .push_u64(fetch_limit);
+    let mut sql = SqlText::new("SELECT * FROM ((");
+    sql.push_text(owner_sql)
+        .push(") UNION (")
+        .push_text(&goal_sql)
+        .push(")) admitted ORDER BY memory_id DESC LIMIT ")
+        .push_u64(fetch_limit);
+    sql
 }
 
-fn append_memory_filters(sql: &mut String, filters: &[MemoryFilter], heads_only: bool) {
+fn append_memory_filters(sql: &mut SqlText, filters: &[MemoryFilter], heads_only: bool) {
     // `$1` is the owner array; the binding filters take the placeholders
     // after it, densely, in the order the caller binds them. A filter that
     // binds nothing (`Kind`) consumes no number.
     let mut placeholder = 2;
     for filter in filters {
-        // Identifiers come from the registered sidecars and pass PgIdent;
-        // request values bind. The other fragments are closed literals.
-        // SQL-POLICY: PgIdent
-        sql.push_str(&filter.predicate(placeholder, heads_only));
+        sql.push_text(&filter.predicate(placeholder, heads_only));
         placeholder += filter.bind_count();
     }
 }
@@ -564,7 +609,7 @@ fn validate_row_stamp(
 /// Never fails on the timeseries path (stateful-NK filters are not used).
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
-pub fn memory_page_sql_for_tests(req: &QueryRequest) -> Result<String, StorageError> {
+pub fn memory_page_sql_for_tests(req: &QueryRequest) -> Result<SqlText, StorageError> {
     Ok(memory_page_sql(
         matches!(req.supersession, SupersessionStatus::HeadsOnly),
         &memory_filters(req, &[], &PgSidecarRegistryFrozen::default())?,
@@ -579,7 +624,7 @@ pub fn memory_page_sql_for_tests_with_schemas(
     req: &QueryRequest,
     schemas: &[MemorySchemaSpec],
     sidecars: &PgSidecarRegistryFrozen,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     Ok(memory_page_sql(
         matches!(req.supersession, SupersessionStatus::HeadsOnly),
         &memory_filters(req, schemas, sidecars)?,
@@ -589,9 +634,34 @@ pub fn memory_page_sql_for_tests_with_schemas(
 
 #[cfg(test)]
 mod tests {
-    use super::{MemorySchemaSpec, validate_row_stamp};
+    use super::{MemoryFilter, MemorySchemaSpec, TagSpec, validate_row_stamp};
     use crate::sidecars::{PgSidecarRegistryFrozen, core_pg_sidecars};
+    use proxiima_core::PgIdent;
     use proxiima_core::{AgentNoteV1, EntityKind, FactPayload, MemoryId, SchemaId, SchemaVersion};
+
+    /// The tag lookup splices the checked identifiers and nothing else: its
+    /// text is the statement the planner has always seen.
+    #[test]
+    fn the_tag_join_is_the_correlated_probe_over_the_checked_names() {
+        let spec = |schema_id: &str, table: &str| TagSpec {
+            schema_id: schema_id.to_owned(),
+            table: PgIdent::table(table).unwrap(),
+            key_column: PgIdent::column("memory_key").unwrap(),
+            tag_column: PgIdent::column("tags").unwrap(),
+        };
+        let filter = MemoryFilter::Tags {
+            specs: vec![
+                spec("core/a-v1", "proxiima_fixture.a_v1"),
+                spec("core/b-v1", "proxiima_fixture.b_v1"),
+            ],
+            tags: vec!["x".to_owned()],
+            tag_match: proxiima_core::verbs::query::TagMatch::Any,
+        };
+        assert_eq!(
+            filter.predicate(2, true).as_str(),
+            " AND ((h.schema_id = $2 AND EXISTS (SELECT 1 FROM proxiima_fixture.a_v1 c WHERE c.memory_key = h.t AND c.tags && $4::text[] OFFSET 0)) OR (h.schema_id = $3 AND EXISTS (SELECT 1 FROM proxiima_fixture.b_v1 c WHERE c.memory_key = h.t AND c.tags && $4::text[] OFFSET 0)))"
+        );
+    }
 
     #[test]
     fn required_primary_stamp_is_checked_against_the_frozen_sidecar_registry() {
@@ -655,6 +725,7 @@ mod tests {
                 MemoryFilter::Cursor(id),
             ];
             let sql = super::memory_page_sql(heads_only, &filters, 10);
+            let sql = sql.as_str();
             let alias = if heads_only { "h" } else { "m" };
             assert!(
                 sql.contains(&format!(
@@ -681,12 +752,14 @@ mod tests {
             ],
             10,
         );
+        let sql = sql.as_str();
         assert!(sql.contains("h.t < $2") && !sql.contains("$3"), "{sql}");
     }
 
     #[test]
     fn heads_only_schema_predicates_use_head_columns() {
         let sql = super::memory_page_sql(true, &[super::MemoryFilter::Schema("s".to_owned())], 10);
+        let sql = sql.as_str();
         assert!(
             sql.contains("o.owner_id = ANY($1::uuid[])") && sql.contains("h.owner_id = o.owner_id"),
             "HeadsOnly scans each requested owner once: {sql}"

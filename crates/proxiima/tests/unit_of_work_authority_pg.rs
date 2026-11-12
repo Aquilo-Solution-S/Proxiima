@@ -800,7 +800,7 @@ async fn existing_memberships_survive_definition_upgrade_and_reapplication() -> 
     h.add(group, h.subject.into(), Relation::Editor).await?;
     // Restore the pre-port policy and remove the new helper on an existing,
     // populated database. The released migration ledger stays untouched.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
+    sqlx::raw_sql(
         "DROP FUNCTION proxiima_core.read_subject_authority(uuid);
          ALTER POLICY proxiima_owner_read ON proxiima_core.group_role_projection
            USING (group_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])));
@@ -809,7 +809,7 @@ async fn existing_memberships_survive_definition_upgrade_and_reapplication() -> 
          CREATE OR REPLACE FUNCTION proxiima_core.definitions_applied()
            RETURNS TABLE(checksum text, release text) LANGUAGE sql IMMUTABLE
            AS $$ SELECT 'previous-definitions'::text, '0.0.0'::text $$;",
-    )).execute(&h.admin).await?;
+    ).execute(&h.admin).await?;
     let ledger: Vec<(i64, Vec<u8>)> =
         sqlx::query_as("SELECT version, checksum FROM public._sqlx_migrations ORDER BY version")
             .fetch_all(&h.admin)

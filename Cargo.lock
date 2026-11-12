@@ -2242,6 +2242,7 @@ dependencies = [
 name = "proxiima-pg-testkit"
 version = "0.0.72"
 dependencies = [
+ "proxiima-core",
  "sqlx",
  "time",
  "tokio",

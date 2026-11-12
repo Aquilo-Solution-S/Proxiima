@@ -11,14 +11,14 @@
 //! `timestamptz`, is refused before any lock or delete.
 
 use proxiima_core::verbs::query::SidecarAtom;
-use proxiima_core::{SchemaId, StorageError};
-use sqlx::{Postgres, QueryBuilder, Transaction};
+use proxiima_core::{SchemaId, SqlBuilder, SqlText, StorageError};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
 use crate::sidecars::PgSidecarRegistryFrozen;
 use crate::verbs::query::push_atom;
+use proxiima_core::PgIdent;
 
 /// The columns of table `$1` named in `$2`, and whether each is `timestamptz`.
 const SIDECAR_COLUMNS_SQL: &str = "\
@@ -30,15 +30,15 @@ SELECT a.attname::text, a.atttypid = 'pg_catalog.timestamptz'::regtype
    AND a.attname = ANY($2::text[])";
 
 /// The sidecar a selection reads, and the named columns it holds.
-struct Sidecar<'a> {
-    table: PgIdent<'a>,
+struct Sidecar {
+    table: PgIdent,
     /// The table's declared memory-key column (`pg_sidecar!(key: …)`).
-    key: PgIdent<'static>,
+    key: PgIdent,
     /// Each named column the table holds, and whether it is `timestamptz`.
     columns: Vec<(String, bool)>,
 }
 
-impl Sidecar<'_> {
+impl Sidecar {
     fn is_timestamptz(&self, column: &str) -> bool {
         self.columns
             .iter()
@@ -48,12 +48,12 @@ impl Sidecar<'_> {
 
 /// Resolve `table` as a registered memory sidecar holding every column in
 /// `names`.
-async fn declared_sidecar<'a>(
+async fn declared_sidecar(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
-    table: Option<&'a str>,
+    table: Option<&str>,
     names: &[&str],
-) -> Result<Sidecar<'a>, StorageError> {
+) -> Result<Sidecar, StorageError> {
     let Some(table) = table else {
         return Err(StorageError::ConstraintViolation(
             "a sidecar selection names no sidecar table".into(),
@@ -118,27 +118,21 @@ pub(super) async fn sidecar_equals_seeds(
         .map(|(column, value)| PgIdent::column(column).map(|ident| (ident, value)))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // SQL-POLICY: QueryBuilder-bound-values
-    let mut builder =
-        QueryBuilder::<Postgres>::new("SELECT t FROM (SELECT DISTINCT ON (m.handle) m.t FROM ");
-    // SQL-POLICY: PgIdent — the registered sidecar and its declared key.
-    builder.push(sidecar.table.as_str());
+    let mut builder = SqlBuilder::new("SELECT t FROM (SELECT DISTINCT ON (m.handle) m.t FROM ");
+    builder.push_ident(&sidecar.table);
     builder.push(" s JOIN proxiima_core.memory_including_forgotten m ON m.t = s.");
-    builder.push(sidecar.key.as_str());
-    // SQL-POLICY: fixed-fragment — the owner and schema scope, before
-    // anything the caller asked for.
+    builder.push_ident(&sidecar.key);
+    // The owner and schema scope, before anything the caller asked for.
     builder.push(" WHERE m.owner_id = ");
     builder.push_bind(owner_id);
     builder.push(" AND m.schema_id = ");
     builder.push_bind(schema.as_str());
     for (ident, value) in &predicates {
-        // SQL-POLICY: PgIdent — a catalog-resolved column of the sidecar.
         builder.push(" AND s.");
-        builder.push(ident.as_str());
+        builder.push_ident(ident);
         builder.push(" = ");
         push_atom(&mut builder, value);
     }
-    // SQL-POLICY: fixed-fragment
     builder.push(" ORDER BY m.handle, m.t) AS matched ORDER BY t LIMIT ");
     builder.push_bind(limit);
 
@@ -176,24 +170,23 @@ pub(super) async fn declared_before_seeds(
         )));
     }
     let column = PgIdent::column(column)?;
-    // SQL-POLICY: PgIdent — the registered sidecar, its declared key, and a
-    // catalog-resolved `timestamptz` column; every value is bound.
-    let sql = format!(
-        concat!(
-            newest_versions_cte!(),
-            "SELECT n.t FROM newest n
+    // The registered sidecar, its declared key, and a catalog-resolved
+    // `timestamptz` column; every value is bound.
+    let mut sql = SqlText::new(concat!(
+        newest_versions_cte!(),
+        "SELECT n.t FROM newest n
   JOIN proxiima_core.memory_including_forgotten m ON m.t = n.t
-  JOIN {tbl} s ON s.{key} = n.t
- WHERE m.owner_id = $1 AND m.schema_id = $2 AND s.{col} < $3
- ORDER BY s.{col}, n.t
- LIMIT $4"
-        ),
-        tbl = sidecar.table.as_str(),
-        key = sidecar.key.as_str(),
-        col = column.as_str(),
-    );
-    // SQL-POLICY: PgIdent (the statement above interpolates only validated identifiers)
-    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+  JOIN "
+    ));
+    sql.push_ident(&sidecar.table)
+        .push(" s ON s.")
+        .push_ident(&sidecar.key)
+        .push(" = n.t\n WHERE m.owner_id = $1 AND m.schema_id = $2 AND s.")
+        .push_ident(&column)
+        .push(" < $3\n ORDER BY s.")
+        .push_ident(&column)
+        .push(", n.t\n LIMIT $4");
+    sqlx::query_scalar(sql)
         .bind(owner_id)
         .bind(schema.as_str())
         .bind(cutoff)

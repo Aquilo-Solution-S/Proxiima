@@ -483,11 +483,10 @@ impl PgSidecarRegistryFrozen {
         }) else {
             return Ok(());
         };
-        let Some(sql) = entry.projection_insert.as_deref() else {
+        let Some(sql) = entry.projection_insert.clone() else {
             return Ok(());
         };
-        // SQL-POLICY: generated
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        sqlx::query(sql)
             .bind(memory_id.into_inner())
             .bind(lexical_language)
             .bind(schema_id)
@@ -667,7 +666,7 @@ impl PgSidecarRegistryFrozen {
             .values()
             .filter_map(|entry| {
                 let table = entry.projection_table.as_deref()?;
-                entry.projection_insert.as_deref()?;
+                entry.projection_insert.as_ref()?;
                 let key = entry.memory_key_column?;
                 Some((
                     entry.sidecar_table.as_str(),
@@ -683,8 +682,7 @@ impl PgSidecarRegistryFrozen {
         let mut projected_schemas = Vec::with_capacity(projected.len());
         for (sidecar_table, schema_id, projection_table, key) in projected {
             let sql = crate::integrity::unprojected_rows_sql(sidecar_table, key, projection_table)?;
-            // SQL-POLICY: generated
-            let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            let rows: i64 = sqlx::query_scalar(sql)
                 .bind(schema_id)
                 .fetch_one(pool)
                 .await
@@ -713,8 +711,7 @@ impl PgSidecarRegistryFrozen {
                 ))
             })?;
             let sql = crate::integrity::undeclared_rows_sql(table, key)?;
-            // SQL-POLICY: generated
-            let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            let rows: i64 = sqlx::query_scalar(sql)
                 .bind(table)
                 .fetch_one(pool)
                 .await
@@ -735,8 +732,7 @@ impl PgSidecarRegistryFrozen {
                 continue;
             }
             let sql = crate::integrity::missing_stamped_rows_sql(table, key)?;
-            // SQL-POLICY: generated
-            let rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            let rows: i64 = sqlx::query_scalar(sql)
                 .bind(table)
                 .fetch_one(pool)
                 .await
@@ -1034,10 +1030,9 @@ impl PgSidecarWriter {
             ))
         })?;
         insert(tx, memory_id, payload, super::SidecarInsertPermit::new()).await?;
-        if let Some(sql) = entry.projection_insert.as_deref() {
+        if let Some(sql) = entry.projection_insert.clone() {
             let language = self.language_bind(entry, &key)?;
-            // SQL-POLICY: generated
-            sqlx::query(sqlx::AssertSqlSafe(sql))
+            sqlx::query(sql)
                 .bind(memory_id.into_inner())
                 .bind(language)
                 .bind(key.schema_id.as_str())
@@ -1113,7 +1108,7 @@ mod language_bind_tests {
             memory_load_batch: None,
             goal_insert: None,
             goal_copy: None,
-            projection_insert: language.map(|_| "INSERT".to_owned()),
+            projection_insert: language.map(|_| proxiima_core::SqlText::new("INSERT")),
             projection_table: language.map(|_| "proxiima_core.projection".to_owned()),
             projection_language: language,
         }

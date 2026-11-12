@@ -327,8 +327,7 @@ fn migrator() -> Migrator {
     s.add_evolution(PgSchemaEvolution::new(&EV, m, evolve));
     // Raw INSERT: no installer registers a Goal sidecar (`install_sidecar` keys
     // the table to `proxiima_core.memory`).
-    let sql = sqlx::AssertSqlSafe(
-        "CREATE SCHEMA IF NOT EXISTS evolution_goal_test;
+    let sql = "CREATE SCHEMA IF NOT EXISTS evolution_goal_test;
          CREATE TABLE IF NOT EXISTS evolution_goal_test.goal_v1 (
              t uuid PRIMARY KEY REFERENCES proxiima_core.goal(t) ON DELETE CASCADE,
              key text NOT NULL
@@ -343,8 +342,7 @@ fn migrator() -> Migrator {
              ON CONFLICT DO NOTHING;
          SELECT proxiima_core.install_owner_rls(
              'evolution_goal_test', ARRAY[]::text[],
-             ARRAY['goal_v1', 'goal_v2']::text[], ARRAY[]::text[]);",
-    );
+             ARRAY['goal_v1', 'goal_v2']::text[], ARRAY[]::text[]);";
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             ANCHOR,

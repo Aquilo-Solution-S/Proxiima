@@ -6,7 +6,7 @@ use sqlx::{Executor, PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
+use proxiima_core::{PgIdent, SqlText};
 
 /// Owner-scoped embed text for one memory.
 ///
@@ -141,16 +141,16 @@ pub async fn load_embedding_texts_on_connection(
         // declares it; the alias back to `t` is this function's own row
         // shape, which stays one spelling whatever a spiice names its
         // column — the same rule the search legs keep.
-        let sql = format!(
-            "SELECT c.{key} AS t, c.{column}
-               FROM {table} c
-              WHERE c.{key} = ANY($1::uuid[])",
-            table = table.as_str(),
-            key = key.as_str(),
-            column = column.as_str(),
-        );
-        // SQL-POLICY: PgIdent
-        let texts: Vec<(Uuid, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        let mut sql = SqlText::new("SELECT c.");
+        sql.push_ident(&key)
+            .push(" AS t, c.")
+            .push_ident(&column)
+            .push("\n               FROM ")
+            .push_ident(&table)
+            .push(" c\n              WHERE c.")
+            .push_ident(&key)
+            .push(" = ANY($1::uuid[])");
+        let texts: Vec<(Uuid, Option<String>)> = sqlx::query_as(sql)
             .bind(&member_ids)
             .fetch_all(&mut *pool)
             .await
@@ -239,16 +239,14 @@ where
     let column = PgIdent::column(&unit.column)?;
     // The filter reads the DECLARED memory-key column, never `t`: the unit
     // carries it off the schema's `Surface` for exactly this statement.
-    let sql = format!(
-        "SELECT c.{column}
-           FROM {table} c
-          WHERE c.{key} = $1",
-        table = table.as_str(),
-        key = key.as_str(),
-        column = column.as_str(),
-    );
-    // SQL-POLICY: PgIdent
-    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+    let mut sql = SqlText::new("SELECT c.");
+    sql.push_ident(&column)
+        .push("\n           FROM ")
+        .push_ident(&table)
+        .push(" c\n          WHERE c.")
+        .push_ident(&key)
+        .push(" = $1");
+    sqlx::query_scalar(sql)
         .bind(memory_id.into_inner())
         .fetch_optional(exec)
         .await

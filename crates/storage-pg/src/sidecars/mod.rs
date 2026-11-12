@@ -17,7 +17,7 @@ use proxiima_core::{
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, PgConnection, PgPool, Postgres, Transaction};
 
-use crate::pg_ident::PgIdent;
+use proxiima_core::{PgIdent, SqlText};
 
 mod core_sidecars;
 mod dispatch;

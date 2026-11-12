@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle};
 use proxiima::testkit::{SplitRoleDb, assert_trigger_migrations, scoped_authz};
 use proxiima::{AppInfo, Proxiima, QueryRequest, ServedSurface, SpiiceApp, company_owner};
+use proxiima_core::SqlText;
 use proxiima_example::testkit::{register_notebook, remember_note};
 use proxiima_example::{
     BASELINE_SQL, ExampleSpiice, NoteV1, SPIICE_ID, baseline_sql_with_owner_rls,
@@ -31,7 +32,7 @@ mod migrated_app;
 const EXAMPLE_MIGRATION_VERSION: i64 = 20_261_018_000_011;
 
 /// The baseline with every table but `settings` classified.
-fn gap_sql() -> String {
+fn gap_sql() -> SqlText {
     baseline_sql_with_owner_rls(&[
         "SELECT proxiima_core.install_owner_rls('proxiima_example', ARRAY['notebooks'], \
          ARRAY['note_v1', 'digest_v1'], '{}')",
@@ -52,7 +53,7 @@ enum PerTableHost {
     ForgetsSettingsAssertsCensus,
 }
 
-fn per_table_sql(host: PerTableHost) -> String {
+fn per_table_sql(host: PerTableHost) -> SqlText {
     const SETTINGS: &str =
         "SELECT proxiima_core.install_owner_rls_table('proxiima_example', 'settings', 'ownerless')";
     const CENSUS: &str = "SELECT proxiima_core.assert_owner_rls_census('proxiima_example')";
@@ -71,13 +72,13 @@ fn per_table_sql(host: PerTableHost) -> String {
     baseline_sql_with_owner_rls(&calls)
 }
 
-fn migrator(description: &'static str, sql: String) -> Migrator {
+fn migrator(description: &'static str, sql: SqlText) -> Migrator {
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             EXAMPLE_MIGRATION_VERSION,
             Cow::Borrowed(description),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(sql).into_sql_str(),
+            sql.into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT
@@ -101,12 +102,11 @@ fn view_migrator(security_invoker: bool) -> Migrator {
     } else {
         ""
     };
-    migrator(
-        "example baseline with a view",
-        format!(
-            "{BASELINE_SQL}\nCREATE VIEW proxiima_example.notebook_view{options} AS SELECT owner_id, name FROM proxiima_example.notebooks"
-        ),
-    )
+    let mut sql = SqlText::new(BASELINE_SQL);
+    sql.push("\nCREATE VIEW proxiima_example.notebook_view")
+        .push(options)
+        .push(" AS SELECT owner_id, name FROM proxiima_example.notebooks");
+    migrator("example baseline with a view", sql)
 }
 
 mod kit_definer_view {
@@ -361,7 +361,7 @@ fn generated_trigger_migration(keep: impl Fn(&str) -> bool) -> String {
     );
     artifacts
         .into_iter()
-        .map(|artifact| artifact.forward)
+        .map(|artifact| artifact.forward.as_str().to_owned())
         .filter(|forward| keep(forward))
         .collect::<Vec<_>>()
         .join("\n")

@@ -106,18 +106,14 @@ pub(super) async fn find_destination_blob(
     schema_id: &str,
     content_hash: &[u8],
 ) -> Result<Option<uuid::Uuid>, StorageError> {
-    // SQL-POLICY: generated
-    let existing: Option<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(dedupe_lookup_sql(
-        BLOB_SURFACE,
-        "blob_id",
-        dedupe_key,
-    )?))
-    .bind(owner_id)
-    .bind(schema_id)
-    .bind(content_hash)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(map_err)?;
+    let existing: Option<uuid::Uuid> =
+        sqlx::query_scalar(dedupe_lookup_sql(BLOB_SURFACE, "blob_id", dedupe_key)?)
+            .bind(owner_id)
+            .bind(schema_id)
+            .bind(content_hash)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(map_err)?;
     if let Some(dest_blob_id) = existing
         && schema_id == proxiima_core::UPLOADED_BLOB_SCHEMA_ID
         && !has_only_exact_upload_publications(tx, dest_blob_id, owner_id, content_hash, None)

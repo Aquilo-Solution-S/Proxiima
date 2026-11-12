@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use proxiima_core::{
     AuthPath, Authenticator, AuthzContext, Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId,
 };
-use proxiima_pg_testkit::{
-    create_db, db_url, drop_db, provision_goal_reader, quoted_ident, unique_db_name,
-};
+use proxiima_pg_testkit::{create_db, db_url, drop_db, provision_goal_reader, unique_db_name};
 use proxiima_storage_pg::{
     MigrationPhase, PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgTuning,
     assert_runtime_rls, begin_owner_transaction, migrations_for_phase,
@@ -15,6 +13,40 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
+
+/// Composed DDL from program literals and quoted identifiers: `"text"` is
+/// appended as written, `id(name)` as the quoted identifier `name`,
+/// `lit(CONST)` as the `&'static str` `CONST`,
+/// `pw(&value)` as the quote-doubled literal `value` (a role password, which
+/// cannot be bound), `text(&sql)` as another composed `SqlText`.
+macro_rules! ddl {
+    (@go $sql:ident;) => {};
+    (@go $sql:ident; $text:literal $(, $($rest:tt)*)?) => {
+        $sql.push($text);
+        ddl!(@go $sql; $($($rest)*)?);
+    };
+    (@go $sql:ident; lit($text:expr) $(, $($rest:tt)*)?) => {
+        $sql.push($text);
+        ddl!(@go $sql; $($($rest)*)?);
+    };
+    (@go $sql:ident; pw($value:expr) $(, $($rest:tt)*)?) => {
+        $sql.push_literal($value).expect("fixture password");
+        ddl!(@go $sql; $($($rest)*)?);
+    };
+    (@go $sql:ident; text($other:expr) $(, $($rest:tt)*)?) => {
+        $sql.push_text($other);
+        ddl!(@go $sql; $($($rest)*)?);
+    };
+    (@go $sql:ident; id($name:expr) $(, $($rest:tt)*)?) => {
+        $sql.push_ident(&proxiima_core::PgIdent::quoted($name).expect("fixture identifier"));
+        ddl!(@go $sql; $($($rest)*)?);
+    };
+    ($first:literal $(, $($rest:tt)*)?) => {{
+        let mut sql = proxiima_core::SqlText::new($first);
+        ddl!(@go sql; $($($rest)*)?);
+        sql
+    }};
+}
 
 static DDL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -71,13 +103,9 @@ impl Authenticator for SyntheticVerifier {
     }
 }
 
-async fn execute(pool: &PgPool, statement: &str) {
+async fn execute(pool: &PgPool, statement: impl sqlx::SqlSafeStr) {
     let _lock = DDL_LOCK.get_or_init(|| Mutex::new(())).lock().await;
-    // SQL-POLICY: fixed-fragment
-    sqlx::query(sqlx::AssertSqlSafe(statement.to_owned()))
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(statement).execute(pool).await.unwrap();
 }
 
 fn assert_rls_refusal(error: &sqlx::Error) {
@@ -151,107 +179,100 @@ async fn setup() -> (String, PgPool, PgPool, String, String, String, String) {
     let owner = format!("rls_owner_{suffix}");
     let runtime = format!("rls_runtime_{suffix}");
     let password = format!("pw_{suffix}");
-    // SQL-POLICY: fixed-fragment
     execute(
         &admin,
-        &format!(
-            "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOBYPASSRLS",
-            quoted_ident(&owner),
-            password
+        ddl!(
+            "CREATE ROLE ",
+            id(&owner),
+            " LOGIN PASSWORD ",
+            pw(&password),
+            " NOSUPERUSER NOBYPASSRLS"
         ),
     )
     .await;
-    // SQL-POLICY: fixed-fragment
     execute(
         &admin,
-        &format!(
-            "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOBYPASSRLS",
-            quoted_ident(&runtime),
-            password
+        ddl!(
+            "CREATE ROLE ",
+            id(&runtime),
+            " LOGIN PASSWORD ",
+            pw(&password),
+            " NOSUPERUSER NOBYPASSRLS"
         ),
     )
     .await;
     let schema = format!("proxiima_rls_{suffix}");
-    // SQL-POLICY: fixed-fragment
     execute(
         &admin,
-        &format!(
-            "CREATE SCHEMA {} AUTHORIZATION {}",
-            quoted_ident(&schema),
-            quoted_ident(&owner)
-        ),
+        ddl!("CREATE SCHEMA ", id(&schema), " AUTHORIZATION ", id(&owner)),
     )
     .await;
-    // SQL-POLICY: fixed-fragment
     execute(
         &admin,
-        &format!(
-            "GRANT USAGE ON SCHEMA {} TO {}",
-            quoted_ident(&schema),
-            quoted_ident(&runtime)
-        ),
+        ddl!("GRANT USAGE ON SCHEMA ", id(&schema), " TO ", id(&runtime)),
     )
     .await;
     for table in ["memory", "sidecar"] {
         execute(
             &admin,
-            &format!(
-                "CREATE TABLE {}.{} (id uuid PRIMARY KEY, owner_id uuid NOT NULL)",
-                quoted_ident(&schema),
-                quoted_ident(table)
+            ddl!(
+                "CREATE TABLE ",
+                id(&schema),
+                ".",
+                id(table),
+                " (id uuid PRIMARY KEY, owner_id uuid NOT NULL)"
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "ALTER TABLE {}.{} OWNER TO {}",
-                quoted_ident(&schema),
-                quoted_ident(table),
-                quoted_ident(&owner)
+            ddl!(
+                "ALTER TABLE ",
+                id(&schema),
+                ".",
+                id(table),
+                " OWNER TO ",
+                id(&owner)
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}",
-                quoted_ident(&schema),
-                quoted_ident(table),
-                quoted_ident(&runtime)
+            ddl!(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ",
+                id(&schema),
+                ".",
+                id(table),
+                " TO ",
+                id(&runtime)
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "ALTER TABLE {}.{} ENABLE ROW LEVEL SECURITY",
-                quoted_ident(&schema),
-                quoted_ident(table)
+            ddl!(
+                "ALTER TABLE ",
+                id(&schema),
+                ".",
+                id(table),
+                " ENABLE ROW LEVEL SECURITY"
             ),
         )
         .await;
         execute(
             &admin,
-            &format!(
-                "ALTER TABLE {}.{} FORCE ROW LEVEL SECURITY",
-                quoted_ident(&schema),
-                quoted_ident(table)
+            ddl!(
+                "ALTER TABLE ",
+                id(&schema),
+                ".",
+                id(table),
+                " FORCE ROW LEVEL SECURITY"
             ),
         )
         .await;
-        execute(&admin, &format!(
-            "CREATE POLICY proxiima_owner_read ON {}.{} FOR SELECT TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{{}}'::uuid[])))",
-            quoted_ident(&schema), quoted_ident(table)
-        )).await;
-        execute(&admin, &format!(
-            "CREATE POLICY proxiima_owner_write ON {}.{} FOR ALL TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{{}}'::uuid[]))) WITH CHECK (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{{}}'::uuid[])))",
-            quoted_ident(&schema), quoted_ident(table)
-        )).await;
-        execute(&admin, &format!(
-            "CREATE POLICY proxiima_platform ON {}.{} FOR ALL TO {} USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')",
-            quoted_ident(&schema), quoted_ident(table), quoted_ident(&owner)
-        )).await;
+        execute(&admin, ddl!("CREATE POLICY proxiima_owner_read ON ", id(&schema), ".", id(table), " FOR SELECT TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])))")).await;
+        execute(&admin, ddl!("CREATE POLICY proxiima_owner_write ON ", id(&schema), ".", id(table), " FOR ALL TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))) WITH CHECK (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])))")).await;
+        execute(&admin, ddl!("CREATE POLICY proxiima_platform ON ", id(&schema), ".", id(table), " FOR ALL TO ", id(&owner), " USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')")).await;
     }
     let runtime_pool = runtime_pool(&database, &runtime, &password).await;
     (
@@ -350,10 +371,12 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     for role in [&platform, &runtime] {
         execute(
             &admin,
-            &format!(
-                "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOBYPASSRLS",
-                quoted_ident(role),
-                password
+            ddl!(
+                "CREATE ROLE ",
+                id(role),
+                " LOGIN PASSWORD ",
+                pw(&password),
+                " NOSUPERUSER NOBYPASSRLS"
             ),
         )
         .await;
@@ -365,10 +388,10 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     }
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — fixture role identifier is quoted.
-        &format!(
-            "GRANT proxiima_search, proxiima_goal_reader TO {} WITH INHERIT FALSE, SET TRUE",
-            quoted_ident(&platform)
+        ddl!(
+            "GRANT proxiima_search, proxiima_goal_reader TO ",
+            id(&platform),
+            " WITH INHERIT FALSE, SET TRUE"
         ),
     )
     .await;
@@ -379,19 +402,17 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     execute(&admin, "CREATE EXTENSION IF NOT EXISTS btree_gin").await;
     execute(
         &admin,
-        &format!(
-            "GRANT CREATE ON DATABASE {} TO {}",
-            quoted_ident(&database),
-            quoted_ident(&platform)
+        ddl!(
+            "GRANT CREATE ON DATABASE ",
+            id(&database),
+            " TO ",
+            id(&platform)
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "GRANT USAGE, CREATE ON SCHEMA public TO {}",
-            quoted_ident(&platform)
-        ),
+        ddl!("GRANT USAGE, CREATE ON SCHEMA public TO ", id(&platform)),
     )
     .await;
     let platform_url = role_url(&database, &platform, &password);
@@ -462,19 +483,17 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     platform_storage.initialize_store_number(1).await.unwrap();
     execute(
         &admin,
-        &format!(
-            "GRANT USAGE ON SCHEMA proxiima_core, proxiima_example TO {}, {}",
-            quoted_ident(&runtime),
-            quoted_ident(&platform)
+        ddl!(
+            "GRANT USAGE ON SCHEMA proxiima_core, proxiima_example TO ",
+            id(&runtime),
+            ", ",
+            id(&platform)
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA proxiima_core, proxiima_example TO {}",
-            quoted_ident(&runtime)
-        ),
+        ddl!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA proxiima_core, proxiima_example TO ", id(&runtime)),
     )
     .await;
     // The blanket grant covers core views too, which the runtime role may only read.
@@ -492,11 +511,7 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     let platform_connection = runtime_pool(&database, &platform, &password).await;
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment — fixture role identifier is quoted.
-        &format!(
-            "GRANT EXECUTE ON FUNCTION proxiima_core.goal_grants_held(), proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO {}",
-            quoted_ident(&runtime)
-        ),
+        ddl!("GRANT EXECUTE ON FUNCTION proxiima_core.goal_grants_held(), proxiima_core.goal_memory_read_routes(), proxiima_core.goal_visible_memory_ids(), proxiima_core.goal_visible_memory_heads(), proxiima_core.goal_memory_read_admitted(uuid), proxiima_core.goal_read_admitted(uuid) TO ", id(&runtime)),
     )
     .await;
     let runtime_connection = runtime_pool(&database, &runtime, &password).await;
@@ -517,109 +532,89 @@ async fn cleanup(database: &str, admin: PgPool, owner: &str, runtime: &str) {
     let control = PgPool::connect(&proxiima_pg_testkit::admin_url())
         .await
         .unwrap();
-    execute(
-        &control,
-        // SQL-POLICY: fixed-fragment
-        &format!("DROP ROLE IF EXISTS {}", quoted_ident(runtime)),
-    )
-    .await;
-    execute(
-        &control,
-        // SQL-POLICY: fixed-fragment
-        &format!("DROP ROLE IF EXISTS {}", quoted_ident(owner)),
-    )
-    .await;
+    execute(&control, ddl!("DROP ROLE IF EXISTS ", id(runtime))).await;
+    execute(&control, ddl!("DROP ROLE IF EXISTS ", id(owner))).await;
     control.close().await;
 }
 
 async fn restore_owner_read_policy(admin: &PgPool, schema: &str, table: &str) {
     execute(
         admin,
-        &format!(
-            "CREATE POLICY proxiima_owner_read ON {}.{} FOR SELECT TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{{}}'::uuid[])))",
-            quoted_ident(schema), quoted_ident(table)
-        ),
+        ddl!("CREATE POLICY proxiima_owner_read ON ", id(schema), ".", id(table), " FOR SELECT TO PUBLIC USING (owner_id = ANY(COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[])))"),
     )
     .await;
 }
 
+/// A pushed literal reads back as written under either string setting.
+async fn assert_literal_reads_back_under_both_string_settings(admin: &PgPool) {
+    let original = r"a\b'c";
+    let mut select = proxiima_core::SqlText::new("SELECT ");
+    select.push_literal(original).unwrap();
+    let mut connection = admin.acquire().await.unwrap();
+    for set in [
+        "SET standard_conforming_strings = on",
+        "SET standard_conforming_strings = off",
+    ] {
+        sqlx::query(set).execute(&mut *connection).await.unwrap();
+        let read: String = sqlx::query_scalar(select.clone())
+            .fetch_one(&mut *connection)
+            .await
+            .unwrap();
+        assert_eq!(read, original, "{set}");
+    }
+}
+
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "structural negative controls share one disposable fixture"
-)]
 async fn runtime_guard_accepts_complete_schema_and_refuses_structural_breaks() {
     let (database, admin, runtime, owner, runtime_role, schema, password) = setup().await;
     assert_runtime_rls(&runtime, &[&schema]).await.unwrap();
+    assert_literal_reads_back_under_both_string_settings(&admin).await;
 
     let owner_pool = runtime_pool(&database, &owner, &password).await;
     assert!(assert_runtime_rls(&owner_pool, &[&schema]).await.is_err());
     owner_pool.close().await;
     execute(
         &admin,
-        &format!(
-            "GRANT {} TO {}",
-            quoted_ident(&owner),
-            quoted_ident(&runtime_role)
-        ),
+        ddl!("GRANT ", id(&owner), " TO ", id(&runtime_role)),
     )
     .await;
     assert!(assert_runtime_rls(&runtime, &[&schema]).await.is_err());
     execute(
         &admin,
-        &format!(
-            "REVOKE {} FROM {}",
-            quoted_ident(&owner),
-            quoted_ident(&runtime_role)
-        ),
+        ddl!("REVOKE ", id(&owner), " FROM ", id(&runtime_role)),
     )
     .await;
-    execute(
-        &admin,
-        // SQL-POLICY: fixed-fragment
-        &format!("ALTER ROLE {} BYPASSRLS", quoted_ident(&runtime_role)),
-    )
-    .await;
+    execute(&admin, ddl!("ALTER ROLE ", id(&runtime_role), " BYPASSRLS")).await;
     assert!(assert_runtime_rls(&runtime, &[&schema]).await.is_err());
     execute(
         &admin,
-        // SQL-POLICY: fixed-fragment
-        &format!("ALTER ROLE {} NOBYPASSRLS", quoted_ident(&runtime_role)),
+        ddl!("ALTER ROLE ", id(&runtime_role), " NOBYPASSRLS"),
     )
     .await;
-    execute(
-        &admin,
-        // SQL-POLICY: fixed-fragment
-        &format!("ALTER ROLE {} SUPERUSER", quoted_ident(&runtime_role)),
-    )
-    .await;
+    execute(&admin, ddl!("ALTER ROLE ", id(&runtime_role), " SUPERUSER")).await;
     assert!(assert_runtime_rls(&runtime, &[&schema]).await.is_err());
     execute(
         &admin,
-        &format!("ALTER ROLE {} NOSUPERUSER", quoted_ident(&runtime_role)),
+        ddl!("ALTER ROLE ", id(&runtime_role), " NOSUPERUSER"),
     )
     .await;
 
-    // SQL-POLICY: fixed-fragment
-    let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT count(*) FROM {}.memory",
-        quoted_ident(&schema)
-    )))
-    .fetch_one(&runtime)
-    .await
-    .unwrap();
+    let count: i64 = sqlx::query_scalar(ddl!("SELECT count(*) FROM ", id(&schema), ".memory"))
+        .fetch_one(&runtime)
+        .await
+        .unwrap();
     assert_eq!(count, 0);
-    // SQL-POLICY: fixed-fragment
     // Raw INSERT on purpose: a table with no scope column must refuse the write
-    let missing_scope = sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {}.memory (id, owner_id) VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002')", quoted_ident(&schema))))
+    let missing_scope = sqlx::query(ddl!("INSERT INTO ", id(&schema), ".memory (id, owner_id) VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002')"))
         .execute(&runtime).await;
     assert_rls_refusal(&missing_scope.expect_err("missing app.owner must refuse writes"));
 
     execute(
         &admin,
-        &format!(
-            "DROP POLICY proxiima_owner_read ON {}.memory",
-            quoted_ident(&schema)
+        ddl!(
+            "DROP POLICY proxiima_owner_read ON ",
+            id(&schema),
+            ".memory"
         ),
     )
     .await;
@@ -628,27 +623,26 @@ async fn runtime_guard_accepts_complete_schema_and_refuses_structural_breaks() {
 
     execute(
         &admin,
-        &format!(
-            "ALTER TABLE {}.sidecar NO FORCE ROW LEVEL SECURITY",
-            quoted_ident(&schema)
+        ddl!(
+            "ALTER TABLE ",
+            id(&schema),
+            ".sidecar NO FORCE ROW LEVEL SECURITY"
         ),
     )
     .await;
     assert!(assert_runtime_rls(&runtime, &[&schema]).await.is_err());
     execute(
         &admin,
-        &format!(
-            "ALTER TABLE {}.sidecar FORCE ROW LEVEL SECURITY",
-            quoted_ident(&schema)
+        ddl!(
+            "ALTER TABLE ",
+            id(&schema),
+            ".sidecar FORCE ROW LEVEL SECURITY"
         ),
     )
     .await;
     execute(
         &admin,
-        &format!(
-            "CREATE TABLE {}.unprotected (id int)",
-            quoted_ident(&schema)
-        ),
+        ddl!("CREATE TABLE ", id(&schema), ".unprotected (id int)"),
     )
     .await;
     assert!(assert_runtime_rls(&runtime, &[&schema]).await.is_err());
@@ -658,13 +652,9 @@ async fn runtime_guard_accepts_complete_schema_and_refuses_structural_breaks() {
         .execute(&mut *transaction)
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment
-    let bypass = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT count(*) FROM {}.memory",
-        quoted_ident(&schema)
-    )))
-    .execute(&mut *transaction)
-    .await;
+    let bypass = sqlx::query(ddl!("SELECT count(*) FROM ", id(&schema), ".memory"))
+        .execute(&mut *transaction)
+        .await;
     assert_rls_refusal(&bypass.expect_err("forced RLS refuses runtime row_security bypass"));
     transaction.rollback().await.unwrap();
     runtime.close().await;
@@ -695,9 +685,10 @@ async fn platform_scope_rejects_missing_force_and_policy() {
 
     execute(
         &admin,
-        &format!(
-            "ALTER TABLE {}.memory NO FORCE ROW LEVEL SECURITY",
-            quoted_ident(&schema)
+        ddl!(
+            "ALTER TABLE ",
+            id(&schema),
+            ".memory NO FORCE ROW LEVEL SECURITY"
         ),
     )
     .await;
@@ -709,19 +700,17 @@ async fn platform_scope_rejects_missing_force_and_policy() {
     );
     execute(
         &admin,
-        &format!(
-            "ALTER TABLE {}.memory FORCE ROW LEVEL SECURITY",
-            quoted_ident(&schema)
+        ddl!(
+            "ALTER TABLE ",
+            id(&schema),
+            ".memory FORCE ROW LEVEL SECURITY"
         ),
     )
     .await;
 
     execute(
         &admin,
-        &format!(
-            "DROP POLICY proxiima_platform ON {}.memory",
-            quoted_ident(&schema)
-        ),
+        ddl!("DROP POLICY proxiima_platform ON ", id(&schema), ".memory"),
     )
     .await;
     assert!(
@@ -733,11 +722,7 @@ async fn platform_scope_rejects_missing_force_and_policy() {
 
     execute(
         &admin,
-        &format!(
-            "CREATE POLICY proxiima_platform ON {}.memory FOR ALL TO {} USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')",
-            quoted_ident(&schema),
-            quoted_ident(&owner)
-        ),
+        ddl!("CREATE POLICY proxiima_platform ON ", id(&schema), ".memory FOR ALL TO ", id(&owner), " USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')"),
     )
     .await;
     PgPlatformScope::new(platform.clone(), &[&schema])
@@ -969,7 +954,6 @@ async fn authenticated_witness_binds_and_clears_transaction_scope() {
 #[tokio::test]
 #[expect(
     clippy::too_many_lines,
-    clippy::uninlined_format_args,
     clippy::similar_names,
     clippy::cast_possible_wrap,
     reason = "single end-to-end RLS acceptance scenario"
@@ -987,14 +971,14 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
     let group_a = GroupId::new(owner_a);
     let group_b = GroupId::new(owner_b);
     // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
-    execute(
-        &admin,
-        &format!(
-            "INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ('{}','group'),('{}','group')",
-            owner_a, owner_b
-        ),
+    sqlx::query(
+        "INSERT INTO proxiima_core.owners(owner_id, kind) VALUES ($1,'group'),($2,'group')",
     )
-    .await;
+    .bind(owner_a)
+    .bind(owner_b)
+    .execute(&admin)
+    .await
+    .unwrap();
     let mut owner_a_t = uuid::Uuid::nil();
     let mut owner_b_t = uuid::Uuid::nil();
     for (owner, handle, t, title) in [
@@ -1007,14 +991,15 @@ async fn full_policy_isolation_uses_authenticated_scope_and_platform_role() {
             owner_b_t = t;
         }
         // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
-        execute(
-            &admin,
-            &format!(
-                "INSERT INTO proxiima_core.memory_head(handle,schema_id,kind,owner_id,t) VALUES ('{}','core/test','fact','{}','{}')",
-                handle, owner, t
-            ),
+        sqlx::query(
+            "INSERT INTO proxiima_core.memory_head(handle,schema_id,kind,owner_id,t) VALUES ($1,'core/test','fact',$2,$3)",
         )
-        .await;
+        .bind(handle)
+        .bind(owner)
+        .bind(t)
+        .execute(&admin)
+        .await
+        .unwrap();
         let mut transaction = admin.begin().await.unwrap();
         // Raw INSERT: this test builds its own split-role database by hand; no PgStorage is connected to it
         sqlx::query("INSERT INTO proxiima_core.memory(handle,t,kind,owner_id,schema_id,sidecar_tables, occurred_at, \"by\", via) VALUES ($1,$2,'fact',$3,'core/test',ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp($2), '00000000-0000-0000-0000-000000000509'::uuid, NULL)")

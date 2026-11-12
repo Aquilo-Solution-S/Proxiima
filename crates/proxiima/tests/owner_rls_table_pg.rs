@@ -10,6 +10,7 @@
 mod example_engine;
 
 use proxiima::testkit::SplitRoleDb;
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
 
@@ -124,7 +125,14 @@ async fn migrated_platform() -> (SplitRoleDb, PgConnection) {
 }
 
 async fn create_fixture(conn: &mut PgConnection, schema: &str) {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(FIXTURE.replace("{s}", schema)))
+    let fixture = SqlText::fill(
+        FIXTURE,
+        &[(
+            "{s}",
+            &SqlText::from(&PgIdent::name(schema).expect("a plain schema name")),
+        )],
+    );
+    sqlx::raw_sql(fixture)
         .execute(&mut *conn)
         .await
         .expect("fixture tables");
@@ -670,14 +678,17 @@ async fn a_host_schema_grows_one_call_at_a_time() {
         .await
         .expect("host schema");
     let lists: [&[&str]; 4] = [OWNER_ID, FK_PARENT, OWNERLESS, MEMORY_OWNER];
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        FIXTURE
-            .replace("CREATE SCHEMA {s};", "")
-            .replace("{s}", "host"),
-    ))
-    .execute(&mut conn)
-    .await
-    .expect("host tables");
+    let host_tables = SqlText::fill(
+        FIXTURE,
+        &[
+            ("CREATE SCHEMA {s};", &SqlText::new("")),
+            ("{s}", &SqlText::new("host")),
+        ],
+    );
+    sqlx::raw_sql(host_tables)
+        .execute(&mut conn)
+        .await
+        .expect("host tables");
 
     let tables = classified(lists);
     for (table, class) in &tables {

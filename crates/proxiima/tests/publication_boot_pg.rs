@@ -23,6 +23,7 @@ use proxiima::spiice::{
     SpiiceRegistryError,
 };
 use proxiima::{AppInfo, Proxiima, ServedSurface, SpiiceApp, company_owner};
+use proxiima_core::SqlText;
 use proxiima_core::env_from_pairs as env;
 use proxiima_core::publication::{PublicationConfig, PublicationLimits, PublicationSource};
 use proxiima_core::spiice::{
@@ -149,22 +150,22 @@ fn probe_migrator() -> Migrator {
         .freeze_against(&registry)
         .expect("the fixture's PG registrations match its contract");
 
-    let statements = [
-        "CREATE SCHEMA pubtest",
-        "CREATE TABLE pubtest.probe_v1 (
+    let statements = SqlText::new(
+        "CREATE SCHEMA pubtest;
+CREATE TABLE pubtest.probe_v1 (
             t uuid PRIMARY KEY,
             probe_id uuid NOT NULL,
             note text NOT NULL
-        )",
-        "SELECT proxiima_core.install_sidecar('pubtest', 'probe_v1', 'pubtest')",
-    ];
+        );
+SELECT proxiima_core.install_sidecar('pubtest', 'probe_v1', 'pubtest')",
+    );
 
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             PROBE_MIGRATION_VERSION,
             Cow::Borrowed("publication probe sidecar"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(statements.join(";\n")).into_sql_str(),
+            statements.into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT

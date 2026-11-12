@@ -174,16 +174,13 @@ fn drop_plan() -> Migrator {
             VERSION,
             Cow::Borrowed("drop retired fixture"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(
-                "SELECT proxiima_core.assert_fact_schema_drained(
+            "SELECT proxiima_core.assert_fact_schema_drained(
                      'test/retired-v1', ARRAY['proxiima_core.agent_note_v1']);
                  DROP TRIGGER memory_declares_proxiima_core_agent_note_v1 ON proxiima_core.memory;
                  DROP TABLE proxiima_core.agent_note_v1;
                  DELETE FROM proxiima_core.spiice_surface
                   WHERE table_name = 'proxiima_core.agent_note_v1';"
-                    .to_owned(),
-            )
-            .into_sql_str(),
+                .into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT

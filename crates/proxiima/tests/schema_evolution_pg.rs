@@ -438,8 +438,7 @@ fn migrator(transform: proxiima::spiice::SchemaMigrationFn) -> Migrator {
     // The registrations must match the contract; the installer below creates
     // the triggers they describe.
     sidecars.freeze_against(&registry).unwrap();
-    let sql = String::from(
-        "CREATE SCHEMA IF NOT EXISTS evolution_test;
+    let sql = "CREATE SCHEMA IF NOT EXISTS evolution_test;
          CREATE TABLE IF NOT EXISTS evolution_test.fact_v1 (
              t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE,
              task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL
@@ -449,14 +448,13 @@ fn migrator(transform: proxiima::spiice::SchemaMigrationFn) -> Migrator {
              task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL
          );
          SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v1', 'evolution-test');
-         SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v2', 'evolution-test');",
-    );
+         SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v2', 'evolution-test');";
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             ANCHOR,
             Cow::Borrowed("evolution sidecars"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(sql).into_sql_str(),
+            sql.into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT
@@ -469,7 +467,7 @@ fn chain_migrator() -> Migrator {
         ANCHOR_V3,
         Cow::Borrowed("evolution v3 sidecars"),
         MigrationType::Simple,
-        sqlx::AssertSqlSafe("CREATE TABLE IF NOT EXISTS evolution_test.fact_v3 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE, task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL); SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v3', 'evolution-test');")
+        "CREATE TABLE IF NOT EXISTS evolution_test.fact_v3 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory(t) ON DELETE CASCADE, task_id uuid NOT NULL, ended_at bigint NOT NULL, text text NOT NULL); SELECT proxiima_core.install_sidecar('evolution_test', 'fact_v3', 'evolution-test');"
             .into_sql_str(),
         false,
     ));
@@ -477,7 +475,7 @@ fn chain_migrator() -> Migrator {
         CLEANUP_ANCHOR,
         Cow::Borrowed("remove obsolete evolution sidecars"),
         MigrationType::Simple,
-        sqlx::AssertSqlSafe("DROP TABLE evolution_test.fact_v1; DROP TABLE evolution_test.fact_v2; DELETE FROM proxiima_core.spiice_surface WHERE table_name IN ('evolution_test.fact_v1', 'evolution_test.fact_v2');")
+        "DROP TABLE evolution_test.fact_v1; DROP TABLE evolution_test.fact_v2; DELETE FROM proxiima_core.spiice_surface WHERE table_name IN ('evolution_test.fact_v1', 'evolution_test.fact_v2');"
             .into_sql_str(),
         false,
     ));

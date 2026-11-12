@@ -109,10 +109,9 @@ async fn seed(pool: &PgPool, owner: OwnerId, other: OwnerId) -> Result<(), sqlx:
     .execute(&mut *stamped)
     .await?;
     stamped.commit().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        "ANALYZE proxiima_core.memory_head; ANALYZE proxiima_core.memory; ANALYZE proxiima_core.agent_note_v1;"
-            .to_owned(),
-    ))
+    sqlx::raw_sql(
+        "ANALYZE proxiima_core.memory_head; ANALYZE proxiima_core.memory; ANALYZE proxiima_core.agent_note_v1;",
+    )
     .execute(pool)
     .await?;
     Ok(())

@@ -8,8 +8,10 @@ left around behind an adapter.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,6 +141,71 @@ def check_lifecycle_guc(findings: list[Finding]) -> None:
         findings.append(Finding(ROOT / rel, line_no, "app.proxiima_lifecycle set outside PgLifecycleScope", line))
 
 
+# A text scan and not a lint: no attribute lifts it, and it sees every spelling
+# of the constructor (call, function value, struct literal, import).
+SQL_ESCAPE_NAMES = re.compile(r"\b(?:AssertSqlSafe|QueryBuilder)\b")
+SQL_ESCAPE_MODULE = "crates/core/src/sql_text.rs"
+SQL_ESCAPE_ALLOWED = (
+    SQL_ESCAPE_MODULE,
+    # Replays released migration text; goes with the schema reset.
+    "crates/storage-pg/src/rename_bootstrap.rs",
+)
+
+
+def sql_escape_users(files: dict[str, str]) -> list[tuple[str, int]]:
+    """Every line outside the SqlText module that names AssertSqlSafe or QueryBuilder."""
+    users: list[tuple[str, int]] = []
+    for rel, text in sorted(files.items()):
+        if rel in SQL_ESCAPE_ALLOWED:
+            continue
+        for index, line in enumerate(text.splitlines(), start=1):
+            if SQL_ESCAPE_NAMES.search(line):
+                users.append((rel, index))
+    return users
+
+
+SQL_ESCAPE_SKIPPED_DIRS = {"target", ".git", ".local"}
+SQL_ESCAPE_SELF = "scripts/check-architecture-guardrails.py"
+
+
+def sql_escape_files(root: Path) -> dict[str, str]:
+    """Every regular file under `root` that can hold Rust, whatever its name or suffix.
+
+    A `#[path = ".escape.rs"]` or `include!("escape.inc")` pulls any file into the
+    build, so the scan cannot go by suffix. Skipped: `target`, `.git` and `.local`
+    directories, this script, and files that are not UTF-8.
+    """
+    files: dict[str, str] = {}
+    for directory, subdirs, names in os.walk(root):
+        subdirs[:] = [d for d in subdirs if d not in SQL_ESCAPE_SKIPPED_DIRS]
+        for name in names:
+            path = Path(directory) / name
+            rel = path.relative_to(root).as_posix()
+            if rel == SQL_ESCAPE_SELF or path.is_symlink():
+                continue
+            try:
+                files[rel] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+    return files
+
+
+def check_sql_escape(findings: list[Finding]) -> None:
+    files = sql_escape_files(ROOT)
+    if not re.search(r"\bAssertSqlSafe\b", files.get(SQL_ESCAPE_MODULE, "")):
+        findings.append(Finding(ROOT / SQL_ESCAPE_MODULE, 1, "sql text", "the SqlText module no longer names AssertSqlSafe"))
+    for rel, line_no in sql_escape_users(files):
+        line = files[rel].splitlines()[line_no - 1]
+        findings.append(
+            Finding(
+                ROOT / rel,
+                line_no,
+                "sqlx::AssertSqlSafe and sqlx::QueryBuilder are named only in crates/core/src/sql_text.rs and crates/storage-pg/src/rename_bootstrap.rs; build the statement with proxiima_core::SqlText or SqlBuilder",
+                line,
+            )
+        )
+
+
 def run_self_test() -> int:
     """Assert each check's detector fires on its committed fixture or inline sample."""
     failures: list[str] = []
@@ -174,6 +241,40 @@ def run_self_test() -> int:
     }
     if [rel for rel, _line in lifecycle_guc_writers(guc_files)] != ["crates/storage-pg/src/other.rs", "crates/x/src/y.sql"]:
         failures.append("lifecycle scope: a second writer of app.proxiima_lifecycle was not detected (or a reader was)")
+    sql_files = {
+        SQL_ESCAPE_MODULE: "pub struct SqlText; fn seal(sql: String) { sqlx::AssertSqlSafe(sql); }",
+        "crates/storage-pg/src/rename_bootstrap.rs": "let q = sqlx::query(sqlx::AssertSqlSafe(sql));",
+        "crates/x/src/call.rs": "let q = sqlx::query(sqlx::AssertSqlSafe(sql));",
+        "crates/x/src/value.rs": "let q = sqls.map(sqlx::AssertSqlSafe);",
+        "crates/x/src/literal.rs": "let q = sqlx::AssertSqlSafe { 0: sql };",
+        "crates/x/src/import.rs": "use sqlx::QueryBuilder;",
+        "crates/x/src/clean.rs": "use proxiima_core::SqlBuilder;\nstruct MyQueryBuilderish;",
+    }
+    sql_expected = [
+        ("crates/x/src/call.rs", 1),
+        ("crates/x/src/import.rs", 1),
+        ("crates/x/src/literal.rs", 1),
+        ("crates/x/src/value.rs", 1),
+    ]
+    if sql_escape_users(sql_files) != sql_expected:
+        failures.append(f"sql text: flagged {sql_escape_users(sql_files)}, expected {sql_expected}")
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = Path(tmp)
+        for rel_path, content in {
+            ".hidden.rs": b"sqlx::AssertSqlSafe",
+            "x.inc": b"sqlx::AssertSqlSafe",
+            "target/y.rs": b"sqlx::AssertSqlSafe",
+            "notes.md": b"sqlx::AssertSqlSafe",
+            ".local/z.rs": b"sqlx::AssertSqlSafe",
+            "sub/.git/config": b"sqlx::AssertSqlSafe",
+            "scripts/check-architecture-guardrails.py": b"sqlx::AssertSqlSafe",
+            "blob.bin": b"\xff\xfe\x00sqlx::AssertSqlSafe",
+        }.items():
+            (tree / rel_path).parent.mkdir(parents=True, exist_ok=True)
+            (tree / rel_path).write_bytes(content)
+        discovered = sorted(sql_escape_files(tree))
+        if discovered != [".hidden.rs", "notes.md", "x.inc"]:
+            failures.append(f"sql text: discovery returned {discovered}, expected ['.hidden.rs', 'notes.md', 'x.inc']")
     if failures:
         for failure in failures:
             print(f"self-test failed: {failure}: {rel}", file=sys.stderr)
@@ -197,6 +298,7 @@ def main() -> int:
     findings: list[Finding] = []
     check_memory_reads(findings)
     check_lifecycle_guc(findings)
+    check_sql_escape(findings)
 
     if findings:
         print("architecture guardrail violations:", file=sys.stderr)

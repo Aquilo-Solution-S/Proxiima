@@ -39,14 +39,16 @@
 //! request's optional tag predicate before a candidate is accepted.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::num::NonZeroU16;
 
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
-use crate::pg_ident::PgIdent;
 use crate::pgvector::set_hnsw_search_sql;
 use crate::projection::{projection_key_ident, sidecar_text_sql};
 use crate::tuning::PgTuning;
-use proxiima_core::spiice::{BandComparability, LanguagePolicy, SubstringArm};
+use proxiima_core::spiice::{
+    Band, BandComparability, LanguagePolicy, SubstringArm, TS_RANK_NORMALIZATION_NONE,
+};
 use proxiima_core::storage_ports::{CandidateBound, VectorCandidatePage};
 use proxiima_core::verbs::query::{
     EntityKind, MAX_SEARCH_PAGE_LIMIT, MemorySearchPage, MemorySearchRequest, MemorySearchResult,
@@ -54,6 +56,7 @@ use proxiima_core::verbs::query::{
 };
 use proxiima_core::verbs::schema::{MemorySearchProjection, PayloadKind, RenderBands};
 use proxiima_core::{MemoryId, OwnerId, SchemaId, StorageError};
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::{PgConnection, Postgres, Transaction};
 
 use super::embedding_candidates::{SEMANTIC_SCAN_CAP, next_candidate_window};
@@ -71,10 +74,10 @@ use hybrid::{HYBRID_CANDIDATE_WINDOW, apply_hybrid_fusion, uses_hybrid_fusion};
 const REQUEST_OVERFETCH_FACTOR: u32 = 20;
 
 /// The tagged semantic scan's tag-array bind…
-const SEMANTIC_TAGS_BIND: usize = 7;
+const SEMANTIC_TAGS_BIND: NonZeroU16 = NonZeroU16::new(7).unwrap();
 /// …and the first of its per-spiice schema-set binds, one per participating
 /// spiice in `spiices` order.
-const SEMANTIC_SCHEMA_BIND_BASE: usize = 8;
+const SEMANTIC_SCHEMA_BIND_BASE: NonZeroU16 = NonZeroU16::new(8).unwrap();
 
 #[derive(Debug, Clone)]
 struct Hit {
@@ -453,8 +456,7 @@ async fn scan_one_spiice_on_connection(
     let overfetch = i64::from(budget);
     let tags = (!req.tags.is_empty()).then_some(req.tags.as_slice());
     let sql = crate::search_candidates::call_sql(&spiice.head().projection_table, false)?;
-    // SQL-POLICY: PgIdent
-    let rows: Vec<RankedRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let rows: Vec<RankedRow> = sqlx::query_as(sql)
         .bind(&req.query)
         .bind(overfetch)
         .bind(tags)
@@ -493,8 +495,7 @@ async fn scan_one_spiice_on_connection(
     if !missing.is_empty() {
         let missing_ids: Vec<&str> = missing.iter().map(|p| p.schema_id.as_str()).collect();
         let sql = crate::search_candidates::call_sql(&spiice.head().projection_table, true)?;
-        // SQL-POLICY: PgIdent
-        let rows: Vec<SubstringRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        let rows: Vec<SubstringRow> = sqlx::query_as(sql)
             .bind(like_pattern(&req.query))
             .bind(overfetch)
             .bind(tags)
@@ -550,12 +551,15 @@ impl SidecarLeg<'_> {
     /// its sidecar, so naming them lets the planner reach the owner's
     /// memories of just those schemas through `memory_owner_schema_t_idx`
     /// instead of reading every memory the request's `$8` names (#490).
-    fn schema_literals(&self) -> String {
-        self.schema_ids
-            .iter()
-            .map(|schema| format!("'{}'", schema.replace('\'', "''")))
-            .collect::<Vec<_>>()
-            .join(", ")
+    fn schema_literals(&self) -> Result<SqlText, StorageError> {
+        let mut sql = SqlText::new("");
+        for (index, schema) in self.schema_ids.iter().enumerate() {
+            if index > 0 {
+                sql.push(", ");
+            }
+            sql.push_literal(schema)?;
+        }
+        Ok(sql)
     }
 }
 
@@ -601,7 +605,7 @@ fn substring_sql(
     schemas: &[&MemorySearchProjection],
     bands: RenderBands,
     req: &MemorySearchRequest,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let scanned = sidecar_legs(schemas.iter().copied());
     let legs = scanned
         .iter()
@@ -611,30 +615,30 @@ fn substring_sql(
     // the column, so the union's own ordering stays one spelling.
     if let ([only], [_leg]) = (legs.as_slice(), scanned.as_slice()) {
         let order_by = match candidate_order(req) {
-            SearchOrder::Relevance => "lexical_score DESC, t DESC".to_owned(),
-            SearchOrder::Recency => "t DESC".to_owned(),
+            SearchOrder::Relevance => "lexical_score DESC, t DESC",
+            SearchOrder::Recency => "t DESC",
         };
-        // SQL-POLICY: PgIdent
-        return Ok(format!(
-            "{only}
-          ORDER BY {order_by}
-          LIMIT $2"
-        ));
+        let mut sql = only.clone();
+        sql.push("\n          ORDER BY ")
+            .push(order_by)
+            .push("\n          LIMIT $2");
+        return Ok(sql);
     }
     let order_by = match candidate_order(req) {
         SearchOrder::Relevance => "s.lexical_score DESC, s.t DESC",
         SearchOrder::Recency => "s.t DESC",
     };
-    let union = legs.join("\n          UNION ALL\n");
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "SELECT s.t, s.lexical_score
-               FROM (
-          {union}
-                    ) s
-              ORDER BY {order_by}
-              LIMIT $2"
-    ))
+    let mut sql = SqlText::new("SELECT s.t, s.lexical_score\n               FROM (\n          ");
+    for (index, leg) in legs.iter().enumerate() {
+        if index > 0 {
+            sql.push("\n          UNION ALL\n");
+        }
+        sql.push_text(leg);
+    }
+    sql.push("\n                    ) s\n              ORDER BY ")
+        .push(order_by)
+        .push("\n              LIMIT $2");
+    Ok(sql)
 }
 
 /// One sidecar's leg of the substring arm.
@@ -647,76 +651,103 @@ fn substring_leg_sql(
     leg: &SidecarLeg<'_>,
     bands: RenderBands,
     req: &MemorySearchRequest,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let projection = leg.projection;
-    let tag_pred = match projection.tag_column.as_deref() {
-        Some(column) if !req.tags.is_empty() => {
-            let column = PgIdent::column(column)?;
-            format!(
-                " AND c.{} {op} $3::text[]",
-                column.as_str(),
-                op = tag_operator(req.tag_match)
-            )
-        }
-        _ => String::new(),
-    };
+    let mut tag_pred = SqlText::new("");
+    if let Some(column) = projection.tag_column.as_deref()
+        && !req.tags.is_empty()
+    {
+        tag_pred
+            .push(" AND c.")
+            .push_ident(&PgIdent::column(column)?)
+            .push(" ")
+            .push(tag_operator(req.tag_match))
+            .push(" $3::text[]");
+    }
     substring_leg_sql_parts(
         leg,
         bands,
         &tag_pred,
-        &admit_side_restriction(req, SUBSTRING_MEMORY_ID),
+        &admit_side_restriction(req, SUBSTRING_MEMORY_ID)?,
     )
 }
 
 fn substring_leg_sql_parts(
     leg: &SidecarLeg<'_>,
     bands: RenderBands,
-    tag_pred: &str,
-    admit_pred: &str,
-) -> Result<String, StorageError> {
+    tag_pred: &SqlText,
+    admit_pred: &SqlText,
+) -> Result<SqlText, StorageError> {
     let projection = leg.projection;
-    let own_schemas = leg.schema_literals();
+    let own_schemas = leg.schema_literals()?;
     let table = PgIdent::table(&projection.sidecar_table)?;
     let key = projection_key_ident(projection)?;
     let search_text = sidecar_text_sql(projection)?;
     // A flat band: the substring arm ranks nothing, it only admits — hence
     // zero width, and no `ts_rank` call to normalize.
-    let (floor, _) = bands.substring.parts();
+    let mut floor = SqlText::new("");
+    floor.push_f32_fixed(bands.substring.floor, 2)?;
     // Same reason as the ranked arm's: this window is shared across the
     // missing schemas now, so a row admission will drop must not spend a
     // slot in it. See `admit_side_restriction`.
-    // SQL-POLICY: PgIdent
     // `c.{key}` is the sidecar's DECLARED memory-key column and `m.t` the
     // kernel memory table's own; the leg aliases its projection back to `t`
     // so the row shape and the union's ordering are one spelling whatever
     // a spiice names its column.
-    Ok(format!(
+    let mut sql = SqlText::new(
         "SELECT * FROM (
          WITH eligible_memory AS MATERIALIZED (
              SELECT source.t, source.handle, source.kind, source.owner_id, source.schema_id
                FROM proxiima_core.live_memory source
               WHERE source.owner_id = ANY($7::uuid[])
                 AND source.schema_id = ANY($8::text[])
-                AND source.schema_id = ANY(ARRAY[{own_schemas}]::text[])
+                AND source.schema_id = ANY(ARRAY[",
+    );
+    sql.push_text(&own_schemas)
+        .push(
+            "]::text[])
          )
          SELECT m.t AS t,
-                {floor}::real AS lexical_score
+                ",
+        )
+        .push_text(&floor)
+        .push(
+            "::real AS lexical_score
            FROM eligible_memory m
-           JOIN {table} c
-             ON c.{key} = m.t
-            AND (lower({search_text}) LIKE $1 ESCAPE '\\')
-            {tag_pred}
+           JOIN ",
+        )
+        .push_ident(&table)
+        .push(
+            " c
+             ON c.",
+        )
+        .push_ident(&key)
+        .push(
+            " = m.t
+            AND (lower(",
+        )
+        .push_text(&search_text)
+        .push(
+            ") LIKE $1 ESCAPE '\\')
+            ",
+        )
+        .push_text(tag_pred)
+        .push(
+            "
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-            {admit_pred}
+            ",
+        )
+        .push_text(admit_pred)
+        .push(
+            "
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) <= $5)
             AND ($6::uuid IS NULL OR m.t < $6)
          ) leg",
-        table = table.as_str(),
-        key = key.as_str(),
-    ))
+        );
+    Ok(sql)
 }
 
 /// The ranked arm: `<spiice>.projection` ALONE, one statement for the whole
@@ -752,25 +783,24 @@ fn ranked_projection_sql(
     spiice: &SpiiceScan<'_>,
     req: &MemorySearchRequest,
     rescue: bool,
-) -> Result<String, StorageError> {
-    let tag_pred = if req.tags.is_empty() {
-        String::new()
-    } else {
+) -> Result<SqlText, StorageError> {
+    let mut tag_pred = SqlText::new("");
+    if !req.tags.is_empty() {
         // Every participating schema declares a `tag_column` when the
         // request carries tags — `core_search_spiices` drops the ones that
         // do not — and the predicate reads `p.tag`, a column every
         // projection row has (default `'{}'`). So it is uniform across the
         // spiice and only the SCHEMA SET narrows.
-        format!(
-            " AND p.tag {op} $3::text[]",
-            op = tag_operator(req.tag_match)
-        )
-    };
+        tag_pred
+            .push(" AND p.tag ")
+            .push(tag_operator(req.tag_match))
+            .push(" $3::text[]");
+    }
     ranked_projection_sql_parts(
         spiice,
         rescue,
         &tag_pred,
-        &admit_side_restriction(req, RANKED_MEMORY_ID),
+        &admit_side_restriction(req, RANKED_MEMORY_ID)?,
         None,
     )
     .map(|query| query.statement(candidate_order(req)))
@@ -778,7 +808,7 @@ fn ranked_projection_sql(
 
 /// One ranked query body, before its closed ordering and limit.
 pub(crate) struct RankedCandidates {
-    pub(crate) body: String,
+    pub(crate) body: SqlText,
 }
 
 impl RankedCandidates {
@@ -790,29 +820,36 @@ impl RankedCandidates {
     }
 
     #[cfg(any(test, feature = "testkit"))]
-    fn statement(&self, order: SearchOrder) -> String {
-        let order = Self::order_sql(order);
-        format!(
-            "{}\n          ORDER BY {order}\n          LIMIT $2",
-            self.body
-        )
+    fn statement(&self, order: SearchOrder) -> SqlText {
+        let mut sql = self.body.clone();
+        sql.push("\n          ORDER BY ")
+            .push(Self::order_sql(order))
+            .push("\n          LIMIT $2");
+        sql
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the statement text is the length of the function"
+)]
 fn ranked_projection_sql_parts(
     spiice: &SpiiceScan<'_>,
     rescue: bool,
-    tag_pred: &str,
-    admit_pred: &str,
-    rescue_switch: Option<&str>,
+    tag_pred: &SqlText,
+    admit_pred: &SqlText,
+    rescue_switch: Option<&'static str>,
 ) -> Result<RankedCandidates, StorageError> {
     let head = spiice.head();
     let table = PgIdent::table(&head.projection_table)?;
     let tsv = "p.search_tsv";
-    let rescue_guard = rescue_switch.map_or_else(String::new, |flag| format!("{flag} AND "));
+    let mut rescue_guard = SqlText::new("");
+    if let Some(flag) = rescue_switch {
+        rescue_guard.push(flag).push(" AND ");
+    }
     let multilingual = multilingual(head);
     let rank_tsq = rank_tsquery_expr(multilingual);
-    let weights = rank_weight_array(head);
+    let weights = rank_weight_array(head)?;
     // The score windows and the `ts_rank` normalization flags are READ OFF
     // the declaration, resolved by name. Raw `ts_rank` is not comparable
     // across corpora; a band is, which is what makes a cross-spiice merge
@@ -820,53 +857,121 @@ fn ranked_projection_sql_parts(
     // two renderers can fill differently while claiming the same number.
     let exact = spiice.bands.exact;
     let rescue_band = spiice.bands.rescue;
-    let (rescue_floor, rescue_width) = rescue_band.parts();
-    let rescue_norm = rescue_band.normalization_arg();
-    let rescue_score = if rescue {
-        format!(
-            ", CASE WHEN {rescue_guard}q.any_tsq IS NOT NULL AND {tsv} @@ q.any_tsq
-                    THEN {rescue_floor} + LEAST(COALESCE(ts_rank({weights}{tsv}, q.any_tsq{rescue_norm}), 0.0) * 100.0, 1.0) * {rescue_width}
-                    ELSE 0.0 END"
-        )
-    } else {
-        String::new()
-    };
-    let rescue_where = if rescue {
-        format!(" OR ({rescue_guard}q.any_tsq IS NOT NULL AND {tsv} @@ q.any_tsq)")
-    } else {
-        String::new()
-    };
-    let (exact_floor, exact_width) = exact.parts();
-    let exact_norm = exact.normalization_arg();
-    let score_expr = format!(
+    let mut rescue_score = SqlText::new("");
+    let mut rescue_where = SqlText::new("");
+    if rescue {
+        rescue_score
+            .push(", CASE WHEN ")
+            .push_text(&rescue_guard)
+            .push("q.any_tsq IS NOT NULL AND ")
+            .push(tsv)
+            .push(
+                " @@ q.any_tsq
+                    THEN ",
+            );
+        push_band_floor(&mut rescue_score, rescue_band)?;
+        rescue_score
+            .push(" + LEAST(COALESCE(ts_rank(")
+            .push_text(&weights)
+            .push(tsv)
+            .push(", q.any_tsq");
+        push_normalization(&mut rescue_score, rescue_band);
+        rescue_score.push("), 0.0) * 100.0, 1.0) * ");
+        push_band_width(&mut rescue_score, rescue_band)?;
+        rescue_score.push(
+            "
+                    ELSE 0.0 END",
+        );
+        rescue_where
+            .push(" OR (")
+            .push_text(&rescue_guard)
+            .push("q.any_tsq IS NOT NULL AND ")
+            .push(tsv)
+            .push(" @@ q.any_tsq)");
+    }
+    let mut score_expr = SqlText::new(
         "GREATEST(
-                    CASE WHEN {tsv} @@ q.tsq
-                         THEN {exact_floor} + LEAST(COALESCE(ts_rank_cd({weights}{tsv}, {rank_tsq}{exact_norm}), 0.0), 1.0) * {exact_width}
-                         ELSE 0.0 END{rescue_score},
-                    0.0
-                )::real"
+                    CASE WHEN p.search_tsv @@ q.tsq
+                         THEN ",
     );
-    // SQL-POLICY: PgIdent
-    Ok(RankedCandidates {
-        body: format!(
-            "{q_cte}
+    push_band_floor(&mut score_expr, exact)?;
+    score_expr
+        .push(" + LEAST(COALESCE(ts_rank_cd(")
+        .push_text(&weights)
+        .push(tsv)
+        .push(", ")
+        .push(rank_tsq);
+    push_normalization(&mut score_expr, exact);
+    score_expr.push("), 0.0), 1.0) * ");
+    push_band_width(&mut score_expr, exact)?;
+    score_expr
+        .push(
+            "
+                         ELSE 0.0 END",
+        )
+        .push_text(&rescue_score)
+        .push(
+            ",
+                    0.0
+                )::real",
+        );
+    let mut body = SqlText::new(query_side_cte(multilingual));
+    body.push(
+        "
          SELECT p.memory_id AS t,
                 p.schema_id,
-                {score_expr} AS lexical_score
-           FROM {table} p, q
+                ",
+    )
+    .push_text(&score_expr)
+    .push(
+        " AS lexical_score
+           FROM ",
+    )
+    .push_ident(&table)
+    .push(
+        " p, q
           WHERE p.owner_id = ANY($7::uuid[])
             AND p.schema_id = ANY($8::text[])
-            AND ({tsv} @@ q.tsq{rescue_where})
-            {tag_pred}{admit_pred}
+            AND (",
+    )
+    .push(tsv)
+    .push(" @@ q.tsq")
+    .push_text(&rescue_where)
+    .push(
+        ")
+            ",
+    )
+    .push_text(tag_pred)
+    .push_text(admit_pred)
+    .push(
+        "
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) <= $5)
             AND ($6::uuid IS NULL OR p.memory_id < $6)",
-            q_cte = query_side_cte(multilingual),
-            table = table.as_str(),
-        ),
-    })
+    );
+    Ok(RankedCandidates { body })
+}
+
+/// The band's floor, at two decimals as `Band::parts` renders it.
+fn push_band_floor(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
+    sql.push_f32_fixed(band.floor, 2)?;
+    Ok(())
+}
+
+/// The band's width, at two decimals as `Band::parts` renders it.
+fn push_band_width(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
+    sql.push_f32_fixed(band.ceiling - band.floor, 2)?;
+    Ok(())
+}
+
+/// The trailing `ts_rank` normalization argument, omitted when the band
+/// declares none (as `Band::normalization_arg` does).
+fn push_normalization(sql: &mut SqlText, band: Band) {
+    if band.normalization != TS_RANK_NORMALIZATION_NONE {
+        sql.push(", ").push_i64(i64::from(band.normalization));
+    }
 }
 
 /// The candidate-side spelling of "this row's memory" in the ranked arm.
@@ -883,7 +988,7 @@ fn projection_candidate_statements(
     projections: &[MemorySearchProjection],
     substring: bool,
     recency: bool,
-) -> Result<Option<String>, StorageError> {
+) -> Result<Option<SqlText>, StorageError> {
     if substring {
         return Ok(
             projection_substring_candidates(projections)?.map(|candidates| {
@@ -901,19 +1006,13 @@ pub(crate) fn projection_ranked_candidates(
     let Some(spiice) = core_band_scan(projections) else {
         return Ok(None);
     };
-    let admit = candidate_authorization("p.memory_id", "");
-    ranked_projection_sql_parts(
-        &spiice,
-        true,
-        &format!(
-            " AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))){}",
-            candidate_tags("p.tag")
-        ),
-        &admit,
-        Some("$9::boolean"),
-    )
-    .map(Some)
+    let admit = candidate_authorization("p.memory_id", &SqlText::new(""));
+    let mut tags = SqlText::new(
+        " AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
+                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))",
+    );
+    tags.push_text(&candidate_tags(&SqlText::new("p.tag")));
+    ranked_projection_sql_parts(&spiice, true, &tags, &admit, Some("$9::boolean")).map(Some)
 }
 
 /// The participating schemas the candidate functions render: those on core
@@ -945,7 +1044,7 @@ const fn candidate_order_of(recency: bool) -> SearchOrder {
 pub(crate) struct CandidateLeg {
     pub(crate) table: String,
     pub(crate) schemas: Vec<String>,
-    pub(crate) sql: String,
+    pub(crate) sql: SqlText,
 }
 
 /// The substring candidate statement as its legs and the ordering that
@@ -972,14 +1071,20 @@ impl SubstringCandidates {
     }
 
     #[cfg(any(test, feature = "testkit"))]
-    fn statement<'a>(legs: impl Iterator<Item = &'a CandidateLeg>, order: SearchOrder) -> String {
+    fn statement<'a>(legs: impl Iterator<Item = &'a CandidateLeg>, order: SearchOrder) -> SqlText {
         let (open, between, close) = Self::frame();
-        let legs = legs.map(|leg| leg.sql.as_str()).collect::<Vec<_>>();
-        format!(
-            "{open}{}{close} ORDER BY {} LIMIT $2",
-            legs.join(between),
-            Self::order_sql(order)
-        )
+        let mut sql = SqlText::new(open);
+        for (index, leg) in legs.enumerate() {
+            if index > 0 {
+                sql.push(between);
+            }
+            sql.push_text(&leg.sql);
+        }
+        sql.push(close)
+            .push(" ORDER BY ")
+            .push(Self::order_sql(order))
+            .push(" LIMIT $2");
+        sql
     }
 }
 
@@ -1004,20 +1109,21 @@ fn substring_candidate_legs(
     )
     .iter()
     .map(|leg| {
-        let tags = leg.projection.tag_column.as_deref().map_or_else(
-            || Ok::<_, StorageError>(" AND $3::text[] IS NULL".to_owned()),
-            |column| {
-                let column = PgIdent::column(column)?;
-                Ok(candidate_tags(&format!("c.{}", column.as_str())))
-            },
-        )?;
+        let tags = match leg.projection.tag_column.as_deref() {
+            None => SqlText::new(" AND $3::text[] IS NULL"),
+            Some(column) => {
+                let mut qualified = SqlText::new("c.");
+                qualified.push_ident(&PgIdent::column(column)?);
+                candidate_tags(&qualified)
+            }
+        };
         // A head carries its memory's schema (`memory_align_head`), so the
         // leg's own schemas bound the heads it checks as well: without
         // them the head check reads every head the owner has.
-        let heads_of_leg = format!(
-            " AND authorized_head.schema_id = ANY(ARRAY[{}]::text[])",
-            leg.schema_literals()
-        );
+        let mut heads_of_leg = SqlText::new(" AND authorized_head.schema_id = ANY(ARRAY[");
+        heads_of_leg
+            .push_text(&leg.schema_literals()?)
+            .push("]::text[])");
         let sql = substring_leg_sql_parts(
             leg,
             spiice.bands,
@@ -1041,26 +1147,37 @@ fn substring_candidate_legs(
     Ok(Some(SubstringCandidates { legs }))
 }
 
-fn candidate_tags(column: &str) -> String {
-    format!(
+fn candidate_tags(column: &SqlText) -> SqlText {
+    let mut sql = SqlText::new(
         " AND ($3::text[] IS NULL OR CASE WHEN $12::boolean \
-         THEN {column} @> $3::text[] ELSE {column} && $3::text[] END)"
-    )
+         THEN ",
+    );
+    sql.push_text(column)
+        .push(" @> $3::text[] ELSE ")
+        .push_text(column)
+        .push(" && $3::text[] END)");
+    sql
 }
 
 /// The candidate statements' authorization of `memory_id`; `head_filter` is
 /// an extra predicate on `authorized_head`, or empty.
-fn candidate_authorization(memory_id: &str, head_filter: &str) -> String {
-    format!(
+fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> SqlText {
+    let mut sql = SqlText::new(
         " AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory \
-         WHERE authorized_memory.t = {memory_id} \
+         WHERE authorized_memory.t = ",
+    );
+    sql
+    .push(memory_id)
+    .push(" \
          AND (authorized_memory.owner_id = ANY($7::uuid[]) \
               OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) \
          AND ($11::text IS NULL OR authorized_memory.kind::text = $11) \
          AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head \
          WHERE authorized_head.handle = authorized_memory.handle \
-         AND authorized_head.t = authorized_memory.t{head_filter})))"
-    )
+         AND authorized_head.t = authorized_memory.t")
+    .push_text(head_filter)
+    .push(")))");
+    sql
 }
 
 /// The `memory_kind` literal a request's `kind` filter selects.
@@ -1134,45 +1251,56 @@ fn kind_literal(kind: Option<EntityKind>) -> Option<&'static str> {
 /// forbid the alternative. `include_superseded` requests with no `kind`
 /// filter render nothing here and keep the unfiltered window.
 #[cfg(any(test, feature = "testkit"))]
-fn admit_side_restriction(req: &MemorySearchRequest, memory_id: &str) -> String {
+fn admit_side_restriction(
+    req: &MemorySearchRequest,
+    memory_id: &'static str,
+) -> Result<SqlText, StorageError> {
     let heads_only = matches!(req.supersession, SupersessionStatus::HeadsOnly);
     let kind = kind_literal(req.kind);
+    let mut sql = SqlText::new("");
     if !heads_only && kind.is_none() {
-        return String::new();
+        return Ok(sql);
     }
     if memory_id == SUBSTRING_MEMORY_ID {
         // The leg already drives `proxiima_core.live_memory m`, so the kind is a
         // column predicate on a row it has already fetched and only the head
         // lookup needs a probe.
-        let kind_pred = kind.map_or_else(String::new, |kind| {
-            format!("\n            AND m.kind = '{kind}'")
-        });
-        let head_pred = if heads_only {
-            "
+        if let Some(kind) = kind {
+            sql.push("\n            AND m.kind = ").push_literal(kind)?;
+        }
+        if heads_only {
+            sql.push(
+                "
             AND EXISTS (SELECT 1
                           FROM proxiima_core.memory_head hh
-                         WHERE hh.handle = m.handle AND hh.t = m.t)"
-        } else {
-            ""
-        };
-        return format!("{kind_pred}{head_pred}");
+                         WHERE hh.handle = m.handle AND hh.t = m.t)",
+            );
+        }
+        return Ok(sql);
     }
-    let head_join = if heads_only {
-        "
-                          JOIN proxiima_core.memory_head hh
-                            ON hh.handle = hm.handle AND hh.t = hm.t"
-    } else {
-        ""
-    };
-    let kind_pred = kind.map_or_else(String::new, |kind| {
-        format!("\n                           AND hm.kind = '{kind}'")
-    });
-    format!(
+    sql.push(
         "
             AND EXISTS (SELECT 1
-                          FROM proxiima_core.live_memory hm{head_join}
-                         WHERE hm.t = {memory_id}{kind_pred})"
+                          FROM proxiima_core.live_memory hm",
+    );
+    if heads_only {
+        sql.push(
+            "
+                          JOIN proxiima_core.memory_head hh
+                            ON hh.handle = hm.handle AND hh.t = hm.t",
+        );
+    }
+    sql.push(
+        "
+                         WHERE hm.t = ",
     )
+    .push(memory_id);
+    if let Some(kind) = kind {
+        sql.push("\n                           AND hm.kind = ")
+            .push_literal(kind)?;
+    }
+    sql.push(")");
+    Ok(sql)
 }
 
 /// The snippet, for the rows that made the page.
@@ -1239,19 +1367,23 @@ fn multilingual(projection: &MemorySearchProjection) -> bool {
 /// uniform level. Passing no array is not the same as passing the default
 /// one only in spelling: with a single level every lexeme is class `D` and
 /// the default `{0.1,0.2,0.4,1.0}` would scale every score by 0.1.
-fn rank_weight_array(projection: &MemorySearchProjection) -> String {
+fn rank_weight_array(projection: &MemorySearchProjection) -> Result<SqlText, StorageError> {
+    let mut sql = SqlText::new("");
     let Some(weights) = projection.rank_weights else {
-        return String::new();
+        return Ok(sql);
     };
-    let rendered = weights
-        .iter()
-        .map(|weight| format!("{weight}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("'{{{rendered}}}'::float4[], ")
+    sql.push("'{");
+    for (index, weight) in weights.iter().enumerate() {
+        if index > 0 {
+            sql.push(",");
+        }
+        sql.push_f32(*weight)?;
+    }
+    sql.push("}'::float4[], ");
+    Ok(sql)
 }
 
-fn search_admit_sql(heads_only: bool) -> String {
+fn search_admit_sql(heads_only: bool) -> SqlText {
     let head_filter = if heads_only {
         " AND (EXISTS (SELECT 1 FROM proxiima_core.memory_head h
                         WHERE h.handle = m.handle AND h.t = m.t)
@@ -1259,8 +1391,7 @@ fn search_admit_sql(heads_only: bool) -> String {
     } else {
         ""
     };
-    format!(
-        "SELECT m.t,
+    let mut sql = SqlText::new("SELECT m.t,
                 m.kind,
                 m.schema_id,
                 proxiima_core.memory_created_at(m.t) AS created_at,
@@ -1275,8 +1406,9 @@ fn search_admit_sql(heads_only: bool) -> String {
                  OR proxiima_core.memory_created_at(m.t) >= $5)
             AND ($6::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) <= $6)
-            {head_filter}"
-    )
+            ");
+    sql.push(head_filter);
+    sql
 }
 
 /// Match-side tsquery. When the schema declares `LanguagePolicy::PerRow`
@@ -1344,45 +1476,54 @@ fn rank_tsquery_expr(multilingual: bool) -> &'static str {
 fn semantic_candidate_admission_sql(
     spiices: &[SpiiceScan<'_>],
     req: &MemorySearchRequest,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let op = tag_operator(req.tag_match);
     let schema_bind_base = if req.tags.is_empty() {
         SEMANTIC_TAGS_BIND
     } else {
         SEMANTIC_SCHEMA_BIND_BASE
     };
-    let probes = spiices
-        .iter()
-        .enumerate()
-        .map(|(index, spiice)| {
-            let table = PgIdent::table(&spiice.head().projection_table)?;
-            let tag_pred = if req.tags.is_empty() {
-                String::new()
-            } else {
-                format!(" AND p.tag {op} ${SEMANTIC_TAGS_BIND}::text[]")
-            };
-            // SQL-POLICY: PgIdent
-            Ok(format!(
-                "EXISTS (SELECT 1 FROM {table} p
+    let mut projection_pred = SqlText::new("");
+    for (index, spiice) in spiices.iter().enumerate() {
+        let table = PgIdent::table(&spiice.head().projection_table)?;
+        let mut tag_pred = SqlText::new("");
+        if !req.tags.is_empty() {
+            tag_pred
+                .push(" AND p.tag ")
+                .push(op)
+                .push(" ")
+                .push_param(SEMANTIC_TAGS_BIND)
+                .push("::text[]");
+        }
+        let schema_bind = u16::try_from(usize::from(schema_bind_base.get()) + index)
+            .ok()
+            .and_then(NonZeroU16::new)
+            .ok_or_else(|| StorageError::Internal("too many search spiices".into()))?;
+        let mut schema_bind_sql = SqlText::new("");
+        schema_bind_sql.push_param(schema_bind);
+        if index > 0 {
+            projection_pred.push(" OR ");
+        }
+        let mut probe = SqlText::new("EXISTS (SELECT 1 FROM ");
+        probe
+        .push_ident(&table)
+        .push(" p
                           WHERE p.memory_id = m.t
                             AND (p.owner_id = ANY($2::uuid[])
                                  OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[])))
-                            AND p.schema_id = ANY(${schema_bind}::text[]){tag_pred})",
-                table = table.as_str(),
-                schema_bind = schema_bind_base + index,
-            ))
-        })
-        .collect::<Result<Vec<_>, StorageError>>()?;
-    let projection_pred = if probes.is_empty() {
-        "FALSE".to_owned()
-    } else {
-        probes.join(" OR ")
-    };
-    // SQL-POLICY: PgIdent — each projection relation above is checked.
-    Ok(format!(
-        "{} AND ({projection_pred})",
-        search_admit_sql(matches!(req.supersession, SupersessionStatus::HeadsOnly))
-    ))
+                            AND p.schema_id = ANY(")
+        .push_text(&schema_bind_sql)
+        .push("::text[])")
+        .push_text(&tag_pred)
+        .push(")");
+        projection_pred.push_text(&probe);
+    }
+    if spiices.is_empty() {
+        projection_pred.push("FALSE");
+    }
+    let mut sql = search_admit_sql(matches!(req.supersession, SupersessionStatus::HeadsOnly));
+    sql.push(" AND (").push_text(&projection_pred).push(")");
+    Ok(sql)
 }
 
 enum SemanticCandidates<'a> {
@@ -1409,8 +1550,7 @@ async fn remote_candidate_filter(
             "SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($1::uuid[])"
         }
     };
-    // SQL-POLICY: fixed-fragment — the closed supersession mode selects the candidate relation.
-    let memories: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+    let memories: Vec<uuid::Uuid> = sqlx::query_scalar(sql)
         .bind(&selectors)
         .fetch_all(connection.as_mut())
         .await
@@ -1491,7 +1631,7 @@ async fn scan_embeddings_on_connection(
         .map(|f| f.schemas.iter().map(|p| p.schema_id.as_str()).collect())
         .collect();
     let sql = semantic_candidate_admission_sql(spiices, req)?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(set_hnsw_search_sql(tuning)))
+    sqlx::raw_sql(set_hnsw_search_sql(tuning))
         .execute(connection.as_mut())
         .await
         .map_err(map_err)?;
@@ -1527,8 +1667,7 @@ async fn scan_embeddings_on_connection(
             .iter()
             .map(|candidate| candidate.memory_id.into_inner())
             .collect();
-        // SQL-POLICY: PgIdent — the shared memory read plus checked projection probes.
-        let mut query = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut query = sqlx::query_as(sql.clone())
             .bind(&candidate_ids)
             .bind(&owner_ids)
             .bind(kind_literal(req.kind))
@@ -1586,8 +1725,7 @@ async fn admit_hits_on_connection(
         .collect();
     let hit_ts: Vec<uuid::Uuid> = hits.keys().copied().collect();
     let sql = search_admit_sql(matches!(req.supersession, SupersessionStatus::HeadsOnly));
-    // SQL-POLICY: PgIdent
-    let rows: Vec<AdmitRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let rows: Vec<AdmitRow> = sqlx::query_as(sql)
         .bind(&hit_ts)
         .bind(&owner_ids)
         .bind(kind_literal(req.kind))
@@ -1700,7 +1838,7 @@ pub fn ranked_projection_sql_for_tests(
     schemas: &[&MemorySearchProjection],
     req: &MemorySearchRequest,
     rescue: bool,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     ranked_projection_sql(
         &SpiiceScan::new(schemas.to_vec())
             .ok_or_else(|| StorageError::Internal("no render bands on head".into()))?,
@@ -1719,7 +1857,7 @@ pub fn ranked_projection_sql_for_tests(
 pub fn substring_sql_for_tests(
     schemas: &[&MemorySearchProjection],
     req: &MemorySearchRequest,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let bands = schemas
         .first()
         .and_then(|projection| projection.render_bands)
@@ -1739,7 +1877,7 @@ pub fn substring_sql_for_tests(
 pub fn substring_candidate_sql_for_tests(
     projections: &[MemorySearchProjection],
     recency: bool,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     projection_candidate_statements(projections, true, recency)?
         .ok_or_else(|| StorageError::Internal("no substring leg in the projections".into()))
 }
@@ -1753,14 +1891,14 @@ pub fn substring_candidate_sql_for_tests(
 pub fn semantic_candidate_admission_sql_for_tests(
     req: &MemorySearchRequest,
     projections: &[MemorySearchProjection],
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     semantic_candidate_admission_sql(&core_search_spiices(req, projections), req)
 }
 
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
-pub fn search_admit_sql_for_tests(heads_only: bool) -> String {
+pub fn search_admit_sql_for_tests(heads_only: bool) -> SqlText {
     search_admit_sql(heads_only)
 }
 
@@ -1799,16 +1937,19 @@ mod tests {
         ] {
             let (pg, _db) = crate::test_fixtures::fresh_pg("search_arm_fns").await;
             if let Some(function) = function {
-                // SQL-POLICY: fixed-fragment
-                sqlx::query(sqlx::AssertSqlSafe(format!(
+                let mut drop = proxiima_core::SqlText::new(
                     "DO $$ BEGIN EXECUTE 'DROP FUNCTION ' || (
                          SELECT oid::regprocedure::text FROM pg_proc
-                          WHERE proname = '{function}'
-                            AND pronamespace = 'proxiima_core'::regnamespace); END $$"
-                )))
-                .execute(pg.pool_for_tests())
-                .await
-                .expect("drop the candidate function");
+                          WHERE proname = '",
+                );
+                drop.push(function).push(
+                    "'
+                            AND pronamespace = 'proxiima_core'::regnamespace); END $$",
+                );
+                sqlx::query(drop)
+                    .execute(pg.pool_for_tests())
+                    .await
+                    .expect("drop the candidate function");
             }
             let found = pg
                 .search_memories(Some(&scope), &req, std::slice::from_ref(&note))
@@ -1896,6 +2037,7 @@ mod tests {
             super::SpiiceScan::new(vec![&note]).expect("fixture head declares render bands");
 
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let ranked = ranked.as_str();
         assert!(ranked.contains("lexical_scrub($1)"), "$1 is the query");
         assert!(ranked.contains("LIMIT $2"), "$2 is the overfetch budget");
         assert!(
@@ -1949,6 +2091,7 @@ mod tests {
         );
 
         let substring = super::substring_sql_for_tests(&[&note], &req).expect("substring");
+        let substring = substring.as_str();
         assert!(substring.contains("LIKE $1 ESCAPE"), "$1 is the pattern");
         assert!(substring.contains("LIMIT $2"), "$2 is the overfetch budget");
         assert!(substring.contains("c.tags && $3::text[]"), "$3 is the tags");
@@ -1990,6 +2133,7 @@ mod tests {
         // else moves: `$3` simply goes unmentioned.
         req.tags.clear();
         let untagged = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let untagged = untagged.as_str();
         assert!(!untagged.contains("p.tag"));
         assert!(untagged.contains("p.owner_id = ANY($7::uuid[])"));
     }
@@ -2016,6 +2160,7 @@ mod tests {
             super::SpiiceScan::new(vec![&docs]).expect("fixture head declares render bands"),
         ];
         let two = super::semantic_candidate_admission_sql(&spiices, &req).expect("semantic");
+        let two = two.as_str();
         let core = two
             .find("FROM proxiima_core.projection p")
             .expect("core probe");
@@ -2049,6 +2194,7 @@ mod tests {
         // starting at `$7`.
         req.tags.clear();
         let untagged = super::semantic_candidate_admission_sql(&spiices, &req).expect("semantic");
+        let untagged = untagged.as_str();
         assert!(untagged.contains("FROM proxiima_core.projection p"));
         assert!(untagged.contains("p.schema_id = ANY($7::text[])"));
         assert!(untagged.contains("FROM proxiima_docs.projection p"));
@@ -2082,6 +2228,7 @@ mod tests {
             super::SpiiceScan::new(vec![&note]).expect("fixture head declares render bands");
 
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let ranked = ranked.as_str();
         assert!(
             ranked.contains("JOIN proxiima_core.memory_head hh")
                 && ranked.contains("ON hh.handle = hm.handle AND hh.t = hm.t")
@@ -2090,6 +2237,7 @@ mod tests {
              not spend the window on superseded revisions"
         );
         let substring = super::substring_sql_for_tests(&[&note], &req).expect("substring");
+        let substring = substring.as_str();
         assert!(
             substring.contains("FROM proxiima_core.memory_head hh")
                 && substring.contains("WHERE hh.handle = m.handle AND hh.t = m.t"),
@@ -2110,6 +2258,7 @@ mod tests {
 
         req.supersession = SupersessionStatus::IncludeSuperseded;
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let ranked = ranked.as_str();
         assert!(
             !ranked.contains("memory_head"),
             "IncludeSuperseded keeps the unfiltered window"
@@ -2120,6 +2269,7 @@ mod tests {
              reachable and admit still applies the kind"
         );
         let substring = super::substring_sql_for_tests(&[&note], &req).expect("substring");
+        let substring = substring.as_str();
         assert!(
             !substring.contains("memory_head"),
             "IncludeSuperseded keeps the unfiltered window"
@@ -2127,6 +2277,7 @@ mod tests {
 
         req.kind = None;
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let ranked = ranked.as_str();
         assert!(
             !ranked
                 .split_whitespace()
@@ -2140,6 +2291,7 @@ mod tests {
         // out of the window.
         req.kind = Some(EntityKind::Perspective);
         let ranked = super::ranked_projection_sql(&spiice, &req, true).expect("ranked");
+        let ranked = ranked.as_str();
         assert!(
             ranked.contains("FROM proxiima_core.live_memory hm\n")
                 && !ranked.contains("memory_head"),
@@ -2199,6 +2351,7 @@ mod tests {
         ];
         for heads_only in [false, true] {
             let admit = super::search_admit_sql(heads_only);
+            let admit = admit.as_str();
             for (bind, why) in MIRRORS {
                 assert!(
                     admit.contains(bind),
@@ -2233,6 +2386,7 @@ mod tests {
         );
         assert!(
             super::search_admit_sql(true)
+                .as_str()
                 .contains("EXISTS (SELECT 1 FROM proxiima_core.memory_head h"),
             "…and that is the shape `admit_side_restriction` mirrors"
         );

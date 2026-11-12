@@ -1,3 +1,4 @@
+use proxiima_core::SqlText;
 use proxiima_core::storage_ports::{InboundPinQuery, PinTargetKind};
 use proxiima_core::verbs::query::{QueryRequest, SupersessionStatus};
 use proxiima_core::{
@@ -97,14 +98,11 @@ pub(crate) async fn load_pin_nodes_on_connection(
     }
     let ids: Vec<uuid::Uuid> = memory_ids.iter().map(|id| id.into_inner()).collect();
     let owner_ids = owner_ids(read_owners);
-    let sql = [
-        "SELECT ",
-        &pin_fields::pin_carrier_columns(""),
+    let mut sql = SqlText::new("SELECT ");
+    sql.push_text(&pin_fields::pin_carrier_columns("")).push(
         " FROM proxiima_core.live_memory WHERE t = ANY($1::uuid[]) AND owner_id = ANY($2::uuid[])",
-    ]
-    .concat();
-    // SQL-POLICY: fixed-fragment
-    let rows: Vec<PinNodeRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    );
+    let rows: Vec<PinNodeRow> = sqlx::query_as(sql)
         .bind(&ids)
         .bind(&owner_ids)
         .fetch_all(&mut *connection)
@@ -130,8 +128,7 @@ pub(crate) async fn load_inbound_pin_nodes_on_connection(
     let ids: Vec<uuid::Uuid> = query.targets.iter().map(|id| id.into_inner()).collect();
     let owner_ids = owner_ids(read_owners);
     let sql = inbound_pin_sql(query.supersession, query.kind, query.target_kind);
-    // SQL-POLICY: fixed-fragment
-    let rows: Vec<PinNodeRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let rows: Vec<PinNodeRow> = sqlx::query_as(sql)
         .bind(&ids)
         .bind(&owner_ids)
         .bind(query.after.map(MemoryId::into_inner))
@@ -149,20 +146,18 @@ pub fn inbound_pin_sql_for_tests(
     supersession: SupersessionStatus,
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
-) -> String {
+) -> SqlText {
     inbound_pin_sql(supersession, kind, target_kind)
 }
 
 /// The page of pin carriers that pin any of `$1` through a column holding
 /// `target_kind` targets of `kind`: the columns come from the pin-column
 /// table, so a Goal target scans only the Goal columns.
-///
-/// SQL-POLICY: fixed-fragment
 fn inbound_pin_sql(
     supersession: SupersessionStatus,
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
-) -> String {
+) -> SqlText {
     let heads_only = match supersession {
         SupersessionStatus::HeadsOnly => {
             "
@@ -172,22 +167,26 @@ fn inbound_pin_sql(
         }
         SupersessionStatus::IncludeSuperseded => "",
     };
-    [
-        "SELECT ",
-        &pin_fields::pin_carrier_columns("m."),
-        "
+    let mut sql = SqlText::new("SELECT ");
+    sql.push_text(&pin_fields::pin_carrier_columns("m."))
+        .push(
+            "
                    FROM proxiima_core.live_memory m
                   WHERE m.owner_id = ANY($2::uuid[])",
-        heads_only,
-        "
+        )
+        .push(heads_only)
+        .push(
+            "
                     AND ",
-        &pin_fields::inbound_overlap("m.", target_kind, kind),
-        "
+        )
+        .push_text(&pin_fields::inbound_overlap("m.", target_kind, kind))
+        .push(
+            "
                     AND ($3::uuid IS NULL OR m.t < $3)
                   ORDER BY m.t DESC
                   LIMIT $4",
-    ]
-    .concat()
+        );
+    sql
 }
 
 /// Snapshot-mode edges: pins whose two endpoints are both in the Query window.

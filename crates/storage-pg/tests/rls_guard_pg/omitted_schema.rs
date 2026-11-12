@@ -1,6 +1,6 @@
 use proxiima_storage_pg::{PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
 
-use super::{cleanup, execute, quoted_ident, setup_full_schema};
+use super::{cleanup, execute, setup_full_schema};
 
 fn role_url(database: &str, role: &str, password: &str) -> String {
     let url = proxiima_pg_testkit::db_url(database);
@@ -19,9 +19,9 @@ async fn storage_construction_refuses_unsafe_registered_schema_outside_scope() {
 
     execute(
         &admin,
-        &format!(
-            "ALTER TABLE proxiima_example.note_v1 OWNER TO {}",
-            quoted_ident(&runtime_role)
+        ddl!(
+            "ALTER TABLE proxiima_example.note_v1 OWNER TO ",
+            id(&runtime_role)
         ),
     )
     .await;

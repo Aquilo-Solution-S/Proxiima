@@ -12,7 +12,7 @@ use proxiima_core::spiice::{
     SpiiceContract, TransferRule,
 };
 use proxiima_core::test_fixtures::authenticated_context;
-use proxiima_core::{FactPayload, OwnerId};
+use proxiima_core::{FactPayload, OwnerId, SqlText};
 use sqlx::SqlSafeStr;
 use sqlx::migrate::{Migration, MigrationType, Migrator};
 use uuid::Uuid;
@@ -118,22 +118,22 @@ static HEALTH_CONTRACT: SpiiceContract = SpiiceContract {
 };
 
 fn probe_migrator() -> Migrator {
-    let statements = [
-        "CREATE SCHEMA publisher_supervision",
-        "CREATE TABLE publisher_supervision.probe_v1 (
+    let statements = SqlText::new(
+        "CREATE SCHEMA publisher_supervision;
+CREATE TABLE publisher_supervision.probe_v1 (
             t uuid PRIMARY KEY,
             probe_id uuid NOT NULL,
             note text NOT NULL
-        )",
-        "SELECT proxiima_core.install_sidecar('publisher_supervision', 'probe_v1', 'publisher-supervision')",
-    ];
+        );
+SELECT proxiima_core.install_sidecar('publisher_supervision', 'probe_v1', 'publisher-supervision')",
+    );
 
     Migrator {
         migrations: Cow::Owned(vec![Migration::new(
             PROBE_MIGRATION_VERSION,
             Cow::Borrowed("publisher supervision probe sidecar"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(statements.join(";\n")).into_sql_str(),
+            statements.into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT

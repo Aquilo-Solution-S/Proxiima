@@ -21,7 +21,7 @@ use proxiima_core::verbs::own_erase::{
     SeriesEraseOutcome, SeriesEraseRefusal, SeriesEraseRefusalKind, SeriesEraseReport,
     SeriesEraseRequest, SeriesEraseSelection, SeriesSelection,
 };
-use proxiima_core::{MemoryId, OwnerId, StorageError};
+use proxiima_core::{MemoryId, OwnerId, SqlText, StorageError};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -29,8 +29,8 @@ use super::forget::{
     ColdPurgePlan, cited_blobs_locked_for_erase, erase_memory_series, lock_admissions_for_erase,
 };
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
 use crate::sidecars::{PgSidecarRegistryFrozen, int_to_u64};
+use proxiima_core::PgIdent;
 
 /// One foreign key into `proxiima_core.memory (t)` that makes a row depend on
 /// a memory OTHER than its own.
@@ -210,15 +210,17 @@ async fn close_footprint(
             // referenced `t` twice and only a refusal reports it.
             let key = PgIdent::column(pair.key.unwrap_or(&pair.column))?;
             let limit = if pair.key.is_some() { "" } else { " LIMIT 20" };
-            // SQL-POLICY: PgIdent
-            let sql = format!(
-                "SELECT {key}, {col} FROM {tbl} WHERE {col} = ANY($1::uuid[]){limit}",
-                key = key.as_str(),
-                tbl = table.as_str(),
-                col = column.as_str()
-            );
-            // SQL-POLICY: PgIdent (the statement above interpolates only validated identifiers)
-            let found: Vec<(Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            let mut sql = SqlText::new("SELECT ");
+            sql.push_ident(&key)
+                .push(", ")
+                .push_ident(&column)
+                .push(" FROM ")
+                .push_ident(&table)
+                .push(" WHERE ")
+                .push_ident(&column)
+                .push(" = ANY($1::uuid[])")
+                .push(limit);
+            let found: Vec<(Uuid, Uuid)> = sqlx::query_as(sql)
                 .bind(&added)
                 .fetch_all(tx.as_mut())
                 .await
@@ -391,27 +393,18 @@ async fn footprint_grew(
     for pair in pairs {
         let table = PgIdent::table(&pair.table)?;
         let column = PgIdent::column(&pair.column)?;
-        let sql = match pair.key {
-            Some(key) => {
-                let key = PgIdent::column(key)?;
-                // SQL-POLICY: PgIdent
-                format!(
-                    "SELECT EXISTS (SELECT 1 FROM {tbl} WHERE {col} = ANY($1::uuid[]) \
-                     AND NOT {key} = ANY($1::uuid[]))",
-                    key = key.as_str(),
-                    tbl = table.as_str(),
-                    col = column.as_str()
-                )
-            }
-            // SQL-POLICY: PgIdent
-            None => format!(
-                "SELECT EXISTS (SELECT 1 FROM {tbl} WHERE {col} = ANY($1::uuid[]))",
-                tbl = table.as_str(),
-                col = column.as_str()
-            ),
-        };
-        // SQL-POLICY: PgIdent (the statement above interpolates only validated identifiers)
-        let found: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        let mut sql = SqlText::new("SELECT EXISTS (SELECT 1 FROM ");
+        sql.push_ident(&table)
+            .push(" WHERE ")
+            .push_ident(&column)
+            .push(" = ANY($1::uuid[])");
+        if let Some(key) = pair.key {
+            sql.push(" AND NOT ")
+                .push_ident(&PgIdent::column(key)?)
+                .push(" = ANY($1::uuid[])");
+        }
+        sql.push(")");
+        let found: bool = sqlx::query_scalar(sql)
             .bind(&ts)
             .fetch_one(tx.as_mut())
             .await
@@ -437,14 +430,12 @@ async fn delete_referencing_rows(
     for pair in pairs.iter().filter(|pair| pair.key.is_some()) {
         let table = PgIdent::table(&pair.table)?;
         let column = PgIdent::column(&pair.column)?;
-        // SQL-POLICY: PgIdent
-        let sql = format!(
-            "DELETE FROM {tbl} WHERE {col} = ANY($1::uuid[])",
-            tbl = table.as_str(),
-            col = column.as_str()
-        );
-        // SQL-POLICY: PgIdent (the statement above interpolates only validated identifiers)
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        let mut sql = SqlText::new("DELETE FROM ");
+        sql.push_ident(&table)
+            .push(" WHERE ")
+            .push_ident(&column)
+            .push(" = ANY($1::uuid[])");
+        sqlx::query(sql)
             .bind(ts)
             .execute(tx.as_mut())
             .await

@@ -1,6 +1,8 @@
 //! Pins on the node, PK outbound, GIN inbound, lineage by t.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
+use std::num::NonZeroU16;
+
 use proxiima_core::MemoryKind;
 use proxiima_core::read_models::MemorySchemaSpec;
 use proxiima_core::storage_ports::FactIngestPort;
@@ -15,8 +17,8 @@ use proxiima_core::verbs::query::{
 };
 use proxiima_core::{
     AbstractionPayload, AccessKind, AgentDerivationV1, EdgeKind, EdgeTargetProjection, EntityRef,
-    OwnerId, SchemaId, SchemaVersion, SidecarPayload, UserId, project_listed_edge,
-    project_window_edges,
+    OwnerId, PgIdent, SchemaId, SchemaVersion, SidecarPayload, SqlText, UserId,
+    project_listed_edge, project_window_edges,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
@@ -990,20 +992,41 @@ async fn the_trigger_admits_exactly_the_kinds_the_pin_table_admits() {
             .filter(|field| field.spec().shape == PinShape::Array)
             .collect();
         let columns: Vec<&str> = fields.iter().map(|field| field.spec().column).collect();
-        let placeholders: Vec<String> = (0..columns.len())
-            .map(|at| format!("${}", at + 4))
+        let pin_idents: Vec<PgIdent> = columns
+            .iter()
+            .map(|column| PgIdent::column(column).expect("pin column"))
             .collect();
-        let content_bind = columns.len() + 4;
-        let insert = format!(
+        let param = |n: usize| NonZeroU16::new(u16::try_from(n).expect("few binds")).expect("n > 0");
+        let mut insert = SqlText::new(
             "INSERT INTO proxiima_core.memory
-                (handle, t, kind, owner_id, schema_id, {}, sidecar_tables, content_id,
+                (handle, t, kind, owner_id, schema_id, ",
+        );
+        for (at, ident) in pin_idents.iter().enumerate() {
+            if at > 0 {
+                insert.push(", ");
+            }
+            insert.push_ident(ident);
+        }
+        insert.push(
+            ", sidecar_tables, content_id,
                  occurred_at, \"by\", via)
-             VALUES ($1, $1, $2::text::proxiima_core.memory_kind, $3, 'core/upload-v1', {}, '{{}}',
-                     CASE WHEN $2 = 'fact' THEN NULL ELSE ${content_bind} END,
+             VALUES ($1, $1, $2::text::proxiima_core.memory_kind, $3, 'core/upload-v1', ",
+        );
+        for at in 0..columns.len() {
+            if at > 0 {
+                insert.push(", ");
+            }
+            insert.push_param(param(at + 4));
+        }
+        insert.push(
+            ", '{}',
+                     CASE WHEN $2 = 'fact' THEN NULL ELSE ",
+        );
+        insert.push_param(param(columns.len() + 4));
+        insert.push(
+            " END,
                      CASE WHEN $2 = 'fact' THEN uuid_extract_timestamp($1) END,
                      '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
-            columns.join(", "),
-            placeholders.join(", "),
         );
 
         for field in fields {
@@ -1047,8 +1070,7 @@ async fn the_trigger_admits_exactly_the_kinds_the_pin_table_admits() {
                     .bind(owner.into_inner())
                     .execute(&mut *tx)
                     .await?;
-                    // SQL-POLICY: fixed-fragment (the pin columns of the table and their binds)
-                    let mut write = sqlx::query(sqlx::AssertSqlSafe(insert.clone()))
+                    let mut write = sqlx::query(insert.clone())
                         .bind(handle)
                         .bind(label)
                         .bind(owner.into_inner());

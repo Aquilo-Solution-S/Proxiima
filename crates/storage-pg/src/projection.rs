@@ -33,25 +33,23 @@
 //! runtime: boot-time `CREATE TABLE` contradicts the migration ledger and,
 //! in a shared multi-owner deployment, runs DDL once per process start.
 
-use std::fmt::Write as _;
-
-use proxiima_core::StorageError;
 use proxiima_core::spiice::{
     KeyShape, LanguagePolicy, SchemaContract, SearchProjectionDecl, SpiiceContract,
     TSVECTOR_WEIGHT_CLASSES,
 };
 use proxiima_core::{SearchProjectionColumnKind, verbs::schema::MemorySearchProjection};
+use proxiima_core::{SqlText, StorageError};
 
-use crate::pg_ident::PgIdent;
+use proxiima_core::PgIdent;
 
 /// The snippet bound the search verb applies to sidecar text.
-pub(crate) const SNIPPET_BYTES: usize = 480;
+pub(crate) const SNIPPET_BYTES: u64 = 480;
 
 /// One emitted object and the statement that removes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Artifact {
-    pub forward: String,
-    pub inverse: String,
+    pub forward: SqlText,
+    pub inverse: SqlText,
 }
 
 /// Everything one spiice's projection is, as SQL.
@@ -66,31 +64,38 @@ pub struct ProjectionArtifacts {
 impl ProjectionArtifacts {
     /// Forward statements in dependency order.
     #[must_use]
-    pub fn forward(&self) -> Vec<&str> {
+    pub fn forward(&self) -> Vec<&SqlText> {
         vec![
-            self.table.forward.as_str(),
-            self.index.forward.as_str(),
-            self.tag_index.forward.as_str(),
-            self.language_trigger.forward.as_str(),
+            &self.table.forward,
+            &self.index.forward,
+            &self.tag_index.forward,
+            &self.language_trigger.forward,
         ]
     }
 
     /// Inverses in reverse dependency order — the de-provisioning script,
     /// derived rather than written.
     #[must_use]
-    pub fn inverse(&self) -> Vec<&str> {
+    pub fn inverse(&self) -> Vec<&SqlText> {
         vec![
-            self.language_trigger.inverse.as_str(),
-            self.tag_index.inverse.as_str(),
-            self.index.inverse.as_str(),
-            self.table.inverse.as_str(),
+            &self.language_trigger.inverse,
+            &self.tag_index.inverse,
+            &self.index.inverse,
+            &self.table.inverse,
         ]
     }
 
     /// The whole emitted text, forward, as it appears in a baseline.
     #[must_use]
-    pub fn render(&self) -> String {
-        self.forward().join("\n\n")
+    pub fn render(&self) -> SqlText {
+        let mut sql = SqlText::new("");
+        for (index, statement) in self.forward().into_iter().enumerate() {
+            if index > 0 {
+                sql.push("\n\n");
+            }
+            sql.push_text(statement);
+        }
+        sql
     }
 }
 
@@ -126,70 +131,89 @@ pub fn projection_artifacts(
     let trigger = format!("{relation}_remember_lang");
     let trigger_ident = PgIdent::column(&trigger)?;
 
-    // SQL-POLICY: PgIdent
     // Every spliced name above went through `PgIdent`, which rejects
     // anything that is not a bare (optionally schema-qualified) identifier.
     // The rest of the text is fixed: the column list, the types and the
     // constraints are the same characters for every spiice, which is the
     // slimness property stated as code.
-    let create = format!(
-        "CREATE TABLE {table} (
+    let mut create = SqlText::new("CREATE TABLE ");
+    create.push_ident(&table).push(
+        " (
     memory_id        uuid      NOT NULL
                      REFERENCES proxiima_core.memory (t) ON DELETE CASCADE,
     schema_id        text      NOT NULL,
     owner_id         uuid      NOT NULL
                      REFERENCES proxiima_core.owners (owner_id),
     search_tsv       tsvector  NOT NULL,
-    tag              text[]    NOT NULL DEFAULT '{{}}',
+    tag              text[]    NOT NULL DEFAULT '{}',
     lexical_language regconfig NOT NULL DEFAULT proxiima_core.lexical_config()
                      REFERENCES proxiima_core.lexical_languages (config),
     PRIMARY KEY (memory_id, schema_id)
 );",
-        table = table.as_str()
     );
 
-    let create_index = format!(
-        "CREATE INDEX {index} ON {table} USING gin (owner_id, search_tsv);",
-        index = index.as_str(),
-        table = table.as_str()
-    );
+    let mut create_index = SqlText::new("CREATE INDEX ");
+    create_index
+        .push_ident(&index)
+        .push(" ON ")
+        .push_ident(&table)
+        .push(" USING gin (owner_id, search_tsv);");
 
-    let create_trigger = format!(
-        "CREATE OR REPLACE TRIGGER {trigger}
-    BEFORE INSERT ON {table}
+    let mut create_trigger = SqlText::new("CREATE OR REPLACE TRIGGER ");
+    create_trigger
+        .push_ident(&trigger_ident)
+        .push("\n    BEFORE INSERT ON ")
+        .push_ident(&table)
+        .push(
+            "
     FOR EACH ROW
     EXECUTE FUNCTION proxiima_core.remember_lexical_language();",
-        trigger = trigger_ident.as_str(),
-        table = table.as_str()
-    );
+        );
+
+    let mut drop_table = SqlText::new("DROP TABLE IF EXISTS ");
+    drop_table.push_ident(&table).push(";");
+    let schema = PgIdent::name(schema)?;
+    let mut drop_index = SqlText::new("DROP INDEX IF EXISTS ");
+    drop_index
+        .push_ident(&schema)
+        .push(".")
+        .push_ident(&index)
+        .push(";");
+    let mut create_tag_index = SqlText::new("CREATE INDEX ");
+    create_tag_index
+        .push_ident(&tag_index)
+        .push(" ON ")
+        .push_ident(&table)
+        .push(" USING gin (owner_id, tag);");
+    let mut drop_tag_index = SqlText::new("DROP INDEX IF EXISTS ");
+    drop_tag_index
+        .push_ident(&schema)
+        .push(".")
+        .push_ident(&tag_index)
+        .push(";");
+    let mut drop_trigger = SqlText::new("DROP TRIGGER IF EXISTS ");
+    drop_trigger
+        .push_ident(&trigger_ident)
+        .push(" ON ")
+        .push_ident(&table)
+        .push(";");
 
     Ok(Some(ProjectionArtifacts {
         table: Artifact {
             forward: create,
-            // SQL-POLICY: PgIdent
-            inverse: format!("DROP TABLE IF EXISTS {};", table.as_str()),
+            inverse: drop_table,
         },
         index: Artifact {
             forward: create_index,
-            // SQL-POLICY: PgIdent
-            inverse: format!("DROP INDEX IF EXISTS {schema}.{};", index.as_str()),
+            inverse: drop_index,
         },
         tag_index: Artifact {
-            forward: format!(
-                "CREATE INDEX {tag_index} ON {table} USING gin (owner_id, tag);",
-                tag_index = tag_index.as_str(),
-                table = table.as_str()
-            ),
-            // SQL-POLICY: PgIdent — both names came from the projection contract.
-            inverse: format!("DROP INDEX IF EXISTS {schema}.{};", tag_index.as_str()),
+            forward: create_tag_index,
+            inverse: drop_tag_index,
         },
         language_trigger: Artifact {
             forward: create_trigger,
-            inverse: format!(
-                "DROP TRIGGER IF EXISTS {} ON {};",
-                trigger_ident.as_str(),
-                table.as_str()
-            ),
+            inverse: drop_trigger,
         },
     }))
 }
@@ -208,62 +232,67 @@ fn split_qualified(table: &str) -> Result<(&str, &str), StorageError> {
 /// `lexical_join(VARIADIC ARRAY[NULLIF(col,''), lexical_text_array(arr)])`
 /// — which is what makes the identity re-proof provable rather than
 /// hopeful, not a re-derivation that happens to agree.
-fn search_text_expr(fields: &[(&str, SearchProjectionColumnKind)]) -> Result<String, StorageError> {
+fn search_text_expr(
+    fields: &[(&str, SearchProjectionColumnKind)],
+) -> Result<SqlText, StorageError> {
     if fields.is_empty() {
         return Err(StorageError::Internal(
             "a projected schema declares no fields".into(),
         ));
     }
-    let mut parts = Vec::with_capacity(fields.len());
-    for (column, kind) in fields {
+    let mut sql = SqlText::new("proxiima_core.lexical_join(VARIADIC ARRAY[");
+    for (index, (column, kind)) in fields.iter().enumerate() {
         let column = PgIdent::column(column)?;
-        parts.push(match kind {
+        if index > 0 {
+            sql.push(", ");
+        }
+        match kind {
             SearchProjectionColumnKind::Text => {
-                format!("NULLIF(c.{}, '')", column.as_str())
+                sql.push("NULLIF(c.").push_ident(&column).push(", '')");
             }
             SearchProjectionColumnKind::TextArray => {
-                format!("proxiima_core.lexical_text_array(c.{})", column.as_str())
+                sql.push("proxiima_core.lexical_text_array(c.")
+                    .push_ident(&column)
+                    .push(")");
             }
-        });
+        }
     }
-    Ok(format!(
-        "proxiima_core.lexical_join(VARIADIC ARRAY[{}])",
-        parts.join(", ")
-    ))
+    sql.push("])");
+    Ok(sql)
 }
 
 /// `lexical_tsv(<config>, <text>)`, unioned across a `PinnedUnion` in the
 /// declared order. Order is load-bearing: tsvector concatenation offsets
 /// the right operand's positions and `ts_rank_cd` is position-sensitive.
-fn vector_expr(language: LanguagePolicy, text: &str) -> Result<String, StorageError> {
+fn vector_expr(language: LanguagePolicy, text: &SqlText) -> Result<SqlText, StorageError> {
+    let pinned = |config: &str| -> Result<SqlText, StorageError> {
+        let config = PgIdent::column(config)?;
+        let mut sql = SqlText::new("proxiima_core.lexical_tsv('");
+        sql.push_ident(&config)
+            .push("'::regconfig, ")
+            .push_text(text)
+            .push(")");
+        Ok(sql)
+    };
     match language {
-        LanguagePolicy::PerRow { .. } => Ok(format!(
-            "proxiima_core.lexical_tsv({LANGUAGE_BIND}, {text})"
-        )),
-        LanguagePolicy::Pinned(config) => {
-            let config = PgIdent::column(config)?;
-            Ok(format!(
-                "proxiima_core.lexical_tsv('{}'::regconfig, {text})",
-                config.as_str()
-            ))
+        LanguagePolicy::PerRow { .. } => {
+            let mut sql = SqlText::new("proxiima_core.lexical_tsv(");
+            sql.push(LANGUAGE_BIND).push(", ").push_text(text).push(")");
+            Ok(sql)
         }
+        LanguagePolicy::Pinned(config) => pinned(config),
         LanguagePolicy::PinnedUnion(configs) => {
             if configs.is_empty() {
                 return Err(StorageError::Internal(
                     "PinnedUnion declares no configuration".into(),
                 ));
             }
-            let mut sql = String::new();
+            let mut sql = SqlText::new("");
             for (index, config) in configs.iter().enumerate() {
-                let config = PgIdent::column(config)?;
                 if index > 0 {
-                    sql.push_str("\n            || ");
+                    sql.push("\n            || ");
                 }
-                let _ = write!(
-                    sql,
-                    "proxiima_core.lexical_tsv('{}'::regconfig, {text})",
-                    config.as_str()
-                );
+                sql.push_text(&pinned(config)?);
             }
             Ok(sql)
         }
@@ -283,15 +312,17 @@ fn vector_expr(language: LanguagePolicy, text: &str) -> Result<String, StorageEr
 const LANGUAGE_BIND: &str = "COALESCE($2::regconfig, proxiima_core.lexical_config())";
 
 /// The row's `lexical_language` value.
-fn language_value_expr(language: LanguagePolicy) -> Result<String, StorageError> {
+fn language_value_expr(language: LanguagePolicy) -> Result<SqlText, StorageError> {
     match language {
-        LanguagePolicy::PerRow { .. } => Ok(LANGUAGE_BIND.to_owned()),
+        LanguagePolicy::PerRow { .. } => Ok(SqlText::new(LANGUAGE_BIND)),
         LanguagePolicy::Pinned(_) | LanguagePolicy::PinnedUnion(_) => {
             let config = language.pinned_config().ok_or_else(|| {
                 StorageError::Internal("a pinned language policy names no configuration".into())
             })?;
             let config = PgIdent::column(config)?;
-            Ok(format!("'{}'::regconfig", config.as_str()))
+            let mut sql = SqlText::new("'");
+            sql.push_ident(&config).push("'::regconfig");
+            Ok(sql)
         }
     }
 }
@@ -309,7 +340,7 @@ fn language_value_expr(language: LanguagePolicy) -> Result<String, StorageError>
 /// `StorageError::Internal` for an invalid identifier or a unit whose
 /// weight levels exceed `PostgreSQL`'s four classes (the freeze rejects
 /// that first; this is the backstop).
-pub fn projection_vector_sql(search: &SearchProjectionDecl) -> Result<String, StorageError> {
+pub fn projection_vector_sql(search: &SearchProjectionDecl) -> Result<SqlText, StorageError> {
     let SearchProjectionDecl::Projected {
         fields, language, ..
     } = search
@@ -330,9 +361,11 @@ pub fn projection_vector_sql(search: &SearchProjectionDecl) -> Result<String, St
             .map(|field| (field.column, field.kind))
             .collect::<Vec<_>>();
         let vector = vector_expr(*language, &search_text_expr(&all)?)?;
-        return Ok(format!("COALESCE({vector}, ''::tsvector)"));
+        let mut sql = SqlText::new("COALESCE(");
+        sql.push_text(&vector).push(", ''::tsvector)");
+        return Ok(sql);
     }
-    let mut parts = Vec::new();
+    let mut sql = SqlText::new("");
     for (index, level) in levels.iter().enumerate() {
         let class = TSVECTOR_WEIGHT_CLASSES[index];
         let in_class = fields
@@ -344,11 +377,16 @@ pub fn projection_vector_sql(search: &SearchProjectionDecl) -> Result<String, St
             continue;
         }
         let vector = vector_expr(*language, &search_text_expr(&in_class)?)?;
-        parts.push(format!(
-            "setweight(COALESCE({vector}, ''::tsvector), '{class}')"
-        ));
+        if !sql.as_str().is_empty() {
+            sql.push("\n            || ");
+        }
+        sql.push("setweight(COALESCE(")
+            .push_text(&vector)
+            .push(", ''::tsvector), '")
+            .push(class)
+            .push("')");
     }
-    Ok(parts.join("\n            || "))
+    Ok(sql)
 }
 
 /// The maintenance statement: one row of `<spiice>.projection` from one row
@@ -376,7 +414,7 @@ pub fn projection_vector_sql(search: &SearchProjectionDecl) -> Result<String, St
 pub fn projection_insert_sql(
     contract: &SpiiceContract,
     schema: &SchemaContract,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let spec = contract.projection.spec().ok_or_else(|| {
         StorageError::Internal(format!(
             "spiice {} declares no projection table, so its schemas write no projection row",
@@ -400,13 +438,17 @@ pub fn projection_insert_sql(
         ));
     };
     let vector = projection_vector_sql(&schema.search)?;
-    let tag = match tag_column {
-        Some(column) => format!("c.{}", PgIdent::column(column)?.as_str()),
-        None => "'{}'::text[]".to_owned(),
-    };
+    let mut tag = SqlText::new("");
+    match tag_column {
+        Some(column) => {
+            tag.push("c.").push_ident(&PgIdent::column(column)?);
+        }
+        None => {
+            tag.push("'{}'::text[]");
+        }
+    }
     let language_value = language_value_expr(*language)?;
 
-    // SQL-POLICY: PgIdent
     // The projection table, the sidecar table, its declared memory-key
     // column, the tag column and every configuration name are validated
     // identifiers; the schema id is a bind ($3) and the memory id is a
@@ -426,23 +468,33 @@ pub fn projection_insert_sql(
     // the other. Nothing in the schema enforces it, so a mismatched write
     // inserts nothing rather than writing a row search would spend a window
     // slot on and admission would drop.
-    Ok(format!(
-        "INSERT INTO {table}
+    let mut sql = SqlText::new("INSERT INTO ");
+    sql.push_ident(&table)
+        .push(
+            "
        (memory_id, schema_id, owner_id, search_tsv, tag, lexical_language)
-SELECT c.{key},
+SELECT c.",
+        )
+        .push_ident(&key)
+        .push(
+            ",
        $3,
        m.owner_id,
-       {vector},
-       {tag},
-       {language_value}
-  FROM {sidecar} c
-  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.{key}
- WHERE c.{key} = $1
-   AND m.schema_id = $3",
-        table = table.as_str(),
-        sidecar = sidecar.as_str(),
-        key = key.as_str()
-    ))
+       ",
+        )
+        .push_text(&vector)
+        .push(",\n       ")
+        .push_text(&tag)
+        .push(",\n       ")
+        .push_text(&language_value)
+        .push("\n  FROM ")
+        .push_ident(&sidecar)
+        .push(" c\n  JOIN proxiima_core.memory_including_forgotten m ON m.t = c.")
+        .push_ident(&key)
+        .push("\n WHERE c.")
+        .push_ident(&key)
+        .push(" = $1\n   AND m.schema_id = $3");
+    Ok(sql)
 }
 
 /// The sidecar's memory-key column, as the contract's [`Surface`] for that
@@ -502,11 +554,13 @@ pub fn projection_tables(contracts: &[&'static SpiiceContract]) -> Vec<String> {
 /// # Errors
 ///
 /// `StorageError::Internal` for an invalid column identifier.
-pub(crate) fn snippet_sql(projection: &MemorySearchProjection) -> Result<String, StorageError> {
-    Ok(format!(
-        "left({}, {SNIPPET_BYTES})",
-        sidecar_text_sql(projection)?
-    ))
+pub(crate) fn snippet_sql(projection: &MemorySearchProjection) -> Result<SqlText, StorageError> {
+    let mut sql = SqlText::new("left(");
+    sql.push_text(&sidecar_text_sql(projection)?)
+        .push(", ")
+        .push_u64(SNIPPET_BYTES)
+        .push(")");
+    Ok(sql)
 }
 
 /// The joined sidecar text for one projected schema, over alias `c`.
@@ -520,7 +574,7 @@ pub(crate) fn snippet_sql(projection: &MemorySearchProjection) -> Result<String,
 /// `StorageError::Internal` for an invalid column identifier.
 pub(crate) fn sidecar_text_sql(
     projection: &MemorySearchProjection,
-) -> Result<String, StorageError> {
+) -> Result<SqlText, StorageError> {
     let fields = projection
         .fields
         .iter()
@@ -548,7 +602,7 @@ pub(crate) fn sidecar_text_sql(
 /// valid identifier.
 pub(crate) fn projection_key_ident(
     projection: &MemorySearchProjection,
-) -> Result<PgIdent<'_>, StorageError> {
+) -> Result<PgIdent, StorageError> {
     PgIdent::column(&projection.sidecar_key_column)
 }
 
@@ -686,7 +740,7 @@ mod tests {
         let artifacts = projection_artifacts(&SPIICE_0)
             .expect("core artifacts")
             .expect("core declares a projection");
-        let ddl = &artifacts.table.forward;
+        let ddl = artifacts.table.forward.as_str();
         assert!(
             ddl.contains(&format!("{PROJECTION_MEMORY_COLUMN} ")),
             "the emitted CREATE TABLE declares the column this constant names: {ddl}"
@@ -705,6 +759,7 @@ mod tests {
             .expect("core projects at least one schema");
         let spec = SPIICE_0.projection.spec().expect("core declares a spec");
         let insert = projection_insert_sql(&SPIICE_0, schema).expect("the insert generates");
+        let insert = insert.as_str();
         assert!(
             insert.contains(&format!("({PROJECTION_MEMORY_COLUMN}, schema_id,")),
             "and the projection INSERT writes it: {insert}"
@@ -805,7 +860,11 @@ mod tests {
             .expect("artifacts")
             .expect("core declares a projection");
         assert_eq!(
-            artifacts.inverse(),
+            artifacts
+                .inverse()
+                .into_iter()
+                .map(proxiima_core::SqlText::as_str)
+                .collect::<Vec<_>>(),
             vec![
                 "DROP TRIGGER IF EXISTS projection_remember_lang ON proxiima_core.projection;",
                 "DROP INDEX IF EXISTS proxiima_core.core_projection_owner_tsv_gin_tag;",
@@ -823,6 +882,7 @@ mod tests {
             .find(|schema| schema.sidecar_table == Some(NOTE_SIDECAR))
             .expect("agent_note_v1");
         let sql = projection_insert_sql(&SPIICE_0, note).expect("insert");
+        let sql = sql.as_str();
         assert!(sql.contains("m.owner_id"), "owner comes from memory");
         assert!(
             sql.contains("JOIN proxiima_core.memory_including_forgotten m ON m.t = c.t"),

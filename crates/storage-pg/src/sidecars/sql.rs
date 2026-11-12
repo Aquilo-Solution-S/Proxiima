@@ -1,6 +1,6 @@
-use std::fmt::Write as _;
+use std::num::NonZeroU16;
 
-use super::{PgIdent, StorageError};
+use super::{PgIdent, SqlText, StorageError};
 
 /// Convert a byte slice into a fixed 32-byte array.
 ///
@@ -52,41 +52,43 @@ pub fn memory_insert_sql(
     key_column: &str,
     columns: &[(&str, Option<&str>)],
     stamp_owner: bool,
-) -> Result<String, StorageError> {
-    let table = PgIdent::table(table)?.as_str();
-    let key_column = PgIdent::column(key_column)?.as_str();
+) -> Result<SqlText, StorageError> {
+    let table = PgIdent::table(table)?;
+    let key_column = PgIdent::column(key_column)?;
     let columns = columns
         .iter()
-        .map(|(column, cast)| Ok((PgIdent::column(column)?.as_str(), *cast)))
+        .map(|(column, cast)| Ok((PgIdent::column(column)?, *cast)))
         .collect::<Result<Vec<_>, StorageError>>()?;
-    let mut sql = String::new();
-    write!(&mut sql, "INSERT INTO {table} ({key_column}")
-        .expect("writing SQL into String cannot fail");
+    let mut sql = SqlText::new("INSERT INTO ");
+    sql.push_ident(&table).push(" (").push_ident(&key_column);
     if stamp_owner {
-        sql.push_str(", owner_id");
+        sql.push(", owner_id");
     }
     for (column, _) in &columns {
-        write!(&mut sql, ", {column}").expect("writing SQL into String cannot fail");
+        sql.push(", ").push_ident(column);
     }
     if stamp_owner {
-        sql.push_str(") SELECT $1, m.owner_id");
+        sql.push(") SELECT $1, m.owner_id");
     } else {
-        sql.push_str(") VALUES ($1");
+        sql.push(") VALUES ($1");
     }
     for (index, (_, cast)) in columns.iter().enumerate() {
-        write!(&mut sql, ", ${}", index + 2).expect("writing SQL into String cannot fail");
+        let placeholder = u16::try_from(index + 2)
+            .ok()
+            .and_then(NonZeroU16::new)
+            .ok_or_else(|| StorageError::Internal("too many sidecar columns".into()))?;
+        sql.push(", ").push_param(placeholder);
         if let Some(pg_type) = cast {
             // The cast target is a (possibly schema-qualified) Postgres type
             // name supplied via `pg_sidecar_cast!`; validate it as an identifier
             // so a spiice author cannot splice arbitrary SQL through `$pg_type`.
-            let pg_type = PgIdent::table(pg_type)?.as_str();
-            write!(&mut sql, "::{pg_type}").expect("writing SQL into String cannot fail");
+            sql.push("::").push_ident(&PgIdent::table(pg_type)?);
         }
     }
     if stamp_owner {
-        sql.push_str(" FROM proxiima_core.memory_including_forgotten m WHERE m.t = $1");
+        sql.push(" FROM proxiima_core.memory_including_forgotten m WHERE m.t = $1");
     } else {
-        sql.push(')');
+        sql.push(")");
     }
     Ok(sql)
 }
@@ -105,17 +107,20 @@ pub fn memory_insert_sql(
 pub fn memory_select_batch_sql(
     table: &str,
     key_column: &str,
-    columns: &[&str],
-) -> Result<String, StorageError> {
-    let table = PgIdent::table(table)?.as_str();
-    let key_column = PgIdent::column(key_column)?.as_str();
-    let mut sql = String::new();
-    write!(&mut sql, "SELECT {key_column}").expect("writing SQL into String cannot fail");
+    columns: &[&'static str],
+) -> Result<SqlText, StorageError> {
+    let table = PgIdent::table(table)?;
+    let key_column = PgIdent::column(key_column)?;
+    let mut sql = SqlText::new("SELECT ");
+    sql.push_ident(&key_column);
     for column in columns {
-        write!(&mut sql, ", {column}").expect("writing SQL into String cannot fail");
+        sql.push(", ").push(column);
     }
-    write!(&mut sql, " FROM {table} WHERE {key_column} = ANY($1)")
-        .expect("writing SQL into String cannot fail");
+    sql.push(" FROM ")
+        .push_ident(&table)
+        .push(" WHERE ")
+        .push_ident(&key_column)
+        .push(" = ANY($1)");
     Ok(sql)
 }
 
@@ -141,25 +146,28 @@ pub fn memory_select_batch_sql(
 pub fn memory_select_batch_owner_pinned_sql(
     table: &str,
     key_column: &str,
-    columns: &[&str],
-) -> Result<String, StorageError> {
-    let table = PgIdent::table(table)?.as_str();
-    let key_column = PgIdent::column(key_column)?.as_str();
-    let mut sql = String::new();
-    write!(&mut sql, "SELECT s.{key_column}").expect("writing SQL into String cannot fail");
+    columns: &[&'static str],
+) -> Result<SqlText, StorageError> {
+    let table = PgIdent::table(table)?;
+    let key_column = PgIdent::column(key_column)?;
+    let mut sql = SqlText::new("SELECT s.");
+    sql.push_ident(&key_column);
     for column in columns {
         // `s.` prefixes both projection shapes the macro emits: `col` and
         // the enum form `col::text AS col`.
-        write!(&mut sql, ", s.{column}").expect("writing SQL into String cannot fail");
+        sql.push(", s.").push(column);
     }
-    write!(
-        &mut sql,
-        " FROM {table} s \
+    sql.push(" FROM ")
+        .push_ident(&table)
+        .push(
+            " s \
            JOIN proxiima_core.memory_including_forgotten m \
-             ON m.t = s.{key_column} AND m.owner_id = s.owner_id \
-          WHERE s.{key_column} = ANY($1)"
-    )
-    .expect("writing SQL into String cannot fail");
+             ON m.t = s.",
+        )
+        .push_ident(&key_column)
+        .push(" AND m.owner_id = s.owner_id WHERE s.")
+        .push_ident(&key_column)
+        .push(" = ANY($1)");
     Ok(sql)
 }
 

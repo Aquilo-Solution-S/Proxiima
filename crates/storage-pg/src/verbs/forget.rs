@@ -6,7 +6,9 @@ use std::collections::BTreeSet;
 
 use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::spiice::{EraseLeg, ForgetLeg, KeyShape};
-use proxiima_core::{ColdObjectStore, ObjectStoreId, OwnerId, PurgeDeleted, StorageError};
+use proxiima_core::{
+    ColdObjectStore, ObjectStoreId, OwnerId, PgIdent, PurgeDeleted, SqlText, StorageError,
+};
 
 use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
 use crate::verbs::maintenance::PurgeBackoff;
@@ -15,7 +17,6 @@ use uuid::Uuid;
 
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
-use crate::pg_ident::PgIdent;
 use crate::sidecars::PgSidecarRegistryFrozen;
 
 /// The in-process purge stub dev and test hosts wire when no object store
@@ -681,8 +682,7 @@ async fn run_forget_legs(
 ) -> Result<(), StorageError> {
     for (table, key_column) in legs {
         let sql = forget_leg_sql(table, key_column)?;
-        // SQL-POLICY: generated
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        sqlx::query(sql)
             .bind(t)
             .execute(tx.as_mut())
             .await
@@ -725,15 +725,15 @@ fn erase_kept_memory_legs(surfaces: &OwnerSurfaces) -> Vec<(&'static str, &'stat
 /// is additionally resolved against `information_schema` by
 /// `spiice_contract_acceptance::every_column_a_declaration_names_is_a_column_the_catalog_has`.
 /// `PgIdent`'s whitelist is what makes the substitution `%I`-equivalent.
-fn forget_leg_sql(table: &str, key_column: &str) -> Result<String, StorageError> {
+fn forget_leg_sql(table: &str, key_column: &str) -> Result<SqlText, StorageError> {
     let table = PgIdent::table(table)?;
     let key = PgIdent::column(key_column)?;
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "DELETE FROM {tbl} WHERE {col} = $1",
-        tbl = table.as_str(),
-        col = key.as_str()
-    ))
+    let mut sql = SqlText::new("DELETE FROM ");
+    sql.push_ident(&table)
+        .push(" WHERE ")
+        .push_ident(&key)
+        .push(" = $1");
+    Ok(sql)
 }
 
 /// Point `memory_head.t` at the newest version that is not forgotten, or
@@ -1678,7 +1678,9 @@ mod tests {
     #[test]
     fn a_forget_leg_deletes_the_declared_key_column() {
         assert_eq!(
-            forget_leg_sql("proxiima_core.embeddings", "entity_id").expect("generates"),
+            forget_leg_sql("proxiima_core.embeddings", "entity_id")
+                .expect("generates")
+                .as_str(),
             "DELETE FROM proxiima_core.embeddings WHERE entity_id = $1"
         );
         assert!(

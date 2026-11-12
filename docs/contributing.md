@@ -131,8 +131,6 @@ python3 scripts/check-release-version.py
 python3 scripts/verify-culprit.py --self-test
 python3 scripts/check-architecture-guardrails.py --self-test
 python3 scripts/check-architecture-guardrails.py
-python3 scripts/check-sql-policy.py --self-test
-python3 scripts/check-sql-policy.py
 python3 scripts/check-schema-ids.py --self-test
 python3 scripts/check-schema-ids.py
 python3 scripts/check-lean-axioms.py --self-test

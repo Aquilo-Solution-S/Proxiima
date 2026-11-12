@@ -510,9 +510,9 @@ async fn reset_local_dev_database_confirmed(
     .await?;
     for table in spiice_ledger_tables {
         eprintln!("dropping spiice ledger table: {table}");
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
-            .execute(&pool)
-            .await?;
+        let mut drop = proxiima_core::SqlText::new("DROP TABLE IF EXISTS ");
+        drop.push_ident(&proxiima_core::PgIdent::table(&table)?);
+        sqlx::query(drop).execute(&pool).await?;
     }
     if dependent_lanes == DependentLanes::Reset {
         delete_dependent_lane_rows(&pool, &spiice_versions).await?;
@@ -547,6 +547,33 @@ async fn reset_local_dev_database_confirmed(
     Ok(())
 }
 
+/// Delete every row of every `public._sqlx_migrations_*` ledger and report the
+/// versions deleted, one line per ledger.
+const DELETE_LANE_LEDGERS_SQL: &str = r"DO $$
+DECLARE
+    ledger record;
+    deleted bigint[];
+    report text := '';
+BEGIN
+    FOR ledger IN
+        SELECT c.relname::text AS relname
+          FROM pg_catalog.pg_class c
+         WHERE c.relnamespace = 'public'::regnamespace
+           AND c.relkind IN ('r', 'p')
+           AND c.relname LIKE '\_sqlx\_migrations\_%' ESCAPE '\'
+         ORDER BY 1
+    LOOP
+        EXECUTE format(
+            'WITH gone AS (DELETE FROM public.%I RETURNING version)
+             SELECT coalesce(array_agg(version ORDER BY version), ''{}'') FROM gone',
+            ledger.relname) INTO deleted;
+        report := report || format('deleted public.%s rows of a dependent lane: %s',
+                                   ledger.relname, deleted) || E'\n';
+    END LOOP;
+    PERFORM set_config('proxiima.deleted_lane_ledgers', rtrim(report, E'\n'), true);
+END
+$$";
+
 /// With dependents dropped, a ledger row no Proxiima lane owns may claim one of
 /// them. The reset cannot say which lane built which object, so the opt-in
 /// deletes every such row — in the shared `public._sqlx_migrations`, and in
@@ -578,24 +605,20 @@ async fn delete_dependent_lane_rows(
              scratch; reset their remaining objects first): {deleted:?}"
         );
     }
-    // The server quotes each name (`format('%I')`); nothing from Rust is
-    // spliced into the statement.
-    let lane_ledgers: Vec<(String, String)> = sqlx::query_as(
-        r"SELECT c.relname::text,
-                 format('DELETE FROM public.%I RETURNING version', c.relname)
-            FROM pg_catalog.pg_class c
-           WHERE c.relnamespace = 'public'::regnamespace
-             AND c.relkind IN ('r', 'p')
-             AND c.relname LIKE '\_sqlx\_migrations\_%' ESCAPE '\'
-           ORDER BY 1",
-    )
-    .fetch_all(pool)
-    .await?;
-    for (table, delete) in lane_ledgers {
-        let deleted: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(delete))
-            .fetch_all(pool)
+    // The server quotes each name (`format('%I')`) and runs the deletes;
+    // nothing from Rust is spliced into the statement. The report comes back
+    // through a transaction-local setting.
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(DELETE_LANE_LEDGERS_SQL)
+        .execute(&mut *tx)
+        .await?;
+    let report: String =
+        sqlx::query_scalar("SELECT current_setting('proxiima.deleted_lane_ledgers')")
+            .fetch_one(&mut *tx)
             .await?;
-        eprintln!("deleted public.{table} rows of a dependent lane: {deleted:?}");
+    tx.commit().await?;
+    if !report.is_empty() {
+        eprintln!("{report}");
     }
     Ok(())
 }

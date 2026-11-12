@@ -216,9 +216,9 @@ async fn serving_storage_refuses_a_runtime_role_unsafe_on_a_spiice_schema() {
         super::setup_full_schema().await;
     super::execute(
         &admin,
-        &format!(
-            "GRANT CREATE ON SCHEMA proxiima_example TO {}",
-            super::quoted_ident(&runtime_role)
+        ddl!(
+            "GRANT CREATE ON SCHEMA proxiima_example TO ",
+            id(&runtime_role)
         ),
     )
     .await;

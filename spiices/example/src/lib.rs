@@ -60,19 +60,19 @@ pub fn installer_calls() -> Vec<&'static str> {
 /// The baseline with its owner-RLS section replaced by `calls`, in place,
 /// for the tutorial's variants.
 #[must_use]
-pub fn baseline_sql_with_owner_rls(calls: &[&str]) -> String {
+pub fn baseline_sql_with_owner_rls(calls: &[&'static str]) -> proxiima::spiice::SqlText {
     let (before, _, after) = owner_rls_split();
-    let mut parts = vec![before];
+    let mut sql = proxiima::spiice::SqlText::new(before);
     for call in calls {
-        parts.extend([*call, ";\n"]);
+        sql.push(call).push(";\n");
     }
-    parts.push(after);
-    parts.concat()
+    sql.push(after);
+    sql
 }
 
 /// The baseline with no owner-RLS section at all.
 #[must_use]
-pub fn baseline_sql_without_installer() -> String {
+pub fn baseline_sql_without_installer() -> proxiima::spiice::SqlText {
     baseline_sql_with_owner_rls(&[])
 }
 

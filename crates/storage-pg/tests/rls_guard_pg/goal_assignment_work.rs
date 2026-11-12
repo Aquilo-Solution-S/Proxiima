@@ -4,7 +4,7 @@
 
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::verbs::query::{EntityKind, GoalMotivationFilter, QueryRequest};
-use proxiima_core::{Credentials, GroupId, MemoryId, OwnerId, OwnerRoles, Role, UserId};
+use proxiima_core::{Credentials, GroupId, MemoryId, OwnerId, OwnerRoles, Role, SqlText, UserId};
 use proxiima_storage_pg::begin_owner_transaction;
 use proxiima_storage_pg::verbs::query::goal_page_sql_for_tests;
 use sqlx::{PgPool, Row};
@@ -175,7 +175,9 @@ async fn run(
 ) -> Vec<sqlx::postgres::PgRow> {
     let sql = goal_page_sql_for_tests(req);
     let sql = if explain {
-        format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}")
+        let mut explained = SqlText::new("EXPLAIN (ANALYZE, FORMAT JSON) ");
+        explained.push_text(&sql);
+        explained
     } else {
         sql
     };
@@ -190,10 +192,7 @@ async fn run(
     let mut tx = begin_owner_transaction(runtime, authz.owner_scope().unwrap())
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment — the closed production goal-page builder.
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(vec![owner])
-        .bind(vec!["Active"]);
+    let mut query = sqlx::query(sql).bind(vec![owner]).bind(vec!["Active"]);
     if let Some(assignment) = assignment {
         query = query.bind(vec![assignment]);
     }

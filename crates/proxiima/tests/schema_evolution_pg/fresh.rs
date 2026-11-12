@@ -115,7 +115,7 @@ async fn migrate_after_failed_first_install(
         ANCHOR + 1,
         Cow::Borrowed("fail after schema evolution"),
         MigrationType::Simple,
-        sqlx::AssertSqlSafe("SELECT 1 / 0;").into_sql_str(),
+        "SELECT 1 / 0;".into_sql_str(),
         false,
     ));
     let error = proxiima::run_core_and_spiice_migrations(

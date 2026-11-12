@@ -32,7 +32,7 @@ use proxiima_example::testkit::{erase_notebook_with_scope, register_notebook};
 use proxiima_example::{ExampleSpiice, NoteV1};
 use proxiima_pg_testkit::{create_db, db_url, drop_db, unique_db_name};
 use proxiima_storage_pg::{PgHostStateLifecyclePort, PgHostStateParticipant};
-use sqlx::{AssertSqlSafe, Postgres, Transaction};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 const PARTICIPANT: HostStateParticipantId =
@@ -285,7 +285,7 @@ async fn exercise_full_registry_erase(
     )
     .execute(&platform_pool)
     .await?;
-    sqlx::raw_sql(AssertSqlSafe("ALTER TABLE proxiima_core.test_scope_host_copy ENABLE ROW LEVEL SECURITY; ALTER TABLE proxiima_core.test_scope_host_copy FORCE ROW LEVEL SECURITY; CREATE POLICY proxiima_owner_read ON proxiima_core.test_scope_host_copy FOR SELECT TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])); CREATE POLICY proxiima_owner_write ON proxiima_core.test_scope_host_copy FOR ALL TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])) WITH CHECK (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])); CREATE POLICY proxiima_platform ON proxiima_core.test_scope_host_copy FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')".to_owned()))
+    sqlx::raw_sql("ALTER TABLE proxiima_core.test_scope_host_copy ENABLE ROW LEVEL SECURITY; ALTER TABLE proxiima_core.test_scope_host_copy FORCE ROW LEVEL SECURITY; CREATE POLICY proxiima_owner_read ON proxiima_core.test_scope_host_copy FOR SELECT TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])); CREATE POLICY proxiima_owner_write ON proxiima_core.test_scope_host_copy FOR ALL TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])) WITH CHECK (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])); CREATE POLICY proxiima_platform ON proxiima_core.test_scope_host_copy FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')")
         .execute(&platform_pool)
         .await?;
     platform_pool.close().await;

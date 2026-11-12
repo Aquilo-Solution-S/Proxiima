@@ -14,90 +14,97 @@ use uuid::Uuid;
 
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
-use crate::pg_ident::PgIdent;
 use crate::pin_fields;
 use crate::projection::{projection_key_ident, snippet_sql};
+use proxiima_core::{PgIdent, SqlText};
 
 /// Outbound origin and read pins of the frontier, newest `(src, tgt)` first.
 /// A target that is both an origin and a read of one source is its origin.
 /// The columns walked are the Memory-target Origin and Read ones of the pin
 /// table.
 ///
-/// SQL-POLICY: fixed-fragment
-static ANCESTOR_HOP_SQL: LazyLock<String> = LazyLock::new(|| {
-    [
+static ANCESTOR_HOP_SQL: LazyLock<SqlText> = LazyLock::new(|| {
+    let mut sql = SqlText::new(
         "SELECT DISTINCT ON (m.t, pin)
        m.t AS src, m.kind AS src_kind, pin AS tgt,
        NOT (pin = ANY (",
-        &pin_fields::lineage_origin_pins("m."),
-        ")) AS is_read,
+    );
+    sql.push_text(&pin_fields::lineage_origin_pins("m."))
+        .push(
+            ")) AS is_read,
        proxiima_core.memory_created_at(m.t) AS created_at
   FROM proxiima_core.live_memory m
   JOIN unnest(",
-        &pin_fields::lineage_pins("m."),
-        ") AS pin ON true
+        )
+        .push_text(&pin_fields::lineage_pins("m."))
+        .push(
+            ") AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])
    AND ($3::uuid IS NULL OR (m.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY m.t DESC, pin DESC
  LIMIT $5",
-    ]
-    .concat()
+        );
+    sql
 });
 
 /// Children whose lineage pin columns overlap the frontier; `tgt` is only a
 /// parent in that frontier (not the child's other pins).
 ///
-/// SQL-POLICY: fixed-fragment
-static DESCENDANT_HOP_SQL: LazyLock<String> = LazyLock::new(|| {
-    [
+static DESCENDANT_HOP_SQL: LazyLock<SqlText> = LazyLock::new(|| {
+    let mut sql = SqlText::new(
         "SELECT DISTINCT ON (child.t, pin)
        child.t AS src, child.kind AS src_kind, pin AS tgt,
        NOT (pin = ANY (",
-        &pin_fields::lineage_origin_pins("child."),
-        ")) AS is_read,
+    );
+    sql.push_text(&pin_fields::lineage_origin_pins("child."))
+        .push(
+            ")) AS is_read,
        proxiima_core.memory_created_at(child.t) AS created_at
   FROM proxiima_core.live_memory child
   JOIN unnest(",
-        &pin_fields::lineage_pins("child."),
-        ") AS pin ON true
+        )
+        .push_text(&pin_fields::lineage_pins("child."))
+        .push(
+            ") AS pin ON true
  WHERE child.owner_id = ANY($2::uuid[])
    AND (",
-        &pin_fields::lineage_overlap("child."),
-        ")
+        )
+        .push_text(&pin_fields::lineage_overlap("child."))
+        .push(
+            ")
    AND pin = ANY($1::uuid[])
    AND ($3::uuid IS NULL OR (child.t, pin) < ($3::uuid, $4::uuid))
  ORDER BY child.t DESC, pin DESC
  LIMIT $5",
-    ]
-    .concat()
+        );
+    sql
 });
 
-/// SQL-POLICY: fixed-fragment
-static ANCESTOR_FRONTIER_SQL: LazyLock<String> = LazyLock::new(|| {
-    [
+static ANCESTOR_FRONTIER_SQL: LazyLock<SqlText> = LazyLock::new(|| {
+    let mut sql = SqlText::new(
         "SELECT DISTINCT pin
   FROM proxiima_core.live_memory m
   JOIN unnest(",
-        &pin_fields::lineage_pins("m."),
+    );
+    sql.push_text(&pin_fields::lineage_pins("m.")).push(
         ") AS pin ON true
  WHERE m.t = ANY($1::uuid[])
    AND m.owner_id = ANY($2::uuid[])",
-    ]
-    .concat()
+    );
+    sql
 });
 
-/// SQL-POLICY: fixed-fragment
-static DESCENDANT_FRONTIER_SQL: LazyLock<String> = LazyLock::new(|| {
-    [
+static DESCENDANT_FRONTIER_SQL: LazyLock<SqlText> = LazyLock::new(|| {
+    let mut sql = SqlText::new(
         "SELECT DISTINCT child.t
   FROM proxiima_core.live_memory child
  WHERE child.owner_id = ANY($2::uuid[])
    AND (",
-        &pin_fields::lineage_overlap("child."),
-        ")",
-    ]
-    .concat()
+    );
+    sql.push_text(&pin_fields::lineage_overlap("child."))
+        .push(")");
+    sql
 });
 
 #[cfg(any(test, feature = "testkit"))]
@@ -316,7 +323,7 @@ pub(crate) async fn unread_targets_on_connection(
     .await
     .map_err(map_err);
     let rows = lifecycle.finish(&mut *connection, rows).await?;
-    let erased_sql = [
+    let mut erased_sql = SqlText::new(
         "SELECT erased.t
            FROM proxiima_core.erased_pin_target erased
           WHERE erased.t = ANY($1::uuid[])
@@ -324,14 +331,15 @@ pub(crate) async fn unread_targets_on_connection(
                 SELECT 1
                   FROM proxiima_core.live_memory pinning
                  WHERE (",
-        &pin_fields::memory_pin_predicate("pinning.", "erased.t"),
-        ")
+    );
+    erased_sql
+        .push_text(&pin_fields::memory_pin_predicate("pinning.", "erased.t"))
+        .push(
+            ")
                    AND pinning.owner_id = ANY($2::uuid[])
             )",
-    ]
-    .concat();
-    // SQL-POLICY: fixed-fragment
-    let erased: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(erased_sql))
+        );
+    let erased: Vec<Uuid> = sqlx::query_scalar(erased_sql)
         .bind(memory_ids)
         .bind(owner_ids)
         .fetch_all(&mut *connection)
@@ -617,14 +625,16 @@ pub(super) async fn load_one_schema_snippets_on_connection(
     let table = PgIdent::table(&projection.sidecar_table)?;
     let key = projection_key_ident(projection)?;
     let snippet = snippet_sql(projection)?;
-    let sql = format!(
-        "SELECT c.{key} AS t, {snippet} AS snippet FROM {table} c WHERE c.{key} = ANY($1::uuid[])",
-        table = table.as_str(),
-        key = key.as_str(),
-        snippet = snippet
-    );
-    // SQL-POLICY: PgIdent
-    let rows: Vec<SnippetRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let mut sql = SqlText::new("SELECT c.");
+    sql.push_ident(&key)
+        .push(" AS t, ")
+        .push_text(&snippet)
+        .push(" AS snippet FROM ")
+        .push_ident(&table)
+        .push(" c WHERE c.")
+        .push_ident(&key)
+        .push(" = ANY($1::uuid[])");
+    let rows: Vec<SnippetRow> = sqlx::query_as(sql)
         .bind(&ts)
         .fetch_all(&mut *connection)
         .await
@@ -645,7 +655,8 @@ mod tests {
     #[test]
     fn each_lineage_hop_pages_in_sql() {
         assert!(
-            ANCESTOR_HOP_SQL.contains("LIMIT") && DESCENDANT_HOP_SQL.contains("LIMIT"),
+            ANCESTOR_HOP_SQL.as_str().contains("LIMIT")
+                && DESCENDANT_HOP_SQL.as_str().contains("LIMIT"),
             "each hop query must page in SQL"
         );
     }

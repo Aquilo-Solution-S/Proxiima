@@ -1464,6 +1464,7 @@ async fn insert_raw_fact_admission(
 /// spiice's migration author calls; boot compares the installed triggers with
 /// the frozen registry.
 fn facade_migrator() -> sqlx::migrate::Migrator {
+    use proxiima_core::SqlText;
     use sqlx::SqlSafeStr;
 
     let mut registry = SpiiceRegistry::new();
@@ -1479,45 +1480,38 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
         .expect("the facade projection declaration is valid")
         .expect("the facade contract declares a projection table");
 
-    let mut statements = vec![
-        "CREATE SCHEMA facade_surface".to_owned(),
-        "CREATE TABLE facade_surface.fact_v1 (
+    let mut statements = SqlText::new(
+        "CREATE SCHEMA facade_surface;
+CREATE TABLE facade_surface.fact_v1 (
             t uuid PRIMARY KEY,
             note_id uuid NOT NULL,
             title text NOT NULL,
             body text NOT NULL,
             tags text[] NOT NULL DEFAULT '{}'
-        )"
-        .to_owned(),
-        "CREATE TABLE facade_surface.abstraction_v1 (
+        );
+CREATE TABLE facade_surface.abstraction_v1 (
             t uuid PRIMARY KEY,
             title text NOT NULL,
             body text NOT NULL,
             source_count integer NOT NULL,
             observed_entity uuid NOT NULL
-        )"
-        .to_owned(),
-        // A test spiice is a spiice: `memory.sidecar_tables` is constrained
-        // to be a subset of `proxiima_core.spiice_surface`, so the installer
-        // declares each sidecar like any other spiice migration.
-        "SELECT proxiima_core.install_sidecar('facade_surface', 'fact_v1', 'facade-test')"
-            .to_owned(),
-        "SELECT proxiima_core.install_sidecar('facade_surface', 'abstraction_v1', 'facade-test')"
-            .to_owned(),
-    ];
-    statements.extend(
-        projection
-            .forward()
-            .into_iter()
-            .map(|statement| statement.trim_end_matches(';').to_owned()),
+        );
+SELECT proxiima_core.install_sidecar('facade_surface', 'fact_v1', 'facade-test');
+SELECT proxiima_core.install_sidecar('facade_surface', 'abstraction_v1', 'facade-test');
+",
     );
+    // A test spiice is a spiice: `memory.sidecar_tables` is constrained
+    // to be a subset of `proxiima_core.spiice_surface`, so the installer
+    // declares each sidecar like any other spiice migration.
+    for statement in projection.forward() {
+        statements.push_text(statement).push(";\n");
+    }
     statements.push(
         "ALTER TABLE facade_surface.projection ENABLE ROW LEVEL SECURITY;\n\
          ALTER TABLE facade_surface.projection FORCE ROW LEVEL SECURITY;\n\
          CREATE POLICY proxiima_owner_read ON facade_surface.projection FOR SELECT TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
          CREATE POLICY proxiima_owner_write ON facade_surface.projection FOR ALL TO PUBLIC USING (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[])) WITH CHECK (owner_id = ANY((SELECT COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}'::uuid[]))::uuid[]));\n\
-         CREATE POLICY proxiima_platform ON facade_surface.projection FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')"
-            .to_owned(),
+         CREATE POLICY proxiima_platform ON facade_surface.projection FOR ALL TO CURRENT_USER USING (current_setting('app.proxiima_scope', true) = 'platform') WITH CHECK (current_setting('app.proxiima_scope', true) = 'platform')",
     );
     // Search candidate functions are installed by Proxiima's composed
     // definitions phase. A consumer migration owns tables, projections,
@@ -1529,7 +1523,7 @@ fn facade_migrator() -> sqlx::migrate::Migrator {
             FACADE_MIGRATION_VERSION,
             std::borrow::Cow::Borrowed("facade test surfaces"),
             sqlx::migrate::MigrationType::Simple,
-            sqlx::AssertSqlSafe(statements.join(";\n")).into_sql_str(),
+            statements.into_sql_str(),
             false,
         )]),
         ..sqlx::migrate::Migrator::DEFAULT
@@ -1604,7 +1598,7 @@ async fn corrupt_lexical_body(pool: &sqlx::PgPool) {
         .execute(&mut *transaction)
         .await
         .expect("candidate role");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
+    sqlx::raw_sql(
         r"CREATE OR REPLACE FUNCTION facade_surface.search_lexical_candidates(
                     query_text text, candidate_limit bigint, requested_tags text[],
                     since_time timestamptz, until_time timestamptz, before_id uuid,
@@ -1618,7 +1612,7 @@ async fn corrupt_lexical_body(pool: &sqlx::PgPool) {
                     RETURN;
                 END
                 $stale$;",
-    ))
+    )
     .execute(&mut *transaction)
     .await
     .expect("overwrite generated definition");
@@ -1734,9 +1728,9 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
     let platform = sqlx::PgPool::connect(split_db.platform_url())
         .await
         .expect("platform connection");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
+    sqlx::raw_sql(
         "CREATE FUNCTION facade_surface.search_lexical_candidates(text) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$",
-    ))
+    )
     .execute(&platform)
     .await
     .expect("create unexpected candidate overload");

@@ -7,7 +7,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::{Postgres, Transaction};
 
 /// One owner's bundle: every surface the contract declares exportable, as
@@ -52,8 +52,7 @@ async fn export_owner_bundle_snapshot(
         let Some(sql) = statement else {
             continue;
         };
-        // SQL-POLICY: PgIdent
-        let rows: Vec<Value> = sqlx::query_scalar::<_, Value>(sqlx::AssertSqlSafe(sql))
+        let rows: Vec<Value> = sqlx::query_scalar::<_, Value>(sql)
             .bind(owner_id)
             .fetch_all(&mut *tx)
             .await
@@ -266,7 +265,7 @@ fn validate_host_export_rows(
 fn export_statement(
     surface: &Surface,
     primary_key: &[String],
-) -> Result<Option<String>, StorageError> {
+) -> Result<Option<SqlText>, StorageError> {
     let projection = match surface.export {
         ExportRule::Excluded { .. } | ExportRule::DerivedFrom { .. } => return Ok(None),
         // The surface is aliased `s`, never `t`. With a single range table
@@ -275,7 +274,7 @@ fn export_statement(
         // row belongs — silent data loss in a portability bundle — and with
         // a joined base table that also has a `t` it raises `column
         // reference "t" is ambiguous`.
-        ExportRule::Rows => "to_jsonb(s)".to_owned(),
+        ExportRule::Rows => SqlText::new("to_jsonb(s)"),
         // An explicit field allowlist: the table is an unsupported
         // persistence detail, the bundle is a supported serialized contract,
         // and a storage-only column added later must not leak into it merely
@@ -283,12 +282,19 @@ fn export_statement(
         // order exactly as `to_jsonb` does, so an allowlist naming every
         // column is byte-identical to the row.
         ExportRule::Allowlist(fields) => {
-            let mut parts = Vec::with_capacity(fields.len());
-            for field in fields {
+            let mut sql = SqlText::new("jsonb_build_object(");
+            for (i, field) in fields.iter().enumerate() {
                 let column = PgIdent::column(field)?;
-                parts.push(format!("'{}', s.{}", field, column.as_str()));
+                if i > 0 {
+                    sql.push(", ");
+                }
+                sql.push("'")
+                    .push_ident(&column)
+                    .push("', s.")
+                    .push_ident(&column);
             }
-            format!("jsonb_build_object({})", parts.join(", "))
+            sql.push(")");
+            sql
         }
     };
     let table = PgIdent::table(surface.table)?;
@@ -301,21 +307,21 @@ fn export_statement(
     // checks the catalog for every exported surface). `IS NOT DISTINCT FROM` made the
     // planner read every owner's rows and filter them, so one small
     // owner's export cost grew with the whole store.
-    // SQL-POLICY: PgIdent
     let sql = if let Some(owner_column) = surface.owner_column {
         // `s.{owner}` is the surface's OWN owner column as it declares it.
         // The branch below joins to the key's home table instead, and
         // `base.owner_id` there is `proxiima_core.memory`'s own column,
         // which is fixed.
         let owner = PgIdent::column(owner_column)?;
-        format!(
-            "SELECT {projection}
-               FROM {table} s
-              WHERE s.{owner} = $1
-              ORDER BY {order}",
-            table = table.as_str(),
-            owner = owner.as_str(),
-        )
+        let mut sql = SqlText::new("SELECT ");
+        sql.push_text(&projection)
+            .push("\n               FROM ")
+            .push_ident(&table)
+            .push(" s\n              WHERE s.")
+            .push_ident(&owner)
+            .push(" = $1\n              ORDER BY ")
+            .push_text(&order);
+        sql
     } else {
         let Some((base_table, base_column, key_column)) = surface.key.home() else {
             return Err(StorageError::Internal(format!(
@@ -329,23 +335,25 @@ fn export_statement(
         // `KeyShape::home`), never from a table name.
         // A memory home is read through the view that keeps forgotten rows.
         let base = if matches!(surface.key, KeyShape::MemoryT { .. }) {
-            "proxiima_core.memory_including_forgotten".to_owned()
+            PgIdent::table("proxiima_core.memory_including_forgotten")?
         } else {
-            PgIdent::table(base_table)?.as_str().to_owned()
+            PgIdent::table(base_table)?
         };
         let base_column = PgIdent::column(base_column)?;
         let key_column = PgIdent::column(key_column)?;
-        format!(
-            "SELECT {projection}
-               FROM {table} s
-               JOIN {base} base
-                 ON base.{base_column} = s.{key_column}
-              WHERE base.owner_id = $1
-              ORDER BY {order}",
-            table = table.as_str(),
-            base_column = base_column.as_str(),
-            key_column = key_column.as_str(),
-        )
+        let mut sql = SqlText::new("SELECT ");
+        sql.push_text(&projection)
+            .push("\n               FROM ")
+            .push_ident(&table)
+            .push(" s\n               JOIN ")
+            .push_ident(&base)
+            .push(" base\n                 ON base.")
+            .push_ident(&base_column)
+            .push(" = s.")
+            .push_ident(&key_column)
+            .push("\n              WHERE base.owner_id = $1\n              ORDER BY ")
+            .push_text(&order);
+        sql
     };
     Ok(Some(sql))
 }
@@ -365,7 +373,7 @@ fn export_statement(
 pub fn export_statement_sql_for_tests(
     surface: &Surface,
     primary_key: &[String],
-) -> Result<Option<String>, StorageError> {
+) -> Result<Option<SqlText>, StorageError> {
     export_statement(surface, primary_key)
 }
 
@@ -381,7 +389,7 @@ pub fn export_statement_sql_for_tests(
 ///
 /// A surface with no primary key has no total order to offer and is refused
 /// rather than exported in an order nobody chose.
-fn order_by(surface: &Surface, primary_key: &[String]) -> Result<String, StorageError> {
+fn order_by(surface: &Surface, primary_key: &[String]) -> Result<SqlText, StorageError> {
     if primary_key.is_empty() {
         return Err(StorageError::Internal(format!(
             "{} has no primary key, so its export order would not be total",
@@ -389,15 +397,18 @@ fn order_by(surface: &Surface, primary_key: &[String]) -> Result<String, Storage
         )));
     }
     let key = surface.key.columns();
-    let mut parts = Vec::new();
+    let mut order = SqlText::new("");
     let tiebreak = primary_key
         .iter()
         .map(String::as_str)
         .filter(|column| !key.contains(column));
     for column in key.iter().copied().chain(tiebreak) {
-        parts.push(format!("s.{}", PgIdent::column(column)?.as_str()));
+        if !order.as_str().is_empty() {
+            order.push(", ");
+        }
+        order.push("s.").push_ident(&PgIdent::column(column)?);
     }
-    Ok(parts.join(", "))
+    Ok(order)
 }
 
 /// The table's primary-key columns in index order, read from the catalog.
@@ -513,6 +524,7 @@ mod tests {
         let sql = export_statement(&ingest, &pk(&["owner_id", "source_id", "ingest_key"]))
             .expect("generates")
             .expect("ingest keys are exported");
+        let sql = sql.as_str();
         assert!(
             sql.contains("ORDER BY s.t, s.owner_id, s.source_id, s.ingest_key"),
             "{sql}"
@@ -624,6 +636,7 @@ mod tests {
         let sql = export_statement(&surface("proxiima_core.blob"), &pk(&["blob_id"]))
             .expect("generates")
             .expect("blob is exported");
+        let sql = sql.as_str();
         assert!(
             sql.contains(
                 "jsonb_build_object('blob_id', s.blob_id, 'schema_id', s.schema_id, \
@@ -641,6 +654,7 @@ mod tests {
         let sql = export_statement(&surface("proxiima_core.agent_note_v1"), &pk(&["t"]))
             .expect("generates")
             .expect("the note sidecar is exported");
+        let sql = sql.as_str();
         assert!(
             sql.contains("JOIN proxiima_core.memory_including_forgotten base"),
             "{sql}"
@@ -659,6 +673,7 @@ mod tests {
         )
         .expect("generates")
         .expect("external origins are exported");
+        let sql = sql.as_str();
         let flat = sql.split_whitespace().collect::<Vec<_>>().join(" ");
         assert_eq!(
             flat,
@@ -678,6 +693,7 @@ mod tests {
                 continue;
             };
             generated += 1;
+            let sql = sql.as_str();
             assert!(
                 !sql.contains("IS NOT DISTINCT FROM"),
                 "{}: {sql}",
@@ -727,6 +743,7 @@ mod tests {
             let Some(sql) = export_statement(&surface, &key).expect("generates") else {
                 continue;
             };
+            let sql = sql.as_str();
             assert!(
                 !sql.contains(" t\n") && !sql.contains("to_jsonb(t)"),
                 "{}: an alias of `t` makes to_jsonb resolve the COLUMN, not the row: {sql}",

@@ -31,7 +31,7 @@ impl SearchDefinitions {
             }
             definitions.extend(search_candidates::candidate_definitions(contract)?);
         }
-        definitions.sort_by(|left, right| left.signature.cmp(&right.signature));
+        definitions.sort_by(|left, right| left.signature.as_str().cmp(right.signature.as_str()));
         Ok(Self {
             definitions: definitions.into(),
             schemas,
@@ -47,7 +47,7 @@ impl SearchDefinitions {
     pub async fn apply_on(&self, connection: &mut PgConnection) -> Result<(), StorageError> {
         self.ensure_no_unexpected_functions(connection).await?;
         for definition in self.definitions() {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(definition.artifact.forward.as_str()))
+            sqlx::raw_sql(definition.artifact.forward.clone())
                 .execute(&mut *connection)
                 .await
                 .map_err(catalog_error)?;
@@ -76,7 +76,7 @@ impl SearchDefinitions {
                    JOIN pg_roles r ON r.oid = p.proowner
                   WHERE p.oid = to_regprocedure($1)",
             )
-            .bind(&definition.signature)
+            .bind(definition.signature.as_str())
             .fetch_optional(&mut *connection)
             .await
             .map_err(catalog_error)?;
@@ -84,7 +84,7 @@ impl SearchDefinitions {
                 return Err(StorageError::MigrationRequired {
                     details: format!(
                         "generated candidate function {} is missing",
-                        definition.signature
+                        definition.signature.as_str()
                     ),
                 });
             };
@@ -111,14 +111,14 @@ impl SearchDefinitions {
             {
                 return Err(StorageError::ConstraintViolation(format!(
                     "generated candidate function {} has an unexpected security configuration",
-                    definition.signature
+                    definition.signature.as_str()
                 )));
             }
-            if body != definition.body {
+            if body != definition.body.as_str() {
                 return Err(StorageError::MigrationRequired {
                     details: format!(
                         "generated candidate function {} has a stale body",
-                        definition.signature
+                        definition.signature.as_str()
                     ),
                 });
             }
@@ -166,7 +166,7 @@ impl SearchDefinitions {
             hasher.update([0]);
         }
         for definition in self.definitions() {
-            hasher.update(definition.artifact.forward.as_bytes());
+            hasher.update(definition.artifact.forward.as_str().as_bytes());
             hasher.update([0]);
         }
         hasher.finalize().into()

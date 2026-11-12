@@ -14,7 +14,7 @@ use crate::verbs::fact_embeddings::{
 };
 use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::spiice::{TransferLeg, TransferRule};
-use proxiima_core::{EntityId, EntityKind, OwnerId, StorageError};
+use proxiima_core::{EntityId, EntityKind, OwnerId, PgIdent, SqlText, StorageError};
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub(super) fn entity_kind(stored: &str) -> Result<EntityKind, StorageError> {
@@ -454,8 +454,7 @@ async fn run_generated_transfer_legs(
     ts: &[uuid::Uuid],
 ) -> Result<(), StorageError> {
     for (table, leg) in surfaces.generated_transfer_legs() {
-        // SQL-POLICY: generated
-        sqlx::query(sqlx::AssertSqlSafe(series_leg_sql(table, leg)?))
+        sqlx::query(series_leg_sql(table, leg)?)
             .bind(ts)
             .bind(to_id)
             .bind(from_id)
@@ -480,35 +479,34 @@ async fn run_generated_transfer_legs(
 /// `spiice_contract_acceptance::every_column_a_declaration_names_is_a_column_the_catalog_has`.
 /// `PgIdent` is the belt to that suspenders: it is what makes the
 /// substitution `%I`-equivalent rather than merely well-intentioned.
-fn series_leg_sql(table: &str, leg: TransferLeg) -> Result<String, StorageError> {
-    let table = crate::pg_ident::PgIdent::table(table)?;
+fn series_leg_sql(table: &str, leg: TransferLeg) -> Result<SqlText, StorageError> {
+    let table = PgIdent::table(table)?;
     match leg {
         TransferLeg::Rehomed {
             key_column,
             owner_column,
         } => {
-            let owner = crate::pg_ident::PgIdent::column(owner_column)?;
-            let key = crate::pg_ident::PgIdent::column(key_column)?;
-            // SQL-POLICY: PgIdent
-            Ok(format!(
-                "UPDATE {} SET {} = $2 WHERE {} = ANY($1::uuid[]) AND {} = $3",
-                table.as_str(),
-                owner.as_str(),
-                key.as_str(),
-                owner.as_str()
-            ))
+            let owner = PgIdent::column(owner_column)?;
+            let key = PgIdent::column(key_column)?;
+            let mut sql = SqlText::new("UPDATE ");
+            sql.push_ident(&table)
+                .push(" SET ")
+                .push_ident(&owner)
+                .push(" = $2 WHERE ")
+                .push_ident(&key)
+                .push(" = ANY($1::uuid[]) AND ")
+                .push_ident(&owner)
+                .push(" = $3");
+            Ok(sql)
         }
         TransferLeg::Dropped { key_column, .. } => {
-            let key = crate::pg_ident::PgIdent::column(key_column)?;
-            // SQL-POLICY: PgIdent
-            Ok(format!(
-                concat!(
-                    "DELETE FROM {} WHERE {} = ANY($1::uuid[]) ",
-                    "AND $2::uuid IS NOT NULL AND $3::uuid IS NOT NULL"
-                ),
-                table.as_str(),
-                key.as_str()
-            ))
+            let key = PgIdent::column(key_column)?;
+            let mut sql = SqlText::new("DELETE FROM ");
+            sql.push_ident(&table)
+                .push(" WHERE ")
+                .push_ident(&key)
+                .push(" = ANY($1::uuid[]) AND $2::uuid IS NOT NULL AND $3::uuid IS NOT NULL");
+            Ok(sql)
         }
         other => Err(StorageError::Internal(format!(
             "{} resolved to {other:?}, which is not a generated transfer leg",
@@ -626,24 +624,27 @@ pub(super) fn dedupe_lookup_sql(
     table: &str,
     key_column: &str,
     dedupe_key: &[&'static str],
-) -> Result<String, StorageError> {
-    let table = crate::pg_ident::PgIdent::table(table)?;
-    let key = crate::pg_ident::PgIdent::column(key_column)?;
-    let mut predicates = Vec::with_capacity(dedupe_key.len());
+) -> Result<SqlText, StorageError> {
+    let table = PgIdent::table(table)?;
+    let key = PgIdent::column(key_column)?;
+    let mut sql = SqlText::new("SELECT ");
+    sql.push_ident(&key)
+        .push(" FROM ")
+        .push_ident(&table)
+        .push(" WHERE ");
     for (n, column) in dedupe_key.iter().enumerate() {
-        predicates.push(format!(
-            "{} = ${}",
-            crate::pg_ident::PgIdent::column(column)?.as_str(),
-            n + 1
-        ));
+        if n > 0 {
+            sql.push(" AND ");
+        }
+        let placeholder = u16::try_from(n + 1)
+            .ok()
+            .and_then(std::num::NonZeroU16::new)
+            .ok_or_else(|| StorageError::Internal("too many dedupe columns".into()))?;
+        sql.push_ident(&PgIdent::column(column)?)
+            .push(" = ")
+            .push_param(placeholder);
     }
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "SELECT {} FROM {} WHERE {}",
-        key.as_str(),
-        table.as_str(),
-        predicates.join(" AND ")
-    ))
+    Ok(sql)
 }
 
 /// One referring column repointed from the old row to the new one,
@@ -653,20 +654,21 @@ pub(super) fn dedupe_lookup_sql(
 /// at this point in the transfer; they change hands in the generated re-home
 /// later in the same transaction. Scoping by owner here
 /// would remap nothing or everything depending on the order.
-fn remap_sql(entry: &str) -> Result<String, StorageError> {
+fn remap_sql(entry: &str) -> Result<SqlText, StorageError> {
     let (table, column) = entry
         .split_once('.')
         .ok_or_else(|| StorageError::Internal(format!("remap {entry} is not <table>.<column>")))?;
     let qualified = format!("proxiima_core.{table}");
-    let table = crate::pg_ident::PgIdent::table(&qualified)?;
-    let column = crate::pg_ident::PgIdent::column(column)?;
-    // SQL-POLICY: PgIdent
-    Ok(format!(
-        "UPDATE {} SET {} = $3 WHERE handle = $1 AND {} = $2",
-        table.as_str(),
-        column.as_str(),
-        column.as_str()
-    ))
+    let table = PgIdent::table(&qualified)?;
+    let column = PgIdent::column(column)?;
+    let mut sql = SqlText::new("UPDATE ");
+    sql.push_ident(&table)
+        .push(" SET ")
+        .push_ident(&column)
+        .push(" = $3 WHERE handle = $1 AND ")
+        .push_ident(&column)
+        .push(" = $2");
+    Ok(sql)
 }
 
 /// One cited blob, one of the three cases.
@@ -685,7 +687,6 @@ async fn transfer_one_cited_blob(
     // Case 1: the destination already owns an identical row. The three
     // columns compared are `blob`'s declared `dedupe_key`, read off the
     // contract rather than restated here.
-    // SQL-POLICY: generated
     let existing = find_destination_blob(tx, dedupe_key, to_id, &schema_id, &content_hash).await?;
     if let Some(dest_blob_id) = existing {
         if dest_blob_id != blob_id {
@@ -749,8 +750,7 @@ async fn remap_handle_refs(
     to_id: uuid::Uuid,
 ) -> Result<(), StorageError> {
     for entry in remaps {
-        // SQL-POLICY: generated
-        sqlx::query(sqlx::AssertSqlSafe(remap_sql(entry)?))
+        sqlx::query(remap_sql(entry)?)
             .bind(handle)
             .bind(from_id)
             .bind(to_id)
@@ -915,7 +915,7 @@ mod tests {
         )
         .expect("a rehome is generated");
         assert_eq!(
-            sql,
+            sql.as_str(),
             "UPDATE test_spiice.thing SET custodian_id = $2 \
              WHERE t = ANY($1::uuid[]) AND custodian_id = $3"
         );
@@ -934,7 +934,7 @@ mod tests {
         )
         .expect("a drop is generated");
         assert_eq!(
-            sql,
+            sql.as_str(),
             "DELETE FROM test_spiice.thing WHERE t = ANY($1::uuid[]) \
              AND $2::uuid IS NOT NULL AND $3::uuid IS NOT NULL"
         );
@@ -968,7 +968,7 @@ mod tests {
         )
         .expect("the declared key generates");
         assert_eq!(
-            sql,
+            sql.as_str(),
             "SELECT blob_id FROM proxiima_core.blob WHERE owner_id = $1 \
              AND schema_id = $2 AND content_hash = $3"
         );
@@ -979,7 +979,9 @@ mod tests {
     #[test]
     fn a_remap_repoints_the_referring_table_not_the_surface() {
         assert_eq!(
-            remap_sql("memory.blob_id").expect("a remap generates"),
+            remap_sql("memory.blob_id")
+                .expect("a remap generates")
+                .as_str(),
             "UPDATE proxiima_core.memory SET blob_id = $3 \
              WHERE handle = $1 AND blob_id = $2"
         );

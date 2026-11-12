@@ -17,12 +17,11 @@
 //! to close.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use proxiima_core::scope::{ScopeDecl, ScopeKind, ScopeRef};
 use proxiima_core::{SidecarPayload, StorageError};
 
-use crate::pg_ident::PgIdent;
+use proxiima_core::{PgIdent, SqlText};
 
 /// One scope's fence key material plus the probe that answers whether its
 /// registry row is still there.
@@ -35,7 +34,7 @@ pub(crate) struct ScopeFenceTarget {
     pub(crate) kind: ScopeKind,
     pub(crate) id: uuid::Uuid,
     /// `SELECT EXISTS(...)`, generated from the declaration.
-    pub(crate) probe_sql: Arc<str>,
+    pub(crate) probe_sql: SqlText,
 }
 
 /// Every linked spiice's scope declaration, resolved.
@@ -47,7 +46,7 @@ pub(crate) struct ScopeFenceTarget {
 /// me where this scope's registry lives".
 #[derive(Debug, Clone, Default)]
 pub struct ScopeSurfaces {
-    probes: BTreeMap<ScopeKind, Result<Arc<str>, String>>,
+    probes: BTreeMap<ScopeKind, Result<SqlText, String>>,
 }
 
 impl ScopeSurfaces {
@@ -96,13 +95,13 @@ impl ScopeSurfaces {
             out.push(ScopeFenceTarget {
                 kind: scope.kind,
                 id: scope.id,
-                probe_sql: Arc::clone(self.probe(scope.kind)?),
+                probe_sql: self.probe(scope.kind)?.clone(),
             });
         }
         Ok(out)
     }
 
-    fn probe(&self, kind: ScopeKind) -> Result<&Arc<str>, StorageError> {
+    fn probe(&self, kind: ScopeKind) -> Result<&SqlText, StorageError> {
         match self.probes.get(&kind) {
             Some(Ok(sql)) => Ok(sql),
             Some(Err(message)) => Err(StorageError::Internal(format!(
@@ -120,7 +119,7 @@ impl ScopeSurfaces {
     #[must_use]
     pub fn probe_sql(&self, kind: ScopeKind) -> Option<&str> {
         match self.probes.get(&kind) {
-            Some(Ok(sql)) => Some(sql.as_ref()),
+            Some(Ok(sql)) => Some(sql.as_str()),
             _ => None,
         }
     }
@@ -132,16 +131,18 @@ impl ScopeSurfaces {
 /// the answer still for the life of the transaction, and a row lock here
 /// would put the spiice's registry into the write lane's lock order a
 /// second time.
-fn generate_probe(decl: &ScopeDecl) -> Result<Arc<str>, String> {
+fn generate_probe(decl: &ScopeDecl) -> Result<SqlText, String> {
     let table = PgIdent::table(decl.registry_table).map_err(|err| err.to_string())?;
     let owner_id = PgIdent::column(decl.owner_id_column).map_err(|err| err.to_string())?;
     let id = PgIdent::column(decl.id_column).map_err(|err| err.to_string())?;
-    Ok(Arc::from(format!(
-        "SELECT EXISTS(\n    SELECT 1\n      FROM {}\n     WHERE {} = $1 AND {} = $2\n)",
-        table.as_str(),
-        owner_id.as_str(),
-        id.as_str(),
-    )))
+    let mut sql = SqlText::new("SELECT EXISTS(\n    SELECT 1\n      FROM ");
+    sql.push_ident(&table)
+        .push("\n     WHERE ")
+        .push_ident(&owner_id)
+        .push(" = $1 AND ")
+        .push_ident(&id)
+        .push(" = $2\n)");
+    Ok(sql)
 }
 
 #[cfg(test)]
@@ -164,6 +165,7 @@ mod tests {
     #[test]
     fn the_probe_spells_only_what_the_declaration_names() {
         let sql = generate_probe(&DECL).expect("the shipped declaration splices");
+        let sql = sql.as_str();
         assert!(sql.contains("FROM proxiima_fixture.registry"));
         assert!(!sql.contains("owner_kind"));
         assert!(sql.contains("owner_id = $1"));
@@ -175,6 +177,7 @@ mod tests {
             ..DECL
         })
         .expect("a renamed declaration splices");
+        let renamed = renamed.as_str();
         assert!(renamed.contains("FROM shelf.books"));
         assert!(renamed.contains("book_id = $2"));
         assert!(!renamed.contains("repo_id"));

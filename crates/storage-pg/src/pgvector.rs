@@ -1,7 +1,5 @@
-use std::fmt::Write as _;
-
 use pgvector::{HalfVector, Vector};
-use proxiima_core::{EmbeddingDim, EmbeddingSpace, StorageError};
+use proxiima_core::{EmbeddingDim, EmbeddingSpace, SqlText, StorageError};
 use sqlx::encode::IsNull;
 use sqlx::error::BoxDynError;
 use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo};
@@ -25,19 +23,14 @@ pub(crate) const REQUIRED_PGVECTOR_PATCH: u32 = 0;
 /// `hnsw.max_scan_tuples` is only reachable under an iterative scan, so the
 /// `Off` arm sends nothing. When iterative scan is on, the session always
 /// pins the crate/env value so a server GUC cannot raise the ceiling.
-pub(crate) fn set_hnsw_search_sql(tuning: &PgTuning) -> String {
-    let mut sql = format!(
-        "SET LOCAL hnsw.ef_search = {}; SET LOCAL hnsw.iterative_scan = {}",
-        tuning.hnsw_ef_search,
-        tuning.hnsw_iterative_scan.as_setting()
-    );
+pub(crate) fn set_hnsw_search_sql(tuning: &PgTuning) -> SqlText {
+    let mut sql = SqlText::new("SET LOCAL hnsw.ef_search = ");
+    sql.push_u64(u64::from(tuning.hnsw_ef_search))
+        .push("; SET LOCAL hnsw.iterative_scan = ")
+        .push(tuning.hnsw_iterative_scan.as_setting());
     if tuning.hnsw_iterative_scan != HnswIterativeScan::Off {
-        write!(
-            &mut sql,
-            "; SET LOCAL hnsw.max_scan_tuples = {}",
-            tuning.hnsw_max_scan_tuples
-        )
-        .expect("write to String is infallible");
+        sql.push("; SET LOCAL hnsw.max_scan_tuples = ")
+            .push_u64(u64::from(tuning.hnsw_max_scan_tuples));
     }
     sql
 }
@@ -222,7 +215,7 @@ mod tests {
     #[test]
     fn default_tuning_sets_the_golden_session_statement() {
         assert_eq!(
-            set_hnsw_search_sql(&PgTuning::default()),
+            set_hnsw_search_sql(&PgTuning::default()).as_str(),
             "SET LOCAL hnsw.ef_search = 100; SET LOCAL hnsw.iterative_scan = relaxed_order; \
              SET LOCAL hnsw.max_scan_tuples = 20000"
         );

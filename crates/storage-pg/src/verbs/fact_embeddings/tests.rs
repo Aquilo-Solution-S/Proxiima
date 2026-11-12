@@ -771,12 +771,9 @@ mod pg_tests {
             .await?;
 
             let mut tx = pool.begin().await?;
-            let explain = format!(
-                "EXPLAIN (ANALYZE, FORMAT JSON) {}",
-                super::super::reconcile_embeddings_sql_for_tests()
-            );
-            // SQL-POLICY: fixed-fragment — the production reconcile page statement.
-            let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+            let mut explain = proxiima_core::SqlText::new("EXPLAIN (ANALYZE, FORMAT JSON) ");
+            explain.push(super::super::reconcile_embeddings_sql_for_tests());
+            let plan: serde_json::Value = sqlx::query_scalar(explain)
                 .bind(STUB_SPACE.model_id())
                 .bind(1_000_000_i64)
                 .bind("missing_only")

@@ -306,13 +306,20 @@ macro_rules! spiice_bundle {
 mod tests {
     use std::borrow::Cow;
 
-    use proxiima_core::{SpiiceRegistry, SpiiceRegistryError};
+    use proxiima_core::{SpiiceRegistry, SpiiceRegistryError, SqlText};
     use proxiima_storage_pg::PgSidecarRegistry;
     use sqlx::SqlSafeStr;
     use sqlx::migrate::{Migration, MigrationType, Migrator};
 
     use super::SpiiceBundle;
     use crate::NamedMigrator;
+
+    fn select_version(version: i64) -> SqlText {
+        let mut sql = SqlText::new("SELECT ");
+        sql.push_u64(u64::try_from(version).expect("a test version is positive"))
+            .push(";");
+        sql
+    }
 
     /// A declaration for a spiice that registers nothing. Freeze refuses a
     /// linked spiice without one, and the subject of these tests is bundle
@@ -433,8 +440,7 @@ mod tests {
                     *version,
                     Cow::Owned(format!("test {version}")),
                     MigrationType::Simple,
-                    // SQL-POLICY: fixed-fragment — version is an i64, formatted as decimal.
-                    sqlx::AssertSqlSafe(format!("SELECT {version};")).into_sql_str(),
+                    select_version(*version).into_sql_str(),
                     false,
                 )
             })

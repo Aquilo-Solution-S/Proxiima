@@ -12,7 +12,7 @@ use proxiima_core::verbs::query::{
     TagMatch,
 };
 use proxiima_core::verbs::schema::MemorySearchProjection;
-use proxiima_core::{EdgeEndpoint, EdgeKind, MemoryKind, OwnerId, SchemaId, UserId};
+use proxiima_core::{EdgeEndpoint, EdgeKind, MemoryKind, OwnerId, SchemaId, SqlText, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::export_statement_sql_for_tests;
@@ -23,8 +23,8 @@ use proxiima_storage_pg::verbs::fact_embeddings::{
     claim_embedding_jobs_sql_for_tests, reclaim_stale_embedding_jobs_sql_for_tests,
 };
 use proxiima_storage_pg::verbs::query::{
-    ancestor_hop_sql_for_tests, descendant_hop_sql_for_tests, inbound_pin_sql_for_tests,
-    memory_page_sql_for_tests, owned_head_handle_sql_for_tests, ranked_projection_sql_for_tests,
+    ancestor_hop_sql_for_tests, descendant_hop_sql_for_tests, explain_owned_head_handle_for_tests,
+    inbound_pin_sql_for_tests, memory_page_sql_for_tests, ranked_projection_sql_for_tests,
     search_admit_sql_for_tests, semantic_candidate_admission_sql_for_tests,
     set_hnsw_search_sql_for_tests, substring_sql_for_tests,
 };
@@ -32,6 +32,13 @@ use proxiima_storage_pg::verbs::{
     fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests,
 };
 use uuid::Uuid;
+
+/// `EXPLAIN` of a production statement, as JSON without costs.
+fn explain_json(statement: impl Into<SqlText>) -> SqlText {
+    let mut explain = SqlText::new("EXPLAIN (FORMAT JSON, COSTS OFF) ");
+    explain.push_text(&statement.into());
+    explain
+}
 
 fn note_projection() -> MemorySearchProjection {
     // The shipped declaration, not a second copy of it: a hand-restated column
@@ -266,15 +273,12 @@ async fn hot_path_plans_use_expected_indexes() {
         sqlx::query("VACUUM (ANALYZE) proxiima_core.projection")
             .execute(pool)
             .await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            "ANALYZE proxiima_core.agent_note_v1;
+        sqlx::raw_sql("ANALYZE proxiima_core.agent_note_v1;
              ANALYZE proxiima_core.projection;
              ANALYZE proxiima_core.memory;
              ANALYZE proxiima_core.memory_head;
              ANALYZE proxiima_core.embeddings;
-             ANALYZE proxiima_core.embedding_jobs",
-        ))
+             ANALYZE proxiima_core.embedding_jobs")
         .execute(pool)
         .await?;
 
@@ -296,9 +300,8 @@ async fn hot_path_plans_use_expected_indexes() {
         // (`= ANY($8)`), and the LIKE pattern is not bound at all — which
         // renumbered every placeholder that followed it.
         let lexical = ranked_projection_sql_for_tests(&[&projection], &req, true)?;
-        let lexical_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {lexical}");
-        // SQL-POLICY: PgIdent — production lexical builder
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(lexical_explain))
+        let lexical_explain = explain_json(lexical);
+        let plan: serde_json::Value = sqlx::query_scalar(lexical_explain)
             .bind(&req.query)
             .bind(20_i64)
             .bind(None::<Vec<String>>)
@@ -399,9 +402,8 @@ async fn hot_path_plans_use_expected_indexes() {
         // core sidecar, deliberately: an indexed sidecar-first scan would be a
         // candidate source carrying no `owner_id`.
         let substring = substring_sql_for_tests(&[&projection], &req)?;
-        let substring_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {substring}");
-        // SQL-POLICY: PgIdent — production substring builder
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(substring_explain))
+        let substring_explain = explain_json(substring);
+        let plan: serde_json::Value = sqlx::query_scalar(substring_explain)
             .bind(&like)
             .bind(20_i64)
             .bind(None::<Vec<String>>)
@@ -442,10 +444,9 @@ async fn hot_path_plans_use_expected_indexes() {
              `MemoryFirstNestedLoop`; sidecar node was `{sidecar_scan}`"
         );
 
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(set_hnsw_search_sql_for_tests(
+        sqlx::raw_sql(set_hnsw_search_sql_for_tests(
             &proxiima_storage_pg::PgTuning::default(),
-        )))
+        ))
         .execute(&mut *tx)
         .await?;
         // Every width lane is served by its own partial HNSW index: the
@@ -453,10 +454,9 @@ async fn hot_path_plans_use_expected_indexes() {
         // so the planner proves the index predicate under any plan.
         for dim in EmbeddingDim::ALL {
             let semantic = proxiima_storage_pg::vector_index::candidate_scan_sql_for_tests(dim);
-            let semantic_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {semantic}");
-            // SQL-POLICY: PgIdent — production semantic builder
+            let semantic_explain = explain_json(semantic);
             let lane_plan: serde_json::Value =
-                sqlx::query_scalar(sqlx::AssertSqlSafe(semantic_explain))
+                sqlx::query_scalar(semantic_explain)
                     .bind(&owner_ids)
                     .bind("test-embed")
                     .bind(pgvector::Vector::from(unit_values(dim)))
@@ -470,9 +470,8 @@ async fn hot_path_plans_use_expected_indexes() {
             &req,
             std::slice::from_ref(&projection),
         )?;
-        let explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {semantic_admission}");
-        // SQL-POLICY: PgIdent — production candidate admission builder.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+        let explain = explain_json(semantic_admission);
+        let plan: serde_json::Value = sqlx::query_scalar(explain)
             .bind(vec![leaf])
             .bind(&owner_ids)
             .bind(Some("fact"))
@@ -490,9 +489,8 @@ async fn hot_path_plans_use_expected_indexes() {
         );
 
         let admit = search_admit_sql_for_tests(true);
-        let admit_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {admit}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(admit_explain))
+        let admit_explain = explain_json(admit);
+        let plan: serde_json::Value = sqlx::query_scalar(admit_explain)
             .bind(vec![child])
             .bind(&owner_ids)
             .bind(None::<String>)
@@ -511,9 +509,8 @@ async fn hot_path_plans_use_expected_indexes() {
         page.entity_kind = Some(EntityKind::Fact);
         page.limit = 20;
         let heads = memory_page_sql_for_tests(&page)?;
-        let heads_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {heads}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(heads_explain))
+        let heads_explain = explain_json(heads);
+        let plan: serde_json::Value = sqlx::query_scalar(heads_explain)
             .bind(&owner_ids)
             .bind("core/agent-note-v1")
             .fetch_one(&mut *tx)
@@ -530,10 +527,8 @@ async fn hot_path_plans_use_expected_indexes() {
             "heads page must index memory_head; plan:\n{heads_plan}"
         );
 
-        let ancestor = ancestor_hop_sql_for_tests();
-        let ancestor_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {ancestor}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(ancestor_explain))
+        let ancestor_explain = explain_json(ancestor_hop_sql_for_tests());
+        let plan: serde_json::Value = sqlx::query_scalar(ancestor_explain)
             .bind(vec![child])
             .bind(&owner_ids)
             .bind(None::<Uuid>)
@@ -546,10 +541,8 @@ async fn hot_path_plans_use_expected_indexes() {
             "ancestor hop must use memory.t; plan:\n{plan}"
         );
 
-        let descendant = descendant_hop_sql_for_tests();
-        let descendant_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {descendant}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(descendant_explain))
+        let descendant_explain = explain_json(descendant_hop_sql_for_tests());
+        let plan: serde_json::Value = sqlx::query_scalar(descendant_explain)
             .bind(vec![leaf])
             .bind(&owner_ids)
             .bind(None::<Uuid>)
@@ -564,9 +557,8 @@ async fn hot_path_plans_use_expected_indexes() {
             Some(EdgeKind::Origin),
             PinTargetKind::Memory,
         );
-        let inbound_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {inbound}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(inbound_explain))
+        let inbound_explain = explain_json(inbound);
+        let plan: serde_json::Value = sqlx::query_scalar(inbound_explain)
             .bind(vec![leaf])
             .bind(&owner_ids)
             .bind(None::<Uuid>)
@@ -575,10 +567,8 @@ async fn hot_path_plans_use_expected_indexes() {
             .await?;
         assert_origin_overlap_index(&plan, "inbound origin");
 
-        let claim = claim_embedding_jobs_sql_for_tests();
-        let claim_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {claim}");
-        // SQL-POLICY: fixed-fragment
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(claim_explain))
+        let claim_explain = explain_json(claim_embedding_jobs_sql_for_tests());
+        let plan: serde_json::Value = sqlx::query_scalar(claim_explain)
             .bind(32_i64)
             .bind(&owner_ids)
             .bind(Vec::<Uuid>::new())
@@ -601,19 +591,15 @@ async fn hot_path_plans_use_expected_indexes() {
         // fact — and the cost of admitting one note grows with everything the
         // owner has ever stored.
         let note_key = Uuid::now_v7();
-        let nk_sql = owned_head_handle_sql_for_tests(
+        let mut nk_explain = explain_owned_head_handle_for_tests(
             owner,
             &projection.schema_id,
             "proxiima_core.agent_note_v1",
             "t",
             &[("note_id", SidecarAtom::Uuid(note_key))],
         )?;
-        let nk_explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {nk_sql}");
-        // SQL-POLICY: PgIdent — production series-handle builder
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(nk_explain))
-            .bind(owner.into_inner())
-            .bind(projection.schema_id.as_str())
-            .bind(note_key)
+        let plan: serde_json::Value = nk_explain
+            .build_query_scalar()
             .fetch_one(&mut *tx)
             .await?;
         let nk_plan = plan.to_string();
@@ -688,12 +674,9 @@ async fn owner_export_reaches_its_owner_through_an_index() {
             .await?;
         let neighbour = OwnerId::from(UserId::new(Uuid::now_v7()));
         seed_projection_corpus(pool, neighbour, "neighbour").await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            "ANALYZE proxiima_core.memory; ANALYZE proxiima_core.agent_note_v1",
-        ))
-        .execute(pool)
-        .await?;
+        sqlx::raw_sql("ANALYZE proxiima_core.memory; ANALYZE proxiima_core.agent_note_v1")
+            .execute(pool)
+            .await?;
 
         let mut tx = pg.platform_scope_for_host().begin().await?;
         for table in ["proxiima_core.memory", "proxiima_core.agent_note_v1"] {
@@ -704,9 +687,8 @@ async fn owner_export_reaches_its_owner_through_an_index() {
             let primary_key = primary_key(&mut tx, table).await?;
             let sql = export_statement_sql_for_tests(&surface, &primary_key)?
                 .unwrap_or_else(|| panic!("{table} is exported"));
-            let explain = format!("EXPLAIN (FORMAT JSON, COSTS OFF) {sql}");
-            // SQL-POLICY: PgIdent — production export builder
-            let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+            let explain = explain_json(sql);
+            let plan: serde_json::Value = sqlx::query_scalar(explain)
                 .bind(owner.into_inner())
                 .fetch_one(&mut *tx)
                 .await?;
@@ -796,18 +778,13 @@ async fn retention_prune_reads_the_published_index() {
         .bind(owner.into_inner())
         .execute(pool)
         .await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe("ANALYZE proxiima_core.publication_outbox"))
+        sqlx::raw_sql("ANALYZE proxiima_core.publication_outbox")
             .execute(pool)
             .await?;
 
         let mut tx = pg.platform_scope_for_host().begin().await?;
-        let explain = format!(
-            "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-            prune_published_sql_for_tests()
-        );
-        // SQL-POLICY: fixed-fragment — the production prune statement.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+        let explain = explain_json(prune_published_sql_for_tests());
+        let plan: serde_json::Value = sqlx::query_scalar(explain)
             .bind(3600.0_f64)
             .bind(1000_i64)
             .fetch_one(&mut *tx)
@@ -861,18 +838,13 @@ async fn the_stale_claim_reclaim_reads_the_processing_index() {
         .bind(owner.into_inner())
         .execute(pool)
         .await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe("ANALYZE proxiima_core.embedding_jobs"))
+        sqlx::raw_sql("ANALYZE proxiima_core.embedding_jobs")
             .execute(pool)
             .await?;
 
         let mut tx = pg.platform_scope_for_host().begin().await?;
-        let explain = format!(
-            "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-            reclaim_stale_embedding_jobs_sql_for_tests()
-        );
-        // SQL-POLICY: fixed-fragment — the production reclaim statement.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+        let explain = explain_json(reclaim_stale_embedding_jobs_sql_for_tests());
+        let plan: serde_json::Value = sqlx::query_scalar(explain)
             .bind(900_i64)
             .fetch_one(&mut *tx)
             .await?;
@@ -928,19 +900,15 @@ async fn a_capacity_check_reads_one_row_whatever_the_backlog() {
         )
         .execute(pool)
         .await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
+        sqlx::raw_sql(
             "ANALYZE proxiima_core.publication_outbox; ANALYZE proxiima_core.publication_backlog",
-        ))
+        )
         .execute(pool)
         .await?;
 
-        let explain = format!(
-            "EXPLAIN (ANALYZE, FORMAT JSON) {}",
-            fresh_backlog_estimate_sql_for_tests()
-        );
-        // SQL-POLICY: fixed-fragment — the production capacity-check read.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(explain))
+        let mut explain = SqlText::new("EXPLAIN (ANALYZE, FORMAT JSON) ");
+        explain.push_text(&SqlText::from(fresh_backlog_estimate_sql_for_tests()));
+        let plan: serde_json::Value = sqlx::query_scalar(explain)
             .bind(30.0_f64)
             .fetch_one(pool)
             .await?;
@@ -999,10 +967,7 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
         .bind(owner.into_inner())
         .execute(pool)
         .await?;
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            "ANALYZE proxiima_core.blob; ANALYZE proxiima_core.blob_uploads",
-        ))
+        sqlx::raw_sql("ANALYZE proxiima_core.blob; ANALYZE proxiima_core.blob_uploads")
         .execute(pool)
         .await?;
         let blob: Uuid = sqlx::query_scalar("SELECT blob_id FROM proxiima_core.blob LIMIT 1")
@@ -1010,12 +975,10 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
             .await?;
 
         let mut tx = pg.platform_scope_for_host().begin().await?;
-        let fence = format!(
-            "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-            proxiima_storage_pg::access::upload_keys::upload_fence_keys_sql_for_tests()
+        let fence = explain_json(
+            proxiima_storage_pg::access::upload_keys::upload_fence_keys_sql_for_tests(),
         );
-        // SQL-POLICY: fixed-fragment — the production fence-keys read.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(fence))
+        let plan: serde_json::Value = sqlx::query_scalar(fence)
             .bind(vec![blob])
             .fetch_one(&mut *tx)
             .await?;
@@ -1024,12 +987,10 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
                 && plan.to_string().contains("blob_uploads_blob_id_idx"),
             "the fence keys must read the blob index; plan:\n{plan}"
         );
-        let sweep = format!(
-            "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-            proxiima_storage_pg::verbs::forget::gc_unreferenced_blobs_sql_for_tests()
+        let sweep = explain_json(
+            proxiima_storage_pg::verbs::forget::gc_unreferenced_blobs_sql_for_tests(),
         );
-        // SQL-POLICY: fixed-fragment — the production unreferenced-blob sweep.
-        let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(sweep))
+        let plan: serde_json::Value = sqlx::query_scalar(sweep)
             .bind(vec![blob])
             .bind(owner.into_inner())
             .fetch_one(&mut *tx)
@@ -1137,12 +1098,9 @@ async fn an_owner_erase_does_not_scan_other_owners_tables() {
             .execute(pool)
             .await?;
         }
-        // SQL-POLICY: fixed-fragment
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            "ANALYZE proxiima_core.memory; ANALYZE proxiima_core.sketch;
+        sqlx::raw_sql("ANALYZE proxiima_core.memory; ANALYZE proxiima_core.sketch;
              ANALYZE proxiima_core.publication_origin; ANALYZE proxiima_core.publication_outbox;
-             ANALYZE proxiima_core.embedding_heads; ANALYZE proxiima_core.embeddings",
-        ))
+             ANALYZE proxiima_core.embedding_heads; ANALYZE proxiima_core.embeddings")
         .execute(pool)
         .await?;
 

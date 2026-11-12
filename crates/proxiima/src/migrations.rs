@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use proxiima_core::{PgIdent, SqlText};
 use proxiima_core::{SchemaEvolution, StorageError};
 pub use proxiima_storage_pg::{MissingMigrationPolicy, VectorStorage};
 use proxiima_storage_pg::{
@@ -26,7 +27,7 @@ use proxiima_storage_pg::{
 };
 use sqlx::migrate::{MigrateError, Migration, Migrator};
 use sqlx::pool::PoolConnection;
-use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Transaction};
+use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction};
 
 const CORE_SOURCE: &str = "proxiima-core";
 
@@ -1665,6 +1666,16 @@ fn is_shared_catalog_contention(err: &MigrateError) -> bool {
         )
 }
 
+/// `CREATE SCHEMA IF NOT EXISTS` for a `create_schemas` entry, which is one
+/// identifier part in Postgres' spelling rules. `None` for a spelling that is
+/// not one such part.
+fn create_schema_sql(schema: &str) -> Option<SqlText> {
+    let [part] = <[String; 1]>::try_from(parse_name_parts(schema)?).ok()?;
+    let mut sql = SqlText::new("CREATE SCHEMA IF NOT EXISTS ");
+    sql.push_ident(&PgIdent::quoted(&part).ok()?);
+    Some(sql)
+}
+
 /// Prepare a spiice's own ledger before its migrator first reads it: create
 /// it and leave it read-only for every role but its owner. Runs on every migration
 /// run; every step is idempotent. Core's ledger, which `SQLx` creates on
@@ -1705,16 +1716,18 @@ async fn prepare_ledger(
         &source.migrator().create_schemas[..]
     };
     for schema in schemas {
-        // SQL-POLICY: fixed-fragment — `schema` is a compiled-in
-        // `create_schemas` entry from the spiice crate's migrator; no value
-        // reaches it from a caller. Interpolated as-is, like `SQLx` itself
-        // interpolates it in `create_schema_if_not_exists`.
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "CREATE SCHEMA IF NOT EXISTS {schema}"
-        )))
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_err)?;
+        // The entry is resolved by Postgres' identifier rules and spliced
+        // quoted, so any spelling the parser reads names the schema it names
+        // in SQL.
+        let create = create_schema_sql(schema).ok_or_else(|| {
+            map_err(sqlx::Error::Protocol(format!(
+                "unreadable schema name: {schema:?}"
+            )))
+        })?;
+        sqlx::query(create)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_err)?;
     }
     sqlx::query("SELECT set_config('proxiima.spiice_ledger', jsonb_build_object('current', $1::text, 'historical', $2::text)::text, true)")
         .bind(&table_name)
@@ -1907,6 +1920,18 @@ fn is_name_space(c: char) -> bool {
 /// against the name (SQL accepts more spellings than this reads, comments
 /// among them): it is not matched by what it resolves to.
 fn parse_ledger_name(name: &str) -> Option<(String, String)> {
+    match <[String; 1]>::try_from(parse_name_parts(name)?) {
+        Ok([table]) => Some(("public".to_owned(), table)),
+        Err(parts) => <[String; 2]>::try_from(parts)
+            .ok()
+            .map(|[schema, table]| (schema, table)),
+    }
+}
+
+/// The identifier parts of a dotted name, resolved as
+/// [`parse_ledger_name`] describes; `None` for a spelling it does not read.
+/// At least one part.
+fn parse_name_parts(name: &str) -> Option<Vec<String>> {
     const MAX_IDENTIFIER_BYTES: usize = 63;
     let mut parts: Vec<String> = Vec::new();
     let mut chars = name.chars().peekable();
@@ -1953,12 +1978,20 @@ fn parse_ledger_name(name: &str) -> Option<(String, String)> {
             Some(_) => return None,
         }
     }
-    match <[String; 1]>::try_from(parts) {
-        Ok([table]) => Some(("public".to_owned(), table)),
-        Err(parts) => <[String; 2]>::try_from(parts)
-            .ok()
-            .map(|[schema, table]| (schema, table)),
-    }
+    Some(parts)
+}
+
+/// `SELECT` of a ledger's rows. The spelling is resolved by
+/// [`parse_ledger_name`] and spliced quoted. `None` for a spelling it does
+/// not read.
+fn ledger_select_sql(ledger: &str) -> Option<SqlText> {
+    let (schema, table) = parse_ledger_name(ledger)?;
+    let mut sql = SqlText::new("SELECT version, checksum, success FROM ");
+    sql.push_ident(&PgIdent::quoted(&schema).ok()?)
+        .push(".")
+        .push_ident(&PgIdent::quoted(&table).ok()?)
+        .push(" ORDER BY version");
+    Some(sql)
 }
 
 /// One row of a migration ledger, as `SQLx` writes it.
@@ -2043,16 +2076,17 @@ async fn read_ledger(
             return Ok(Vec::new());
         }
     }
-    // SQL-POLICY: fixed-fragment — `ledger` is a compiled-in migrator table
-    // name (`NamedMigrator::ledger`); no value reaches it from a caller.
-    // Interpolated as-is, like `SQLx` itself interpolates it in
-    // `list_applied_migrations`.
-    let rows: Vec<(i64, Vec<u8>, bool)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT version, checksum, success FROM {ledger} ORDER BY version"
-    )))
-    .fetch_all(&mut *conn)
-    .await
-    .map_err(read_error)?;
+    // The migrator's table name is resolved by Postgres' identifier rules and
+    // spliced quoted; a spelling the parser does not read is refused.
+    let select = ledger_select_sql(ledger).ok_or_else(|| {
+        read_error(sqlx::Error::Protocol(format!(
+            "unreadable ledger name: {ledger:?}"
+        )))
+    })?;
+    let rows: Vec<(i64, Vec<u8>, bool)> = sqlx::query_as(select)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(read_error)?;
     Ok(rows
         .into_iter()
         .map(|(version, checksum, success)| LedgerRow {
@@ -2315,12 +2349,21 @@ mod tests {
     use sqlx::SqlSafeStr;
     use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 
+    use proxiima_core::SqlText;
+
     use super::{
         LedgerConflict, LedgerRow, MigrationError, MissingMigrationPolicy, NamedMigrator,
         PendingMigration, VectorStorage, check_recorded_versions, composed_ledgers, core_source,
         ledger_conflict, order_pending_operations, pending_migrations, prepare_sources,
         schema_evolution_schedule, spiice_ledger_table, unapplied, unrecorded,
     };
+
+    fn select_version(version: i64) -> SqlText {
+        let mut sql = SqlText::new("SELECT ");
+        sql.push_u64(u64::try_from(version).expect("a test version is positive"))
+            .push(";");
+        sql
+    }
 
     const fn evolution_schema(name: &'static str, version: u32) -> SchemaContract {
         SchemaContract {
@@ -2358,8 +2401,7 @@ mod tests {
                     *version,
                     Cow::Owned(format!("test {version}")),
                     MigrationType::Simple,
-                    // SQL-POLICY: fixed-fragment — version is an i64, formatted as decimal.
-                    sqlx::AssertSqlSafe(format!("SELECT {version};")).into_sql_str(),
+                    select_version(*version).into_sql_str(),
                     false,
                 )
             })
@@ -2838,7 +2880,7 @@ mod tests {
             2,
             Cow::Borrowed("test 2 down"),
             MigrationType::ReversibleDown,
-            sqlx::AssertSqlSafe("SELECT 2;".to_owned()).into_sql_str(),
+            SqlText::new("SELECT 2;").into_sql_str(),
             false,
         ));
         let source = NamedMigrator::new(
@@ -3042,6 +3084,55 @@ mod tests {
             matches!(plan, Err(MigrationError::Connection(_))),
             "the plan reaches for the database: {plan:?}"
         );
+    }
+
+    #[test]
+    fn a_ledger_select_splices_the_resolved_quoted_name() {
+        let sql = |ledger: &str| super::ledger_select_sql(ledger).map(|s| s.as_str().to_owned());
+        let select = |table: &str| {
+            Some(format!(
+                "SELECT version, checksum, success FROM {table} ORDER BY version"
+            ))
+        };
+        for (ledger, table) in [
+            (
+                "public._sqlx_migrations_host",
+                "\"public\".\"_sqlx_migrations_host\"",
+            ),
+            ("public.\"Host\"", "\"public\".\"Host\""),
+            ("\"a\"\"b\"", "\"public\".\"a\"\"b\""),
+            (
+                "PUBLIC._SQLX_MIGRATIONS_HOST",
+                "\"public\".\"_sqlx_migrations_host\"",
+            ),
+            ("public . x", "\"public\".\"x\""),
+        ] {
+            assert_eq!(sql(ledger), select(table), "{ledger:?}");
+        }
+        for ledger in ["a.b.c", "x y", "", "\"\""] {
+            assert_eq!(sql(ledger), None, "{ledger:?}");
+        }
+    }
+
+    #[test]
+    fn a_create_schema_splices_the_resolved_quoted_name() {
+        let sql = |schema: &str| super::create_schema_sql(schema).map(|s| s.as_str().to_owned());
+        for (schema, quoted) in [
+            ("host", "\"host\""),
+            ("Host", "\"host\""),
+            ("\"My Schema\"", "\"My Schema\""),
+            ("\"Host\"", "\"Host\""),
+            ("\"a\"\"b\"", "\"a\"\"b\""),
+        ] {
+            assert_eq!(
+                sql(schema),
+                Some(format!("CREATE SCHEMA IF NOT EXISTS {quoted}")),
+                "{schema:?}"
+            );
+        }
+        for schema in ["a.b", "", "x y"] {
+            assert_eq!(sql(schema), None, "{schema:?}");
+        }
     }
 
     #[test]

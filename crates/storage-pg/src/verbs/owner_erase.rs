@@ -21,9 +21,9 @@ use crate::access::fences::{
 };
 use crate::access::owner_columns::lock_group_membership_tx;
 use crate::error::{map_err, with_bounded_retry};
-use crate::pg_ident::PgIdent;
 use crate::sidecars::int_to_u64;
 use crate::verbs::forget::{ColdPurgeEntry, ColdPurgePlan};
+use proxiima_core::{PgIdent, SqlText};
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
@@ -415,33 +415,33 @@ async fn delete_owned_surfaces(
             )));
         };
         let owner_column = PgIdent::column(declared_owner)?;
-        // SQL-POLICY: PgIdent
         let sql = match scope {
             SelectionScope::Owner => {
-                format!(
-                    "DELETE FROM {tbl} WHERE {owner} = $1",
-                    tbl = ident.as_str(),
-                    owner = owner_column.as_str(),
-                )
+                let mut sql = SqlText::new("DELETE FROM ");
+                sql.push_ident(&ident)
+                    .push(" WHERE ")
+                    .push_ident(&owner_column)
+                    .push(" = $1");
+                sql
             }
             SelectionScope::Source(_) => {
                 let Some(column) = source_scoped else {
                     continue;
                 };
                 let key = PgIdent::column(column)?;
-                format!(
-                    "DELETE FROM {tbl} a
-                      WHERE a.{owner} = $1
-                        AND EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m
-                                     WHERE m.t = a.{key} AND m.source_id = $2)",
-                    tbl = ident.as_str(),
-                    owner = owner_column.as_str(),
-                    key = key.as_str(),
-                )
+                let mut sql = SqlText::new("DELETE FROM ");
+                sql.push_ident(&ident)
+                    .push(" a\n                      WHERE a.")
+                    .push_ident(&owner_column)
+                    .push(
+                        " = $1\n                        AND EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m\n                                     WHERE m.t = a.",
+                    )
+                    .push_ident(&key)
+                    .push(" AND m.source_id = $2)");
+                sql
             }
         };
-        // SQL-POLICY: PgIdent
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_id);
+        let mut query = sqlx::query(sql).bind(owner_id);
         if let SelectionScope::Source(source_id) = scope {
             query = query.bind(source_id.as_str());
         }
@@ -1361,19 +1361,15 @@ async fn delete_fixed_by_selected(
     let table_column = PgIdent::column(table_column)?;
     let selected_table = PgIdent::table(selected_table)?;
     let selected_column = PgIdent::column(selected_column)?;
-    // SQL-POLICY: PgIdent
-    let sql = format!(
-        "DELETE FROM {table} t USING {selected_table} s WHERE t.{table_column} = s.{selected_column}",
-        table = table.as_str(),
-        selected_table = selected_table.as_str(),
-        table_column = table_column.as_str(),
-        selected_column = selected_column.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .execute(&mut **tx)
-        .await
-        .map_err(map_err)?;
+    let mut sql = SqlText::new("DELETE FROM ");
+    sql.push_ident(&table)
+        .push(" t USING ")
+        .push_ident(&selected_table)
+        .push(" s WHERE t.")
+        .push_ident(&table_column)
+        .push(" = s.")
+        .push_ident(&selected_column);
+    let result = sqlx::query(sql).execute(&mut **tx).await.map_err(map_err)?;
     Ok(result.rows_affected())
 }
 
@@ -1412,7 +1408,6 @@ async fn assert_selection_fully_deleted(
     selection: Selection,
     deleted: u64,
 ) -> Result<(), StorageError> {
-    // SQL-POLICY: fixed-fragment
     let selected: i64 = sqlx::query_scalar(selection.count_sql())
         .fetch_one(&mut **tx)
         .await

@@ -1,10 +1,8 @@
-use std::fmt::Write as _;
-
-use proxiima_core::StorageError;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::verbs::query::{
     EntityKind, GoalMotivationFilter, GoalRow, QueryCursor, QueryRequest, SupersessionStatus,
 };
+use proxiima_core::{SqlText, StorageError};
 use sqlx::PgConnection;
 
 use crate::error::map_err;
@@ -33,8 +31,7 @@ pub(super) async fn query_goals_on_connection(
     }
     let filters = goal_filters(req, visible_motivations.as_deref());
     let sql = goal_page_sql(req, &filters);
-    // SQL-POLICY: fixed-fragment
-    let mut q = sqlx::query_as::<_, GoalRowDb>(sqlx::AssertSqlSafe(sql)).bind(owner_ids);
+    let mut q = sqlx::query_as::<_, GoalRowDb>(sql).bind(owner_ids);
     for filter in filters {
         q = match filter {
             GoalFilter::Schema(value) => q.bind(value),
@@ -134,13 +131,15 @@ async fn load_visible_perspective_ids(
 }
 
 /// The time a Goal `t` was minted at, decoded by the shared UUID timestamp function.
-fn t_timestamp_sql(t: &str) -> String {
-    format!("proxiima_core.memory_created_at({t})")
+fn t_timestamp_sql(t: &'static str) -> SqlText {
+    let mut sql = SqlText::new("proxiima_core.memory_created_at(");
+    sql.push(t).push(")");
+    sql
 }
 
 /// The columns of a goal row, as [`GoalRowDb`] reads them. `g` is the goal
 /// version and `h` its series head.
-fn goal_columns() -> String {
+fn goal_columns() -> SqlText {
     // `created_at` is this version's time (`changed_at`); `set_at` is
     // the time of the series' first version, the
     // least `t` among its rows. Both come from the same `t` derivation.
@@ -149,20 +148,23 @@ fn goal_columns() -> String {
         "(SELECT series.t FROM proxiima_core.goal series \
            WHERE series.handle = g.handle ORDER BY series.t LIMIT 1)",
     );
-    format!(
-        "g.handle, g.t AS goal_id, \
-         {created_at} AS created_at, \
-         {set_at} AS set_at, \
+    let mut sql = SqlText::new("g.handle, g.t AS goal_id, ");
+    sql.push_text(&created_at)
+        .push(" AS created_at, ")
+        .push_text(&set_at)
+        .push(
+            " AS set_at, \
          h.schema_id, \
          g.owner_id, g.\"by\", g.via, g.title, g.text, g.state, \
          g.dependency_t AS dependency_goal_ids, \
          g.assignment_t AS assignment, \
          g.motivated_by, \
-         g.evidence_t AS evidence"
-    )
+         g.evidence_t AS evidence",
+        );
+    sql
 }
 
-fn goal_page_sql(req: &QueryRequest, filters: &[GoalFilter]) -> String {
+fn goal_page_sql(req: &QueryRequest, filters: &[GoalFilter]) -> SqlText {
     let has_goal_ids = !req.goal_ids.is_empty();
     let single_goal_stream = matches!(req.entity_kind, Some(EntityKind::Goal));
     let fetch_limit = if single_goal_stream {
@@ -189,30 +191,29 @@ fn goal_page_sql(req: &QueryRequest, filters: &[GoalFilter]) -> String {
          JOIN proxiima_core.goal_head h ON h.handle = g.handle"
     };
     let columns = goal_columns();
-    let mut sql = format!(
-        "SELECT {columns} \
-         {from} \
-         WHERE g.owner_id = ANY($1::uuid[])"
-    );
+    let mut sql = SqlText::new("SELECT ");
+    sql.push_text(&columns)
+        .push(" ")
+        .push(from)
+        .push(" WHERE g.owner_id = ANY($1::uuid[])");
     append_goal_filters(&mut sql, filters, |filter, next| {
         filter.predicate(next, heads_only)
     });
-    let _ = write!(sql, " ORDER BY g.handle DESC, g.t DESC LIMIT {fetch_limit}");
+    sql.push(" ORDER BY g.handle DESC, g.t DESC LIMIT ")
+        .push_u64(fetch_limit);
     sql
 }
 
 /// Append each filter's predicate, numbering its binds from `$2` (`$1` is the
 /// owner list).
 fn append_goal_filters(
-    sql: &mut String,
+    sql: &mut SqlText,
     filters: &[GoalFilter],
-    predicate: impl Fn(&GoalFilter, u32) -> String,
+    predicate: impl Fn(&GoalFilter, u32) -> SqlText,
 ) {
     let mut next = 2_u32;
     for filter in filters {
-        // SQL-POLICY: fixed-fragment — GoalFilter predicates contain only
-        // literals and numbered placeholders; outside values are binds below.
-        sql.push_str(&predicate(filter, next));
+        sql.push_text(&predicate(filter, next));
         next += filter.bind_count();
     }
 }
@@ -228,44 +229,56 @@ fn append_goal_filters(
 /// The join is on `t` alone: it is unique, and a second equality on `handle`
 /// makes the planner estimate the join at one row and choose a scan of both
 /// tables.
-fn owner_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
+fn owner_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> SqlText {
     let columns = goal_columns();
-    let mut sql = format!(
+    let mut sql = SqlText::new(
         "SELECT page.* \
          FROM proxiima_core.owners o CROSS JOIN LATERAL ( \
-           SELECT {columns} \
+           SELECT ",
+    );
+    sql.push_text(&columns).push(
+        " \
            FROM proxiima_core.goal_head h \
            JOIN proxiima_core.goal g ON g.t = h.t \
-           WHERE h.owner_id = o.owner_id AND g.owner_id = o.owner_id"
+           WHERE h.owner_id = o.owner_id AND g.owner_id = o.owner_id",
     );
     append_goal_filters(&mut sql, filters, GoalFilter::head_predicate);
-    let _ = write!(
-        sql,
-        " ORDER BY h.handle DESC LIMIT {fetch_limit} \
+    sql.push(" ORDER BY h.handle DESC LIMIT ")
+        .push_u64(fetch_limit)
+        .push(
+            " \
          ) page WHERE o.owner_id = ANY($1::uuid[]) \
-         ORDER BY page.handle DESC, page.goal_id DESC LIMIT {fetch_limit}"
-    );
+         ORDER BY page.handle DESC, page.goal_id DESC LIMIT ",
+        )
+        .push_u64(fetch_limit);
     sql
 }
 
 /// Keep the indexed owner stream and merge only explicitly granted Goal heads.
 /// Goal controller owners remain selectors, never owner-role entries.
-fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
+fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> SqlText {
     let owner = owner_head_page_sql(filters, fetch_limit);
     let columns = goal_columns();
-    let mut guests = format!(
-        "SELECT {columns} FROM proxiima_core.goal_grants_held() a \
+    let mut guests = SqlText::new("SELECT ");
+    guests.push_text(&columns).push(
+        " FROM proxiima_core.goal_grants_held() a \
          JOIN proxiima_core.goal_head h ON h.handle=a.goal_handle \
          JOIN proxiima_core.goal g ON g.t=h.t \
          WHERE a.reads_goal \
            AND a.controller_generation=h.authority_generation \
-           AND g.owner_id=ANY($1::uuid[])"
+           AND g.owner_id=ANY($1::uuid[])",
     );
     append_goal_filters(&mut guests, filters, GoalFilter::head_predicate);
-    let _ = write!(guests, " ORDER BY h.handle DESC LIMIT {fetch_limit}");
-    format!(
-        "SELECT * FROM (({owner}) UNION ({guests})) visible ORDER BY handle DESC,goal_id DESC LIMIT {fetch_limit}"
-    )
+    guests
+        .push(" ORDER BY h.handle DESC LIMIT ")
+        .push_u64(fetch_limit);
+    let mut sql = SqlText::new("SELECT * FROM ((");
+    sql.push_text(&owner)
+        .push(") UNION (")
+        .push_text(&guests)
+        .push(")) visible ORDER BY handle DESC,goal_id DESC LIMIT ")
+        .push_u64(fetch_limit);
+    sql
 }
 
 /// The statement [`query_goals_on_connection`] runs for `req`: `$1` is the
@@ -273,7 +286,7 @@ fn audience_head_page_sql(filters: &[GoalFilter], fetch_limit: u64) -> String {
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
-pub fn goal_page_sql_for_tests(req: &QueryRequest) -> String {
+pub fn goal_page_sql_for_tests(req: &QueryRequest) -> SqlText {
     goal_page_sql(req, &goal_filters(req, None))
 }
 
@@ -305,40 +318,66 @@ impl GoalFilter {
     /// The predicate in a page that reads heads first (`h`) and probes the
     /// version (`g`): the cursor starts the head scan, the rest is as
     /// [`Self::predicate`] for heads.
-    fn head_predicate(&self, placeholder: u32) -> String {
+    fn head_predicate(&self, placeholder: u32) -> SqlText {
         match self {
-            Self::Cursor(_, _) => format!(
-                " AND (h.handle, h.t) < (${placeholder}, ${})",
-                placeholder + 1
-            ),
+            Self::Cursor(_, _) => {
+                let mut sql = SqlText::new(" AND (h.handle, h.t) < ($");
+                sql.push_u64(u64::from(placeholder))
+                    .push(", $")
+                    .push_u64(u64::from(placeholder) + 1)
+                    .push(")");
+                sql
+            }
             _ => self.predicate(placeholder, true),
         }
     }
 
-    fn predicate(&self, placeholder: u32, heads_only: bool) -> String {
+    fn predicate(&self, placeholder: u32, heads_only: bool) -> SqlText {
+        let at = u64::from(placeholder);
+        let mut sql = SqlText::new("");
         match self {
-            Self::Schema(_) => format!(" AND h.schema_id = ${placeholder}"),
-            Self::States(_) => {
-                format!(" AND g.state = ANY(${placeholder}::proxiima_core.goal_state[])")
+            Self::Schema(_) => {
+                sql.push(" AND h.schema_id = $").push_u64(at);
             }
-            Self::Unmotivated => " AND g.motivated_by = '{}'::uuid[]".to_owned(),
-            Self::MotivatedBy(_) => format!(
-                " AND g.t IN (SELECT mi.goal_t \
+            Self::States(_) => {
+                sql.push(" AND g.state = ANY($")
+                    .push_u64(at)
+                    .push("::proxiima_core.goal_state[])");
+            }
+            Self::Unmotivated => {
+                sql.push(" AND g.motivated_by = '{}'::uuid[]");
+            }
+            Self::MotivatedBy(_) => {
+                sql.push(
+                    " AND g.t IN (SELECT mi.goal_t \
                     FROM proxiima_core.goal_motivation_index mi \
                    WHERE mi.owner_id = ANY($1::uuid[]) \
-                     AND mi.perspective_t = ANY(${placeholder}::uuid[]))"
-            ),
-            Self::Evidence(_) => format!(" AND ${placeholder} = ANY(g.evidence_t)"),
-            Self::Ids(_) => format!(" AND g.t = ANY(${placeholder}::uuid[])"),
-            Self::Handles(_) => format!(
-                " AND {}.handle = ANY(${placeholder}::uuid[])",
-                if heads_only { "h" } else { "g" }
-            ),
-            Self::Cursor(_, _) => format!(
-                " AND (g.handle, g.t) < (${placeholder}, ${})",
-                placeholder + 1
-            ),
+                     AND mi.perspective_t = ANY($",
+                )
+                .push_u64(at)
+                .push("::uuid[]))");
+            }
+            Self::Evidence(_) => {
+                sql.push(" AND $").push_u64(at).push(" = ANY(g.evidence_t)");
+            }
+            Self::Ids(_) => {
+                sql.push(" AND g.t = ANY($").push_u64(at).push("::uuid[])");
+            }
+            Self::Handles(_) => {
+                sql.push(if heads_only { " AND h." } else { " AND g." })
+                    .push("handle = ANY($")
+                    .push_u64(at)
+                    .push("::uuid[])");
+            }
+            Self::Cursor(_, _) => {
+                sql.push(" AND (g.handle, g.t) < ($")
+                    .push_u64(at)
+                    .push(", $")
+                    .push_u64(at + 1)
+                    .push(")");
+            }
         }
+        sql
     }
 }
 

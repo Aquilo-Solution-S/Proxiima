@@ -77,7 +77,7 @@ enforcer there. This table holds the engineering boundaries.
 | Optional kernel witnesses, typed schema contracts | Payload traits, registry freeze, authorized sidecar helpers |
 | Build-time spiices; no raw spiice core SQL | Facade SDK; the sidecar read context refuses core SQL; review |
 | Atomic writes and scoped host state | `UnitOfWork`, private permits, PG rollback tests |
-| Trusted composed SQL and closed database vocabularies | SQL-policy gate; migration catalog tests |
+| Trusted composed SQL and closed database vocabularies | `SqlText` and `SqlBuilder`; the architecture guardrail keeps sqlx's safety assertion and query builder inside their module; migration catalog tests |
 | No mirrors: one source of truth | Rust to Rust: one type, the compiler. Rust to wire: the schema derive. Code to prose: link, do not restate (review judgment; example: a docs page listing the pin kinds beside `EdgeKind` went stale when a kind was added) |
 
 Judgment: if a proposed edge needs its own reason/confidence, find the node

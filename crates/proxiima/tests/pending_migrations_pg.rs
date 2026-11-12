@@ -24,6 +24,7 @@ use proxiima::{
     preflight_without_migrations_with_policy, run_core_and_spiice_migrations,
     run_core_and_spiice_migrations_with_policy,
 };
+use proxiima_core::SqlText;
 use proxiima_pg_testkit::{
     DbGuard, SplitRoleDb, create_db, db_url, split_role_urls, unique_db_name,
 };
@@ -76,7 +77,7 @@ fn migrator(versions: &[i64]) -> Migrator {
                 *version,
                 Cow::Owned(format!("plan {version}")),
                 MigrationType::Simple,
-                sqlx::AssertSqlSafe(sql(*version).to_owned()).into_sql_str(),
+                sql(*version).into_sql_str(),
                 *version == NO_TX,
             )
         })
@@ -740,14 +741,16 @@ async fn a_changed_definitions_record_is_planned_and_reapplied() {
         (MissingMigrationPolicy::Reject, "0.0.35"),
         (MissingMigrationPolicy::Allow, "0.0.35"),
     ] {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        let mut amend = SqlText::new(
             "CREATE OR REPLACE FUNCTION proxiima_core.definitions_applied()
              RETURNS TABLE(checksum text, release text)
-             LANGUAGE sql IMMUTABLE AS $$ SELECT 'changed'::text, '{release}'::text $$"
-        )))
-        .execute(&db.admin)
-        .await
-        .expect("amend definitions record");
+             LANGUAGE sql IMMUTABLE AS $$ SELECT 'changed'::text, '",
+        );
+        amend.push(release).push("'::text $$");
+        sqlx::raw_sql(amend)
+            .execute(&db.admin)
+            .await
+            .expect("amend definitions record");
         let world_before = db.world().await;
         let catalog_before = db
             .definitions_catalog()

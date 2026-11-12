@@ -1,6 +1,7 @@
 //! Canonical expressions preserve independently seeded owner/kind outcomes.
 //! Raw transaction settings deliberately cover asymmetric SQL-boundary scopes.
 
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::{PgConnection, PgPool, Row};
 use uuid::Uuid;
 
@@ -178,12 +179,18 @@ async fn predicates(
     })
 }
 
+/// The quoted `schema.table`, as a value to bind to a `regclass`.
 fn relation(schema: &str, table: &str) -> String {
     format!(
         "{}.{}",
-        super::quoted_ident(schema),
-        super::quoted_ident(table)
+        PgIdent::quoted(schema).unwrap().as_str(),
+        PgIdent::quoted(table).unwrap().as_str()
     )
+}
+
+/// The same relation, to splice into a statement.
+fn relation_sql(schema: &str, table: &str) -> SqlText {
+    ddl!("", id(schema), ".", id(table))
 }
 
 async fn assert_envelope(fixture: &Fixture, schema: &str, table: &str) {
@@ -326,8 +333,7 @@ async fn insert_core_row(
     owner: Uuid,
     label: &str,
 ) -> Result<(), sqlx::Error> {
-    // SQL-POLICY: fixed-fragment — the four insert templates above are closed test fixtures.
-    sqlx::query(sqlx::AssertSqlSafe(table.insert))
+    sqlx::query(table.insert)
         .bind(id)
         .bind(owner)
         .bind(label)
@@ -360,20 +366,44 @@ async fn seed_core(fixture: &Fixture, seed: &Seed) {
     }
 }
 
+/// Runs a predicate read back from the catalog against `target` on the
+/// caller's connection, server-side: the expression is data to the function
+/// and never part of a statement the test composes.
+async fn install_rows_where(connection: &mut PgConnection) {
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION pg_temp.rows_where(target regclass, key name, expression text)
+         RETURNS TABLE(k uuid, owner_id uuid) LANGUAGE plpgsql AS $$
+         BEGIN
+             RETURN QUERY EXECUTE format(
+                 'SELECT %s.%I, %s.owner_id FROM %s WHERE %s ORDER BY 1,2',
+                 target, key, target, target, expression);
+         END $$;
+         CREATE OR REPLACE FUNCTION pg_temp.ids_where(target regclass, key name, expression text)
+         RETURNS SETOF uuid LANGUAGE plpgsql AS $$
+         BEGIN
+             RETURN QUERY EXECUTE format(
+                 'SELECT %s.%I FROM %s CROSS JOIN (SELECT NULL::uuid AS owner_id) other WHERE %s ORDER BY 1',
+                 target, key, target, expression);
+         END $$",
+    )
+    .execute(connection)
+    .await
+    .unwrap();
+}
+
 async fn core_rows(
     connection: &mut PgConnection,
     table: &CoreTable,
     expression: &str,
 ) -> Vec<(Uuid, Uuid)> {
-    let target = relation("proxiima_core", table.table);
-    // SQL-POLICY: fixed-fragment — closed table keys and the trusted catalog generator's expression.
-    sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {target}.{}, {target}.owner_id FROM {target} WHERE {expression} ORDER BY 1,2",
-        super::quoted_ident(table.key)
-    )))
-    .fetch_all(connection)
-    .await
-    .unwrap()
+    install_rows_where(connection).await;
+    sqlx::query_as("SELECT k, owner_id FROM pg_temp.rows_where($1::regclass, $2, $3)")
+        .bind(relation("proxiima_core", table.table))
+        .bind(table.key)
+        .bind(expression)
+        .fetch_all(connection)
+        .await
+        .unwrap()
 }
 
 struct ScopeCase {
@@ -509,15 +539,15 @@ async fn assert_core_writes(fixture: &Fixture, seed: &Seed, table: &CoreTable) {
     )
     .await
     .unwrap();
-    let target = relation("proxiima_core", table.table);
-    // SQL-POLICY: fixed-fragment — closed relation/key, bound owner values.
-    let update = format!(
-        "UPDATE {target} SET owner_id=$1 WHERE {}=$2",
-        super::quoted_ident(table.key)
+    let update = ddl!(
+        "UPDATE ",
+        text(&relation_sql("proxiima_core", table.table)),
+        " SET owner_id=$1 WHERE ",
+        id(table.key),
+        "=$2"
     );
     assert_eq!(
-        // SQL-POLICY: fixed-fragment — the closed table/key template above; values stay bound.
-        sqlx::query(sqlx::AssertSqlSafe(update.clone()))
+        sqlx::query(update.clone())
             .bind(seed.owners[1])
             .bind(seed.entities[4].id)
             .execute(&mut *transaction)
@@ -531,8 +561,7 @@ async fn assert_core_writes(fixture: &Fixture, seed: &Seed, table: &CoreTable) {
         .execute(&mut *transaction)
         .await
         .unwrap();
-    // SQL-POLICY: fixed-fragment — the same closed table/key template with bound owner values.
-    let error = sqlx::query(sqlx::AssertSqlSafe(update))
+    let error = sqlx::query(update)
         .bind(seed.owners[1])
         .bind(seed.entities[0].id)
         .execute(&mut *transaction)
@@ -597,34 +626,42 @@ async fn core_predicates_preserve_kinds_goals_effective_select_and_write_checks(
 }
 
 async fn create_spiice_tables(fixture: &Fixture, schema: &str) {
-    let schema_name = super::quoted_ident(schema);
     super::execute(
         &fixture.admin,
-        &format!(
-            "CREATE SCHEMA {schema_name} AUTHORIZATION {}",
-            super::quoted_ident(&fixture.platform_role)
+        ddl!(
+            "CREATE SCHEMA ",
+            id(schema),
+            " AUTHORIZATION ",
+            id(&fixture.platform_role)
         ),
     )
     .await;
     let mut platform = fixture.platform.acquire().await.unwrap();
-    // SQL-POLICY: fixed-fragment — identifiers are quoted; no supplied value is executable SQL.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "CREATE TABLE {} (id uuid PRIMARY KEY REFERENCES proxiima_core.memory(t),owner_id uuid NOT NULL REFERENCES proxiima_core.owners(owner_id)); CREATE TABLE {} (id uuid PRIMARY KEY,owner_id uuid NOT NULL REFERENCES proxiima_core.owners(owner_id))",
-        relation(schema, MEMORY_TABLE), relation(schema, "projection")
-    ))).execute(&mut *platform).await.unwrap();
+    let tables = ddl!(
+        "CREATE TABLE ",
+        text(&relation_sql(schema, MEMORY_TABLE)),
+        " (id uuid PRIMARY KEY REFERENCES proxiima_core.memory(t),owner_id uuid NOT NULL REFERENCES proxiima_core.owners(owner_id)); CREATE TABLE ",
+        text(&relation_sql(schema, "projection")),
+        " (id uuid PRIMARY KEY,owner_id uuid NOT NULL REFERENCES proxiima_core.owners(owner_id))"
+    );
+    sqlx::raw_sql(tables).execute(&mut *platform).await.unwrap();
     super::execute(
         &fixture.admin,
-        &format!(
-            "GRANT USAGE ON SCHEMA {schema_name} TO {}",
-            super::quoted_ident(&fixture.runtime_role)
+        ddl!(
+            "GRANT USAGE ON SCHEMA ",
+            id(schema),
+            " TO ",
+            id(&fixture.runtime_role)
         ),
     )
     .await;
     super::execute(
         &fixture.admin,
-        &format!(
-            "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {schema_name} TO {}",
-            super::quoted_ident(&fixture.runtime_role)
+        ddl!(
+            "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA ",
+            id(schema),
+            " TO ",
+            id(&fixture.runtime_role)
         ),
     )
     .await;
@@ -646,29 +683,31 @@ async fn seed_spiice(fixture: &Fixture, schema: &str, seed: &Seed) {
     for entity in seed.entities.iter().filter(|entity| entity.memory) {
         // Raw INSERT: a row of a table this test creates; no write path exists for it.
         // This class intentionally derives ownership from memory, not the child owner.
-        // SQL-POLICY: fixed-fragment — quoted fixture relation, bound data.
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO {}(id,owner_id) VALUES ($1,$2)",
-            relation(schema, MEMORY_TABLE)
-        )))
-        .bind(entity.id)
-        .bind(seed.owners[1])
-        .execute(&fixture.admin)
-        .await
-        .unwrap();
+        let insert = ddl!(
+            "INSERT INTO ",
+            text(&relation_sql(schema, MEMORY_TABLE)),
+            "(id,owner_id) VALUES ($1,$2)"
+        );
+        sqlx::query(insert)
+            .bind(entity.id)
+            .bind(seed.owners[1])
+            .execute(&fixture.admin)
+            .await
+            .unwrap();
     }
     for index in [0, 4] {
         let entity = &seed.entities[index];
-        // SQL-POLICY: fixed-fragment — quoted fixture relation, bound data.
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO {}(id,owner_id) VALUES ($1,$2)",
-            relation(schema, "projection")
-        )))
-        .bind(entity.id)
-        .bind(entity.owner)
-        .execute(&fixture.admin)
-        .await
-        .unwrap();
+        let insert = ddl!(
+            "INSERT INTO ",
+            text(&relation_sql(schema, "projection")),
+            "(id,owner_id) VALUES ($1,$2)"
+        );
+        sqlx::query(insert)
+            .bind(entity.id)
+            .bind(entity.owner)
+            .execute(&fixture.admin)
+            .await
+            .unwrap();
     }
 }
 
@@ -679,11 +718,16 @@ async fn ids(
     key: &str,
     expression: &str,
 ) -> Vec<Uuid> {
-    let target = relation(schema, table);
-    // The extra owner_id makes an accidentally unqualified owner column ambiguous.
-    // SQL-POLICY: fixed-fragment — quoted identifiers and trusted generated expression.
-    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {target}.{} FROM {target} CROSS JOIN (SELECT NULL::uuid AS owner_id) other WHERE {expression} ORDER BY 1", super::quoted_ident(key))))
-        .fetch_all(connection).await.unwrap()
+    install_rows_where(connection).await;
+    // The function's `CROSS JOIN` adds an `owner_id`, which makes an
+    // accidentally unqualified owner column ambiguous.
+    sqlx::query_scalar("SELECT pg_temp.ids_where($1::regclass, $2, $3)")
+        .bind(relation(schema, table))
+        .bind(key)
+        .bind(expression)
+        .fetch_all(connection)
+        .await
+        .unwrap()
 }
 
 fn expected_ids(seed: &Seed, indices: &[usize]) -> Vec<Uuid> {
@@ -826,9 +870,9 @@ async fn spiice_predicates_keep_parent_rls_through_both_installers_and_quoted_na
 async fn create_fk_tables(fixture: &Fixture) {
     super::execute(
         &fixture.admin,
-        &format!(
-            "CREATE SCHEMA predicate_fk AUTHORIZATION {}",
-            super::quoted_ident(&fixture.platform_role)
+        ddl!(
+            "CREATE SCHEMA predicate_fk AUTHORIZATION ",
+            id(&fixture.platform_role)
         ),
     )
     .await;
@@ -848,17 +892,17 @@ async fn create_fk_tables(fixture: &Fixture) {
     ).execute(&mut *platform).await.unwrap();
     super::execute(
         &fixture.admin,
-        &format!(
-            "GRANT USAGE ON SCHEMA predicate_fk TO {}",
-            super::quoted_ident(&fixture.runtime_role)
+        ddl!(
+            "GRANT USAGE ON SCHEMA predicate_fk TO ",
+            id(&fixture.runtime_role)
         ),
     )
     .await;
     super::execute(
         &fixture.admin,
-        &format!(
-            "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA predicate_fk TO {}",
-            super::quoted_ident(&fixture.runtime_role)
+        ddl!(
+            "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA predicate_fk TO ",
+            id(&fixture.runtime_role)
         ),
     )
     .await;

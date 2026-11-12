@@ -44,7 +44,7 @@ fn lane(versions: &[i64]) -> Vec<NamedMigrator> {
                 *version,
                 Cow::Owned(format!("lineage {version}")),
                 MigrationType::Simple,
-                sqlx::AssertSqlSafe(sql(*version).to_owned()).into_sql_str(),
+                sql(*version).into_sql_str(),
                 false,
             )
         })

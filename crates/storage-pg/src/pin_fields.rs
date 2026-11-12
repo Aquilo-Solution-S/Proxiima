@@ -7,7 +7,7 @@
 //! collapsed), so a new pin column cannot be added to the table and left out
 //! of the database.
 
-use proxiima_core::{EdgeKind, EntityKind, MemoryPinField, PinShape, PinTargetKind};
+use proxiima_core::{EdgeKind, EntityKind, MemoryPinField, PinShape, PinTargetKind, SqlText};
 
 const ARRAY_BOUND: &str = "$1::uuid[]";
 
@@ -23,53 +23,92 @@ fn memory_array_fields() -> impl Iterator<Item = MemoryPinField> {
     array_fields().filter(|field| field.target() == PinTargetKind::Memory)
 }
 
+/// The columns of `fields`, each prefixed with `row`, between `separator`s.
 fn join_columns(
     fields: impl Iterator<Item = MemoryPinField>,
-    row: &str,
-    separator: &str,
-) -> String {
-    fields
-        .map(|field| [row, field.spec().column].concat())
-        .collect::<Vec<_>>()
-        .join(separator)
+    row: &'static str,
+    separator: &'static str,
+) -> SqlText {
+    let mut sql = SqlText::new("");
+    for (index, field) in fields.enumerate() {
+        if index > 0 {
+            sql.push(separator);
+        }
+        sql.push(row).push(field.spec().column);
+    }
+    sql
+}
+
+/// The terms joined by `separator`.
+fn join_terms(terms: impl Iterator<Item = SqlText>, separator: &'static str) -> SqlText {
+    let mut sql = SqlText::new("");
+    for (index, term) in terms.enumerate() {
+        if index > 0 {
+            sql.push(separator);
+        }
+        sql.push_text(&term);
+    }
+    sql
 }
 
 /// `t, kind, schema_id` and every pin column, each prefixed with `row`
 /// (`"m."`, or `""` for none): what a pin carrier decodes.
 #[must_use]
-pub fn pin_carrier_columns(row: &str) -> String {
-    let pins = join_columns(fields(), row, ", ");
-    [row, "t, ", row, "kind, ", row, "schema_id, ", &pins].concat()
+pub fn pin_carrier_columns(row: &'static str) -> SqlText {
+    let mut sql = SqlText::new("");
+    sql.push(row)
+        .push("t, ")
+        .push(row)
+        .push("kind, ")
+        .push(row)
+        .push("schema_id, ")
+        .push_text(&join_columns(fields(), row, ", "));
+    sql
 }
 
 /// Whether `row` pins any of `$1` as a target of `kind` (every kind when
 /// `None`) and `target`: the overlap of each matching column, or `false`
 /// when no column can hold such a pin.
 #[must_use]
-pub fn inbound_overlap(row: &str, target: PinTargetKind, kind: Option<EdgeKind>) -> String {
-    let terms: Vec<String> = fields()
+pub fn inbound_overlap(
+    row: &'static str,
+    target: PinTargetKind,
+    kind: Option<EdgeKind>,
+) -> SqlText {
+    let terms = fields()
         .filter(|field| {
             field.target() == target && kind.is_none_or(|wanted| field.spec().kind == wanted)
         })
         .map(|field| {
             let spec = field.spec();
+            let mut term = SqlText::new(row);
             match spec.shape {
-                PinShape::Array => [row, spec.column, " && ", ARRAY_BOUND].concat(),
-                PinShape::Scalar => [row, spec.column, "=ANY(", ARRAY_BOUND, ")"].concat(),
+                PinShape::Array => {
+                    term.push(spec.column).push(" && ").push(ARRAY_BOUND);
+                }
+                PinShape::Scalar => {
+                    term.push(spec.column)
+                        .push("=ANY(")
+                        .push(ARRAY_BOUND)
+                        .push(")");
+                }
             }
+            term
         })
-        .collect();
+        .collect::<Vec<_>>();
     if terms.is_empty() {
-        "false".to_owned()
-    } else {
-        ["(", &terms.join(" OR "), ")"].concat()
+        return SqlText::new("false");
     }
+    let mut sql = SqlText::new("(");
+    sql.push_text(&join_terms(terms.into_iter(), " OR "))
+        .push(")");
+    sql
 }
 
 /// The Memory-target pin columns of kind Origin or Read that a lineage walk
 /// follows, concatenated into one array.
 #[must_use]
-pub fn lineage_pins(row: &str) -> String {
+pub fn lineage_pins(row: &'static str) -> SqlText {
     join_columns(
         memory_array_fields()
             .filter(|field| matches!(field.spec().kind, EdgeKind::Origin | EdgeKind::Read)),
@@ -81,7 +120,7 @@ pub fn lineage_pins(row: &str) -> String {
 /// The lineage pin columns of kind Origin, concatenated; a lineage pin
 /// outside them is a read.
 #[must_use]
-pub fn lineage_origin_pins(row: &str) -> String {
+pub fn lineage_origin_pins(row: &'static str) -> SqlText {
     join_columns(
         memory_array_fields().filter(|field| field.spec().kind == EdgeKind::Origin),
         row,
@@ -91,56 +130,74 @@ pub fn lineage_origin_pins(row: &str) -> String {
 
 /// Whether `row` lists any of `$1` in a lineage pin column.
 #[must_use]
-pub fn lineage_overlap(row: &str) -> String {
-    memory_array_fields()
-        .filter(|field| matches!(field.spec().kind, EdgeKind::Origin | EdgeKind::Read))
-        .map(|field| [row, field.spec().column, " && ", ARRAY_BOUND].concat())
-        .collect::<Vec<_>>()
-        .join(" OR ")
+pub fn lineage_overlap(row: &'static str) -> SqlText {
+    join_terms(
+        memory_array_fields()
+            .filter(|field| matches!(field.spec().kind, EdgeKind::Origin | EdgeKind::Read))
+            .map(|field| {
+                let mut term = SqlText::new(row);
+                term.push(field.spec().column)
+                    .push(" && ")
+                    .push(ARRAY_BOUND);
+                term
+            }),
+        " OR ",
+    )
 }
 
 /// Whether `row` pins `target` (a SQL expression) through any column that
 /// holds a Memory.
 #[must_use]
-pub fn memory_pin_predicate(row: &str, target: &str) -> String {
-    fields()
-        .filter(|field| field.target() == PinTargetKind::Memory)
-        .map(|field| {
-            let spec = field.spec();
-            match spec.shape {
-                PinShape::Array => [row, spec.column, " @> ARRAY[", target, "]"].concat(),
-                PinShape::Scalar => [row, spec.column, " = ", target].concat(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ")
+pub fn memory_pin_predicate(row: &'static str, target: &'static str) -> SqlText {
+    join_terms(
+        fields()
+            .filter(|field| field.target() == PinTargetKind::Memory)
+            .map(|field| {
+                let spec = field.spec();
+                let mut term = SqlText::new(row);
+                match spec.shape {
+                    PinShape::Array => {
+                        term.push(spec.column)
+                            .push(" @> ARRAY[")
+                            .push(target)
+                            .push("]");
+                    }
+                    PinShape::Scalar => {
+                        term.push(spec.column).push(" = ").push(target);
+                    }
+                }
+                term
+            }),
+        " OR ",
+    )
 }
 
 /// The targets `row` holds in `field` as a `uuid[]`: the array itself, or
 /// the scalar as an array of at most one.
 #[must_use]
-pub fn pin_ids(row: &str, field: MemoryPinField) -> String {
+pub fn pin_ids(row: &'static str, field: MemoryPinField) -> SqlText {
     let spec = field.spec();
-    let column = [row, spec.column].concat();
+    let mut sql = SqlText::new("");
     match spec.shape {
-        PinShape::Array => column,
-        PinShape::Scalar => [
-            "CASE WHEN ",
-            &column,
-            " IS NULL THEN '{}'::uuid[] ELSE ARRAY[",
-            &column,
-            "] END",
-        ]
-        .concat(),
+        PinShape::Array => {
+            sql.push(row).push(spec.column);
+        }
+        PinShape::Scalar => {
+            sql.push("CASE WHEN ")
+                .push(row)
+                .push(spec.column)
+                .push(" IS NULL THEN '{}'::uuid[] ELSE ARRAY[")
+                .push(row)
+                .push(spec.column)
+                .push("] END");
+        }
     }
+    sql
 }
 
 /// Every pin column of `row` as one `uuid[]`.
-fn all_pins(row: &str) -> String {
-    fields()
-        .map(|field| pin_ids(row, field))
-        .collect::<Vec<_>>()
-        .join(" || ")
+fn all_pins(row: &'static str) -> SqlText {
+    join_terms(fields().map(|field| pin_ids(row, field)), " || ")
 }
 
 fn grounding_fields() -> impl Iterator<Item = MemoryPinField> {
@@ -160,56 +217,58 @@ fn kind_label(kind: EntityKind) -> &'static str {
 /// `proxiima_core.memory_pin_kinds(field, source)`: the kinds a memory of
 /// kind `source` may pin through the column `field`.
 #[must_use]
-pub fn memory_pin_kinds_function() -> String {
-    let mut text = String::from(
+pub fn memory_pin_kinds_function() -> SqlText {
+    let mut text = SqlText::new(
         "CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_kinds(field text, source proxiima_core.memory_kind)\n \
 RETURNS text[]\n LANGUAGE sql\n IMMUTABLE\n SET search_path TO 'pg_catalog'\nAS $function$\n    SELECT CASE field\n",
     );
     for field in fields() {
         let spec = field.spec();
-        text.push_str(&["        WHEN '", spec.column, "' THEN CASE source\n"].concat());
+        text.push("        WHEN '")
+            .push(spec.column)
+            .push("' THEN CASE source\n");
         for source in [
             EntityKind::Fact,
             EntityKind::Abstraction,
             EntityKind::Perspective,
         ] {
-            let labels: Vec<String> = field
-                .admitted(source)
-                .iter()
-                .map(|kind| ["'", kind_label(*kind), "'"].concat())
-                .collect();
-            let array = if labels.is_empty() {
-                "ARRAY[]::text[]".to_owned()
+            text.push("            WHEN '")
+                .push(kind_label(source))
+                .push("' THEN ARRAY[");
+            let admitted = field.admitted(source);
+            if admitted.is_empty() {
+                text.push("]::text[]");
             } else {
-                ["ARRAY[", &labels.join(", "), "]"].concat()
-            };
-            text.push_str(
-                &[
-                    "            WHEN '",
-                    kind_label(source),
-                    "' THEN ",
-                    &array,
-                    "\n",
-                ]
-                .concat(),
-            );
+                for (index, kind) in admitted.iter().enumerate() {
+                    if index > 0 {
+                        text.push(", ");
+                    }
+                    text.push("'").push(kind_label(*kind)).push("'");
+                }
+                text.push("]");
+            }
+            text.push("\n");
         }
-        text.push_str("        END\n");
+        text.push("        END\n");
     }
-    text.push_str("    END\n$function$;");
+    text.push("    END\n$function$;");
     text
 }
 
 /// Every text the definitions carry from the table, in the order they appear
 /// in the definitions.
 #[must_use]
-pub fn definition_artifacts() -> Vec<String> {
+pub fn definition_artifacts() -> Vec<SqlText> {
+    let mut grounding = SqlText::new("(");
+    grounding
+        .push_text(&grounding_predicate("m.", "NEW.t"))
+        .push(")");
     vec![
         // functions.sql: schema-evolution `source_pins`.
         all_pins("source."),
         memory_pin_kinds_function(),
         // functions.sql: forget grounding dependers.
-        ["(", &grounding_predicate("m.", "NEW.t"), ")"].concat(),
+        grounding,
         // functions.sql: append-only comparison.
         changed_array_pins(),
         // functions.sql: `memory_pin_checks` variables.
@@ -226,68 +285,75 @@ pub fn definition_artifacts() -> Vec<String> {
 
 /// Whether `row` lists `target` in a grounding column.
 #[must_use]
-pub fn grounding_predicate(row: &str, target: &str) -> String {
-    grounding_fields()
-        .map(|field| [row, field.spec().column, " @> ARRAY[", target, "]"].concat())
-        .collect::<Vec<_>>()
-        .join(" OR ")
+pub fn grounding_predicate(row: &'static str, target: &'static str) -> SqlText {
+    join_terms(
+        grounding_fields().map(|field| {
+            let mut term = SqlText::new(row);
+            term.push(field.spec().column)
+                .push(" @> ARRAY[")
+                .push(target)
+                .push("]");
+            term
+        }),
+        " OR ",
+    )
 }
 
-fn changed_array_pins() -> String {
-    array_fields()
-        .map(|field| {
+fn changed_array_pins() -> SqlText {
+    join_terms(
+        array_fields().map(|field| {
             let column = field.spec().column;
-            ["NEW.", column, " IS DISTINCT FROM OLD.", column].concat()
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ")
+            let mut term = SqlText::new("NEW.");
+            term.push(column)
+                .push(" IS DISTINCT FROM OLD.")
+                .push(column);
+            term
+        }),
+        " OR ",
+    )
 }
 
-fn pin_targets_declaration() -> String {
-    [
+fn declaration(name: &'static str, columns: &SqlText) -> SqlText {
+    let mut sql = SqlText::new(name);
+    sql.push_text(columns).push(";");
+    sql
+}
+
+fn pin_targets_declaration() -> SqlText {
+    declaration(
         "pin_targets uuid[] := ARRAY[NEW.t] || ",
         &join_columns(array_fields(), "NEW.", " || "),
-        ";",
-    ]
-    .concat()
+    )
 }
 
-fn memory_pins_declaration() -> String {
-    [
+fn memory_pins_declaration() -> SqlText {
+    declaration(
         "memory_pins uuid[] := ",
         &join_columns(memory_array_fields(), "NEW.", " || "),
-        ";",
-    ]
-    .concat()
+    )
 }
 
-fn goal_pins_declaration() -> String {
-    [
+fn goal_pins_declaration() -> SqlText {
+    declaration(
         "goal_pins uuid[] := ",
         &join_columns(
             array_fields().filter(|field| field.target() == PinTargetKind::Goal),
             "NEW.",
             " || ",
         ),
-        ";",
-    ]
-    .concat()
+    )
 }
 
-fn grounding_pins_declaration() -> String {
-    [
+fn grounding_pins_declaration() -> SqlText {
+    declaration(
         "grounding_pins uuid[] := ",
         &join_columns(grounding_fields(), "NEW.", " || "),
-        ";",
-    ]
-    .concat()
+    )
 }
 
-fn update_trigger_columns() -> String {
-    [
-        "AFTER UPDATE OF ",
-        &join_columns(fields(), "", ", "),
-        " ON proxiima_core.memory",
-    ]
-    .concat()
+fn update_trigger_columns() -> SqlText {
+    let mut sql = SqlText::new("AFTER UPDATE OF ");
+    sql.push_text(&join_columns(fields(), "", ", "))
+        .push(" ON proxiima_core.memory");
+    sql
 }

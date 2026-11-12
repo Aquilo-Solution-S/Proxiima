@@ -85,10 +85,7 @@ fn source(id: &'static str, version: i64, shared: bool) -> NamedMigrator {
             version,
             Cow::Borrowed("policy fixture"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(
-                "CREATE TABLE IF NOT EXISTS public.policy_fixture (id int)".to_owned(),
-            )
-            .into_sql_str(),
+            "CREATE TABLE IF NOT EXISTS public.policy_fixture (id int)".into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT

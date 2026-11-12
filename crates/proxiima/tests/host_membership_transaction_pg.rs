@@ -14,7 +14,7 @@ use proxiima_core::StorageRule;
 use proxiima_core::storage_ports::OwnerMembershipAdminPort;
 use proxiima_storage_pg::{PgPlatformScope, PgStorage};
 use sqlx::migrate::{Migration, MigrationType, Migrator};
-use sqlx::{AssertSqlSafe, PgPool, SqlSafeStr};
+use sqlx::{PgPool, SqlSafeStr};
 use uuid::Uuid;
 
 const HOST_MIGRATION: i64 = 20_991_014_000_001;
@@ -25,10 +25,7 @@ fn migration() -> Migration {
         HOST_MIGRATION,
         Cow::Borrowed("host membership transaction table"),
         MigrationType::Simple,
-        AssertSqlSafe(
-            "CREATE TABLE public.host_membership_transaction_rows (id uuid PRIMARY KEY)".to_owned(),
-        )
-        .into_sql_str(),
+        "CREATE TABLE public.host_membership_transaction_rows (id uuid PRIMARY KEY)".into_sql_str(),
         false,
     )
 }

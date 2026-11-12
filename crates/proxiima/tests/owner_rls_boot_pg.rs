@@ -12,15 +12,15 @@ use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegist
 use proxiima::{AppInfo, FactWrite, Proxiima, QueryRequest, ServedSurface, SpiiceApp};
 use proxiima_core::{
     AccessKind, AgentNoteV1, AuthError, AuthPath, Authenticator, AuthzContext, Credentials,
-    ErrorCode, GroupId, OwnerId, OwnerRoles, UserId,
+    ErrorCode, GroupId, OwnerId, OwnerRoles, PgIdent, SqlText, UserId,
 };
 use proxiima_pg_testkit::{
-    admin_url, create_db, db_url, drop_db, provision_goal_reader, quoted_ident, unique_db_name,
+    admin_url, create_db, db_url, drop_db, provision_goal_reader, unique_db_name,
 };
 use proxiima_storage_pg::PgPoolConfig;
 use setup_error::expect_described;
 use sqlx::postgres::PgConnectOptions;
-use sqlx::{AssertSqlSafe, ConnectOptions, PgPool};
+use sqlx::{ConnectOptions, PgPool, SqlSafeStr};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -39,11 +39,12 @@ impl Authenticator for SyntheticAuthenticator {
     }
 }
 
-async fn exec(pool: &PgPool, sql: impl Into<String>) {
-    sqlx::raw_sql(AssertSqlSafe(sql.into()))
-        .execute(pool)
-        .await
-        .expect("fixture SQL");
+fn quoted(name: &str) -> PgIdent {
+    PgIdent::quoted(name).expect("a generated fixture name")
+}
+
+async fn exec(pool: &PgPool, sql: impl SqlSafeStr) {
+    sqlx::raw_sql(sql).execute(pool).await.expect("fixture SQL");
 }
 
 /// The platform role migrates with no parameter ACL: owner RLS must activate
@@ -65,18 +66,11 @@ async fn cleanup(database: &str, admin: PgPool, runtime: &str, platform: &str) {
     admin.close().await;
     drop_db(database).await.expect("drop database");
     let control = expect_described("control connection", PgPool::connect(&admin_url()).await).await;
-    // SQL-POLICY: fixed-fragment — uniquely generated fixture roles, quoted identifiers.
-    exec(
-        &control,
-        format!("DROP ROLE IF EXISTS {}", quoted_ident(runtime)),
-    )
-    .await;
-    // SQL-POLICY: fixed-fragment — uniquely generated fixture roles, quoted identifiers.
-    exec(
-        &control,
-        format!("DROP ROLE IF EXISTS {}", quoted_ident(platform)),
-    )
-    .await;
+    for role in [runtime, platform] {
+        let mut drop_role = SqlText::new("DROP ROLE IF EXISTS ");
+        drop_role.push_ident(&quoted(role));
+        exec(&control, drop_role).await;
+    }
     control.close().await;
 }
 
@@ -124,34 +118,30 @@ async fn setup_fresh() -> (String, PgPool, String, String, String, String) {
     let runtime = format!("owner_rls_fresh_runtime_{suffix}");
     let password = format!("pw_{suffix}");
     for role in [&platform, &runtime] {
-        exec(
-            &admin,
-            format!(
-                "CREATE ROLE {} LOGIN PASSWORD '{}' NOSUPERUSER NOBYPASSRLS",
-                quoted_ident(role),
-                password
-            ),
-        )
-        .await;
+        let mut create_role = SqlText::new("CREATE ROLE ");
+        create_role
+            .push_ident(&quoted(role))
+            .push(" LOGIN PASSWORD ");
+        create_role
+            .push_literal(&password)
+            .expect("a generated fixture password")
+            .push(" NOSUPERUSER NOBYPASSRLS");
+        exec(&admin, create_role).await;
     }
-    exec(
-        &admin,
-        format!(
-            "GRANT CREATE ON DATABASE {} TO {}; GRANT USAGE, CREATE ON SCHEMA public TO {}; ALTER DEFAULT PRIVILEGES FOR ROLE {} GRANT USAGE ON SCHEMAS TO {}; ALTER DEFAULT PRIVILEGES FOR ROLE {} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}; ALTER DEFAULT PRIVILEGES FOR ROLE {} GRANT USAGE, SELECT ON SEQUENCES TO {}",
-            quoted_ident(&database), quoted_ident(&platform), quoted_ident(&platform), quoted_ident(&platform), quoted_ident(&runtime),
-            quoted_ident(&platform), quoted_ident(&runtime), quoted_ident(&platform), quoted_ident(&runtime)
-        ),
-    )
-    .await;
-    // SQL-POLICY: fixed-fragment — the migration role is a quoted fixture identifier.
-    exec(
-        &admin,
-        format!(
-            "GRANT proxiima_search TO {} WITH ADMIN FALSE, INHERIT FALSE, SET TRUE",
-            quoted_ident(&platform)
-        ),
-    )
-    .await;
+    let grants = SqlText::fill(
+        "GRANT CREATE ON DATABASE {database} TO {platform}; GRANT USAGE, CREATE ON SCHEMA public TO {platform}; ALTER DEFAULT PRIVILEGES FOR ROLE {platform} GRANT USAGE ON SCHEMAS TO {runtime}; ALTER DEFAULT PRIVILEGES FOR ROLE {platform} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {runtime}; ALTER DEFAULT PRIVILEGES FOR ROLE {platform} GRANT USAGE, SELECT ON SEQUENCES TO {runtime}",
+        &[
+            ("{database}", &SqlText::from(&quoted(&database))),
+            ("{platform}", &SqlText::from(&quoted(&platform))),
+            ("{runtime}", &SqlText::from(&quoted(&runtime))),
+        ],
+    );
+    exec(&admin, grants).await;
+    let mut search_membership = SqlText::new("GRANT proxiima_search TO ");
+    search_membership
+        .push_ident(&quoted(&platform))
+        .push(" WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
+    exec(&admin, search_membership).await;
     provision_goal_reader(&admin, &platform, &runtime)
         .await
         .expect("goal reader fixture role");
@@ -470,7 +460,13 @@ async fn split_role_boot_refuses_runtime_table_owner() {
         boot(runtime_url.clone(), Some(platform_url.clone()), owner).await,
     )
     .await;
-    exec(&admin, format!("DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r','p') LOOP EXECUTE format('ALTER TABLE %I.%I OWNER TO {}', r.nspname, r.relname); END LOOP; END $$", quoted_ident(&runtime))).await;
+    let mut hand_over = SqlText::new(
+        "DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r','p') LOOP EXECUTE format('ALTER TABLE %I.%I OWNER TO ",
+    );
+    hand_over
+        .push_ident(&quoted(&runtime))
+        .push("', r.nspname, r.relname); END LOOP; END $$");
+    exec(&admin, hand_over).await;
     assert!(boot(runtime_url, Some(platform_url), owner).await.is_err());
     cleanup(&database, admin, &runtime, &platform).await;
 }
@@ -482,18 +478,14 @@ async fn split_role_boot_refuses_runtime_bypassrls() {
         .lock()
         .await;
     let (database, admin, runtime_url, platform_url, owner, runtime, platform) = setup().await;
-    // SQL-POLICY: fixed-fragment — generated role identifier is quoted.
     expect_described(
         "initial explicit migration",
         boot(runtime_url.clone(), Some(platform_url.clone()), owner).await,
     )
     .await;
-    // SQL-POLICY: fixed-fragment — the generated fixture role is identifier-quoted.
-    exec(
-        &admin,
-        format!("ALTER ROLE {} BYPASSRLS", quoted_ident(&runtime)),
-    )
-    .await;
+    let mut bypass = SqlText::new("ALTER ROLE ");
+    bypass.push_ident(&quoted(&runtime)).push(" BYPASSRLS");
+    exec(&admin, bypass).await;
     assert!(boot(runtime_url, Some(platform_url), owner).await.is_err());
     cleanup(&database, admin, &runtime, &platform).await;
 }

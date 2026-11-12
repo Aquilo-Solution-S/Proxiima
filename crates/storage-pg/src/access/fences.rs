@@ -106,7 +106,6 @@ async fn lock_owner_fences(
     } else {
         LOCK_OWNER_FENCES_SHARED_SQL
     };
-    // SQL-POLICY: fixed-fragment
     sqlx::query(sql)
         .bind(&ids)
         .execute(&mut **tx)
@@ -157,7 +156,6 @@ async fn lock_source_fence(
     } else {
         LOCK_SOURCE_FENCE_SHARED_SQL
     };
-    // SQL-POLICY: fixed-fragment
     sqlx::query(sql)
         .bind(owner.into_inner())
         .bind(source)
@@ -263,7 +261,6 @@ async fn lock_scope_fence(
     } else {
         LOCK_SCOPE_FENCE_SHARED_SQL
     };
-    // SQL-POLICY: fixed-fragment
     sqlx::query(sql)
         .bind(kind.as_str())
         .bind(owner.into_inner())
@@ -320,7 +317,6 @@ pub async fn lock_object_keys_tx(
     let mut keys: Vec<&str> = object_keys.iter().map(String::as_str).collect();
     keys.sort_unstable();
     keys.dedup();
-    // SQL-POLICY: fixed-fragment
     sqlx::query(LOCK_OBJECT_KEYS_SQL)
         .bind(&keys)
         .execute(&mut **tx)

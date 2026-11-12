@@ -1,6 +1,8 @@
 //! The generic rule a spiice lane's ledger relies on, through the example
 //! spiice's migrations.
 
+use proxiima_core::{PgIdent, SqlText};
+
 /// `SQLx` records each spiice migration as SHA-384 of its file minus the
 /// `ignored-chars` of the spiice's `sqlx.toml` (`\r`). The released file
 /// bytes are pinned by `scripts/check-migrations.py`; this pins the
@@ -61,13 +63,14 @@ async fn rename_ledger_snapshot(
     connection: &mut sqlx::PgConnection,
     ledger: &str,
 ) -> Vec<(i64, Vec<u8>)> {
-    // SQL-POLICY: fixed-fragment — ledger is derived from the embedded migrator.
-    sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT version, checksum FROM {ledger} ORDER BY version"
-    )))
-    .fetch_all(connection)
-    .await
-    .expect("migration ledger snapshot")
+    let mut select = SqlText::new("SELECT version, checksum FROM ");
+    select
+        .push_ident(&PgIdent::table(ledger).expect("a plain ledger name"))
+        .push(" ORDER BY version");
+    sqlx::query_as(select)
+        .fetch_all(connection)
+        .await
+        .expect("migration ledger snapshot")
 }
 
 async fn rename_schema_oid(connection: &mut sqlx::PgConnection, schema: &str) -> Option<i64> {
@@ -104,11 +107,13 @@ async fn failing_late_historical_lane_rolls_back_catalog_and_ledgers() {
     let original = proxiima_example::migrator();
     let mut migrations = original.iter().cloned().collect::<Vec<_>>();
     let first = &migrations[0];
+    let mut failing = SqlText::from(first.sql.clone());
+    failing.push("\nSELECT 1 / 0;");
     migrations[0] = Migration::new(
         first.version,
         first.description.clone(),
         MigrationType::Simple,
-        sqlx::AssertSqlSafe(format!("{}\nSELECT 1 / 0;", first.sql.as_str())).into_sql_str(),
+        failing.into_sql_str(),
         false,
     );
     let migrator = Migrator {
@@ -185,8 +190,8 @@ async fn stage_released_role_shapes(
     let mut admin = sqlx::PgConnection::connect(&proxiima_pg_testkit::db_url(database))
         .await
         .expect("superuser connection");
-    // SQL-POLICY: fixed-fragment — role and schema names derive from the embedded catalog and the fixture role.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+    let name = |value: &str| SqlText::from(&PgIdent::name(value).expect("a plain catalog name"));
+    let shapes = SqlText::fill(
         "DO $roles$ BEGIN
              IF to_regrole('{historical_search}') IS NULL THEN
                  CREATE ROLE {historical_search} NOLOGIN NOINHERIT;
@@ -199,11 +204,22 @@ async fn stage_released_role_shapes(
          GRANT USAGE ON SCHEMA {old_core} TO {historical_search};
          REASSIGN OWNED BY proxiima_search TO {historical_search};
          ALTER DEFAULT PRIVILEGES FOR ROLE {historical_search} GRANT EXECUTE ON FUNCTIONS TO {platform};
-         CREATE POLICY rename_operator ON {old_example}.settings TO {operator_role} USING (true);"
-    )))
-    .execute(&mut admin)
-    .await
-    .expect("released role shapes");
+         CREATE POLICY rename_operator ON {old_example}.settings TO {operator_role} USING (true);",
+        &[
+            ("{historical_search}", &name(&historical_search)),
+            ("{operator_role}", &name(&operator_role)),
+            (
+                "{platform}",
+                &SqlText::from(&PgIdent::quoted(platform).expect("the platform role name")),
+            ),
+            ("{old_core}", &name(old_core)),
+            ("{old_example}", &name(old_example)),
+        ],
+    );
+    sqlx::raw_sql(shapes)
+        .execute(&mut admin)
+        .await
+        .expect("released role shapes");
     let owned: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE n.nspname = $1 AND p.proowner = to_regrole($2)",
@@ -356,20 +372,39 @@ async fn installed_historical_example_upgrades_in_place_with_its_real_ledger() {
             ]
         })
         .collect();
-    // SQL-POLICY: fixed-fragment — schema is derived from the embedded core catalog.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "CREATE OR REPLACE FUNCTION {old_core}.definitions_applied() RETURNS TABLE(checksum text, release text)
-         LANGUAGE sql IMMUTABLE AS $$ SELECT '{checksum}'::text, '0.0.66'::text $$")))
-        .execute(transaction.as_mut()).await.expect("original release record");
-    // SQL-POLICY: fixed-fragment — schema is derived from the embedded example catalog.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO {old_example}.settings(key,value) VALUES ($1,$2)"
-    )))
-    .bind("rename-probe")
-    .bind("preserved")
+    // The record names a schema and a checksum known only at run time; the
+    // server formats them into the function.
+    sqlx::query(
+        "SELECT set_config('proxiima_test.record_schema', $1, true),
+                set_config('proxiima_test.record_checksum', $2, true)",
+    )
+    .bind(&old_core)
+    .bind(&checksum)
     .execute(transaction.as_mut())
     .await
-    .expect("existing application data");
+    .expect("original release record parameters");
+    sqlx::raw_sql(
+        "DO $record$ BEGIN
+             EXECUTE format(
+                 'CREATE OR REPLACE FUNCTION %I.definitions_applied() RETURNS TABLE(checksum text, release text)
+                  LANGUAGE sql IMMUTABLE AS $f$ SELECT %L::text, ''0.0.66''::text $f$',
+                 current_setting('proxiima_test.record_schema'),
+                 current_setting('proxiima_test.record_checksum'));
+         END $record$",
+    )
+    .execute(transaction.as_mut())
+    .await
+    .expect("original release record");
+    let mut insert_setting = SqlText::new("INSERT INTO ");
+    insert_setting
+        .push_ident(&PgIdent::name(&old_example).expect("a plain catalog name"))
+        .push(".settings(key,value) VALUES ($1,$2)");
+    sqlx::query(insert_setting)
+        .bind("rename-probe")
+        .bind("preserved")
+        .execute(transaction.as_mut())
+        .await
+        .expect("existing application data");
     transaction
         .commit()
         .await

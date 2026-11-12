@@ -1,11 +1,9 @@
+use crate::verbs::query::push_atom;
 use proxiima_core::owner_inverse::OwnerSurfaces;
 use proxiima_core::storage_ports::{
     OwnerWritePermit, SIDECAR_SESSION_READ_MAX_ROWS, SidecarSessionRead,
 };
-use sqlx::QueryBuilder;
-
-use crate::pg_ident::PgIdent;
-use crate::verbs::query::push_atom;
+use proxiima_core::{PgIdent, SqlBuilder, SqlText};
 
 use super::{
     FromRow, MemoryId, PgConnection, PgPool, PgRow, PgSidecarRegistryFrozen, Postgres, StorageError,
@@ -79,26 +77,19 @@ pub(crate) async fn read_own_sidecar(
             .min(SIDECAR_SESSION_READ_MAX_ROWS),
     );
 
-    // SQL-POLICY: PgIdent
-    // SQL-POLICY: QueryBuilder-bound-values
-    let mut builder = QueryBuilder::<Postgres>::new("SELECT to_jsonb(s) FROM ");
-    builder.push(table.as_str());
-    // SQL-POLICY: PgIdent — the owner scope, stamped before anything the
-    // caller asked for.
+    let mut builder = SqlBuilder::new("SELECT to_jsonb(s) FROM ");
+    builder.push_ident(&table);
+    // The owner scope, stamped before anything the caller asked for.
     builder.push(" s WHERE s.");
-    builder.push(owner_ident.as_str());
-    // SQL-POLICY: fixed-fragment
+    builder.push_ident(&owner_ident);
     builder.push(" = ");
     builder.push_bind(permit.owner().into_inner());
     for (ident, value) in &predicates {
-        // SQL-POLICY: PgIdent
         builder.push(" AND s.");
-        builder.push(ident.as_str());
-        // SQL-POLICY: fixed-fragment
+        builder.push_ident(ident);
         builder.push(" = ");
         push_atom(&mut builder, value);
     }
-    // SQL-POLICY: fixed-fragment
     builder.push(" LIMIT ");
     builder.push_bind(limit);
 
@@ -202,14 +193,15 @@ impl PgSidecarReadCtx<'_> {
     /// Returns `StorageError` when SQL validation or query execution fails.
     pub async fn fetch_optional_by_memory_id<T>(
         self,
-        sql: &str,
+        sql: impl Into<SqlText>,
         memory_id: MemoryId,
     ) -> Result<Option<T>, StorageError>
     where
         for<'r> T: FromRow<'r, PgRow> + Send + Unpin,
     {
-        validate_sidecar_read_sql(sql, self.allow_core_schema)?;
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(memory_id.into_inner());
+        let sql = sql.into();
+        validate_sidecar_read_sql(sql.as_str(), self.allow_core_schema)?;
+        let query = sqlx::query_as(sql).bind(memory_id.into_inner());
         match self.executor {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_optional(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_optional(connection).await,
@@ -224,14 +216,15 @@ impl PgSidecarReadCtx<'_> {
     /// Returns `StorageError` when SQL validation or query execution fails.
     pub async fn fetch_all_by_memory_id<T>(
         self,
-        sql: &str,
+        sql: impl Into<SqlText>,
         memory_id: MemoryId,
     ) -> Result<Vec<T>, StorageError>
     where
         for<'r> T: FromRow<'r, PgRow> + Send + Unpin,
     {
-        validate_sidecar_read_sql(sql, self.allow_core_schema)?;
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(memory_id.into_inner());
+        let sql = sql.into();
+        validate_sidecar_read_sql(sql.as_str(), self.allow_core_schema)?;
+        let query = sqlx::query_as(sql).bind(memory_id.into_inner());
         match self.executor {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
@@ -252,18 +245,19 @@ impl PgSidecarReadCtx<'_> {
     /// Returns `StorageError` when SQL validation or query execution fails.
     pub async fn fetch_all_by_memory_ids_owner_pinned<T>(
         self,
-        sql: &str,
+        sql: impl Into<SqlText>,
         memory_ids: &[MemoryId],
     ) -> Result<Vec<T>, StorageError>
     where
         for<'r> T: FromRow<'r, PgRow> + Send + Unpin,
     {
-        validate_sidecar_read_sql(sql, true)?;
+        let sql = sql.into();
+        validate_sidecar_read_sql(sql.as_str(), true)?;
         let raw_memory_ids = memory_ids
             .iter()
             .map(|memory_id| (*memory_id).into_inner())
             .collect::<Vec<_>>();
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&raw_memory_ids);
+        let query = sqlx::query_as(sql).bind(&raw_memory_ids);
         match self.executor {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
@@ -278,18 +272,19 @@ impl PgSidecarReadCtx<'_> {
     /// Returns `StorageError` when SQL validation or query execution fails.
     pub async fn fetch_all_by_memory_ids<T>(
         self,
-        sql: &str,
+        sql: impl Into<SqlText>,
         memory_ids: &[MemoryId],
     ) -> Result<Vec<T>, StorageError>
     where
         for<'r> T: FromRow<'r, PgRow> + Send + Unpin,
     {
-        validate_sidecar_read_sql(sql, self.allow_core_schema)?;
+        let sql = sql.into();
+        validate_sidecar_read_sql(sql.as_str(), self.allow_core_schema)?;
         let raw_memory_ids = memory_ids
             .iter()
             .map(|memory_id| (*memory_id).into_inner())
             .collect::<Vec<_>>();
-        let query = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&raw_memory_ids);
+        let query = sqlx::query_as(sql).bind(&raw_memory_ids);
         match self.executor {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
@@ -304,14 +299,15 @@ impl PgSidecarReadCtx<'_> {
     /// Returns `StorageError` when SQL validation or query execution fails.
     pub async fn fetch_optional_scalar_by_memory_id<T>(
         self,
-        sql: &str,
+        sql: impl Into<SqlText>,
         memory_id: MemoryId,
     ) -> Result<Option<T>, StorageError>
     where
         for<'r> T: sqlx::Decode<'r, Postgres> + sqlx::Type<Postgres> + Send + Unpin,
     {
-        validate_sidecar_read_sql(sql, self.allow_core_schema)?;
-        let query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(memory_id.into_inner());
+        let sql = sql.into();
+        validate_sidecar_read_sql(sql.as_str(), self.allow_core_schema)?;
+        let query = sqlx::query_scalar(sql).bind(memory_id.into_inner());
         match self.executor {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_optional(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_optional(connection).await,

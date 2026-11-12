@@ -9,12 +9,12 @@
 //! `h.t` are the kernel tables' own keys and are fixed.
 
 use proxiima_core::verbs::query::SidecarAtom;
-use proxiima_core::{OwnerId, SchemaId, StorageError};
-use sqlx::{PgExecutor, Postgres, QueryBuilder};
+use proxiima_core::{OwnerId, SchemaId, SqlBuilder, StorageError};
+use sqlx::PgExecutor;
 use uuid::Uuid;
 
 use crate::error::map_err;
-use crate::pg_ident::PgIdent;
+use proxiima_core::PgIdent;
 
 /// Which column of the head row the lookup projects.
 ///
@@ -115,6 +115,7 @@ where
     E: PgExecutor<'e>,
 {
     head_column_builder(
+        "",
         owner,
         schema_id,
         sidecar_table,
@@ -134,14 +135,14 @@ where
 /// hand-restated copy of it: a second spelling agrees with this one only by
 /// coincidence, and the access path is the thing under test.
 fn head_column_builder(
+    prefix: &'static str,
     owner: OwnerId,
     schema_id: &SchemaId,
     sidecar_table: &str,
     key_column: &str,
     columns: &[(&str, SidecarAtom)],
     projection: HeadProjection,
-    // SQL-POLICY: QueryBuilder-bound-values
-) -> Result<QueryBuilder<Postgres>, StorageError> {
+) -> Result<SqlBuilder, StorageError> {
     if columns.is_empty() {
         return Err(StorageError::ConstraintViolation(
             "owned series-handle lookup requires at least one sidecar column".into(),
@@ -154,67 +155,53 @@ fn head_column_builder(
         .map(|(column, _)| PgIdent::column(column))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // SQL-POLICY: PgIdent
-    // SQL-POLICY: QueryBuilder-bound-values
-    // SQL-POLICY: fixed-fragment — `HeadProjection::column` is a closed set
-    // of two literals.
-    let mut builder = QueryBuilder::<Postgres>::new(projection.column());
-    builder.push(table.as_str());
-    // SQL-POLICY: fixed-fragment
-    // The natural-key series lookup runs this in the lifecycle scope, so it
-    // reaches a forgotten head (#488 review r3); other callers read under
-    // owner RLS, which hides one.
+    let mut builder = SqlBuilder::new(prefix);
+    builder.push(projection.column());
+    builder.push_ident(&table);
     builder.push(" s JOIN proxiima_core.memory_including_forgotten m ON m.t = s.");
-    // SQL-POLICY: PgIdent
-    builder.push(key.as_str());
-    // SQL-POLICY: fixed-fragment
+    builder.push_ident(&key);
     builder.push(
         " JOIN proxiima_core.memory_head h ON h.handle = m.handle AND h.t = m.t \
          WHERE m.owner_id = ",
     );
     builder.push_bind(owner.into_inner());
-    // SQL-POLICY: fixed-fragment
     builder.push(" AND m.schema_id = ");
     builder.push_bind(schema_id.as_str());
     for (ident, (_, value)) in col_idents.iter().zip(columns) {
-        // SQL-POLICY: PgIdent
         builder.push(" AND s.");
-        builder.push(ident.as_str());
-        // SQL-POLICY: fixed-fragment
+        builder.push_ident(ident);
         builder.push(" = ");
         push_atom(&mut builder, value);
     }
-    // SQL-POLICY: fixed-fragment
     builder.push(" LIMIT 1");
 
     Ok(builder)
 }
 
-/// The shipped head-lookup SQL, for the EXPLAIN plan guard.
+/// The shipped head-lookup statement under `EXPLAIN`, values bound, for the
+/// plan guard.
 ///
 /// # Errors
 ///
 /// `ConstraintViolation` when a column identifier is invalid.
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
-pub fn owned_head_handle_sql_for_tests(
+pub fn explain_owned_head_handle_for_tests(
     owner: OwnerId,
     schema_id: &SchemaId,
     sidecar_table: &str,
     key_column: &str,
     columns: &[(&str, SidecarAtom)],
-) -> Result<String, StorageError> {
-    Ok(head_column_builder(
+) -> Result<SqlBuilder, StorageError> {
+    head_column_builder(
+        "EXPLAIN (FORMAT JSON, COSTS OFF) ",
         owner,
         schema_id,
         sidecar_table,
         key_column,
         columns,
         HeadProjection::Handle,
-    )?
-    .sql()
-    .as_str()
-    .to_owned())
+    )
 }
 
 /// Bind one [`SidecarAtom`] into a builder.
@@ -222,8 +209,7 @@ pub fn owned_head_handle_sql_for_tests(
 /// The single binder for the atom vocabulary: every generated statement
 /// that takes a spiice-named column value goes through it, so "which Rust
 /// type does a `Text` atom bind as" has one answer.
-// SQL-POLICY: QueryBuilder-bound-values
-pub(crate) fn push_atom(builder: &mut QueryBuilder<Postgres>, value: &SidecarAtom) {
+pub(crate) fn push_atom(builder: &mut SqlBuilder, value: &SidecarAtom) {
     match value {
         SidecarAtom::Uuid(id) => {
             builder.push_bind(*id);

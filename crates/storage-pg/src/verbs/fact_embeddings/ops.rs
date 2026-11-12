@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use proxiima_core::{
     EmbeddingAnnObservability, EmbeddingJobBacklog, EmbeddingOrphanCounts,
-    EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRecallStratum, StorageError,
+    EmbeddingOrphanSweepOutcome, EmbeddingRecallCanary, EmbeddingRecallStratum, SqlText,
+    StorageError,
 };
 use sqlx::{Connection, PgConnection, PgPool};
 
@@ -387,7 +388,6 @@ async fn current_embedding_ids_by_distance(
                 .map_err(map_err)?;
         }
         DistancePlan::Ann => {
-            // SQL-POLICY: fixed-fragment
             sqlx::raw_sql(ANN_CANARY_SESSION_SQL)
                 .execute(tx.as_mut())
                 .await
@@ -396,7 +396,7 @@ async fn current_embedding_ids_by_distance(
     }
     // The canary measures ANN recall over vector rows. Distinguish chunks
     // so another chunk of the same memory cannot count as an exact match.
-    let sql = format!(
+    let mut sql = SqlText::new(
         "SELECT emb.entity_id, emb.embedding_version, emb.chunk_ordinal
            FROM proxiima_core.embeddings emb
            JOIN proxiima_core.embedding_heads head
@@ -406,16 +406,15 @@ async fn current_embedding_ids_by_distance(
             AND head.embedding_version = emb.embedding_version
           WHERE emb.model_id = $1
             AND emb.owner_id = $2
-            AND {predicate}
-          ORDER BY {vec} <=> $3{cast}, emb.entity_id, emb.chunk_ordinal
-          LIMIT $4",
-        predicate = lane.predicate,
-        vec = lane.vec,
-        cast = lane.cast,
+            AND ",
     );
-    // SQL-POLICY: fixed-fragment — the lane's compile-time predicate and
-    // casts, chosen by a closed enum; every value is bound.
-    let rows = sqlx::query_as::<_, (uuid::Uuid, i32, i32)>(sqlx::AssertSqlSafe(sql))
+    sql.push(lane.predicate)
+        .push("\n          ORDER BY ")
+        .push(lane.vec)
+        .push(" <=> $3")
+        .push(lane.cast)
+        .push(", emb.entity_id, emb.chunk_ordinal\n          LIMIT $4");
+    let rows = sqlx::query_as::<_, (uuid::Uuid, i32, i32)>(sql)
         .bind(model_id)
         .bind(owner_id)
         .bind(vec)

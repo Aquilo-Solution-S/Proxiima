@@ -8,8 +8,6 @@ pub use crate::spiice_bundle;
 /// runtime handles a spawning spiice receives and the named join handle
 /// it returns.
 pub use crate::workers::{SpiiceWorker, SpiiceWorkerContext};
-/// The generator and sidecar adapters return this storage refusal type.
-pub use proxiima_core::StorageError;
 /// The typed artefact inside [`CitedBlobStaged`], and the outcome of
 /// [`proxiima_core::Engine::complete_upload_as_fact`].
 ///
@@ -243,6 +241,8 @@ pub use proxiima_core::{MAX_QUERY_CHARS, MAX_TEXT_CAP_CHARS, reject_zero_limit};
 ///
 /// [`SpiiceContract::scopes`]: proxiima_core::SpiiceContract::scopes
 pub use proxiima_core::{ScopeDecl, ScopeKind, ScopeRef};
+/// The generator and sidecar adapters return this storage refusal type.
+pub use proxiima_core::{SqlText, StorageError};
 pub use proxiima_storage_pg::access::fences::{
     lock_scope_fence_exclusive_tx, lock_scope_fence_shared_tx,
 };

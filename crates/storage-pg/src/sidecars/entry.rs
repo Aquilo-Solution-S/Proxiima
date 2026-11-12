@@ -73,7 +73,7 @@ pub struct PgSidecarEntry {
     /// surface. Built in `freeze_against` from the spiice contract, so a
     /// projected schema cannot be written without its projection row: the
     /// two statements are one method call apart in one transaction.
-    pub(super) projection_insert: Option<String>,
+    pub(super) projection_insert: Option<proxiima_core::SqlText>,
     /// The projection table this entry maintains. Carried so transfer can
     /// ask the registry which tables follow an owner without knowing which
     /// spiices are linked.

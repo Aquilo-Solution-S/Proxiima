@@ -526,13 +526,16 @@ async fn upload_transitions_join_the_owner_fence() -> Result<(), Box<dyn std::er
         AuthPath::HostBearer,
     ));
 
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+    let mut probe = proxiima_core::SqlText::new(
         "CREATE SEQUENCE public.upload_status_probe;
          CREATE FUNCTION public.block_upload_status_update() RETURNS trigger
          LANGUAGE plpgsql SECURITY DEFINER AS $$
          BEGIN
              PERFORM nextval('public.upload_status_probe');
-             PERFORM pg_advisory_xact_lock({UPLOAD_STATUS_PROBE_LOCK});
+             PERFORM pg_advisory_xact_lock(",
+    );
+    probe.push_i64(UPLOAD_STATUS_PROBE_LOCK).push(
+        ");
              RETURN NEW;
          END
          $$;
@@ -540,11 +543,12 @@ async fn upload_transitions_join_the_owner_fence() -> Result<(), Box<dyn std::er
          BEFORE UPDATE OF status ON proxiima_core.blob_uploads
          FOR EACH ROW
          WHEN (OLD.status IS DISTINCT FROM NEW.status)
-         EXECUTE FUNCTION public.block_upload_status_update();"
-    )))
-    .execute(&pool)
-    .await
-    .expect("upload status probe");
+         EXECUTE FUNCTION public.block_upload_status_update();",
+    );
+    sqlx::raw_sql(probe)
+        .execute(&pool)
+        .await
+        .expect("upload status probe");
 
     let finish_upload = staged_upload(
         &pool,
@@ -709,13 +713,16 @@ async fn stage_rechecks_terminal_upload_before_publishing_locator()
     // Abort owns the row lock while its status trigger is paused. Stage can
     // still perform its S3 GET/PUT, but its final locator UPDATE must wait for
     // the row and then observe the committed terminal status.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+    let mut probe = proxiima_core::SqlText::new(
         "CREATE SEQUENCE public.upload_status_probe;
          CREATE FUNCTION public.block_abort_status_update() RETURNS trigger
          LANGUAGE plpgsql SECURITY DEFINER AS $$
          BEGIN
              PERFORM nextval('public.upload_status_probe');
-             PERFORM pg_advisory_xact_lock({UPLOAD_STATUS_PROBE_LOCK});
+             PERFORM pg_advisory_xact_lock(",
+    );
+    probe.push_i64(UPLOAD_STATUS_PROBE_LOCK).push(
+        ");
              RETURN NEW;
          END
          $$;
@@ -723,10 +730,9 @@ async fn stage_rechecks_terminal_upload_before_publishing_locator()
          BEFORE UPDATE OF status ON proxiima_core.blob_uploads
          FOR EACH ROW
          WHEN (OLD.status = 'pending' AND NEW.status = 'aborted')
-         EXECUTE FUNCTION public.block_abort_status_update();"
-    )))
-    .execute(&pool)
-    .await?;
+         EXECUTE FUNCTION public.block_abort_status_update();",
+    );
+    sqlx::raw_sql(probe).execute(&pool).await?;
 
     let mut probe = pool.acquire().await?;
     sqlx::query("SELECT pg_advisory_lock($1)")

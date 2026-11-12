@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use proxiima_core::{AccessCeiling, GoalAccess, GroupId, OwnerId, UserId};
+use proxiima_core::{AccessCeiling, GoalAccess, GroupId, OwnerId, PgIdent, SqlText, UserId};
 use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
@@ -2023,27 +2023,27 @@ fn generator_output_is_the_migration_text() {
     }
     let definitions = include_str!("../definitions/triggers.sql");
     assert!(
-        definitions.contains(&core.language_trigger.forward),
+        definitions.contains(core.language_trigger.forward.as_str()),
         "definitions/triggers.sql does not carry the projection trigger"
     );
-    assert!(baseline.contains(&core.tag_index.forward));
+    assert!(baseline.contains(core.tag_index.forward.as_str()));
     for artifact in
         proxiima_storage_pg::search_candidates::candidate_artifacts(&proxiima_core::SPIICE_0)
             .expect("core candidates")
     {
         assert!(
-            proxiima_storage_pg::definitions::FUNCTIONS.contains(&artifact.forward),
+            proxiima_storage_pg::definitions::FUNCTIONS.contains(artifact.forward.as_str()),
             "definitions do not carry generated candidate function:\n{}",
-            artifact.forward
+            artifact.forward.as_str()
         );
     }
     for artifact in
         proxiima_storage_pg::vector_index::vector_candidate_artifacts().expect("vector candidates")
     {
         assert!(
-            proxiima_storage_pg::definitions::VECTOR.contains(&artifact.forward),
+            proxiima_storage_pg::definitions::VECTOR.contains(artifact.forward.as_str()),
             "definitions/vector.sql does not carry generated vector candidate function:\n{}",
-            artifact.forward
+            artifact.forward.as_str()
         );
     }
 
@@ -2101,9 +2101,9 @@ fn generated_declaration_triggers_are_the_migration_text() {
     );
     for artifact in &artifacts {
         assert!(
-            migration.contains(&artifact.forward),
+            migration.contains(artifact.forward.as_str()),
             "definitions/triggers.sql does not carry the generator's output verbatim:\n{}",
-            artifact.forward
+            artifact.forward.as_str()
         );
     }
 }
@@ -2129,8 +2129,9 @@ fn pin_column_definitions_are_the_tables_rendering() {
     );
     for artifact in proxiima_storage_pg::pin_fields::definition_artifacts() {
         assert!(
-            definitions.contains(&collapsed(&artifact)),
-            "the definitions do not carry the pin-column table's rendering:\n{artifact}"
+            definitions.contains(&collapsed(artifact.as_str())),
+            "the definitions do not carry the pin-column table's rendering:\n{}",
+            artifact.as_str()
         );
     }
 }
@@ -2179,16 +2180,17 @@ fn generated_presence_triggers_are_the_migration_text() {
         .filter(|artifact| {
             artifact
                 .forward
+                .as_str()
                 .contains("AFTER INSERT OR UPDATE OF sidecar_tables")
         })
         .count();
     let orphan = artifacts
         .iter()
-        .filter(|artifact| artifact.forward.contains("AFTER DELETE ON"))
+        .filter(|artifact| artifact.forward.as_str().contains("AFTER DELETE ON"))
         .count();
     let repoint = artifacts
         .iter()
-        .filter(|artifact| artifact.forward.contains("BEFORE UPDATE OF"))
+        .filter(|artifact| artifact.forward.as_str().contains("BEFORE UPDATE OF"))
         .count();
     assert_eq!(
         (presence, orphan),
@@ -2207,9 +2209,9 @@ fn generated_presence_triggers_are_the_migration_text() {
     );
     for artifact in &artifacts {
         assert!(
-            migration.contains(&artifact.forward),
+            migration.contains(artifact.forward.as_str()),
             "definitions/triggers.sql does not carry the generator's output verbatim:\n{}",
-            artifact.forward
+            artifact.forward.as_str()
         );
     }
     assert!(
@@ -2650,8 +2652,7 @@ async fn a_damaged_presence_trigger_fails_the_boot_guardrail() {
                      ON proxiima_core.agent_note_v1",
             ),
         ] {
-            // SQL-POLICY: fixed-fragment — a literal from the table above.
-            sqlx::query(sqlx::AssertSqlSafe(drop)).execute(pool).await?;
+            sqlx::query(drop).execute(pool).await?;
             let err = proxiima_storage_pg::integrity::ensure_declaration_triggers(pool, &sidecars)
                 .await
                 .expect_err(why)
@@ -2665,8 +2666,7 @@ async fn a_damaged_presence_trigger_fails_the_boot_guardrail() {
             // reason.
             let sidecars_for_repair = sidecars.presence_trigger_artifacts("core")?;
             for artifact in &sidecars_for_repair {
-                // SQL-POLICY: generated
-                sqlx::raw_sql(sqlx::AssertSqlSafe(artifact.forward.clone()))
+                sqlx::raw_sql(artifact.forward.clone())
                     .execute(pool)
                     .await?;
             }
@@ -2712,23 +2712,16 @@ async fn a_damaged_presence_trigger_fails_the_boot_guardrail() {
                 "'proxiima_core.utterance_v1', 't'",
             ),
         ] {
-            let ddl = format!(
-                // SQL-POLICY: fixed-fragment — see the comment above.
+            let mut ddl = SqlText::new(
                 "DROP TRIGGER IF EXISTS memory_declares_proxiima_core_agent_note_v1
                      ON proxiima_core.memory;
                  CREATE CONSTRAINT TRIGGER memory_declares_proxiima_core_agent_note_v1
-                     AFTER INSERT OR UPDATE OF sidecar_tables ON proxiima_core.memory
-                     {deferral}
-                     FOR EACH ROW
-                     {when}
-                     EXECUTE FUNCTION \
-                         proxiima_core.assert_declared_sidecar_present({args})"
+                     AFTER INSERT OR UPDATE OF sidecar_tables ON proxiima_core.memory ",
             );
-            // SQL-POLICY: fixed-fragment — every part comes from the fixed
-            // table of damaged shapes above.
-            sqlx::raw_sql(sqlx::AssertSqlSafe(ddl))
-                .execute(pool)
-                .await?;
+            ddl.push(deferral).push(" FOR EACH ROW ").push(when);
+            ddl.push(" EXECUTE FUNCTION proxiima_core.assert_declared_sidecar_present(");
+            ddl.push(args).push(")");
+            sqlx::raw_sql(ddl).execute(pool).await?;
             let err = proxiima_storage_pg::integrity::ensure_declaration_triggers(pool, &sidecars)
                 .await
                 .expect_err(why)
@@ -2795,8 +2788,7 @@ async fn a_key_repoint_onto_an_undeclared_memory_is_refused() {
             proxiima_storage_pg::integrity::key_repoint_trigger(TABLE, KEY)
                 .expect("the generator emits the UPDATE guard"),
         ] {
-            // SQL-POLICY: generated
-            sqlx::query(sqlx::AssertSqlSafe(artifact.forward))
+            sqlx::query(artifact.forward)
                 .execute(pool)
                 .await?;
         }
@@ -2892,14 +2884,12 @@ async fn the_boot_guardrail_ignores_the_callers_session_settings() {
             "search_path TO proxiima_core, public",
             "quote_all_identifiers TO on",
         ] {
-            // SQL-POLICY: fixed-fragment — the only interpolations are the
-            // uuid-derived database name this test created and a literal from
-            // the list above.
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "ALTER DATABASE {db_name} SET {setting}"
-            )))
-            .execute(pool)
-            .await?;
+            let mut alter = SqlText::new("ALTER DATABASE ");
+            alter
+                .push_ident(&PgIdent::name(&db_name)?)
+                .push(" SET ")
+                .push(setting);
+            sqlx::query(alter).execute(pool).await?;
         }
 
         let (runtime_url, _) = proxiima_pg_testkit::split_role_urls(&db_name).await?;
@@ -3012,10 +3002,7 @@ async fn the_boot_guardrail_accepts_a_sidecar_keyed_on_something_other_than_t() 
             proxiima_storage_pg::integrity::presence_trigger(TABLE, KEY)?,
             proxiima_storage_pg::integrity::delete_guard_trigger(TABLE, KEY)?,
         ] {
-            // SQL-POLICY: generated
-            sqlx::raw_sql(sqlx::AssertSqlSafe(artifact.forward))
-                .execute(pool)
-                .await?;
+            sqlx::raw_sql(artifact.forward).execute(pool).await?;
         }
 
         proxiima_storage_pg::integrity::ensure_declaration_triggers(pool, &sidecars)
@@ -3078,8 +3065,7 @@ async fn the_trigger_reads_the_declared_key_column_of_a_renamed_sidecar() {
         .await?;
         let artifact = proxiima_storage_pg::integrity::declaration_trigger(TABLE, KEY)
             .expect("the generator emits a trigger for a renamed key");
-        // SQL-POLICY: generated
-        sqlx::query(sqlx::AssertSqlSafe(artifact.forward))
+        sqlx::query(artifact.forward)
             .execute(pool)
             .await?;
 

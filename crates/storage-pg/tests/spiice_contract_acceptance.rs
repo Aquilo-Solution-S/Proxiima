@@ -7,7 +7,7 @@
 
 use proxiima_core::spiice::{Enforcement, EraseLeg, SLOT_DEFAULT, TransferRule};
 use proxiima_core::verbs::schema::PayloadKind;
-use proxiima_core::{SPIICE_0, SpiiceRegistry};
+use proxiima_core::{PgIdent, SPIICE_0, SpiiceRegistry, SqlText};
 use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{TestNote, create_core_db, create_user};
@@ -433,11 +433,15 @@ async fn each_recipe_reproduces_the_bytes_the_shipped_path_embeds() {
                 .unwrap_or_else(|| panic!("{schema_id}: {table} declares its memory key"));
 
             // What the recipe says to read, read literally.
-            // SQL-POLICY: fixed-fragment — `table`, `key` and `column` are
-            // `&'static str` off the compiled-in contract, not runtime input.
-            let recipe_text: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT c.{column} FROM {table} c WHERE c.{key} = $1"
-            )))
+            let mut recipe_sql = SqlText::new("SELECT c.");
+            recipe_sql
+                .push_ident(&PgIdent::column(column).expect("recipe column"))
+                .push(" FROM ")
+                .push_ident(&PgIdent::table(table).expect("recipe table"))
+                .push(" c WHERE c.")
+                .push_ident(&PgIdent::column(key).expect("memory key column"))
+                .push(" = $1");
+            let recipe_text: Option<String> = sqlx::query_scalar(recipe_sql)
             .bind(t)
             .fetch_one(pool)
             .await?;

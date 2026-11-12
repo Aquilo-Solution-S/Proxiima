@@ -17,7 +17,7 @@ use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
     AccessCeiling, AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GoalAccess,
     GroupId, MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId, SchemaVersion, SourceId,
-    StorageError, UserId,
+    SqlText, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::{
@@ -416,11 +416,15 @@ async fn fresh_owner_erase_pg() -> (String, PgStorage) {
 }
 
 async fn install_memory_insert_gate(pool: &PgPool, key: i64) -> Result<(), sqlx::Error> {
-    let sql = format!(
+    let mut sql = SqlText::new(
         "CREATE OR REPLACE FUNCTION public.test_owner_erase_memory_insert_gate()
          RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
-             PERFORM pg_advisory_xact_lock({key});
+             PERFORM pg_advisory_xact_lock(",
+    );
+    sql.push_i64(key);
+    sql.push(
+        ");
              RETURN NEW;
          END
          $$;
@@ -428,20 +432,22 @@ async fn install_memory_insert_gate(pool: &PgPool, key: i64) -> Result<(), sqlx:
              ON proxiima_core.memory;
          CREATE TRIGGER test_owner_erase_memory_insert_gate
          AFTER INSERT ON proxiima_core.memory
-         FOR EACH ROW EXECUTE FUNCTION public.test_owner_erase_memory_insert_gate();"
+         FOR EACH ROW EXECUTE FUNCTION public.test_owner_erase_memory_insert_gate();",
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-        .execute(pool)
-        .await?;
+    sqlx::raw_sql(sql).execute(pool).await?;
     Ok(())
 }
 
 async fn install_goal_insert_gate(pool: &PgPool, key: i64) -> Result<(), sqlx::Error> {
-    let sql = format!(
+    let mut sql = SqlText::new(
         "CREATE OR REPLACE FUNCTION public.test_owner_erase_goal_insert_gate()
          RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
-             PERFORM pg_advisory_xact_lock({key});
+             PERFORM pg_advisory_xact_lock(",
+    );
+    sql.push_i64(key);
+    sql.push(
+        ");
              RETURN NEW;
          END
          $$;
@@ -449,20 +455,22 @@ async fn install_goal_insert_gate(pool: &PgPool, key: i64) -> Result<(), sqlx::E
              ON proxiima_core.goal;
          CREATE TRIGGER test_owner_erase_goal_insert_gate
          AFTER INSERT ON proxiima_core.goal
-         FOR EACH ROW EXECUTE FUNCTION public.test_owner_erase_goal_insert_gate();"
+         FOR EACH ROW EXECUTE FUNCTION public.test_owner_erase_goal_insert_gate();",
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-        .execute(pool)
-        .await?;
+    sqlx::raw_sql(sql).execute(pool).await?;
     Ok(())
 }
 
 async fn install_transfer_update_gate(pool: &PgPool, key: i64) -> Result<(), sqlx::Error> {
-    let sql = format!(
+    let mut sql = SqlText::new(
         "CREATE OR REPLACE FUNCTION public.test_owner_erase_transfer_gate()
          RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
-             PERFORM pg_advisory_xact_lock({key});
+             PERFORM pg_advisory_xact_lock(",
+    );
+    sql.push_i64(key);
+    sql.push(
+        ");
              RETURN NEW;
          END
          $$;
@@ -472,11 +480,9 @@ async fn install_transfer_update_gate(pool: &PgPool, key: i64) -> Result<(), sql
          BEFORE UPDATE OF owner_id ON proxiima_core.memory
          FOR EACH ROW
          WHEN (OLD.owner_id IS DISTINCT FROM NEW.owner_id)
-         EXECUTE FUNCTION public.test_owner_erase_transfer_gate();"
+         EXECUTE FUNCTION public.test_owner_erase_transfer_gate();",
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-        .execute(pool)
-        .await?;
+    sqlx::raw_sql(sql).execute(pool).await?;
     Ok(())
 }
 

@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use proxiima_core::SqlText;
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::verbs::fact_ingest::FactIngestOutcome;
 use proxiima_core::{
@@ -764,14 +765,10 @@ async fn load_pin_ids(
     t: uuid::Uuid,
     field: MemoryPinField,
 ) -> Result<Vec<uuid::Uuid>, StorageError> {
-    let sql = [
-        "SELECT unnest(",
-        &crate::pin_fields::pin_ids("", field),
-        ") FROM proxiima_core.memory_including_forgotten WHERE t = $1",
-    ]
-    .concat();
-    // SQL-POLICY: fixed-fragment
-    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+    let mut sql = SqlText::new("SELECT unnest(");
+    sql.push_text(&crate::pin_fields::pin_ids("", field))
+        .push(") FROM proxiima_core.memory_including_forgotten WHERE t = $1");
+    sqlx::query_scalar(sql)
         .bind(t)
         .fetch_all(&mut **tx)
         .await

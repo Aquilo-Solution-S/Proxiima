@@ -11,7 +11,7 @@ fn memory_insert_sql_validates_identifiers() {
     .unwrap();
 
     assert_eq!(
-        sql,
+        sql.as_str(),
         "INSERT INTO proxiima_core.agent_note_v1 (memory_id, title, tags) \
              VALUES ($1, $2::text, $3)"
     );
@@ -46,7 +46,7 @@ fn memory_select_batch_sql_validates_identifiers() {
     .unwrap();
 
     assert_eq!(
-        sql,
+        sql.as_str(),
         "SELECT memory_id, title, tags FROM proxiima_core.agent_note_v1 \
              WHERE memory_id = ANY($1)"
     );
@@ -60,7 +60,7 @@ fn memory_select_batch_sql_validates_identifiers() {
         &["state::text AS state"],
     )
     .unwrap();
-    assert!(enum_sql.contains("state::text AS state"));
+    assert!(enum_sql.as_str().contains("state::text AS state"));
     // The table and key column are still validated as identifiers.
     assert!(memory_select_batch_sql("bad table;", "memory_id", &["title"]).is_err());
     assert!(
@@ -253,6 +253,7 @@ fn memory_insert_sql_stamps_owner_for_follows() {
         memory_insert_sql("public.follows_stamp_v1", "t", &[("mark", None)], true).unwrap();
     let none = memory_insert_sql("public.follows_stamp_v1", "t", &[("mark", None)], false).unwrap();
     assert_eq!(follows, pinned);
+    let (follows, none) = (follows.as_str(), none.as_str());
     assert!(
         follows.contains("owner_id")
             && follows.contains("SELECT $1, m.owner_id")

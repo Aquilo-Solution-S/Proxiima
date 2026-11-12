@@ -20,6 +20,7 @@
 
 use std::time::Duration;
 
+use proxiima_core::{PgIdent, SqlText};
 use proxiima_pg_testkit::{DbGuard, admin_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
@@ -83,13 +84,15 @@ async fn a_serving_boot_validates_on_one_connection_per_pool() {
         backends(&admin, &name).await.is_empty(),
         "the migration pool's connections closed"
     );
-    // SQL-POLICY: fixed-fragment — the database name is this test's own uuid-v7 name.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "ALTER DATABASE \"{name}\" CONNECTION LIMIT {CAP}"
-    )))
-    .execute(&admin)
-    .await
-    .expect("cap the database's connections");
+    let mut cap_sql = SqlText::new("ALTER DATABASE ");
+    cap_sql
+        .push_ident(&PgIdent::quoted(&name).expect("this test's own database name"))
+        .push(" CONNECTION LIMIT ")
+        .push_i64(CAP);
+    sqlx::raw_sql(cap_sql)
+        .execute(&admin)
+        .await
+        .expect("cap the database's connections");
 
     let platform_pool = PgPoolOptions::new()
         .max_connections(10)

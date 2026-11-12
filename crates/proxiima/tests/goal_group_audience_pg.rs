@@ -452,12 +452,10 @@ async fn the_runtime_may_not_name_the_person_whose_grants_it_reads() {
     let runtime = example_engine::fixture_pool(h.db.runtime_url(), 1)
         .await
         .expect("runtime pool");
-    // SQL-POLICY: fixed-fragment (closed literal probe statements)
     sqlx::query("SELECT count(*) FROM proxiima_core.goal_grants_held()")
         .execute(&runtime)
         .await
         .expect("the bound person's own grants");
-    // SQL-POLICY: fixed-fragment (closed literal probe statements)
     sqlx::query("SELECT count(*) FROM proxiima_core.goal_grants_of(gen_random_uuid())")
         .execute(&runtime)
         .await
@@ -539,7 +537,6 @@ async fn owners_granting_on_each_others_goals_do_not_deadlock() {
         };
         let held = if hold_lower { lower } else { upper };
         let mut gate = h.pool.begin().await.expect("gate");
-        // SQL-POLICY: fixed-fragment (closed literal advisory-lock probe)
         sqlx::query(
             "SELECT pg_advisory_xact_lock(hashtextextended('proxiima-owner-kind:' || $1::uuid::text, 0))",
         )

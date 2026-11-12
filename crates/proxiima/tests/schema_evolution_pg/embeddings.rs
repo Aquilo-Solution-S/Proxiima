@@ -101,8 +101,7 @@ fn embedded_migrator() -> Migrator {
         EMBEDDED_ANCHOR,
         Cow::Borrowed("evolution test projection"),
         MigrationType::Simple,
-        // SQL-POLICY: generated — the projection declaration owns all DDL.
-        sqlx::AssertSqlSafe(projection.render()).into_sql_str(),
+        projection.render().into_sql_str(),
         false,
     ));
     migrations

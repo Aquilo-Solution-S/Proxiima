@@ -22,12 +22,9 @@ fn source(shared: bool) -> NamedMigrator {
             VERSION,
             Cow::Borrowed("assignment baseline"),
             MigrationType::Simple,
-            sqlx::AssertSqlSafe(
-                "DROP TABLE IF EXISTS public.assignment_fixture; \
-                 CREATE TABLE public.assignment_fixture (id int PRIMARY KEY)"
-                    .to_owned(),
-            )
-            .into_sql_str(),
+            "DROP TABLE IF EXISTS public.assignment_fixture; \
+             CREATE TABLE public.assignment_fixture (id int PRIMARY KEY)"
+                .into_sql_str(),
             false,
         )]),
         ..Migrator::DEFAULT

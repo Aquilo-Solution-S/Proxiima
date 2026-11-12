@@ -1,7 +1,7 @@
 //! Work bound for the substring arm under the shipped RLS policies (#490).
 
 use proxiima_core::verbs::query::like_pattern;
-use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId};
+use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, SqlText, UserId};
 use proxiima_storage_pg::begin_owner_transaction;
 use proxiima_storage_pg::verbs::query::substring_candidate_sql_for_tests;
 use sqlx::{PgPool, Row};
@@ -200,12 +200,13 @@ async fn run_candidates_on(
         .collect();
     let sql = substring_candidate_sql_for_tests(registry.search_projections(), false).unwrap();
     let sql = if explain {
-        format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}")
+        let mut explained = SqlText::new("EXPLAIN (ANALYZE, FORMAT JSON) ");
+        explained.push_text(&sql);
+        explained
     } else {
         sql
     };
-    // SQL-POLICY: fixed-fragment — the closed production substring builder.
-    sqlx::query(sqlx::AssertSqlSafe(sql))
+    sqlx::query(sql)
         .bind(like_pattern(query))
         .bind(20_i64)
         .bind(None::<Vec<String>>)

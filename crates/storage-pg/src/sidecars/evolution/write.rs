@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use proxiima_core::{MemoryId, StorageError};
+use proxiima_core::{MemoryId, PgIdent, SqlText, StorageError};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
@@ -8,7 +8,6 @@ use super::target_rows;
 use super::{MigrationInput, MigrationPlan, PgSchemaEvolution, refused};
 use crate::error::map_err;
 use crate::pg_enums::{PgMemoryKind, PgSketchKind};
-use crate::pg_ident::PgIdent;
 use crate::sidecars::{PgSidecarEntry, PgSidecarRegistryFrozen};
 
 /// Materialize one owner's target records after the authority rows for the
@@ -381,20 +380,23 @@ async fn remove_replaced_goal_sidecars(
         };
         let table = PgIdent::table(surface.table)?;
         let column = PgIdent::column(column)?;
-        // SQL-POLICY: source surfaces and key columns are frozen contracts.
-        let sql = format!(
-            "DELETE FROM {} WHERE {}=$1",
-            table.as_str(),
-            column.as_str()
-        );
-        // SQL-POLICY: PgIdent
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        sqlx::query(delete_where_eq(&table, &column))
             .bind(value)
             .execute(&mut **tx)
             .await
             .map_err(map_err)?;
     }
     Ok(())
+}
+
+/// `DELETE FROM table WHERE column=$1`.
+fn delete_where_eq(table: &PgIdent, column: &PgIdent) -> SqlText {
+    let mut sql = SqlText::new("DELETE FROM ");
+    sql.push_ident(table)
+        .push(" WHERE ")
+        .push_ident(column)
+        .push("=$1");
+    sql
 }
 
 async fn remove_replaced_memory_sidecars(
@@ -418,13 +420,7 @@ async fn remove_replaced_memory_sidecars(
             })
             .ok_or_else(|| refused("source sidecar has no typed memory key column"))?;
         let column = PgIdent::column(column_name)?;
-        let sql = format!(
-            "DELETE FROM {} WHERE {}=$1",
-            table.as_str(),
-            column.as_str()
-        );
-        // SQL-POLICY: PgIdent
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        sqlx::query(delete_where_eq(&table, &column))
             .bind(target.id)
             .execute(&mut **tx)
             .await
@@ -443,17 +439,30 @@ async fn remove_stale_projection(
         return Ok(());
     };
     let table = PgIdent::table(projection_table)?;
-    // SQL-POLICY: projection table is a frozen contract identifier.
-    let sql = format!(
-        "DELETE FROM {} WHERE memory_id=$1 AND schema_id<>$2",
-        table.as_str()
-    );
-    // SQL-POLICY: PgIdent
-    sqlx::query(sqlx::AssertSqlSafe(sql))
+    let mut sql = SqlText::new("DELETE FROM ");
+    sql.push_ident(&table)
+        .push(" WHERE memory_id=$1 AND schema_id<>$2");
+    sqlx::query(sql)
         .bind(memory_id)
         .bind(schema_id)
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod delete_text_tests {
+    use super::delete_where_eq;
+    use proxiima_core::PgIdent;
+
+    #[test]
+    fn the_delete_names_the_checked_table_and_column() {
+        let table = PgIdent::table("proxiima_fixture.note_v1").unwrap();
+        let column = PgIdent::column("memory_id").unwrap();
+        assert_eq!(
+            delete_where_eq(&table, &column).as_str(),
+            "DELETE FROM proxiima_fixture.note_v1 WHERE memory_id=$1"
+        );
+    }
 }

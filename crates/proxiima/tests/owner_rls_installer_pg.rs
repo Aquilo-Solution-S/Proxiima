@@ -9,7 +9,7 @@ mod example_engine;
 use example_engine::ExampleEngine;
 use proxiima::{FactPayload, FactWrite};
 use proxiima_core::{
-    AuthPath, AuthzContext, OwnerId, StorageError, StorageRule, UserId,
+    AuthPath, AuthzContext, OwnerId, SqlText, StorageError, StorageRule, UserId,
     test_fixtures::{authenticated_context, owner_scope_for_tests},
 };
 use proxiima_example::StampV1;
@@ -238,17 +238,15 @@ async fn assert_parent_refusals(conn: &mut PgConnection) {
     ];
     for (tables, fk_parent, refusal, accepted) in cases {
         let mut tx = conn.begin().await.expect("probe transaction");
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE SCHEMA probe; {tables}"
-        )))
-        .execute(&mut *tx)
-        .await
-        .expect("probe tables");
-        let result = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "SELECT proxiima_core.install_owner_rls('probe', '{{}}', {fk_parent}, '{{}}')"
-        )))
-        .execute(&mut *tx)
-        .await;
+        let mut create = SqlText::new("CREATE SCHEMA probe; ");
+        create.push(tables);
+        sqlx::raw_sql(create)
+            .execute(&mut *tx)
+            .await
+            .expect("probe tables");
+        let mut install = SqlText::new("SELECT proxiima_core.install_owner_rls('probe', '{}', ");
+        install.push(fk_parent).push(", '{}')");
+        let result = sqlx::raw_sql(install).execute(&mut *tx).await;
         if refusal.is_empty() {
             result.expect("an FK on the key, or the only FK, names the owner");
             for (table, fragment) in accepted {
@@ -312,17 +310,16 @@ async fn assert_memory_owner_refusals(conn: &mut PgConnection) {
     ];
     for (tables, memory_owner, refusal, accepted) in cases {
         let mut tx = conn.begin().await.expect("probe transaction");
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE SCHEMA probe; {tables}"
-        )))
-        .execute(&mut *tx)
-        .await
-        .expect("probe tables");
-        let result = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "SELECT proxiima_core.install_owner_rls('probe', '{{}}', '{{}}', '{{}}', {memory_owner})"
-        )))
-        .execute(&mut *tx)
-        .await;
+        let mut create = SqlText::new("CREATE SCHEMA probe; ");
+        create.push(tables);
+        sqlx::raw_sql(create)
+            .execute(&mut *tx)
+            .await
+            .expect("probe tables");
+        let mut install =
+            SqlText::new("SELECT proxiima_core.install_owner_rls('probe', '{}', '{}', '{}', ");
+        install.push(memory_owner).push(")");
+        let result = sqlx::raw_sql(install).execute(&mut *tx).await;
         if refusal.is_empty() {
             result.expect("one memory names each row");
             for (table, fragment) in accepted {

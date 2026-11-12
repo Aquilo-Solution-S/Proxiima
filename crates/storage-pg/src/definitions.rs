@@ -1,9 +1,6 @@
 //! The mutable core functions, triggers, policies and views pass.
 
-use std::borrow::Cow;
-use std::fmt::Write as _;
-
-use proxiima_core::{RELEASE_VERSION, Relation, StorageError};
+use proxiima_core::{PgIdent, RELEASE_VERSION, Relation, SqlText, StorageError};
 use sha2::{Digest, Sha384};
 use sqlx::PgConnection;
 
@@ -25,26 +22,8 @@ pub const VECTOR: &str = include_str!("../definitions/vector.sql");
 /// definitions, so a change to a relation's role re-applies them.
 #[doc(hidden)]
 #[must_use]
-pub fn relation_roles_sql() -> String {
-    let rows = Relation::ALL
-        .map(|relation| {
-            let role = relation.role();
-            format!(
-                "('{relation}'::proxiima_core.membership_relation, \
-                 '{read}'::proxiima_core.memory_ceiling, \
-                 '{write}'::proxiima_core.memory_ceiling, \
-                 '{goals}'::proxiima_core.goal_access, {administers}, {manage})",
-                read = role.read_ceiling().as_str(),
-                write = role.write_ceiling().as_str(),
-                goals = role.goals().as_str(),
-                administers = role.administers(),
-                manage = role.manages(),
-            )
-        })
-        .join(",\n           ");
-    let mut sql = String::new();
-    let _ = write!(
-        sql,
+pub fn relation_roles_sql() -> SqlText {
+    let mut sql = SqlText::new(
         "-- Generated from Relation::ALL and Relation::role().
 CREATE OR REPLACE FUNCTION proxiima_core.relation_roles()
  RETURNS TABLE(relation proxiima_core.membership_relation,
@@ -54,25 +33,47 @@ CREATE OR REPLACE FUNCTION proxiima_core.relation_roles()
  LANGUAGE sql IMMUTABLE
  SET search_path TO 'pg_catalog', 'pg_temp'
 AS $function$
-    VALUES {rows}
+    VALUES ",
+    );
+    for (index, relation) in Relation::ALL.into_iter().enumerate() {
+        let role = relation.role();
+        if index > 0 {
+            sql.push(",\n           ");
+        }
+        sql.push("('")
+            .push(relation.as_str())
+            .push("'::proxiima_core.membership_relation, '")
+            .push(role.read_ceiling().as_str())
+            .push("'::proxiima_core.memory_ceiling, '")
+            .push(role.write_ceiling().as_str())
+            .push("'::proxiima_core.memory_ceiling, '")
+            .push(role.goals().as_str())
+            .push("'::proxiima_core.goal_access, ")
+            .push(if role.administers() { "true" } else { "false" })
+            .push(", ")
+            .push(if role.manages() { "true" } else { "false" })
+            .push(")");
+    }
+    sql.push(
+        "
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.relation_roles() FROM PUBLIC;
-"
+",
     );
     sql
 }
 
 /// The definitions a store of this kind holds, in application order.
-fn files(vectors: VectorStorage) -> Vec<Cow<'static, str>> {
+fn files(vectors: VectorStorage) -> Vec<SqlText> {
     let mut files = vec![
-        Cow::Owned(relation_roles_sql()),
-        Cow::Borrowed(FUNCTIONS),
-        Cow::Borrowed(TRIGGERS),
-        Cow::Borrowed(POLICIES),
-        Cow::Borrowed(VIEWS),
+        relation_roles_sql(),
+        SqlText::new(FUNCTIONS),
+        SqlText::new(TRIGGERS),
+        SqlText::new(POLICIES),
+        SqlText::new(VIEWS),
     ];
     if vectors == VectorStorage::Local {
-        files.push(Cow::Borrowed(VECTOR));
+        files.push(SqlText::new(VECTOR));
     }
     files
 }
@@ -83,7 +84,7 @@ fn checksum(vectors: VectorStorage) -> Vec<u8> {
         if index > 0 {
             digest.update([0]);
         }
-        digest.update(sql.as_bytes());
+        digest.update(sql.as_str().as_bytes());
     }
     digest.finalize().to_vec()
 }
@@ -174,6 +175,24 @@ pub fn checksum_hex(vectors: VectorStorage) -> String {
         .collect()
 }
 
+/// Every table of the core schema, locked by the server, which quotes each
+/// name itself (`%I`): the statement carries no name of ours.
+const LOCK_CORE_TABLES_SQL: &str = "DO $$
+DECLARE
+    core_table record;
+BEGIN
+    FOR core_table IN
+        SELECT n.nspname, c.relname
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r', 'p')
+         ORDER BY c.relname
+    LOOP
+        EXECUTE format('LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE',
+                       core_table.nspname, core_table.relname);
+    END LOOP;
+END
+$$";
+
 /// Replace the definitions in the caller's migration transaction when needed.
 ///
 /// # Errors
@@ -187,43 +206,31 @@ pub(crate) async fn apply(
     if current_matches_with_policy(connection, policy, vectors).await? {
         return Ok(());
     }
-    let tables: Vec<String> = sqlx::query_scalar(
-        "SELECT format('%I.%I', n.nspname, c.relname)
-           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r', 'p')
-          ORDER BY c.relname",
-    )
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(internal)?;
-    for table in tables {
-        // SQL-POLICY: fixed-fragment — PostgreSQL format('%I') quotes catalog identifiers.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "LOCK TABLE {table} IN SHARE ROW EXCLUSIVE MODE"
-        )))
+    sqlx::raw_sql(LOCK_CORE_TABLES_SQL)
         .execute(&mut *connection)
         .await
         .map_err(internal)?;
-    }
     sqlx::query("SET LOCAL check_function_bodies = off")
         .execute(&mut *connection)
         .await
         .map_err(internal)?;
     for sql in files(vectors) {
-        // SQL-POLICY: fixed-fragment — the embedded definitions files and the text rendered from the closed `Relation` set.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.into_owned()))
+        sqlx::raw_sql(sql)
             .execute(&mut *connection)
             .await
             .map_err(internal)?;
     }
-    let checksum = checksum_hex(vectors);
-    // SQL-POLICY: fixed-fragment — generated hex checksum and compiled release constant.
-    let record = format!(
+    let mut record = SqlText::new(
         "CREATE OR REPLACE FUNCTION proxiima_core.definitions_applied()
          RETURNS TABLE(checksum text, release text) LANGUAGE sql IMMUTABLE
-         AS $$ SELECT '{checksum}'::text, '{RELEASE_VERSION}'::text $$"
+         AS $$ SELECT '",
     );
-    sqlx::raw_sql(sqlx::AssertSqlSafe(record))
+    record
+        .push_hex(&checksum(vectors))
+        .push("'::text, '")
+        .push(RELEASE_VERSION)
+        .push("'::text $$");
+    sqlx::raw_sql(record)
         .execute(&mut *connection)
         .await
         .map_err(internal)?;
@@ -286,25 +293,24 @@ pub(crate) async fn validate_historical_release(
     connection: &mut PgConnection,
     policy: crate::MissingMigrationPolicy,
 ) -> Result<(), StorageError> {
-    let function = format!(
+    let function = PgIdent::table(&format!(
         "{}core.definitions_applied",
         crate::rename_bootstrap::historical_namespace_prefix()
-    );
+    ))?;
     let exists: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
-        .bind(format!("{function}()"))
+        .bind(format!("{}()", function.as_str()))
         .fetch_one(&mut *connection)
         .await
         .map_err(internal)?;
     if !exists {
         return Ok(());
     }
-    // SQL-POLICY: fixed-fragment — namespace derived only from embedded historical SQL.
-    let release: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT release FROM {function}()"
-    )))
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(internal)?;
+    let mut read = SqlText::new("SELECT release FROM ");
+    read.push_ident(&function).push("()");
+    let release: Option<String> = sqlx::query_scalar(read)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(internal)?;
     if let Some(release) = release {
         let recorded = Release::parse(&release)?;
         let binary = Release::parse(RELEASE_VERSION)?;
@@ -319,7 +325,32 @@ pub(crate) async fn validate_historical_release(
 
 #[cfg(test)]
 mod tests {
-    use super::Release;
+    use super::{LOCK_CORE_TABLES_SQL, Release};
+    use crate::test_fixtures::fresh_pg;
+
+    /// The one static statement locks every core table, quoted by the server.
+    #[tokio::test]
+    async fn the_lock_statement_locks_every_core_table() {
+        let (pg, _db) = fresh_pg("definitions_lock").await;
+        let mut tx = pg.pool_for_tests().begin().await.expect("begin");
+        sqlx::raw_sql(LOCK_CORE_TABLES_SQL)
+            .execute(&mut *tx)
+            .await
+            .expect("lock the core tables");
+        let (tables, locked): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r', 'p')),
+                    (SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'proxiima_core' AND c.relkind IN ('r', 'p')
+                        AND l.pid = pg_backend_pid() AND l.mode = 'ShareRowExclusiveLock')",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("count");
+        assert!(tables > 0, "the core schema has tables");
+        assert_eq!(locked, tables);
+    }
 
     #[test]
     fn release_parser_refuses_malformed_database_values() {

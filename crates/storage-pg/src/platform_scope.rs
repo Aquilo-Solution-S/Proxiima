@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use proxiima_core::StorageError;
-use sqlx::{AssertSqlSafe, PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::error::map_err;
 
@@ -286,14 +286,12 @@ pub(crate) async fn set_local_lock_timeout(
     connection: &mut sqlx::PgConnection,
     timeout: Duration,
 ) -> Result<(), StorageError> {
-    // SQL-POLICY: fixed-fragment — interpolates only a millisecond count.
-    sqlx::query(AssertSqlSafe(format!(
-        "SET LOCAL lock_timeout = '{}ms'",
-        timeout.as_millis()
-    )))
-    .execute(&mut *connection)
-    .await
-    .map_err(map_err)?;
+    let mut sql = proxiima_core::SqlText::new("SET LOCAL lock_timeout = '");
+    sql.push_u64(millis(timeout)).push("ms'");
+    sqlx::query(sql)
+        .execute(&mut *connection)
+        .await
+        .map_err(map_err)?;
     Ok(())
 }
 

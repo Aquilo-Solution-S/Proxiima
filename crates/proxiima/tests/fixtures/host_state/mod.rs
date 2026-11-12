@@ -97,7 +97,7 @@ impl SpiiceBundle for HostFixtureApp {
 
     fn migrators() -> Vec<NamedMigrator> {
         let mut migrator = sqlx::migrate!("tests/fixtures/host_state/migrations");
-        migrator.dangerous_set_table_name("public._sqlx_migrations_host_fixture");
+        migrator.dangerous_set_table_name("public.\"Host_Ledger\"");
         migrator.set_ignore_missing(true);
         vec![NamedMigrator::new("host_fixture", migrator)]
     }

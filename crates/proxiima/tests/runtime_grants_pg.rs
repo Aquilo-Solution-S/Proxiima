@@ -9,13 +9,14 @@ use proxiima::{
     company_owner,
 };
 use proxiima_core::{
-    AgentNoteV1, AuthPath, AuthzContext, OwnerId, Role, SpiiceRegistry, SpiiceRegistryError, UserId,
+    AgentNoteV1, AuthPath, AuthzContext, OwnerId, PgIdent, Role, SpiiceRegistry,
+    SpiiceRegistryError, SqlText, UserId,
 };
 use proxiima_pg_testkit::{
-    admin_url, create_db, db_url, drop_db, provision_goal_reader, quoted_ident, unique_db_name,
+    admin_url, create_db, db_url, drop_db, provision_goal_reader, unique_db_name,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{AssertSqlSafe, ConnectOptions, PgPool};
+use sqlx::{ConnectOptions, PgPool, SqlSafeStr};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -66,11 +67,13 @@ struct Fixture {
     platform_url: String,
 }
 
-async fn exec(pool: &PgPool, sql: impl Into<String>) {
-    sqlx::raw_sql(AssertSqlSafe(sql.into()))
-        .execute(pool)
-        .await
-        .expect("fixture SQL");
+/// A generated fixture name as quoted SQL text.
+fn quoted(name: &str) -> SqlText {
+    SqlText::from(&PgIdent::quoted(name).expect("a generated fixture name"))
+}
+
+async fn exec(pool: &PgPool, sql: impl SqlSafeStr) {
+    sqlx::raw_sql(sql).execute(pool).await.expect("fixture SQL");
 }
 
 fn role_url(database: &str, role: &str, password: &str) -> String {
@@ -109,30 +112,30 @@ async fn setup() -> Fixture {
     let platform = format!("rtg_platform_{suffix}");
     let runtime = format!("rtg_runtime_{suffix}");
     let password = format!("pw_{suffix}");
-    // SQL-POLICY: fixed-fragment — generated role identifiers are quoted; the
-    // password is a generated hex fixture value.
-    exec(
-        &admin,
-        format!(
-            "CREATE ROLE {} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS NOINHERIT; \
-             CREATE ROLE {} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS NOINHERIT",
-            quoted_ident(&platform),
-            quoted_ident(&runtime),
-        ),
-    )
-    .await;
-    // SQL-POLICY: fixed-fragment — generated database and role identifiers are quoted.
-    exec(
-        &admin,
-        format!(
-            "GRANT CREATE ON DATABASE {} TO {p}; GRANT USAGE, CREATE ON SCHEMA public TO {p}; \
-             GRANT USAGE ON SCHEMA public TO proxiima_search; \
-             GRANT proxiima_search TO {p} WITH INHERIT FALSE, SET TRUE",
-            quoted_ident(&database),
-            p = quoted_ident(&platform),
-        ),
-    )
-    .await;
+    let mut password_literal = SqlText::new("");
+    password_literal
+        .push_literal(&password)
+        .expect("a generated fixture password");
+    let create_roles = SqlText::fill(
+        "CREATE ROLE {platform} LOGIN PASSWORD {password} NOSUPERUSER NOBYPASSRLS NOINHERIT; \
+         CREATE ROLE {runtime} LOGIN PASSWORD {password} NOSUPERUSER NOBYPASSRLS NOINHERIT",
+        &[
+            ("{platform}", &quoted(&platform)),
+            ("{runtime}", &quoted(&runtime)),
+            ("{password}", &password_literal),
+        ],
+    );
+    exec(&admin, create_roles).await;
+    let grants = SqlText::fill(
+        "GRANT CREATE ON DATABASE {database} TO {p}; GRANT USAGE, CREATE ON SCHEMA public TO {p}; \
+         GRANT USAGE ON SCHEMA public TO proxiima_search; \
+         GRANT proxiima_search TO {p} WITH INHERIT FALSE, SET TRUE",
+        &[
+            ("{database}", &quoted(&database)),
+            ("{p}", &quoted(&platform)),
+        ],
+    );
+    exec(&admin, grants).await;
     provision_goal_reader(&admin, &platform, &runtime)
         .await
         .expect("goal reader fixture role");
@@ -154,16 +157,14 @@ async fn cleanup(fixture: Fixture) {
     let control = PgPool::connect(&admin_url())
         .await
         .expect("control connection");
-    // SQL-POLICY: fixed-fragment — uniquely generated fixture roles, quoted identifiers.
-    exec(
-        &control,
-        format!(
-            "DROP ROLE IF EXISTS {}; DROP ROLE IF EXISTS {}",
-            quoted_ident(&fixture.runtime),
-            quoted_ident(&fixture.platform)
-        ),
-    )
-    .await;
+    let drop_roles = SqlText::fill(
+        "DROP ROLE IF EXISTS {runtime}; DROP ROLE IF EXISTS {platform}",
+        &[
+            ("{runtime}", &quoted(&fixture.runtime)),
+            ("{platform}", &quoted(&fixture.platform)),
+        ],
+    );
+    exec(&control, drop_roles).await;
     control.close().await;
 }
 
@@ -435,15 +436,9 @@ async fn boot_refuses_unsafe_runtime_privileges_in_a_composed_spiice_schema() {
         .shutdown()
         .await;
 
-    // SQL-POLICY: fixed-fragment — the generated fixture role is identifier-quoted.
-    exec(
-        &fixture.admin,
-        format!(
-            "GRANT TRUNCATE ON proxiima_example.notebooks TO {}",
-            quoted_ident(&fixture.runtime)
-        ),
-    )
-    .await;
+    let mut grant = SqlText::new("GRANT TRUNCATE ON proxiima_example.notebooks TO ");
+    grant.push_text(&quoted(&fixture.runtime));
+    exec(&fixture.admin, grant).await;
     let error = build(&fixture, owner, false)
         .await
         .expect_err("runtime safety covers linked spiice schemas as well as core");

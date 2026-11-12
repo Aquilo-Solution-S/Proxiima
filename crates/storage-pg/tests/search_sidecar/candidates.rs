@@ -43,8 +43,7 @@ async fn text_candidates(
     owners: &[Uuid],
     window: Option<i64>,
 ) -> Result<Vec<CandidateRow>, sqlx::Error> {
-    // SQL-POLICY: fixed-fragment — a closed leg chooses one fixed function call.
-    sqlx::query_as(sqlx::AssertSqlSafe(leg.sql()))
+    sqlx::query_as(leg.sql())
         .bind(leg.query())
         .bind(window)
         .bind(owners)

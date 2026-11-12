@@ -33,11 +33,12 @@ use proxiima_core::{
     GoalAccess, GroupId, MemoryId, OwnerId, OwnerRoles, Role, SpiiceRegistry, StorageError,
     UploadedBlobPayload, UserId,
 };
+use proxiima_core::{PgIdent, SqlText};
 use proxiima_pg_testkit::{db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures;
 use serde_json::{Value, json};
 use split_core_db::clone_split_core_db;
-use sqlx::{Acquire, AssertSqlSafe, PgPool};
+use sqlx::{Acquire, PgPool};
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -1104,39 +1105,50 @@ const TABLES: &[(&str, Rows)] = &[
 ];
 
 /// Rows of an Abstraction, Perspective or Goal, as the superuser sees them.
-fn above_fact(table: &str, rows: Rows) -> Option<String> {
-    let memory_kind = |join: &str| {
-        format!(
-            "EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE {join} AND m.kind <> 'fact')"
-        )
-    };
-    let predicate = match rows {
-        Rows::Kind => "x.kind::text <> 'fact'".to_owned(),
-        Rows::Goal | Rows::GoalPlatformOnly => "true".to_owned(),
-        Rows::Memory(column) => memory_kind(&format!("m.t = x.{column}")),
-        Rows::Content => memory_kind("m.content_id = x.content_id"),
-        Rows::ClosedHandle => "EXISTS (SELECT 1 FROM proxiima_core.memory_head AS h
-                                WHERE h.handle = x.handle AND h.kind <> 'fact')"
-            .to_owned(),
+fn above_fact(table: &'static str, rows: Rows) -> Option<SqlText> {
+    const ABOVE_FACT_END: &str = " AND m.kind <> 'fact')";
+    let mut sql = SqlText::new("SELECT to_jsonb(x)::text FROM proxiima_core.");
+    sql.push_ident(&table_ident(table)).push(" AS x WHERE ");
+    match rows {
+        Rows::Kind => {
+            sql.push("x.kind::text <> 'fact'");
+        }
+        Rows::Goal | Rows::GoalPlatformOnly => {
+            sql.push("true");
+        }
+        Rows::Memory(column) => {
+            sql.push("EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.t = x.")
+                .push_ident(&PgIdent::column(column).expect("a TABLES column"))
+                .push(ABOVE_FACT_END);
+        }
+        Rows::Content => {
+            sql.push(
+                "EXISTS (SELECT 1 FROM proxiima_core.memory AS m WHERE m.content_id = x.content_id",
+            )
+            .push(ABOVE_FACT_END);
+        }
+        Rows::ClosedHandle => {
+            sql.push(
+                "EXISTS (SELECT 1 FROM proxiima_core.memory_head AS h
+                                WHERE h.handle = x.handle AND h.kind <> 'fact')",
+            );
+        }
         Rows::FactSidecar | Rows::NoKind => return None,
-    };
-    Some(format!(
-        "SELECT to_jsonb(x)::text FROM proxiima_core.{table} AS x WHERE {predicate}"
-    ))
+    }
+    Some(sql)
+}
+
+fn table_ident(table: &str) -> PgIdent {
+    PgIdent::name(table).expect("a TABLES entry is a plain table name")
 }
 
 /// One statement over one row, the row bound as `$1` (its `to_jsonb` text).
 async fn run_on_row(
     connection: &mut sqlx::PgConnection,
-    statement: String,
+    statement: SqlText,
     row: &str,
 ) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
-    // SQL-POLICY: fixed-fragment — table and column names come from TABLES
-    // and pg_attribute; the row is bound.
-    sqlx::query(AssertSqlSafe(statement))
-        .bind(row)
-        .execute(connection)
-        .await
+    sqlx::query(statement).bind(row).execute(connection).await
 }
 
 fn sqlstate(error: &sqlx::Error) -> Option<String> {
@@ -1337,19 +1349,16 @@ async fn assert_fact_scope_sql(
         let Some(query) = above_fact(table, *rows) else {
             continue;
         };
-        // SQL-POLICY: fixed-fragment — names come from TABLES and pg_attribute.
         // The open debt transaction sees its own uncommitted rows; every other
         // table is already committed and visible here under READ COMMITTED.
-        let above: Vec<String> = sqlx::query_scalar(AssertSqlSafe(query))
-            .fetch_all(&mut *debt)
-            .await?;
+        let above: Vec<String> = sqlx::query_scalar(query).fetch_all(&mut *debt).await?;
         if above.is_empty() {
             uncovered.push(*table);
             continue;
         }
         // Writable columns, in order; the first one is the UPDATE target.
         let columns: Vec<String> = sqlx::query_scalar(
-            "SELECT quote_ident(attname) FROM pg_attribute
+            "SELECT attname::text FROM pg_attribute
               WHERE attrelid = format('proxiima_core.%I', $1::text)::regclass
                 AND attnum > 0 AND NOT attisdropped AND attgenerated = ''
               ORDER BY attnum",
@@ -1357,18 +1366,28 @@ async fn assert_fact_scope_sql(
         .bind(table)
         .fetch_all(admin)
         .await?;
+        let columns = columns
+            .iter()
+            .map(|name| PgIdent::quoted(name))
+            .collect::<Result<Vec<_>, _>>()?;
         let column = columns.first().ok_or("a writable column")?;
-        let columns = columns.join(", ");
+        let mut column_list = SqlText::new("");
+        for (position, name) in columns.iter().enumerate() {
+            if position > 0 {
+                column_list.push(", ");
+            }
+            column_list.push_ident(name);
+        }
+        let table_name = table_ident(table);
 
         let mut tx = proxiima_storage_pg::begin_owner_transaction(&runtime, scope).await?;
-        // SQL-POLICY: fixed-fragment — table names come from TABLES.
-        let visible: BTreeSet<String> = sqlx::query_scalar(AssertSqlSafe(format!(
-            "SELECT to_jsonb(x)::text FROM proxiima_core.{table} AS x"
-        )))
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .collect();
+        let mut select_all = SqlText::new("SELECT to_jsonb(x)::text FROM proxiima_core.");
+        select_all.push_ident(&table_name).push(" AS x");
+        let visible: BTreeSet<String> = sqlx::query_scalar(select_all)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .collect();
         for row in &above {
             if !matches!(rows, Rows::GoalPlatformOnly) {
                 assert!(!visible.contains(row), "{table} shows a Fact scope {row}");
@@ -1376,13 +1395,11 @@ async fn assert_fact_scope_sql(
         }
         for row in &above {
             let mut probe = tx.begin().await?;
-            // SQL-POLICY: fixed-fragment — the table name comes from TABLES.
-            let deleted = run_on_row(
-                &mut probe,
-                format!("DELETE FROM proxiima_core.{table} AS x WHERE to_jsonb(x)::text = $1"),
-                row,
-            )
-            .await?;
+            let mut delete = SqlText::new("DELETE FROM proxiima_core.");
+            delete
+                .push_ident(&table_name)
+                .push(" AS x WHERE to_jsonb(x)::text = $1");
+            let deleted = run_on_row(&mut probe, delete, row).await?;
             assert_eq!(
                 deleted.rows_affected(),
                 0,
@@ -1390,15 +1407,18 @@ async fn assert_fact_scope_sql(
             );
             probe.rollback().await?;
             let mut probe = tx.begin().await?;
-            let updated = run_on_row(
-                &mut probe,
-                format!(
-                    "UPDATE proxiima_core.{table} AS x SET {column} = x.{column}
-                      WHERE to_jsonb(x)::text = $1"
-                ),
-                row,
-            )
-            .await?;
+            let mut update = SqlText::new("UPDATE proxiima_core.");
+            update
+                .push_ident(&table_name)
+                .push(" AS x SET ")
+                .push_ident(column)
+                .push(" = x.")
+                .push_ident(column)
+                .push(
+                    "
+                      WHERE to_jsonb(x)::text = $1",
+                );
+            let updated = run_on_row(&mut probe, update, row).await?;
             assert_eq!(
                 updated.rows_affected(),
                 0,
@@ -1430,10 +1450,19 @@ async fn assert_fact_scope_sql(
             // either.
             // Raw INSERT on purpose: replays each table's stored row as the runtime role
             // to see whether owner RLS admits it.
-            let insert = format!(
-                "INSERT INTO proxiima_core.{table} ({columns})
-                 SELECT {columns} FROM jsonb_populate_record(NULL::proxiima_core.{table}, $1::jsonb)"
-            );
+            let mut insert = SqlText::new("INSERT INTO proxiima_core.");
+            insert
+                .push_ident(&table_name)
+                .push(" (")
+                .push_text(&column_list)
+                .push(
+                    ")
+                 SELECT ",
+                )
+                .push_text(&column_list)
+                .push(" FROM jsonb_populate_record(NULL::proxiima_core.")
+                .push_ident(&table_name)
+                .push(", $1::jsonb)");
             let mut full =
                 proxiima_storage_pg::begin_owner_transaction(&runtime, full_scope).await?;
             let written = run_on_row(&mut full, insert.clone(), row).await;
