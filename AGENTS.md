@@ -44,14 +44,25 @@ concepts and integration; avoid a second invariant or configuration ledger.
    force-push branches or numbered tags. Only `verify.yml` moves the rolling
    `nightly` tag. Before pushing, run the complete local gates and an independent
    review of `origin/main..HEAD` by a vendor other than the one the commits'
-   `Co-Authored-By` trailers name. Every rule in this file that says "review"
-   means this review; nothing else reads a change before it lands.
+   `Co-Authored-By` trailers name. The last commit of the pushed range records
+   it as a `Reviewed-By: <reviewer> <address>` trailer (example
+   `Reviewed-By: Codex <noreply@openai.com>`), the address being the one that
+   vendor's `Co-Authored-By` trailers use; a commit a person wrote alone is
+   recorded the same way, by anyone but its author. The trailer also covers
+   commits already on `main` that carry no record yet, so the review includes
+   those. Every rule in this file that says "review" means this review;
+   nothing else reads a change before it lands.
 2. `verified` is the last `main` commit that passed CI; only `verify.yml`
    moves it. Start work from `origin/verified`, not `origin/main`: commits on
    `main` past `verified` are untested and are not ground truth.
 3. `verify.yml` runs CI on the newest `main` commit and batches pushes that
-   land meanwhile. Green atomically fast-forwards `verified` and moves the
-   lightweight `nightly` tag to the same tested commit. Red re-runs CI on commits
+   land meanwhile. It advances only over recorded commits: each commit past
+   `verified` needs a `Reviewed-By` trailer, on itself or on a later commit,
+   whose address is neither the commit's author nor one of its
+   `Co-Authored-By` (`scripts/verify-review.py`); the workflow's own revert
+   needs none. Green on such a range atomically fast-forwards `verified` and
+   moves the lightweight `nightly` tag to the same tested commit; without the
+   record `verified` stays until a later push carries it. Red re-runs CI on commits
    in the batch, reverts the first red one on `main`, or opens an issue naming the
    range. Only verify runs save Rust caches. PRs remain for outside
    contributors.
@@ -134,8 +145,9 @@ Never weaken, delete, or ignore a surviving behavioral assertion to pass.
   `cliff.toml` renders the footer; its fixture gate verifies rendering.
 - AI commits carry a `Co-Authored-By` trailer naming the model that wrote
   them, e.g. `Codex <noreply@openai.com>` or
-  `Claude Opus 5.5 <noreply@anthropic.com>`. The independent review reads it
-  to exclude the authoring vendor, so a borrowed trailer defeats the review.
+  `Claude Opus 5.5 <noreply@anthropic.com>`. The independent review and
+  `verify.yml` read it to exclude the authoring vendor, so a borrowed trailer
+  defeats the review.
   Add `Tesla-Valve:` trailers for decisions made under that skill.
 
 If a requirement is ambiguous or conflicts with a principle, ask before making

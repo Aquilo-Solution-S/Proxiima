@@ -129,6 +129,7 @@ python3 scripts/check-upgrade-notes.py --self-test
 python3 scripts/check-release-version.py --self-test
 python3 scripts/check-release-version.py
 python3 scripts/verify-culprit.py --self-test
+python3 scripts/verify-review.py --self-test
 python3 scripts/check-architecture-guardrails.py --self-test
 python3 scripts/check-architecture-guardrails.py
 python3 scripts/check-schema-ids.py --self-test
@@ -220,6 +221,10 @@ Keep commits narrow and use the repository subjects: `docs(<scope>): …`,
 `feat(<component>): …`, `fix(<component>): …`, or `chore(<component>): …`.
 The orchestrating engineer reviews actual diffs, reruns load-bearing gates,
 and owns commits, pushes, and publication. Do not commit from delegated work.
+The review record a pushed range carries is defined in the
+[branch policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#branch-and-release-policy),
+and `python3 scripts/verify-review.py check --base origin/verified --tip HEAD`
+reads a range the way `verify.yml` will.
 
 Breaking commits carry an `Upgrade:` footer with concrete operator/client
 actions. `cliff.toml` renders these in the release notes;
