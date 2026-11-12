@@ -45,7 +45,7 @@ impl Tool for RetentionTool {
         _args: RetentionArgs,
     ) -> BoxFuture<'static, Result<RetentionOutput, ToolError>> {
         Box::pin(async move {
-            let engine = ctx.require_engine()?;
+            let engine = ctx.engine();
             let rows = engine.read_retention(ctx.authz()).await?;
             Ok(RetentionOutput {
                 retention: rows
@@ -106,7 +106,7 @@ impl Tool for SetRetentionTool {
             if args.schema_id.is_empty() {
                 return Err(ToolError::InvalidInput("schema_id is empty".into()));
             }
-            let engine = ctx.require_engine()?;
+            let engine = ctx.engine();
             engine
                 .set_retention(
                     ctx.authz(),

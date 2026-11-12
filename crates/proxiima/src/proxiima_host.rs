@@ -147,11 +147,7 @@ impl ProxiimaHost {
     /// The registry's tools over this runtime's composed service set.
     #[must_use]
     pub fn core_mcp_tools(&self) -> CoreMcpTools {
-        CoreMcpTools::new(
-            self.registry.clone(),
-            self.engine.clone(),
-            self.services.clone(),
-        )
+        CoreMcpTools::new(self.engine.clone(), self.services.clone())
     }
 
     /// Same as [`Self::core_mcp_tools`], with a per-request
@@ -167,11 +163,7 @@ impl ProxiimaHost {
     ) -> Result<CoreMcpTools, SpiiceServiceError> {
         let mut services = self.services.clone();
         services.try_extend(request)?;
-        Ok(CoreMcpTools::new(
-            self.registry.clone(),
-            self.engine.clone(),
-            services,
-        ))
+        Ok(CoreMcpTools::new(self.engine.clone(), services))
     }
 
     /// Test-only backend pool access for integration fixtures.

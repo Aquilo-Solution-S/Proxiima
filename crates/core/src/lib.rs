@@ -122,8 +122,8 @@ pub use storage::*;
 pub use text_bounds::*;
 
 pub use verbs::fact_ingest::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,
-    FactIngestOutcome, FactReceiptDraft, FactWriteCommand, IngestReceipt, OCCURRED_AT_FUTURE_BOUND,
+    AuthorizedCitation, AuthorizedFactWrite, FactIngestOutcome, FactReceiptDraft, FactWriteCommand,
+    IngestReceipt, OCCURRED_AT_FUTURE_BOUND,
 };
 pub use verbs::goal_write::{
     GoalDependencyRef, GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, IdempotencyKey,

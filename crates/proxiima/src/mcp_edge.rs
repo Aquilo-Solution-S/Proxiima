@@ -192,7 +192,13 @@ mod tests {
             additional_scopes: Vec::new(),
         };
         let edge = McpEdge {
-            tool_host: ToolHost::from_parts(Arc::new(registry), SpiiceServices::default()),
+            tool_host: ToolHost::from_engine(
+                Arc::new(proxiima_core::Engine::new(
+                    registry,
+                    proxiima_core::StoragePorts::rejecting_for_tests(),
+                )),
+                SpiiceServices::default(),
+            ),
             edge_auth: Arc::new(EdgeAuth::headless()),
             origin_allowlist: OriginAllowlist::parse(["https://proxiima.example.com"]).unwrap(),
             host_allowlist: HostAllowlist::parse(["proxiima.example.com"]).unwrap(),

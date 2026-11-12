@@ -710,11 +710,15 @@ async fn raw_stateful_fact_cannot_bypass_typed_key_binding() -> TestResult {
             .expect_err("an unbound or foreign key must not receive a witness");
         assert_eq!(error.code, proxiima_core::error::ErrorCode::InvalidArgument);
     }
-    let error = fixture
-        .engine
-        .fact_ingest(&authz, command)
-        .await
-        .expect_err("a raw command cannot mint an unbound stateful series");
+    let error = async {
+        let authorized = fixture
+            .engine
+            .authorize_fact_ingest(&authz, command, &[])
+            .await?;
+        fixture.engine.ingest_authorized_fact(&authorized).await
+    }
+    .await
+    .expect_err("a raw command cannot mint an unbound stateful series");
     assert_eq!(error.code, proxiima_core::error::ErrorCode::InvalidArgument);
     let admitted: i64 =
         sqlx::query_scalar("SELECT count(*) FROM proxiima_core.memory WHERE schema_id = $1")

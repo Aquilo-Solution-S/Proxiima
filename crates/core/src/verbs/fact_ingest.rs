@@ -194,10 +194,9 @@ pub struct FactWriteCommand {
 /// owner-stamped command, the Fact's sidecar contract and payload set, and
 /// the index rows storage must assert alongside the Fact row.
 ///
-/// `pub(crate)`, and no `pub` accessor hands the core out. A witness that could
-/// yield its core would let a citing write be routed through the plain-Fact
-/// persistence path, which drops the citation; a witness reveals its core's
-/// values one getter at a time instead.
+/// `pub(crate)`, and no `pub` accessor hands the core out: a core never leaves
+/// the [`AuthorizedCitation`] it was authorized with, and a witness reveals
+/// its core's values one getter at a time.
 #[derive(Debug)]
 pub(crate) struct AuthorizedFactCore {
     permit: WritePermit,
@@ -206,7 +205,7 @@ pub(crate) struct AuthorizedFactCore {
     fact_natural_key_columns: Vec<String>,
     fact_natural_key_values: Option<crate::NaturalKeySnapshot>,
     /// [`crate::engine::FactWrite::reobserve_if_displaced`]. Only the typed Fact
-    /// write sets it; both citing routes leave it `false`.
+    /// write sets it; both citing authorizations leave it `false`.
     reobserve_displaced: bool,
     sidecar_payloads: Vec<SidecarPayload>,
     links: AuthorizedNodeLinks,
@@ -297,11 +296,46 @@ impl AuthorizedFactCore {
 
 /// Proof that a Fact write passed authorization + schema validation
 /// and had its owner stamped from the authz context.
-/// The only constructor is `Engine::authorize_fact_ingest`, so a
-/// caller cannot reach the sidecar-ingest primitive below the gate.
+///
+/// The Engine's Fact authorizations are the only constructors:
+/// `authorize_fact_ingest` mints [`AuthorizedCitation::None`],
+/// `authorize_fact_with_citation` [`AuthorizedCitation::Inline`] and
+/// `authorize_fact_with_citation_by_ref` [`AuthorizedCitation::Reference`].
+/// Its fields are private, so no caller swaps the citation a witness was
+/// authorized with:
+///
+/// ```compile_fail,E0451
+/// use proxiima_core::verbs::fact_ingest::{AuthorizedCitation, AuthorizedFactWrite};
+/// fn forge(write: AuthorizedFactWrite) -> AuthorizedFactWrite {
+///     AuthorizedFactWrite { citation: AuthorizedCitation::Reference(uuid::Uuid::nil()), ..write }
+/// }
+/// ```
 #[derive(Debug)]
 pub struct AuthorizedFactWrite {
     core: AuthorizedFactCore,
+    citation: AuthorizedCitation,
+}
+
+/// What an authorized Fact write cites, settled by the authorization that
+/// minted it.
+#[derive(Debug)]
+pub enum AuthorizedCitation {
+    /// No cited object beyond the draft's own opaque
+    /// [`FactWriteCommand::citation`] hint.
+    None,
+    /// A cited object written in the same transaction as the Fact, upserted
+    /// on `(owner, schema, content_hash)`.
+    Inline {
+        object: Box<AuthorizedInlineCitedObject>,
+        /// The upload row completed atomically with this Fact; only the
+        /// Engine's upload verb sets it.
+        upload_completion: Option<Uuid>,
+    },
+    /// An already-stored cited object, by id. Storage checks its existence
+    /// and owner in the transaction that writes the Fact. The citation is
+    /// not receipt key material, so a receipt replay short-circuits before
+    /// any citation is checked or written, as on the inline path.
+    Reference(Uuid),
 }
 
 /// The index rows a node write is admitted to assert, resolved and
@@ -400,14 +434,17 @@ impl AuthorizedFactWrite {
         fact_natural_key_columns: Vec<String>,
         links: AuthorizedNodeLinks,
     ) -> Self {
-        Self::new(AuthorizedFactCore::new(
-            WritePermit::for_tests(owner_write),
-            draft,
-            fact_sidecar_table,
-            fact_natural_key_columns,
-            Vec::new(),
-            links,
-        ))
+        Self::new(
+            AuthorizedFactCore::new(
+                WritePermit::for_tests(owner_write),
+                draft,
+                fact_sidecar_table,
+                fact_natural_key_columns,
+                Vec::new(),
+                links,
+            ),
+            AuthorizedCitation::None,
+        )
     }
 
     /// Test-only: attach the publication plan core would have resolved.
@@ -429,8 +466,14 @@ impl AuthorizedFactWrite {
         self
     }
 
-    pub(crate) const fn new(core: AuthorizedFactCore) -> Self {
-        Self { core }
+    pub(crate) const fn new(core: AuthorizedFactCore, citation: AuthorizedCitation) -> Self {
+        Self { core, citation }
+    }
+
+    /// What this write cites.
+    #[must_use]
+    pub const fn citation(&self) -> &AuthorizedCitation {
+        &self.citation
     }
 
     /// Carry [`crate::engine::FactWrite::reobserve_if_displaced`] to storage.
@@ -549,205 +592,6 @@ impl AuthorizedInlineCitedObject {
     #[must_use]
     pub const fn sidecar_payload(&self) -> &SidecarPayload {
         &self.sidecar_payload
-    }
-}
-
-/// Proof that a Fact ingest and its inline cited object passed
-/// authorization and kind-specific schema validation.
-#[derive(Debug)]
-pub struct AuthorizedFactWithCitation {
-    core: AuthorizedFactCore,
-    cited_object: AuthorizedInlineCitedObject,
-    upload_completion: Option<Uuid>,
-}
-
-impl AuthorizedFactWithCitation {
-    pub(crate) const fn new(
-        core: AuthorizedFactCore,
-        cited_object: AuthorizedInlineCitedObject,
-    ) -> Self {
-        Self {
-            core,
-            cited_object,
-            upload_completion: None,
-        }
-    }
-
-    /// Index rows storage must assert alongside the Fact row.
-    #[must_use]
-    pub const fn links(&self) -> &AuthorizedNodeLinks {
-        self.core.links()
-    }
-
-    #[must_use]
-    pub const fn permit(&self) -> &WritePermit {
-        self.core.permit()
-    }
-
-    #[must_use]
-    pub fn owner_write_permit(&self) -> &OwnerWritePermit {
-        self.core.permit().owner_write_permit()
-    }
-
-    #[must_use]
-    pub const fn draft(&self) -> &FactWriteCommand {
-        self.core.draft()
-    }
-
-    /// The publication record this admission must capture, or `None` when
-    /// the Fact's schema is not listenable.
-    ///
-    /// Read by the storage backend inside the write transaction. It is
-    /// DATA, not a callback, so the bounded retry around
-    /// begin→body→commit re-runs cleanly.
-    #[must_use]
-    pub const fn publication(&self) -> Option<&crate::publication::PublicationPlan> {
-        self.core.publication()
-    }
-
-    pub(crate) fn with_upload_completion(mut self, upload_id: Uuid) -> Self {
-        self.upload_completion = Some(upload_id);
-        self
-    }
-
-    /// Upload row to complete atomically with this cited Fact, minted only by
-    /// the Engine's upload verb.
-    ///
-    /// ```compile_fail
-    /// fn forge(write: proxiima_core::verbs::fact_ingest::AuthorizedFactWithCitation) {
-    ///     write.with_upload_completion(uuid::Uuid::nil());
-    /// }
-    /// ```
-    #[must_use]
-    pub const fn upload_completion(&self) -> Option<Uuid> {
-        self.upload_completion
-    }
-
-    #[must_use]
-    pub const fn cited_object(&self) -> &AuthorizedInlineCitedObject {
-        &self.cited_object
-    }
-
-    #[must_use]
-    pub fn fact_sidecar_table(&self) -> Option<&str> {
-        self.core.fact_sidecar_table()
-    }
-
-    #[must_use]
-    pub fn fact_natural_key_columns(&self) -> &[String] {
-        self.core.fact_natural_key_columns()
-    }
-
-    /// Exact natural-key values captured from the typed payload during authorization.
-    /// Storage compares them before automatic series selection.
-    #[must_use]
-    pub fn fact_natural_key_values(&self) -> Option<&crate::NaturalKeySnapshot> {
-        self.core.fact_natural_key_values.as_ref()
-    }
-
-    /// Whether a replay whose Fact no longer heads its natural-key series is
-    /// admitted again rather than replayed
-    /// ([`crate::engine::FactWrite::reobserve_if_displaced`]).
-    #[must_use]
-    pub const fn reobserves_displaced(&self) -> bool {
-        self.core.reobserve_displaced
-    }
-
-    #[must_use]
-    pub fn sidecar_payloads(&self) -> &[SidecarPayload] {
-        self.core.sidecar_payloads()
-    }
-}
-
-/// Proof that a Fact ingest citing an EXISTING cited object by id passed
-/// authorization and kind-specific schema validation.
-///
-/// The by-ref twin of [`AuthorizedFactWithCitation`]: it carries no
-/// inline cited-object payload — only the referenced id, which storage
-/// checks against the stored row (existence, owner) before the Fact
-/// cites it. Receipt and idempotency semantics are identical to the
-/// inline path: the citation is not part of the receipt key on either
-/// path, and a receipt replay short-circuits before any citation is
-/// written.
-#[derive(Debug)]
-pub struct AuthorizedFactWithCitationRef {
-    core: AuthorizedFactCore,
-    cited_object_id: Uuid,
-}
-
-impl AuthorizedFactWithCitationRef {
-    pub(crate) const fn new(core: AuthorizedFactCore, cited_object_id: Uuid) -> Self {
-        Self {
-            core,
-            cited_object_id,
-        }
-    }
-
-    /// Index rows storage must assert alongside the Fact row.
-    #[must_use]
-    pub const fn links(&self) -> &AuthorizedNodeLinks {
-        self.core.links()
-    }
-
-    #[must_use]
-    pub const fn permit(&self) -> &WritePermit {
-        self.core.permit()
-    }
-
-    #[must_use]
-    pub fn owner_write_permit(&self) -> &OwnerWritePermit {
-        self.core.permit().owner_write_permit()
-    }
-
-    #[must_use]
-    pub const fn draft(&self) -> &FactWriteCommand {
-        self.core.draft()
-    }
-
-    /// The publication record this admission must capture, or `None` when
-    /// the Fact's schema is not listenable.
-    ///
-    /// Read by the storage backend inside the write transaction. It is
-    /// DATA, not a callback, so the bounded retry around
-    /// begin→body→commit re-runs cleanly.
-    #[must_use]
-    pub const fn publication(&self) -> Option<&crate::publication::PublicationPlan> {
-        self.core.publication()
-    }
-
-    #[must_use]
-    pub const fn cited_object_id(&self) -> Uuid {
-        self.cited_object_id
-    }
-
-    #[must_use]
-    pub fn fact_sidecar_table(&self) -> Option<&str> {
-        self.core.fact_sidecar_table()
-    }
-
-    #[must_use]
-    pub fn fact_natural_key_columns(&self) -> &[String] {
-        self.core.fact_natural_key_columns()
-    }
-
-    /// Exact natural-key values captured from the typed payload during authorization.
-    /// Storage compares them before automatic series selection.
-    #[must_use]
-    pub fn fact_natural_key_values(&self) -> Option<&crate::NaturalKeySnapshot> {
-        self.core.fact_natural_key_values.as_ref()
-    }
-
-    /// Whether a replay whose Fact no longer heads its natural-key series is
-    /// admitted again rather than replayed
-    /// ([`crate::engine::FactWrite::reobserve_if_displaced`]).
-    #[must_use]
-    pub const fn reobserves_displaced(&self) -> bool {
-        self.core.reobserve_displaced
-    }
-
-    #[must_use]
-    pub fn sidecar_payloads(&self) -> &[SidecarPayload] {
-        self.core.sidecar_payloads()
     }
 }
 

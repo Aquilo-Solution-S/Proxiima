@@ -181,8 +181,10 @@ async fn a_host_tool_dispatches_through_the_request_behaviors() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut registry = SpiiceRegistry::new();
     registry.add_request_behavior(RecordingBehavior(Arc::clone(&seen)));
-    let server = ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let server = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
     .with_host_tools(Arc::new(EchoHostTools));
@@ -274,8 +276,10 @@ async fn a_host_tool_dispatches_through_the_request_behaviors() {
 }
 
 fn make_server() -> ToolHost {
-    ToolHost::from_parts(
-        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }
@@ -849,8 +853,10 @@ async fn a_host_call_carries_the_entry_it_resolved_to_although_the_catalog_moved
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut registry = SpiiceRegistry::new();
     registry.add_request_behavior(RevisionBehavior(Arc::clone(&seen)));
-    let server = ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let server = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
     .with_host_tools(Arc::new(MovingHostTools(
@@ -992,8 +998,10 @@ async fn a_declared_goal_work_action_runs_for_every_member_who_works_goals() {
     use proxiima_core::Role;
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<Board>("plan");
-    let server = ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let server = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let board = server
@@ -1242,8 +1250,10 @@ impl proxiima_core::RequestBehavior for ContentBehavior {
 async fn a_behavior_cannot_turn_a_registry_tool_or_a_resource_into_content() {
     let mut registry = SpiiceRegistry::new();
     registry.add_request_behavior(ContentBehavior);
-    let server = ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let server = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let auth = owner_auth();

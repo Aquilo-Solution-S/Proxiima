@@ -163,11 +163,17 @@ fn fixture() -> Fixture {
         },
         requested: Mutex::new(Vec::new()),
     });
-    let engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry().as_ref().clone(),
+    let engine = Arc::new(crate::Engine::new(
+        ctx.registry().clone(),
         crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
-    )));
-    ctx = ctx.with_engine(engine);
+    ));
+    ctx = crate::test_fixtures::tool_ctx_on(
+        ctx.owner(),
+        ctx.authz().clone(),
+        engine,
+        crate::SpiiceServices::default(),
+        ctx.caller().clone(),
+    );
     let (started, receiver) = mpsc::unbounded_channel();
     let port = Arc::new(ControlledStore {
         owner: ctx.owner(),

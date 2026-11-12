@@ -75,7 +75,7 @@ pub async fn get_memories(
             requested.push((id, raw));
         }
     }
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let response = engine
         .get_memories(
             ctx.authz(),

@@ -360,7 +360,7 @@ async fn transfer_moves_same_memory_t_and_sidecar() {
             .owner_scope()
             .expect("sealed scope")
             .writer();
-        let written = pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await?;
+        let written = pg.ingest_authorized_fact(&authorized, &[]).await?;
         let t = written.memory_id.into_inner();
         let witness_before: Option<String> = sqlx::query_scalar(
             "SELECT kind::text FROM proxiima_core.erased_pin_target WHERE t = $1",

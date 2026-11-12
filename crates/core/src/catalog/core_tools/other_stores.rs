@@ -139,7 +139,7 @@ pub(crate) async fn resolve_references_with_retained(
     handles: &[String],
     retained: &[(crate::MemoryId, MemoryHandleClass)],
 ) -> Result<Vec<ResolvedMemory>, ToolError> {
-    let local_number = ctx.require_engine()?.store_number();
+    let local_number = ctx.engine().store_number();
     let retained = retained
         .iter()
         .map(|(id, kind)| (id.into_inner(), *kind))
@@ -231,7 +231,7 @@ pub(crate) async fn route_search(
     requested: Option<&[u16]>,
     schema_id: Option<&str>,
 ) -> Result<SearchStores, ToolError> {
-    let local_number = ctx.require_engine()?.store_number();
+    let local_number = ctx.engine().store_number();
     let service = service(ctx);
     let answered = match &service {
         Some(service) => Some(
@@ -258,13 +258,11 @@ pub(crate) async fn route_search(
         .flatten()
         .unwrap_or_else(|| StoreInventory::empty(local_number));
     let local_declares = |schema_id: &str| {
-        ctx.engine().is_some_and(|engine| {
-            engine
-                .registry()
-                .schemas()
-                .iter()
-                .any(|info| info.schema_id.as_str() == schema_id)
-        })
+        ctx.engine()
+            .registry()
+            .schemas()
+            .iter()
+            .any(|info| info.schema_id.as_str() == schema_id)
     };
     let route = route_stores(requested, schema_id, local_declares, &readable)
         .map_err(ToolError::InvalidInput)?;

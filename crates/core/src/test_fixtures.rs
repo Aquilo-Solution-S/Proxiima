@@ -5,8 +5,8 @@ use proxiima_core::embedding::{EmbeddingClient, EmbeddingDim, LlmError};
 use std::sync::Arc;
 
 use proxiima_core::{
-    AuthPath, AuthzContext, OwnerId, OwnerScope, Role, SpiiceRegistryFrozen, SpiiceServices,
-    ToolCaller, ToolCtx, UserId,
+    AuthPath, AuthzContext, Engine, OwnerId, OwnerScope, Role, SpiiceRegistryFrozen,
+    SpiiceServices, StoragePorts, ToolCaller, ToolCtx, UserId,
 };
 
 /// Fixture embeddings sit on the default 1024-wide lane.
@@ -194,8 +194,8 @@ impl proxiima_core::embedding::EmbeddingRouter for TestEmbeddingRouter {
     }
 }
 
-/// A tool context for `owner` under `authz`, with an empty service set and
-/// no engine, called by a `test` client. See [`tool_ctx_with`].
+/// A tool context for `owner` under `authz`, with an empty service set,
+/// called by a `test` client. See [`tool_ctx_with`].
 #[must_use]
 pub fn tool_ctx(
     owner: OwnerId,
@@ -211,9 +211,7 @@ pub fn tool_ctx(
     )
 }
 
-/// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`
-/// builds one: through [`ToolCtx::new`], with no engine (chain
-/// [`ToolCtx::with_engine`]).
+/// [`tool_ctx_on`] the [`rejecting_engine`] over `registry`.
 #[must_use]
 pub fn tool_ctx_with(
     owner: OwnerId,
@@ -222,7 +220,31 @@ pub fn tool_ctx_with(
     services: SpiiceServices,
     caller: ToolCaller,
 ) -> ToolCtx {
-    ToolCtx::new(owner, authz, registry, services, caller)
+    tool_ctx_on(owner, authz, rejecting_engine(registry), services, caller)
+}
+
+/// An engine over `registry` whose storage refuses every call
+/// ([`StoragePorts::rejecting_for_tests`]), for a test that never reaches
+/// storage.
+#[must_use]
+pub fn rejecting_engine(registry: impl AsRef<SpiiceRegistryFrozen>) -> Arc<Engine> {
+    Arc::new(Engine::new(
+        registry.as_ref().clone(),
+        StoragePorts::rejecting_for_tests(),
+    ))
+}
+
+/// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`
+/// builds one: through [`ToolCtx::new`], serving `engine`'s registry.
+#[must_use]
+pub fn tool_ctx_on(
+    owner: OwnerId,
+    authz: AuthzContext,
+    engine: Arc<Engine>,
+    services: SpiiceServices,
+    caller: ToolCaller,
+) -> ToolCtx {
+    ToolCtx::new(owner, authz, services, caller, engine)
 }
 
 #[must_use]

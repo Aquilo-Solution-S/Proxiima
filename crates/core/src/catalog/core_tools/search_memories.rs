@@ -390,7 +390,7 @@ impl Tool for SearchMemoriesTool {
                     unanswered,
                     remote.limit,
                     args.order,
-                    ctx.require_engine()?.store_number(),
+                    ctx.engine().store_number(),
                 );
             }
             Ok(output)
@@ -414,9 +414,7 @@ pub async fn caller_input_schema(
     let Some(service) = super::other_stores::service(ctx) else {
         return Ok(schema);
     };
-    let Some(engine) = ctx.engine() else {
-        return Ok(schema);
-    };
+    let engine = ctx.engine();
     let Some(inventory) = service
         .stores_bounded(super::other_stores::caller(ctx), engine.store_number())
         .await?
@@ -717,7 +715,7 @@ async fn plan_owner_lanes(
             })
             .collect());
     }
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let mut routes = Vec::with_capacity(spaces.len());
     for space in &spaces {
         routes.push(engine.search_route(&space.owner).await);
@@ -952,7 +950,7 @@ async fn search_one_space(
         after,
         semantic: lane.arm.semantic().cloned(),
     };
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let response = engine
         .search(
             ctx.authz(),

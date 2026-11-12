@@ -55,7 +55,7 @@ impl ToolCtx {
         &self,
         ids: &[MemoryId],
     ) -> Result<Vec<(MemoryId, MemoryHandleClass)>, ToolError> {
-        self.require_engine()?
+        self.engine()
             .memory_kinds(self.authz(), ids)
             .await?
             .into_iter()

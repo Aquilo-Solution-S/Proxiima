@@ -76,7 +76,7 @@ pub(super) async fn facts_citing_object(
             })
         })
         .transpose()?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let page = engine
         .facts_citing_object(
             ctx.authz(),

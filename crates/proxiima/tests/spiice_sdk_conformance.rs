@@ -164,9 +164,9 @@ fn wire_references_round_trip_through_a_transport_neutral_tool_ctx() {
         AuthzContext::single_owner(&owner, AuthPath::System)
             .with_trusted_model_id("acme/runner-v3")
             .expect("a well-formed runner id binds"),
-        registry,
         SpiiceServices::new(),
         ToolCaller::new("test/model", "test-client", "1.0"),
+        proxiima::testkit::rejecting_engine(registry),
     );
 
     // Trusted model provenance is visible to an out-of-tree spiice on the

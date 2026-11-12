@@ -168,7 +168,7 @@ pub async fn walk_memory_lineage(
     let direction = MemoryLineageDirection::from(args.direction);
     let depth = u8::try_from(args.depth.clamp(1, MAX_LINEAGE_DEPTH)).unwrap_or(8);
     let fingerprint = lineage_fingerprint(&args.memory, direction, depth);
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     if matches!(direction, MemoryLineageDirection::Ancestors)
         && crate::memory_store_number(start.into_inner()) != engine.store_number()
     {

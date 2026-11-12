@@ -2,7 +2,7 @@
 //!
 //! These are what make "REST is a rendering of the manifest, not a second
 //! API" checkable rather than aspirational. Everything here runs against a
-//! registry-only [`ToolHost`] with no engine: the claims under test are
+//! [`ToolHost`] whose engine refuses every storage call: the claims under test are
 //! about surface derivation, gating, and error class — none of which is
 //! allowed to depend on storage, and all of which would be untestable if it
 //! did.
@@ -31,8 +31,10 @@ use proxiima_server::{AuthContext, ToolHost};
 use tower::ServiceExt;
 
 fn host() -> ToolHost {
-    ToolHost::from_parts(
-        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }
@@ -205,8 +207,10 @@ impl proxiima_core::Tool for StubArgvTool {
 fn spiice_host() -> ToolHost {
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
-    ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }
@@ -214,8 +218,10 @@ fn spiice_host() -> ToolHost {
 fn argv_host() -> ToolHost {
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<StubArgvTool>("proxiima-stub");
-    ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }
@@ -223,8 +229,10 @@ fn argv_host() -> ToolHost {
 fn caller_context_host() -> ToolHost {
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<CallerContextTool>("proxiima-stub");
-    ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }
@@ -380,8 +388,10 @@ async fn rest_refuses_nonobject_outputs_introduced_by_request_behaviors() {
         let mut registry = SpiiceRegistry::new();
         registry.add_tool_or_panic_for_tests::<CallerContextTool>("proxiima-stub");
         registry.add_request_behavior(ReplaceOutputBehavior(output));
-        let host = ToolHost::from_parts(
-            Arc::new(registry.freeze_or_panic_for_tests()),
+        let host = ToolHost::from_engine(
+            proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+                registry.freeze_or_panic_for_tests(),
+            )),
             SpiiceServices::default(),
         );
         let answer = call(
@@ -455,8 +465,10 @@ fn host_with(behavior: impl proxiima_core::RequestBehavior + 'static) -> ToolHos
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<StubDispatchTool>("proxiima-stub");
     registry.add_request_behavior(behavior);
-    ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     )
 }

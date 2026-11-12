@@ -428,7 +428,7 @@ async fn split_fact_witness_rechecks_expiry_before_commit() {
         .expect("authorize before expiry");
     authorized.expire_delegated_write_for_test();
     let err = engine
-        .ingest_fact_with_typed_sidecar(&authorized)
+        .ingest_authorized_fact(&authorized)
         .await
         .expect_err("expired split witness must fail before storage");
     assert_eq!(err.code, ErrorCode::Forbidden);

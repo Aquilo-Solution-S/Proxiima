@@ -19,18 +19,14 @@ use proxiima_core::{FactPayload, ToolCtx, ToolError};
 ///
 /// # Errors
 ///
-/// `ToolError::Other` when the context carries no engine; otherwise the
-/// ingest's `ProtocolError`, including `Internal` when the write missed
+/// The ingest's `ProtocolError`, including `Internal` when the write missed
 /// `deadline` or its task did not finish.
 pub async fn ingest_fact_detached<P: FactPayload + Clone>(
     ctx: &ToolCtx,
     write: FactWrite<'_, P>,
     deadline: Duration,
 ) -> Result<FactIngestOutcome, ToolError> {
-    let engine = ctx
-        .engine()
-        .ok_or_else(|| ToolError::Other("tool context has no engine".into()))?;
-    engine
+    ctx.engine()
         .ingest_fact_detached(ctx.authz(), write, deadline)
         .await
         .map_err(ToolError::Protocol)

@@ -64,8 +64,10 @@ fn router(auth: Arc<EdgeAuth>, owner: OwnerId) -> Router {
 }
 
 fn router_with_hosts(auth: Arc<EdgeAuth>, _owner: OwnerId, allowed_hosts: &[String]) -> Router {
-    let host = ToolHost::from_parts(
-        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    let host = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let cancel = CancellationToken::new();
@@ -125,8 +127,10 @@ async fn status_with_host(
 async fn mcp_only_router_leaves_host_routes_to_the_host() {
     let owner = owner();
     let auth = Arc::new(edge_auth().with_host(Arc::new(StubHostAuth { owner })));
-    let host = ToolHost::from_parts(
-        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    let host = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let cancel = CancellationToken::new();

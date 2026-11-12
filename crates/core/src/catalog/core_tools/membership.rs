@@ -177,10 +177,7 @@ impl Tool for CoreMembershipTool {
         ctx: ToolCtx,
         args: CoreMembershipArgs,
     ) -> BoxFuture<'static, Result<CoreMembershipOutput, ToolError>> {
-        Box::pin(async move {
-            let engine = ctx.require_engine()?;
-            execute_membership(engine, &ctx, args).await
-        })
+        Box::pin(async move { execute_membership(ctx.engine().as_ref(), &ctx, args).await })
     }
 }
 

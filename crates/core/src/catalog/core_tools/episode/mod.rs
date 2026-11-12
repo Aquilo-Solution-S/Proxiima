@@ -244,7 +244,7 @@ async fn episode_commit(
     )?;
     let (space, authz) =
         super::memory_spaces::resolve_space_for_write(&ctx, args.space.as_deref())?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let mut uow = engine.unit_of_work(&authz).await?;
     let write_act = uow
         .ingest_fact(FactWrite::new(

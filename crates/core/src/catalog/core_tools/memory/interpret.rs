@@ -114,7 +114,7 @@ impl Tool for InterpretTool {
                 client_version: ctx.caller().client_version.clone(),
             };
             let outcome = ctx
-                .require_engine()?
+                .engine()
                 .derive_memory(
                     ctx.authz(),
                     DerivedMemory::guided_interpretation(
@@ -185,7 +185,7 @@ async fn prepare_interpretation(
         super::util::resolve_destination(ctx, args.space.as_deref(), args.working_goal.as_deref())?;
     let retained = match supersedes {
         Some(prior) => ctx
-            .require_engine()?
+            .engine()
             .retained_revision_sources(
                 ctx.authz(),
                 destination,
@@ -396,7 +396,7 @@ mod tests {
         for confidence in [0, 100, default_confidence()] {
             let err = InterpretTool::call(ctx(owner), args(vec![subject()], confidence))
                 .await
-                .expect_err("no engine is wired, so the write cannot land");
+                .expect_err("the rejecting engine refuses the write");
             assert!(
                 !matches!(&err, ToolError::InvalidInput(message) if message.contains("0..=100")),
                 "confidence {confidence} must be inside the scale: {err:?}"

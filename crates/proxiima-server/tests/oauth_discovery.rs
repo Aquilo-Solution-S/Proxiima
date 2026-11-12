@@ -61,8 +61,10 @@ async fn challenge(app: Router, path: &str) -> String {
 }
 
 fn auth_layer() -> proxiima_server::AuthLayer {
-    let host = ToolHost::from_parts(
-        Arc::new(SpiiceRegistry::new().freeze_or_panic_for_tests()),
+    let host = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let service = streamable_http_service(

@@ -23,10 +23,7 @@ use crate::owner_inverse::OwnerEraseTarget;
 use crate::read_models::{ActiveGoalSummary, MemorySchemaSpec, MemorySnapshot};
 use crate::storage::{AuthorDerivedOutcome, AuthorDerivedRequest, EmbeddingJobClaim, StorageError};
 
-use crate::verbs::fact_ingest::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,
-    FactIngestOutcome,
-};
+use crate::verbs::fact_ingest::{AuthorizedFactWrite, FactIngestOutcome};
 use crate::verbs::goal_write::{
     AchieveGoalAtomicRequest, CreateGoalAtomicRequest, DecomposeGoalAtomicRequest,
     DecomposeGoalOutcome, GoalReplayOutcome, GoalReplayRequest, GoalWriteOutcome,
@@ -118,29 +115,9 @@ impl FactIngestPort for RejectingStorage {
         ))
     }
 
-    async fn ingest_fact_with_typed_sidecar(
+    async fn ingest_authorized_fact(
         &self,
         _authorized: &AuthorizedFactWrite,
-        _embedding_spaces: &[crate::EmbeddingSpace],
-    ) -> Result<FactIngestOutcome, StorageError> {
-        Err(StorageError::Internal(
-            "RejectingStorage rejects writes".into(),
-        ))
-    }
-
-    async fn ingest_fact_with_citation_and_typed_sidecar(
-        &self,
-        _authorized: &AuthorizedFactWithCitation,
-        _embedding_spaces: &[crate::EmbeddingSpace],
-    ) -> Result<FactIngestOutcome, StorageError> {
-        Err(StorageError::Internal(
-            "RejectingStorage rejects writes".into(),
-        ))
-    }
-
-    async fn ingest_fact_with_citation_ref_and_typed_sidecar(
-        &self,
-        _authorized: &AuthorizedFactWithCitationRef,
         _embedding_spaces: &[crate::EmbeddingSpace],
     ) -> Result<FactIngestOutcome, StorageError> {
         Err(StorageError::Internal(

@@ -98,8 +98,10 @@ struct Observation {
 async fn observe_transports() -> TestResult<Vec<Observation>> {
     let mut registry = SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<EchoTool>("proxiima-nul");
-    let host = ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let host = ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         SpiiceServices::default(),
     );
     let owner = common::nil_owner();

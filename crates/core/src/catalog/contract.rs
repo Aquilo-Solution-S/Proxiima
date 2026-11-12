@@ -244,8 +244,8 @@ impl ToolCaller {
 }
 
 /// Everything one tool call runs with: the owner it acts for, the caller's
-/// authorization, the frozen registry, the caller, the composed services
-/// and the engine.
+/// authorization, the caller, the composed services and the engine, whose
+/// frozen registry the call serves.
 ///
 /// [`Self::new`] is the only way in; a field changes only through a
 /// `with_*` method, so the invariants `new` establishes hold for the whole
@@ -260,10 +260,9 @@ impl ToolCaller {
 pub struct ToolCtx {
     owner: OwnerId,
     authz: AuthzContext,
-    registry: Arc<SpiiceRegistryFrozen>,
     caller: ToolCaller,
     services: SpiiceServices,
-    engine: Option<Arc<Engine>>,
+    engine: Arc<Engine>,
     judged: crate::catalog::JudgedKey,
 }
 
@@ -273,13 +272,12 @@ impl std::fmt::Debug for ToolCtx {
             .field("owner", &self.owner)
             .field("caller", &self.caller)
             .field("services", &self.services)
-            .field("has_engine", &self.engine.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl ToolCtx {
-    /// A context with no engine and an empty judged key.
+    /// A context running against `engine`, with an empty judged key.
     ///
     /// When `authz` binds a model identity, the caller's `model_id` becomes
     /// that identity: a host assembles `caller` by hand, and `model_id` is
@@ -288,17 +286,16 @@ impl ToolCtx {
     pub fn new(
         owner: OwnerId,
         authz: AuthzContext,
-        registry: Arc<SpiiceRegistryFrozen>,
         services: SpiiceServices,
         caller: ToolCaller,
+        engine: Arc<Engine>,
     ) -> Self {
         Self {
             owner,
             authz,
-            registry,
             caller,
             services,
-            engine: None,
+            engine,
             judged: crate::catalog::JudgedKey::default(),
         }
         .with_bound_model_id()
@@ -324,12 +321,6 @@ impl ToolCtx {
     pub fn with_authz(mut self, authz: AuthzContext) -> Self {
         self.authz = authz;
         self.with_bound_model_id()
-    }
-
-    #[must_use]
-    pub fn with_engine(mut self, engine: Option<Arc<Engine>>) -> Self {
-        self.engine = engine;
-        self
     }
 
     /// Add one service to this call's set without replacing one of the same
@@ -361,9 +352,10 @@ impl ToolCtx {
         &self.authz
     }
 
+    /// The frozen registry this call serves: the engine's.
     #[must_use]
-    pub fn registry(&self) -> &Arc<SpiiceRegistryFrozen> {
-        &self.registry
+    pub fn registry(&self) -> &SpiiceRegistryFrozen {
+        self.engine.registry()
     }
 
     #[must_use]
@@ -377,23 +369,10 @@ impl ToolCtx {
         self.caller.caller_self_perspective
     }
 
-    /// `None` when the host wired no engine.
+    /// The engine this call runs against.
     #[must_use]
-    pub fn engine(&self) -> Option<&Arc<Engine>> {
-        self.engine.as_ref()
-    }
-
-    /// The wired engine, or the one canonical "engine unavailable" error.
-    /// Every tool that needs storage goes through this so a missing
-    /// engine reads identically everywhere.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToolError::Other`] when no engine is wired.
-    pub fn require_engine(&self) -> Result<&Engine, ToolError> {
-        self.engine
-            .as_deref()
-            .ok_or_else(|| ToolError::Other("engine unavailable".into()))
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
     }
 
     /// The key the scope gate judged this call by, if it derived one. Clones
@@ -415,17 +394,12 @@ impl ToolCtx {
     ///
     /// # Errors
     ///
-    /// Returns [`ToolError::Other`] when the tool was not wired with an engine
-    /// and [`ToolError::Protocol`] when authorization fails.
+    /// Returns [`ToolError::Protocol`] when authorization fails.
     pub async fn owner_write_permit(
         &self,
         kind: AccessKind,
     ) -> Result<OwnerWritePermit, ToolError> {
-        let engine = self
-            .engine
-            .as_ref()
-            .ok_or_else(|| ToolError::Other("tool context has no engine".into()))?;
-        engine
+        self.engine
             .authorize_owner_write(&self.authz, &self.owner, kind)
             .await
             .map_err(ToolError::Protocol)
@@ -653,7 +627,7 @@ pub enum ToolError {
     LayeringViolation(String),
     #[error("storage: {0}")]
     Storage(#[from] crate::StorageError),
-    /// A required capability (embedding client, blob lane, engine) is not
+    /// A required capability (embedding client, blob lane) is not
     /// configured for this host. Unlike [`Self::Other`], its message is a
     /// caller-actionable precondition and is passed through verbatim rather
     /// than redacted to a generic internal-server-error (REST 503).

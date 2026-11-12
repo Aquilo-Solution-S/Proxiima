@@ -36,10 +36,8 @@ fn erase_from(ctx: ToolCtx, args: &GateArgs) -> BoxFuture<'static, Result<GateOu
         some_series()
     };
     Box::pin(async move {
-        let engine = ctx
+        let mut unit = ctx
             .engine()
-            .ok_or_else(|| ToolError::Other("the gate fixture needs an engine".into()))?;
-        let mut unit = engine
             .unit_of_work(ctx.authz())
             .await
             .map_err(ToolError::Protocol)?;
@@ -205,14 +203,13 @@ async fn call_with(
         .registry()
         .mcp_tool(tool)
         .expect("the fixture tool is registered");
-    let ctx = crate::test_fixtures::tool_ctx_with(
+    let ctx = crate::test_fixtures::tool_ctx_on(
         owner,
         AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-        Arc::new(engine.registry().clone()),
+        Arc::clone(engine),
         crate::SpiiceServices::default(),
         crate::ToolCaller::new("gate/model", "gate", "1"),
-    )
-    .with_engine(Some(Arc::clone(engine)));
+    );
     (descriptor.call)(ctx, args)
         .await
         .map_err(|err| err.to_string())

@@ -741,7 +741,7 @@ async fn natural_key_selection_uses_the_authorized_payload() {
                 .memories
                 .is_empty()
         );
-        let valid = engine.ingest_fact_with_typed_sidecar(&authorized).await?;
+        let valid = engine.ingest_authorized_fact(&authorized).await?;
         assert_eq!(
             engine
                 .get_memories(

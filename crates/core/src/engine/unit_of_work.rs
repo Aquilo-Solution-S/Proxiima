@@ -95,7 +95,7 @@ impl<'a, P: FactPayload> FactWrite<'a, P> {
         self
     }
 
-    /// Opaque cited-object hint (`CitationPlan::DraftHint`).
+    /// Opaque cited-object hint (`AuthorizedCitation::None`).
     #[must_use]
     pub fn citation(mut self, citation: CitationSpec) -> Self {
         self.citation = Some(citation);
@@ -1097,7 +1097,7 @@ impl<'a> UnitOfWork<'a> {
         let outcome = self
             .ensure_session()
             .await?
-            .ingest_fact_with_typed_sidecar(&authorized, &embedding_spaces)
+            .ingest_authorized_fact(&authorized, &embedding_spaces)
             .await
             .map_err(super::errors::map_fact_ingest_error)?;
         if !outcome.idempotent_replay {

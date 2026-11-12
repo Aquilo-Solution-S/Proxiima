@@ -1402,8 +1402,8 @@ fn spiice_sdk_names_query_and_ingest_types() {
         proxiima::spiice::GoalRow,
         proxiima::spiice::FactIngestOutcome,
         proxiima::spiice::FactWriteCommand,
-        proxiima::spiice::AuthorizedFactWithCitation,
-        proxiima::spiice::AuthorizedFactWithCitationRef,
+        proxiima::spiice::AuthorizedFactWrite,
+        proxiima::spiice::AuthorizedCitation,
     )> = None;
     let _cited = proxiima::spiice::InlineCitedObjectDraft {
         schema_id: proxiima::spiice::SchemaId::new("core/upload-v1".into()),

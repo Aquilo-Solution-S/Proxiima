@@ -238,7 +238,7 @@ impl Tool for CoreUploadTool {
                 CoreUploadArgs::Complete(args) => {
                     let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
                     let service = blob_service(&ctx)?;
-                    let engine = ctx.require_engine()?;
+                    let engine = ctx.engine();
                     // No extension sidecars from the MCP surface: a tool
                     // caller has no registered schema of its own to add.
                     // Spiices reach the same verb in-process and pass theirs.

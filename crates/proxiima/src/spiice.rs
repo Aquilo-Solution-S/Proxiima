@@ -108,8 +108,8 @@ pub use proxiima_core::storage_ports::{SIDECAR_SESSION_READ_MAX_ROWS, SidecarSes
 /// slice; without these names an out-of-tree spiice can only spell
 /// `CitationSpec` (opaque hash) or take `proxiima-core`.
 pub use proxiima_core::verbs::fact_ingest::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, CitationSpec, FactIngestOutcome,
-    FactWriteCommand, IngestReceipt, InlineCitedObjectDraft,
+    AuthorizedCitation, AuthorizedFactWrite, CitationSpec, FactIngestOutcome, FactWriteCommand,
+    IngestReceipt, InlineCitedObjectDraft,
 };
 pub use proxiima_core::verbs::goal_write::{
     ChildGoalDraft, DecomposeGoalOutcome, GoalAuthorship, GoalCreateRequest, GoalDependencyRef,
@@ -153,7 +153,6 @@ pub use proxiima_core::{
 };
 /// Query / ingest types a spiice names next to [`crate::Engine`]
 /// (Host API). `Engine` itself stays off this module (`docs/protocol.md`).
-/// `AuthorizedFactWrite` is Engine-internal (UoW-first).
 ///
 /// [`AuthorizationHook`] is the advertised extension. Implementing `veto`
 /// or `observe` requires the input/outcome types; [`OwnerResolver`] is the

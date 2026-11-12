@@ -30,9 +30,8 @@ use crate::request_scope::RequestHeaderAllowlist;
 
 #[derive(Clone)]
 pub struct ToolHost {
-    registry: Arc<SpiiceRegistryFrozen>,
     services: SpiiceServices,
-    engine: Option<Arc<Engine>>,
+    engine: Arc<Engine>,
     request_headers: RequestHeaderAllowlist,
     host_tools: Option<Arc<dyn HostTools>>,
     tool_list: Option<ToolListNotifier>,
@@ -44,7 +43,6 @@ pub const MAX_HOST_TOOL_NAME_CHARS: usize = 128;
 impl std::fmt::Debug for ToolHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolHost")
-            .field("has_engine", &self.engine.is_some())
             .field("host_tools", &self.host_tools)
             .field("tool_list_notifications", &self.tool_list.is_some())
             .finish_non_exhaustive()
@@ -52,27 +50,16 @@ impl std::fmt::Debug for ToolHost {
 }
 
 impl ToolHost {
+    /// Serve `engine`'s registry, running every tool against `engine`.
     #[must_use]
-    pub fn from_parts(registry: Arc<SpiiceRegistryFrozen>, services: SpiiceServices) -> Self {
+    pub fn from_engine(engine: Arc<Engine>, services: SpiiceServices) -> Self {
         Self {
-            registry,
             services,
-            engine: None,
+            engine,
             request_headers: RequestHeaderAllowlist::default(),
             host_tools: None,
             tool_list: None,
         }
-    }
-
-    #[must_use]
-    pub fn from_engine(engine: Arc<Engine>, services: SpiiceServices) -> Self {
-        Self::from_parts(Arc::new(engine.registry().clone()), services).with_engine(engine)
-    }
-
-    #[must_use]
-    pub fn with_engine(mut self, engine: Arc<Engine>) -> Self {
-        self.engine = Some(engine);
-        self
     }
 
     /// Serve `tools` beside the registry's (see [`HostTools`]).
@@ -97,10 +84,10 @@ impl ToolHost {
         self.tool_list.as_ref()
     }
 
-    /// The engine tools run against, when one was attached.
+    /// The engine tools run against.
     #[must_use]
-    pub fn engine(&self) -> Option<&Arc<Engine>> {
-        self.engine.as_ref()
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
     }
 
     /// The host tools `auth` may be shown, before palette, owner-role and
@@ -121,7 +108,7 @@ impl ToolHost {
         };
         let mut served: Vec<HostTool> = Vec::new();
         for tool in source.list(auth).await? {
-            match host_tool_name_refusal(&self.registry, &tool.name, &served) {
+            match host_tool_name_refusal(self.registry(), &tool.name, &served) {
                 Some(reason) => tracing::warn!(tool = %tool.name, reason, "host tool not served"),
                 None => served.push(tool),
             }
@@ -164,7 +151,7 @@ impl ToolHost {
 
     #[must_use]
     pub fn registry(&self) -> &SpiiceRegistryFrozen {
-        &self.registry
+        self.engine.registry()
     }
 
     /// Build a per-call [`ToolCtx`] derived from the auth regime.
@@ -211,11 +198,10 @@ impl ToolHost {
         Ok(ToolCtx::new(
             auth.owner,
             auth.authz.clone(),
-            self.registry.clone(),
             services,
             caller,
-        )
-        .with_engine(self.engine.clone()))
+            self.engine.clone(),
+        ))
     }
 
     /// # Errors
@@ -326,7 +312,7 @@ impl ToolHost {
         name: &str,
     ) -> Result<ToolTarget<'_>, ToolInvocationError> {
         if let Some(descriptor) = self
-            .registry
+            .registry()
             .list_mcp_tools()
             .iter()
             .find(|d| tool_name_matches(d.name, name))
@@ -337,7 +323,7 @@ impl ToolHost {
         let Some(source) = &self.host_tools else {
             return Err(not_found());
         };
-        if host_tool_name_refusal(&self.registry, name, &[]).is_some() {
+        if host_tool_name_refusal(self.registry(), name, &[]).is_some() {
             return Err(not_found());
         }
         match source.resolve(auth, name).await? {
@@ -495,7 +481,7 @@ impl ToolHost {
         ctx: ToolCtx,
         terminal: TerminalDispatch<'a>,
     ) -> Result<ToolReply, ToolInvocationError> {
-        Next::new(self.registry.request_behaviors(), terminal)
+        Next::new(self.registry().request_behaviors(), terminal)
             .run(ToolCall { name, args, ctx })
             .await
             .map_err(Into::into)

@@ -190,8 +190,10 @@ fn mcp_service_for(host: crate::server::ToolHost) -> super::McpStreamableService
 fn stub_host() -> crate::server::ToolHost {
     let mut registry = proxiima_core::SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
-    crate::server::ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    crate::server::ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         proxiima_core::SpiiceServices::default(),
     )
 }
@@ -938,8 +940,10 @@ impl proxiima_core::Tool for SendTool {
 async fn a_typed_tool_failure_goes_out_as_is_error_with_its_text() {
     let mut registry = proxiima_core::SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<SendTool>("proxiima-stub");
-    let host = crate::server::ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    let host = crate::server::ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         proxiima_core::SpiiceServices::default(),
     );
     let owner = personal_owner();
@@ -1109,8 +1113,10 @@ fn stub_host_behaving(
     let mut registry = proxiima_core::SpiiceRegistry::new();
     registry.add_tool_or_panic_for_tests::<StubTool>("proxiima-stub");
     registry.add_request_behavior(behavior);
-    crate::server::ToolHost::from_parts(
-        Arc::new(registry.freeze_or_panic_for_tests()),
+    crate::server::ToolHost::from_engine(
+        proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+            registry.freeze_or_panic_for_tests(),
+        )),
         proxiima_core::SpiiceServices::default(),
     )
 }

@@ -400,7 +400,7 @@ impl WriteSession for PgWriteSession {
         Ok(head.map(MemoryId::new))
     }
 
-    async fn ingest_fact_with_typed_sidecar(
+    async fn ingest_authorized_fact(
         &mut self,
         authorized: &AuthorizedFactWrite,
         embedding_spaces: &[proxiima_core::EmbeddingSpace],
@@ -408,7 +408,6 @@ impl WriteSession for PgWriteSession {
         let sidecar_payloads = authorized.sidecar_payloads();
         let fact_sidecars = self.sidecars.writing(authorized.draft());
         let payloads = sidecar_payloads.to_vec();
-        let content_payloads = payloads.clone();
         let tables = self.sidecars.tables_for_payloads(sidecar_payloads)?;
         let natural_key = verbs::fact_ingest::fact_natural_key(
             authorized.draft(),
@@ -424,8 +423,9 @@ impl WriteSession for PgWriteSession {
         // this same line, and the fence it takes is the one the spiice's
         // erase holds.
         let scopes = self.scopes.targets_for_payloads(sidecar_payloads)?;
-        let outcome = verbs::fact_ingest::ingest_fact_with_sidecar_in_tx(
+        let outcome = verbs::fact_ingest::ingest_authorized_fact_in_tx(
             &mut self.tx,
+            &self.sidecars,
             authorized,
             embedding_spaces,
             verbs::fact_ingest::FactAdmissionInput {
@@ -433,10 +433,6 @@ impl WriteSession for PgWriteSession {
                 natural_key: natural_key.as_ref(),
                 sidecar_tables: &tables,
                 scopes: &scopes,
-                content: verbs::fact_ingest::ContentResolution {
-                    content_id: None,
-                    payloads: Some(&content_payloads),
-                },
                 publication: authorized.publication(),
             },
             move |tx, outcome| {

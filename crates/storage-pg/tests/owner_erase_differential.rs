@@ -31,7 +31,7 @@
 //! sidecar rows by hand. `assert_memory_declares_sidecar` makes that corpus
 //! unwritable — a sidecar row whose memory does not declare the table is
 //! refused — so the four admissions that carry sidecar rows now go through
-//! `ingest_fact_with_typed_sidecar`, which writes the rows and the stamp as
+//! `ingest_authorized_fact`, which writes the rows and the stamp as
 //! one act. A typed payload carries its own `note_id`, so four uuids that
 //! used to equal their memory's `t` are now distinct, and every
 //! order-of-first-appearance token after them shifts.
@@ -374,7 +374,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
     // stamps `memory.sidecar_tables` from the payloads it routes, so the
     // stamp and the rows are one statement of one fact rather than two.
     let first = pg
-        .ingest_fact_with_typed_sidecar(
+        .ingest_authorized_fact(
             &published(
                 owner,
                 "one",
@@ -389,7 +389,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
         .await?;
     let handle = first.handle;
     let second = pg
-        .ingest_fact_with_typed_sidecar(
+        .ingest_authorized_fact(
             &authorized_with_sidecars(
                 owner,
                 draft(Some(("src-a", "k2")), Some(handle), Some(blob)),
@@ -399,7 +399,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
         )
         .await?;
     let third = pg
-        .ingest_fact_with_typed_sidecar(
+        .ingest_authorized_fact(
             &authorized_with_sidecars(
                 owner,
                 draft(Some(("src-b", "k3")), None, None),
@@ -409,7 +409,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
         )
         .await?;
     let neighbour_memory = pg
-        .ingest_fact_with_typed_sidecar(
+        .ingest_authorized_fact(
             &published(
                 other,
                 "neighbour",

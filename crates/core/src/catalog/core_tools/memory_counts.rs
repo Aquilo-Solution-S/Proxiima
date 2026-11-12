@@ -23,7 +23,7 @@ pub struct MemoryCountsOutput {
 /// Returns authorization (`Forbidden` for a context that reads nothing) or
 /// storage failures.
 pub async fn memory_counts(ctx: ToolCtx) -> Result<MemoryCountsOutput, ToolError> {
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let counts = engine.memory_counts(ctx.authz()).await?;
     Ok(MemoryCountsOutput { counts })
 }

@@ -18,13 +18,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 use proxiima_core::verbs::fact_ingest::{
-    AuthorizedInlineCitedObject, AuthorizedNodeLinks, FactIngestOutcome, FactWriteCommand,
+    AuthorizedCitation, AuthorizedNodeLinks, FactIngestOutcome, FactWriteCommand,
 };
 use proxiima_core::verbs::schema::PayloadKind;
-use proxiima_core::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite, MemoryId,
-    OwnerId, SidecarPayload, StorageError,
-};
+use proxiima_core::{AuthorizedFactWrite, MemoryId, OwnerId, SidecarPayload, StorageError};
 use sqlx::{Acquire, PgPool, Postgres, Transaction};
 
 pub(crate) use super::memory_timeseries::ContentResolution;
@@ -36,18 +33,18 @@ pub type FactIngestSidecarFuture<'t> =
     Pin<Box<dyn Future<Output = Result<(), StorageError>> + Send + 't>>;
 
 /// How [`ingest_core`] settles the write's side effects: which embedding
-/// spaces to enqueue and how the draft's citation resolves to a `blob_id`.
+/// spaces to enqueue and how the write's citation resolves to a `blob_id`.
 #[derive(Debug, Clone, Copy)]
 struct IngestCoreOptions<'a> {
     embedding_spaces: &'a [proxiima_core::EmbeddingSpace],
-    citation_plan: CitationPlan<'a>,
+    citation: &'a AuthorizedCitation,
 }
 
 /// What this Fact admission declares about its own rows: the sidecar tables
-/// it actually inserts, the lifecycle scopes its payloads belong to, and how
-/// its owner-scoped `Content` resolves. One value, because the three are read
-/// off the same payload set and a route that carried the tables without the
-/// scopes would admit a row a concurrent scope erase cannot see.
+/// it actually inserts and the lifecycle scopes its payloads belong to. One
+/// value, because both are read off the same payload set and a route that
+/// carried the tables without the scopes would admit a row a concurrent
+/// scope erase cannot see.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FactAdmissionInput<'a> {
     pub(crate) store_number: u16,
@@ -59,7 +56,6 @@ pub(crate) struct FactAdmissionInput<'a> {
     /// erase cannot see, which is the defect this field exists to make
     /// unspellable at the call site.
     pub(crate) scopes: &'a [ScopeFenceTarget],
-    pub(crate) content: ContentResolution<'a>,
     /// The `CloudEvents` record this admission captures — draft AND the
     /// limits it is sealed under — when its schema is registered
     /// listenable. `None` is the overwhelmingly common case and costs the
@@ -162,17 +158,6 @@ impl<'a> AuthorizedFactInput<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum CitationPlan<'a> {
-    DraftHint,
-    Inline {
-        cited_object: &'a AuthorizedInlineCitedObject,
-    },
-    ByRef {
-        cited_object_id: uuid::Uuid,
-    },
-}
-
 /// Pool-scoped `FactIngest`. Opens its own transaction; commits on
 /// success.
 ///
@@ -222,6 +207,14 @@ pub(crate) async fn ingest_fact_command_in_tx(
             "typed Fact sidecars require the typed persistence path".into(),
         ));
     }
+    match authorized.citation() {
+        AuthorizedCitation::None => {}
+        AuthorizedCitation::Inline { .. } | AuthorizedCitation::Reference(_) => {
+            return Err(StorageError::ConstraintViolation(
+                "a cited Fact requires the typed persistence path".into(),
+            ));
+        }
+    }
     // The receipt-only route carries no typed payload, so there is nothing
     // to export. Core refuses a listenable schema here before it mints the
     // witness; this is the storage backstop for a caller that reached the
@@ -235,7 +228,7 @@ pub(crate) async fn ingest_fact_command_in_tx(
     }
     let options = IngestCoreOptions {
         embedding_spaces,
-        citation_plan: CitationPlan::DraftHint,
+        citation: authorized.citation(),
     };
     ingest_core(
         tx,
@@ -254,103 +247,13 @@ pub(crate) async fn ingest_fact_command_in_tx(
             // one that declares references), so there is no payload to read a
             // scope off and no sidecar row for a scope erase to sweep.
             scopes: &[],
-            content: ContentResolution {
-                content_id: None,
-                payloads: None,
-            },
             publication: None,
         },
+        ContentResolution {
+            content_id: None,
+            payloads: None,
+        },
         |_tx, _outcome| Box::pin(async { Ok(()) }),
-    )
-    .await
-}
-
-/// Run gated Fact ingest plus its inline cited object inside an
-/// already-open transaction.
-///
-/// The cited object is one `proxiima_core.blob` row, upserted on
-/// `(owner, schema, content_hash)`; the Fact's `blob_id` points at it.
-///
-/// # Errors
-///
-/// Returns storage errors from core row materialization (the Fact, the
-/// cited-object `blob` row and the `blob_id` link) or caller-owned Fact
-/// sidecar insertion. The caller owns transaction rollback/commit.
-pub(crate) async fn ingest_fact_with_citation_in_tx<F>(
-    tx: &mut Transaction<'_, Postgres>,
-    sidecars: &PgSidecarRegistryFrozen,
-    authorized: &AuthorizedFactWithCitation,
-    embedding_spaces: &[proxiima_core::EmbeddingSpace],
-    input: FactAdmissionInput<'_>,
-    fact_sidecar: F,
-) -> Result<FactIngestOutcome, StorageError>
-where
-    F: for<'t> FnOnce(
-        &'t mut Transaction<'_, Postgres>,
-        &'t FactIngestOutcome,
-    ) -> FactIngestSidecarFuture<'t>,
-{
-    reject_unstamped_memory_tables(sidecars, input.sidecar_tables)?;
-    let draft = authorized.draft();
-    let options = IngestCoreOptions {
-        embedding_spaces,
-        citation_plan: CitationPlan::Inline {
-            cited_object: authorized.cited_object(),
-        },
-    };
-    ingest_core(
-        tx,
-        AuthorizedFactInput::new(authorized.owner_write_permit(), draft, authorized.links())?,
-        options,
-        input,
-        fact_sidecar,
-    )
-    .await
-}
-
-/// Run gated Fact ingest citing an EXISTING cited object by id inside an
-/// already-open transaction.
-///
-/// The by-ref twin of [`ingest_fact_with_citation_in_tx`]: verifies the
-/// referenced object (existence, owner) in the same transaction, then
-/// points the Fact's `blob_id` at the existing row.
-/// Receipt/idempotency semantics are identical to the inline path — a
-/// receipt replay returns before any citation row is written.
-///
-/// # Errors
-///
-/// Returns `ConstraintViolation` when the referenced object is missing
-/// for the Fact's owner; otherwise storage errors from core row
-/// materialization or Fact sidecar insertion. The caller owns
-/// transaction rollback/commit.
-pub(crate) async fn ingest_fact_with_citation_ref_in_tx<F>(
-    tx: &mut Transaction<'_, Postgres>,
-    sidecars: &PgSidecarRegistryFrozen,
-    authorized: &AuthorizedFactWithCitationRef,
-    embedding_spaces: &[proxiima_core::EmbeddingSpace],
-    input: FactAdmissionInput<'_>,
-    fact_sidecar: F,
-) -> Result<FactIngestOutcome, StorageError>
-where
-    F: for<'t> FnOnce(
-        &'t mut Transaction<'_, Postgres>,
-        &'t FactIngestOutcome,
-    ) -> FactIngestSidecarFuture<'t>,
-{
-    reject_unstamped_memory_tables(sidecars, input.sidecar_tables)?;
-    let draft = authorized.draft();
-    let options = IngestCoreOptions {
-        embedding_spaces,
-        citation_plan: CitationPlan::ByRef {
-            cited_object_id: authorized.cited_object_id(),
-        },
-    };
-    ingest_core(
-        tx,
-        AuthorizedFactInput::new(authorized.owner_write_permit(), draft, authorized.links())?,
-        options,
-        input,
-        fact_sidecar,
     )
     .await
 }
@@ -369,30 +272,28 @@ fn reject_unstamped_memory_tables(
     Ok(())
 }
 
-/// Resolve the draft's citation to a `blob_id` per [`CitationPlan`]: a draft
-/// hint and an inline object both upsert a blob; a by-ref plan verifies the
-/// existing object and returns its id.
+/// Resolve the write's citation to a `blob_id`: the draft's hint and an
+/// inline object both upsert a blob; a reference verifies the existing
+/// object and returns its id.
 async fn persist_citation_timeseries(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
     draft: &FactWriteCommand,
-    plan: CitationPlan<'_>,
+    citation: &AuthorizedCitation,
 ) -> Result<Option<uuid::Uuid>, StorageError> {
-    match plan {
-        CitationPlan::DraftHint => persist_draft_citation(tx, owner, draft).await,
-        CitationPlan::Inline { cited_object, .. } => upsert_blob(
+    match citation {
+        AuthorizedCitation::None => persist_draft_citation(tx, owner, draft).await,
+        AuthorizedCitation::Inline { object, .. } => upsert_blob(
             tx,
             owner,
-            cited_object.schema_id().as_str(),
-            cited_object.content_hash(),
+            object.schema_id().as_str(),
+            object.content_hash(),
         )
         .await
         .map(Some),
-        CitationPlan::ByRef {
-            cited_object_id, ..
-        } => {
-            verify_cited_object_ref_in_tx(tx, owner, cited_object_id).await?;
-            Ok(Some(cited_object_id))
+        AuthorizedCitation::Reference(cited_object_id) => {
+            verify_cited_object_ref_in_tx(tx, owner, *cited_object_id).await?;
+            Ok(Some(*cited_object_id))
         }
     }
 }
@@ -528,17 +429,26 @@ async fn verify_cited_object_ref_in_tx(
     Ok(())
 }
 
-/// Run gated `FactIngest` plus a typed sidecar insert inside an
-/// already-open transaction. The witness proves the draft passed core
-/// authorization, owner stamping, and schema validation before storage
-/// saw it.
+/// Run gated `FactIngest` with its typed sidecars and the citation its
+/// authorization settled inside an already-open transaction. The witness
+/// proves the draft passed core authorization, owner stamping, and schema
+/// validation before storage saw it.
+///
+/// A Fact without a cited object resolves its owner-scoped `Content` from
+/// its payloads. A cited Fact resolves none, and every table it stamps must
+/// be a registered memory sidecar. An inline citation that names an upload
+/// fences the owner and the upload's object key before admission, and
+/// completes the upload row after it.
 ///
 /// # Errors
 ///
-/// Returns storage errors from Fact materialization or sidecar
-/// insertion. The caller owns transaction rollback/commit.
-pub(crate) async fn ingest_fact_with_sidecar_in_tx<F>(
+/// `ConstraintViolation` when a cited Fact stamps an unregistered table or
+/// a referenced cited object is missing for the Fact's owner; otherwise
+/// storage errors from Fact materialization, citation, upload completion or
+/// sidecar insertion. The caller owns transaction rollback/commit.
+pub(crate) async fn ingest_authorized_fact_in_tx<F>(
     tx: &mut Transaction<'_, Postgres>,
+    sidecars: &PgSidecarRegistryFrozen,
     authorized: &AuthorizedFactWrite,
     embedding_spaces: &[proxiima_core::EmbeddingSpace],
     input: FactAdmissionInput<'_>,
@@ -550,26 +460,77 @@ where
         &'t FactIngestOutcome,
     ) -> FactIngestSidecarFuture<'t>,
 {
-    let draft = authorized.draft();
+    let owner = authorized.owner_write_permit().owner();
+    let (content, upload) = match authorized.citation() {
+        AuthorizedCitation::None => (
+            ContentResolution {
+                content_id: None,
+                payloads: Some(authorized.sidecar_payloads()),
+            },
+            None,
+        ),
+        AuthorizedCitation::Inline {
+            upload_completion, ..
+        } => {
+            reject_unstamped_memory_tables(sidecars, input.sidecar_tables)?;
+            // Admission replays can return before the ordinary owner fence.
+            // Fence both new writes and replays before any corpus row locks.
+            if let Some(upload_id) = upload_completion {
+                crate::access::fences::lock_owner_fence_shared_tx(tx, owner).await?;
+                let key = proxiima_core::citations::uploaded_blob_object_key(*upload_id);
+                crate::access::fences::lock_object_keys_tx(tx, std::slice::from_ref(&key)).await?;
+            }
+            (CITED_CONTENT, *upload_completion)
+        }
+        AuthorizedCitation::Reference(_) => {
+            reject_unstamped_memory_tables(sidecars, input.sidecar_tables)?;
+            (CITED_CONTENT, None)
+        }
+    };
     let options = IngestCoreOptions {
         embedding_spaces,
-        citation_plan: CitationPlan::DraftHint,
+        citation: authorized.citation(),
     };
-    ingest_core(
+    let outcome = ingest_core(
         tx,
-        AuthorizedFactInput::new(authorized.owner_write_permit(), draft, authorized.links())?,
+        AuthorizedFactInput::new(
+            authorized.owner_write_permit(),
+            authorized.draft(),
+            authorized.links(),
+        )?,
         options,
         input,
+        content,
         sidecar,
     )
-    .await
+    .await?;
+    if let Some(upload_id) = upload {
+        let cited_object_id = outcome.cited_object_id.ok_or_else(|| {
+            StorageError::Internal("upload completion requires a cited object".into())
+        })?;
+        crate::access::upload_completion::complete_upload_in_tx(
+            tx,
+            owner,
+            upload_id,
+            cited_object_id,
+        )
+        .await?;
+    }
+    Ok(outcome)
 }
+
+/// A cited Fact resolves no owner-scoped `Content`.
+const CITED_CONTENT: ContentResolution<'static> = ContentResolution {
+    content_id: None,
+    payloads: None,
+};
 
 async fn ingest_core<F>(
     tx: &mut Transaction<'_, Postgres>,
     authorized: AuthorizedFactInput<'_>,
     options: IngestCoreOptions<'_>,
     input: FactAdmissionInput<'_>,
+    content: ContentResolution<'_>,
     sidecar: F,
 ) -> Result<FactIngestOutcome, StorageError>
 where
@@ -581,7 +542,7 @@ where
     let mut retried_collision = false;
     let (mut outcome, occurred_at, blob_id) = loop {
         let mut attempt = tx.begin().await.map_err(map_err)?;
-        match admit_fact(&mut attempt, authorized, options, input).await {
+        match admit_fact(&mut attempt, authorized, options, input, content).await {
             Ok(outcome) => {
                 attempt.commit().await.map_err(map_err)?;
                 break outcome;
@@ -640,6 +601,7 @@ async fn admit_fact(
     authorized: AuthorizedFactInput<'_>,
     options: IngestCoreOptions<'_>,
     input: FactAdmissionInput<'_>,
+    content: ContentResolution<'_>,
 ) -> Result<
     (
         FactIngestOutcome,
@@ -682,10 +644,9 @@ async fn admit_fact(
     let occurred_at = prepared.occurred_at();
     let mut write = draft.clone();
     if write.blob_id.is_none() {
-        write.blob_id =
-            persist_citation_timeseries(tx, owner, draft, options.citation_plan).await?;
+        write.blob_id = persist_citation_timeseries(tx, owner, draft, options.citation).await?;
     }
-    let content_id = match (input.content.content_id, input.content.payloads) {
+    let content_id = match (content.content_id, content.payloads) {
         (Some(content_id), _) => Some(content_id),
         (None, Some(payloads)) => {
             crate::verbs::content::ensure_content_from_payloads(

@@ -314,7 +314,10 @@ fn host_tier_implements_the_rmcp_server_handler_around_the_dynamic_handler() {
             .try_freeze()
             .expect("empty registry freezes"),
     );
-    let host = proxiima::ToolHost::from_parts(registry, proxiima::SpiiceServices::default());
+    let host = proxiima::ToolHost::from_engine(
+        proxiima::testkit::rejecting_engine(&registry),
+        proxiima::SpiiceServices::default(),
+    );
     let wrapped = HostHandler {
         inner: proxiima::DynamicHandler::new(host),
     };
@@ -360,12 +363,12 @@ async fn host_tier_builds_the_mcp_edge_layer_stack() {
         .expect("concrete origin");
 
     let service = proxiima::streamable_http_service(
-        proxiima::ToolHost::from_parts(
-            Arc::new(
+        proxiima::ToolHost::from_engine(
+            proxiima::testkit::rejecting_engine(Arc::new(
                 proxiima::spiice::SpiiceRegistry::new()
                     .try_freeze()
                     .expect("empty registry freezes"),
-            ),
+            )),
             proxiima::SpiiceServices::default(),
         ),
         &origins,

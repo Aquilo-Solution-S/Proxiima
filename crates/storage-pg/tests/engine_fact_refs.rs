@@ -244,14 +244,19 @@ async fn fact_reference_wrong_stored_kind_writes_nothing() -> TestResult {
         .memory_id;
     let before = w.engine.memory_counts(&w.authz).await?;
 
-    let error = w
-        .engine
-        .fact_ingest(
-            &w.authz,
-            draft(&payload("wrong-kind", Vec::new())).with_refs(vec![abstraction.into_inner()]),
-        )
-        .await
-        .expect_err("a raw Fact endpoint must match the stored kind");
+    let error = async {
+        let authorized = w
+            .engine
+            .authorize_fact_ingest(
+                &w.authz,
+                draft(&payload("wrong-kind", Vec::new())).with_refs(vec![abstraction.into_inner()]),
+                &[],
+            )
+            .await?;
+        w.engine.ingest_authorized_fact(&authorized).await
+    }
+    .await
+    .expect_err("a raw Fact endpoint must match the stored kind");
 
     assert_eq!(error.code, ErrorCode::InvalidArgument);
     assert_eq!(w.engine.memory_counts(&w.authz).await?, before);
@@ -264,14 +269,19 @@ async fn fact_reference_unreadable_writes_nothing() -> TestResult {
     let foreign = w.fact(OwnerId::from(UserId::new(Uuid::now_v7()))).await?;
     let before = w.engine.memory_counts(&w.authz).await?;
 
-    let error = w
-        .engine
-        .fact_ingest(
-            &w.authz,
-            draft(&payload("unreadable", Vec::new())).with_refs(vec![foreign.into_inner()]),
-        )
-        .await
-        .expect_err("an unreadable target must fail before persistence");
+    let error = async {
+        let authorized = w
+            .engine
+            .authorize_fact_ingest(
+                &w.authz,
+                draft(&payload("unreadable", Vec::new())).with_refs(vec![foreign.into_inner()]),
+                &[],
+            )
+            .await?;
+        w.engine.ingest_authorized_fact(&authorized).await
+    }
+    .await
+    .expect_err("an unreadable target must fail before persistence");
 
     assert_eq!(error.code, ErrorCode::Forbidden);
     assert_eq!(w.engine.memory_counts(&w.authz).await?, before);

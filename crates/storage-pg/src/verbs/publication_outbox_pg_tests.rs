@@ -131,7 +131,7 @@ fn witness(owner: &OwnerId, command: FactWriteCommand) -> AuthorizedFactWrite {
     )
 }
 
-/// One listenable admission through the typed-sidecar port — the route a
+/// One listenable admission through the Fact write port — the route a
 /// spiice's Fact write takes.
 async fn ingest_listenable(
     pg: &PgStorage,
@@ -159,7 +159,7 @@ async fn ingest_listenable_with_source_id(
         payload,
         PublicationLimits::default(),
     ));
-    pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+    pg.ingest_authorized_fact(&authorized, &[]).await
 }
 
 /// The same route under an explicit deployment bound.
@@ -173,7 +173,7 @@ async fn ingest_listenable_under(
     let command = fact_command(ListenableProbeV1::SCHEMA_ID, ingest_key);
     let authorized =
         witness(owner, command).with_publication_for_tests(plan_for(*owner, payload, limits));
-    pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+    pg.ingest_authorized_fact(&authorized, &[]).await
 }
 
 /// The same route with host-bound extension attributes on the draft —
@@ -189,7 +189,7 @@ async fn ingest_listenable_with_extensions(
     draft.extensions = extensions;
     let authorized = witness(owner, command)
         .with_publication_for_tests(PublicationPlan::new(draft, PublicationLimits::default()));
-    pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+    pg.ingest_authorized_fact(&authorized, &[]).await
 }
 
 async fn outbox_rows(pool: &sqlx::PgPool) -> i64 {
@@ -366,7 +366,7 @@ async fn a_backdated_fact_publishes_when_it_occurred() {
         PublicationLimits::default(),
     ));
     let outcome = pg
-        .ingest_fact_with_typed_sidecar(&authorized, &[])
+        .ingest_authorized_fact(&authorized, &[])
         .await
         .expect("a backdated listenable write commits");
     let t = outcome.memory_id.into_inner();
@@ -532,8 +532,9 @@ async fn a_failing_sidecar_rolls_back_the_fact_and_its_capture() {
         PublicationLimits::default(),
     ));
     let mut tx = pool.begin().await.expect("begin");
-    let err = crate::verbs::fact_ingest::ingest_fact_with_sidecar_in_tx(
+    let err = crate::verbs::fact_ingest::ingest_authorized_fact_in_tx(
         &mut tx,
+        pg.sidecars(),
         &authorized,
         &[],
         crate::verbs::fact_ingest::FactAdmissionInput {
@@ -541,10 +542,6 @@ async fn a_failing_sidecar_rolls_back_the_fact_and_its_capture() {
             natural_key: None,
             sidecar_tables: &[],
             scopes: &[],
-            content: crate::verbs::fact_ingest::ContentResolution {
-                content_id: None,
-                payloads: Some(&[]),
-            },
             publication: authorized.publication(),
         },
         |_tx, _outcome| {
@@ -593,8 +590,9 @@ async fn a_failure_after_the_capture_takes_the_captured_record_with_it() {
     ));
 
     let mut tx = pool.begin().await.expect("begin");
-    let outcome = crate::verbs::fact_ingest::ingest_fact_with_sidecar_in_tx(
+    let outcome = crate::verbs::fact_ingest::ingest_authorized_fact_in_tx(
         &mut tx,
+        pg.sidecars(),
         &authorized,
         &[],
         crate::verbs::fact_ingest::FactAdmissionInput {
@@ -602,10 +600,6 @@ async fn a_failure_after_the_capture_takes_the_captured_record_with_it() {
             natural_key: None,
             sidecar_tables: &[],
             scopes: &[],
-            content: crate::verbs::fact_ingest::ContentResolution {
-                content_id: None,
-                payloads: Some(&[]),
-            },
             publication: authorized.publication(),
         },
         |_tx, _outcome| Box::pin(async { Ok(()) }),
@@ -965,7 +959,7 @@ async fn an_uncommitted_write_session_leaves_no_visible_record() {
             .await
             .expect("session begins");
         session
-            .ingest_fact_with_typed_sidecar(&authorized, &[])
+            .ingest_authorized_fact(&authorized, &[])
             .await
             .expect("the write succeeds inside the transaction");
         // Dropped without commit.
@@ -2668,7 +2662,7 @@ async fn every_event_of_a_series_carries_the_next_position_in_it() {
     let mut command = fact_command(ListenableProbeV1::SCHEMA_ID, None);
     command.handle = Some(series);
     let second = pg
-        .ingest_fact_with_typed_sidecar(
+        .ingest_authorized_fact(
             &witness(&owner, command).with_publication_for_tests(plan_for(
                 owner,
                 &probe("v2"),
@@ -2758,12 +2752,12 @@ async fn forget_restore_write_publishes_above_prior_sequences() {
             .expect("sequence is numeric")
     };
     let first = pg
-        .ingest_fact_with_typed_sidecar(&write_to(None, "v1"), &[])
+        .ingest_authorized_fact(&write_to(None, "v1"), &[])
         .await
         .expect("first write");
     let series = first.handle;
     let second = pg
-        .ingest_fact_with_typed_sidecar(&write_to(Some(series), "v2"), &[])
+        .ingest_authorized_fact(&write_to(Some(series), "v2"), &[])
         .await
         .expect("second write");
     let prior = sequence(envelope_of(&pool, first.memory_id.into_inner()).await).max(sequence(
@@ -2779,7 +2773,7 @@ async fn forget_restore_write_publishes_above_prior_sequences() {
         .await
         .expect("restore");
     let third = pg
-        .ingest_fact_with_typed_sidecar(&write_to(Some(series), "v3"), &[])
+        .ingest_authorized_fact(&write_to(Some(series), "v3"), &[])
         .await
         .expect("write after restore");
     assert_eq!(third.handle, series);
@@ -2816,7 +2810,7 @@ async fn overlapping_series_writes_head_has_highest_sequence() {
         ))
     };
     let series = pg
-        .ingest_fact_with_typed_sidecar(&write_to(None, "v0"), &[])
+        .ingest_authorized_fact(&write_to(None, "v0"), &[])
         .await
         .expect("series exists")
         .handle;
@@ -2825,7 +2819,7 @@ async fn overlapping_series_writes_head_has_highest_sequence() {
     let a = {
         let pg = pg.clone();
         tokio::spawn(async move {
-            pg.ingest_fact_with_typed_sidecar(&write_to(Some(series), "a"), &[])
+            pg.ingest_authorized_fact(&write_to(Some(series), "a"), &[])
                 .await
         })
     };
@@ -2833,7 +2827,7 @@ async fn overlapping_series_writes_head_has_highest_sequence() {
     let b = {
         let pg = pg.clone();
         tokio::spawn(async move {
-            pg.ingest_fact_with_typed_sidecar(&write_to(Some(series), "b"), &[])
+            pg.ingest_authorized_fact(&write_to(Some(series), "b"), &[])
                 .await
         })
     };

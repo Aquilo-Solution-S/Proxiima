@@ -1097,8 +1097,7 @@ fn resolve_mcp_edge(
             .with_host(authenticator)
             .with_owner_access(owner_access);
     }
-    let mut tool_host = ToolHost::from_parts(Arc::new(engine.registry().clone()), services)
-        .with_engine(engine)
+    let mut tool_host = ToolHost::from_engine(engine, services)
         .with_request_headers(config.request_headers.clone());
     if let Some(host_tools) = parts.host_tools.clone() {
         tool_host = tool_host.with_host_tools(host_tools);

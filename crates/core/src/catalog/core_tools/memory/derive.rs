@@ -292,7 +292,7 @@ fn build_derived_memory(
     reason = "derive preparation keeps retained revision sources and identity together"
 )]
 async fn derive_call(ctx: ToolCtx, args: DeriveArgs) -> Result<DeriveOutput, ToolError> {
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let supersedes = resolve_supersedes(
         &ctx,
         args.kind,

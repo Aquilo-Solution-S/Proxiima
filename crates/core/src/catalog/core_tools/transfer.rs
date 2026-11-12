@@ -61,7 +61,7 @@ impl Tool for CoreTransferTool {
         args: CoreTransferArgs,
     ) -> BoxFuture<'static, Result<TransferOutput, ToolError>> {
         Box::pin(async move {
-            let engine = ctx.require_engine()?;
+            let engine = ctx.engine();
             match args {
                 CoreTransferArgs::TransferToOwner(args) => {
                     let entity = resolve_transferable_entity(&ctx, &args.entity).await?;
@@ -87,7 +87,7 @@ fn parse_to_owner(raw: &str) -> Result<crate::OwnerId, ToolError> {
 /// the typed "goals do not transfer" error instead of a parse error.
 async fn resolve_transferable_entity(ctx: &ToolCtx, raw: &str) -> Result<EntityId, ToolError> {
     let memory_id = ctx.resolve_memory(raw)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let memories = engine
         .get_memories(
             ctx.authz(),

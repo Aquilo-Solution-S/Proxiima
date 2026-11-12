@@ -702,11 +702,6 @@ mod other_stores {
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        let engine = Some(Arc::new(crate::Engine::new(
-            ctx.registry().as_ref().clone(),
-            crate::StoragePorts::rejecting_for_tests(),
-        )));
-        ctx = ctx.with_engine(engine);
         ctx.try_insert_service(OtherStoresService::new(port.clone()))
             .expect("the fixture context holds no service");
         ctx
@@ -918,11 +913,6 @@ mod other_stores {
             crate::UserId::new(uuid::Uuid::now_v7()),
             Vec::new(),
         );
-        let engine = Some(Arc::new(crate::Engine::new(
-            ctx.registry().as_ref().clone(),
-            crate::StoragePorts::rejecting_for_tests(),
-        )));
-        ctx = ctx.with_engine(engine);
         ctx.try_insert_service(OtherStoresService::new(Arc::new(TwoStores)))
             .expect("the fixture context holds no service");
         let schema = caller_input_schema(&ctx, static_schema())

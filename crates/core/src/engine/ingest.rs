@@ -7,9 +7,9 @@ use crate::embedding::EmbeddingSpace;
 use crate::error::ProtocolError;
 use crate::storage_ports::OwnerWritePermit;
 use crate::verbs::fact_ingest::{
-    AuthorizedFactCore, AuthorizedFactWithCitation, AuthorizedFactWithCitationRef,
-    AuthorizedFactWrite, AuthorizedInlineCitedObject, AuthorizedNodeLinks, FactIngestOutcome,
-    FactWriteCommand, InlineCitedObjectDraft, check_occurred_at,
+    AuthorizedCitation, AuthorizedFactCore, AuthorizedFactWrite, AuthorizedInlineCitedObject,
+    AuthorizedNodeLinks, FactIngestOutcome, FactWriteCommand, InlineCitedObjectDraft,
+    check_occurred_at,
 };
 use crate::verbs::schema::{PayloadKind, ProtocolPayload, SchemaInfo};
 use crate::{EntityKind, MemoryId, OwnerId, SidecarPayload};
@@ -77,44 +77,6 @@ fn normalize_fact_draft(draft: &mut FactWriteCommand) -> Result<(), ProtocolErro
 }
 
 impl Engine {
-    /// docs/protocol.md
-    /// schemas and delegates to storage.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Forbidden` when the context cannot resolve exactly one owner
-    /// it may write Facts on; `UnknownSchema` when the
-    /// Fact schema or provided citation schemas are not registered;
-    /// `InvalidArgument` when the draft's `occurred_at` lies more than
-    /// [`crate::OCCURRED_AT_FUTURE_BOUND`] in the future.
-    /// Caller-fixable storage rejections (concurrent citation) surface as
-    /// `InvalidArgument`; infrastructure faults as `Internal`.
-    ///
-    /// A schema whose recipe resolves to no embed unit is written without a
-    /// vector even when the host has an embedder configured.
-    pub async fn fact_ingest<A>(
-        &self,
-        authority: &A,
-        draft: FactWriteCommand,
-    ) -> Result<FactIngestOutcome, ProtocolError>
-    where
-        A: EngineAuthority + ?Sized,
-    {
-        let authorized = self.authorize_fact_ingest(authority, draft, &[]).await?;
-        self.validate_write_permit(authorized.owner_write_permit())?;
-        let embedding_spaces = self
-            .embedding_spaces_for_fact(authorized.owner_write_permit(), authorized.draft())
-            .await?;
-        let outcome = self
-            .storage
-            .ingest
-            .fact_ingest
-            .ingest_authorized_fact_atomic(&authorized, &embedding_spaces)
-            .await
-            .map_err(super::errors::map_fact_ingest_error)?;
-        Ok(outcome)
-    }
-
     /// Authorize + schema-validate + owner-stamp a Fact write,
     /// returning a witness required by the sidecar-ingest primitive.
     /// Does NOT write.
@@ -212,6 +174,7 @@ impl Engine {
             )
             .with_natural_key_values(natural_key_values)
             .with_publication(publication),
+            AuthorizedCitation::None,
         ))
     }
 
@@ -229,10 +192,34 @@ impl Engine {
     pub async fn authorize_fact_with_citation<A>(
         &self,
         authority: &A,
+        draft: FactWriteCommand,
+        cited_object: InlineCitedObjectDraft,
+        sidecars: &[SidecarPayload],
+    ) -> Result<AuthorizedFactWrite, ProtocolError>
+    where
+        A: EngineAuthority + ?Sized,
+    {
+        let (core, object) = self
+            .authorize_inline_cited_fact(authority, draft, cited_object, sidecars)
+            .await?;
+        Ok(AuthorizedFactWrite::new(
+            core,
+            AuthorizedCitation::Inline {
+                object: Box::new(object),
+                upload_completion: None,
+            },
+        ))
+    }
+
+    /// [`Self::authorize_fact_with_citation`] before its citation is settled:
+    /// the upload verb completes its upload row with the same write.
+    pub(in crate::engine) async fn authorize_inline_cited_fact<A>(
+        &self,
+        authority: &A,
         mut draft: FactWriteCommand,
         cited_object: InlineCitedObjectDraft,
         sidecars: &[SidecarPayload],
-    ) -> Result<AuthorizedFactWithCitation, ProtocolError>
+    ) -> Result<(AuthorizedFactCore, AuthorizedInlineCitedObject), ProtocolError>
     where
         A: EngineAuthority + ?Sized,
     {
@@ -257,7 +244,7 @@ impl Engine {
         let natural_key_values = bind_fact_natural_key(&self.registry, &draft, sidecars)?;
         let publication =
             self.resolve_publication(authority, fact_info, *permit.owner(), sidecars)?;
-        Ok(AuthorizedFactWithCitation::new(
+        Ok((
             AuthorizedFactCore::new(
                 permit,
                 draft,
@@ -291,7 +278,7 @@ impl Engine {
         mut draft: FactWriteCommand,
         cited_object_id: uuid::Uuid,
         sidecars: &[SidecarPayload],
-    ) -> Result<AuthorizedFactWithCitationRef, ProtocolError>
+    ) -> Result<AuthorizedFactWrite, ProtocolError>
     where
         A: EngineAuthority + ?Sized,
     {
@@ -310,7 +297,7 @@ impl Engine {
         let natural_key_values = bind_fact_natural_key(&self.registry, &draft, sidecars)?;
         let publication =
             self.resolve_publication(authority, fact_info, *permit.owner(), sidecars)?;
-        Ok(AuthorizedFactWithCitationRef::new(
+        Ok(AuthorizedFactWrite::new(
             AuthorizedFactCore::new(
                 permit,
                 draft,
@@ -321,7 +308,7 @@ impl Engine {
             )
             .with_natural_key_values(natural_key_values)
             .with_publication(publication),
-            cited_object_id,
+            AuthorizedCitation::Reference(cited_object_id),
         ))
     }
 
@@ -588,14 +575,16 @@ impl Engine {
         Ok(self.write_route(owner).await?.write_spaces())
     }
 
-    /// Persist an already-authorized typed-sidecar Fact ingest, queued for
-    /// the engine's embedding space unless the schema declines a vector.
+    /// Persist an already-authorized Fact with its typed sidecars and the
+    /// citation its authorization settled ([`AuthorizedCitation`]), queued
+    /// for the engine's embedding spaces unless the schema declines a vector.
     ///
     /// # Errors
     ///
-    /// Returns caller-fixable storage rejections (concurrent citation) as
-    /// `InvalidArgument` and infrastructure faults as `Internal`.
-    pub async fn ingest_fact_with_typed_sidecar(
+    /// Returns caller-fixable storage rejections (concurrent citation, a
+    /// missing or foreign cited object) as `InvalidArgument` and
+    /// infrastructure faults as `Internal`.
+    pub async fn ingest_authorized_fact(
         &self,
         authorized: &AuthorizedFactWrite,
     ) -> Result<FactIngestOutcome, ProtocolError> {
@@ -606,53 +595,7 @@ impl Engine {
         self.storage()
             .ingest
             .fact_ingest
-            .ingest_fact_with_typed_sidecar(authorized, &embedding_spaces)
-            .await
-            .map_err(super::errors::map_fact_ingest_error)
-    }
-
-    /// Persist an already-authorized typed-sidecar Fact with inline citation.
-    ///
-    /// # Errors
-    ///
-    /// Returns caller-fixable storage rejections (concurrent citation) as
-    /// `InvalidArgument` and infrastructure faults as `Internal`.
-    pub async fn ingest_fact_with_citation_and_typed_sidecar(
-        &self,
-        authorized: &AuthorizedFactWithCitation,
-    ) -> Result<FactIngestOutcome, ProtocolError> {
-        self.validate_write_permit(authorized.owner_write_permit())?;
-        let embedding_spaces = self
-            .embedding_spaces_for_fact(authorized.owner_write_permit(), authorized.draft())
-            .await?;
-        self.storage()
-            .ingest
-            .fact_ingest
-            .ingest_fact_with_citation_and_typed_sidecar(authorized, &embedding_spaces)
-            .await
-            .map_err(super::errors::map_fact_ingest_error)
-    }
-
-    /// Persist an already-authorized typed-sidecar Fact citing an
-    /// existing object by reference.
-    ///
-    /// # Errors
-    ///
-    /// Returns caller-fixable storage rejections (missing or foreign
-    /// cited object) as `InvalidArgument` and
-    /// infrastructure faults as `Internal`.
-    pub async fn ingest_fact_with_citation_ref_and_typed_sidecar(
-        &self,
-        authorized: &AuthorizedFactWithCitationRef,
-    ) -> Result<FactIngestOutcome, ProtocolError> {
-        self.validate_write_permit(authorized.owner_write_permit())?;
-        let embedding_spaces = self
-            .embedding_spaces_for_fact(authorized.owner_write_permit(), authorized.draft())
-            .await?;
-        self.storage()
-            .ingest
-            .fact_ingest
-            .ingest_fact_with_citation_ref_and_typed_sidecar(authorized, &embedding_spaces)
+            .ingest_authorized_fact(authorized, &embedding_spaces)
             .await
             .map_err(super::errors::map_fact_ingest_error)
     }

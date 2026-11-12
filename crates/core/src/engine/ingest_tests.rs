@@ -171,10 +171,12 @@ async fn non_fact_source_cannot_mint_authorized_fact_write() {
     let mut draft = referenced_draft(&payload);
     draft.kind = crate::MemoryKind::Abstraction;
 
-    let error = engine
-        .fact_ingest(&authz, draft)
-        .await
-        .expect_err("a non-Fact source must not mint a Fact witness");
+    let error = async {
+        let authorized = engine.authorize_fact_ingest(&authz, draft, &[]).await?;
+        engine.ingest_authorized_fact(&authorized).await
+    }
+    .await
+    .expect_err("a non-Fact source must not mint a Fact witness");
 
     assert_eq!(error.code, ErrorCode::InvalidArgument);
 }
@@ -193,13 +195,18 @@ async fn malformed_goal_endpoint_stops_before_port() {
         entity: crate::EntityRef::Goal(crate::GoalId::new(uuid::Uuid::now_v7())),
     };
 
-    let error = engine
-        .fact_ingest(
-            &authz,
-            referenced_draft(&payload).with_additional_references(vec![malformed]),
-        )
-        .await
-        .expect_err("a malformed Goal endpoint must fail before persistence");
+    let error = async {
+        let authorized = engine
+            .authorize_fact_ingest(
+                &authz,
+                referenced_draft(&payload).with_additional_references(vec![malformed]),
+                &[],
+            )
+            .await?;
+        engine.ingest_authorized_fact(&authorized).await
+    }
+    .await
+    .expect_err("a malformed Goal endpoint must fail before persistence");
 
     assert_eq!(error.code, ErrorCode::InvalidArgument);
 }

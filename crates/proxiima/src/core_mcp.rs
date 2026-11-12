@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use proxiima_core::{
-    AuthzContext, CapabilitySet, Engine, OwnerId, ServedSurface, SpiiceRegistryFrozen,
-    SpiiceServices, ToolCaller, ToolDescriptor, ToolEffect, ToolErrorKind, ToolScope,
-    provider_safe_tool_name, resolve_operator_label, tool_name_matches,
+    AuthzContext, CapabilitySet, Engine, OwnerId, ServedSurface, SpiiceServices, ToolCaller,
+    ToolDescriptor, ToolEffect, ToolErrorKind, ToolScope, provider_safe_tool_name,
+    resolve_operator_label, tool_name_matches,
 };
 use proxiima_server::{
     AuthContext, DynamicHandler, ToolHost, ToolInvocationError, ToolListNotifier,
@@ -100,13 +100,9 @@ impl CoreMcpError {
 
 impl CoreMcpTools {
     #[must_use]
-    pub fn new(
-        registry: Arc<SpiiceRegistryFrozen>,
-        engine: Arc<Engine>,
-        services: SpiiceServices,
-    ) -> Self {
+    pub fn new(engine: Arc<Engine>, services: SpiiceServices) -> Self {
         Self {
-            host: ToolHost::from_parts(registry, services).with_engine(engine),
+            host: ToolHost::from_engine(engine, services),
         }
     }
 
@@ -417,7 +413,6 @@ mod tests {
         registry.add_tool_or_panic_for_tests::<LabelEchoTool>("test");
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
-            registry.clone(),
             Arc::new(proxiima_core::Engine::new(
                 (*registry).clone(),
                 proxiima_core::StoragePorts::rejecting_for_tests(),
@@ -476,7 +471,6 @@ mod tests {
         registry.add_tool_or_panic_for_tests::<MarkerTool>("test");
         let registry = Arc::new(registry.freeze_or_panic_for_tests());
         let tools = CoreMcpTools::new(
-            registry.clone(),
             Arc::new(proxiima_core::Engine::new(
                 (*registry).clone(),
                 proxiima_core::StoragePorts::rejecting_for_tests(),

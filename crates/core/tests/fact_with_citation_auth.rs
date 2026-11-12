@@ -1,7 +1,7 @@
 use proxiima_core::engine::Engine;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::verbs::fact_ingest::{
-    FactReceiptDraft, FactWriteCommand, InlineCitedObjectDraft,
+    AuthorizedCitation, FactReceiptDraft, FactWriteCommand, InlineCitedObjectDraft,
 };
 use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{
@@ -169,7 +169,14 @@ async fn authorize_fact_with_citation_derives_cited_object_content_hash() {
         .await
         .expect("registered cited object payload must authorize");
 
-    assert_eq!(authorized.cited_object().content_hash(), &expected);
+    match authorized.citation() {
+        AuthorizedCitation::Inline { object, .. } => {
+            assert_eq!(object.content_hash(), &expected);
+        }
+        AuthorizedCitation::None | AuthorizedCitation::Reference(_) => {
+            panic!("an inline citation authorizes an inline cited object")
+        }
+    }
 }
 
 #[tokio::test]

@@ -455,7 +455,7 @@ async fn goal_set(ctx: ToolCtx, args: GoalSetArgs) -> Result<GoalWriteOutput, To
     let request_id = IdempotencyKey::optional_or_generated("goal_set", args.idempotency_key)
         .map_err(ToolError::InvalidInput)?;
     let authorship = system_operator_authorship(&ctx, "goal_set");
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let outcome = engine
         .create_goal_from_payload_write(
             ctx.authz(),
@@ -499,7 +499,7 @@ async fn goal_grant_access(
     a: GoalAccessArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
     let role = collaboration_role(&a)?;
-    ctx.require_engine()?
+    ctx.engine()
         .grant_goal_access(
             ctx.authz(),
             &crate::GoalAudienceGrantInput {
@@ -524,7 +524,7 @@ async fn goal_revoke_access(
     ctx: ToolCtx,
     a: GoalSubjectArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
-    ctx.require_engine()?
+    ctx.engine()
         .revoke_goal_access(
             ctx.authz(),
             collaboration_goal(&a.goal_handle)?,
@@ -546,7 +546,7 @@ async fn goal_publish(
     a: GoalPublicationArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
     let memory = ctx.resolve_memory(&a.memory_id)?;
-    ctx.require_engine()?
+    ctx.engine()
         .publish_to_goal(
             ctx.authz(),
             &crate::GoalPublicationInput {
@@ -577,7 +577,7 @@ async fn goal_unpublish(
     a: GoalUnpublishArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
     let memory = ctx.resolve_memory(&a.memory_id)?;
-    ctx.require_engine()?
+    ctx.engine()
         .unpublish_from_goal(ctx.authz(), collaboration_goal(&a.goal_handle)?, memory)
         .await
         .map(|()| GoalCollaborationOutput {
@@ -595,7 +595,7 @@ async fn goal_bind_work(
     a: GoalWorkArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
     let series = crate::engine::SeriesHandle::new(crate::catalog::ids::parse_wire_uuid(&a.series)?);
-    ctx.require_engine()?
+    ctx.engine()
         .bind_goal_work(
             ctx.authz(),
             &crate::GoalWorkBindingInput {
@@ -619,7 +619,7 @@ async fn goal_unbind_work(
     a: GoalWorkArgs,
 ) -> Result<GoalCollaborationOutput, ToolError> {
     let series = crate::engine::SeriesHandle::new(crate::catalog::ids::parse_wire_uuid(&a.series)?);
-    ctx.require_engine()?
+    ctx.engine()
         .unbind_goal_work(
             ctx.authz(),
             &crate::GoalWorkBindingInput {
@@ -712,7 +712,7 @@ async fn existing_goal_owner(
     request.include_payloads = false;
     request.limit = 1;
     let row = ctx
-        .require_engine()?
+        .engine()
         .query(ctx.authz(), &request)
         .await?
         .goals
@@ -734,7 +734,7 @@ async fn goal_transition(
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
     let request_id = IdempotencyKey::optional_or_generated("goal_transition", args.idempotency_key)
         .map_err(ToolError::InvalidInput)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let outcome = engine
         .transition_goal(
             ctx.authz(),
@@ -780,7 +780,7 @@ async fn goal_mark_achieved(
     let request_id =
         IdempotencyKey::optional_or_generated("goal_mark_achieved", args.idempotency_key)
             .map_err(ToolError::InvalidInput)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let outcome = engine
         .mark_goal_achieved(
             ctx.authz(),
@@ -836,7 +836,7 @@ async fn goal_modify(ctx: ToolCtx, args: GoalModifyArgs) -> Result<GoalWriteOutp
     };
     let request_id = IdempotencyKey::optional_or_generated("goal_modify", args.idempotency_key)
         .map_err(ToolError::InvalidInput)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let outcome = engine
         .modify_goal(
             ctx.authz(),
@@ -938,7 +938,7 @@ async fn goal_decompose(
                 })?,
         });
     }
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let outcome = engine
         .decompose_goal(
             ctx.authz(),
@@ -1026,7 +1026,7 @@ pub(crate) async fn resolve_goal_evidence_handles(
         .iter()
         .map(|handle| ctx.resolve_memory(handle))
         .collect::<Result<Vec<_>, _>>()?;
-    let store_number = ctx.require_engine()?.store_number();
+    let store_number = ctx.engine().store_number();
     // The remote reads run together under one call-wide deadline, so a goal
     // naming several memories of other stores takes the slowest read.
     let remote_ids: Vec<uuid::Uuid> = ids

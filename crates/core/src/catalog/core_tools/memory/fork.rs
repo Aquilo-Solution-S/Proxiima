@@ -58,7 +58,7 @@ impl Tool for ForkTool {
                 IdempotencyKey::optional_or_generated("memory_fork", args.idempotency_key)
                     .map_err(ToolError::InvalidInput)?;
             let outcome = ctx
-                .require_engine()?
+                .engine()
                 .fork_memory(
                     ctx.authz(),
                     &ForkMemoryRequest {

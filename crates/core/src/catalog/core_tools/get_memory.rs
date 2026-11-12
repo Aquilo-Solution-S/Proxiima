@@ -90,7 +90,7 @@ pub struct GetMemoryOutput {
 /// Returns invalid-reference, storage, or projection failures.
 pub async fn get_memory(ctx: ToolCtx, args: GetMemoryArgs) -> Result<GetMemoryOutput, ToolError> {
     let memory_id = ctx.resolve_memory(&args.memory)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     if crate::memory_store_number(memory_id.into_inner()) != engine.store_number() {
         return remote_memory_output(
             &ctx,

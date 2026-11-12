@@ -106,11 +106,6 @@ fn inventory_ctx(reply: InventoryReply) -> (ToolCtx, Arc<InventoryPort>) {
         searches: std::sync::Mutex::new(Vec::new()),
     });
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
-    let engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry().as_ref().clone(),
-        crate::StoragePorts::rejecting_for_tests(),
-    )));
-    ctx = ctx.with_engine(engine);
     ctx.try_insert_service(OtherStoresService::new(port.clone()))
         .expect("the fixture context holds no service");
     (ctx, port)
@@ -336,11 +331,6 @@ async fn derive_origin_admission_refuses_255_slow_origins_before_writing() {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
     ctx.try_insert_service(OtherStoresService::new(Arc::new(SlowOriginStore)))
         .expect("the fixture context holds no service");
-    let engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry().as_ref().clone(),
-        crate::StoragePorts::rejecting_for_tests(),
-    )));
-    ctx = ctx.with_engine(engine);
     let origins = (0..MAX_SOURCE_HANDLES - 1)
         .map(|_| crate::new_memory_uuid(1).to_string())
         .collect::<Vec<_>>();
@@ -420,11 +410,6 @@ fn read_reply_ctx(reply: ReadReply) -> ToolCtx {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
     ctx.try_insert_service(OtherStoresService::new(Arc::new(ReadReplyStore(reply))))
         .expect("the fixture context holds no service");
-    let engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry().as_ref().clone(),
-        crate::StoragePorts::rejecting_for_tests(),
-    )));
-    ctx = ctx.with_engine(engine);
     ctx
 }
 
@@ -591,11 +576,6 @@ fn graph_ctx(store: &Arc<GraphStore>) -> ToolCtx {
     let mut ctx = ctx_for(UserId::new(uuid::Uuid::now_v7()), Vec::new());
     ctx.try_insert_service(OtherStoresService::new(store.clone()))
         .expect("the fixture context holds no service");
-    let engine = Some(Arc::new(crate::Engine::new(
-        ctx.registry().as_ref().clone(),
-        crate::StoragePorts::rejecting_for_tests(),
-    )));
-    ctx = ctx.with_engine(engine);
     ctx
 }
 

@@ -3,10 +3,7 @@ use crate::storage::StorageError;
 use crate::storage_ports::OwnerWritePermit;
 #[cfg(any(test, feature = "testkit"))]
 use crate::verbs::fact_ingest::FactWriteCommand;
-use crate::verbs::fact_ingest::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,
-    FactIngestOutcome,
-};
+use crate::verbs::fact_ingest::{AuthorizedFactWrite, FactIngestOutcome};
 
 #[async_trait::async_trait]
 pub trait FactIngestPort: Send + Sync {
@@ -43,7 +40,15 @@ pub trait FactIngestPort: Send + Sync {
     }
 
     /// Persist an authorized Fact together with every typed sidecar row it
-    /// carries, in ONE transaction.
+    /// carries and the citation its authorization settled, in ONE
+    /// transaction.
+    ///
+    /// **Citation.** [`AuthorizedCitation::None`] resolves the draft's own
+    /// citation hint; [`AuthorizedCitation::Inline`] upserts the cited
+    /// object and, when the Engine's upload verb named an upload, completes
+    /// that upload row in the same transaction;
+    /// [`AuthorizedCitation::Reference`] verifies the stored object
+    /// (existence, owner) in the transaction that writes the Fact.
     ///
     /// The authorized wrapper owns the payload slice because a Fact may be
     /// extended: the substrate owns the Fact and its own sidecar, and a
@@ -78,28 +83,15 @@ pub trait FactIngestPort: Send + Sync {
     /// # Errors
     ///
     /// `ConstraintViolation` when any payload's schema is not registered as
-    /// a memory sidecar; otherwise storage faults.
-    async fn ingest_fact_with_typed_sidecar(
+    /// a memory sidecar, or when a referenced cited object is missing for
+    /// the Fact's owner; otherwise storage faults.
+    ///
+    /// [`AuthorizedCitation::None`]: crate::verbs::fact_ingest::AuthorizedCitation::None
+    /// [`AuthorizedCitation::Inline`]: crate::verbs::fact_ingest::AuthorizedCitation::Inline
+    /// [`AuthorizedCitation::Reference`]: crate::verbs::fact_ingest::AuthorizedCitation::Reference
+    async fn ingest_authorized_fact(
         &self,
         authorized: &AuthorizedFactWrite,
-        embedding_spaces: &[crate::EmbeddingSpace],
-    ) -> Result<FactIngestOutcome, StorageError>;
-
-    /// Persist the citation and Fact atomically. When the Engine carrier
-    /// names an upload, complete its row in that same transaction as well.
-    async fn ingest_fact_with_citation_and_typed_sidecar(
-        &self,
-        authorized: &AuthorizedFactWithCitation,
-        embedding_spaces: &[crate::EmbeddingSpace],
-    ) -> Result<FactIngestOutcome, StorageError>;
-
-    /// The by-ref twin of
-    /// [`Self::ingest_fact_with_citation_and_typed_sidecar`]: the cited
-    /// object already exists; storage must verify it (existence, owner)
-    /// in the same transaction that writes the Fact.
-    async fn ingest_fact_with_citation_ref_and_typed_sidecar(
-        &self,
-        authorized: &AuthorizedFactWithCitationRef,
         embedding_spaces: &[crate::EmbeddingSpace],
     ) -> Result<FactIngestOutcome, StorageError>;
 }

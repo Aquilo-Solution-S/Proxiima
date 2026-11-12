@@ -250,7 +250,7 @@ async fn resolve_note_identity(
         return Ok((note_id, None, None));
     };
     let prior_id = ctx.resolve_memory(raw)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let response = engine
         .get_memory(
             authz,
@@ -322,58 +322,32 @@ pub(crate) async fn execute_note_write(
     ctx: &ToolCtx,
     prepared: PreparedNoteWrite,
 ) -> Result<crate::FactIngestOutcome, ToolError> {
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let PreparedNoteWrite {
         authz,
         draft,
         payload,
         citation,
     } = prepared;
-    if let Some(citation) = citation {
-        ingest_cited_fact(
-            engine,
-            &authz,
-            draft,
-            remember_citation_drafts(citation)?,
-            std::slice::from_ref(&SidecarPayload::fact(payload)),
-        )
-        .await
-    } else {
-        let sidecars = [SidecarPayload::fact(payload)];
-        let authorized = engine
-            .authorize_fact_ingest(&authz, draft, &sidecars)
-            .await?;
-        Ok(engine.ingest_fact_with_typed_sidecar(&authorized).await?)
-    }
-}
-
-/// Authorize + ingest one cited Fact through the shape-appropriate
-/// engine pair: inline payload or by-ref to an already-stored object.
-async fn ingest_cited_fact(
-    engine: &crate::Engine,
-    authz: &crate::AuthzContext,
-    draft: FactWriteCommand,
-    drafts: RememberCitationDrafts,
-    sidecars: &[SidecarPayload],
-) -> Result<crate::FactIngestOutcome, ToolError> {
-    match drafts {
-        RememberCitationDrafts::Inline { cited_object } => {
-            let authorized = engine
-                .authorize_fact_with_citation(authz, draft, cited_object, sidecars)
-                .await?;
-            Ok(engine
-                .ingest_fact_with_citation_and_typed_sidecar(&authorized)
-                .await?)
+    let sidecars = [SidecarPayload::fact(payload)];
+    let authorized = match citation.map(remember_citation_drafts).transpose()? {
+        None => {
+            engine
+                .authorize_fact_ingest(&authz, draft, &sidecars)
+                .await?
         }
-        RememberCitationDrafts::ByRef { cited_object_id } => {
-            let authorized = engine
-                .authorize_fact_with_citation_by_ref(authz, draft, cited_object_id, sidecars)
-                .await?;
-            Ok(engine
-                .ingest_fact_with_citation_ref_and_typed_sidecar(&authorized)
-                .await?)
+        Some(RememberCitationDrafts::Inline { cited_object }) => {
+            engine
+                .authorize_fact_with_citation(&authz, draft, cited_object, &sidecars)
+                .await?
         }
-    }
+        Some(RememberCitationDrafts::ByRef { cited_object_id }) => {
+            engine
+                .authorize_fact_with_citation_by_ref(&authz, draft, cited_object_id, &sidecars)
+                .await?
+        }
+    };
+    Ok(engine.ingest_authorized_fact(&authorized).await?)
 }
 
 /// Validated citation input: inline artifact payload, or a reference to

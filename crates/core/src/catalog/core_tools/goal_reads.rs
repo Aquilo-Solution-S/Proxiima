@@ -107,7 +107,7 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
         .transpose()?;
     let limit = super::resolve_page_limit(args.limit)?;
 
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
     req.goal_states = states.clone();
@@ -143,7 +143,7 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
 /// failures.
 pub async fn get_goal(ctx: ToolCtx, raw: &str) -> Result<GoalItem, ToolError> {
     let id = ctx.resolve_goal(raw)?.into_inner();
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let handle = series_handle(&ctx, engine, id).await?;
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);

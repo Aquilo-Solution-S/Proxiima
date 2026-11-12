@@ -119,12 +119,12 @@ impl Tool for RecordUtteranceTool {
                     draft.request_key(crate::RequestKey::new(crate::KeyScope::Utterance, key, fp));
             }
 
-            let engine = ctx.require_engine()?;
+            let engine = ctx.engine();
             let sidecars = [SidecarPayload::fact(payload.clone())];
             let authorized = engine
                 .authorize_fact_ingest(&authz, draft, &sidecars)
                 .await?;
-            let outcome = engine.ingest_fact_with_typed_sidecar(&authorized).await?;
+            let outcome = engine.ingest_authorized_fact(&authorized).await?;
 
             Ok(RecordUtteranceOutput {
                 handle: outcome.memory_id.into_inner().to_string(),

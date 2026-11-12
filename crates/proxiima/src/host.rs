@@ -469,14 +469,14 @@ pub use proxiima_core::{AuthError, Credentials, OwnerScope, WriterAttribution, a
 /// `testkit` feature adds `*_for_tests` constructors), and these exports confer
 /// no authority.
 pub use proxiima_core::{
-    AuthorizedFactWithCitation, AuthorizedFactWithCitationRef, AuthorizedFactWrite,
-    OperatorMaintenanceProof, WritePermit, fact_ingest::AuthorizedInlineCitedObject,
-    fact_ingest::AuthorizedNodeLinks, owner_inverse::EraseAuthorization,
-    owner_inverse::ExportAuthorization, owner_inverse::OwnerEraseContext,
-    owner_inverse::OwnerExportContext, storage_ports::EmbeddingWriteProof,
-    storage_ports::MembershipEndpointAuthority, storage_ports::MembershipMemberAuthority,
-    storage_ports::MembershipWritePermit, storage_ports::OperatorWriteProof,
-    storage_ports::OwnerWritePermit, storage_ports::WriteAuthority,
+    AuthorizedCitation, AuthorizedFactWrite, OperatorMaintenanceProof, WritePermit,
+    fact_ingest::AuthorizedInlineCitedObject, fact_ingest::AuthorizedNodeLinks,
+    owner_inverse::EraseAuthorization, owner_inverse::ExportAuthorization,
+    owner_inverse::OwnerEraseContext, owner_inverse::OwnerExportContext,
+    storage_ports::EmbeddingWriteProof, storage_ports::MembershipEndpointAuthority,
+    storage_ports::MembershipMemberAuthority, storage_ports::MembershipWritePermit,
+    storage_ports::OperatorWriteProof, storage_ports::OwnerWritePermit,
+    storage_ports::WriteAuthority,
 };
 /// The memories a session read before it writes
 /// ([`AuthzContext::with_read_set`], #677): the set, one named memory, and

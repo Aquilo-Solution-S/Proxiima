@@ -131,7 +131,7 @@ async fn think(ctx: ToolCtx, args: ThinkArgs) -> Result<ThinkOutput, ToolError> 
         .iter()
         .map(|raw| ctx.resolve_memory(raw))
         .collect::<Result<Vec<_>, _>>()?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     match args.direction {
         ThinkDirection::Ancestors | ThinkDirection::Descendants => {
             pin_bfs(

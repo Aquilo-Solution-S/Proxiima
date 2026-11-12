@@ -262,7 +262,7 @@ mod tests {
         let ctx = crate::test_fixtures::tool_ctx_with(
             trusted.owner(),
             trusted.authz().clone(),
-            trusted.registry().clone(),
+            std::sync::Arc::new(trusted.registry().clone()),
             crate::SpiiceServices::default(),
             crate::ToolCaller::new("stale/label", "test", "0"),
         );

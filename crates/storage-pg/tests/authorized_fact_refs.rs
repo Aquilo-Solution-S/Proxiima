@@ -493,7 +493,7 @@ async fn authorized_links_are_persisted_by_engine_uow() {
                 &[SidecarPayload::fact(pool_payload.clone())],
             )
             .await?;
-        let pool_typed = engine.ingest_fact_with_typed_sidecar(&authorized).await?;
+        let pool_typed = engine.ingest_authorized_fact(&authorized).await?;
         assert_eq!(
             stored_refs(&pg, pool_typed.memory_id).await?,
             vec![fact_id.into_inner()]
@@ -621,9 +621,7 @@ async fn inline_and_by_ref_citation_routes_keep_authorized_links() {
                 &[SidecarPayload::fact(inline_payload.clone())],
             )
             .await?;
-        let inline = engine
-            .ingest_fact_with_citation_and_typed_sidecar(&authorized)
-            .await?;
+        let inline = engine.ingest_authorized_fact(&authorized).await?;
         assert_eq!(
             stored_refs(&pg, inline.memory_id).await?,
             vec![fact_id.into_inner()]
@@ -649,9 +647,7 @@ async fn inline_and_by_ref_citation_routes_keep_authorized_links() {
                 &[SidecarPayload::fact(by_ref_payload.clone())],
             )
             .await?;
-        let by_ref = engine
-            .ingest_fact_with_citation_ref_and_typed_sidecar(&authorized)
-            .await?;
+        let by_ref = engine.ingest_authorized_fact(&authorized).await?;
         assert_eq!(
             stored_refs(&pg, by_ref.memory_id).await?,
             vec![fact_id.into_inner()]
@@ -705,7 +701,7 @@ async fn by_ref_citation_refuses_missing_and_foreign_objects_alike() {
             )
             .await?;
         let foreign_blob = engine
-            .ingest_fact_with_citation_and_typed_sidecar(&authorized)
+            .ingest_authorized_fact(&authorized)
             .await?
             .cited_object_id
             .expect("foreign citation blob");
@@ -732,7 +728,7 @@ async fn by_ref_citation_refuses_missing_and_foreign_objects_alike() {
                 )
                 .await?;
             let error = engine
-                .ingest_fact_with_citation_ref_and_typed_sidecar(&authorized)
+                .ingest_authorized_fact(&authorized)
                 .await
                 .expect_err("a by-ref citation must name an object of the Fact's owner");
             refusals.push(
@@ -793,9 +789,7 @@ async fn an_uploaded_blob_citation_needs_a_staged_upload() {
                         &[SidecarPayload::fact(payload.clone())],
                     )
                     .await?;
-                engine
-                    .ingest_fact_with_citation_and_typed_sidecar(&authorized)
-                    .await
+                engine.ingest_authorized_fact(&authorized).await
             }
         };
 
@@ -869,7 +863,7 @@ async fn storage_uses_sidecars_bound_during_authorization() {
             .authorize_fact_ingest(&authz, custom_draft(&admitted), &admitted_sidecars)
             .await?;
         drop(admitted_sidecars);
-        let written = pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await?;
+        let written = pg.ingest_authorized_fact(&authorized, &[]).await?;
         assert_eq!(
             stored_refs(&pg, written.memory_id).await?,
             vec![first.into_inner()]
@@ -1443,19 +1437,26 @@ async fn storage_persists_authorized_links_not_draft_refs() {
             AuthzContext::single_owner(&owner, AuthPath::HostBearer),
         );
         let engine = engine(&pg, &registry);
-        engine
-            .fact_ingest(
+        let first = engine
+            .authorize_fact_ingest(
                 &authz,
                 direct_draft("engine-replay-links", vec![fact_a.into_inner()]),
+                &[],
             )
             .await?;
-        let error = engine
-            .fact_ingest(
-                &authz,
-                direct_draft("engine-replay-links", vec![fact_b.into_inner()]),
-            )
-            .await
-            .expect_err("Engine must map changed-ref replay to IdempotencyConflict");
+        engine.ingest_authorized_fact(&first).await?;
+        let error = async {
+            let changed = engine
+                .authorize_fact_ingest(
+                    &authz,
+                    direct_draft("engine-replay-links", vec![fact_b.into_inner()]),
+                    &[],
+                )
+                .await?;
+            engine.ingest_authorized_fact(&changed).await
+        }
+        .await
+        .expect_err("Engine must map changed-ref replay to IdempotencyConflict");
         assert_eq!(
             error.code,
             proxiima_core::error::ErrorCode::IdempotencyConflict

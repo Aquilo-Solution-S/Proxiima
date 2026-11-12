@@ -200,8 +200,9 @@ mod pg_tests {
             .begin()
             .await
             .map_err(crate::error::map_err)?;
-        let outcome = crate::verbs::fact_ingest::ingest_fact_with_sidecar_in_tx(
+        let outcome = crate::verbs::fact_ingest::ingest_authorized_fact_in_tx(
             &mut tx,
+            pg.sidecars(),
             &authorized,
             embedding_spaces,
             crate::verbs::fact_ingest::FactAdmissionInput {
@@ -209,15 +210,11 @@ mod pg_tests {
                 natural_key: None,
                 sidecar_tables: &[AGENT_NOTE.to_owned()],
                 scopes: &[],
-                content: crate::verbs::fact_ingest::ContentResolution {
-                    content_id: None,
-                    payloads: Some(&[]),
-                },
                 publication: None,
             },
             move |tx, outcome| {
                 Box::pin(async move {
-                    // Raw INSERT: needs a builder for a note with embedding spaces and a receipt (TestNote takes neither; the typed ingest is `ingest_fact_with_typed_sidecar`).
+                    // Raw INSERT: needs a builder for a note with embedding spaces and a receipt (TestNote takes neither; the typed ingest is `ingest_authorized_fact`).
                     sqlx::query(
                         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body)
                          VALUES ($1, $2, $3, $4)",

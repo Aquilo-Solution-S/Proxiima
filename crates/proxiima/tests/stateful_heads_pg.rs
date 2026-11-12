@@ -211,8 +211,13 @@ async fn heads_only_no_op_for_stateless_fact_schema() {
     // Two distinct sidecarless Facts.
     for payload in [b"c1" as &[u8], b"c2"] {
         let draft = fresh_draft(StatelessFactV1::SCHEMA_ID, payload);
+        let authorized = h
+            .engine
+            .authorize_fact_ingest(&authz, draft, &[])
+            .await
+            .expect("the stateless Fact is authorized");
         h.engine
-            .fact_ingest(&authz, draft)
+            .ingest_authorized_fact(&authorized)
             .await
             .expect("the stateless Fact is admitted");
     }

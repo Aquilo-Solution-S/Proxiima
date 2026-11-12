@@ -30,7 +30,7 @@ pub(super) async fn citation_of_fact(
     args: CitationOfFactArgs,
 ) -> Result<CitationOfFactOutput, ToolError> {
     let fact_memory_id = ctx.resolve_memory(&args.fact)?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let citation = engine
         .read_fact_citation(ctx.authz(), &FactCitationReadRequest { fact_memory_id })
         .await?

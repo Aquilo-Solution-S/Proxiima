@@ -12,6 +12,10 @@ pub use proxiima_pg_testkit::*;
 /// spiice tests that read across owners.
 pub use proxiima_core::test_fixtures::owner_scope_for_tests;
 
+/// An engine whose storage refuses every call, for a test that serves tools
+/// through a [`crate::ToolHost`] without reaching storage.
+pub use proxiima_core::test_fixtures::rejecting_engine;
+
 use proxiima_core::{AuthPath, AuthzContext, OwnerId, Role, SpiiceRegistry, UserId};
 use proxiima_storage_pg::{
     PgPoolConfig, PgSidecarRegistry, PgSidecarRegistryFrozen, PgTuning, VectorStorage,

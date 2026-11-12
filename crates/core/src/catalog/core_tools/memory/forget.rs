@@ -38,7 +38,7 @@ impl Tool for ForgetTool {
             let memory_id = ctx.resolve_memory(&args.memory)?;
             let (space, authz) =
                 super::super::memory_spaces::resolve_space_for_write(&ctx, args.space.as_deref())?;
-            let engine = ctx.require_engine()?;
+            let engine = ctx.engine();
             engine.forget_memory(&authz, space.owner, memory_id).await?;
             Ok(ForgetOutput {
                 ok: true,

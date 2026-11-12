@@ -147,7 +147,7 @@ async fn recall(ctx: ToolCtx, args: RecallArgs) -> Result<RecallOutput, ToolErro
         args.space.as_deref(),
         super::memory_spaces::SpaceDefault::Current,
     )?;
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let mut subjects = Vec::new();
     for raw in &args.subjects {
         subjects.push(ctx.resolve_memory(raw)?);

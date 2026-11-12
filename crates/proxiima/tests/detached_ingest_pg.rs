@@ -9,8 +9,10 @@ use proxiima::spiice::{NamedMigrator, SpiiceBundle, SpiiceRegistry, SpiiceRegist
 use proxiima::{
     AppInfo, BuiltProxiima, FactWrite, Proxiima, QueryRequest, ServedSurface, SpiiceApp,
 };
-use proxiima_core::test_fixtures::tool_ctx;
-use proxiima_core::{AgentNoteV1, AuthPath, AuthzContext, OwnerId, UserId};
+use proxiima_core::test_fixtures::tool_ctx_on;
+use proxiima_core::{
+    AgentNoteV1, AuthPath, AuthzContext, OwnerId, SpiiceServices, ToolCaller, UserId,
+};
 use proxiima_pg_testkit::SplitRoleDb;
 use proxiima_storage_pg::PgPoolConfig;
 
@@ -182,9 +184,13 @@ async fn a_dropped_request_still_records_its_fact() {
 
     // The tool-facing form resolves the engine and authorization from the
     // tool context.
-    let registry = Arc::new(engine.registry().clone());
-    let ctx =
-        tool_ctx(owner, authz.clone(), Arc::clone(&registry)).with_engine(Some(Arc::clone(engine)));
+    let ctx = tool_ctx_on(
+        owner,
+        authz.clone(),
+        Arc::clone(engine),
+        SpiiceServices::default(),
+        ToolCaller::new("test", "test", "0"),
+    );
     let from_tool = note("from tool");
     let outcome = proxiima::spiice::ingest_fact_detached(
         &ctx,
@@ -194,13 +200,4 @@ async fn a_dropped_request_still_records_its_fact() {
     .await
     .expect("tool-context ingest");
     assert!(!outcome.idempotent_replay);
-    let engineless = tool_ctx(owner, authz.clone(), registry);
-    let error = proxiima::spiice::ingest_fact_detached(
-        &engineless,
-        FactWrite::new(owner, "test/detached", &from_tool),
-        Duration::from_secs(30),
-    )
-    .await
-    .expect_err("no engine, no ingest");
-    assert!(error.to_string().contains("no engine"), "{error}");
 }

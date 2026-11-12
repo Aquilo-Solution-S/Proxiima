@@ -213,7 +213,9 @@ pub trait WriteSession: Send {
         columns: &[(&str, SidecarAtom)],
     ) -> Result<Option<MemoryId>, StorageError>;
 
-    async fn ingest_fact_with_typed_sidecar(
+    /// The transaction-scoped twin of
+    /// [`crate::storage_ports::FactIngestPort::ingest_authorized_fact`].
+    async fn ingest_authorized_fact(
         &mut self,
         authorized: &AuthorizedFactWrite,
         embedding_spaces: &[crate::EmbeddingSpace],

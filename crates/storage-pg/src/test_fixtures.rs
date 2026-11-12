@@ -937,7 +937,7 @@ impl TestNote {
             Vec::new(),
         )
         .with_sidecar_payloads_for_tests(vec![proxiima_core::SidecarPayload::fact(self.note)]);
-        pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+        pg.ingest_authorized_fact(&authorized, &[]).await
     }
 }
 
@@ -1095,7 +1095,7 @@ impl TestDerived {
             Vec::new(),
         )
         .with_sidecar_payloads_for_tests(vec![payload]);
-        pg.ingest_fact_with_typed_sidecar(&authorized, &[]).await
+        pg.ingest_authorized_fact(&authorized, &[]).await
     }
 }
 

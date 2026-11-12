@@ -104,8 +104,10 @@ impl Fixture {
         let seen = Seen::default();
         let mut services = SpiiceServices::default();
         services.try_insert(seen.clone()).expect("unique service");
-        let handler = DynamicHandler::new(ToolHost::from_parts(
-            Arc::new(registry.freeze_or_panic_for_tests()),
+        let handler = DynamicHandler::new(ToolHost::from_engine(
+            proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+                registry.freeze_or_panic_for_tests(),
+            )),
             services,
         ));
         let (transport, remote) = tokio::io::duplex(4096);

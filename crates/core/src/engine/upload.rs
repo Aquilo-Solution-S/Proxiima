@@ -29,7 +29,9 @@ use crate::authz::EngineAuthority;
 use crate::citations::{UPLOADED_BLOB_SCHEMA_ID, UploadedBlobPayload};
 use crate::error::ProtocolError;
 use crate::storage_ports::{CitedBlobService, CitedBlobStaged, CitedBlobUploadCompleted};
-use crate::verbs::fact_ingest::{FactWriteCommand, InlineCitedObjectDraft};
+use crate::verbs::fact_ingest::{
+    AuthorizedCitation, AuthorizedFactWrite, FactWriteCommand, InlineCitedObjectDraft,
+};
 use crate::{
     CitedObjectPayload, FactIngestOutcome, OwnerId, SchemaId, SchemaVersion, SidecarPayload,
     UploadV1,
@@ -272,11 +274,11 @@ impl Engine {
                 ProtocolError::internal(format!("serialize staged blob payload: {err}"))
             })?,
         };
-        let authorized = self
-            .authorize_fact_with_citation(authority, draft, cited_object, extensions)
+        let (core, object) = self
+            .authorize_inline_cited_fact(authority, draft, cited_object, extensions)
             .await?;
 
-        let resolved = *authorized.owner_write_permit().owner();
+        let resolved = *core.permit().owner();
         if resolved != owner {
             return Err(ProtocolError::internal(format!(
                 "upload was staged under {owner:?} but the Fact write resolved to {resolved:?}; \
@@ -287,10 +289,14 @@ impl Engine {
         let upload_id = uuid::Uuid::parse_str(upload_id).map_err(|err| {
             ProtocolError::invalid_argument("upload_id", format!("invalid upload id: {err}"))
         })?;
-        let authorized = authorized.with_upload_completion(upload_id);
-        let fact = self
-            .ingest_fact_with_citation_and_typed_sidecar(&authorized)
-            .await?;
+        let authorized = AuthorizedFactWrite::new(
+            core,
+            AuthorizedCitation::Inline {
+                object: Box::new(object),
+                upload_completion: Some(upload_id),
+            },
+        );
+        let fact = self.ingest_authorized_fact(&authorized).await?;
 
         // Present on every citation-bearing write, including a replay,
         // where it is read back from the Fact that already exists.

@@ -42,7 +42,7 @@ pub struct GetGraphOutput {
 ///
 /// Returns storage, engine, or projection failures.
 pub async fn get_graph(ctx: ToolCtx, _args: GetGraphArgs) -> Result<GetGraphOutput, ToolError> {
-    let engine = ctx.require_engine()?;
+    let engine = ctx.engine();
     let graph = engine
         .get_graph(ctx.authz(), &GetGraphReadRequest { owner: ctx.owner() })
         .await?;
