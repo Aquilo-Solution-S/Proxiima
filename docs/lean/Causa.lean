@@ -9,5 +9,4 @@ import Causa.Audience
 import Causa.EdgeAuthorization
 import Causa.Citations
 import Causa.Compliance
-import Causa.Knowledge
 import Causa.SchemaEvolution

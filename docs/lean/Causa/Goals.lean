@@ -159,41 +159,10 @@ def perspective_guidance_retained_valid
         e ∈ targets ∧ erased_pin_target_t e = id ∧
         erased_pin_target_kind e = .Goal)
 
-theorem motivated_by_targets_are_perspectives
-    (memories : Set Memory) (goal : Goal)
-    (h : goal_motivations_valid memories goal)
-    (id : MemoryId) (hid : id ∈ goal_motivated_by goal) :
-    ∃ p : Memory, p ∈ memories ∧ memory_t p = id ∧ memory_kind p = .Perspective := by
-  obtain ⟨p, hp, ht, hk, _⟩ := h id hid
-  exact ⟨p, hp, ht, hk⟩
-
-theorem guided_by_targets_are_goals
-    (memories : Set Memory) (goals : Set Goal) (p : Memory)
-    (h : perspective_guidance_valid memories goals p)
-    (hp : memory_kind p = .Perspective)
-    (id : GoalId) (hid : id ∈ memory_guided_by p) :
-    ∃ g : Goal, g ∈ goals ∧ goal_t g = id ∧ goal_owner g = memory_owner p := by
-  exact h hp id hid
-
-theorem motivated_by_target_kind_is_perspective
-    (memories : Set Memory) (goal : Goal)
-    (h : goal_motivations_valid memories goal)
-    (id : MemoryId) (hid : id ∈ goal_motivated_by goal) :
-    ∃ p : Memory, p ∈ memories ∧ memory_t p = id ∧ memory_kind p = .Perspective := by
-  exact motivated_by_targets_are_perspectives memories goal h id hid
-
 def ErasedTargetsDisjointGoals
     (targets : Set ErasedPinTarget) (goals : Set Goal) : Prop :=
   ∀ e : ErasedPinTarget, e ∈ targets →
     ∀ g : Goal, g ∈ goals → erased_pin_target_t e ≠ goal_t g
-
-theorem erased_target_not_goal
-    (targets : Set ErasedPinTarget) (goals : Set Goal)
-    (hdisjoint : ErasedTargetsDisjointGoals targets goals)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (g : Goal) (hg : g ∈ goals) :
-    erased_pin_target_t e ≠ goal_t g :=
-  hdisjoint e he g hg
 
 /-- Declared pins to other nodes (ids only). No edge table. -/
 def goalDeclaredTargetIds (g : Goal) : List Id :=
@@ -207,25 +176,6 @@ def GoalIdUnique (goals : Set Goal) : Prop :=
     g2 ∈ goals →
     goal_t g1 = goal_t g2 →
     g1 = g2
-
-theorem goal_id_injective :
-    ∀ (goals : Set Goal),
-      GoalIdUnique goals →
-      ∀ g1 g2 : Goal,
-        g1 ∈ goals →
-        g2 ∈ goals →
-        goal_t g1 = goal_t g2 → g1 = g2 := by
-  intro goals huniq g1 g2 hg1 hg2 hid
-  exact huniq g1 g2 hg1 hg2 hid
-
-/-- Each recorded Goal version keeps its own writer, independently of
-    optional write-act Facts or later versions on the same handle. -/
-theorem goal_version_writer_unique
-    (goals : Set Goal) (hunique : GoalIdUnique goals)
-    (g1 g2 : Goal) (hg1 : g1 ∈ goals) (hg2 : g2 ∈ goals)
-    (ht : goal_t g1 = goal_t g2) :
-    goal_writer g1 = goal_writer g2 :=
-  congrArg goal_writer (hunique g1 g2 hg1 hg2 ht)
 
 /-- Same `(owner, request_id)` is the same Goal version (UML §3). -/
 def GoalRequestUnique (goals : Set Goal) : Prop :=
@@ -262,51 +212,11 @@ def GoalTransitionValid (goals : Set Goal) : Prop :=
     goalTransitionAdmitted (goal_state old) (goal_state new) ∧
     (goal_state new ≠ goal_state old → goal_text new = goal_text old)
 
-theorem goal_transition_same_owner :
-    ∀ (goals : Set Goal),
-      GoalTransitionValid goals →
-      ∀ new old : Goal,
-        goalImmediatelySucceeds goals new old →
-        goal_owner new = goal_owner old := by
-  intro goals hvalid new old h
-  exact (hvalid new old h).1
-
-theorem goal_transition_admitted :
-    ∀ (goals : Set Goal),
-      GoalTransitionValid goals →
-      ∀ new old : Goal,
-        goalImmediatelySucceeds goals new old →
-        goalTransitionAdmitted (goal_state old) (goal_state new) := by
-  intro goals hvalid new old h
-  exact (hvalid new old h).2.1
-
-/-- Only a modify (Active to Active) gives a series a new text; a pause,
-resume, abandon or achievement keeps the predecessor's, `none` included. -/
-theorem goal_transition_keeps_text :
-    ∀ (goals : Set Goal),
-      GoalTransitionValid goals →
-      ∀ new old : Goal,
-        goalImmediatelySucceeds goals new old →
-        goal_state new ≠ goal_state old →
-        goal_text new = goal_text old := by
-  intro goals hvalid new old h
-  exact (hvalid new old h).2.2
-
 /-- Root = least tick on the handle. Creation is Active only. -/
 def GoalRootValid (goals : Set Goal) : Prop :=
   ∀ g : Goal, g ∈ goals →
     (∀ g' : Goal, g' ∈ goals → goalSameSeries g' g → goal_tick g ≤ goal_tick g') →
     goal_state g = .Active
-
-theorem goal_root_active :
-    ∀ (goals : Set Goal),
-      GoalRootValid goals →
-      ∀ g : Goal,
-        g ∈ goals →
-        (∀ g' : Goal, g' ∈ goals → goalSameSeries g' g → goal_tick g ≤ goal_tick g') →
-        goal_state g = .Active := by
-  intro goals hvalid g hg hroot
-  exact hvalid g hg hroot
 
 /-- Terminal admits no later `t` (UML §3). -/
 def GoalTerminalClosed (goals : Set Goal) : Prop :=
@@ -320,12 +230,6 @@ def GoalTerminalClosed (goals : Set Goal) : Prop :=
 -- Close Fact
 -- ============================================================
 
-theorem terminal_goal_closes_with_fact :
-    ∀ g : Goal, (goal_state g).terminal = true →
-      (goal_close_fact_t g).isSome = true := by
-  intro g h
-  exact g.terminal_close_fact h
-
 def GoalTerminalCloseFactValid
     (goals : Set Goal) (memories : Set Memory) : Prop :=
   ∀ g : Goal, g ∈ goals → (goal_state g).terminal = true →
@@ -334,17 +238,6 @@ def GoalTerminalCloseFactValid
       goal_close_fact_t g = some (memory_t m) ∧
       memory_kind m = .Fact ∧
       memory_owner m = goal_owner g)
-
-theorem terminal_goal_close_fact_member :
-    ∀ (goals : Set Goal) (memories : Set Memory),
-      GoalTerminalCloseFactValid goals memories →
-      ∀ g : Goal,
-        g ∈ goals →
-        (goal_state g).terminal = true →
-        (∃ m : Memory, m ∈ memories ∧ goal_close_fact_t g = some (memory_t m)) := by
-  intro goals memories hvalid g hg hterminal
-  obtain ⟨m, hm, hclose, _, _⟩ := hvalid g hg hterminal
-  exact ⟨m, hm, hclose⟩
 
 -- ============================================================
 -- Heads and the active set
@@ -379,28 +272,6 @@ def GoalTreeClosed (goals : Set Goal) (heads : Set GoalHead) : Prop :=
     ((∃ c : Goal, goalChildOf goals heads c p) →
       ∃ c : Goal, goalChildOf goals heads c p ∧ goal_state c = .Achieved)
 
-theorem achieved_parent_child_closed :
-    ∀ (goals : Set Goal) (heads : Set GoalHead),
-      GoalTreeClosed goals heads →
-      ∀ p c : Goal,
-        goalIsHead goals heads p →
-        goal_state p = .Achieved →
-        goalChildOf goals heads c p →
-        goal_state c = .Achieved ∨ goal_state c = .Abandoned := by
-  intro goals heads hclosed p c hp hachieved hc
-  exact (hclosed p hp hachieved).1 c hc
-
-theorem achieved_parent_has_achieved_child :
-    ∀ (goals : Set Goal) (heads : Set GoalHead),
-      GoalTreeClosed goals heads →
-      ∀ p : Goal,
-        goalIsHead goals heads p →
-        goal_state p = .Achieved →
-        (∃ c : Goal, goalChildOf goals heads c p) →
-        ∃ c : Goal, goalChildOf goals heads c p ∧ goal_state c = .Achieved := by
-  intro goals heads hclosed p hp hachieved hsome
-  exact (hclosed p hp hachieved).2 hsome
-
 -- ============================================================
 -- No open goal under a closed one: the step model (refs #514)
 -- ============================================================
@@ -411,24 +282,13 @@ def GoalState.isOpen : GoalState → Bool
   | .Achieved | .Abandoned => false
 
 /-- The goal tree at one moment: one entry per series, holding its head
-    state. `parent` is a function of the handle because of `GoalParentFixed`
-    (see `goal_parent_of_handle`): every version of a series names the same
-    parent. `born` orders series by creation; `clock` is the next birth. -/
+    state. `parent` is a function of the handle because of `GoalParentFixed`:
+    every version of a series names the same parent. `born` orders series by creation; `clock` is the next birth. -/
 structure GoalForest where
   state  : Handle → Option GoalState
   parent : Handle → Option Handle
   born   : Handle → Nat
   clock  : Nat
-
-/-- `GoalParentFixed` restated per handle; the forest's `parent` function
-    rests on it. -/
-theorem goal_parent_of_handle :
-    ∀ (goals : Set Goal),
-      GoalParentFixed goals →
-      ∀ g g' : Goal, g ∈ goals → g' ∈ goals →
-        goal_handle g = goal_handle g' → goal_parent g = goal_parent g' := by
-  intro goals hfixed g g' hg hg' hsame
-  exact hfixed g g' hg hg' hsame
 
 def forestChildOf (F : GoalForest) (c p : Handle) : Prop :=
   (F.state c).isSome = true ∧ F.parent c = some p
@@ -702,18 +562,6 @@ theorem goalStep_preserves_inv :
   | achieve _ hchild r => exact achieve_preserves inv hchild r
   | abandon _ _ hchild r => exact abandon_preserves inv hchild r
 
-/-- Every abandon the step model admits (from an open goal) is an admitted
-    transition of the state matrix: the model and `goalTransitionAdmitted`
-    agree on Active → Abandoned and Paused → Abandoned. -/
-theorem abandon_admitted :
-    ∀ old : GoalState, old.isOpen = true → goalTransitionAdmitted old .Abandoned := by
-  intro old h
-  cases old with
-  | Active => trivial
-  | Paused => trivial
-  | Achieved => simp [GoalState.isOpen] at h
-  | Abandoned => simp [GoalState.isOpen] at h
-
 def emptyForest : GoalForest where
   state  := fun _ => none
   parent := fun _ => none
@@ -792,26 +640,6 @@ def GoalNoOpenUnderClosed (goals : Set Goal) (heads : Set GoalHead) : Prop :=
   ∀ p c : Goal, goalIsHead goals heads p → goalChildOf goals heads c p →
     (goal_state c).isOpen = true → (goal_state p).isOpen = true
 
-/-- The rule gives #514's first `GoalTreeClosed` conjunct. -/
-theorem noOpenUnderClosed_achieved_children_closed :
-    ∀ (goals : Set Goal) (heads : Set GoalHead),
-      GoalNoOpenUnderClosed goals heads →
-      ∀ p : Goal, goalIsHead goals heads p → goal_state p = .Achieved →
-        ∀ c : Goal, goalChildOf goals heads c p →
-          goal_state c = .Achieved ∨ goal_state c = .Abandoned := by
-  intro goals heads hrule p hp hachieved c hc
-  cases hs : goal_state c with
-  | Achieved => exact Or.inl rfl
-  | Abandoned => exact Or.inr rfl
-  | Active =>
-    have := hrule p c hp hc (by rw [hs]; rfl)
-    rw [hachieved] at this
-    cases this
-  | Paused =>
-    have := hrule p c hp hc (by rw [hs]; rfl)
-    rw [hachieved] at this
-    cases this
-
 /-- Reachability along later ticks of the same handle. -/
 inductive GoalSeriesReachable (goals : Set Goal) : Goal → Goal → Prop where
   | refl {g : Goal} :
@@ -827,18 +655,6 @@ def activeGoalHeadFrom
   GoalSeriesReachable goals source head ∧
   goal_state head = .Active ∧
   goalIsHead goals heads head
-
-theorem active_goal_head_from_active :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (source head : Goal),
-      activeGoalHeadFrom goals heads source head → goal_state head = .Active := by
-  intro _ _ _ _ h
-  exact h.2.1
-
-theorem active_goal_head_from_head :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (source head : Goal),
-      activeGoalHeadFrom goals heads source head → goalIsHead goals heads head := by
-  intro _ _ _ _ h
-  exact h.2.2
 
 def activeGoals (goals : Set Goal) (heads : Set GoalHead) (o : Owner) : Set Goal :=
   fun g => goal_owner g = o ∧ goal_state g = .Active ∧ goalIsHead goals heads g
@@ -873,80 +689,6 @@ def situatedSelf
     memoryIsHead memories heads m ∧
     cueTouches m cue
 
-theorem self_goals_are_active_goals :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (o : Owner),
-      selfGoals goals heads o = activeGoals goals heads o := by
-  intro _ _ _
-  rfl
-
-theorem self_goal_owner :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (o : Owner) (g : Goal),
-      g ∈ selfGoals goals heads o → goal_owner g = o := by
-  intro _ _ _ _ h
-  exact h.1
-
-theorem self_goal_active :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (o : Owner) (g : Goal),
-      g ∈ selfGoals goals heads o → goal_state g = .Active := by
-  intro _ _ _ _ h
-  exact h.2.1
-
-theorem self_goal_head :
-    ∀ (goals : Set Goal) (heads : Set GoalHead) (o : Owner) (g : Goal),
-      g ∈ selfGoals goals heads o → goalIsHead goals heads g := by
-  intro _ _ _ _ h
-  exact h.2.2
-
-theorem self_perspective_member :
-    ∀ (memories : Set Memory) (o : Owner) (m : Memory),
-      m ∈ selfPerspectives memories o → m ∈ memories := by
-  intro _ _ _ h
-  exact h.1
-
-theorem self_perspective_owner :
-    ∀ (memories : Set Memory) (o : Owner) (m : Memory),
-      m ∈ selfPerspectives memories o → memory_owner m = o := by
-  intro _ _ _ h
-  exact h.2.1
-
-theorem self_perspective_kind :
-    ∀ (memories : Set Memory) (o : Owner) (m : Memory),
-      m ∈ selfPerspectives memories o → memory_kind m = .Perspective := by
-  intro _ _ _ h
-  exact h.2.2
-
-theorem situated_self_is_perspective :
-    ∀ memories heads o cue m,
-      m ∈ situatedSelf memories heads o cue → memory_kind m = .Perspective := by
-  intro _ _ _ _ _ h
-  exact h.1.2.2
-
-theorem situated_self_owner :
-    ∀ memories heads o cue m,
-      m ∈ situatedSelf memories heads o cue → memory_owner m = o := by
-  intro _ _ _ _ _ h
-  exact h.1.2.1
-
-theorem situated_self_is_head :
-    ∀ memories heads o cue m,
-      m ∈ situatedSelf memories heads o cue → memoryIsHead memories heads m := by
-  intro _ _ _ _ _ h
-  exact h.2.1
-
-theorem situated_self_touches_cue :
-    ∀ memories heads o cue m,
-      m ∈ situatedSelf memories heads o cue → cueTouches m cue := by
-  intro _ _ _ _ _ h
-  exact h.2.2
-
-/-- S3 — Self is cue-indexed. The candidate pool is not Self. -/
-theorem situated_self_subset_owner_perspectives :
-    ∀ memories heads o cue m,
-      m ∈ situatedSelf memories heads o cue →
-        m ∈ ownerPerspectives memories o := by
-  intro _ _ _ _ _ h
-  exact h.1
-
 -- ============================================================
 -- Goal assignment and evidence
 -- ============================================================
@@ -956,12 +698,6 @@ def goalAssignedToPerspective (memories : Set Memory) (goal : Goal) (self : Memo
   memory_kind self = .Perspective ∧
   memory_owner self = goal_owner goal ∧
   goal_assignment goal = some (memory_t self)
-
-theorem goal_assignment_same_owner
-    (memories : Set Memory) (goal : Goal) (self : Memory)
-    (h : goalAssignedToPerspective memories goal self) :
-    memory_owner self = goal_owner goal :=
-  h.2.2.1
 
 def GoalAssignmentValid (memories : Set Memory) (goals : Set Goal) : Prop :=
   ∀ g : Goal, g ∈ goals →
@@ -985,23 +721,6 @@ def RetainedGoalAssignmentValid
         erased_pin_target_t e = id ∧
       erased_pin_target_kind e = .Perspective)
 
-theorem goal_assignment_valid_retained_empty
-    (goals : Set Goal) (memories : Set Memory)
-    (hvalid : GoalAssignmentValid memories goals) :
-    RetainedGoalAssignmentValid goals memories (fun _ => False) := by
-  intro g hg
-  cases hvalid g hg with
-  | inl hnone => exact Or.inl hnone
-  | inr hassigned =>
-      obtain ⟨self, hself⟩ := hassigned
-      exact Or.inr (Or.inl ⟨self, hself.1, hself.2.2.2, hself.2.1, hself.2.2.1⟩)
-
-theorem goal_assignment_target_perspective :
-    ∀ memories goal self,
-      goalAssignedToPerspective memories goal self → memory_kind self = .Perspective := by
-  intro _ _ _ h
-  exact h.2.1
-
 def activeGoalsForSelf
     (goals : Set Goal) (heads : Set GoalHead) (memories : Set Memory)
     (self : Memory) : Set Goal :=
@@ -1011,31 +730,6 @@ def activeGoalsForSelf
       goalAssignedToPerspective memories source self ∧
       activeGoalHeadFrom goals heads source head
 
-theorem active_goal_for_self_active :
-    ∀ goals heads memories self head,
-      head ∈ activeGoalsForSelf goals heads memories self → goal_state head = .Active := by
-  intro goals heads memories self head h
-  rcases h with ⟨source, _, _, hhead⟩
-  exact active_goal_head_from_active goals heads source head hhead
-
-theorem active_goal_for_self_head :
-    ∀ goals heads memories self head,
-      head ∈ activeGoalsForSelf goals heads memories self →
-        goalIsHead goals heads head := by
-  intro goals heads memories self head h
-  rcases h with ⟨source, _, _, hhead⟩
-  exact active_goal_head_from_head goals heads source head hhead
-
-theorem active_goal_for_self_has_assignment :
-    ∀ goals heads memories self head,
-      head ∈ activeGoalsForSelf goals heads memories self →
-        ∃ source : Goal,
-          source ∈ goals ∧
-          goalAssignedToPerspective memories source self ∧
-          activeGoalHeadFrom goals heads source head := by
-  intro _ _ _ _ _ h
-  exact h
-
 /-- Evidence ids resolve to admitted Fact or Abstraction. No authorship
     field — operator-must-have-evidence is retired with the authorship blob. -/
 structure GoalEvidenceValid
@@ -1043,19 +737,6 @@ structure GoalEvidenceValid
   resolved : ∀ g : Goal, g ∈ goals → ∀ i : MemoryId, i ∈ goal_evidence g →
     (∃ m : Memory, m ∈ memories ∧ memory_t m = i ∧
       memory_kind m ≠ .Perspective)
-
-theorem goal_evidence_not_perspective :
-    ∀ goals memories,
-      GoalEvidenceValid goals memories →
-      ∀ (g : Goal) (i : MemoryId), g ∈ goals → i ∈ goal_evidence g →
-        (∃ m : Memory, m ∈ memories ∧ memory_t m = i ∧
-          memory_kind m ≠ .Perspective) := by
-  intro goals memories hvalid g i hg hi
-  exact hvalid.resolved g hg i hi
-
-theorem memory_kind_ne_perspective_cases (kind : MemoryKind)
-    (h : kind ≠ .Perspective) : kind = .Fact ∨ kind = .Abstraction := by
-  cases kind <;> simp_all
 
 def RetainedGoalEvidenceValid
     (goals : Set Goal) (memories : Set Memory)
@@ -1079,20 +760,5 @@ def RetainedGoalTerminalCloseFactValid
       e ∈ targets ∧
       goal_close_fact_t g = some (erased_pin_target_t e) ∧
       erased_pin_target_kind e = .Fact)
-
-theorem goal_evidence_valid_retained_empty
-    (goals : Set Goal) (memories : Set Memory)
-    (hvalid : GoalEvidenceValid goals memories) :
-    RetainedGoalEvidenceValid goals memories (fun _ => False) := by
-  intro g hg i hi
-  obtain ⟨m, hm, hid, hk⟩ := hvalid.resolved g hg i hi
-  exact Or.inl ⟨m, hm, hid, memory_kind_ne_perspective_cases _ hk⟩
-
-theorem goal_terminal_close_valid_retained_empty
-    (goals : Set Goal) (memories : Set Memory)
-    (hvalid : GoalTerminalCloseFactValid goals memories) :
-    RetainedGoalTerminalCloseFactValid goals memories (fun _ => False) := by
-  intro g hg hterminal
-  exact Or.inl (hvalid g hg hterminal)
 
 end Causa

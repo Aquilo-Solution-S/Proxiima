@@ -87,30 +87,6 @@ structure SchemaMigrationWitness where
   terminalCloseValid :
     RetainedGoalTerminalCloseFactValid newGoals newMemories retainedTargets
 
-theorem schema_migration_source_memory_covered
-    (migration : SchemaMigrationWitness) (old : Memory)
-    (h : old ∈ migration.oldMemories) :
-    ∃ new, new ∈ migration.newMemories ∧ migration.memoryMap old new :=
-  migration.sourceMemoryCoverage old h
-
-theorem schema_migration_source_goal_covered
-    (migration : SchemaMigrationWitness) (old : Goal)
-    (h : old ∈ migration.oldGoals) :
-    ∃ new, new ∈ migration.newGoals ∧ migration.goalMap old new :=
-  migration.sourceGoalCoverage old h
-
-theorem schema_migration_mapped_memory_preserves_owner
-    (migration : SchemaMigrationWitness) (old new : Memory)
-    (h : migration.memoryMap old new) :
-    memory_owner old = memory_owner new :=
-  migration.mappedMemoryOwner old new h
-
-theorem schema_migration_mapped_goal_preserves_owner
-    (migration : SchemaMigrationWitness) (old new : Goal)
-    (h : migration.goalMap old new) :
-    goal_owner old = goal_owner new :=
-  migration.mappedGoalOwner old new h
-
 theorem schema_migration_validates_retained_store
     (migration : SchemaMigrationWitness) :
     RetainedCommittedStoreValid migration.newMemories migration.newGoals

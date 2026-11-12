@@ -60,36 +60,6 @@ def deriveCausalReferences (memories : Set Memory) (goals : Set Goal) :
       ∃ id : MemoryId, id ∈ goal_motivated_by g ∧
         pair = (goal_t g, id))
 
-theorem causal_reference_targets_are_exact_versions
-    (memories : Set Memory) (goals : Set Goal)
-    (m : Memory) (g : Goal)
-    (hm : m ∈ memories) (_hg : g ∈ goals) :
-    goal_t g ∈ memory_guided_by m →
-      (memory_t m, goal_t g) ∈ deriveCausalReferences memories goals := by
-  intro h
-  change (∃ m' : Memory, m' ∈ memories ∧
-      ∃ id : GoalId, id ∈ memory_guided_by m' ∧
-        (memory_t m, goal_t g) = (memory_t m', id)) ∨
-    (∃ g' : Goal, g' ∈ goals ∧
-      ∃ id : MemoryId, id ∈ goal_motivated_by g' ∧
-        (memory_t m, goal_t g) = (goal_t g', id))
-  exact Or.inl ⟨m, hm, goal_t g, h, rfl⟩
-
-theorem causal_motivation_targets_are_exact_versions
-    (memories : Set Memory) (goals : Set Goal)
-    (m : Memory) (g : Goal)
-    (_hm : m ∈ memories) (hg : g ∈ goals)
-    (h : memory_t m ∈ goal_motivated_by g) :
-    (goal_t g, memory_t m) ∈ deriveCausalReferences memories goals := by
-  change (∃ m' : Memory, m' ∈ memories ∧
-      ∃ id : GoalId, id ∈ memory_guided_by m' ∧
-        (goal_t g, memory_t m) = (memory_t m', id)) ∨
-    (∃ g' : Goal, g' ∈ goals ∧
-      ∃ id : MemoryId, id ∈ goal_motivated_by g' ∧
-        (goal_t g, memory_t m) = (goal_t g', id))
-  exact Or.inr ⟨g, hg, memory_t m, h, rfl⟩
-
-
 /- A legacy/live reference carrier can still name either spine. The storage
    split is reflected by `goalReferenceTargetExists`; this union remains the
    target-existence predicate for the pre-split/live graph relation. -/
@@ -130,11 +100,6 @@ def retainedOriginTargetExists
     (targets : Set ErasedPinTarget) (id : MemoryId) : Prop :=
   pinExists memories id ∨ recordedMemoryTargetExists targets id
 
-theorem goal_is_reference_target
-    (goals : Set Goal) (g : Goal) (hg : g ∈ goals) :
-    goalReferenceTargetExists goals (goal_t g) :=
-  ⟨g, hg, rfl⟩
-
 /-- Read-side resolution after the Goal-reference split. `goal_refs` is the STORED typing; what
     a given reader may see is a separate question, so before projection the
     Goals this reader cannot read are moved back into the untyped `refs`
@@ -149,12 +114,6 @@ def resolveVisibleGoalRefs (readable : GoalId → Bool) (m : Memory) :
 def resolveVisibleGuidance (readable : GoalId → Bool) (m : Memory) : List GoalId :=
   (memory_guided_by m).filter readable
 
-theorem guidance_projection_hides_unreadable_targets
-    (readable : GoalId → Bool) (m : Memory) (g : GoalId)
-    (hg : readable g = false) (h : g ∈ memory_guided_by m) :
-    g ∉ resolveVisibleGuidance readable m := by
-  simp [resolveVisibleGuidance, hg, h]
-
 /-- The non-disclosure invariant. A row carrying an unreadable Goal
     reference resolves to exactly the carrier of a row that had that id in
     `refs` all along — so no reader downstream can tell the two apart, and
@@ -167,207 +126,14 @@ theorem unreadable_goal_reference_resolves_like_a_memory_reference
     resolveVisibleGoalRefs readable m = resolveVisibleGoalRefs readable n := by
   simp [resolveVisibleGoalRefs, hmg, hng, hrefs, hg]
 
-/-- A readable Goal stays typed: resolution is a filter, not a demotion. -/
-theorem readable_goal_reference_survives_resolution
-    (readable : GoalId → Bool) (m : Memory) (g : GoalId)
-    (hmg : memory_goal_refs m = [g]) (hg : readable g = true) :
-    resolveVisibleGoalRefs readable m = (memory_refs m, [g]) := by
-  simp [resolveVisibleGoalRefs, hmg, hg]
-
-/-- The read-cost claim. A row with no Goal reference resolves to itself,
-    so nothing about the Goal spine has to be consulted to project it.
-    Before the split this was undecidable from the row: `refs` could not
-    say whether any of its ids were Goals, so every read had to ask. -/
-theorem a_row_without_goal_refs_resolves_to_itself
-    (readable : GoalId → Bool) (m : Memory) (h : memory_goal_refs m = []) :
-    resolveVisibleGoalRefs readable m = (memory_refs m, []) := by
-  simp [resolveVisibleGoalRefs, h]
-
-theorem retained_goal_is_reference_target
-    (_memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget)
-    (g : Goal) (hg : g ∈ goals) :
-    retainedGoalReferenceTargetExists goals targets (goal_t g) := by
-  exact Or.inl (goal_is_reference_target goals g hg)
-
-theorem erased_goal_is_retained_goal_reference
-    (goals : Set Goal) (targets : Set ErasedPinTarget)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (hk : erased_pin_target_kind e = .Goal) :
-    retainedGoalReferenceTargetExists goals targets (erased_pin_target_t e) := by
-  exact Or.inr ⟨e, he, rfl, hk⟩
-
-theorem erased_memory_is_retained_memory_reference
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (hk : erased_pin_target_kind e ≠ .Goal) :
-    retainedMemoryReferenceTargetExists memories targets
-      (erased_pin_target_t e) := by
-  cases hkind : erased_pin_target_kind e with
-  | Fact => exact Or.inr ⟨.Fact, e, he, rfl, hkind⟩
-  | Abstraction => exact Or.inr ⟨.Abstraction, e, he, rfl, hkind⟩
-  | Perspective => exact Or.inr ⟨.Perspective, e, he, rfl, hkind⟩
-  | Goal => exact False.elim (hk hkind)
-
-/-- Legacy-only mixed carrier: a witness kind is not checked against the
-    caller's typed column. New retained graph proofs use the two predicates
-    above instead. -/
-theorem erased_is_retained_reference_target
-    (memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget)
-    (e : ErasedPinTarget) (he : e ∈ targets) :
-    retainedReferenceTargetExists memories goals targets
-      (erased_pin_target_t e) := by
-  exact Or.inr ⟨e, he, rfl⟩
-
-/-- Legacy-only mixed live carrier; typed retained proofs do not use it. -/
-theorem live_reference_target_is_retained
-    (memories : Set Memory) (goals : Set Goal)
-    (targets : Set ErasedPinTarget) (id : Id)
-    (h : referenceTargetExists memories goals id) :
-    retainedReferenceTargetExists memories goals targets id :=
-  Or.inl h
-
-theorem live_origin_target_is_retained
-    (memories : Set Memory)
-    (targets : Set ErasedPinTarget) (id : MemoryId)
-    (h : pinExists memories id) :
-    retainedOriginTargetExists memories targets id :=
-  Or.inl h
-
-theorem pins_are_node_content (m : Memory) :
-    derivePins m =
-      (m.origins, m.refs ++ m.forked_from.toList, m.goal_refs, m.guided_by, m.reads) := rfl
-
-theorem derived_table_rebuildable (m : Memory) :
-    derivePins m =
-      (memory_origins m, memory_reference_ids m,
-        memory_goal_refs m, memory_guided_by m, memory_reads m) :=
-  pins_are_node_content m
-
-/-- E4z — a write with empty origins is legal (interpretation Perspective). -/
-theorem declaration_without_origins_writes_no_origin_pins (m : Memory)
-    (h : memory_origins m = []) :
-    ∀ id : MemoryId, id ∈ memory_origins m → False := by
-  intro id hin
-  rw [h] at hin
-  cases hin
-
-/-- Fact sources declare no origins, so they never originate from A/P. -/
-theorem fact_source_reaches_only_facts (m : Memory)
-    (hk : memory_kind m = .Fact) :
-    memory_origins m = [] :=
-  m.fact_origins_empty hk
-
-/-- Layer rule on origins: A origins are Facts or Abstractions; P origins
-    are empty or A's. Targets may be live or forgotten. -/
-theorem origin_layer_rule
-    (memories : Set Memory) (m : Memory)
-    (hv : OriginKindValid memories m) :
-    (memory_kind m = .Abstraction →
-      ∀ id : MemoryId, id ∈ memory_origins m →
-        pinKindFactOrAbstraction memories id) ∧
-    (memory_kind m = .Perspective →
-      memory_origins m = [] ∨
-      ∀ id : MemoryId, id ∈ memory_origins m →
-        pinKindIs memories id .Abstraction ∧
-          MemoryKind.layer .Abstraction ≤ (memory_kind m).layer) := by
-  constructor
-  · intro habs id hid
-    exact hv.absFactOrAbs habs id hid
-  · intro hp
-    cases hv.perspAbsOrEmpty hp with
-    | inl hempty => exact Or.inl hempty
-    | inr hall =>
-      refine Or.inr ?_
-      intro id hid
-      refine ⟨hall id hid, ?_⟩
-      rw [hp]
-      exact Nat.le_succ 1
-
-theorem abstraction_origin_fact_or_abstraction
-    (memories : Set Memory) (m : Memory) (id : MemoryId)
-    (hv : OriginKindValid memories m)
-    (habs : memory_kind m = .Abstraction)
-    (hid : id ∈ memory_origins m) :
-    pinKindFactOrAbstraction memories id :=
-  hv.absFactOrAbs habs id hid
-
 /-- Interpretation is a Perspective with empty origins that refs a subject. -/
 def interpretationOf (p : Memory) (subject : Memory) : Prop :=
   memory_kind p = .Perspective ∧
   memory_origins p = [] ∧
   memory_t subject ∈ memory_refs p
 
-theorem interpretation_is_never_a_fact
-    (p subject : Memory) (h : interpretationOf p subject) :
-    memory_kind p ≠ .Fact := by
-  intro hf
-  rw [h.1] at hf
-  exact (nomatch hf)
-
-theorem interpretation_rows_are_references
-    (p subject : Memory) (h : interpretationOf p subject) :
-    memory_t subject ∈ memory_refs p :=
-  h.2.2
-
-/-- Goal pins are the Goal-row columns, never `Memory.refs`. -/
-theorem goal_declared_rows_are_references (g : Goal) :
-    goalDeclaredTargetIds g =
-      (goal_assignment g).toList ++ goal_dependencies g ++ goal_evidence g ++
-        goal_motivated_by g ++
-        (goal_close_fact_t g).toList ++ (goal_write_act_t g).toList :=
-  rfl
-
-theorem goal_declared_row_count (g : Goal) :
-    (goalDeclaredTargetIds g).length =
-      ((goal_assignment g).toList ++ goal_dependencies g ++ goal_evidence g ++
-        goal_motivated_by g ++
-        (goal_close_fact_t g).toList ++ (goal_write_act_t g).toList).length := rfl
-
-/-- Closed vocabulary: three kinds. -/
-theorem principle_epistemic_edge_kinds_are_exactly_three_aux (k : EdgeKind) :
-    k = .origin ∨ k = .reference ∨ k = .read := by
-  cases k with
-  | origin => exact Or.inl rfl
-  | reference => exact Or.inr (Or.inl rfl)
-  | read => exact Or.inr (Or.inr rfl)
-
-/-- info: 'Causa.pins_are_node_content' does not depend on any axioms -/
-#guard_msgs in
-#print axioms pins_are_node_content
-
-/-- info: 'Causa.fact_source_reaches_only_facts' does not depend on any axioms -/
-#guard_msgs in
-#print axioms fact_source_reaches_only_facts
-
-/-- info: 'Causa.interpretation_is_never_a_fact' does not depend on any axioms -/
-#guard_msgs in
-#print axioms interpretation_is_never_a_fact
-
-/-- info: 'Causa.declaration_without_origins_writes_no_origin_pins' does not depend on any axioms -/
-#guard_msgs in
-#print axioms declaration_without_origins_writes_no_origin_pins
-
-/-- info: 'Causa.origin_layer_rule' does not depend on any axioms -/
-#guard_msgs in
-#print axioms origin_layer_rule
-
-/-- info: 'Causa.abstraction_origin_fact_or_abstraction' does not depend on any axioms -/
-#guard_msgs in
-#print axioms abstraction_origin_fact_or_abstraction
-
 /-- info: 'Causa.unreadable_goal_reference_resolves_like_a_memory_reference' depends on axioms: [propext] -/
 #guard_msgs in
 #print axioms unreadable_goal_reference_resolves_like_a_memory_reference
-
-/-- info: 'Causa.readable_goal_reference_survives_resolution' depends on axioms: [propext] -/
-#guard_msgs in
-#print axioms readable_goal_reference_survives_resolution
-
-/-- info: 'Causa.a_row_without_goal_refs_resolves_to_itself' depends on axioms: [propext] -/
-#guard_msgs in
-#print axioms a_row_without_goal_refs_resolves_to_itself
 
 end Causa

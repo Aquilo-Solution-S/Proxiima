@@ -50,10 +50,6 @@ def MemoryKind.pinTargetKind : MemoryKind → PinTargetKind
   | .Abstraction => .Abstraction
   | .Perspective => .Perspective
 
-theorem memory_kind_pin_target_kind_ne_goal (kind : MemoryKind) :
-    kind.pinTargetKind ≠ .Goal := by
-  cases kind <;> simp [MemoryKind.pinTargetKind]
-
 /-- A hard-erased identity witness. It carries only the former `t` and its
     closed kind; in particular it carries no owner and cannot reconstruct one. -/
 structure ErasedPinTarget where
@@ -109,31 +105,6 @@ def recordedGoalTargetExists
     e ∈ targets ∧
     erased_pin_target_t e = id ∧
     erased_pin_target_kind e = .Goal
-
-theorem goal_witness_ne_memory_kind
-    (e : ErasedPinTarget) (he : erased_pin_target_kind e = .Goal)
-    (kind : MemoryKind) :
-    erased_pin_target_kind e ≠ kind.pinTargetKind := by
-  intro hkind
-  rw [he] at hkind
-  exact (memory_kind_pin_target_kind_ne_goal kind) hkind.symm
-
-theorem goal_witness_not_recorded_memory_target
-    (targets : Set ErasedPinTarget)
-    (hunique : ErasedPinTargetIdUnique targets)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (hegoal : erased_pin_target_kind e = .Goal)
-    (id : MemoryId) (kind : MemoryKind)
-    (hid : erased_pin_target_t e = id)
-    (hrecorded : recordedMemoryTargetKind targets id kind) : False := by
-  obtain ⟨other, hother, hother_id, hother_kind⟩ := hrecorded
-  have same_id : erased_pin_target_t e = erased_pin_target_t other := by
-    calc
-      erased_pin_target_t e = id := hid
-      _ = erased_pin_target_t other := hother_id.symm
-  have same : e = other := hunique e other he hother same_id
-  subst other
-  exact goal_witness_ne_memory_kind e hegoal kind hother_kind
 
 -- ============================================================
 -- Content — owner-scoped typed payload (not an admission)
@@ -243,22 +214,6 @@ def memory_content_id : Memory → Option ContentId := Memory.content_id
 def memory_tick : Memory → Instant := Memory.tick
 def memory_forgotten : Memory → Bool := Memory.forgotten
 
-theorem memory_field_projection
-    (handle : Handle) (t : MemoryId) (kind : MemoryKind) (owner : Owner)
-    (writer : WriterAttribution)
-    (origins refs : List MemoryId) (goal_refs guided_by : List GoalId)
-    (forked_from : Option MemoryId) (reads : List MemoryId)
-    (blob_id : Option BlobId)
-    (content_id : Option ContentId) (tick : Instant) (forgotten : Bool)
-    (guided_by_only_perspective : kind ≠ .Perspective → guided_by = [])
-    (fact_origins_empty : kind = .Fact → origins = [])
-    (perspective_never_cites : kind = .Perspective → blob_id = none)
-    (blob_fa_only : blob_id ≠ none → kind = .Fact ∨ kind = .Abstraction) :
-    memory_t
-      (Memory.mk handle t kind owner writer origins refs goal_refs guided_by forked_from reads blob_id content_id
-        tick forgotten guided_by_only_perspective fact_origins_empty
-        perspective_never_cites blob_fa_only) = t := rfl
-
 /-- `t` uniqueness is a table/store invariant. -/
 def MemoryIdUnique (memories : Set Memory) : Prop :=
   ∀ m1 m2 : Memory,
@@ -267,27 +222,11 @@ def MemoryIdUnique (memories : Set Memory) : Prop :=
     memory_t m1 = memory_t m2 →
     m1 = m2
 
-/-- A recorded version has one writer. This does not identify the writers
-    of different versions on the same handle. -/
-theorem memory_version_writer_unique
-    (memories : Set Memory) (hunique : MemoryIdUnique memories)
-    (m1 m2 : Memory) (hm1 : m1 ∈ memories) (hm2 : m2 ∈ memories)
-    (ht : memory_t m1 = memory_t m2) :
-    memory_writer m1 = memory_writer m2 :=
-  congrArg memory_writer (hunique m1 m2 hm1 hm2 ht)
-
 def ForkAnchorAligned (memories : Set Memory) : Prop :=
   ∀ m1 m2 : Memory,
     m1 ∈ memories → m2 ∈ memories →
     memory_handle m1 = memory_handle m2 →
     memory_forked_from m1 = memory_forked_from m2
-
-theorem fork_anchor_same_series_is_retained
-    (memories : Set Memory) (haligned : ForkAnchorAligned memories)
-    (m1 m2 : Memory) (hm1 : m1 ∈ memories) (hm2 : m2 ∈ memories)
-    (hhandle : memory_handle m1 = memory_handle m2) :
-    memory_forked_from m2 = memory_forked_from m1 := by
-  exact (haligned m1 m2 hm1 hm2 hhandle).symm
 
 instance : AppendOnly Memory := ⟨⟩
 
@@ -298,12 +237,6 @@ instance : AppendOnly Memory := ⟨⟩
 def Fact : Type := { m : Memory // memory_kind m = .Fact }
 
 def Fact.memory (f : Fact) : Memory := f.val
-
-theorem fact_memory_kind (f : Fact) : memory_kind f.memory = .Fact := f.property
-
-/-- ME-4 replacement — a Fact declares no origins. -/
-theorem fact_origins_nothing (f : Fact) : memory_origins f.memory = [] :=
-  f.val.fact_origins_empty f.property
 
 -- ============================================================
 -- Series catalog (UML §2b)
@@ -372,11 +305,6 @@ def contentShared (m1 m2 : Memory) : Prop :=
   (memory_content_id m1).isSome = true ∧
   memory_t m1 ≠ memory_t m2
 
-theorem shared_content_preserves_distinct_admissions
-    (m1 m2 : Memory) (h : contentShared m1 m2) :
-    memory_t m1 ≠ memory_t m2 :=
-  h.2.2
-
 /-- A Memory lifecycle head: the catalog names this `t` for the handle. -/
 def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) : Prop :=
   m ∈ memories ∧
@@ -390,18 +318,6 @@ def memoryHeads (memories : Set Memory) (heads : Set MemoryHead) : Set Memory :=
 def perspectiveHeads (memories : Set Memory) (heads : Set MemoryHead) : Set Memory :=
   fun m => memory_kind m = .Perspective ∧ memoryIsHead memories heads m
 
-theorem perspective_head_is_perspective :
-    ∀ (memories : Set Memory) (heads : Set MemoryHead) (m : Memory),
-      m ∈ perspectiveHeads memories heads → memory_kind m = .Perspective := by
-  intro _ _ _ h
-  exact h.1
-
-theorem perspective_head_is_memory_head :
-    ∀ (memories : Set Memory) (heads : Set MemoryHead) (m : Memory),
-      m ∈ perspectiveHeads memories heads → memoryIsHead memories heads m := by
-  intro _ _ _ h
-  exact h.2
-
 -- ============================================================
 -- Forgetting (#488) — a flag on the row, not a move to a stub
 -- ============================================================
@@ -411,24 +327,6 @@ def Memory.forget (m : Memory) : Memory := { m with forgotten := true }
 
 /-- Restore clears the flag and nothing else. -/
 def Memory.restore (m : Memory) : Memory := { m with forgotten := false }
-
-theorem forget_keeps_t (m : Memory) : memory_t m.forget = memory_t m := rfl
-theorem forget_keeps_handle (m : Memory) : memory_handle m.forget = memory_handle m := rfl
-theorem forget_keeps_kind (m : Memory) : memory_kind m.forget = memory_kind m := rfl
-theorem forget_keeps_owner (m : Memory) : memory_owner m.forget = memory_owner m := rfl
-theorem forget_keeps_origins (m : Memory) : memory_origins m.forget = memory_origins m := rfl
-theorem forget_keeps_refs (m : Memory) : memory_refs m.forget = memory_refs m := rfl
-theorem forget_keeps_content (m : Memory) :
-    memory_content_id m.forget = memory_content_id m := rfl
-theorem forget_marks (m : Memory) : memory_forgotten m.forget = true := rfl
-
-/-- Restoring a memory that was live before the forget gives back the very
-    same row: nothing was moved, so nothing has to be put back. -/
-theorem restore_after_forget (m : Memory) (hlive : memory_forgotten m = false) :
-    m.forget.restore = m := by
-  cases m
-  simp only [memory_forgotten] at hlive
-  simp only [Memory.forget, Memory.restore, hlive]
 
 /-- The store after forgetting the row `id`: every row stays, that one is
     flagged. -/
@@ -451,18 +349,6 @@ theorem forgetIn_marks
     (ht : memory_t m = id) :
     m.forget ∈ forgetIn memories id ∧ memory_forgotten m.forget = true :=
   ⟨⟨m, hm, Or.inl ⟨ht, rfl⟩⟩, rfl⟩
-
-/-- Forget adds no row: everything after it was there before, maybe now
-    flagged. -/
-theorem forgetIn_adds_nothing
-    (memories : Set Memory) (id : MemoryId) (m' : Memory)
-    (hm' : m' ∈ forgetIn memories id) :
-    ∃ m : Memory, m ∈ memories ∧ memory_t m' = memory_t m ∧
-      memory_kind m' = memory_kind m ∧ memory_owner m' = memory_owner m := by
-  obtain ⟨m, hm, h⟩ := hm'
-  rcases h with ⟨_, he⟩ | ⟨_, he⟩ <;> subst he
-  · exact ⟨m, hm, rfl, rfl, rfl⟩
-  · exact ⟨_, hm, rfl, rfl, rfl⟩
 
 /-- A pin target exists when a row with that `t` is stored, live or
     forgotten: forget keeps the row (#488). -/
@@ -502,14 +388,6 @@ def ErasedTargetsDisjointMemories
   ∀ e : ErasedPinTarget, e ∈ targets →
     ∀ m : Memory, m ∈ memories → erased_pin_target_t e ≠ memory_t m
 
-theorem erased_target_not_memory
-    (targets : Set ErasedPinTarget) (memories : Set Memory)
-    (hdisjoint : ErasedTargetsDisjointMemories targets memories)
-    (e : ErasedPinTarget) (he : e ∈ targets)
-    (m : Memory) (hm : m ∈ memories) :
-    erased_pin_target_t e ≠ memory_t m :=
-  hdisjoint e he m hm
-
 def recordedPinKindIs
     (memories : Set Memory)
     (targets : Set ErasedPinTarget)
@@ -548,11 +426,6 @@ structure OriginKindValid
     memory_origins m = [] ∨
     ∀ id : MemoryId, id ∈ memory_origins m →
       pinKindIs memories id .Abstraction
-
-/-- A Fact never originates from anything. THEOREM from the row field. -/
-theorem facts_declare_no_origins (m : Memory) (hk : memory_kind m = .Fact) :
-    memory_origins m = [] :=
-  m.fact_origins_empty hk
 
 -- ============================================================
 -- Personality absence (doc 02 §Personality, D4)

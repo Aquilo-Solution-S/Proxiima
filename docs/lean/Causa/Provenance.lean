@@ -124,87 +124,6 @@ structure RetainedCommittedStoreValid
   evidence : RetainedGoalEvidenceValid goals memories targets
   terminalClose : RetainedGoalTerminalCloseFactValid goals memories targets
 
-theorem memory_graph_valid_retained_empty
-    (memories : Set Memory) (goals : Set Goal)
-    (heads : Set MemoryHead)
-    (hgraph : MemoryGraphValid memories goals heads) :
-    RetainedMemoryGraphValid memories goals heads (fun _ => False) := by
-  refine {
-    memoryIdUnique := hgraph.memoryIdUnique
-    goalIdUnique := hgraph.goalIdUnique
-    erasedPinIdUnique := ?_
-    headAligned := hgraph.headAligned
-    forkAnchorAligned := hgraph.forkAnchorAligned
-    pinTargetsExist := ?_
-    motivationsValid := by
-      intro g hg id hid
-      exact Or.inl (hgraph.motivationsValid g hg id hid)
-    guidanceValid := by
-      intro m hm hp id hid
-      exact Or.inl (hgraph.guidanceValid m hm hp id hid)
-    originKind := ?_
-    memoryGoalIdsDisjoint := hgraph.memoryGoalIdsDisjoint
-    erasedMemoryDisjoint := ?_
-    erasedGoalDisjoint := ?_
-    abstractionHasOrigins := hgraph.abstractionHasOrigins
-    derivedProvenance := hgraph.derivedProvenance
-    pinTimeStrict := hgraph.pinTimeStrict
-  }
-  · intro e1 e2 he1 _ _
-    exact False.elim he1
-  · intro m hm
-    refine ⟨?_, ?_, ?_, ?_⟩
-    · intro id hid
-      exact Or.inl ((hgraph.pinTargetsExist m hm).1 id hid)
-    · intro id hid
-      exact Or.inl ((hgraph.pinTargetsExist m hm).2.1 id hid)
-    · intro id hid
-      exact Or.inl ((hgraph.pinTargetsExist m hm).2.2.1 id hid)
-    · intro id hid
-      exact Or.inl ((hgraph.pinTargetsExist m hm).2.2.2 id hid)
-  · intro m hm
-    let h := hgraph.originKind m hm
-    refine {
-      factEmpty := h.factEmpty
-      absFactOrAbs := ?_
-      perspAbsOrEmpty := ?_
-    }
-    · intro habs id hid
-      cases h.absFactOrAbs habs id hid with
-      | inl hfact => exact Or.inl (Or.inl hfact)
-      | inr habs => exact Or.inr (Or.inl habs)
-    · intro hp
-      cases h.perspAbsOrEmpty hp with
-      | inl hempty => exact Or.inl hempty
-      | inr hall =>
-          exact Or.inr (fun id hid => Or.inl (hall id hid))
-  · intro e he _m _hm
-    exact False.elim he
-  · intro e he _g _hg
-    exact False.elim he
-
-theorem memory_graph_and_goals_valid_retained_empty
-    (memories : Set Memory) (goals : Set Goal)
-    (heads : Set MemoryHead)
-    (hgraph : MemoryGraphValid memories goals heads)
-    (hassignment : GoalAssignmentValid memories goals)
-    (hevidence : GoalEvidenceValid goals memories)
-    (hclose : GoalTerminalCloseFactValid goals memories) :
-    RetainedCommittedStoreValid memories goals heads (fun _ => False) := by
-  exact {
-    graph := memory_graph_valid_retained_empty memories goals heads hgraph
-    assignments := goal_assignment_valid_retained_empty goals memories hassignment
-    evidence := goal_evidence_valid_retained_empty goals memories hevidence
-    terminalClose := goal_terminal_close_valid_retained_empty goals memories hclose
-  }
-
-theorem memory_graph_origin_kind :
-    ∀ memories goals heads,
-      MemoryGraphValid memories goals heads →
-      ∀ m : Memory, m ∈ memories → OriginKindValid memories m := by
-  intro _ _ _ hgraph
-  exact hgraph.originKind
-
 theorem grounding_wf
     (memories : Set Memory) (goals : Set Goal)
     (heads : Set MemoryHead)
@@ -242,14 +161,6 @@ theorem memory_grounds_in_facts
     have htable : pinFromInTable memories m tgt := ⟨hm, htgt, hfrom⟩
     exact GroundsInFact.step hfrom (ih tgt htable htgt)
 
-theorem abstraction_has_provenance :
-    ∀ memories goals heads,
-      MemoryGraphValid memories goals heads →
-      ∀ m : Memory, m ∈ memories → memory_kind m = .Abstraction →
-        memory_origins m ≠ [] := by
-  intro memories goals heads hgraph m hm hk
-  exact hgraph.abstractionHasOrigins m hm hk
-
 theorem perspective_has_provenance :
     ∀ memories goals heads,
       MemoryGraphValid memories goals heads →
@@ -273,38 +184,5 @@ theorem guidance_does_not_ground
   obtain ⟨source, hsource, hst⟩ :=
     (hgraph.pinTargetsExist p hp).1 goal_id horigin
   exact hgraph.memoryGoalIdsDisjoint source g hsource hg (hst.trans hgt.symm)
-
-/-- After the Goal-reference split `refs` is the Memory spine, so a Goal `t` is never in it. It
-    is a theorem now rather than a case each reader had to rule out at read
-    time: the column carries the target's kind, and the two id spaces are
-    disjoint, so nothing has to be probed to know this. -/
-theorem a_goal_is_never_a_memory_reference
-    (memories : Set Memory) (goals : Set Goal)
-    (heads : Set MemoryHead)
-    (hgraph : MemoryGraphValid memories goals heads)
-    (m : Memory) (hm : m ∈ memories) (g : Goal) (hg : g ∈ goals) :
-    goal_t g ∉ memory_refs m := by
-  intro hin
-  obtain ⟨m', hm', ht⟩ := (hgraph.pinTargetsExist m hm).2.1 (goal_t g) hin
-  exact hgraph.memoryGoalIdsDisjoint m' g hm' hg ht
-
-/-- The other half: a Goal reference that IS declared resolves on the Goal
-    spine, never on the Memory one. -/
-theorem a_goal_reference_resolves_on_the_goal_spine
-    (memories : Set Memory) (goals : Set Goal)
-    (heads : Set MemoryHead)
-    (hgraph : MemoryGraphValid memories goals heads)
-    (m : Memory) (hm : m ∈ memories) (id : GoalId)
-    (hin : id ∈ memory_goal_refs m) :
-    goalReferenceTargetExists goals id :=
-  (hgraph.pinTargetsExist m hm).2.2.2 id hin
-
-theorem abstraction_grounds_in_facts :
-    ∀ memories goals heads,
-      MemoryGraphValid memories goals heads →
-      ∀ m : Memory, m ∈ memories → memory_kind m = .Abstraction →
-        GroundsInFact memories m := by
-  intro memories goals heads hgraph m hm _
-  exact memory_grounds_in_facts memories goals heads hgraph m hm
 
 end Causa

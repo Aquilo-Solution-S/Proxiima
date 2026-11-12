@@ -72,46 +72,6 @@ structure InvocationProvenanceComplete (inv : OperatorInvocation) : Prop where
     ∀ inp : Memory, inp ∈ inv.inputs →
       memory_t inp ∈ goal_evidence g
 
-/-- E4z — no declared inputs ⇒ nothing to prove. -/
-theorem invocation_without_inputs_is_complete :
-    ∀ inv : OperatorInvocation, (∀ m : Memory, m ∉ inv.inputs) →
-      InvocationProvenanceComplete inv := by
-  intro inv hempty
-  exact ⟨fun _ _ inp hin => absurd hin (hempty inp),
-         fun _ _ inp hin => absurd hin (hempty inp)⟩
-
-theorem invocation_memory_input_provenance_persisted :
-    ∀ memories goals inv,
-      InvocationInGraph memories goals inv →
-      InvocationProvenanceComplete inv →
-      ∀ out : Memory, out ∈ inv.outputMemories →
-      ∀ inp : Memory, inp ∈ inv.inputs →
-        memory_t inp ∈ memory_origins out := by
-  intro _ _ inv _ hcomplete out hout inp hin
-  exact hcomplete.memoryInputs out hout inp hin
-
-theorem invocation_goal_input_evidence_persisted :
-    ∀ memories goals inv,
-      InvocationInGraph memories goals inv →
-      InvocationProvenanceComplete inv →
-      ∀ g : Goal, g ∈ inv.outputGoals →
-      ∀ inp : Memory, inp ∈ inv.inputs →
-        memory_t inp ∈ goal_evidence g := by
-  intro _ _ inv _ hcomplete g hg inp hin
-  exact hcomplete.goalInputs g hg inp hin
-
-theorem invocation_input_kind_valid :
-    ∀ inv, InvocationShapeValid inv → ∀ m : Memory, m ∈ inv.inputs →
-      inv.phase.inputKind (memory_kind m) := by
-  intro inv hshape m hm
-  exact hshape.inputsShape m hm
-
-theorem invocation_output_memory_kind_valid :
-    ∀ inv, InvocationShapeValid inv → ∀ m : Memory, m ∈ inv.outputMemories →
-      inv.phase.outputMemoryKind (memory_kind m) := by
-  intro inv hshape m hm
-  exact hshape.outputMemoriesShape m hm
-
 theorem operator_memory_output_not_fact :
     ∀ (inv : OperatorInvocation) (m : Memory),
       InvocationShapeValid inv → m ∈ inv.outputMemories → memory_kind m ≠ .Fact := by
@@ -121,31 +81,5 @@ theorem operator_memory_output_not_fact :
   | toa => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
   | atop => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
   | atogoal => rw [hphase] at h; exact absurd h (by simp [OperatorPhase.outputMemoryKind])
-
-theorem operator_inputs_match_phase :
-    ∀ (inv : OperatorInvocation) (m : Memory),
-      InvocationShapeValid inv → m ∈ inv.inputs →
-        (inv.phase = .toa → memory_kind m = .Fact ∨ memory_kind m = .Abstraction) ∧
-        (inv.phase ≠ .toa → memory_kind m = .Abstraction) := by
-  intro inv m hshape hm
-  have h := hshape.inputsShape m hm
-  constructor
-  · intro hphase
-    rw [hphase] at h
-    exact h
-  · intro hphase
-    cases hp : inv.phase with
-    | toa => exact absurd hp hphase
-    | atop => rw [hp] at h; exact h
-    | atogoal => rw [hp] at h; exact h
-
-/-- Origins of a derived Abstraction sit at or below its layer (to-Abstraction). -/
-theorem operator_origin_row_not_upward :
-    ∀ (memories : Set Memory) (out : Memory) (id : MemoryId),
-      OriginKindValid memories out →
-      memory_kind out = .Abstraction →
-      id ∈ memory_origins out →
-      pinKindFactOrAbstraction memories id :=
-  fun _ _ id hv houtk hin => hv.absFactOrAbs houtk id hin
 
 end Causa
