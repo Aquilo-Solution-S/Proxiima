@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use http_body_util::Limited;
@@ -23,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::mcp::handler::DynamicHandler;
 use crate::mcp::session::McpSessionBindings;
+use crate::problem::Problem;
 use crate::security::{HostAllowlist, OriginAllowlist, cors_layer, host_guard_layer};
 use crate::server::ToolHost;
 
@@ -280,15 +280,11 @@ async fn limit_body(max_bytes: usize, request: Request<Body>, next: Next) -> Res
         .and_then(|raw| raw.parse::<usize>().ok())
         && len > max_bytes
     {
-        return payload_too_large();
+        return Problem::body_too_large(request.uri().path()).into_response();
     }
     let (parts, body) = request.into_parts();
     let limited = Body::new(Limited::new(body, max_bytes));
     next.run(Request::from_parts(parts, limited)).await
-}
-
-fn payload_too_large() -> Response {
-    (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
 }
 
 #[cfg(test)]

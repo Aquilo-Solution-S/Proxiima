@@ -68,17 +68,27 @@ const CONTEXT_HEADERS: &[(&str, bool, &str)] = &[
 ];
 
 /// The REST statuses, each rendered as RFC 9457
-/// `application/problem+json`. The mapping itself belongs to the routing
-/// module; this list only has to advertise the same set.
+/// `application/problem+json`: the routes' own (`rest::error`) and the
+/// listener's guards in front of them (`crate::problem`). The mappings
+/// belong there; this list only has to advertise the same set.
 const PROBLEM_STATUSES: &[(u16, &str)] = &[
     (
         400,
         "Invalid input, a reserved call-context argument in the request body, \
-         an unknown schema, or a body `action` conflicting with the route.",
+         an unknown schema, a body `action` conflicting with the route, or a \
+         missing or malformed Host header.",
     ),
     (401, "Bearer token missing or invalid."),
-    (403, "Not authorized for this tool or action."),
-    (404, "No such tool, action, resource, or memory."),
+    (
+        403,
+        "Not authorized for this tool or action, or a Host, Origin, or owner \
+         selection the listener refuses.",
+    ),
+    (
+        404,
+        "No such tool, action, resource, or memory, or an unknown or expired \
+         `Mcp-Session-Id`.",
+    ),
     (
         409,
         "Idempotency conflict, duplicate ingest, trigger conflict, or a \
@@ -89,6 +99,7 @@ const PROBLEM_STATUSES: &[(u16, &str)] = &[
         "The write would violate F/A/P layering, or the tool ran and failed \
          (`tool-failure`, the tool's text as detail).",
     ),
+    (413, "Request body larger than the listener's limit."),
     (500, "Internal error. The detail is deliberately generic."),
     (
         503,
@@ -833,7 +844,9 @@ mod tests {
             &document,
             &format!("/v1/tools/{}", protocol_tool::CORE_REMEMBER),
         );
-        for status in ["400", "401", "403", "404", "409", "422", "500", "503"] {
+        for status in [
+            "400", "401", "403", "404", "409", "413", "422", "500", "503",
+        ] {
             assert_eq!(
                 item.pointer(&format!("/post/responses/{status}/$ref"))
                     .and_then(Value::as_str),

@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
@@ -36,16 +36,13 @@ use crate::mcp::handler::{
     annotations_for_auth, how_to_allowed_for_auth, project_dispatcher_actions_for_auth,
     resource_allowed_for_auth, tool_allowed_for_auth,
 };
-use crate::rest::context::{RestAuth, author_from_headers, reject_reserved_arguments};
-use crate::rest::error::{Problem, problem_for};
+use crate::problem::{NO_STORE, Problem};
+use crate::rest::context::{
+    RestAuth, RestBody, RestPath, author_from_headers, reject_reserved_arguments,
+};
+use crate::rest::error::problem_for;
 use crate::selfdoc;
 use crate::server::ToolHost;
-
-/// Every answer is owner- and token-scoped, so nothing on this surface is
-/// shared-cacheable — including `QUERY` reads, whose cacheability is
-/// deliberately unused. What `QUERY` buys here is retry safety and correct
-/// modelling, not caching.
-pub const NO_STORE: &str = "private, no-store";
 
 /// Path prefix of the whole surface. Baked into the route strings rather
 /// than applied with `Router::nest`, because `nest` rewrites the inner
@@ -70,6 +67,11 @@ struct RestState {
 /// Merge it into the listener *inside* the shared auth and body-limit
 /// layers: it reads the [`crate::AuthContext`] those layers inject and
 /// authenticates nothing itself.
+///
+/// It sets no router fallback, so merging it keeps the host's own. Its
+/// misses are its own routes instead: a method a route does not serve is
+/// a `405` problem (axum adds `Allow`), and a path under `/v1/` no route
+/// matches is a `404` problem.
 #[must_use = "merge the returned router into the MCP HTTP surface"]
 pub fn router(host: ToolHost, public_url: Option<String>) -> Router {
     Router::new()
@@ -80,10 +82,25 @@ pub fn router(host: ToolHost, public_url: Option<String>) -> Router {
         .route("/v1/resources/{*path}", get(read_resource))
         .route("/v1/how-to", get(how_to))
         .route("/v1/openapi.json", get(openapi))
+        .method_not_allowed_fallback(method_not_allowed)
+        .route("/v1/{*unrouted}", any(no_route))
         .with_state(RestState {
             host,
             public_url: public_url.map(Arc::from),
         })
+}
+
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn method_not_allowed(method: Method, uri: Uri) -> Problem {
+    Problem::method_not_allowed(&method, uri.path())
+}
+
+#[allow(clippy::unused_async, reason = "axum handlers must be futures")]
+async fn no_route(uri: Uri) -> Problem {
+    Problem::not_found(
+        format!("no route under {PREFIX}/ matches this path; GET {PREFIX}/openapi.json lists them"),
+        uri.path(),
+    )
 }
 
 // ---------------------------------------------------------------- catalog
@@ -248,11 +265,11 @@ async fn openapi(
 async fn tool_route(
     State(state): State<RestState>,
     method: Method,
-    Path(tool): Path<String>,
+    RestPath(tool): RestPath<String>,
     headers: axum::http::HeaderMap,
     extensions: axum::http::Extensions,
     RestAuth(auth): RestAuth,
-    body: Bytes,
+    RestBody(body): RestBody,
 ) -> Response {
     let instance = tool_instance(&tool);
     let Some(descriptor) = find_descriptor(&state, &tool) else {
@@ -328,11 +345,11 @@ async fn tool_route(
 async fn action_route(
     State(state): State<RestState>,
     method: Method,
-    Path((tool, action)): Path<(String, String)>,
+    RestPath((tool, action)): RestPath<(String, String)>,
     headers: axum::http::HeaderMap,
     extensions: axum::http::Extensions,
     RestAuth(auth): RestAuth,
-    body: Bytes,
+    RestBody(body): RestBody,
 ) -> Response {
     let instance = format!("{PREFIX}/tools/{tool}/{action}");
     let Some(descriptor) = find_descriptor(&state, &tool) else {
@@ -458,15 +475,7 @@ fn gate_method(method: &Method, allow: Allow, instance: &str) -> Result<(), Prob
     if *method == Method::POST || (allow.admits_query() && *method == Method::QUERY) {
         return Ok(());
     }
-    let allow = allow.header();
-    Err(Problem::new(
-        StatusCode::METHOD_NOT_ALLOWED,
-        "method-not-allowed",
-        "Method not allowed",
-        format!("{method} is not allowed here; allowed: {allow}"),
-        instance,
-    )
-    .with_allow(allow))
+    Err(Problem::method_not_allowed(method, instance).with_allow(allow.header()))
 }
 
 /// The methods one route answers. The `Allow` header and the `QUERY` gate both read it, so the

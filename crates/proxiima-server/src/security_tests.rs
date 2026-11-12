@@ -20,12 +20,13 @@ use tokio::time;
 use tower::ServiceExt;
 
 use super::{
-    HostAllowlist, OriginAllowlist, RevalidatedBody, auth_layer_with_sessions, cors_layer,
-    default_allowlist, host_guard_layer,
+    HostAllowlist, HostRequestError, OriginAllowlist, RevalidatedBody, auth_layer_with_sessions,
+    cors_layer, default_allowlist, host_guard_layer,
 };
 use crate::ServerError;
 use crate::auth::{AuthContext, EdgeAuth};
 use crate::mcp::session::{McpSessionBindings, owner_key};
+use crate::problem::Problem;
 
 /// Host authenticator that accepts exactly `good-token` for `owner`.
 struct TokenAuth {
@@ -391,7 +392,7 @@ async fn forwarded_owner_live_session_must_match_the_current_token_claim() {
             effective_owners_response(app.clone(), mismatching).await,
             (
                 StatusCode::NOT_FOUND,
-                Bytes::from_static(b"unknown or expired MCP session")
+                problem_bytes(&Problem::session_not_found("/mcp"))
             )
         );
     }
@@ -820,6 +821,54 @@ async fn status_of(app: Router, request: Request<Body>) -> StatusCode {
     app.oneshot(request).await.unwrap().status()
 }
 
+fn problem_bytes(problem: &Problem) -> Bytes {
+    Bytes::from(problem.to_json().to_string())
+}
+
+/// `response` is exactly `expected`'s problem document.
+async fn assert_problem(response: Response, expected: &Problem) {
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/problem+json"
+    );
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        problem_bytes(expected)
+    );
+}
+
+/// A new session the global bound has no room for is refused with a
+/// `503` problem, not the transport's own answer with its session id.
+#[tokio::test]
+async fn a_session_over_the_global_bound_is_a_503_problem() {
+    let owner = user_owner();
+    let sessions =
+        McpSessionBindings::with_limits(Arc::default(), crate::mcp::session::SESSION_IDLE_TTL, 0);
+    let app = Router::new()
+        .route(
+            "/mcp",
+            any(|| async { ([("Mcp-Session-Id", "fresh-session")], StatusCode::OK) }),
+        )
+        .layer(auth_layer_with_sessions(
+            Arc::new(EdgeAuth::headless().with_host(Arc::new(TokenAuth { owner }))),
+            sessions,
+            RevalidationConfig::default(),
+            None,
+        ));
+    let response = app
+        .oneshot(
+            mcp_request("Bearer good-token")
+                .header("X-Proxiima-Owner", owner_key(owner))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!response.headers().contains_key("Mcp-Session-Id"));
+    assert_problem(response, &Problem::session_limit_reached("/mcp")).await;
+}
+
 fn cors_app(calls: Arc<AtomicU64>) -> Router {
     Router::new()
         .route(
@@ -967,10 +1016,7 @@ async fn malformed_or_repeated_preflight_fields_fail_closed() {
                 .headers()
                 .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
         );
-        assert_eq!(
-            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-            Bytes::from_static(b"invalid CORS preflight")
-        );
+        assert_problem(response, &Problem::invalid_cors_preflight("/ok")).await;
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
@@ -1256,27 +1302,17 @@ async fn host_header_wins_and_uri_authority_is_the_http2_fallback() {
 }
 
 #[tokio::test]
-async fn missing_or_malformed_host_is_bad_request_with_rmcp_text() {
+async fn missing_or_malformed_host_is_a_bad_request_problem() {
     let app = host_guard_app(&[]);
     let missing = Request::builder().uri("/ok").body(Body::empty()).unwrap();
     let missing = app.clone().oneshot(missing).await.unwrap();
     assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        missing.headers().get(http::header::CONTENT_TYPE).unwrap(),
-        "text/plain; charset=utf-8"
-    );
-    assert_eq!(
-        to_bytes(missing.into_body(), usize::MAX).await.unwrap(),
-        Bytes::from_static(b"Bad Request: missing Host header")
-    );
+    assert_problem(missing, &HostRequestError::MissingHeader.problem("/ok")).await;
 
     let malformed = request_with_host("http://localhost/ok", "bad host");
     let malformed = app.clone().oneshot(malformed).await.unwrap();
     assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        to_bytes(malformed.into_body(), usize::MAX).await.unwrap(),
-        Bytes::from_static(b"Bad Request: Invalid Host header")
-    );
+    assert_problem(malformed, &HostRequestError::InvalidHeader.problem("/ok")).await;
 
     let mut non_utf8 = Request::builder()
         .uri("http://localhost/ok")
@@ -1288,24 +1324,17 @@ async fn missing_or_malformed_host_is_bad_request_with_rmcp_text() {
     );
     let non_utf8 = app.oneshot(non_utf8).await.unwrap();
     assert_eq!(non_utf8.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        to_bytes(non_utf8.into_body(), usize::MAX).await.unwrap(),
-        Bytes::from_static(b"Bad Request: Invalid Host header encoding")
-    );
+    assert_problem(non_utf8, &HostRequestError::InvalidEncoding.problem("/ok")).await;
 }
 
 #[tokio::test]
-async fn disallowed_host_uses_rmcp_forbidden_response_shape() {
+async fn disallowed_host_is_a_forbidden_problem() {
     let response = host_guard_app(&[])
         .oneshot(request_with_host("/ok", "evil.test"))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert!(!response.headers().contains_key(http::header::CONTENT_TYPE));
-    assert_eq!(
-        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        Bytes::from_static(b"Forbidden: Host header is not allowed")
-    );
+    assert_problem(response, &Problem::host_not_allowed("/ok")).await;
 }
 
 // A bad token yields 401 even when a valid owner is selected.
@@ -1440,7 +1469,7 @@ async fn foreign_owner_session_matches_unknown_session_response() {
     assert_eq!(foreign_body, unknown_body);
     assert_eq!(
         foreign_body,
-        Bytes::from_static(b"unknown or expired MCP session")
+        problem_bytes(&Problem::session_not_found("/mcp"))
     );
 }
 

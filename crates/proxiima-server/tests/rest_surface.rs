@@ -8,6 +8,8 @@
 //! did.
 #![cfg(feature = "rest")]
 
+#[path = "rest_surface/listener_refusals.rs"]
+mod listener_refusals;
 #[path = "rest_surface/nul_arguments.rs"]
 mod nul_arguments;
 

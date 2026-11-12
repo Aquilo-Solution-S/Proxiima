@@ -24,6 +24,7 @@ use crate::auth::EdgeAuth;
 use crate::mcp::session::{McpSessionBindings, parse_owner_key};
 use crate::mcp::transport::McpStreamableService;
 use crate::oauth::{ResourceChallenges, ResourceServerMetadata};
+use crate::problem::Problem;
 
 const MCP_SESSION_ID_HEADER: &str = "Mcp-Session-Id";
 pub(crate) const PROXIIMA_OWNER_HEADER: &str = "X-Proxiima-Owner";
@@ -267,14 +268,16 @@ enum HostRequestError {
     MissingHeader,
 }
 
-impl IntoResponse for HostRequestError {
-    fn into_response(self) -> Response {
-        let message = match self {
-            Self::InvalidEncoding => "Bad Request: Invalid Host header encoding",
-            Self::InvalidHeader => "Bad Request: Invalid Host header",
-            Self::MissingHeader => "Bad Request: missing Host header",
-        };
-        (StatusCode::BAD_REQUEST, message).into_response()
+impl HostRequestError {
+    fn problem(self, instance: &str) -> Problem {
+        Problem::invalid_host(
+            match self {
+                Self::InvalidEncoding => "the Host header is not valid UTF-8",
+                Self::InvalidHeader => "the Host header is not a host or host:port",
+                Self::MissingHeader => "the request names no Host header and no :authority",
+            },
+            instance,
+        )
     }
 }
 
@@ -342,17 +345,14 @@ async fn enforce_host(
 ) -> Response {
     let authority = match request_authority(&request) {
         Ok(authority) => authority,
-        Err(error) => return error.into_response(),
+        Err(error) => return error.problem(request.uri().path()).into_response(),
     };
     if !allowlist.allows_authority(&authority) {
         tracing::warn!(
             category = "not_allowed",
             "rejected request with disallowed Host header (possible DNS rebinding attempt)",
         );
-        return Response::builder()
-            .status(StatusCode::FORBIDDEN)
-            .body(Body::from("Forbidden: Host header is not allowed"))
-            .expect("static Host rejection response is valid");
+        return Problem::host_not_allowed(request.uri().path()).into_response();
     }
     next.run(request).await
 }
@@ -401,7 +401,7 @@ async fn enforce_cors(
     };
     if origins.next().is_some() || !allowlist.allows_origin(&origin) {
         tracing::warn!("rejected request with disallowed or malformed Origin header");
-        let mut response = (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+        let mut response = Problem::origin_not_allowed(request.uri().path()).into_response();
         append_vary(&mut response, "Origin");
         return response;
     }
@@ -430,7 +430,7 @@ async fn enforce_cors(
             Err(()) => {
                 tracing::warn!("rejected malformed CORS preflight headers");
                 let mut response =
-                    (StatusCode::BAD_REQUEST, "invalid CORS preflight").into_response();
+                    Problem::invalid_cors_preflight(request.uri().path()).into_response();
                 append_vary(&mut response, "Origin");
                 append_vary(&mut response, "Access-Control-Request-Method");
                 append_vary(&mut response, "Access-Control-Request-Headers");
@@ -649,14 +649,16 @@ async fn mcp_auth(
         // Streamable-HTTP clients transparently re-initialize on. Only
         // the token-valid path reaches here, so 404 never leaks to an
         // unauthenticated caller.
-        OwnerSelection::UnknownSession => return session_not_found(),
+        OwnerSelection::UnknownSession => {
+            return Problem::session_not_found(&path).into_response();
+        }
         OwnerSelection::Missing => {
-            return (StatusCode::FORBIDDEN, "owner selection required or invalid").into_response();
+            return Problem::owner_selection_refused(&path).into_response();
         }
     };
     let Some(ctx) = state.auth.bind_to_owner(resolved, selected_owner).await else {
         return if via_session {
-            session_not_found()
+            Problem::session_not_found(&path).into_response()
         } else {
             unauthorized(&state, &path)
         };
@@ -664,7 +666,7 @@ async fn mcp_auth(
     let principal = ctx.authz.principal();
     let expires_at = ctx.authz.expires_at();
     request.extensions_mut().insert(ctx);
-    let mut response = next.run(request).await;
+    let response = next.run(request).await;
     if bind_new_session
         && let Some(session_id) = response_header_str(response.headers(), MCP_SESSION_ID_HEADER)
     {
@@ -673,8 +675,7 @@ async fn mcp_auth(
             .bind(session_id, selected_owner, principal)
             .await;
         if !bound {
-            response.headers_mut().remove(MCP_SESSION_ID_HEADER);
-            *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+            return Problem::session_limit_reached(&path).into_response();
         }
     }
     revalidate_response(response, expires_at, state.revalidation)
@@ -752,15 +753,8 @@ async fn selected_owner(
     }
 }
 
-/// 404 for a present-but-unbound `Mcp-Session-Id`. Matches rmcp's
-/// unknown-session behavior: standard Streamable-HTTP clients auto-issue
-/// a fresh `initialize` on 404.
-fn session_not_found() -> Response {
-    (StatusCode::NOT_FOUND, "unknown or expired MCP session").into_response()
-}
-
 fn unauthorized(state: &AuthLayerState, path: &str) -> Response {
-    let mut resp = StatusCode::UNAUTHORIZED.into_response();
+    let mut resp = Problem::auth_required(path).into_response();
     if let Some(challenges) = &state.challenges {
         resp.headers_mut().insert(
             http::header::WWW_AUTHENTICATE,

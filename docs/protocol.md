@@ -229,18 +229,29 @@ REST answers a tool failure as `422` with type `tool-failure` and the text as
 REST returns `application/problem+json`: machine-readable `type`, `title`,
 `status`, safe `detail`, and request `instance`. Its exhaustive variant map is
 [`rest/error.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima-server/src/rest/error.rs).
+The listener's own refusals in front of every route (Host, Origin, CORS
+preflight, body size, bearer, owner selection, MCP session) are the same
+problem documents, identical on `/mcp`, `/v1` and host-mounted routes; their
+`type`s are in
+[`problem.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima-server/src/problem.rs).
+A `401` also carries its `WWW-Authenticate` challenge. Under `/v1/`, a path
+no route matches is a `404` problem and a method a route does not serve a
+`405` problem with `Allow`; paths outside `/v1/` and `/mcp` keep the host's
+own fallback.
 
 | Failure class | HTTP status |
 |---|---|
-| Missing authentication | 401 |
-| Insufficient authority | 403 |
-| Missing or invisible entity / route | 404 |
-| Invalid input or unknown schema | 400 |
+| Missing or invalid bearer | 401 |
+| Insufficient authority; refused Host, Origin, or owner selection | 403 |
+| Missing or invisible entity / route; unknown or expired MCP session | 404 |
+| Invalid input or unknown schema; malformed Host or CORS preflight | 400 |
 | Idempotency, storage, or suppression conflict | 409 |
+| Request body over the listener's limit | 413 |
 | Layering violation | 422 |
 | Tool failure (`tool-failure`, the tool's text) | 422 |
 | Missing capability or publication capacity exhausted | 503 |
 | Another store did not answer (`store-unavailable`, retryable) | 503 |
+| MCP session limit reached (`session-limit-reached`, retryable) | 503 |
 | Internal/deployment failure | 500 |
 
 A memory on another store that the store did not answer for (it failed, timed

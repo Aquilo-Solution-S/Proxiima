@@ -1,5 +1,5 @@
-//! RFC 9457 `application/problem+json` rendering of the dispatch seam's
-//! errors.
+//! The dispatch seam's errors as [`Problem`] documents: which status,
+//! `type` and `title` each one answers.
 //!
 //! Two rules carry the whole module and neither is negotiable:
 //!
@@ -16,139 +16,13 @@
 //!   Adding an error variant is therefore a compile error until someone
 //!   chooses its status.
 
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::StatusCode;
 use proxiima_core::ToolError;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::{RuleClass, StorageError};
 
+use crate::problem::Problem;
 use crate::server::ToolInvocationError;
-
-/// Base of every `type` URI. A stable, dereferenceable namespace so a client
-/// can switch on `type` instead of on the human `title`.
-const TYPE_BASE: &str = "https://proxiima.dev/errors/";
-
-/// One RFC 9457 problem document plus the response metadata that travels
-/// with it.
-#[derive(Debug, Clone)]
-pub struct Problem {
-    status: StatusCode,
-    /// Slug appended to [`TYPE_BASE`]; the machine-readable discriminator.
-    slug: &'static str,
-    title: &'static str,
-    detail: String,
-    instance: String,
-    /// `Allow` for a `405`. Emitted by hand because the generated routes use
-    /// `any()`, which calls `skip_allow_header()` and suppresses axum's own.
-    allow: Option<&'static str>,
-    /// RFC 9457 extension: existing handle for an idempotency conflict.
-    existing: Option<uuid::Uuid>,
-}
-
-impl Problem {
-    #[must_use]
-    pub fn new(
-        status: StatusCode,
-        slug: &'static str,
-        title: &'static str,
-        detail: impl Into<String>,
-        instance: &str,
-    ) -> Self {
-        Self {
-            status,
-            slug,
-            title,
-            detail: detail.into(),
-            instance: instance.to_string(),
-            allow: None,
-            existing: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_allow(mut self, allow: &'static str) -> Self {
-        self.allow = Some(allow);
-        self
-    }
-
-    #[must_use]
-    pub fn with_existing(mut self, existing: uuid::Uuid) -> Self {
-        self.existing = Some(existing);
-        self
-    }
-
-    /// No bound [`crate::AuthContext`]. In a served deployment this means
-    /// the request bypassed the shared `mcp_auth` layer, which 401s before
-    /// dispatch — so the surface fails closed rather than dispatching
-    /// unauthenticated.
-    #[must_use]
-    pub fn auth_required(instance: &str) -> Self {
-        Self::new(
-            StatusCode::UNAUTHORIZED,
-            "auth-required",
-            "Authentication required",
-            "a bearer token is required on this surface",
-            instance,
-        )
-    }
-
-    #[must_use]
-    pub fn invalid_input(detail: impl Into<String>, instance: &str) -> Self {
-        Self::new(
-            StatusCode::BAD_REQUEST,
-            "invalid-input",
-            "Invalid input",
-            detail,
-            instance,
-        )
-    }
-
-    #[must_use]
-    pub fn not_found(detail: impl Into<String>, instance: &str) -> Self {
-        Self::new(
-            StatusCode::NOT_FOUND,
-            "not-found",
-            "Not found",
-            detail,
-            instance,
-        )
-    }
-
-    pub(crate) fn to_json(&self) -> serde_json::Value {
-        let mut value = serde_json::json!({
-            "type": format!("{TYPE_BASE}{}", self.slug),
-            "title": self.title,
-            "status": self.status.as_u16(),
-            "detail": self.detail,
-            "instance": self.instance,
-        });
-        if let Some(existing) = self.existing {
-            value["existing"] = serde_json::json!(existing.to_string());
-        }
-        value
-    }
-}
-
-impl IntoResponse for Problem {
-    fn into_response(self) -> Response {
-        let body = self.to_json().to_string();
-        let mut response = (self.status, body).into_response();
-        let headers = response.headers_mut();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        );
-        // Every answer on this surface is owner- and token-scoped.
-        headers.insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static(super::NO_STORE),
-        );
-        if let Some(allow) = self.allow {
-            headers.insert(header::ALLOW, HeaderValue::from_static(allow));
-        }
-        response
-    }
-}
 
 /// Map one dispatch failure onto its problem document.
 ///
@@ -367,11 +241,12 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::response::IntoResponse;
     use proxiima_core::StorageRule;
     use proxiima_core::error::ProtocolError;
 
     fn status_of(err: &ToolInvocationError) -> StatusCode {
-        problem_for(err, "/v1/tools/x").status
+        problem_for(err, "/v1/tools/x").into_response().status()
     }
 
     fn refused(rule: StorageRule) -> StorageError {
@@ -542,8 +417,7 @@ mod tests {
     fn an_unanswered_store_is_a_503_with_its_own_type() {
         let err = ToolInvocationError::Tool(ToolError::StoreUnavailable { store: 1 });
         let problem = problem_for(&err, "/v1/tools/core_get_memory");
-        assert_eq!(problem.status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(problem.slug, "store-unavailable");
+        assert_eq!(status_of(&err), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
             problem.to_json()["type"],
             "https://proxiima.dev/errors/store-unavailable"
@@ -558,12 +432,12 @@ mod tests {
                 max: 100_000,
             },
         )));
-        let problem = problem_for(&err, "/v1/tools/core_remember");
-        assert_eq!(problem.status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(problem.slug, "capacity-exhausted");
-        assert!(problem.detail.contains("100000"), "{}", problem.detail);
+        let problem = problem_for(&err, "/v1/tools/core_remember").to_json();
+        assert_eq!(status_of(&err), StatusCode::SERVICE_UNAVAILABLE);
+        let detail = problem["detail"].as_str().expect("detail is a string");
+        assert!(detail.contains("100000"), "{detail}");
         assert_eq!(
-            problem.to_json()["type"],
+            problem["type"],
             "https://proxiima.dev/errors/capacity-exhausted"
         );
 

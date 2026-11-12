@@ -368,11 +368,15 @@ async fn origin_rejection_and_host_rejection_both_run_before_auth() {
         .await
         .unwrap();
     assert_eq!(disallowed_origin.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        to_bytes(disallowed_origin.into_body(), usize::MAX)
+    let problem: serde_json::Value = serde_json::from_slice(
+        &to_bytes(disallowed_origin.into_body(), usize::MAX)
             .await
             .unwrap(),
-        "origin not allowed"
+    )
+    .unwrap();
+    assert_eq!(
+        problem["type"],
+        "https://proxiima.dev/errors/origin-not-allowed"
     );
 
     let foreign_host_preflight = app

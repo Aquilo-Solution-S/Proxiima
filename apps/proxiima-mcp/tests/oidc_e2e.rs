@@ -37,6 +37,8 @@ use uuid::Uuid;
 const KID: &str = "e2e-key";
 const ISSUER: &str = "https://idp.e2e.test";
 const AUDIENCE: &str = "proxiima-mcp";
+/// The problem `type` the listener answers for a Host it does not serve.
+const HOST_NOT_ALLOWED: &str = "https://proxiima.dev/errors/host-not-allowed";
 
 fn keypair() -> (RsaKeyPair, StaticJwksResolver) {
     let signing = RsaKeyPair::generate(KeySize::Rsa2048).expect("generate test RSA key");
@@ -201,8 +203,8 @@ async fn oidc_e2e_discovery_public_and_core_tools_behind_bearer()
         "Host rejection must not be rendered as an authentication challenge"
     );
     assert_eq!(
-        foreign_discovery.text().await?,
-        "Forbidden: Host header is not allowed"
+        serde_json::from_str::<serde_json::Value>(&foreign_discovery.text().await?)?["type"],
+        HOST_NOT_ALLOWED
     );
 
     // The listener guard also covers the router fallback, not only mounted
@@ -218,8 +220,8 @@ async fn oidc_e2e_discovery_public_and_core_tools_behind_bearer()
         "Host rejection must run before the authenticated fallback"
     );
     assert_eq!(
-        foreign_fallback.text().await?,
-        "Forbidden: Host header is not allowed"
+        serde_json::from_str::<serde_json::Value>(&foreign_fallback.text().await?)?["type"],
+        HOST_NOT_ALLOWED
     );
 
     // Protected production routes reject a foreign Host before bearer auth.
@@ -236,8 +238,8 @@ async fn oidc_e2e_discovery_public_and_core_tools_behind_bearer()
         "Host rejection must run before bearer authentication"
     );
     assert_eq!(
-        foreign_mcp.text().await?,
-        "Forbidden: Host header is not allowed"
+        serde_json::from_str::<serde_json::Value>(&foreign_mcp.text().await?)?["type"],
+        HOST_NOT_ALLOWED
     );
 
     // 2. /mcp without a bearer → 401 carrying WWW-Authenticate.
@@ -650,8 +652,8 @@ async fn oidc_e2e_rest_openapi_matches_the_mcp_scope_on_the_mounted_runtime()
         .await?;
     assert_eq!(foreign_rest.status(), reqwest::StatusCode::FORBIDDEN);
     assert_eq!(
-        foreign_rest.text().await?,
-        "Forbidden: Host header is not allowed"
+        serde_json::from_str::<serde_json::Value>(&foreign_rest.text().await?)?["type"],
+        HOST_NOT_ALLOWED
     );
 
     // Invoke a real mounted REST tool, not only its generated OpenAPI route.

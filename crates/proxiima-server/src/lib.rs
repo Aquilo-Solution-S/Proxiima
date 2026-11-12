@@ -3,13 +3,15 @@
 //! [`ToolHost`] runs a tool call or a resource read for an authenticated
 //! caller. `mcp` serves it over MCP (Streamable HTTP), `rest` over `/v1`;
 //! authentication, the Host and Origin guards and OAuth discovery are
-//! shared by both.
+//! shared by both, and every refusal the listener answers itself is one
+//! [`Problem`] document.
 
 mod auth;
 mod error;
 mod host_tools;
 mod mcp;
 pub mod oauth;
+mod problem;
 mod request_scope;
 #[cfg(feature = "rest")]
 pub mod rest;
@@ -38,6 +40,7 @@ pub use oauth::{
     PublicClientFacadeError, REGISTRATION_PATH, ResourceServerMetadata, SCOPES_SUPPORTED,
     ScopeToken, ScopeTokenError, public_discovery_router,
 };
+pub use problem::Problem;
 pub use request_scope::RequestHeaderAllowlist;
 pub use security::{
     AuthLayer, CorsLayer, HostAllowlist, HostGuardLayer, OriginAllowlist, assert_loopback,

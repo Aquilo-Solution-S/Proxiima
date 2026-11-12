@@ -8,15 +8,17 @@
 //! debt, so context is header-borne and a reserved body field is an error
 //! rather than a silently ignored duplicate.
 
-use axum::extract::FromRequestParts;
+use axum::body::Bytes;
+use axum::extract::{FromRequest, FromRequestParts, Path, Request};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use proxiima_core::catalog::resolve_operator_label;
 use proxiima_core::{MemoryId, RELEASE_VERSION, ToolCaller};
 
 use crate::auth::AuthContext;
 use crate::mcp::handler::{MODEL_ID_ARG, SELF_PERSPECTIVE_ARGS};
-use crate::rest::error::Problem;
+use crate::problem::Problem;
 
 /// Model label for the write's provenance.
 pub const MODEL_ID_HEADER: &str = "X-Proxiima-Model-Id";
@@ -71,6 +73,64 @@ where
             .cloned()
             .map(Self)
             .ok_or_else(|| Problem::auth_required(parts.uri.path()))
+    }
+}
+
+/// The route's path parameters, or a `400` `invalid-input` problem for a
+/// path the caller sent that does not decode into them (a segment that is
+/// not UTF-8 after percent-decoding). A rejection axum classes as a server
+/// error is a route wired with the wrong parameters, not a refusal of the
+/// request, and keeps axum's own answer.
+#[derive(Debug, Clone)]
+pub struct RestPath<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for RestPath<T>
+where
+    T: serde::de::DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match Path::<T>::from_request_parts(parts, state).await {
+            Ok(Path(value)) => Ok(Self(value)),
+            Err(rejection) if rejection.status().is_client_error() => {
+                Err(Problem::invalid_input(
+                    "a path segment is not valid UTF-8 after percent-decoding or does not fit the route",
+                    parts.uri.path(),
+                )
+                .into_response())
+            }
+            Err(rejection) => Err(rejection.into_response()),
+        }
+    }
+}
+
+/// The request body, or the listener's problem for a body it could not
+/// read: one that streamed past the body-size cap is the same `413`
+/// `body-too-large` problem the size guard answers for a declared
+/// `Content-Length`.
+#[derive(Debug, Clone)]
+pub struct RestBody(pub Bytes);
+
+impl<S> FromRequest<S> for RestBody
+where
+    S: Send + Sync,
+{
+    type Rejection = Problem;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let instance = request.uri().path().to_owned();
+        Bytes::from_request(request, state)
+            .await
+            .map(Self)
+            .map_err(|rejection| {
+                if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    Problem::body_too_large(&instance)
+                } else {
+                    Problem::invalid_input("the request body could not be read", &instance)
+                }
+            })
     }
 }
 
