@@ -168,7 +168,6 @@ pub const LIST_NOTEBOOKS_TOOL: &str = "proxiima-example_list_notebooks";
 
 const TOOLS: &[ToolContract] = &[ToolContract {
     wire_name: LIST_NOTEBOOKS_TOOL,
-    actions: &[],
 }];
 
 /// Baseline schemas only (note + digest). Tutorial kit spiices that splice

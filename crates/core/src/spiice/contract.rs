@@ -1543,8 +1543,9 @@ impl ProjectionDecl {
 
 // ── MCP surface ─────────────────────────────────────────────────────────
 
-/// One registered MCP tool, as the contract sees it: a wire name and the
-/// action leaves the scope gate authorizes at.
+/// One registered MCP tool, as the contract sees it: its wire name. The
+/// actions the scope gate authorizes at are the registered descriptor's
+/// [`action_arg_specs`](crate::catalog::ToolDescriptor::action_arg_specs).
 ///
 /// It states no behaviour. What a tool does is its
 /// [`ToolEffect`](crate::catalog::ToolEffect), declared once on the tool and
@@ -1553,9 +1554,6 @@ impl ProjectionDecl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ToolContract {
     pub wire_name: &'static str,
-    /// Empty ⇒ flat tool, scope key is the wire name.
-    /// Non-empty ⇒ scope keys are `"<wire_name>:<action>"`.
-    pub actions: &'static [&'static str],
 }
 
 /// One `proxiima://` resource.

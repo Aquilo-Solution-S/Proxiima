@@ -360,44 +360,21 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// A tool's contract entry against the descriptor the registry holds.
+    /// Every tool a contract names is one the registry holds.
     ///
-    /// `actions` is a second description of the dispatcher's
-    /// `action_arg_specs`, and nothing but this check keeps the two equal.
-    /// The contract states no behaviour: that is the tool's `ToolEffect`,
-    /// declared once on the tool.
+    /// The contract states no actions and no behaviour: the actions are the
+    /// descriptor's `action_arg_specs`, the behaviour its `ToolEffect`.
     fn validate_contract_tools(
         &self,
         contract: &crate::spiice::contract::SpiiceContract,
     ) -> Result<(), SpiiceRegistryError> {
         for tool in contract.tools {
-            let Some(entry) = self
+            if !self
                 .mcp_tools
                 .iter()
-                .find(|entry| entry.name == tool.wire_name)
-            else {
+                .any(|entry| entry.name == tool.wire_name)
+            {
                 return Err(SpiiceRegistryError::ContractToolNotRegistered {
-                    spiice_id: contract.spiice_id,
-                    name: tool.wire_name,
-                });
-            };
-            // `actions` is a SECOND description of a fact the registry
-            // already holds. The dispatcher's truth is
-            // `ToolDescriptor::action_arg_specs`, validated against the
-            // JSON schema and never against this list.
-            //
-            // The list is compared in ORDER, not as a set. A palette scope
-            // key is `"<wire_name>:<action>"`, so the declaration is read by
-            // people composing palettes; a list that agrees on membership
-            // and disagrees on order is still a list that has stopped being
-            // a copy of the thing it describes.
-            let registered_actions = entry
-                .action_arg_specs
-                .iter()
-                .map(|spec| spec.action)
-                .collect::<Vec<_>>();
-            if registered_actions != tool.actions {
-                return Err(SpiiceRegistryError::ToolActionsDisagreement {
                     spiice_id: contract.spiice_id,
                     name: tool.wire_name,
                 });

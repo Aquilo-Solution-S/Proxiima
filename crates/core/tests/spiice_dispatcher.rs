@@ -107,7 +107,6 @@ static DISPATCH_SPIICE_CONTRACT: SpiiceContract = SpiiceContract {
     kernel_surfaces: &[],
     tools: &[ToolContract {
         wire_name: DISPATCH,
-        actions: &["look", "touch"],
     }],
     resources: &[],
     bespoke_erase_legs: &[],

@@ -9,8 +9,8 @@
 use super::fixtures::{
     CITATION_WITH_A_SIDECAR, DECLARES_A_RESOURCE, DUPLICATE_ORDINAL, DuplicateKeyFact, EMPTY,
     FIXTURE_ACTIONS, FIXTURE_EFFECT, FIXTURE_SPIICE, FOREIGN_SCHEMA, SameKeyDifferentKindFact,
-    SameKeyDifferentTypeFact, TAG_WITHOUT_MEMORY_SURFACE, TOOL_ACTIONS_DISAGREE, TOOL_AGREES,
-    UNENFORCED_REFUSAL, UNREGISTERED_SCHEMA, UNREGISTERED_TOOL, register_fixture_schema,
+    SameKeyDifferentTypeFact, TAG_WITHOUT_MEMORY_SURFACE, TOOL_AGREES, UNENFORCED_REFUSAL,
+    UNREGISTERED_SCHEMA, UNREGISTERED_TOOL, register_fixture_schema,
     register_fixture_schema_of_kind, register_fixture_schema_with_key, register_fixture_tool,
     register_uniformity_schemas, registration_without_a_contract,
 };
@@ -482,20 +482,6 @@ fn each_contract_cross_check_rejects_its_own_shape() {
                     err,
                     SpiiceRegistryError::ContractToolNotRegistered { name, .. }
                         if *name == "test_spiice_absent"
-                )
-            },
-        ),
-        (
-            "the contract's action list is not the dispatcher's",
-            |registry| {
-                register_fixture_tool(registry, &[], FIXTURE_EFFECT);
-                registry.contracts.push(&TOOL_ACTIONS_DISAGREE);
-            },
-            |err| {
-                matches!(
-                    err,
-                    SpiiceRegistryError::ToolActionsDisagreement { name, .. }
-                        if *name == "test_spiice_flat"
                 )
             },
         ),

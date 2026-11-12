@@ -1287,91 +1287,60 @@ const KERNEL_SURFACES: &[Surface] = &[
 const TOOLS: &[ToolContract] = &[
     ToolContract {
         wire_name: tool::CORE_SEARCH_MEMORIES,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_RECALL,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_THINK,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_MEMORY_SPACES,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_REMEMBER,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_EPISODE_COMMIT,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_FORGET,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_RESTORE,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_RECORD_UTTERANCE,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_DERIVE,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_INTERPRET,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_FORK,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_GOAL,
-        actions: &[
-            "set",
-            "grant_access",
-            "revoke_access",
-            "publish",
-            "unpublish",
-            "bind_work",
-            "unbind_work",
-            "transition",
-            "modify",
-            "mark_achieved",
-            "decompose",
-        ],
     },
     ToolContract {
         wire_name: tool::CORE_FACT,
-        actions: &["citation_of_fact", "facts_citing_object"],
     },
     ToolContract {
         wire_name: tool::CORE_MEMBERSHIP,
-        actions: &["add_member", "remove_member", "list_members"],
     },
     ToolContract {
         wire_name: tool::CORE_TRANSFER,
-        actions: &["transfer_to_owner"],
     },
     ToolContract {
         wire_name: tool::CORE_UPLOAD,
-        actions: &["prepare", "complete", "abort"],
     },
     ToolContract {
         wire_name: tool::CORE_RETENTION,
-        actions: &[],
     },
     ToolContract {
         wire_name: tool::CORE_SET_RETENTION,
-        actions: &[],
     },
 ];
 

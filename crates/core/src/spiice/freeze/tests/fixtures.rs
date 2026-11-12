@@ -261,22 +261,6 @@ pub(super) static UNREGISTERED_TOOL: SpiiceContract = contract(
     &[],
     &[ToolContract {
         wire_name: "test_spiice_absent",
-        actions: &[],
-    }],
-    &[],
-);
-
-/// The registration says nothing dispatches; the declaration names an
-/// action. `actions` is a copy of `ActionArgSpec::action`, and a copy
-/// that has drifted is worse than no copy: palette scope keys are
-/// `"<wire_name>:<action>"`, so the drifted list is read by people
-/// composing palettes against actions the dispatcher will not route.
-pub(super) static TOOL_ACTIONS_DISAGREE: SpiiceContract = contract(
-    8,
-    &[],
-    &[ToolContract {
-        wire_name: "test_spiice_flat",
-        actions: &["compose"],
     }],
     &[],
 );
@@ -287,7 +271,6 @@ pub(super) static TOOL_AGREES: SpiiceContract = contract(
     &[],
     &[ToolContract {
         wire_name: "test_spiice_flat",
-        actions: &[],
     }],
     &[],
 );

@@ -458,16 +458,6 @@ pub enum SpiiceRegistryError {
         spiice_id: &'static str,
         schema_id: SchemaId,
     },
-    /// A tool's contract names different dispatcher actions, or names them
-    /// in a different order, than the descriptor the registry holds.
-    #[error(
-        "spiice {spiice_id} declares actions for {name} that are not, in order, \
-         the actions its registered dispatcher accepts"
-    )]
-    ToolActionsDisagreement {
-        spiice_id: &'static str,
-        name: &'static str,
-    },
     /// A schema declared `NotTransferable` without naming where the refusal
     /// is enforced. A refusal nothing backs is a comment.
     #[error(

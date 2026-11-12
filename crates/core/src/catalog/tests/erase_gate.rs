@@ -151,15 +151,12 @@ static GATE_CONTRACT: SpiiceContract = SpiiceContract {
     tools: &[
         ToolContract {
             wire_name: "gate_fixture_wipe",
-            actions: &[],
         },
         ToolContract {
             wire_name: "gate_fixture_touch",
-            actions: &[],
         },
         ToolContract {
             wire_name: "gate_fixture_mixed",
-            actions: &["wipe", "touch"],
         },
     ],
     resources: &[],
