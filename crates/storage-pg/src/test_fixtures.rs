@@ -8,7 +8,7 @@ use proxiima_storage_pg::{
 use proxiima_core::storage_ports::{FactIngestPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::{FactIngestOutcome, FactWriteCommand};
 use proxiima_core::{
-    AccessKind, EdgeEndpoint, GroupId, MemoryId, MemoryKind, OwnerId, Relation, SchemaId,
+    AccessKind, EdgeEndpoint, GroupId, MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId,
     SchemaVersion, UserId, memory_store_number, new_memory_uuid,
 };
 use proxiima_pg_testkit::{
@@ -416,6 +416,81 @@ pub async fn add_member(
         member.into(),
         relation,
     )
+    .await?;
+    Ok(())
+}
+
+/// Insert the Goal access grant of `subject` on `goal` with `role`, at the
+/// Goal's current controller generation. Raw INSERT: the grant port takes a
+/// permit only the engine mints. No row is written when `goal` has no head.
+///
+/// # Errors
+///
+/// The database refusal of the insert.
+pub async fn insert_goal_grant<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    goal: Uuid,
+    subject: Uuid,
+    granted_by: Uuid,
+    role: Role,
+) -> Result<(), sqlx::Error> {
+    let columns = crate::access::role_columns::RoleColumns::of(role);
+    sqlx::query(
+        "INSERT INTO proxiima_core.goal_access_grant
+             (goal_handle, subject_id, read_ceiling, write_ceiling, goal_access, administers,
+              manage, controller_generation, granted_by)
+         SELECT $1, $2, $4, $5, $6, $7, $8, authority_generation, $3
+           FROM proxiima_core.goal_head
+          WHERE handle = $1",
+    )
+    .bind(goal)
+    .bind(subject)
+    .bind(granted_by)
+    .bind(columns.read_ceiling)
+    .bind(columns.write_ceiling)
+    .bind(columns.goal_access)
+    .bind(columns.administers)
+    .bind(columns.manage)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Insert a live delegated grant for `core_remember` that reads and writes
+/// Facts only, written by `by` through `via`. Raw INSERT: the delegation port
+/// takes a permit only the engine mints.
+///
+/// # Errors
+///
+/// The database refusal of the insert.
+pub async fn insert_delegated_grant<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    delegation_id: Uuid,
+    subject: Uuid,
+    owner: Uuid,
+    by: Uuid,
+    via: Option<Uuid>,
+) -> Result<(), sqlx::Error> {
+    let columns = crate::access::role_columns::RoleColumns::of(Role::ingest());
+    sqlx::query(
+        "INSERT INTO proxiima_core.delegated_authority_grants
+             (delegation_id, subject_user_id, owner_id, tool_name,
+              read_ceiling, write_ceiling, goal_access, administers,
+              expires_at, auth_epoch, issued_at, \"by\", via)
+         VALUES ($1, $2, $3, 'core_remember', $4, $5, $6, $7,
+                 TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
+                 TIMESTAMPTZ '2026-01-01 00:00:00Z', $8, $9)",
+    )
+    .bind(delegation_id)
+    .bind(subject)
+    .bind(owner)
+    .bind(columns.read_ceiling)
+    .bind(columns.write_ceiling)
+    .bind(columns.goal_access)
+    .bind(columns.administers)
+    .bind(by)
+    .bind(via)
+    .execute(executor)
     .await?;
     Ok(())
 }

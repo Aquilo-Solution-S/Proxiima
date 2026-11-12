@@ -57,6 +57,9 @@ mod goal_tree;
 #[path = "core_mcp_pg/group_goal_work.rs"]
 mod group_goal_work;
 
+#[path = "core_mcp_pg/unit_goal_work.rs"]
+mod unit_goal_work;
+
 #[path = "core_mcp_pg/goal_collaboration.rs"]
 mod goal_collaboration;
 

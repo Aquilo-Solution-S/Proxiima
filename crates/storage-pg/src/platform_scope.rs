@@ -247,7 +247,7 @@ impl PgPlatformScope {
                     set_config('app.write_owner', '{}', true),
                     set_config('app.write_abstraction', '{}', true),
                     set_config('app.write_perspective', '{}', true),
-                    set_config('app.write_goal', '{}', true),
+                    set_config('app.work_goal', '{}', true),
                     set_config('app.manage_owner', '{}', true),
                     set_config('app.goal_subject', '', true)
                FROM pg_catalog.pg_database d CROSS JOIN pg_catalog.pg_roles r

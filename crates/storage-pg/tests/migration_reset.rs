@@ -17,11 +17,16 @@ const BASELINE: &str = include_str!("../fixtures/0057_baseline.sql");
 /// Both store kinds, each with the database its roles are provisioned for.
 const KINDS: [VectorStorage; 2] = [VectorStorage::Local, VectorStorage::HostIndex];
 
-/// The definitions files a store of this kind holds.
-fn definition_files(vectors: VectorStorage) -> Vec<&'static str> {
-    let mut files = vec![definitions::FUNCTIONS, definitions::POLICIES];
+/// The definitions text a store of this kind holds, the rendered functions
+/// included.
+fn definition_files(vectors: VectorStorage) -> Vec<String> {
+    let mut files = vec![
+        definitions::relation_roles_sql(),
+        definitions::FUNCTIONS.to_owned(),
+        definitions::POLICIES.to_owned(),
+    ];
     if vectors == VectorStorage::Local {
-        files.push(definitions::VECTOR);
+        files.push(definitions::VECTOR.to_owned());
     }
     files
 }

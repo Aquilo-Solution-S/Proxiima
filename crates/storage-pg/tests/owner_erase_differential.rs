@@ -137,7 +137,7 @@ use proxiima_core::{
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::create_core_db;
+use proxiima_storage_pg::test_fixtures::{create_core_db, insert_delegated_grant};
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -614,18 +614,14 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
         .await?;
     }
     for (subject, holder) in [(target, owner), (target, other), (neighbour, other)] {
-        sqlx::query(
-            "INSERT INTO proxiima_core.delegated_authority_grants
-                 (delegation_id, subject_user_id, owner_id, tool_name,
-                  read_ceiling, write_ceiling, expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, 'core_remember',
-                     'fact', 'fact', TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
-                     TIMESTAMPTZ '2026-01-01 00:00:00Z', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+        insert_delegated_grant(
+            pool,
+            Uuid::now_v7(),
+            subject.into_inner(),
+            holder.into_inner(),
+            Uuid::from_u128(0x509),
+            None,
         )
-        .bind(Uuid::now_v7())
-        .bind(subject.into_inner())
-        .bind(holder.into_inner())
-        .execute(pool)
         .await?;
     }
 
@@ -717,6 +713,12 @@ pub const UNPAIRED_COLUMNS: &[(&str, &str)] = &[
     // 0066 added the host read set after this frozen baseline;
     // `core_mcp_pg::host_reads` pins its erase and export directly.
     ("memory", "reads"),
+    // 0067 stores a role's Goal access and administration in their own
+    // columns; the baseline kept them on a fourth rung of the two ceilings.
+    // `migrations::role_columns_migration_keeps_what_every_old_row_decoded_to`
+    // pins the mapping.
+    ("delegated_authority_grants", "goal_access"),
+    ("delegated_authority_grants", "administers"),
 ];
 
 fn names_relation(table: &str, relation: &str) -> bool {

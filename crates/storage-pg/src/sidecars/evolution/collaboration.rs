@@ -6,6 +6,7 @@ use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use super::refused;
+use crate::access::role_columns::RoleColumns;
 use crate::error::map_err;
 
 #[derive(Default)]
@@ -70,9 +71,8 @@ fn pairs(left: &[Uuid], right: &[Uuid]) -> Vec<(Uuid, Uuid)> {
 
 #[derive(Clone, PartialEq, Eq, sqlx::FromRow)]
 struct Grant {
-    read_ceiling: i16,
-    write_ceiling: i16,
-    manage: bool,
+    #[sqlx(flatten)]
+    role: RoleColumns,
     controller_generation: i64,
     expires_at: Option<time::OffsetDateTime>,
     granted_by: Uuid,
@@ -233,7 +233,7 @@ async fn preserve_grants(
     tx: &mut Transaction<'_, Postgres>,
     goals: &Mapping,
 ) -> Result<(), StorageError> {
-    let rows: Vec<GrantRow> = sqlx::query_as("SELECT goal_handle,subject_id,read_ceiling,write_ceiling,manage,controller_generation,expires_at,granted_by FROM proxiima_core.goal_access_grant")
+    let rows: Vec<GrantRow> = sqlx::query_as("SELECT goal_handle,subject_id,read_ceiling,write_ceiling,goal_access,administers,manage,controller_generation,expires_at,granted_by FROM proxiima_core.goal_access_grant")
         .fetch_all(&mut **tx).await.map_err(map_err)?;
     let before: HashMap<_, _> = rows
         .into_iter()
@@ -248,8 +248,8 @@ async fn preserve_grants(
         .iter()
         .filter(|(key, value)| before.get(key) != Some(*value))
     {
-        sqlx::query("INSERT INTO proxiima_core.goal_access_grant(goal_handle,subject_id,read_ceiling,write_ceiling,manage,controller_generation,expires_at,granted_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-            .bind(goal).bind(subject).bind(row.read_ceiling).bind(row.write_ceiling).bind(row.manage).bind(row.controller_generation).bind(row.expires_at).bind(row.granted_by)
+        sqlx::query("INSERT INTO proxiima_core.goal_access_grant(goal_handle,subject_id,read_ceiling,write_ceiling,goal_access,administers,manage,controller_generation,expires_at,granted_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            .bind(goal).bind(subject).bind(row.role.read_ceiling).bind(row.role.write_ceiling).bind(row.role.goal_access).bind(row.role.administers).bind(row.role.manage).bind(row.controller_generation).bind(row.expires_at).bind(row.granted_by)
             .execute(&mut **tx).await.map_err(map_err)?;
     }
     for (goal, subject) in before.keys().filter(|key| !after.contains_key(key)) {

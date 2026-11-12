@@ -325,6 +325,16 @@ pub async fn run_core_phase(
             .await
             .map_err(internal)?;
         execute_replay_sql(connection, restore_historical_catalog_sql()).await?;
+        // The released definitions return the four-rung enum, a row type the
+        // current function cannot be replaced by in place.
+        execute_replay_sql(
+            connection,
+            format!(
+                "DROP FUNCTION IF EXISTS {}core.read_subject_authority(uuid)",
+                historical_namespace_prefix()
+            ),
+        )
+        .await?;
         install_historical_definitions(connection, vectors).await?;
     }
     if phase == MigrationPhase::Historical {

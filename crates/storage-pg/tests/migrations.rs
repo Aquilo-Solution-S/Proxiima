@@ -1,14 +1,14 @@
 //! The fresh CREATE set of the core migration. Requires local PG.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use proxiima_core::{GroupId, OwnerId, UserId};
+use proxiima_core::{AccessCeiling, GoalAccess, GroupId, OwnerId, UserId};
 use proxiima_pg_testkit::{create_db, db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
-    TestGoal, TestMemory, create_content, create_group, create_user,
+    TestGoal, TestMemory, create_content, create_group, create_user, insert_delegated_grant,
 };
 use uuid::Uuid;
 
@@ -41,10 +41,12 @@ async fn apply_current_migrations(
     migration.run_migrations().await
 }
 
-/// A real upgrade fixture: install the historical/finalized core and current
-/// migrations through 0064, leaving 0065 to the migration under test.
-async fn apply_core_before_schema_evolution(
+/// A real upgrade fixture: install the historical/finalized core and the
+/// current migrations below version `below`, leaving the rest to the
+/// migration under test.
+async fn apply_core_before(
     pg: &proxiima_storage_pg::PgMigrationStorage,
+    below: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pool = pg.clone_pool_for_backend();
     let mut connection = pool.acquire().await?;
@@ -69,7 +71,7 @@ async fn apply_core_before_schema_evolution(
         .filter(|migration| {
             proxiima_storage_pg::migration_phase(&source, migration)
                 == proxiima_storage_pg::MigrationPhase::Current
-                && migration.version < 65
+                && migration.version < below
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -156,7 +158,7 @@ async fn seed_historical_goal_series(
     .await
 }
 
-async fn run_goal_schema_upgrade(
+async fn run_current_migrations(
     migration: &proxiima_storage_pg::PgMigrationStorage,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pool = migration.clone_pool_for_backend();
@@ -228,7 +230,7 @@ async fn schema_evolution_backfills_historical_goal_versions_by_series_handle() 
             proxiima_storage_pg::PgTuning::default(),
         )
         .await?;
-        apply_core_before_schema_evolution(&migration).await?;
+        apply_core_before(&migration, 65).await?;
         let pool = migration.clone_pool_for_backend();
         let owner = Uuid::now_v7();
         let handle = Uuid::now_v7();
@@ -237,13 +239,336 @@ async fn schema_evolution_backfills_historical_goal_versions_by_series_handle() 
         let before = seed_historical_goal_series(&pool, owner, handle, first, second).await?;
         assert_eq!(before.len(), 2);
         assert!(sqlx::query_scalar::<_, bool>("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='proxiima_core' AND table_name='goal' AND column_name='schema_id')").fetch_one(&pool).await?);
-        run_goal_schema_upgrade(&migration).await?;
+        run_current_migrations(&migration).await?;
         assert_upgraded_goal_series(&pool, owner, handle, &before).await?;
         Ok(())
     }
     .await;
     let _ = drop_db(&database).await;
     result.expect("historical Goal schema backfill must preserve every version");
+}
+
+/// The four-rung ladder the role columns stored before 0067; the top rung is
+/// Goal work on a read column and administration on a write column.
+const OLD_LADDER: [&str; 5] = ["none", "fact", "abstraction", "perspective", "goal"];
+
+/// The memory ceiling under an old rung.
+const fn memory_ceiling_of_rung(rung: usize) -> AccessCeiling {
+    match rung {
+        0 => AccessCeiling::None,
+        1 => AccessCeiling::Fact,
+        2 => AccessCeiling::Abstraction,
+        _ => AccessCeiling::Perspective,
+    }
+}
+
+type RoleRow = (AccessCeiling, AccessCeiling, GoalAccess, bool, bool);
+
+/// Every old (read, write) rung pair a row can hold: write at most read.
+fn old_rung_pairs() -> impl Iterator<Item = (usize, usize)> {
+    (0..5).flat_map(|read| (0..=read).map(move |write| (read, write)))
+}
+
+/// What the old decoders read from a projection or delegated row.
+fn expected_ladder_role(read: usize, write: usize, manage: bool) -> RoleRow {
+    (
+        memory_ceiling_of_rung(read),
+        memory_ceiling_of_rung(write),
+        if read == 4 {
+            GoalAccess::Works
+        } else {
+            GoalAccess::None
+        },
+        write == 4,
+        manage,
+    )
+}
+
+/// What the old decoder read from a Goal grant: ranks 0..3 are the memory
+/// ladder and the pair (4, 4) is a guest that works the Goal.
+fn expected_grant_role(read: i16, write: i16, manage: bool) -> RoleRow {
+    (
+        memory_ceiling_of_rung(usize::try_from(read).expect("rank")),
+        memory_ceiling_of_rung(usize::try_from(write).expect("rank")),
+        if (read, write) == (4, 4) {
+            GoalAccess::Works
+        } else {
+            GoalAccess::Reads
+        },
+        false,
+        manage,
+    )
+}
+
+async fn platform_connection(
+    pool: &sqlx::PgPool,
+) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', false)")
+        .execute(&mut *connection)
+        .await?;
+    Ok(connection)
+}
+
+/// Insert a delegated grant in the shape of 0066.
+async fn seed_old_delegated_grant(
+    connection: &mut sqlx::PgConnection,
+    read: &str,
+    write: &str,
+) -> Result<Uuid, sqlx::Error> {
+    let delegation_id = Uuid::now_v7();
+    // Raw INSERT: this database stops before the migration that retypes the columns.
+    sqlx::query(
+        "INSERT INTO proxiima_core.delegated_authority_grants
+            (delegation_id, subject_user_id, owner_id, tool_name, read_ceiling, write_ceiling,
+             expires_at, auth_epoch, issued_at, \"by\", via)
+         VALUES ($1, $1, $1, 'core_remember', $2::proxiima_core.access_ceiling,
+                 $3::proxiima_core.access_ceiling, TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
+                 TIMESTAMPTZ '2026-01-01 00:00:00Z', $1, NULL)",
+    )
+    .bind(delegation_id)
+    .bind(read)
+    .bind(write)
+    .execute(connection)
+    .await?;
+    Ok(delegation_id)
+}
+
+type Expected = BTreeMap<Uuid, RoleRow>;
+
+/// Projection and delegated rows of every old (read, write, manage) shape.
+async fn seed_old_ladder_roles(
+    seed: &mut sqlx::PgConnection,
+) -> Result<(Expected, Expected), Box<dyn std::error::Error>> {
+    let mut expected_projection = BTreeMap::new();
+    let mut expected_delegated = BTreeMap::new();
+
+    // The projection's write guard admits only its own maintenance; the
+    // seed is the old shape no current writer produces. The guard is back
+    // before the migration runs, and the migration must leave it so.
+    sqlx::query("ALTER TABLE proxiima_core.group_role_projection DISABLE TRIGGER group_projection_write_guard")
+            .execute(&mut *seed)
+            .await?;
+    for (read, write) in old_rung_pairs() {
+        for manage in [false, true] {
+            let member = Uuid::now_v7();
+            let group = Uuid::now_v7();
+            sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal'), ($2, 'group')")
+                    .bind(member)
+                    .bind(group)
+                    .execute(&mut *seed)
+                    .await?;
+            // Raw INSERT: see above.
+            sqlx::query(
+                "INSERT INTO proxiima_core.group_role_projection
+                        (member_user_id, group_id, read_ceiling, write_ceiling, manage)
+                     VALUES ($1, $2, $3::proxiima_core.access_ceiling,
+                             $4::proxiima_core.access_ceiling, $5)",
+            )
+            .bind(member)
+            .bind(group)
+            .bind(OLD_LADDER[read])
+            .bind(OLD_LADDER[write])
+            .bind(manage)
+            .execute(&mut *seed)
+            .await?;
+            expected_projection.insert(member, expected_ladder_role(read, write, manage));
+        }
+        let delegation =
+            seed_old_delegated_grant(&mut *seed, OLD_LADDER[read], OLD_LADDER[write]).await?;
+        expected_delegated.insert(delegation, expected_ladder_role(read, write, false));
+    }
+    sqlx::query("ALTER TABLE proxiima_core.group_role_projection ENABLE TRIGGER group_projection_write_guard")
+            .execute(&mut *seed)
+            .await?;
+
+    // The delegated table had no CHECK on its ceilings, and the old decoder
+    // read memory ceilings: (perspective, goal) has its write rung above its
+    // read rung and still decoded, as administration without Goal access. It
+    // is the only such pair; the projection and the grants refused it.
+    let administering = seed_old_delegated_grant(seed, "perspective", "goal").await?;
+    expected_delegated.insert(
+        administering,
+        (
+            AccessCeiling::Perspective,
+            AccessCeiling::Perspective,
+            GoalAccess::None,
+            true,
+            false,
+        ),
+    );
+
+    Ok((expected_projection, expected_delegated))
+}
+
+/// Goal grants of every old rank pair, on one Goal.
+async fn seed_old_grants(
+    seed: &mut sqlx::PgConnection,
+) -> Result<Expected, Box<dyn std::error::Error>> {
+    let mut expected_grants = BTreeMap::new();
+    let controller = Uuid::now_v7();
+    let goal = Uuid::now_v7();
+    // Raw INSERTs: the grant rows carry their old smallint ranks.
+    sqlx::query("INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')")
+        .bind(controller)
+        .execute(&mut *seed)
+        .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
+             VALUES ($1, 'legacy/tasks-v1', $2, $3)",
+    )
+    .bind(goal)
+    .bind(controller)
+    .bind(Uuid::now_v7())
+    .execute(&mut *seed)
+    .await?;
+    for (read, write) in old_rung_pairs() {
+        for manage in [false, true] {
+            let subject = Uuid::now_v7();
+            let (read, write) = (i16::try_from(read)?, i16::try_from(write)?);
+            sqlx::query(
+                "INSERT INTO proxiima_core.owners (owner_id, kind) VALUES ($1, 'personal')",
+            )
+            .bind(subject)
+            .execute(&mut *seed)
+            .await?;
+            sqlx::query(
+                "INSERT INTO proxiima_core.goal_access_grant
+                        (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
+                         controller_generation, granted_by)
+                     VALUES ($1, $2, $3, $4, $5, 0, $6)",
+            )
+            .bind(goal)
+            .bind(subject)
+            .bind(read)
+            .bind(write)
+            .bind(manage)
+            .bind(controller)
+            .execute(&mut *seed)
+            .await?;
+            expected_grants.insert(subject, expected_grant_role(read, write, manage));
+        }
+    }
+    Ok(expected_grants)
+}
+
+#[tokio::test]
+async fn role_columns_migration_keeps_what_every_old_row_decoded_to() {
+    let database = format!("proxiima_role_columns_{}", Uuid::now_v7().simple());
+    create_db(&database)
+        .await
+        .expect("owned PostgreSQL database");
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let (_, platform_url) = proxiima_pg_testkit::split_role_urls(&database).await?;
+        let migration = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
+            &platform_url,
+            proxiima_storage_pg::PgPoolConfig::default(),
+            proxiima_storage_pg::PgTuning::default(),
+        )
+        .await?;
+        apply_core_before(&migration, 67).await?;
+        let pool = migration.clone_pool_for_backend();
+        let mut seed = platform_connection(&pool).await?;
+        let (expected_projection, expected_delegated) = seed_old_ladder_roles(&mut seed).await?;
+        let expected_grants = seed_old_grants(&mut seed).await?;
+        drop(seed);
+
+        run_current_migrations(&migration).await?;
+
+        let mut read = platform_connection(&pool).await?;
+        let projection: Vec<(Uuid, AccessCeiling, AccessCeiling, GoalAccess, bool, bool)> = sqlx::query_as(
+            "SELECT member_user_id, read_ceiling, write_ceiling, goal_access, administers, manage
+               FROM proxiima_core.group_role_projection",
+        )
+        .fetch_all(&mut *read)
+        .await?;
+        assert_eq!(
+            projection
+                .into_iter()
+                .map(|(member, r, w, g, a, m)| (member, (r, w, g, a, m)))
+                .collect::<BTreeMap<_, _>>(),
+            expected_projection
+        );
+        let delegated: Vec<(Uuid, AccessCeiling, AccessCeiling, GoalAccess, bool)> = sqlx::query_as(
+            "SELECT delegation_id, read_ceiling, write_ceiling, goal_access, administers
+               FROM proxiima_core.delegated_authority_grants",
+        )
+        .fetch_all(&mut *read)
+        .await?;
+        assert_eq!(
+            delegated
+                .into_iter()
+                .map(|(id, r, w, g, a)| (id, (r, w, g, a, false)))
+                .collect::<BTreeMap<_, _>>(),
+            expected_delegated
+        );
+        let grants: Vec<(Uuid, AccessCeiling, AccessCeiling, GoalAccess, bool, bool)> = sqlx::query_as(
+            "SELECT subject_id, read_ceiling, write_ceiling, goal_access, administers, manage
+               FROM proxiima_core.goal_access_grant",
+        )
+        .fetch_all(&mut *read)
+        .await?;
+        assert_eq!(
+            grants
+                .into_iter()
+                .map(|(subject, r, w, g, a, m)| (subject, (r, w, g, a, m)))
+                .collect::<BTreeMap<_, _>>(),
+            expected_grants
+        );
+        let guard: String = sqlx::query_scalar(
+            "SELECT tgenabled::text FROM pg_trigger WHERE tgname = 'group_projection_write_guard'",
+        )
+        .fetch_one(&mut *read)
+        .await?;
+        assert_eq!(guard, "O", "the projection's write guard stays enabled");
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&database).await;
+    result.expect("every old role row keeps its role");
+}
+
+#[tokio::test]
+async fn role_columns_migration_stops_at_a_row_with_write_above_read() {
+    let database = format!("proxiima_role_columns_{}", Uuid::now_v7().simple());
+    create_db(&database)
+        .await
+        .expect("owned PostgreSQL database");
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let (_, platform_url) = proxiima_pg_testkit::split_role_urls(&database).await?;
+        let migration = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
+            &platform_url,
+            proxiima_storage_pg::PgPoolConfig::default(),
+            proxiima_storage_pg::PgTuning::default(),
+        )
+        .await?;
+        apply_core_before(&migration, 67).await?;
+        let pool = migration.clone_pool_for_backend();
+        let mut seed = platform_connection(&pool).await?;
+        // The delegated table had no CHECK on its ceilings.
+        seed_old_delegated_grant(&mut seed, "fact", "abstraction").await?;
+        drop(seed);
+        let refusal = run_current_migrations(&migration)
+            .await
+            .expect_err("a role the new CHECK refuses is not coerced");
+        assert!(
+            refusal
+                .to_string()
+                .contains("delegated_authority_grants_role_chk"),
+            "{refusal}"
+        );
+        let still_old: bool = sqlx::query_scalar(
+            "SELECT to_regtype('proxiima_core.access_ceiling') IS NOT NULL
+                AND to_regtype('proxiima_core.memory_ceiling') IS NULL",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert!(still_old, "the failed migration rolled back whole");
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&database).await;
+    result.expect("the failed migration leaves the old schema");
 }
 
 async fn table_exists(pg: &impl DatabaseFixture, table_name: &str) -> bool {
@@ -1446,16 +1771,8 @@ async fn memory_is_append_only_and_head_t_only() {
         assert_eq!(writer, (Uuid::from_u128(0x509), None));
 
         let delegation_id = Uuid::now_v7();
-        // Raw INSERT: no write path for delegated_authority_grants reachable from test fixtures
-        sqlx::query(
-            "INSERT INTO proxiima_core.delegated_authority_grants
-                (delegation_id, subject_user_id, owner_id, tool_name,
-                 read_ceiling, write_ceiling, expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $2, 'core_remember', 'fact', 'fact',
-                     TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
-                     TIMESTAMPTZ '2026-01-01 00:00:00Z', $3, $4)",
-        ).bind(delegation_id).bind(owner).bind(writer.0).bind(Uuid::from_u128(0x510))
-            .execute(pool).await?;
+        insert_delegated_grant(pool, delegation_id, owner, owner, writer.0, Some(Uuid::from_u128(0x510)))
+            .await?;
         for query in [
             sqlx::query("UPDATE proxiima_core.delegated_authority_grants SET \"by\" = $2 WHERE delegation_id = $1"),
             sqlx::query("UPDATE proxiima_core.delegated_authority_grants SET via = $2 WHERE delegation_id = $1"),

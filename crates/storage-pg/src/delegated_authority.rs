@@ -8,10 +8,10 @@ use proxiima_core::storage_ports::{
     DelegationStorePort,
 };
 use proxiima_core::{ActionName, OwnerId, StorageError, UserId};
-use sqlx::Row as _;
+use sqlx::{FromRow as _, Row as _};
 use time::OffsetDateTime;
 
-use crate::access::owner_columns::{PgAccessCeiling, delegated_ceiling_columns, member_role};
+use crate::access::role_columns::RoleColumns;
 use crate::error::{internal, map_err};
 
 /// Backend adapter used by the runtime-composed delegated-authority service.
@@ -45,7 +45,9 @@ impl DelegationStorePort for PgDelegationStore {
         grant: &DelegationGrant,
     ) -> Result<(), StorageError> {
         let owner_id = grant.owner().into_inner();
-        let (read_ceiling, write_ceiling) = delegated_ceiling_columns(grant.role_ceiling())?;
+        // A delegated ceiling never manages (the engine refuses one that does),
+        // so the table has no `manage` column.
+        let role = RoleColumns::of(grant.role_ceiling());
         let mut tx = self.platform.begin().await?;
         // `auth_epoch` is NOT NULL and read by no one; the column goes at the
         // next schema reset.
@@ -53,16 +55,19 @@ impl DelegationStorePort for PgDelegationStore {
             "INSERT INTO proxiima_core.delegated_authority_grants
                 (delegation_id, subject_user_id, owner_id,
                  tool_name, action_name, read_ceiling, write_ceiling,
+                 goal_access, administers,
                  expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12)",
         )
         .bind(grant.delegation_id().into_uuid())
         .bind(grant.subject().into_inner())
         .bind(owner_id)
         .bind(grant.command().tool().as_str())
         .bind(grant.command().action().map(ActionName::as_str))
-        .bind(read_ceiling)
-        .bind(write_ceiling)
+        .bind(role.read_ceiling)
+        .bind(role.write_ceiling)
+        .bind(role.goal_access)
+        .bind(role.administers)
         .bind(OffsetDateTime::from(grant.expires_at()))
         .bind(OffsetDateTime::from(grant.issued_at()))
         .bind(grant.writer().by)
@@ -85,6 +90,7 @@ impl DelegationStorePort for PgDelegationStore {
         let row = sqlx::query(
             "SELECT delegation_id, subject_user_id, owner_id,
                     tool_name, action_name, read_ceiling, write_ceiling,
+                    goal_access, administers, false AS manage,
                     expires_at, issued_at, revoked_at,
                     revoked_by_user_id, \"by\", via
                FROM proxiima_core.delegated_authority_grants
@@ -140,9 +146,7 @@ fn decode_grant(
 ) -> Result<DelegationGrant, StorageError> {
     let owner_id: uuid::Uuid = row.try_get("owner_id").map_err(internal)?;
     let owner = OwnerId::new(owner_id);
-    let read: PgAccessCeiling = row.try_get("read_ceiling").map_err(internal)?;
-    let write: PgAccessCeiling = row.try_get("write_ceiling").map_err(internal)?;
-    let role_ceiling = member_role(read, write, false)?;
+    let role_ceiling = RoleColumns::from_row(row).map_err(internal)?.role()?;
 
     DelegationGrant::from_storage(
         permit,

@@ -113,9 +113,9 @@ impl ScopeGrant {
             .map_or_else(Vec::new, OwnerRoles::goal_reading_owners)
     }
 
-    pub(crate) fn administered_owners(&self) -> Vec<OwnerId> {
+    pub(crate) fn goal_working_owners(&self) -> Vec<OwnerId> {
         self.live()
-            .map_or_else(Vec::new, OwnerRoles::administered_owners)
+            .map_or_else(Vec::new, OwnerRoles::goal_working_owners)
     }
 }
 
@@ -299,10 +299,10 @@ impl OwnerScope {
         self.grant.goal_reading_owners()
     }
 
-    /// Owners the scope administers ([`Role::administers`]).
+    /// Owners whose Goals the scope works ([`Role::works_goals`]).
     #[must_use]
-    pub fn administered_owners(&self) -> Vec<OwnerId> {
-        self.grant.administered_owners()
+    pub fn goal_working_owners(&self) -> Vec<OwnerId> {
+        self.grant.goal_working_owners()
     }
 
     #[must_use]

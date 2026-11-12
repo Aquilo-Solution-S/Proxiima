@@ -1,6 +1,9 @@
 //! The mutable core functions, triggers, policies and views pass.
 
-use proxiima_core::{RELEASE_VERSION, StorageError};
+use std::borrow::Cow;
+use std::fmt::Write as _;
+
+use proxiima_core::{RELEASE_VERSION, Relation, StorageError};
 use sha2::{Digest, Sha384};
 use sqlx::PgConnection;
 
@@ -16,12 +19,62 @@ pub const VIEWS: &str = include_str!("../definitions/views.sql");
 /// vectors in pgvector.
 pub const VECTOR: &str = include_str!("../definitions/vector.sql");
 
+/// `proxiima_core.relation_roles()`: the role each membership relation holds,
+/// rendered from [`Relation::ALL`] and [`Relation::role`] so the projection
+/// fold in SQL and the Rust role cannot disagree. It is part of the
+/// definitions, so a change to a relation's role re-applies them.
+#[doc(hidden)]
+#[must_use]
+pub fn relation_roles_sql() -> String {
+    let rows = Relation::ALL
+        .map(|relation| {
+            let role = relation.role();
+            format!(
+                "('{relation}'::proxiima_core.membership_relation, \
+                 '{read}'::proxiima_core.memory_ceiling, \
+                 '{write}'::proxiima_core.memory_ceiling, \
+                 '{goals}'::proxiima_core.goal_access, {administers}, {manage})",
+                read = role.read_ceiling().as_str(),
+                write = role.write_ceiling().as_str(),
+                goals = role.goals().as_str(),
+                administers = role.administers(),
+                manage = role.manages(),
+            )
+        })
+        .join(",\n           ");
+    let mut sql = String::new();
+    let _ = write!(
+        sql,
+        "-- Generated from Relation::ALL and Relation::role().
+CREATE OR REPLACE FUNCTION proxiima_core.relation_roles()
+ RETURNS TABLE(relation proxiima_core.membership_relation,
+               read_ceiling proxiima_core.memory_ceiling,
+               write_ceiling proxiima_core.memory_ceiling,
+               goal_access proxiima_core.goal_access, administers boolean, manage boolean)
+ LANGUAGE sql IMMUTABLE
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+    VALUES {rows}
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.relation_roles() FROM PUBLIC;
+"
+    );
+    sql
+}
+
 /// The definitions a store of this kind holds, in application order.
-fn files(vectors: VectorStorage) -> &'static [&'static str] {
-    match vectors {
-        VectorStorage::Local => &[FUNCTIONS, TRIGGERS, POLICIES, VIEWS, VECTOR],
-        VectorStorage::HostIndex => &[FUNCTIONS, TRIGGERS, POLICIES, VIEWS],
+fn files(vectors: VectorStorage) -> Vec<Cow<'static, str>> {
+    let mut files = vec![
+        Cow::Owned(relation_roles_sql()),
+        Cow::Borrowed(FUNCTIONS),
+        Cow::Borrowed(TRIGGERS),
+        Cow::Borrowed(POLICIES),
+        Cow::Borrowed(VIEWS),
+    ];
+    if vectors == VectorStorage::Local {
+        files.push(Cow::Borrowed(VECTOR));
     }
+    files
 }
 
 fn checksum(vectors: VectorStorage) -> Vec<u8> {
@@ -156,9 +209,9 @@ pub(crate) async fn apply(
         .execute(&mut *connection)
         .await
         .map_err(internal)?;
-    for sql in files(vectors).iter().copied() {
-        // SQL-POLICY: fixed-fragment — the embedded definitions files.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+    for sql in files(vectors) {
+        // SQL-POLICY: fixed-fragment — the embedded definitions files and the text rendered from the closed `Relation` set.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.into_owned()))
             .execute(&mut *connection)
             .await
             .map_err(internal)?;

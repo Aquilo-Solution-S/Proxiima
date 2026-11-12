@@ -15,18 +15,27 @@ use proxiima_core::storage_ports::{
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, MemoryId, MemoryKind,
-    OwnerId, Relation, SchemaId, SchemaVersion, SourceId, StorageError, UserId,
+    AccessCeiling, AccessKind, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GoalAccess,
+    GroupId, MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId, SchemaVersion, SourceId,
+    StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::{
     TestGoal, TestMemory, add_member, create_core_db, create_embedding, create_group,
+    insert_goal_grant,
 };
 use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use proxiima_storage_pg::verbs::goal_timeseries::{GoalWriteCommand, write_goal};
 use proxiima_storage_pg::{ColdPurgeRetryOptions, PgStorage};
 use sqlx::{PgPool, Postgres};
 use uuid::Uuid;
+
+/// A guest that reads Facts and the Goal it was granted on.
+fn fact_reader() -> Role {
+    Role::new(AccessCeiling::Fact, AccessCeiling::None)
+        .expect("a read-only role")
+        .with_goals(GoalAccess::Reads)
+}
 
 /// The five sidecar legs exactly as the engine assembles them: from the
 /// frozen spiice registry. Passing empty slices here would silently skip
@@ -519,17 +528,8 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         let goal = TestGoal::new("erase-grant").create(&pg, controller).await?.handle;
         let other_goal = TestGoal::new("keep-grant").create(&pg, other).await?.handle;
         for goal in [goal, other_goal] {
-            // Raw INSERT: no write path for goal_access_grant reachable from test fixtures (its port takes a permit only the Engine mints).
-            sqlx::query(
-                "INSERT INTO proxiima_core.goal_access_grant
-                    (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-                     controller_generation, granted_by)
-                 VALUES ($1, $2, 1, 0, false, 0, $2)",
-            )
-            .bind(goal)
-            .bind(subject.into_inner())
-            .execute(pool)
-            .await?;
+            insert_goal_grant(pool, goal, subject.into_inner(), subject.into_inner(), fact_reader())
+                .await?;
         }
         let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalOwner {
             user_id: controller_user,
@@ -551,17 +551,13 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .fetch_one(pool)
         .await?;
         assert_eq!(erased, 0, "Goal controller erase cascades its grants");
-        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures (its port takes a permit only the Engine mints).
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_access_grant
-                (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-                 controller_generation, granted_by)
-             VALUES ($1, $2, 1, 0, false, 0, $3)",
+        insert_goal_grant(
+            pool,
+            other_goal,
+            colleague.into_inner(),
+            subject.into_inner(),
+            fact_reader(),
         )
-        .bind(other_goal)
-        .bind(colleague.into_inner())
-        .bind(subject.into_inner())
-        .execute(pool)
         .await?;
         let fact: Uuid = sqlx::query_scalar(
             "SELECT t FROM proxiima_core.memory WHERE owner_id = $1 AND kind = 'fact' LIMIT 1",
@@ -647,7 +643,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         );
         sqlx::query(
             "UPDATE proxiima_core.goal_access_grant
-                SET read_ceiling = 2
+                SET read_ceiling = 'abstraction'
               WHERE goal_handle = $1 AND subject_id = $2 AND granted_by = $3",
         )
         .bind(other_goal)
@@ -665,8 +661,8 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .fetch_one(pool)
         .await?;
         assert_eq!(remaining, 0, "erasure revokes direct subject grants");
-        let retained_grant: i16 = sqlx::query_scalar(
-            "SELECT read_ceiling FROM proxiima_core.goal_access_grant
+        let retained_grant: String = sqlx::query_scalar(
+            "SELECT read_ceiling::text FROM proxiima_core.goal_access_grant
               WHERE goal_handle = $1 AND subject_id = $2 AND granted_by = $3",
         )
         .bind(other_goal)
@@ -674,7 +670,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         .bind(subject.into_inner())
         .fetch_one(pool)
         .await?;
-        assert_eq!(retained_grant, 2, "foreign issuer grant remains writable");
+        assert_eq!(retained_grant, "abstraction", "foreign issuer grant remains writable");
         let remaining_consents: i64 = sqlx::query_scalar(
             "SELECT (SELECT count(*) FROM proxiima_core.goal_memory_publication WHERE published_by = $1)
                   + (SELECT count(*) FROM proxiima_core.goal_work_binding WHERE bound_by = $1)",

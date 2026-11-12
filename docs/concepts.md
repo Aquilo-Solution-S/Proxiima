@@ -85,10 +85,10 @@ Roles have separate read and write ceilings over the memory kinds
 `Fact < Abstraction < Perspective`, and three capabilities beside them: Goal
 access (none, reads, works), owner administration, and group management.
 Writing a kind always implies reading it, and a Goal is no rung: no memory
-ceiling grants Goal access, and Goal access grants no memory. The stored row
-policies do not hold every such role yet: one that reads Goals below a
-Perspective read ceiling, or administers below a Perspective write ceiling,
-is refused wherever a request under it would go through those policies.
+ceiling grants Goal access, and Goal access grants no memory. The stored role
+and the row policies hold every such role: the memory settings carry the
+ceilings, one setting the owners whose Goals the role reads and one those whose
+Goals it works. No policy reads administration.
 This access ladder is separate from the [derivation rules](#layering).
 
 The standard relations illustrate the intended jobs:

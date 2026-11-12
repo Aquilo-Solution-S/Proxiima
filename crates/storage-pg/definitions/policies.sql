@@ -55,21 +55,32 @@ BEGIN
                     perspective_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
                         'app.' || direction || '_perspective', '', '{}');
                     goal_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
-                        'app.' || direction || '_goal', '', '{}');
-                    kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s WHEN ''perspective'' THEN %s ELSE %s END',
-                        fact_owners, abstraction_owners, perspective_owners, goal_owners);
+                        CASE direction WHEN 'read' THEN 'app.read_goal' ELSE 'app.work_goal' END, '', '{}');
+                    -- A memory row is admitted by its parent memory's kind and nothing else.
+                    kind_of := format('CASE parent.kind::text WHEN ''fact'' THEN %s WHEN ''abstraction'' THEN %s WHEN ''perspective'' THEN %s END',
+                        fact_owners, abstraction_owners, perspective_owners);
                     kind_of := format($expr$(
                         %1$I.%2$I.%3$I = ANY(%4$s)
-                        OR (
-                            %1$I.%2$I.%3$I = ANY(%5$s)
-                            AND EXISTS (
-                                SELECT 1 FROM proxiima_core.memory AS parent
-                                 WHERE parent.t = %1$I.%2$I.%6$I
-                                   AND parent.owner_id = ANY(%7$s)
-                            )
+                        AND EXISTS (
+                            SELECT 1 FROM proxiima_core.memory AS parent
+                             WHERE parent.t = %1$I.%2$I.%5$I
+                               AND parent.owner_id = ANY(%6$s)
                         )
                     )$expr$, target_schema, target_table, owner_column,
-                        goal_owners, fact_owners, memory_key, kind_of);
+                        fact_owners, memory_key, kind_of);
+                    -- Only a table that holds a Goal's rows (keyed by the Goal's version id)
+                    -- admits them, to the owners whose Goals the role reads or works.
+                    IF target_table <> 'projection' THEN
+                        kind_of := format($expr$(
+                            %1$I.%2$I.%3$I = ANY(%4$s)
+                            AND EXISTS (
+                                SELECT 1 FROM proxiima_core.goal AS parent
+                                 WHERE parent.t = %1$I.%2$I.%5$I
+                                   AND parent.owner_id = %1$I.%2$I.%3$I
+                            )
+                        ) OR %6$s$expr$, target_schema, target_table, owner_column,
+                            goal_owners, memory_key, kind_of);
+                    END IF;
                     IF direction = 'read' THEN
                         read_expr := kind_of;
                     ELSE
@@ -127,7 +138,7 @@ BEGIN
             IF fk_schema = 'proxiima_core' AND fk_table = 'memory' THEN
                 write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.memory AS parent WHERE parent.%I = %I.%I.%I AND ((parent.kind = ''fact'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''abstraction'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (parent.kind = ''perspective'' AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_column, target_schema, target_table, fk_child);
             ELSIF fk_schema = 'proxiima_core' AND fk_table = 'goal' THEN
-                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.goal AS parent WHERE parent.%I = %I.%I.%I AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_goal'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))', fk_column, target_schema, target_table, fk_child);
+                write_expr := format('EXISTS (SELECT 1 FROM proxiima_core.goal AS parent WHERE parent.%I = %I.%I.%I AND parent.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.work_goal'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))', fk_column, target_schema, target_table, fk_child);
             ELSIF parent_has_t THEN
                 write_expr := format('EXISTS (SELECT 1 FROM %I.%I AS parent JOIN proxiima_core.memory AS owner_memory ON owner_memory.t = parent.t WHERE parent.%I = %I.%I.%I AND ((owner_memory.kind = ''fact'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_owner'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''abstraction'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_abstraction'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[])) OR (owner_memory.kind = ''perspective'' AND owner_memory.owner_id = ANY((SELECT COALESCE(NULLIF(current_setting(''app.write_perspective'', true), '''')::uuid[], ''{}''::uuid[]))::uuid[]))))', fk_schema, fk_table, fk_column, target_schema, target_table, fk_child);
             ELSE
@@ -195,7 +206,6 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.closed_handle USING ((EXISTS (
             WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-            ELSE ( SELECT COALESCE((NULLIF(current_setting('app.read_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
         END))))));
 
 ALTER POLICY proxiima_owner_write ON proxiima_core.closed_handle USING ((EXISTS ( SELECT 1
@@ -205,7 +215,6 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.closed_handle USING ((EXISTS 
             WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-            ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
         END)))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM proxiima_core.memory_head parent
   WHERE ((parent.handle = closed_handle.handle) AND (parent.owner_id = ANY (
@@ -213,7 +222,6 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.closed_handle USING ((EXISTS 
             WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-            ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
         END))))));
 
 -- cold_purge_pending
@@ -229,7 +237,6 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.content USING (((owner_id = AN
             WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-            ELSE ( SELECT COALESCE((NULLIF(current_setting('app.read_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
         END)))))))));
 
 ALTER POLICY proxiima_owner_write ON proxiima_core.content USING (((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) OR ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND ((EXISTS ( SELECT 1
@@ -239,7 +246,6 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.content USING (((owner_id = A
             WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
             WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-            ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
         END))))))))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
 
 -- delegated_authority_grants
@@ -281,7 +287,7 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.goal USING (
     owner_id = ANY ((SELECT COALESCE((NULLIF(current_setting('app.read_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])
 );
 
-ALTER POLICY proxiima_owner_write ON proxiima_core.goal USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
+ALTER POLICY proxiima_owner_write ON proxiima_core.goal USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
 
 -- goal_motivation_index is a derived projection. Goal owners may read rows
 -- through their Goal scope; only the trigger/platform path may write them.
@@ -298,7 +304,7 @@ SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'pr
 
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_head USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.read_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
 
-ALTER POLICY proxiima_owner_write ON proxiima_core.goal_head USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
+ALTER POLICY proxiima_owner_write ON proxiima_core.goal_head USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
 
 -- Goal collaboration routes. These are additive to owner RLS and never add a
 -- subject to app.owner/app.read_* arrays. The trusted host binds app.goal_subject
@@ -443,7 +449,6 @@ CASE (kind)::text
     WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.read_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.read_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
 END))));
 
 ALTER POLICY proxiima_owner_write ON proxiima_core.memory_head USING (((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (owner_id = ANY (
@@ -451,13 +456,11 @@ CASE (kind)::text
     WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
 END)))) WITH CHECK (((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (owner_id = ANY (
 CASE (kind)::text
     WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
 END))));
 
 -- owner_rls_epoch
@@ -511,13 +514,13 @@ CASE (kind)::text
     WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
+    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
 END)))) WITH CHECK (((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (owner_id = ANY (
 CASE (kind)::text
     WHEN 'fact'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'abstraction'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
     WHEN 'perspective'::text THEN ( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
-    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.write_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
+    ELSE ( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")
 END))));
 
 -- retention

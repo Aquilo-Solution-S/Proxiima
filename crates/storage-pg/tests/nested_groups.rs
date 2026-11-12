@@ -6,9 +6,7 @@ use std::time::Duration;
 
 use proxiima_core::owner_inverse::{EraseAuthorization, OwnerEraseTarget, OwnerSurfaces};
 use proxiima_core::storage_ports::OwnerInversePort;
-use proxiima_core::{
-    AccessCeiling, GoalAccess, GroupId, OwnerId, Relation, Role, StorageError, StorageRule, UserId,
-};
+use proxiima_core::{GroupId, OwnerId, Relation, Role, StorageError, StorageRule, UserId};
 use proxiima_pg_testkit::{DbGuard, create_db, db_url, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{create_group, create_user};
 use proxiima_storage_pg::{
@@ -102,25 +100,32 @@ impl Harness {
         Ok(())
     }
 
+    async fn projection_rows(&self) -> TestResult<usize> {
+        let rows: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM proxiima_core.group_role_projection")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(usize::try_from(rows)?)
+    }
+
     async fn assert_projection(&self) -> TestResult {
         let expected = reference_climb(&self.pool).await?;
-        let rows: Vec<(Uuid, Uuid, String, String, bool)> = sqlx::query_as(
-            "SELECT member_user_id, group_id, read_ceiling::text, write_ceiling::text, manage
+        let mut conn = self.pool.acquire().await?;
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT member_user_id, group_id
              FROM proxiima_core.group_role_projection ORDER BY member_user_id, group_id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
-        let actual: Roles = rows
-            .into_iter()
-            .map(|(person, group, read, write, manage)| {
-                ((person, group), stored_role(&read, &write, manage))
-            })
-            .collect();
+        let mut actual = Roles::new();
+        for (person, group) in rows {
+            let role = group_role(&mut conn, UserId::new(person), GroupId::new(group)).await?;
+            actual.insert((person, group), role.expect("a projected row has a role"));
+        }
         assert_eq!(
             actual, expected,
             "projection equals the independent climb from written rows"
         );
-        let mut conn = self.pool.acquire().await?;
         for ((person, group), role) in expected {
             assert_eq!(
                 group_role(&mut conn, UserId::new(person), GroupId::new(group)).await?,
@@ -128,29 +133,6 @@ impl Harness {
             );
         }
         Ok(())
-    }
-}
-
-/// The projection's fourth rung is Goal work on the read column and
-/// administration on the write column.
-fn stored_role(read: &str, write: &str, manage: bool) -> Role {
-    let mut role = Role::new(ceiling(read), ceiling(write)).expect("valid stored role");
-    if read == "goal" {
-        role = role.with_goals(GoalAccess::Works);
-    }
-    if write == "goal" {
-        role = role.administering();
-    }
-    if manage { role.managing() } else { role }
-}
-
-fn ceiling(text: &str) -> AccessCeiling {
-    match text {
-        "none" => AccessCeiling::None,
-        "fact" => AccessCeiling::Fact,
-        "abstraction" => AccessCeiling::Abstraction,
-        "perspective" | "goal" => AccessCeiling::Perspective,
-        _ => panic!("unknown stored ceiling {text}"),
     }
 }
 
@@ -290,6 +272,74 @@ async fn projection_equals_reference_after_seeded_person_and_group_write_sequenc
 }
 
 #[tokio::test]
+async fn reorganising_near_the_root_of_a_deep_tree_rebuilds_every_member_below() -> TestResult {
+    const LEVELS: usize = 12;
+    const PEOPLE_PER_GROUP: usize = 25;
+    let h = Harness::new().await?;
+    let groups = h.groups(LEVELS).await?;
+    let started = std::time::Instant::now();
+    for index in 1..LEVELS {
+        h.add(
+            groups[index - 1],
+            OwnerId::from(groups[index]),
+            RELATIONS[(index + 1) % 4],
+        )
+        .await?;
+    }
+    for (level, group) in groups.iter().enumerate() {
+        for person in 0..PEOPLE_PER_GROUP {
+            h.add(
+                *group,
+                OwnerId::new(Uuid::now_v7()),
+                RELATIONS[(level + person) % 4],
+            )
+            .await?;
+        }
+    }
+    let people = LEVELS * PEOPLE_PER_GROUP;
+    // A person in group `level` is projected into itself and every ancestor.
+    let built = PEOPLE_PER_GROUP * (1..=LEVELS).sum::<usize>();
+    let rows = h.projection_rows().await?;
+    eprintln!(
+        "reorg build ms={} rows={rows}",
+        started.elapsed().as_millis()
+    );
+    h.assert_projection().await?;
+    assert_eq!(rows, built);
+
+    let root = groups[0];
+    let child = OwnerId::from(groups[1]);
+    // Detached, the subtree keeps its own members and the root keeps only its own.
+    let detached = PEOPLE_PER_GROUP * (1..LEVELS).sum::<usize>() + PEOPLE_PER_GROUP;
+    let steps: [(&str, usize); 3] = [
+        ("detach", detached),
+        ("reattach", built),
+        ("replace", built),
+    ];
+    for (name, expected_rows) in steps {
+        let rows_before = h.projection_rows().await?;
+        let step_started = std::time::Instant::now();
+        match name {
+            "detach" => h.remove(root, child).await?,
+            "reattach" => h.add(root, child, Relation::Viewer).await?,
+            "replace" => {
+                h.replace(root, child, Relation::Viewer, Relation::Editor)
+                    .await?;
+            }
+            _ => unreachable!(),
+        }
+        let ms = step_started.elapsed().as_millis();
+        let rows_after = h.projection_rows().await?;
+        eprintln!(
+            "reorg step={name} people={people} rows_before={rows_before} rows_after={rows_after} ms={ms}"
+        );
+        h.assert_projection().await?;
+        assert_eq!(rows_after, expected_rows, "{name}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn database_lattice_equals_rust_for_all_relations_and_cap_chains() -> TestResult {
     let h = Harness::new().await?;
     let groups = h.groups(4).await?;
@@ -343,8 +393,9 @@ async fn readding_same_group_edge_is_a_noop() -> TestResult {
     .fetch_all(&h.pool)
     .await?;
     assert_eq!(before.len(), 1, "one stored group edge");
-    let projection_before: Vec<(Uuid, Uuid, String, String, bool)> = sqlx::query_as(
-        "SELECT member_user_id, group_id, read_ceiling::text, write_ceiling::text, manage
+    let projection_before: Vec<(Uuid, Uuid, String, String, String, bool, bool)> = sqlx::query_as(
+        "SELECT member_user_id, group_id, read_ceiling::text, write_ceiling::text,
+                goal_access::text, administers, manage
          FROM proxiima_core.group_role_projection
          WHERE member_user_id = $1
          ORDER BY group_id",
@@ -374,8 +425,9 @@ async fn readding_same_group_edge_is_a_noop() -> TestResult {
     .bind(groups[1].into_inner())
     .fetch_all(&h.pool)
     .await?;
-    let projection_after: Vec<(Uuid, Uuid, String, String, bool)> = sqlx::query_as(
-        "SELECT member_user_id, group_id, read_ceiling::text, write_ceiling::text, manage
+    let projection_after: Vec<(Uuid, Uuid, String, String, String, bool, bool)> = sqlx::query_as(
+        "SELECT member_user_id, group_id, read_ceiling::text, write_ceiling::text,
+                goal_access::text, administers, manage
          FROM proxiima_core.group_role_projection
          WHERE member_user_id = $1
          ORDER BY group_id",

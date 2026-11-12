@@ -89,10 +89,12 @@ impl From<crate::MemoryKind> for AccessKind {
     PartialOrd,
     Ord,
     Hash,
+    sqlx::Type,
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
 )]
+#[sqlx(type_name = "proxiima_core.memory_ceiling", rename_all = "lowercase")]
 pub enum AccessCeiling {
     None,
     Fact,
@@ -101,6 +103,17 @@ pub enum AccessCeiling {
 }
 
 impl AccessCeiling {
+    /// The database label, as `#[sqlx(rename_all = "lowercase")]` encodes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Fact => "fact",
+            Self::Abstraction => "abstraction",
+            Self::Perspective => "perspective",
+        }
+    }
+
     #[must_use]
     pub const fn rank(self) -> u8 {
         match self {
@@ -140,10 +153,12 @@ impl AccessCeiling {
     PartialOrd,
     Ord,
     Hash,
+    sqlx::Type,
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
 )]
+#[sqlx(type_name = "proxiima_core.goal_access", rename_all = "lowercase")]
 pub enum GoalAccess {
     None,
     Reads,
@@ -151,6 +166,16 @@ pub enum GoalAccess {
 }
 
 impl GoalAccess {
+    /// The database label, as `#[sqlx(rename_all = "lowercase")]` encodes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Reads => "reads",
+            Self::Works => "works",
+        }
+    }
+
     #[must_use]
     pub const fn rank(self) -> u8 {
         match self {
@@ -576,10 +601,11 @@ impl OwnerRoles {
         self.ordered(Role::reads_goals)
     }
 
-    /// Owners the subject administers, ordered as [`Self::readable_owners`].
+    /// Owners whose Goals the subject works, ordered as
+    /// [`Self::readable_owners`].
     #[must_use]
-    pub fn administered_owners(&self) -> Vec<OwnerId> {
-        self.ordered(Role::administers)
+    pub fn goal_working_owners(&self) -> Vec<OwnerId> {
+        self.ordered(Role::works_goals)
     }
 
     fn ordered(&self, keep: impl Fn(Role) -> bool) -> Vec<OwnerId> {

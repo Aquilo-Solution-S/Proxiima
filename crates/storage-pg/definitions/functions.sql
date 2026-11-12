@@ -30,6 +30,11 @@ BEGIN
 END
 $retire_legacy_vector_candidates$;
 
+-- The released read_subject_authority returned the four-rung enum. A changed
+-- row type cannot be replaced in place, and a historical replay installs the
+-- released function again, so the definitions pass retires it first.
+DROP FUNCTION IF EXISTS proxiima_core.read_subject_authority(uuid);
+
 -- Assertion functions
 
 -- Schema evolution fence.  The schema id is already the complete SchemaRef
@@ -1225,8 +1230,9 @@ REVOKE ALL ON FUNCTION proxiima_core.lock_authority_targets(uuid[], uuid[]) FROM
 -- The authenticated subject's authority projection is distinct from memory
 -- owner reach. VOLATILE gives the query after a lock wait a fresh snapshot.
 CREATE OR REPLACE FUNCTION proxiima_core.read_subject_authority(p_subject uuid)
- RETURNS TABLE(group_id uuid, read_ceiling proxiima_core.access_ceiling,
-               write_ceiling proxiima_core.access_ceiling, manage boolean)
+ RETURNS TABLE(group_id uuid, read_ceiling proxiima_core.memory_ceiling,
+               write_ceiling proxiima_core.memory_ceiling,
+               goal_access proxiima_core.goal_access, administers boolean, manage boolean)
  LANGUAGE plpgsql VOLATILE SECURITY INVOKER
  SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
 AS $function$
@@ -1257,7 +1263,8 @@ BEGIN
             MESSAGE = 'authority subject must be a person';
     END IF;
     RETURN QUERY
-        SELECT m.group_id, m.read_ceiling, m.write_ceiling, m.manage
+        SELECT m.group_id, m.read_ceiling, m.write_ceiling, m.goal_access,
+               m.administers, m.manage
           FROM proxiima_core.group_role_projection m
          WHERE m.member_user_id = p_subject
          ORDER BY m.group_id;
@@ -1508,35 +1515,27 @@ BEGIN
             hashtextextended('proxiima-group-projection:' || user_id::text, 0));
         DELETE FROM proxiima_core.group_role_projection WHERE member_user_id = user_id;
         INSERT INTO proxiima_core.group_role_projection
-        (member_user_id, group_id, read_ceiling, write_ceiling, manage)
-    WITH RECURSIVE relation_roles(relation, read_rank, write_rank, manages) AS (
-        VALUES ('admin'::proxiima_core.membership_relation, 4, 4, true),
-               ('editor'::proxiima_core.membership_relation, 4, 3, false),
-               ('viewer'::proxiima_core.membership_relation, 4, 0, false),
-               ('ingest'::proxiima_core.membership_relation, 1, 1, false)
-    ), paths(member_user_id, group_id, read_rank, write_rank, manages) AS (
-        SELECT m.member_user_id, m.group_id,
-               r.read_rank, r.write_rank, r.manages
+        (member_user_id, group_id, read_ceiling, write_ceiling, goal_access, administers, manage)
+    WITH RECURSIVE paths(member_user_id, group_id, read_ceiling, write_ceiling,
+                         goal_access, administers, manage) AS (
+        SELECT m.member_user_id, m.group_id, r.read_ceiling, r.write_ceiling,
+               r.goal_access, r.administers, r.manage
           FROM proxiima_core.group_memberships m
-          JOIN relation_roles r ON r.relation = m.relation
+          JOIN proxiima_core.relation_roles() r ON r.relation = m.relation
          WHERE m.member_user_id = user_id
         UNION ALL
         SELECT p.member_user_id, e.parent_group_id,
-               LEAST(p.read_rank, r.read_rank),
-               LEAST(p.write_rank, r.write_rank),
-               p.manages AND r.manages
+               LEAST(p.read_ceiling, r.read_ceiling),
+               LEAST(p.write_ceiling, r.write_ceiling),
+               LEAST(p.goal_access, r.goal_access),
+               p.administers AND r.administers,
+               p.manage AND r.manage
           FROM paths p JOIN proxiima_core.group_edges e ON e.child_group_id = p.group_id
-          JOIN relation_roles r ON r.relation = e.relation
-    ), folded AS (
-        SELECT member_user_id, group_id, max(read_rank) AS read_rank,
-               max(write_rank) AS write_rank, bool_or(manages) AS manages
-          FROM paths GROUP BY member_user_id, group_id
+          JOIN proxiima_core.relation_roles() r ON r.relation = e.relation
     )
-    SELECT member_user_id, group_id,
-           (ARRAY['none','fact','abstraction','perspective','goal'])[read_rank + 1]::proxiima_core.access_ceiling,
-           (ARRAY['none','fact','abstraction','perspective','goal'])[write_rank + 1]::proxiima_core.access_ceiling,
-           manages
-      FROM folded;
+    SELECT member_user_id, group_id, max(read_ceiling), max(write_ceiling),
+           max(goal_access), bool_or(administers), bool_or(manage)
+      FROM paths GROUP BY member_user_id, group_id;
     END LOOP;
     PERFORM set_config('proxiima.projection_maintenance', COALESCE(previous_maintenance, ''), true);
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
@@ -2993,10 +2992,10 @@ AS $function$
         UNION ALL
         SELECT h.handle,
                CASE
-                   WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_perspective', true), '')::uuid[], '{}')) THEN 3
-                   WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_abstraction', true), '')::uuid[], '{}')) THEN 2
-                   ELSE 1
-               END::smallint,
+                   WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_perspective', true), '')::uuid[], '{}')) THEN 'perspective'
+                   WHEN h.owner_id = ANY(COALESCE(NULLIF(current_setting('app.read_abstraction', true), '')::uuid[], '{}')) THEN 'abstraction'
+                   ELSE 'fact'
+               END::proxiima_core.memory_ceiling,
                h.owner_id, h.authority_generation
           FROM proxiima_core.goal_head h
          WHERE current_setting('app.proxiima_scope', true) = 'owner'
@@ -3014,7 +3013,7 @@ AS $function$
           JOIN proxiima_core.live_memory m ON m.t = p.memory_t AND m.owner_id = p.source_owner
           JOIN proxiima_core.memory_head mh ON mh.handle = m.handle
            AND mh.owner_id = m.owner_id AND mh.authority_generation = p.source_generation
-         WHERE a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
+         WHERE a.read_ceiling >= m.kind::text::proxiima_core.memory_ceiling
     ), working AS (
         SELECT m.t, m.handle, m.owner_id, a.goal_handle, a.owner_id
           FROM audience a
@@ -3023,7 +3022,7 @@ AS $function$
           JOIN proxiima_core.memory_head mh ON mh.handle = w.memory_handle
            AND mh.owner_id = w.source_owner AND mh.authority_generation = w.source_generation
           JOIN proxiima_core.live_memory m ON m.handle = mh.handle AND m.owner_id = mh.owner_id
-         WHERE a.read_ceiling >= CASE m.kind WHEN 'fact' THEN 1 WHEN 'abstraction' THEN 2 WHEN 'perspective' THEN 3 END
+         WHERE a.read_ceiling >= m.kind::text::proxiima_core.memory_ceiling
     )
     SELECT * FROM published UNION SELECT * FROM working
 $function$;

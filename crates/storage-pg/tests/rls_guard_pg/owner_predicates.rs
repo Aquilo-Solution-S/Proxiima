@@ -13,7 +13,7 @@ const SETTINGS: [&str; 10] = [
     "app.write_owner",
     "app.write_abstraction",
     "app.write_perspective",
-    "app.write_goal",
+    "app.work_goal",
     "app.manage_owner",
 ];
 const HELPER: &str = "proxiima_core.owner_rls_class_predicates(text,text,text,text,proxiima_core.owner_rls_class,text)";
@@ -403,9 +403,9 @@ fn core_cases(owners: [Uuid; 2]) -> Vec<ScopeCase> {
             write: vec![],
         },
         ScopeCase {
-            name: "Goal shortcut without F owner",
+            name: "Goal reads admit the Goal's rows and no memory row",
             grants: vec![("app.read_goal", a)],
-            read: vec![0, 1, 2, 3],
+            read: vec![3],
             write: vec![],
         },
         ScopeCase {
@@ -429,10 +429,10 @@ fn core_cases(owners: [Uuid; 2]) -> Vec<ScopeCase> {
             write: vec![0, 1, 2],
         },
         ScopeCase {
-            name: "Goal write-only shortcut",
-            grants: vec![("app.write_goal", a)],
+            name: "Goal work admits the Goal's rows and no memory row",
+            grants: vec![("app.work_goal", a)],
             read: vec![],
-            write: vec![0, 1, 2, 3],
+            write: vec![3],
         },
         ScopeCase {
             name: "empty",

@@ -3,8 +3,8 @@
 use proxiima_core::goal_collaboration::GoalEditPermit;
 use proxiima_core::verbs::goal_write::GoalEvidenceRef;
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerId, OwnerRoles, OwnerScope,
-    Role, StorageError,
+    AccessKind, EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, OwnerId, OwnerRoles,
+    OwnerScope, Role, StorageError,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -83,7 +83,11 @@ pub(crate) async fn begin_goal_work(
     owner: OwnerId,
     named: &GoalWorkSources<'_>,
 ) -> Result<Transaction<'static, Postgres>, StorageError> {
-    if scope.goal_work() != Some(owner) || scope.administers(&owner) {
+    // An owner transaction registers the owner row, which takes a Fact write
+    // limit; an administrator without one writes under platform scope too.
+    if scope.goal_work() != Some(owner)
+        || (scope.administers(&owner) && scope.may_write(&owner, AccessKind::Fact))
+    {
         return crate::owner_scope::begin_owner_transaction(&storage.pool, scope).await;
     }
     let mut tx = storage.platform_transaction().await?;

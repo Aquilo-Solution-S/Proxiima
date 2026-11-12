@@ -4,11 +4,12 @@ use proxiima_core::goal_collaboration::{
 };
 use proxiima_core::storage_ports::OwnerWritePermit;
 use proxiima_core::{OwnerId, StorageError, UserId};
-use sqlx::Row;
+use sqlx::{FromRow as _, Row};
 use std::time::SystemTime;
 
 pub(crate) mod source_reads;
 
+use crate::access::role_columns::RoleColumns;
 use crate::{PgStorage, error::map_err, owner_scope::begin_owner_transaction};
 
 /// Lock lifecycle owners before the existing tree/kind authority gateway.
@@ -81,64 +82,18 @@ pub(crate) fn source_admin(
     })
 }
 
-/// The memory ceiling under a stored grant rung. The grant columns still
-/// carry a fourth rung above Perspective; [`guest_role`] and
-/// [`guest_columns`] are the only readers and writers of it.
-fn memory_ceiling(rank: i16) -> Result<proxiima_core::AccessCeiling, StorageError> {
-    use proxiima_core::AccessCeiling;
-    match rank {
-        0 => Ok(AccessCeiling::None),
-        1 => Ok(AccessCeiling::Fact),
-        2 => Ok(AccessCeiling::Abstraction),
-        3 | 4 => Ok(AccessCeiling::Perspective),
-        _ => Err(StorageError::ConstraintViolation(
-            "invalid stored Goal ceiling".into(),
-        )),
-    }
-}
-
-/// A guest's role from its stored grant: the top write rung edits the Goal,
-/// and every guest reads the Goal it was granted on.
-fn guest_role(read: i16, write: i16, manage: bool) -> Result<proxiima_core::Role, StorageError> {
-    use proxiima_core::GoalAccess;
-    let role = proxiima_core::Role::new(memory_ceiling(read)?, memory_ceiling(write)?)
-        .map_err(|error| StorageError::ConstraintViolation(error.to_string()))?
-        .with_goals(if write == 4 {
-            GoalAccess::Works
-        } else {
-            GoalAccess::Reads
-        });
-    Ok(if manage { role.managing() } else { role })
-}
-
-/// The stored grant of a guest role. Administration is the owner's and no
-/// grant carries it. Editing the Goal is the top write rung, above
-/// Perspective, so a guest who edits the Goal holds both Perspective limits;
-/// a narrower editing grant has no stored form and is refused. Every guest
-/// reads the Goal it was granted on, so a grant that names no Goal access
-/// is the grant that reads.
-fn guest_columns(role: proxiima_core::Role) -> Result<(i16, i16, bool), StorageError> {
-    use proxiima_core::AccessCeiling;
+/// The columns of a guest's Goal grant. Administration is the owner's, so no
+/// grant carries it. Every guest reads the Goal it was granted on, so a role
+/// that names no Goal access is stored as the role that reads.
+fn guest_columns(role: proxiima_core::Role) -> Result<RoleColumns, StorageError> {
     if role.administers() {
         return Err(StorageError::ConstraintViolation(
             "a Goal grant carries no owner administration".into(),
         ));
     }
-    if !role.works_goals() {
-        return Ok((
-            i16::from(role.read_ceiling().rank()),
-            i16::from(role.write_ceiling().rank()),
-            role.manages(),
-        ));
-    }
-    if role.read_ceiling() != AccessCeiling::Perspective
-        || role.write_ceiling() != AccessCeiling::Perspective
-    {
-        return Err(StorageError::ConstraintViolation(
-            "a guest who edits the Goal holds Perspective read and write limits".into(),
-        ));
-    }
-    Ok((4, 4, role.manages()))
+    Ok(RoleColumns::of(role.with_goals(
+        role.goals().max(proxiima_core::GoalAccess::Reads),
+    )))
 }
 
 async fn lock_goal_manager(
@@ -197,17 +152,11 @@ pub(crate) async fn role_for_goal(
         return Err(StorageError::NotFound);
     }
     let owner_role = current_role(scope, roles, controller).map(on_goal_route);
-    let grant = sqlx::query("SELECT read_ceiling, write_ceiling, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2 AND controller_generation=$3 AND (expires_at IS NULL OR expires_at > statement_timestamp())")
+    let grant = sqlx::query("SELECT read_ceiling, write_ceiling, goal_access, administers, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2 AND controller_generation=$3 AND (expires_at IS NULL OR expires_at > statement_timestamp())")
         .bind(goal.into_inner()).bind(scope.subject().into_inner())
         .bind(controller_generation).fetch_optional(&mut **tx).await.map_err(map_err)?;
     let grant_role = grant
-        .map(|grant| {
-            guest_role(
-                grant.get("read_ceiling"),
-                grant.get("write_ceiling"),
-                grant.get("manage"),
-            )
-        })
+        .map(|grant| RoleColumns::from_row(&grant).map_err(map_err)?.role())
         .transpose()?;
     Ok(match (owner_role, grant_role) {
         (Some(owner), Some(grant)) => Some(owner.join(grant)),
@@ -476,7 +425,7 @@ impl GoalCollaborationPort for PgStorage {
                 "Goal permit target mismatch".into(),
             ));
         }
-        let (read, write, manage) = guest_columns(input.role)?;
+        let columns = guest_columns(input.role)?;
         let expires_at = db_expiry(input.expires_at)?;
         let mut tx = self.platform_transaction().await?;
         let roles = fenced_roles(
@@ -488,17 +437,16 @@ impl GoalCollaborationPort for PgStorage {
         )
         .await?;
         let actor = require_manager(lock_goal_manager(&mut tx, permit, &roles).await?)?;
-        // The grant is judged as it will be read back: every guest reads its
-        // Goal, so a grant that names no Goal access still hands out Goal read.
-        if !actor.dominates(guest_role(read, write, manage)?) {
+        // The grant is judged as it will be read back.
+        if !actor.dominates(columns.role()?) {
             return Err(StorageError::ConstraintViolation(
                 "Goal grant exceeds actor authority".into(),
             ));
         }
         crate::access::owner_registry::ensure_owner_row(&mut tx, &OwnerId::from(input.subject))
             .await?;
-        let result = sqlx::query("INSERT INTO proxiima_core.goal_access_grant (goal_handle,subject_id,read_ceiling,write_ceiling,manage,controller_generation,expires_at,granted_by) SELECT $1,$2,$3,$4,$5,authority_generation,$6,$7 FROM proxiima_core.goal_head WHERE handle=$1 AND owner_id=$8 ON CONFLICT (goal_handle,subject_id) DO UPDATE SET read_ceiling=EXCLUDED.read_ceiling, write_ceiling=EXCLUDED.write_ceiling, manage=EXCLUDED.manage, controller_generation=EXCLUDED.controller_generation, expires_at=EXCLUDED.expires_at, granted_by=EXCLUDED.granted_by")
-            .bind(input.goal.into_inner()).bind(input.subject.into_inner()).bind(read).bind(write).bind(manage).bind(expires_at).bind(permit.subject().into_inner()).bind(permit.controller().into_inner()).execute(&mut *tx).await.map_err(map_err)?;
+        let result = sqlx::query("INSERT INTO proxiima_core.goal_access_grant (goal_handle,subject_id,read_ceiling,write_ceiling,goal_access,administers,manage,controller_generation,expires_at,granted_by) SELECT $1,$2,$3,$4,$5,$6,$7,authority_generation,$8,$9 FROM proxiima_core.goal_head WHERE handle=$1 AND owner_id=$10 ON CONFLICT (goal_handle,subject_id) DO UPDATE SET read_ceiling=EXCLUDED.read_ceiling, write_ceiling=EXCLUDED.write_ceiling, goal_access=EXCLUDED.goal_access, administers=EXCLUDED.administers, manage=EXCLUDED.manage, controller_generation=EXCLUDED.controller_generation, expires_at=EXCLUDED.expires_at, granted_by=EXCLUDED.granted_by")
+            .bind(input.goal.into_inner()).bind(input.subject.into_inner()).bind(columns.read_ceiling).bind(columns.write_ceiling).bind(columns.goal_access).bind(columns.administers).bind(columns.manage).bind(expires_at).bind(permit.subject().into_inner()).bind(permit.controller().into_inner()).execute(&mut *tx).await.map_err(map_err)?;
         require_rows(result.rows_affected(), "grant")?;
         tx.commit().await.map_err(map_err)
     }
@@ -692,66 +640,33 @@ impl GoalCollaborationPort for PgStorage {
 mod tests {
     use proxiima_core::{AccessCeiling, GoalAccess, Role, StorageError};
 
-    use super::{guest_columns, guest_role};
+    use super::guest_columns;
 
-    /// Every stored grant writes back to itself. A grant row holds
-    /// `write <= read`, and the top write rung only under the top read rung.
+    /// Owner administration is refused where a grant is written; any other
+    /// role is stored as it is, and a guest always reads its Goal.
     #[test]
-    fn a_stored_grant_reads_as_one_role_and_writes_back() {
-        for read in 0..=4_i16 {
-            for write in (0..=read).filter(|write| *write < 4 || read == 4) {
-                for manage in [false, true] {
-                    let role = guest_role(read, write, manage).expect("a stored grant is a role");
-                    assert!(role.reads_goals(), "every guest reads its Goal");
-                    assert_eq!(role.works_goals(), write == 4);
-                    assert!(!role.administers());
-                    let (stored_read, stored_write, stored_manage) =
-                        guest_columns(role).expect("a stored grant has columns");
-                    // A read rung above Perspective says nothing without the
-                    // write rung: both store as Perspective.
-                    let expected_read = if write == 4 { 4 } else { read.min(3) };
-                    assert_eq!(
-                        (stored_read, stored_write, stored_manage),
-                        (expected_read, write, manage)
-                    );
-                    assert_eq!(
-                        guest_role(stored_read, stored_write, stored_manage)
-                            .expect("columns read back"),
-                        role
-                    );
-                }
-            }
+    fn a_grant_carries_no_administration_and_always_reads_the_goal() {
+        for administering in [Role::admin(), Role::editor().administering()] {
+            assert!(matches!(
+                guest_columns(administering),
+                Err(StorageError::ConstraintViolation(_))
+            ));
         }
-        assert!(guest_role(5, 0, false).is_err());
-    }
-
-    /// The grants with no stored form are refused where they enter.
-    #[test]
-    fn a_grant_with_no_stored_form_is_refused() {
+        assert_eq!(
+            guest_columns(Role::ingest())
+                .expect("an ingest grant")
+                .goal_access,
+            GoalAccess::Reads
+        );
         let narrow_editor = Role::new(AccessCeiling::Fact, AccessCeiling::Fact)
             .expect("role")
             .with_goals(GoalAccess::Works);
-        for unstorable in [
-            Role::admin(),
-            Role::editor().administering(),
-            Role::viewer(),
-            narrow_editor,
-        ] {
-            assert!(
-                matches!(
-                    guest_columns(unstorable),
-                    Err(StorageError::ConstraintViolation(_))
-                ),
-                "{unstorable:?} has no stored form"
-            );
-        }
         assert_eq!(
-            guest_columns(Role::editor().managing()).expect("an editing manager"),
-            (4, 4, true)
-        );
-        assert_eq!(
-            guest_columns(Role::ingest()).expect("a grant naming no Goal access reads the Goal"),
-            (1, 1, false)
+            guest_columns(narrow_editor)
+                .expect("a narrow editor")
+                .role()
+                .expect("stored role"),
+            narrow_editor
         );
     }
 }

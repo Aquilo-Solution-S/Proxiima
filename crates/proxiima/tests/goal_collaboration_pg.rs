@@ -625,8 +625,8 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
         )
         .await
         .expect("fixture grant");
-    let before: (i16, i16, bool) = sqlx::query_as(
-        "SELECT read_ceiling, write_ceiling, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2",
+    let before: (String, String, String, bool, bool) = sqlx::query_as(
+        "SELECT read_ceiling::text, write_ceiling::text, goal_access::text, administers, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2",
     )
     .bind(goal.into_inner())
     .bind(reader.into_inner())
@@ -638,7 +638,7 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
         .expect("runtime pool");
     // Raw INSERT on purpose: the runtime role must be refused every goal collaboration write.
     for statement in [
-        "INSERT INTO proxiima_core.goal_access_grant (goal_handle, subject_id, read_ceiling, write_ceiling, manage, controller_generation) VALUES (gen_random_uuid(), gen_random_uuid(), 1, 0, false, 0)",
+        "INSERT INTO proxiima_core.goal_access_grant (goal_handle, subject_id, read_ceiling, write_ceiling, goal_access, administers, manage, controller_generation) VALUES (gen_random_uuid(), gen_random_uuid(), 'fact', 'none', 'reads', false, false, 0)",
         "INSERT INTO proxiima_core.goal_memory_publication (goal_handle, memory_t, source_owner, source_generation, controller_generation, permitted_use, published_by) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 0, 0, 'read', gen_random_uuid())",
         "INSERT INTO proxiima_core.goal_work_binding (goal_handle, memory_handle, source_owner, source_generation, controller_generation, bound_by) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 0, 0, gen_random_uuid())",
     ] {
@@ -664,8 +664,8 @@ async fn runtime_cannot_write_goal_collaboration_tables() {
         );
     }
     runtime.close().await;
-    let after: (i16, i16, bool) = sqlx::query_as(
-        "SELECT read_ceiling, write_ceiling, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2",
+    let after: (String, String, String, bool, bool) = sqlx::query_as(
+        "SELECT read_ceiling::text, write_ceiling::text, goal_access::text, administers, manage FROM proxiima_core.goal_access_grant WHERE goal_handle=$1 AND subject_id=$2",
     )
     .bind(goal.into_inner())
     .bind(reader.into_inner())

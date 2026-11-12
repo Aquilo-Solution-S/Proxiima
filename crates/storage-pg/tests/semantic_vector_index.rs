@@ -10,12 +10,13 @@ use proxiima_core::verbs::query::{
     EntityKind, MemorySearchRequest, SearchMode, SearchOrder, SupersessionStatus, TagMatch,
 };
 use proxiima_core::{
-    EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, MemoryId, OwnerId, Role, SchemaId,
-    SpaceVector, StorageError, UserId,
+    AccessCeiling, EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, GoalAccess, MemoryId,
+    OwnerId, Role, SchemaId, SpaceVector, StorageError, UserId,
 };
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
     TestDerived, TestGoal, TestNote, create_embedding_of, create_user, fresh_pg_host_index,
+    insert_goal_grant,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -265,7 +266,7 @@ async fn publish_semantic_fixture(
     source_owner: OwnerId,
     guest: UserId,
     published: Uuid,
-    read_ceiling: i16,
+    read_ceiling: AccessCeiling,
 ) -> TestResult {
     create_user(pg.pool_for_tests(), guest).await?;
     let goal_handle = TestGoal::new(&Uuid::now_v7().to_string())
@@ -274,20 +275,13 @@ async fn publish_semantic_fixture(
         .await?
         .handle;
     let mut platform = pg.platform_scope_for_host().begin().await?;
-    // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal_access_grant
-             (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-              controller_generation, granted_by)
-         SELECT $1, $2, $4, 0, false, authority_generation, $3
-           FROM proxiima_core.goal_head
-          WHERE handle = $1",
+    insert_goal_grant(
+        &mut *platform,
+        goal_handle,
+        guest.into_inner(),
+        source_owner.into_inner(),
+        Role::new(read_ceiling, AccessCeiling::None)?.with_goals(GoalAccess::Reads),
     )
-    .bind(goal_handle)
-    .bind(guest.into_inner())
-    .bind(source_owner.into_inner())
-    .bind(read_ceiling)
-    .execute(&mut *platform)
     .await?;
     // Raw INSERT: no write path for goal_memory_publication reachable from test fixtures
     sqlx::query(
@@ -326,7 +320,7 @@ async fn readable_goal_semantic_search_reaches_a_far_published_fact() -> TestRes
         private.push(seed_note(&pg, source_owner, "wanted").await?);
     }
 
-    publish_semantic_fixture(&pg, source_owner, guest, published, 1).await?;
+    publish_semantic_fixture(&pg, source_owner, guest, published, AccessCeiling::Fact).await?;
 
     for memory in &private {
         index
@@ -396,7 +390,14 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
         );
     }
 
-    publish_semantic_fixture(&pg, source_owner, guest, published, 3).await?;
+    publish_semantic_fixture(
+        &pg,
+        source_owner,
+        guest,
+        published,
+        AccessCeiling::Perspective,
+    )
+    .await?;
 
     for memory in &private {
         index

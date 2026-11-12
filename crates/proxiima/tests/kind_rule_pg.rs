@@ -71,15 +71,14 @@ const KINDS: [EntityKind; 4] = [
     EntityKind::Goal,
 ];
 
-/// Whether `role` writes `kind`: a memory kind up to its write limit. A Goal
-/// when it administers: Goal work below administration is read again from
-/// the membership rows, and these roles are the host's word alone.
+/// Whether `role` writes `kind`: a memory kind up to its write limit, a Goal
+/// when the role works Goals.
 fn writes(role: Role, kind: EntityKind) -> bool {
-    AccessKind::of(kind).map_or(role.administers(), |kind| role.may_write(kind))
+    AccessKind::of(kind).map_or(role.works_goals(), |kind| role.may_write(kind))
 }
 
 /// Every preset, plus limits below the top with and without Goal work.
-fn roles() -> [(&'static str, Role); 7] {
+fn roles() -> [(&'static str, Role); 10] {
     [
         ("viewer", Role::viewer()),
         ("ingest", Role::ingest()),
@@ -99,28 +98,30 @@ fn roles() -> [(&'static str, Role); 7] {
             "new(P,P) without Goals",
             Role::new(AccessCeiling::Perspective, AccessCeiling::Perspective).expect("role"),
         ),
-    ]
-}
-
-/// Roles the row policies cannot hold yet: they read four rungs, so Goal
-/// read would read every memory kind and administration would write it.
-fn roles_without_row_policies() -> [(&'static str, Role); 3] {
-    let fact = Role::new(AccessCeiling::Fact, AccessCeiling::Fact).expect("role");
-    [
-        ("new(F,F) works Goals", fact.with_goals(GoalAccess::Works)),
-        ("new(F,F) reads Goals", fact.with_goals(GoalAccess::Reads)),
+        (
+            "new(F,F) works Goals",
+            Role::new(AccessCeiling::Fact, AccessCeiling::Fact)
+                .expect("role")
+                .with_goals(GoalAccess::Works),
+        ),
+        (
+            "new(F,F) reads Goals",
+            Role::new(AccessCeiling::Fact, AccessCeiling::Fact)
+                .expect("role")
+                .with_goals(GoalAccess::Reads),
+        ),
         ("viewer who administers", Role::viewer().administering()),
     ]
 }
 
 fn context(group: OwnerId, role: Role) -> AuthzContext {
+    context_of(UserId::new(Uuid::now_v7()), group, role)
+}
+
+fn context_of(subject: UserId, group: OwnerId, role: Role) -> AuthzContext {
     proxiima_core::test_fixtures::authenticated_context(
-        AuthzContext::for_subject_with_role(
-            UserId::new(Uuid::now_v7()),
-            [(group, role)],
-            AuthPath::HostBearer,
-        )
-        .with_tool_scope(ToolScope::All),
+        AuthzContext::for_subject_with_role(subject, [(group, role)], AuthPath::HostBearer)
+            .with_tool_scope(ToolScope::All),
     )
 }
 
@@ -210,24 +211,21 @@ async fn set_goal(
     tools: &CoreMcpTools,
     authz: &AuthzContext,
     owner: OwnerId,
-    seeded: &Seeded,
+    seeded: Option<&Seeded>,
 ) -> Result<Value, proxiima::CoreMcpError> {
-    call(
-        tools,
-        authz,
-        owner,
-        "core_goal",
-        json!({
-            "action": "set",
-            "schema_id": "core/simple-text-v1",
-            "title": "kindrule goal",
-            "text": "kindrule goal",
-            "body": {},
-            "evidence": [seeded.abstraction["handle"]],
-            "motivated_by": [seeded.perspective["handle"]],
-        }),
-    )
-    .await
+    let mut args = json!({
+        "action": "set",
+        "schema_id": "core/simple-text-v1",
+        "title": "kindrule goal",
+        "text": "kindrule goal",
+        "body": {},
+    });
+    // A Goal names evidence and motivation only a role that reads them may name.
+    if let Some(seeded) = seeded {
+        args["evidence"] = json!([seeded.abstraction["handle"]]);
+        args["motivated_by"] = json!([seeded.perspective["handle"]]);
+    }
+    call(tools, authz, owner, "core_goal", args).await
 }
 
 /// A Fact, an Abstraction over it, a Perspective over that and a Goal
@@ -265,7 +263,7 @@ async fn seed(tools: &CoreMcpTools, group: OwnerId) -> TestResult<Seeded> {
         perspective,
         unpinned,
     };
-    set_goal(tools, &admin, group, &seeded).await?;
+    set_goal(tools, &admin, group, Some(&seeded)).await?;
     call(
         tools,
         &admin,
@@ -535,12 +533,24 @@ async fn assert_reads(
 /// covers the kind it writes.
 async fn assert_writes(
     tools: &CoreMcpTools,
+    admin: &PgPool,
     group: OwnerId,
     name: &str,
     role: Role,
     seeded: &Seeded,
 ) -> TestResult {
-    let authz = context(group, role);
+    // Goal work by membership is judged again against the member's current
+    // membership; the host's word for the role is the limit, so the member
+    // holds the widest relation.
+    let subject = UserId::new(Uuid::now_v7());
+    test_fixtures::add_member(
+        admin,
+        group.as_group(),
+        subject,
+        proxiima_core::Relation::Admin,
+    )
+    .await?;
+    let authz = context_of(subject, group, role);
     let writes = |kind: EntityKind| writes(role, kind);
 
     let fact = remember(tools, &authz, group, &format!("{name} fact")).await;
@@ -575,7 +585,13 @@ async fn assert_writes(
         writes(EntityKind::Perspective),
         "{name} Perspective: {perspective:?}"
     );
-    let goal = set_goal(tools, &authz, group, seeded).await;
+    let goal = set_goal(
+        tools,
+        &authz,
+        group,
+        role.may_read(AccessKind::Perspective).then_some(seeded),
+    )
+    .await;
     assert_eq!(
         goal.is_ok(),
         writes(EntityKind::Goal),
@@ -930,8 +946,10 @@ async fn every_role_acts_exactly_up_to_its_limit(
         let with_s3 = s3.is_some();
         let built = boot(&database, group, router.clone(), s3).await?;
         let tools = built.host().core_mcp_tools();
-        let seeded = seed(&tools, group).await?;
         let admin = PgPool::connect(&db_url(&database)).await?;
+        // A registered group, so a member's membership rows can exist.
+        test_fixtures::create_group(&admin, group.as_group()).await?;
+        let seeded = seed(&tools, group).await?;
         embed(&admin, &seeded, group).await?;
         router.set_default(BoundEmbeddingClient::bind(Arc::new(
             ConstantEmbedding::prefixed("test-embed", &[1.0, 0.0, 0.0]),
@@ -939,22 +957,11 @@ async fn every_role_acts_exactly_up_to_its_limit(
 
         for (name, role) in roles() {
             assert_reads(&built, &tools, group, name, role, &seeded).await?;
-            assert_writes(&tools, group, name, role, &seeded).await?;
+            assert_writes(&tools, &admin, group, name, role, &seeded).await?;
             assert_upload(&built, &admin, group, name, role).await;
             if with_s3 {
                 assert_s3_writes(&built, &tools, group, name, role).await?;
             }
-        }
-
-        // Refused whole where the scope is bound, not served with what the
-        // policies would add.
-        for (name, role) in roles_without_row_policies() {
-            let read = built
-                .host()
-                .engine()
-                .query(&context(group, role), &QueryRequest::readable())
-                .await;
-            assert!(read.is_err(), "{name} is not bound: {read:?}");
         }
 
         assert_backfill(&built, &admin, &router, group).await?;
@@ -1163,15 +1170,13 @@ async fn assert_fact_scope_sql(
     // Raw INSERT on purpose: a census row in each goal collaboration table
     // naming the group as subject and actor, which the person-driven
     // collaboration commands do not write.
-    sqlx::query(
-        "INSERT INTO proxiima_core.goal_access_grant
-            (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-             controller_generation, granted_by)
-         VALUES ($1, $2, 1, 0, false, 0, $2)",
+    test_fixtures::insert_goal_grant(
+        admin,
+        goal_handle,
+        group.into_inner(),
+        group.into_inner(),
+        Role::ingest().with_goals(GoalAccess::Reads),
     )
-    .bind(goal_handle)
-    .bind(group.into_inner())
-    .execute(admin)
     .await?;
     sqlx::query(
         "INSERT INTO proxiima_core.goal_memory_publication
@@ -1277,8 +1282,8 @@ async fn assert_fact_scope_sql(
     // Raw INSERT on purpose: the runtime role under a Fact-only scope must be refused.
     let projection = sqlx::query(
         "INSERT INTO proxiima_core.group_role_projection
-            (member_user_id, group_id, read_ceiling, write_ceiling, manage)
-         VALUES ($1, $2, 'fact', 'none', false)",
+            (member_user_id, group_id, read_ceiling, write_ceiling, goal_access, administers, manage)
+         VALUES ($1, $2, 'fact', 'none', 'none', false, false)",
     )
     .bind(Uuid::now_v7())
     .bind(group.into_inner())

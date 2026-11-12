@@ -15,7 +15,7 @@ use proxiima_core::{
 };
 use sqlx::{Postgres, Transaction};
 
-use crate::access::owner_columns::PgAccessCeiling;
+use crate::access::role_columns::RoleColumns;
 use crate::error::internal;
 use crate::pg_enums::PgMemoryKind;
 use crate::sidecars::PgSidecarRegistryFrozen;
@@ -77,8 +77,8 @@ impl<'connection> PgHostStateSession<'_, 'connection> {
             ));
         }
         let subject = scope.subject();
-        let rows = sqlx::query_as::<_, (uuid::Uuid, PgAccessCeiling, PgAccessCeiling, bool)>(
-            "SELECT group_id, read_ceiling, write_ceiling, manage
+        let rows = sqlx::query_as::<_, AuthorityRow>(
+            "SELECT group_id, read_ceiling, write_ceiling, goal_access, administers, manage
                FROM proxiima_core.read_subject_authority($1)",
         )
         .bind(subject.into_inner())
@@ -92,10 +92,10 @@ impl<'connection> PgHostStateSession<'_, 'connection> {
         }
         let memberships = rows
             .into_iter()
-            .map(|(group, read, write, manage)| {
+            .map(|row| {
                 Ok(MembershipRow {
-                    group: GroupId::new(group),
-                    role: crate::access::owner_columns::member_role(read, write, manage)?,
+                    group: GroupId::new(row.group_id),
+                    role: row.role.role()?,
                 })
             })
             .collect::<Result<Vec<_>, StorageError>>()?;
@@ -104,6 +104,13 @@ impl<'connection> PgHostStateSession<'_, 'connection> {
             memberships,
         })
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct AuthorityRow {
+    group_id: uuid::Uuid,
+    #[sqlx(flatten)]
+    role: RoleColumns,
 }
 
 /// A read-only snapshot of one authenticated subject's memberships.

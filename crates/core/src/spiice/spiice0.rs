@@ -1094,6 +1094,8 @@ const KERNEL_SURFACES: &[Surface] = &[
             "action_name",
             "read_ceiling",
             "write_ceiling",
+            "goal_access",
+            "administers",
             "expires_at",
             "auth_epoch",
             "issued_at",

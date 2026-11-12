@@ -3,6 +3,7 @@ pub(crate) mod cited_blobs;
 pub mod fences;
 pub mod owner_columns;
 pub mod owner_registry;
+pub(crate) mod role_columns;
 pub mod scope_surfaces;
 pub(crate) mod transfer;
 pub mod upload_completion;

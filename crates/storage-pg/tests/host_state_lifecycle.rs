@@ -31,7 +31,7 @@ use proxiima_core::{
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::{
-    create_core_db, create_embedding_of, create_group, create_source_cursor,
+    create_core_db, create_embedding_of, create_group, create_source_cursor, insert_delegated_grant,
 };
 use proxiima_storage_pg::{
     PgHostStateLifecyclePort, PgHostStateParticipant, PgPoolConfig, PgStorage,
@@ -2416,19 +2416,14 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
         let subject_id = Uuid::now_v7();
         create_source_cursor(pool, owner, "snapshot-source", vec![0xaa, 0xbb]).await?;
         let mut seed = pool.begin().await?;
-        // Raw INSERT: no write path for delegated_authority_grants reachable from test fixtures
-        sqlx::query(
-            "INSERT INTO proxiima_core.delegated_authority_grants
-                (delegation_id, subject_user_id, owner_id, tool_name,
-                 read_ceiling, write_ceiling, expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, 'core_remember', 'fact', 'fact',
-                     TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
-                     TIMESTAMPTZ '2026-01-01 00:00:00Z', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+        insert_delegated_grant(
+            &mut *seed,
+            delegation_id,
+            subject_id,
+            user_id.into_inner(),
+            Uuid::from_u128(0x509),
+            None,
         )
-        .bind(delegation_id)
-        .bind(subject_id)
-        .bind(user_id.into_inner())
-        .execute(&mut *seed)
         .await?;
         seed.commit().await?;
 

@@ -7,10 +7,15 @@ use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerInversePort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::query::EntityKind;
-use proxiima_core::{AccessKind, EdgeEndpoint, MemoryId, OwnerId, SchemaId, SchemaVersion, UserId};
+use proxiima_core::{
+    AccessCeiling, AccessKind, EdgeEndpoint, GoalAccess, MemoryId, OwnerId, Role, SchemaId,
+    SchemaVersion, UserId,
+};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
-use proxiima_storage_pg::test_fixtures::{TestGoal, create_content, create_core_db};
+use proxiima_storage_pg::test_fixtures::{
+    TestGoal, create_content, create_core_db, insert_goal_grant,
+};
 use uuid::Uuid;
 
 /// The five sidecar legs exactly as the engine assembles them: from the
@@ -728,27 +733,22 @@ async fn export_carries_goal_controller_grants_only() {
             .create(&pg, other)
             .await?
             .handle;
-        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_access_grant
-                (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-                 controller_generation, granted_by)
-             VALUES ($1, $2, 2, 1, false, 0, $2)",
+        insert_goal_grant(
+            pool,
+            goal,
+            subject.into_inner(),
+            subject.into_inner(),
+            Role::new(AccessCeiling::Abstraction, AccessCeiling::Fact)?
+                .with_goals(GoalAccess::Reads),
         )
-        .bind(goal)
-        .bind(subject.into_inner())
-        .execute(pool)
         .await?;
-        // Raw INSERT: no write path for goal_access_grant reachable from test fixtures
-        sqlx::query(
-            "INSERT INTO proxiima_core.goal_access_grant
-                (goal_handle, subject_id, read_ceiling, write_ceiling, manage,
-                 controller_generation, granted_by)
-             VALUES ($1, $2, 1, 0, false, 0, $2)",
+        insert_goal_grant(
+            pool,
+            other_goal,
+            subject.into_inner(),
+            subject.into_inner(),
+            Role::new(AccessCeiling::Fact, AccessCeiling::None)?.with_goals(GoalAccess::Reads),
         )
-        .bind(other_goal)
-        .bind(subject.into_inner())
-        .execute(pool)
         .await?;
 
         let auth = ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner {

@@ -551,18 +551,14 @@ pub async fn seed(pool: &PgPool) -> Result<Corpus, Box<dyn std::error::Error>> {
         .execute(pool)
         .await?;
     }
-    sqlx::query(
-        "INSERT INTO proxiima_core.delegated_authority_grants
-             (delegation_id, subject_user_id, owner_id, tool_name,
-              read_ceiling, write_ceiling, expires_at, auth_epoch, issued_at, \"by\", via)
-         VALUES ($1, $2, $3, 'core_remember',
-                 'fact', 'fact', TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
-                 TIMESTAMPTZ '2026-01-01 00:00:00Z', '00000000-0000-0000-0000-000000000509'::uuid, NULL)",
+    crate::test_fixtures::insert_delegated_grant(
+        pool,
+        Uuid::now_v7(),
+        source.into_inner(),
+        source.into_inner(),
+        Uuid::from_u128(0x509),
+        None,
     )
-    .bind(Uuid::now_v7())
-    .bind(source.into_inner())
-    .bind(source.into_inner())
-    .execute(pool)
     .await?;
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending
@@ -748,6 +744,15 @@ pub async fn dump_database(
                 && let Some(object) = row.as_object_mut()
             {
                 object.remove("authority_generation");
+            }
+            if table == "delegated_authority_grants"
+                && let Some(object) = row.as_object_mut()
+            {
+                // 0067 stores the Goal access and administration of a role in
+                // their own columns; the baseline kept them on a fourth rung
+                // of the two ceilings. `migrations::role_columns_migration_keeps_what_every_old_row_decoded_to` pins the mapping.
+                object.remove("goal_access");
+                object.remove("administers");
             }
             if table == "blob_uploads"
                 && let Some(object) = row.as_object_mut()

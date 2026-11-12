@@ -219,8 +219,9 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
         .await
         .expect("Bob upgrades Carol to editor access");
 
-    let row: (Uuid, i16, i16, bool) = sqlx::query_as(
-        "SELECT granted_by, read_ceiling, write_ceiling, manage
+    let row: (Uuid, String, String, String, bool, bool) = sqlx::query_as(
+        "SELECT granted_by, read_ceiling::text, write_ceiling::text, goal_access::text,
+                administers, manage
            FROM proxiima_core.goal_access_grant
           WHERE goal_handle = $1 AND subject_id = $2",
     )
@@ -230,7 +231,10 @@ async fn goal_access_regrant_updates_granted_by_and_ceilings() {
     .await
     .expect("Carol's regranted row");
     assert_eq!(row.0, bob.into_inner(), "regrant records its actual actor");
-    assert_eq!((row.1, row.2, row.3), (3, 3, false));
+    assert_eq!(
+        (row.1.as_str(), row.2.as_str(), row.3.as_str(), row.4, row.5),
+        ("perspective", "perspective", "reads", false, false)
+    );
 
     h.pool.close().await;
 }
@@ -302,8 +306,8 @@ async fn a_goal_grant_carries_no_administration_and_a_manager_grants_what_it_hol
         )
         .await
         .expect_err("a guest who does not manage grants nothing");
-    let carol_row: (i16, i16, bool) = sqlx::query_as(
-        "SELECT read_ceiling, write_ceiling, manage
+    let carol_row: (String, String, String, bool, bool) = sqlx::query_as(
+        "SELECT read_ceiling::text, write_ceiling::text, goal_access::text, administers, manage
            FROM proxiima_core.goal_access_grant
           WHERE goal_handle = $1 AND subject_id = $2",
     )
@@ -312,7 +316,17 @@ async fn a_goal_grant_carries_no_administration_and_a_manager_grants_what_it_hol
     .fetch_one(&h.pool)
     .await
     .expect("Carol's row after the refused grants");
-    assert_eq!(carol_row, (3, 3, false), "a refused grant changes nothing");
+    assert_eq!(
+        carol_row,
+        (
+            "perspective".to_owned(),
+            "perspective".to_owned(),
+            "reads".to_owned(),
+            false,
+            false
+        ),
+        "a refused grant changes nothing"
+    );
     h.pool.close().await;
 }
 
