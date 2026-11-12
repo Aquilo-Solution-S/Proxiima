@@ -1,14 +1,14 @@
 //! Capability types for embedding clients.
 //!
 //! - [`EmbedCaps`] is live: `dim` must be a supported
-//!   [`crate::llm::EmbeddingDim`] width;
+//!   [`crate::embedding::EmbeddingDim`] width;
 //!   `matryoshka` / `max_input_chars` are host-injected client flags.
 
 use std::num::NonZeroU32;
 
 /// Embedding capability axes. `dim` is the vector size — a width that is
-/// not an [`crate::llm::EmbeddingDim`] fails when the client is bound
-/// ([`crate::llm::BoundEmbeddingClient::bind`]), i.e. at boot.
+/// not an [`crate::embedding::EmbeddingDim`] fails when the client is bound
+/// ([`crate::embedding::BoundEmbeddingClient::bind`]), i.e. at boot.
 /// `matryoshka` indicates whether the model produces nested-prefix
 /// embeddings (caller may truncate without re-embedding).
 #[derive(
@@ -32,8 +32,8 @@ pub struct EmbedCaps {
     /// limit (a local runner can die instead of rejecting). Characters, not
     /// tokens (no shared tokenizer) and not bytes (would refuse non-ASCII
     /// shorter text; see [`crate::text_bounds`]). Over-cap is
-    /// [`crate::llm::LlmError::InputRefused`] → [`crate::llm::embed_in_chunks`];
-    /// floor is [`crate::llm::MIN_EMBED_INPUT_CAP_CHARS`].
+    /// [`crate::embedding::LlmError::InputRefused`] → [`crate::embedding::embed_in_chunks`];
+    /// floor is [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`].
     pub max_input_chars: Option<NonZeroU32>,
 }
 
@@ -54,7 +54,7 @@ impl EmbedCaps {
     /// Refuse, without sending, any input longer than `chars` characters.
     ///
     /// See [`EmbedCaps::max_input_chars`] and
-    /// [`crate::llm::MIN_EMBED_INPUT_CAP_CHARS`].
+    /// [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`].
     #[must_use]
     pub const fn with_max_input_chars(mut self, chars: NonZeroU32) -> Self {
         self.max_input_chars = Some(chars);

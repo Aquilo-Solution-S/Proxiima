@@ -21,7 +21,7 @@ use proxiima::{
     AppInfo, Feature, FeatureControl, FeatureControlError, FeatureStatus, Proxiima, ServedSurface,
     SpiiceApp, company_owner,
 };
-use proxiima_core::llm::{EmbeddingClient, LlmError};
+use proxiima_core::embedding::{EmbeddingClient, LlmError};
 use proxiima_core::test_fixtures::ConstantEmbedding;
 use proxiima_core::{
     AgentNoteV1, AuthError, AuthPath, Authenticator, AuthzContext, Credentials, OwnerId, Role,
@@ -327,7 +327,7 @@ async fn within<T>(future: impl std::future::Future<Output = T>) -> T {
 
 #[tokio::test]
 async fn configuration_fault_health_tracks_the_worker_and_clears_after_rebinding() {
-    use proxiima_core::llm::BoundEmbeddingClient;
+    use proxiima_core::embedding::BoundEmbeddingClient;
     use proxiima_core::test_fixtures::TestEmbeddingRouter;
 
     let world = World::new("feature_control_configuration_health").await;

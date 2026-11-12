@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use futures::FutureExt;
 use proxiima_core::PlaintextHosts;
-use proxiima_core::llm::{
+use proxiima_core::embedding::{
     EMBEDDING_PURPOSE_HEADER, EMBEDDING_SEARCH_PURPOSE, EmbeddingClient,
     EmbeddingConfigurationFault, EmbeddingInputRefusal, LlmError, MIN_EMBED_INPUT_CAP_CHARS,
 };
@@ -22,7 +22,7 @@ use crate::{build_client, embedding_endpoint};
 /// fast request, and the in-process serial drainer must not stall for
 /// minutes on one wedged call. Override with
 /// [`OpenAiCompatConfig::with_timeout`] for unusually slow local models.
-pub const DEFAULT_EMBED_TIMEOUT: Duration = proxiima_core::llm::DEFAULT_EMBED_REQUEST_TIMEOUT;
+pub const DEFAULT_EMBED_TIMEOUT: Duration = proxiima_core::embedding::DEFAULT_EMBED_REQUEST_TIMEOUT;
 
 const RESPONSE_ENVELOPE_BYTES: usize = 64 * 1024;
 const BYTES_PER_FLOAT_HEADROOM: usize = 32;
@@ -118,7 +118,7 @@ impl OpenAiCompatEmbeddingClient {
     /// transit), if `config.timeout` is zero, if `config.bearer_token` is
     /// blank, or if
     /// [`EmbedCaps::max_input_chars`] is set below
-    /// [`proxiima_core::llm::MIN_EMBED_INPUT_CAP_CHARS`].
+    /// [`proxiima_core::embedding::MIN_EMBED_INPUT_CAP_CHARS`].
     pub fn new(
         model_id: impl Into<String>,
         caps: EmbedCaps,

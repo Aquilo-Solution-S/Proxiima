@@ -511,7 +511,7 @@ pub async fn embed_in_chunks_with_timeout(
 /// A retryable failure cannot authorize input splitting.
 ///
 /// ```compile_fail
-/// # use proxiima_core::llm::{EmbeddingClient, LlmError, embed_in_chunks_after_failure};
+/// # use proxiima_core::embedding::{EmbeddingClient, LlmError, embed_in_chunks_after_failure};
 /// # fn rescue(client: &dyn EmbeddingClient) {
 /// let _ = embed_in_chunks_after_failure(client, "text", LlmError::retryable("busy"));
 /// # }
@@ -605,5 +605,5 @@ fn split_segment(segment: &str) -> Option<(&str, &str)> {
 }
 
 #[cfg(test)]
-#[path = "llm_tests.rs"]
+#[path = "embedding_tests.rs"]
 mod tests;

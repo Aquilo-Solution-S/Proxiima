@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use proxiima_core::authz::SystemAuthority;
-use proxiima_core::llm::{EmbeddingClient, EmbeddingRouter};
+use proxiima_core::embedding::{EmbeddingClient, EmbeddingRouter};
 use proxiima_core::storage_ports::OwnerDropProofHandle;
 use proxiima_core::storage_ports::publication::{OriginScope, PublicationOriginEligibilityPort};
 use proxiima_core::{ColdObjectStore, Engine, SpiiceRegistry, StorageError, composed_schema_names};
@@ -610,7 +610,7 @@ fn embedding_router_for(
         (Some(client), None) => {
             // Fail fast on a width no lane indexes: jobs would be claimed
             // and then rejected at insert, silently burning the queue.
-            let router = proxiima_core::llm::SingleClientRouter::bind(client)
+            let router = proxiima_core::embedding::SingleClientRouter::bind(client)
                 .map_err(|error| ProxiimaError::Config(error.to_string()))?;
             Ok(Some(Arc::new(router)))
         }

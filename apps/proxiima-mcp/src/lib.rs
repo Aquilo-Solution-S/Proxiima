@@ -21,7 +21,7 @@ use proxiima::{
     RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices,
     embedding_runtime_policy_from_lookup,
 };
-use proxiima_core::llm::{
+use proxiima_core::embedding::{
     BoundEmbeddingClient, QueryInstruction, QueryInstructions, QueryTask, SingleClientRouter,
 };
 use proxiima_core::protocol::profile as protocol_profile;
@@ -946,7 +946,7 @@ fn reject_served_read_denials(
 ///
 /// The model's vectors must be `PROXIIMA_EMBED_DIM` wide (default 1024), and
 /// that width must be one the store indexes (see
-/// [`proxiima_core::llm::EmbeddingDim`]). Set `PROXIIMA_EMBED_MATRYOSHKA=true`
+/// [`proxiima_core::embedding::EmbeddingDim`]). Set `PROXIIMA_EMBED_MATRYOSHKA=true`
 /// for a nested-prefix model (qwen3-embedding, text-embedding-3-*) so the
 /// request asks for that width rather than the model's native one.
 ///
@@ -1049,16 +1049,16 @@ fn embedding_model_from_env(lookup: impl Fn(&str) -> Option<String>) -> Option<S
 /// `PROXIIMA_EMBED_DIM`, or 1024 when unset.
 fn embedding_dim_from_env(
     lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<proxiima_core::llm::EmbeddingDim, CliError> {
+) -> Result<proxiima_core::embedding::EmbeddingDim, CliError> {
     let Some(raw) = PROXIIMA_EMBED_DIM.read(lookup) else {
-        return Ok(proxiima_core::llm::EmbeddingDim::D1024);
+        return Ok(proxiima_core::embedding::EmbeddingDim::D1024);
     };
     let width = raw.parse::<usize>().map_err(|_| {
         CliError::Runtime(ProxiimaError::Config(format!(
             "{PROXIIMA_EMBED_DIM} must be an integer, got {raw:?}"
         )))
     })?;
-    proxiima_core::llm::EmbeddingDim::try_from(width).map_err(|err| {
+    proxiima_core::embedding::EmbeddingDim::try_from(width).map_err(|err| {
         CliError::Runtime(ProxiimaError::Config(format!(
             "{PROXIIMA_EMBED_DIM}: {err}"
         )))

@@ -1,5 +1,5 @@
 use super::*;
-use proxiima_core::llm::BoundEmbeddingClient;
+use proxiima_core::embedding::BoundEmbeddingClient;
 use proxiima_core::test_fixtures::TestEmbeddingRouter;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

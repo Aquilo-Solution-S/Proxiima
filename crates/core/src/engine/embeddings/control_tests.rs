@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
-use crate::llm::BoundEmbeddingClient;
+use crate::embedding::BoundEmbeddingClient;
 
 const PATIENCE: Duration = Duration::from_secs(30);
 
@@ -459,7 +459,7 @@ async fn a_wrong_vector_width_pauses_the_client_for_background_work_and_queries(
             bound.embed_many(&["a".into(), "b".into()]).await.map(drop)
         } else {
             bound
-                .embed_query("q", crate::llm::QueryTask::DEFAULT)
+                .embed_query("q", crate::embedding::QueryTask::DEFAULT)
                 .await
                 .map(drop)
         };
@@ -471,7 +471,7 @@ async fn a_wrong_vector_width_pauses_the_client_for_background_work_and_queries(
                 Err(LlmError::Configuration(actual)) if actual == fault));
         assert!(
             matches!(
-                bound.embed_query("suppressed", crate::llm::QueryTask::DEFAULT).await,
+                bound.embed_query("suppressed", crate::embedding::QueryTask::DEFAULT).await,
                 Err(LlmError::Configuration(actual)) if actual == fault
             ),
             "a paused client refuses queries too"
@@ -635,7 +635,7 @@ async fn calls_reach_the_provider_concurrently_and_a_query_waits_for_none() {
     );
     tokio::time::timeout(
         PATIENCE,
-        bound.embed_query("query", crate::llm::QueryTask::DEFAULT),
+        bound.embed_query("query", crate::embedding::QueryTask::DEFAULT),
     )
     .await
     .expect("the query is not queued behind held writes")

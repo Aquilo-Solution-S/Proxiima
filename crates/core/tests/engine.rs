@@ -5,8 +5,8 @@ use std::sync::Arc;
 #[path = "../src/test_fixtures.rs"]
 mod test_fixtures;
 
+use proxiima_core::embedding::SingleClientRouter;
 use proxiima_core::engine::Engine;
-use proxiima_core::llm::SingleClientRouter;
 use proxiima_core::owner::OwnerId;
 use proxiima_core::verbs::query::QueryRequest;
 use proxiima_core::verbs::schema::SchemaRequest;

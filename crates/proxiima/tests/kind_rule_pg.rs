@@ -21,8 +21,8 @@ use proxiima::{
     S3RuntimeConfig, ServedSurface, SpiiceApp, ToolScope,
 };
 use proxiima_blob_s3::CitedBlobUploadPrepareTs;
+use proxiima_core::embedding::BoundEmbeddingClient;
 use proxiima_core::error::{ErrorCode, ProtocolError};
-use proxiima_core::llm::BoundEmbeddingClient;
 use proxiima_core::storage_ports::{
     CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
     CitedBlobUploadPrepared,

@@ -6,8 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 
+use crate::embedding::BoundEmbeddingClient;
 use crate::engine::SearchReadRequest;
-use crate::llm::BoundEmbeddingClient;
 use crate::protocol::tool as protocol_tool;
 use crate::verbs::query::{
     EntityKind, MemorySearchRequest, SearchCursor, SearchMode, SearchOrder, SupersessionStatus,
@@ -1365,7 +1365,7 @@ async fn embed_query_for_search(
     use tracing::Instrument as _;
     crate::stage_timing::timed(
         "query_embedding",
-        embed.embed_query(query, crate::llm::QueryTask::DEFAULT),
+        embed.embed_query(query, crate::embedding::QueryTask::DEFAULT),
     )
     .instrument(
         tracing::debug_span!(target: "proxiima::stage_timing", "query_embedding", work = "query"),

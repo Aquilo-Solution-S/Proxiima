@@ -321,7 +321,7 @@ fn host_api_can_build_an_openai_compatible_embedding_client() {
     // out-of-tree host that ever built one. `new` + `with_*` keeps them
     // compiling across a version that adds an axis they do not set.
     let caps = proxiima::EmbedCaps::new(
-        u32::try_from(proxiima::llm::EmbeddingDim::D768.width()).expect("the width fits u32"),
+        u32::try_from(proxiima::embedding::EmbeddingDim::D768.width()).expect("the width fits u32"),
         // The reason a local endpoint needs this at all: a model whose
         // native width is no supported `EmbeddingDim` must be asked for a
         // nested prefix, or binding the client refuses it.
@@ -331,10 +331,15 @@ fn host_api_can_build_an_openai_compatible_embedding_client() {
     // runner that dies on over-long input rather than refusing it can only
     // be protected from outside, by the caller declining to send.
     .with_max_input_chars(
-        NonZeroU32::try_from(u32::try_from(proxiima::llm::MIN_EMBED_INPUT_CAP_CHARS).unwrap())
-            .expect("the floor is positive"),
+        NonZeroU32::try_from(
+            u32::try_from(proxiima::embedding::MIN_EMBED_INPUT_CAP_CHARS).unwrap(),
+        )
+        .expect("the floor is positive"),
     );
-    assert_eq!(caps.dim as usize, proxiima::llm::EmbeddingDim::D768.width());
+    assert_eq!(
+        caps.dim as usize,
+        proxiima::embedding::EmbeddingDim::D768.width()
+    );
     assert!(
         caps.max_input_chars.is_some(),
         "the cap survives the builder"
@@ -377,7 +382,7 @@ fn host_api_can_build_a_search_read_request() {
             min_score: None,
             semantic_weight: Some(proxiima::DEFAULT_HYBRID_SEMANTIC_WEIGHT),
             after: None,
-            semantic: None::<proxiima::llm::SpaceVector>,
+            semantic: None::<proxiima::embedding::SpaceVector>,
         },
         include_body: false,
         include_neighbor_edges: false,

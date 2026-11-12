@@ -19,6 +19,7 @@ pub mod cold;
 pub mod count;
 pub mod cursor;
 pub mod edge;
+pub mod embedding;
 pub mod engine;
 pub mod entity;
 pub mod env;
@@ -27,7 +28,6 @@ pub mod goal;
 pub mod goal_collaboration;
 pub mod ids;
 pub mod lexical_language;
-pub mod llm;
 pub mod memory;
 mod memory_uuid;
 pub mod models;
@@ -82,13 +82,13 @@ pub use cold::{
 pub use count::count_u64;
 pub use cursor::*;
 pub use edge::*;
+pub use embedding::*;
 pub use engine::*;
 pub use entity::*;
 pub use env::{Setting, SettingKind, env_from_pairs, parse_bool_word, process_env};
 pub use error::*;
 pub use goal::{SimpleTextGoalV1, TaskGoalV1, TaskPriority};
 pub use ids::*;
-pub use llm::*;
 pub use memory::*;
 pub use memory_uuid::{memory_store_number, new_memory_uuid, new_memory_uuid_after};
 pub use models::*;
@@ -169,7 +169,7 @@ macro_rules! proxiima_schema_id {
 /// fails the build.
 ///
 /// Embedding capability types live in `crate::models` (`EmbedCaps`).
-/// Hosts inject [`crate::llm::EmbeddingClient`] at boot; this macro does
+/// Hosts inject [`crate::embedding::EmbeddingClient`] at boot; this macro does
 /// not bind models, and there is no inference-target registry.
 ///
 /// Unknown keys are rejected at expansion time.

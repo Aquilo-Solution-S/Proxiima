@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use async_trait::async_trait;
-use proxiima_core::llm::{EmbeddingClient, EmbeddingDim, LlmError};
+use proxiima_core::embedding::{EmbeddingClient, EmbeddingDim, LlmError};
 use std::sync::Arc;
 
 use proxiima_core::{
@@ -108,9 +108,12 @@ impl EmbeddingClient for ConstantEmbedding {
 /// every owner, overridden per Owner by a route or a refusal.
 #[derive(Debug, Default)]
 pub struct TestEmbeddingRouter {
-    default: std::sync::RwLock<Option<proxiima_core::llm::BoundEmbeddingClient>>,
+    default: std::sync::RwLock<Option<proxiima_core::embedding::BoundEmbeddingClient>>,
     owners: std::sync::RwLock<
-        std::collections::HashMap<OwnerId, Result<proxiima_core::llm::EmbeddingRoute, String>>,
+        std::collections::HashMap<
+            OwnerId,
+            Result<proxiima_core::embedding::EmbeddingRoute, String>,
+        >,
     >,
 }
 
@@ -119,7 +122,7 @@ impl TestEmbeddingRouter {
     ///
     /// # Panics
     /// On a poisoned lock.
-    pub fn set_default(&self, client: proxiima_core::llm::BoundEmbeddingClient) {
+    pub fn set_default(&self, client: proxiima_core::embedding::BoundEmbeddingClient) {
         *self.default.write().expect("router lock") = Some(client);
     }
 
@@ -130,13 +133,13 @@ impl TestEmbeddingRouter {
     pub fn set_owner(
         &self,
         owner: OwnerId,
-        client: Option<proxiima_core::llm::BoundEmbeddingClient>,
+        client: Option<proxiima_core::embedding::BoundEmbeddingClient>,
     ) {
         self.set_route(
             owner,
             client.map_or_else(
-                proxiima_core::llm::EmbeddingRoute::none,
-                proxiima_core::llm::EmbeddingRoute::current,
+                proxiima_core::embedding::EmbeddingRoute::none,
+                proxiima_core::embedding::EmbeddingRoute::current,
             ),
         );
     }
@@ -145,7 +148,7 @@ impl TestEmbeddingRouter {
     ///
     /// # Panics
     /// On a poisoned lock.
-    pub fn set_route(&self, owner: OwnerId, route: proxiima_core::llm::EmbeddingRoute) {
+    pub fn set_route(&self, owner: OwnerId, route: proxiima_core::embedding::EmbeddingRoute) {
         self.owners
             .write()
             .expect("router lock")
@@ -165,14 +168,17 @@ impl TestEmbeddingRouter {
 }
 
 #[async_trait]
-impl proxiima_core::llm::EmbeddingRouter for TestEmbeddingRouter {
+impl proxiima_core::embedding::EmbeddingRouter for TestEmbeddingRouter {
     async fn route(
         &self,
         owner: &OwnerId,
-    ) -> Result<proxiima_core::llm::EmbeddingRoute, proxiima_core::llm::EmbeddingRouteError> {
+    ) -> Result<
+        proxiima_core::embedding::EmbeddingRoute,
+        proxiima_core::embedding::EmbeddingRouteError,
+    > {
         match self.owners.read().expect("router lock").get(owner) {
             Some(Ok(route)) => Ok(route.clone()),
-            Some(Err(message)) => Err(proxiima_core::llm::EmbeddingRouteError::new(
+            Some(Err(message)) => Err(proxiima_core::embedding::EmbeddingRouteError::new(
                 message.clone(),
             )),
             None => Ok(self
@@ -181,8 +187,8 @@ impl proxiima_core::llm::EmbeddingRouter for TestEmbeddingRouter {
                 .expect("router lock")
                 .clone()
                 .map_or_else(
-                    proxiima_core::llm::EmbeddingRoute::none,
-                    proxiima_core::llm::EmbeddingRoute::current,
+                    proxiima_core::embedding::EmbeddingRoute::none,
+                    proxiima_core::embedding::EmbeddingRoute::current,
                 )),
         }
     }

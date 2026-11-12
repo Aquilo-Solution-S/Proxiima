@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::OwnerId;
-use crate::llm::{
+use crate::embedding::{
     EmbeddingClient, EmbeddingConfigurationFault, EmbeddingInputRefusal, EmbeddingRoute,
     EmbeddingRuntimePolicy, EmbeddingSpace, LlmError,
 };

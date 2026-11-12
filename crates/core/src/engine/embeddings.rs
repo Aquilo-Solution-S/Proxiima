@@ -4,11 +4,11 @@ use tracing::Instrument as _;
 
 use super::Engine;
 use crate::authz::AuthzContext;
-use crate::error::ProtocolError;
-use crate::llm::{
+use crate::embedding::{
     BoundEmbeddingClient, ChunkedEmbedding, EmbeddingConfigurationFault, EmbeddingInputRefusal,
     EmbeddingRoute, EmbeddingRouteError, EmbeddingSpace, LlmError,
 };
+use crate::error::ProtocolError;
 use crate::storage::{EmbeddingJobClaim, StorageError};
 use crate::storage_ports::{EmbeddingJobHandle, EmbeddingWrite};
 use crate::{EmbeddableEntityRef, EntityKind, MemoryId, OwnerId};
@@ -662,7 +662,8 @@ impl Engine {
             let coverage = match attempt {
                 Ok(vector) => Ok(ChunkedEmbedding::Embedded(vec![vector])),
                 Err(LlmError::InputRefused(refusal)) => {
-                    crate::llm::embed_in_chunks_after_failure(client.as_ref(), &text, refusal).await
+                    crate::embedding::embed_in_chunks_after_failure(client.as_ref(), &text, refusal)
+                        .await
                 }
                 Err(err) => Err(err),
             };

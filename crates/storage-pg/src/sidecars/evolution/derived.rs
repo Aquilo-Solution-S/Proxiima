@@ -25,7 +25,7 @@ pub(super) async fn rebuild(
         "SELECT entity_id,model_id,dim FROM proxiima_core.embedding_heads WHERE entity_id=ANY($1::uuid[]) AND owner_id=$2
          UNION SELECT entity_id,model_id,dim FROM proxiima_core.embedding_jobs WHERE entity_id=ANY($1::uuid[]) AND owner_id=$2")
         .bind(&sources).bind(input.owner.into_inner()).fetch_all(&mut **tx).await.map_err(map_err)?;
-    let mut target_spaces = HashMap::<Uuid, Vec<proxiima_core::llm::EmbeddingSpace>>::new();
+    let mut target_spaces = HashMap::<Uuid, Vec<proxiima_core::embedding::EmbeddingSpace>>::new();
     for (source, model, dim) in spaces {
         let space = crate::pgvector::stored_space(model, dim)?;
         for target in plan.mappings[&source].targets() {

@@ -8,7 +8,7 @@ use proxiima::{
     OwnerEraseOutcome, OwnerEraseRefusal, PayloadKind, Proxiima, ProxiimaError, SpiiceApp,
     company_owner, run_core_and_spiice_migrations,
 };
-use proxiima_core::llm::{EmbeddingClient, LlmError};
+use proxiima_core::embedding::{EmbeddingClient, LlmError};
 use proxiima_core::test_fixtures::ConstantEmbedding;
 use proxiima_core::{
     AgentNoteV1, AuthError, AuthPath, Authenticator, AuthzContext, Credentials, FactPayload,
@@ -564,13 +564,13 @@ async fn boot_rejects_embedding_client_with_unsupported_width() {
         }
 
         // One client and a router are two answers to one question.
-        let lane_768 = proxiima_core::llm::BoundEmbeddingClient::bind(Arc::new(
+        let lane_768 = proxiima_core::embedding::BoundEmbeddingClient::bind(Arc::new(
             FixedDimEmbedding::new("lane-768", 768),
         ))?;
         let err = app()
             .configure(|b| {
                 b.embed_client(Arc::new(FixedDimEmbedding::new("lane-768", 768)))
-                    .embedding_router(Arc::new(proxiima_core::llm::SingleClientRouter::new(
+                    .embedding_router(Arc::new(proxiima_core::embedding::SingleClientRouter::new(
                         lane_768,
                     )))
             })
@@ -590,7 +590,7 @@ async fn boot_rejects_embedding_client_with_unsupported_width() {
         let route = booted.host().engine().embedding_route(&owner).await?;
         assert_eq!(
             route.current_client().map(|client| client.space().dim()),
-            Some(proxiima_core::llm::EmbeddingDim::D768),
+            Some(proxiima_core::embedding::EmbeddingDim::D768),
             "a supported-width client routes every Owner"
         );
         booted.shutdown().await;

@@ -5,7 +5,7 @@
 mod pg_tests {
     use std::sync::Arc;
 
-    use proxiima_core::llm::{
+    use proxiima_core::embedding::{
         EmbeddingClient, EmbeddingInputRefusal, EmbeddingRuntimePolicy, LlmError,
     };
     use proxiima_core::storage_ports::{
@@ -25,9 +25,9 @@ mod pg_tests {
     use uuid::Uuid;
 
     use proxiima_core::EmbeddableEntityRef;
+    use proxiima_core::embedding::{CHUNKED_EMBED_MIN_BYTES, MIN_EMBED_INPUT_CAP_CHARS};
+    use proxiima_core::embedding::{EmbeddingDim, SingleClientRouter};
     use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
-    use proxiima_core::llm::{CHUNKED_EMBED_MIN_BYTES, MIN_EMBED_INPUT_CAP_CHARS};
-    use proxiima_core::llm::{EmbeddingDim, SingleClientRouter};
     use proxiima_core::{
         AgentDerivationV1, DerivationIdentity, DerivedMemory, MemoryId, OperatorId, SeriesHandle,
     };

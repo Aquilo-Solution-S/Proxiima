@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use proxiima_core::PlaintextHosts;
-use proxiima_core::llm::{
+use proxiima_core::embedding::{
     EmbeddingClient, EmbeddingConfigurationFault, EmbeddingInputRefusal, LlmError,
     MIN_EMBED_INPUT_CAP_CHARS,
 };

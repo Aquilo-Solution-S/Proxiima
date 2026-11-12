@@ -28,8 +28,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::authz::{EngineAuthority, EngineOperationAuthority, context_for_engine_operation};
+use crate::embedding::EmbeddingRouter;
 use crate::error::ProtocolError;
-use crate::llm::EmbeddingRouter;
 use crate::storage_ports::{EngineStoragePorts, OwnerWritePermit};
 use crate::verbs::schema::SpiiceRegistryFrozen;
 
@@ -62,7 +62,7 @@ pub struct Engine {
     delegation_runtime_binding: crate::authz::DelegationRuntimeBinding,
     storage: EngineStoragePorts,
     embedding_router: Option<Arc<dyn EmbeddingRouter>>,
-    embedding_runtime_policy: crate::llm::EmbeddingRuntimePolicy,
+    embedding_runtime_policy: crate::embedding::EmbeddingRuntimePolicy,
     /// Shared original-client pause/retry state and observed owner routes.
     embedding_control: embeddings::EmbeddingControl,
     /// Producer identity and capture bounds for listenable Fact schemas
@@ -114,7 +114,7 @@ impl Engine {
     }
 
     #[must_use]
-    pub const fn embedding_runtime_policy(&self) -> crate::llm::EmbeddingRuntimePolicy {
+    pub const fn embedding_runtime_policy(&self) -> crate::embedding::EmbeddingRuntimePolicy {
         self.embedding_runtime_policy
     }
 

@@ -56,6 +56,7 @@ pub use proxiima_core::catalog::core_tools::{NodeStatus, UnavailableReason};
 /// checks or grants on the same set.
 pub use proxiima_core::composed_schema_names;
 pub use proxiima_core::cursor::Cursor;
+pub use proxiima_core::embedding;
 /// The read verb a spiice searches its own corpus with.
 ///
 /// [`proxiima_core::Engine::search`] was already public, but every type in
@@ -93,12 +94,11 @@ pub use proxiima_core::goal_collaboration::{
 };
 /// Explicitly select the deployment's lexical configuration for a memory write.
 pub use proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT;
-pub use proxiima_core::llm;
 /// [`EmbedCaps`] is the second parameter of
 /// [`OpenAiCompatEmbeddingClient::new`], so without it on the facade that
 /// constructor is unspellable for a host depending on `proxiima` alone. That
 /// rules out OpenAI-compatible endpoints needing `matryoshka` to return a
-/// supported [`llm::EmbeddingDim`] rather than their native width.
+/// supported [`embedding::EmbeddingDim`] rather than their native width.
 pub use proxiima_core::models::EmbedCaps;
 /// Owner erase surface. Note that [`OwnerEraseTarget`]'s
 /// variants take id newtypes rather than bare UUIDs and strings:

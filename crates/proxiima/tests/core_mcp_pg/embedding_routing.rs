@@ -17,7 +17,7 @@ const RETRY_RECOVERY_PATIENCE: std::time::Duration = std::time::Duration::from_s
 /// outside any task, and pass straight through.
 #[derive(Debug)]
 struct HeldWorker {
-    inner: Arc<dyn proxiima_core::llm::EmbeddingRouter>,
+    inner: Arc<dyn proxiima_core::embedding::EmbeddingRouter>,
     held: std::sync::atomic::AtomicBool,
     parked: tokio::sync::Notify,
     released: tokio::sync::Notify,
@@ -29,11 +29,11 @@ impl HeldWorker {
     async fn boot<F, Fut>(
         db_name: &str,
         owner: OwnerId,
-        inner: Arc<dyn proxiima_core::llm::EmbeddingRouter>,
+        inner: Arc<dyn proxiima_core::embedding::EmbeddingRouter>,
         start: F,
     ) -> Result<(proxiima::BuiltProxiima, Arc<Self>), Box<dyn std::error::Error>>
     where
-        F: FnOnce(Arc<dyn proxiima_core::llm::EmbeddingRouter>) -> Fut,
+        F: FnOnce(Arc<dyn proxiima_core::embedding::EmbeddingRouter>) -> Fut,
         Fut: std::future::Future<Output = Result<proxiima::BuiltProxiima, proxiima::ProxiimaError>>,
     {
         let admin = sqlx::PgPool::connect(&db_url(db_name)).await?;
@@ -63,11 +63,14 @@ impl HeldWorker {
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingRouter for HeldWorker {
+impl proxiima_core::embedding::EmbeddingRouter for HeldWorker {
     async fn route(
         &self,
         owner: &OwnerId,
-    ) -> Result<proxiima_core::llm::EmbeddingRoute, proxiima_core::llm::EmbeddingRouteError> {
+    ) -> Result<
+        proxiima_core::embedding::EmbeddingRoute,
+        proxiima_core::embedding::EmbeddingRouteError,
+    > {
         if tokio::task::try_id().is_some()
             && !self.held.swap(true, std::sync::atomic::Ordering::SeqCst)
         {
@@ -81,11 +84,11 @@ impl proxiima_core::llm::EmbeddingRouter for HeldWorker {
 /// A client at a non-default width whose vectors separate two topics, so a
 /// semantic search ranks correctly only by reading its own width lane.
 #[derive(Debug)]
-struct LaneEmbedding(proxiima_core::llm::EmbeddingDim);
+struct LaneEmbedding(proxiima_core::embedding::EmbeddingDim);
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for LaneEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
+impl proxiima_core::embedding::EmbeddingClient for LaneEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
         let mut vector = vec![0.0; self.0.width()];
         vector[usize::from(!text.contains("alpha"))] = 1.0;
         Ok(vector)
@@ -107,8 +110,8 @@ impl proxiima_core::llm::EmbeddingClient for LaneEmbedding {
 #[tokio::test]
 async fn facade_embeds_and_searches_at_a_non_default_width() {
     for dim in [
-        proxiima_core::llm::EmbeddingDim::D768,
-        proxiima_core::llm::EmbeddingDim::D3072,
+        proxiima_core::embedding::EmbeddingDim::D768,
+        proxiima_core::embedding::EmbeddingDim::D3072,
     ] {
         let split_db = clone_split_core_db("proxiima_core_width_lane")
             .await
@@ -124,9 +127,9 @@ async fn facade_embeds_and_searches_at_a_non_default_width() {
             let (built, held) = HeldWorker::boot(
                 &db_name,
                 owner,
-                Arc::new(proxiima_core::llm::SingleClientRouter::bind(Arc::new(
-                    LaneEmbedding(dim),
-                ))?),
+                Arc::new(proxiima_core::embedding::SingleClientRouter::bind(
+                    Arc::new(LaneEmbedding(dim)),
+                )?),
                 |router| {
                     Proxiima::<AgentMemoryApp>::app()
                         .configure(|b| {
@@ -208,12 +211,12 @@ async fn facade_embeds_and_searches_at_a_non_default_width() {
 #[derive(Debug)]
 struct RecordingRouteEmbedding {
     model: &'static str,
-    dim: proxiima_core::llm::EmbeddingDim,
+    dim: proxiima_core::embedding::EmbeddingDim,
     texts: std::sync::Mutex<Vec<String>>,
 }
 
 impl RecordingRouteEmbedding {
-    fn new(model: &'static str, dim: proxiima_core::llm::EmbeddingDim) -> Arc<Self> {
+    fn new(model: &'static str, dim: proxiima_core::embedding::EmbeddingDim) -> Arc<Self> {
         Arc::new(Self {
             model,
             dim,
@@ -225,14 +228,14 @@ impl RecordingRouteEmbedding {
         self.texts.lock().expect("recorder lock").clone()
     }
 
-    fn bound(self: &Arc<Self>) -> proxiima_core::llm::BoundEmbeddingClient {
-        proxiima_core::llm::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
+    fn bound(self: &Arc<Self>) -> proxiima_core::embedding::BoundEmbeddingClient {
+        proxiima_core::embedding::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
     }
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for RecordingRouteEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
+impl proxiima_core::embedding::EmbeddingClient for RecordingRouteEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
         self.texts
             .lock()
             .expect("recorder lock")
@@ -259,7 +262,9 @@ impl proxiima_core::llm::EmbeddingClient for RecordingRouteEmbedding {
 /// (#354).
 #[tokio::test]
 async fn memory_search_embeds_its_query_in_the_default_instruction() {
-    use proxiima_core::llm::{QueryInstruction, QueryInstructions, QueryTask, SingleClientRouter};
+    use proxiima_core::embedding::{
+        QueryInstruction, QueryInstructions, QueryTask, SingleClientRouter,
+    };
 
     let split_db = clone_split_core_db("proxiima_core_query_instruction")
         .await
@@ -274,7 +279,7 @@ async fn memory_search_embeds_its_query_in_the_default_instruction() {
         let owner = company_owner(Uuid::now_v7());
         let recorder = RecordingRouteEmbedding::new(
             "instructed-embed",
-            proxiima_core::llm::EmbeddingDim::D1024,
+            proxiima_core::embedding::EmbeddingDim::D1024,
         );
         let instructions = QueryInstructions::default()
             .with_instruction(QueryTask::DEFAULT, QueryInstruction::new("note: {query}")?)
@@ -542,7 +547,7 @@ impl TwoOwnerFixture {
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn each_owner_embeds_and_searches_through_its_own_route() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_owners")
         .await
         .expect("PG required for tests");
@@ -650,13 +655,13 @@ struct RendezvousEmbedding {
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for RendezvousEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
+impl proxiima_core::embedding::EmbeddingClient for RendezvousEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
         if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
             tokio::time::timeout(std::time::Duration::from_secs(5), self.meeting.wait())
                 .await
                 .map_err(|_| {
-                    proxiima_core::llm::LlmError::Internal(
+                    proxiima_core::embedding::LlmError::Internal(
                         "the other query never arrived".to_owned(),
                     )
                 })?;
@@ -677,7 +682,7 @@ impl proxiima_core::llm::EmbeddingClient for RendezvousEmbedding {
 /// both at once: the providers' latencies overlap instead of adding up.
 #[tokio::test]
 async fn a_search_over_two_routes_embeds_its_query_on_both_at_once() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_concurrent")
         .await
         .expect("PG required for tests");
@@ -693,7 +698,7 @@ async fn a_search_over_two_routes_embeds_its_query_on_both_at_once() {
                 armed: armed.clone(),
                 meeting: meeting.clone(),
             });
-            proxiima_core::llm::BoundEmbeddingClient::bind(rendezvous).expect("lane width")
+            proxiima_core::embedding::BoundEmbeddingClient::bind(rendezvous).expect("lane width")
         };
         fixture.router.set_owner(
             fixture.personal,
@@ -733,7 +738,7 @@ async fn a_search_over_two_routes_embeds_its_query_on_both_at_once() {
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn a_route_failure_stays_with_its_owner() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_refusal")
         .await
         .expect("PG required for tests");
@@ -813,7 +818,7 @@ async fn a_route_failure_stays_with_its_owner() {
 /// as before routing, and the query is embedded once for both.
 #[tokio::test]
 async fn one_client_across_owners_ranks_by_score() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_shared")
         .await
         .expect("PG required for tests");
@@ -920,7 +925,7 @@ fn returned_handles(page: &serde_json::Value) -> Vec<String> {
 #[allow(clippy::too_many_lines)]
 async fn an_owner_moves_to_a_new_model_without_a_search_gap() {
     use proxiima_core::EmbeddingSpaceRole;
-    use proxiima_core::llm::{EmbeddingDim, EmbeddingRoute};
+    use proxiima_core::embedding::{EmbeddingDim, EmbeddingRoute};
     let split_db = clone_split_core_db("proxiima_core_route_move")
         .await
         .expect("PG required for tests");
@@ -1082,7 +1087,7 @@ async fn an_owner_moves_to_a_new_model_without_a_search_gap() {
 /// route refuses the transfer.
 #[tokio::test]
 async fn a_transferred_memory_moves_to_the_destinations_space() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_transfer")
         .await
         .expect("PG required for tests");
@@ -1165,7 +1170,7 @@ async fn a_transferred_memory_moves_to_the_destinations_space() {
 /// A purge for an Owner the host cannot route deletes nothing.
 #[tokio::test]
 async fn an_unroutable_owner_is_never_purged() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db("proxiima_core_route_purge_refusal")
         .await
         .expect("PG required for tests");
@@ -1200,10 +1205,10 @@ async fn an_unroutable_owner_is_never_purged() {
 
 #[derive(Debug, Clone, Copy)]
 enum RoutedRefusal {
-    Configuration(proxiima_core::llm::EmbeddingConfigurationFault),
+    Configuration(proxiima_core::embedding::EmbeddingConfigurationFault),
     Input {
-        first: proxiima_core::llm::EmbeddingInputRefusal,
-        later: proxiima_core::llm::EmbeddingInputRefusal,
+        first: proxiima_core::embedding::EmbeddingInputRefusal,
+        later: proxiima_core::embedding::EmbeddingInputRefusal,
     },
 }
 
@@ -1225,15 +1230,15 @@ impl RefusingRouteEmbedding {
         self.lengths.lock().expect("refusal recorder lock").clone()
     }
 
-    fn bound(self: &Arc<Self>) -> proxiima_core::llm::BoundEmbeddingClient {
-        proxiima_core::llm::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
+    fn bound(self: &Arc<Self>) -> proxiima_core::embedding::BoundEmbeddingClient {
+        proxiima_core::embedding::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
     }
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for RefusingRouteEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
-        use proxiima_core::llm::LlmError;
+impl proxiima_core::embedding::EmbeddingClient for RefusingRouteEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
+        use proxiima_core::embedding::LlmError;
         let mut lengths = self.lengths.lock().expect("refusal recorder lock");
         let first_call = lengths.is_empty();
         lengths.push(text.len());
@@ -1250,15 +1255,15 @@ impl proxiima_core::llm::EmbeddingClient for RefusingRouteEmbedding {
     }
 
     fn dim(&self) -> usize {
-        proxiima_core::llm::EmbeddingDim::D1024.width()
+        proxiima_core::embedding::EmbeddingDim::D1024.width()
     }
 }
 
 async fn shared_configuration_fault_case(
     fixture: &TwoOwnerFixture,
-    fault: proxiima_core::llm::EmbeddingConfigurationFault,
+    fault: proxiima_core::embedding::EmbeddingConfigurationFault,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let engine = fixture.built.host().engine();
     let refused = RefusingRouteEmbedding::new(RoutedRefusal::Configuration(fault));
     for owner in [fixture.personal, fixture.shared] {
@@ -1350,7 +1355,7 @@ async fn shared_configuration_fault_case(
 
 #[tokio::test]
 async fn configuration_faults_pause_shared_clients_until_their_bindings_change() {
-    use proxiima_core::llm::EmbeddingConfigurationFault;
+    use proxiima_core::embedding::EmbeddingConfigurationFault;
     let split_db = clone_split_core_db("proxiima_core_route_configuration")
         .await
         .expect("PG required for tests");
@@ -1372,7 +1377,7 @@ async fn configuration_faults_pause_shared_clients_until_their_bindings_change()
 
 #[tokio::test]
 async fn paused_jobs_allow_limit_one_progress_in_other_owner_and_next_spaces() {
-    use proxiima_core::llm::{EmbeddingConfigurationFault, EmbeddingDim, EmbeddingRoute};
+    use proxiima_core::embedding::{EmbeddingConfigurationFault, EmbeddingDim, EmbeddingRoute};
     let split_db = clone_split_core_db("proxiima_core_route_paused_progress")
         .await
         .expect("PG required for tests");
@@ -1446,9 +1451,9 @@ async fn paused_jobs_allow_limit_one_progress_in_other_owner_and_next_spaces() {
 
 async fn terminal_input_refusal_case(
     fixture: &TwoOwnerFixture,
-    later: proxiima_core::llm::EmbeddingInputRefusal,
+    later: proxiima_core::embedding::EmbeddingInputRefusal,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use proxiima_core::llm::{EmbeddingInputRefusal, MIN_EMBED_INPUT_CAP_CHARS};
+    use proxiima_core::embedding::{EmbeddingInputRefusal, MIN_EMBED_INPUT_CAP_CHARS};
     let refused = RefusingRouteEmbedding::new(RoutedRefusal::Input {
         first: EmbeddingInputRefusal::PayloadTooLarge,
         later,
@@ -1503,7 +1508,7 @@ async fn terminal_input_refusal_case(
 
 #[tokio::test]
 async fn terminal_jobs_record_the_final_typed_input_refusal() {
-    use proxiima_core::llm::EmbeddingInputRefusal;
+    use proxiima_core::embedding::EmbeddingInputRefusal;
     let split_db = clone_split_core_db("proxiima_core_route_input_status")
         .await
         .expect("PG required for tests");
@@ -1529,8 +1534,8 @@ enum RetryFailure {
 }
 
 impl RetryFailure {
-    fn error(self) -> proxiima_core::llm::LlmError {
-        use proxiima_core::llm::LlmError;
+    fn error(self) -> proxiima_core::embedding::LlmError {
+        use proxiima_core::embedding::LlmError;
         match self {
             Self::Http(status) => LlmError::Retryable {
                 status: Some(status),
@@ -1577,12 +1582,12 @@ impl RetryRouteEmbedding {
         self.calls.lock().expect("retry recorder lock").clone()
     }
 
-    fn bound(self: &Arc<Self>) -> proxiima_core::llm::BoundEmbeddingClient {
-        proxiima_core::llm::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
+    fn bound(self: &Arc<Self>) -> proxiima_core::embedding::BoundEmbeddingClient {
+        proxiima_core::embedding::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
     }
 
     fn assert_failed_attempt(&self) {
-        use proxiima_core::llm::CHUNKED_EMBED_MIN_BYTES;
+        use proxiima_core::embedding::CHUNKED_EMBED_MIN_BYTES;
         let calls = self.calls();
         assert_eq!(
             calls.batches.len(),
@@ -1636,15 +1641,15 @@ impl RetryRouteEmbedding {
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for RetryRouteEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
+impl proxiima_core::embedding::EmbeddingClient for RetryRouteEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
         let mut calls = self.calls.lock().expect("retry recorder lock");
         calls.singles.push(text.len());
         let accepted = text == "ok"
             || matches!(self.stage, RetryStage::LaterChunk) && calls.singles.len() == 1;
         if accepted {
             calls.accepted_singles += 1;
-            let mut vector = vec![0.0; proxiima_core::llm::EmbeddingDim::D1024.width()];
+            let mut vector = vec![0.0; proxiima_core::embedding::EmbeddingDim::D1024.width()];
             vector[0] = 1.0;
             return Ok(vector);
         }
@@ -1654,8 +1659,8 @@ impl proxiima_core::llm::EmbeddingClient for RetryRouteEmbedding {
     async fn embed_many(
         &self,
         texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, proxiima_core::llm::LlmError> {
-        use proxiima_core::llm::{EmbeddingInputRefusal, LlmError};
+    ) -> Result<Vec<Vec<f32>>, proxiima_core::embedding::LlmError> {
+        use proxiima_core::embedding::{EmbeddingInputRefusal, LlmError};
         self.calls
             .lock()
             .expect("retry recorder lock")
@@ -1673,7 +1678,7 @@ impl proxiima_core::llm::EmbeddingClient for RetryRouteEmbedding {
         "route-retry"
     }
     fn dim(&self) -> usize {
-        proxiima_core::llm::EmbeddingDim::D1024.width()
+        proxiima_core::embedding::EmbeddingDim::D1024.width()
     }
 }
 
@@ -1696,7 +1701,7 @@ async fn remember_retry_case(
                 .await?,
         ]),
         RetryStage::LaterChunk => {
-            let mut body = "x".repeat(2 * proxiima_core::llm::MIN_EMBED_INPUT_CAP_CHARS);
+            let mut body = "x".repeat(2 * proxiima_core::embedding::MIN_EMBED_INPUT_CAP_CHARS);
             body.replace_range(..marker.len(), &marker);
             Ok(vec![fixture.remember("current", &body).await?])
         }
@@ -1728,7 +1733,7 @@ async fn retryable_job_case(
     stage: RetryStage,
     failure: RetryFailure,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let client = RetryRouteEmbedding::new(stage, failure);
     for owner in [fixture.personal, fixture.shared] {
         fixture.router.set_owner(owner, Some(client.bound()));
@@ -1793,7 +1798,7 @@ async fn retryable_job_case(
 /// One fixture covers all 24 cases and drains each before admitting the next.
 #[tokio::test]
 async fn retryable_failures_retain_jobs_without_partial_embeddings() {
-    use proxiima_core::llm::EmbeddingRuntimePolicy;
+    use proxiima_core::embedding::EmbeddingRuntimePolicy;
     let split_db = clone_split_core_db("proxiima_core_route_retry_retention")
         .await
         .expect("PG required for tests");
@@ -1844,8 +1849,8 @@ struct RecoveringRetryEmbedding {
 }
 
 impl RecoveringRetryEmbedding {
-    fn bound(self: &Arc<Self>) -> proxiima_core::llm::BoundEmbeddingClient {
-        proxiima_core::llm::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
+    fn bound(self: &Arc<Self>) -> proxiima_core::embedding::BoundEmbeddingClient {
+        proxiima_core::embedding::BoundEmbeddingClient::bind(self.clone()).expect("lane width")
     }
 
     fn calls(&self) -> (usize, usize) {
@@ -1863,13 +1868,13 @@ impl RecoveringRetryEmbedding {
     }
 
     fn vector() -> Vec<f32> {
-        vec![1.0; proxiima_core::llm::EmbeddingDim::D1024.width()]
+        vec![1.0; proxiima_core::embedding::EmbeddingDim::D1024.width()]
     }
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for RecoveringRetryEmbedding {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
+impl proxiima_core::embedding::EmbeddingClient for RecoveringRetryEmbedding {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
         self.singles
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if text == "ok" || !self.in_failure_window(tokio::time::Instant::now()) {
@@ -1881,7 +1886,7 @@ impl proxiima_core::llm::EmbeddingClient for RecoveringRetryEmbedding {
     async fn embed_many(
         &self,
         texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, proxiima_core::llm::LlmError> {
+    ) -> Result<Vec<Vec<f32>>, proxiima_core::embedding::LlmError> {
         self.batches
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let now = tokio::time::Instant::now();
@@ -1896,7 +1901,7 @@ impl proxiima_core::llm::EmbeddingClient for RecoveringRetryEmbedding {
         "route-retry"
     }
     fn dim(&self) -> usize {
-        proxiima_core::llm::EmbeddingDim::D1024.width()
+        proxiima_core::embedding::EmbeddingDim::D1024.width()
     }
 }
 
@@ -1904,7 +1909,7 @@ impl proxiima_core::llm::EmbeddingClient for RecoveringRetryEmbedding {
 /// original client's busy window without rebinding or an acceptance-time call.
 #[tokio::test]
 async fn retryable_jobs_complete_after_the_same_clients_window_passes() {
-    use proxiima_core::llm::EmbeddingRuntimePolicy;
+    use proxiima_core::embedding::EmbeddingRuntimePolicy;
     let split_db = clone_split_core_db("proxiima_core_route_retry_expiry")
         .await
         .expect("PG required for tests");
@@ -2001,19 +2006,22 @@ struct ConcurrentBatchesEmbedding {
 }
 
 #[async_trait::async_trait]
-impl proxiima_core::llm::EmbeddingClient for ConcurrentBatchesEmbedding {
-    async fn embed(&self, _text: &str) -> Result<Vec<f32>, proxiima_core::llm::LlmError> {
-        Ok(vec![1.0; proxiima_core::llm::EmbeddingDim::D1024.width()])
+impl proxiima_core::embedding::EmbeddingClient for ConcurrentBatchesEmbedding {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>, proxiima_core::embedding::LlmError> {
+        Ok(vec![
+            1.0;
+            proxiima_core::embedding::EmbeddingDim::D1024.width()
+        ])
     }
 
     async fn embed_many(
         &self,
         texts: &[String],
-    ) -> Result<Vec<Vec<f32>>, proxiima_core::llm::LlmError> {
+    ) -> Result<Vec<Vec<f32>>, proxiima_core::embedding::LlmError> {
         self.together.wait().await;
         Ok(texts
             .iter()
-            .map(|_| vec![1.0; proxiima_core::llm::EmbeddingDim::D1024.width()])
+            .map(|_| vec![1.0; proxiima_core::embedding::EmbeddingDim::D1024.width()])
             .collect())
     }
 
@@ -2021,7 +2029,7 @@ impl proxiima_core::llm::EmbeddingClient for ConcurrentBatchesEmbedding {
         "concurrent-batches"
     }
     fn dim(&self) -> usize {
-        proxiima_core::llm::EmbeddingDim::D1024.width()
+        proxiima_core::embedding::EmbeddingDim::D1024.width()
     }
 }
 
@@ -2030,7 +2038,7 @@ impl proxiima_core::llm::EmbeddingClient for ConcurrentBatchesEmbedding {
 /// after another would never finish.
 #[tokio::test]
 async fn a_drain_pass_sends_its_concurrent_batches_at_once() {
-    use proxiima_core::llm::EmbeddingRuntimePolicy;
+    use proxiima_core::embedding::EmbeddingRuntimePolicy;
     let split_db = clone_split_core_db("proxiima_core_drain_concurrency")
         .await
         .expect("PG required for tests");
@@ -2052,7 +2060,7 @@ async fn a_drain_pass_sends_its_concurrent_batches_at_once() {
         });
         fixture.router.set_owner(
             fixture.personal,
-            Some(proxiima_core::llm::BoundEmbeddingClient::bind(client).expect("lane width")),
+            Some(proxiima_core::embedding::BoundEmbeddingClient::bind(client).expect("lane width")),
         );
         let handles = [
             fixture
@@ -2092,7 +2100,7 @@ async fn a_drain_pass_sends_its_concurrent_batches_at_once() {
 #[allow(clippy::too_many_lines)]
 async fn a_store_keeps_its_vectors_in_a_host_index_over_the_wire() {
     use proxiima::vector_index_http::{VectorIndexClient, vector_index_router};
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db_host_index("proxiima_core_remote_index")
         .await
         .expect("PG required for tests");
@@ -2257,7 +2265,7 @@ impl VectorIndex for RendezvousIndex {
 /// and not the sum of the two.
 #[tokio::test]
 async fn a_search_over_two_spaces_reads_them_at_once() {
-    use proxiima_core::llm::EmbeddingDim;
+    use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db_host_index("proxiima_core_lane_concurrent")
         .await
         .expect("PG required for tests");

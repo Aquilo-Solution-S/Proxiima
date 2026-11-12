@@ -93,7 +93,7 @@ mod membership_refusal;
 mod embedding_failure_regressions {
     use super::*;
     use proxiima::host::{EmbedCaps, OpenAiCompatConfig, OpenAiCompatEmbeddingClient};
-    use proxiima_core::llm::{BoundEmbeddingClient, EmbeddingClient, EmbeddingDim, LlmError};
+    use proxiima_core::embedding::{BoundEmbeddingClient, EmbeddingClient, EmbeddingDim, LlmError};
     use proxiima_core::test_fixtures::TestEmbeddingRouter;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;

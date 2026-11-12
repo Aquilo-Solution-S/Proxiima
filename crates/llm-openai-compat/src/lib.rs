@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use proxiima_core::llm::LlmError;
+use proxiima_core::embedding::LlmError;
 use proxiima_core::{EndpointUrlPolicy, PlaintextHosts, validate_endpoint_url_for_hosts};
 
 pub mod openai_compat;

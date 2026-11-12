@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use proxiima::Proxiima;
-use proxiima_core::llm::BoundEmbeddingClient;
+use proxiima_core::embedding::BoundEmbeddingClient;
 use proxiima_core::test_fixtures::TestEmbeddingRouter;
 use proxiima_core::{OwnerId, Role, UserId};
 use proxiima_pg_testkit::db_url;

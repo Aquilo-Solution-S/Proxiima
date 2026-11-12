@@ -1,4 +1,4 @@
-use proxiima_core::llm::EmbeddingClient;
+use proxiima_core::embedding::EmbeddingClient;
 use proxiima_core::protocol::tool as protocol_tool;
 use proxiima_core::protocol::{action as protocol_action, resource as protocol_resource};
 
@@ -1204,7 +1204,7 @@ fn embedding_input_cap_defaults_and_allows_override() {
 /// running config is not the one they wrote.
 #[test]
 fn an_input_cap_below_the_rescue_floor_refuses_to_boot() {
-    let too_low = proxiima_core::llm::MIN_EMBED_INPUT_CAP_CHARS - 1;
+    let too_low = proxiima_core::embedding::MIN_EMBED_INPUT_CAP_CHARS - 1;
     let err = embedding_client_from_env(
         |key| match key {
             PROXIIMA_EMBED_BASE_URL => Some("http://127.0.0.1:11434/v1".to_string()),
@@ -1339,7 +1339,10 @@ fn maintenance_space_is_explicit_or_from_generic_env() {
     .expect("generic env model is accepted");
     assert_eq!(
         space,
-        proxiima_core::EmbeddingSpace::new("env-model", proxiima_core::llm::EmbeddingDim::D768)
+        proxiima_core::EmbeddingSpace::new(
+            "env-model",
+            proxiima_core::embedding::EmbeddingDim::D768
+        )
     );
     let err = maintenance_embedding_space(None, |_| None)
         .expect_err("there is no provider-specific default");

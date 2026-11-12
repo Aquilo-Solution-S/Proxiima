@@ -3,8 +3,8 @@ use crate::SchemaVersion;
 use crate::access::AccessKind;
 use crate::authz::EngineAuthority;
 use crate::edge::EdgeEndpoint;
+use crate::embedding::EmbeddingSpace;
 use crate::error::ProtocolError;
-use crate::llm::EmbeddingSpace;
 use crate::storage_ports::OwnerWritePermit;
 use crate::verbs::fact_ingest::{
     AuthorizedFactCore, AuthorizedFactWithCitation, AuthorizedFactWithCitationRef,

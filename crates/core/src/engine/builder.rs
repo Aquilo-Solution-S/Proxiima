@@ -21,7 +21,7 @@ impl Engine {
             delegation_runtime_binding: DelegationRuntimeBinding::fresh(),
             storage: EngineStoragePorts::from(storage),
             embedding_router: None,
-            embedding_runtime_policy: crate::llm::EmbeddingRuntimePolicy::default(),
+            embedding_runtime_policy: crate::embedding::EmbeddingRuntimePolicy::default(),
             embedding_control: super::embeddings::EmbeddingControl::default(),
             publication: crate::publication::PublicationConfig::default(),
             mcp_url: Arc::new(RwLock::new(None)),
@@ -101,7 +101,10 @@ impl Engine {
     /// embeds through the route of the Owner whose memories it touches.
     /// Without one, nothing is embedded and search is lexical.
     #[must_use]
-    pub fn with_embedding_router(mut self, router: Arc<dyn crate::llm::EmbeddingRouter>) -> Self {
+    pub fn with_embedding_router(
+        mut self,
+        router: Arc<dyn crate::embedding::EmbeddingRouter>,
+    ) -> Self {
         self.embedding_router = Some(router);
         self
     }
@@ -113,7 +116,7 @@ impl Engine {
     #[must_use]
     pub const fn with_embedding_runtime_policy(
         mut self,
-        policy: crate::llm::EmbeddingRuntimePolicy,
+        policy: crate::embedding::EmbeddingRuntimePolicy,
     ) -> Self {
         self.embedding_runtime_policy = policy;
         self
@@ -185,7 +188,7 @@ mod tests {
         }
 
         fn dim(&self) -> usize {
-            crate::llm::EmbeddingDim::D1024.width()
+            crate::embedding::EmbeddingDim::D1024.width()
         }
     }
 
@@ -204,7 +207,7 @@ mod tests {
         )
         .with_embedding_runtime_policy(policy)
         .with_embedding_router(Arc::new(
-            crate::llm::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
+            crate::embedding::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
                 .expect("supported lane"),
         ));
 

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use proxiima_core::PlaintextHosts;
-use proxiima_core::llm::{EmbeddingClient, LlmError};
+use proxiima_core::embedding::{EmbeddingClient, LlmError};
 use proxiima_core::models::EmbedCaps;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -576,7 +576,7 @@ async fn stalled_error_bodies_cannot_overwrite_captured_status_or_retry_after() 
         )
         .expect("loopback embedding endpoint");
         let (result, marker) = tokio::join!(
-            proxiima_core::llm::embed_with_timeout(&client, "test text", PATIENCE),
+            proxiima_core::embedding::embed_with_timeout(&client, "test text", PATIENCE),
             tokio::time::timeout(PATIENCE, headers_sent),
         );
         marker

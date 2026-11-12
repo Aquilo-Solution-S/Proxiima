@@ -1261,7 +1261,7 @@ impl Engine {
 
 /// Validate every chunk before storage can publish an embedding version.
 pub(in crate::engine) fn space_vectors(
-    bound: &crate::llm::BoundEmbeddingClient,
+    bound: &crate::embedding::BoundEmbeddingClient,
     vectors: Vec<Vec<f32>>,
 ) -> Result<Vec<crate::SpaceVector>, StorageError> {
     if vectors.is_empty() {
@@ -1278,7 +1278,7 @@ pub(in crate::engine) fn space_vectors(
 /// A vector the client returned, in its space. A width other than the one
 /// the client declared is a misconfiguration, never the input's fault.
 pub(in crate::engine) fn space_vector(
-    bound: &crate::llm::BoundEmbeddingClient,
+    bound: &crate::embedding::BoundEmbeddingClient,
     vector: Vec<f32>,
 ) -> Result<crate::SpaceVector, StorageError> {
     bound

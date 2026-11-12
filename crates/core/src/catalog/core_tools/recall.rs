@@ -577,11 +577,11 @@ fn require_cue(question: Option<&str>, subjects: &[String]) -> Result<(), ToolEr
 }
 
 async fn embed_query(
-    embed: &crate::llm::BoundEmbeddingClient,
+    embed: &crate::embedding::BoundEmbeddingClient,
     query: &str,
 ) -> Result<crate::SpaceVector, String> {
     embed
-        .embed_query(query, crate::llm::QueryTask::DEFAULT)
+        .embed_query(query, crate::embedding::QueryTask::DEFAULT)
         .await
         .map_err(|err| {
             tracing::warn!(error = %err, "embedding provider failed");
