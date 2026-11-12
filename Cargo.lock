@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -2179,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-auth-oidc"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -2199,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-blob-s3"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "aws-sdk-s3",
@@ -2221,7 +2221,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-core"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-dev-idp"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-dev-migrate"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "proxiima",
  "proxiima-core",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-example"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "proxiima",
  "proxiima-example",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-llm-openai-compat"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "futures",
@@ -2302,7 +2302,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-mcp"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-pg-testkit"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "proxiima-core",
  "sqlx",
@@ -2346,7 +2346,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-server"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "axum",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-spiice"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "proxiima-core",
  "proxiima-storage-pg",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "proxiima-storage-pg"
-version = "0.0.72"
+version = "0.0.73"
 dependencies = [
  "async-trait",
  "blake3",
