@@ -1,4 +1,3 @@
--- Generated current-name tutorial fixture; applied migrations remain immutable.
 -- proxiima-example baseline: a test and tutorial fixture, not a product.
 CREATE SCHEMA proxiima_example;
 CREATE TABLE proxiima_example.notebooks (

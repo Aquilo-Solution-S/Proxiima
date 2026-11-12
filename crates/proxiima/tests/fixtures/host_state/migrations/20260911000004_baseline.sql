@@ -31,3 +31,7 @@ CREATE TABLE host_fixture.deferred_reference (
         FOREIGN KEY (execution_id) REFERENCES host_fixture.execution(invocation_id)
         DEFERRABLE INITIALLY DEFERRED
 );
+
+SELECT proxiima_core.install_owner_rls_table('host_fixture', 'execution', 'owner_id');
+SELECT proxiima_core.install_owner_rls_table('host_fixture', 'auxiliary', 'owner_id');
+SELECT proxiima_core.install_owner_rls_table('host_fixture', 'deferred_reference', 'owner_id');

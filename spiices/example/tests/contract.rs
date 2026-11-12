@@ -49,6 +49,20 @@ fn the_one_tool_is_list_notebooks_and_it_reads() {
 }
 
 #[test]
+fn the_lane_baseline_begins_with_the_tutorial_baseline() {
+    let migrator = proxiima_example::migrator();
+    let lane = migrator
+        .iter()
+        .next()
+        .expect("the example lane has a baseline");
+    assert!(
+        lane.sql
+            .as_str()
+            .starts_with(proxiima_example::BASELINE_SQL)
+    );
+}
+
+#[test]
 fn the_installer_section_is_the_non_sidecar_tables_then_the_census() {
     let calls = proxiima_example::installer_calls();
     assert_eq!(calls.len(), 3, "{calls:?}");

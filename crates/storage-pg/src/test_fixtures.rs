@@ -100,6 +100,44 @@ pub async fn ensure_core_template(vectors: VectorStorage) -> Result<String, sqlx
     Ok(template)
 }
 
+/// Turn a store freshly installed from this tree into one at the previous
+/// head, the shape [`crate::run_core_migrations`] adopts: the column the
+/// baseline dropped is back, and the core ledger is exactly the previous
+/// head's, with its pgvector row when `vectors` is
+/// [`VectorStorage::Local`]. `pool` connects as the store's migration role.
+///
+/// # Errors
+///
+/// The database refusal of a statement.
+pub async fn stage_previous_head(
+    pool: &sqlx::PgPool,
+    vectors: VectorStorage,
+) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "ALTER TABLE proxiima_core.delegated_authority_grants
+             ADD COLUMN auth_epoch bigint NOT NULL DEFAULT 0",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DELETE FROM public._sqlx_migrations WHERE version <= $1")
+        .bind(crate::CORE_MIGRATION_VERSION_CEILING)
+        .execute(&mut *transaction)
+        .await?;
+    for (version, checksum) in crate::baseline::previous_head_rows(vectors) {
+        sqlx::query(
+            "INSERT INTO public._sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+             VALUES ($1, 'previous head', true, $2, 0)",
+        )
+        .bind(version)
+        .bind(checksum)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await
+}
+
 /// Create `name` already migrated through the full core template of a store
 /// with pgvector vectors, cloned from that template. Drop it with `drop_db`
 /// like any other test database.
@@ -476,9 +514,9 @@ pub async fn insert_delegated_grant<'e>(
         "INSERT INTO proxiima_core.delegated_authority_grants
              (delegation_id, subject_user_id, owner_id, tool_name,
               read_ceiling, write_ceiling, goal_access, administers,
-              expires_at, auth_epoch, issued_at, \"by\", via)
+              expires_at, issued_at, \"by\", via)
          VALUES ($1, $2, $3, 'core_remember', $4, $5, $6, $7,
-                 TIMESTAMPTZ '2030-01-01 00:00:00Z', 1,
+                 TIMESTAMPTZ '2030-01-01 00:00:00Z',
                  TIMESTAMPTZ '2026-01-01 00:00:00Z', $8, $9)",
     )
     .bind(delegation_id)

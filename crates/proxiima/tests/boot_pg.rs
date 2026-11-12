@@ -275,8 +275,8 @@ async fn unknown_pre_reset_ledger_surfaces_typed_reset_error_through_boot() {
         match err {
             ProxiimaError::SchemaResetRequired { details } => {
                 assert!(
-                    details.contains("reinstall") && details.contains("reset"),
-                    "reset details should name the schema mismatch, got: {details}"
+                    details.contains("migrate this store with v0.0.73 first"),
+                    "reset details should name the release to pass through, got: {details}"
                 );
             }
             other => {

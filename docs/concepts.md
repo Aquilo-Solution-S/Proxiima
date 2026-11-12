@@ -246,7 +246,7 @@ See [capability admission](host-integration.md#capability-admission).
 
 The store holds every role: the group role projection, Goal grants, and
 delegated grants store the five fields in one shape
-([migration 0067](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/migrations/0067_role_columns.sql),
+([the core baseline](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/migrations/0069_baseline.sql),
 [`role_columns.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/role_columns.rs)).
 
 | Mechanism | Purpose | Boundary |

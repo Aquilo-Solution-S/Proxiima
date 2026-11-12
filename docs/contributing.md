@@ -61,15 +61,23 @@ that statement; do not add an edge sidecar.
 
 ## Migrations
 
-Released migration files are immutable from v0.0.48 onward; a schema fix is a
+Released migration files are immutable from the release `RELEASE_EPOCH` names
+in `scripts/check-migrations.py`; a schema fix is a
 new migration whose version is above every released version in its directory.
 Definitions in `crates/storage-pg/definitions/` are edited in place.
 Run `scripts/check-migrations.py` before changing SQL.
-At a reset, number the new baseline above the old head, move mutable
-objects into definitions, and refuse every earlier ledger with
-`SchemaResetRequired`: pre-alpha stores install fresh, and no compatibility
-arm stays. Delete the replaced migration files, and prove the new baseline
-equals the old head's schema and seed rows. A migration that only a
+A baseline replaces the core migrations up to the previous release's head and
+is numbered above them; mutable objects stay in definitions. It installs a
+blank database and adopts a store whose core ledger is exactly the previous
+head: every version, every checksum, each row successful. The adoption applies
+the difference between the previous head and the baseline inside the migration
+transaction, before any migration runs, and records the baseline's ledger rows
+in place of the previous head's. A ledger that records the baseline continues
+from it. Every other ledger is refused with
+`SchemaResetRequired`, whose details name the release to migrate the store with
+first. The replaced files are deleted, and dumps of a fresh install show that
+the baseline's schema and seed rows equal the previous head's when the
+baseline lands. A migration that only a
 pgvector-backed store needs has a description starting with `pgvector`; a store
 with a host vector index skips it, and its definitions live in
 `definitions/vector.sql`.

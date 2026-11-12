@@ -2413,6 +2413,7 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
         seed_host_fact(pool, owner, fact, "snapshot-source", &[0x10, 0x20]).await;
         let delegation_id = Uuid::now_v7();
         let subject_id = Uuid::now_v7();
+        let revoker = Uuid::now_v7();
         create_source_cursor(pool, owner, "snapshot-source", vec![0xaa, 0xbb]).await?;
         let mut seed = pool.begin().await?;
         insert_delegated_grant(
@@ -2437,10 +2438,11 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
         .await?;
         sqlx::query(
             "UPDATE proxiima_core.delegated_authority_grants
-                SET auth_epoch = 2
+                SET revoked_by_user_id = $2
               WHERE delegation_id = $1",
         )
         .bind(delegation_id)
+        .bind(revoker)
         .execute(&mut *writer)
         .await?;
         sqlx::query(
@@ -2472,9 +2474,9 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
             Some(r"\xaabb")
         );
         assert_eq!(
-            before_snapshot.tables["proxiima_core.delegated_authority_grants"][0]["auth_epoch"]
-                .as_i64(),
-            Some(1)
+            before_snapshot.tables["proxiima_core.delegated_authority_grants"][0]
+                .get("revoked_by_user_id"),
+            Some(&Value::Null)
         );
         assert_eq!(
             before_snapshot.tables[FACTS_TABLE][0]["payload"].as_str(),
@@ -2489,9 +2491,10 @@ async fn export_snapshot_keeps_unfenced_cursor_and_grant_writes_coherent() {
             Some(r"\xccdd")
         );
         assert_eq!(
-            after_commit.tables["proxiima_core.delegated_authority_grants"][0]["auth_epoch"]
-                .as_i64(),
-            Some(2)
+            after_commit.tables["proxiima_core.delegated_authority_grants"][0]
+                ["revoked_by_user_id"]
+                .as_str(),
+            Some(revoker.to_string().as_str())
         );
         assert_eq!(
             after_commit.tables[FACTS_TABLE][0]["payload"].as_str(),

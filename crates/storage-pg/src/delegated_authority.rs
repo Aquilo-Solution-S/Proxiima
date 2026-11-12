@@ -49,15 +49,13 @@ impl DelegationStorePort for PgDelegationStore {
         // so the table has no `manage` column.
         let role = RoleColumns::of(grant.role_ceiling());
         let mut tx = self.platform.begin().await?;
-        // `auth_epoch` is NOT NULL and read by no one; the column goes at the
-        // next schema reset.
         sqlx::query(
             "INSERT INTO proxiima_core.delegated_authority_grants
                 (delegation_id, subject_user_id, owner_id,
                  tool_name, action_name, read_ceiling, write_ceiling,
                  goal_access, administers,
-                 expires_at, auth_epoch, issued_at, \"by\", via)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12)",
+                 expires_at, issued_at, \"by\", via)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(grant.delegation_id().into_uuid())
         .bind(grant.subject().into_inner())

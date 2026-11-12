@@ -333,19 +333,18 @@ pub async fn begin_migration_transaction(
     let (enforcing, safe, ownership_mismatch): (bool, bool, Option<String>) = sqlx::query_as(
         "SELECT EXISTS (
             SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-             WHERE (starts_with(n.nspname, 'proxiima_') OR starts_with(n.nspname, $1))
+             WHERE starts_with(n.nspname, 'proxiima_')
                AND (c.relname='owner_rls_epoch'
                     OR (c.relkind IN ('r','p') AND (c.relrowsecurity OR c.relforcerowsecurity)))
          ), NOT r.rolsuper AND NOT r.rolbypassrls, (
             SELECT format('%I.%I', n.nspname, c.relname)
               FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-             WHERE (starts_with(n.nspname, 'proxiima_') OR starts_with(n.nspname, $1))
+             WHERE starts_with(n.nspname, 'proxiima_')
                AND c.relkind IN ('r','p','v','m','f')
                AND NOT pg_has_role(current_user,c.relowner,'USAGE')
              ORDER BY n.nspname, c.relname LIMIT 1
          ) FROM pg_roles r WHERE r.rolname=current_user",
     )
-    .bind(crate::rename_bootstrap::historical_namespace_prefix())
     .fetch_one(&mut *tx)
     .await
     .map_err(map_err)?;
@@ -361,7 +360,6 @@ pub async fn begin_migration_transaction(
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
-    crate::rename_bootstrap::configure_history_scope(&mut tx).await?;
     Ok(tx)
 }
 

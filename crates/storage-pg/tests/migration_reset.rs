@@ -8,10 +8,10 @@ use proxiima_pg_testkit::{
 };
 use proxiima_storage_pg::{
     PgMigrationStorage, PgPoolConfig, PgTuning, VectorStorage, core_migrator_for, definitions,
-    ensure_core_schema_current,
+    ensure_core_schema_current, test_fixtures::stage_previous_head,
 };
 
-const BASELINE: &str = include_str!("../fixtures/0057_baseline.sql");
+const BASELINE: &str = include_str!("../migrations/0069_baseline.sql");
 
 /// Both store kinds, each with the database its roles are provisioned for.
 const KINDS: [VectorStorage; 2] = [VectorStorage::Local, VectorStorage::HostIndex];
@@ -537,5 +537,208 @@ async fn a_pre_reset_ledger_is_refused_and_left_as_it_was() {
                 "{vectors:?}: the refusal changed nothing"
             );
         }
+    }
+}
+
+/// A database that holds a schema of an earlier install and no core ledger
+/// row is not blank: the run refuses it and installs nothing beside it.
+#[tokio::test]
+async fn an_earlier_schema_without_a_ledger_is_refused() {
+    for vectors in KINDS {
+        let Some((_name, migration, _guard)) = migration_db("earlier", vectors).await else {
+            return;
+        };
+        let pool = migration.clone_pool_for_backend();
+        sqlx::query("CREATE SCHEMA proxima_core")
+            .execute(&pool)
+            .await
+            .expect("earlier schema");
+        let refusal = migration.run_migrations().await;
+        assert!(
+            matches!(refusal, Err(StorageError::SchemaResetRequired { .. })),
+            "{vectors:?}: {refusal:?}"
+        );
+        let installed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'proxiima_core')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("state");
+        assert!(!installed, "{vectors:?}: the refusal installed nothing");
+    }
+}
+
+/// The core ledger rows, `(version, checksum)`, and whether the column the
+/// baseline dropped exists.
+async fn core_state(pool: &sqlx::PgPool) -> (Vec<(i64, Vec<u8>)>, bool) {
+    let ledger = sqlx::query_as(
+        "SELECT version, checksum FROM public._sqlx_migrations
+          WHERE version <= 9999 ORDER BY version",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("ledger");
+    let column = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = 'proxiima_core'
+                           AND table_name = 'delegated_authority_grants'
+                           AND column_name = 'auth_epoch')",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("column");
+    (ledger, column)
+}
+
+async fn grant_ids(pool: &sqlx::PgPool) -> Vec<uuid::Uuid> {
+    let mut transaction = pool.begin().await.expect("transaction");
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+        .execute(&mut *transaction)
+        .await
+        .expect("platform scope");
+    sqlx::query_scalar(
+        "SELECT delegation_id FROM proxiima_core.delegated_authority_grants ORDER BY 1",
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .expect("grants")
+}
+
+/// The rows `sql` selects, each as one text value, read as the platform.
+async fn rows_as_text(pool: &sqlx::PgPool, sql: &'static str) -> Vec<String> {
+    let mut transaction = pool.begin().await.expect("transaction");
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+        .execute(&mut *transaction)
+        .await
+        .expect("platform scope");
+    sqlx::query_scalar(sql)
+        .fetch_all(&mut *transaction)
+        .await
+        .expect("rows")
+}
+
+/// Every core ledger row, whole.
+const LEDGER_ROWS: &str = "SELECT l::text FROM public._sqlx_migrations l
+     WHERE version <= 9999 ORDER BY version";
+/// Every delegated grant, whole.
+const GRANT_ROWS: &str = "SELECT to_jsonb(g)::text
+      FROM proxiima_core.delegated_authority_grants g ORDER BY delegation_id";
+/// Every delegated grant without the column the baseline drops.
+const GRANT_ROWS_OF_THE_BASELINE: &str = "SELECT (to_jsonb(g) - 'auth_epoch')::text
+      FROM proxiima_core.delegated_authority_grants g ORDER BY delegation_id";
+
+/// Stage a previous-head store on a fresh install and give it one delegated
+/// grant, whose id is returned.
+async fn previous_head_with_a_grant(pool: &sqlx::PgPool, vectors: VectorStorage) -> uuid::Uuid {
+    stage_previous_head(pool, vectors)
+        .await
+        .expect("previous head");
+    let grant = uuid::Uuid::now_v7();
+    let mut transaction = pool.begin().await.expect("transaction");
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+        .execute(&mut *transaction)
+        .await
+        .expect("platform scope");
+    proxiima_storage_pg::test_fixtures::insert_delegated_grant(
+        &mut *transaction,
+        grant,
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        None,
+    )
+    .await
+    .expect("grant");
+    transaction.commit().await.expect("commit");
+    grant
+}
+
+/// A store at the previous head is adopted in place by a migration run, its
+/// rows kept; the same store one migration short is refused and left as it
+/// was.
+#[tokio::test]
+async fn a_previous_head_store_is_adopted_and_a_shorter_one_refused() {
+    for vectors in KINDS {
+        let Some((_name, migration, _guard)) = migration_db("adopt", vectors).await else {
+            return;
+        };
+        migration.run_migrations().await.expect("fresh migration");
+        let pool = migration.clone_pool_for_backend();
+        let grant = previous_head_with_a_grant(&pool, vectors).await;
+        let short = migration_db("short", vectors).await.expect("database");
+        short.1.run_migrations().await.expect("fresh migration");
+        let short_pool = short.1.clone_pool_for_backend();
+
+        assert!(
+            matches!(
+                ensure_core_schema_current(
+                    &pool,
+                    proxiima_storage_pg::MissingMigrationPolicy::Reject,
+                    vectors
+                )
+                .await,
+                Err(StorageError::MigrationRequired { .. })
+            ),
+            "{vectors:?}: an adoptable store is not current before a run"
+        );
+        let grants = rows_as_text(&pool, GRANT_ROWS_OF_THE_BASELINE).await;
+        migration.run_migrations().await.expect("adoption");
+        assert_eq!(
+            rows_as_text(&pool, GRANT_ROWS_OF_THE_BASELINE).await,
+            grants,
+            "{vectors:?}: the adoption keeps every other value of the row"
+        );
+        let (ledger, column) = core_state(&pool).await;
+        assert_eq!(
+            ledger,
+            core_migrator_for(vectors)
+                .iter()
+                .map(|migration| (migration.version, migration.checksum.to_vec()))
+                .collect::<Vec<_>>(),
+            "{vectors:?}: the ledger is the baseline's"
+        );
+        assert!(!column, "{vectors:?}: the adoption drops the column");
+        assert_eq!(grant_ids(&pool).await, vec![grant], "{vectors:?}");
+        assert!(
+            definitions::current_matches(
+                &mut pool.acquire().await.expect("connection").detach(),
+                vectors
+            )
+            .await
+            .expect("definitions"),
+            "{vectors:?}"
+        );
+
+        let short_grant = previous_head_with_a_grant(&short_pool, vectors).await;
+        sqlx::query(
+            "DELETE FROM public._sqlx_migrations
+              WHERE version = (SELECT max(version) FROM public._sqlx_migrations)",
+        )
+        .execute(&short_pool)
+        .await
+        .expect("drop the newest row");
+        let before = (
+            core_state(&short_pool).await,
+            rows_as_text(&short_pool, LEDGER_ROWS).await,
+            rows_as_text(&short_pool, GRANT_ROWS).await,
+        );
+        let refusal = short.1.run_migrations().await;
+        assert!(
+            matches!(&refusal, Err(StorageError::SchemaResetRequired { details })
+                if details.contains("v0.0.73")),
+            "{vectors:?}: {refusal:?}"
+        );
+        let after = (
+            core_state(&short_pool).await,
+            rows_as_text(&short_pool, LEDGER_ROWS).await,
+            rows_as_text(&short_pool, GRANT_ROWS).await,
+        );
+        assert_eq!(before, after, "{vectors:?}: the refusal changed nothing");
+        assert!(after.0.1, "{vectors:?}: the column stays");
+        assert_eq!(
+            grant_ids(&short_pool).await,
+            vec![short_grant],
+            "{vectors:?}: the row stays"
+        );
     }
 }

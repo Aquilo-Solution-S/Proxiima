@@ -589,6 +589,11 @@ pub enum PendingMigration {
         description: String,
         checksum: Vec<u8>,
     },
+    /// Adopt a store whose core ledger is exactly the head of `release` into
+    /// the core baseline, in place and with its data, before core's
+    /// migrations run.
+    #[non_exhaustive]
+    AdoptPreviousHead { release: String },
     /// Replace the core functions, triggers and policies in place.
     #[non_exhaustive]
     CoreDefinitions { checksum: Vec<u8>, release: String },
@@ -603,9 +608,10 @@ pub enum PendingMigration {
 /// Pending embedded SQL and core definitions, applying nothing.
 ///
 /// `sources` is what `spiices` is to [`run_core_and_spiice_migrations`]; core
-/// is always first. Historical migrations run core then each
-/// source, followed by core finalization, current SQL and definitions, and
-/// consumer finalizers. Inside a ledger the run walks
+/// is always first. Core's adoption of a previous-head ledger, its migrations
+/// and its definitions come first, then each source's migrations, with
+/// pending schema evolutions placed where a run applies them. Inside a ledger
+/// the run walks
 /// the migrator (ascending by version for `sqlx::migrate!`). It follows the
 /// runner's rules, from the runner's helpers:
 ///
@@ -856,6 +862,9 @@ async fn plan_snapshot(
                         checksum: migration.checksum.into_owned(),
                     }
                 }
+                proxiima_storage_pg::CoreSchemaAction::AdoptPreviousHead { release } => {
+                    PendingMigration::AdoptPreviousHead { release }
+                }
                 proxiima_storage_pg::CoreSchemaAction::Definitions { checksum, release } => {
                     PendingMigration::CoreDefinitions { checksum, release }
                 }
@@ -873,60 +882,10 @@ fn order_pending_operations(
     lineup: &[&NamedMigrator],
     evolutions: &[SchemaEvolution],
 ) -> Result<Vec<PendingMigration>, MigrationError> {
-    let phases: BTreeMap<i64, (proxiima_storage_pg::MigrationPhase, bool)> = lineup
-        .iter()
-        .flat_map(|source| {
-            source.lane().into_iter().map(move |migration| {
-                (
-                    migration.version,
-                    (
-                        proxiima_storage_pg::migration_phase(source.migrator(), migration),
-                        source.source() == CORE_SOURCE,
-                    ),
-                )
-            })
-        })
-        .collect();
-    let mut historical = Vec::new();
-    let mut core_finalization = Vec::new();
-    let mut current = Vec::new();
-    let mut consumer_finalization = Vec::new();
-    for operation in plan {
-        let phase = match &operation {
-            PendingMigration::Sql { version, .. } => {
-                phases
-                    .get(version)
-                    .expect("planned migration belongs to its source")
-                    .0
-            }
-            PendingMigration::CoreDefinitions { .. } | PendingMigration::SchemaEvolution { .. } => {
-                proxiima_storage_pg::MigrationPhase::Current
-            }
-        };
-        match phase {
-            proxiima_storage_pg::MigrationPhase::Historical => historical.push(operation),
-            proxiima_storage_pg::MigrationPhase::Finalize => {
-                if matches!(&operation, PendingMigration::Sql { version, .. }
-                    if phases.get(version).expect("planned migration belongs to its source").1)
-                {
-                    core_finalization.push(operation);
-                } else {
-                    consumer_finalization.push(operation);
-                }
-            }
-            proxiima_storage_pg::MigrationPhase::Current => current.push(operation),
-        }
-    }
-    historical.extend(core_finalization);
     if evolutions.is_empty() {
-        historical.extend(current);
-    } else {
-        historical.extend(order_current_evolution_operations(
-            current, lineup, evolutions,
-        )?);
+        return Ok(plan);
     }
-    historical.extend(consumer_finalization);
-    Ok(historical)
+    order_current_evolution_operations(plan, lineup, evolutions)
 }
 
 fn order_current_evolution_operations(
@@ -951,7 +910,10 @@ fn order_current_evolution_operations(
                     by_source.entry(source).or_default().push(operation);
                 }
             }
-            PendingMigration::CoreDefinitions { .. } => core.push(operation),
+            PendingMigration::AdoptPreviousHead { .. }
+            | PendingMigration::CoreDefinitions { .. } => {
+                core.push(operation);
+            }
             PendingMigration::SchemaEvolution { id, .. } => {
                 pending_steps.insert(id, operation);
             }
@@ -1103,18 +1065,11 @@ async fn run_sources_on_connection(
     if !sidecars.schema_evolutions().is_empty() {
         return run_evolution_sources(conn, sources, sidecars, vectors).await;
     }
-    run_historical_sources(conn, sources, sidecars, vectors).await?;
     for source in sources {
         if source.source() != CORE_SOURCE {
             prepare_ledger(conn, source).await?;
         }
-        run_source_with_contention_retry(
-            conn,
-            source,
-            vectors,
-            proxiima_storage_pg::MigrationPhase::Current,
-        )
-        .await?;
+        run_source_with_contention_retry(conn, source, vectors).await?;
         if source.source() == CORE_SOURCE {
             prepare_ledger(conn, source).await?;
             sync_owner_follows(conn, sidecars)
@@ -1123,18 +1078,6 @@ async fn run_sources_on_connection(
                 .await
                 .map_err(execute_error)?;
         }
-    }
-    for source in sources
-        .iter()
-        .filter(|source| source.source() != CORE_SOURCE)
-    {
-        run_source_with_contention_retry(
-            conn,
-            source,
-            vectors,
-            proxiima_storage_pg::MigrationPhase::Finalize,
-        )
-        .await?;
     }
     let mut transaction = sync_owner_follows(conn, sidecars).await?;
     sidecars
@@ -1168,15 +1111,11 @@ async fn run_evolution_sources(
         .execute(&mut *transaction)
         .await
         .map_err(execute_error)?;
-    if historical_pending(transaction.as_mut(), sources).await? {
-        run_historical_transaction(&mut transaction, sources, sidecars, vectors).await?;
-    }
     if sources.iter().any(|source| source.source() == CORE_SOURCE) {
-        proxiima_storage_pg::run_core_phase(
+        proxiima_storage_pg::run_core_migrations(
             &mut transaction,
             MissingMigrationPolicy::Allow,
             vectors,
-            proxiima_storage_pg::MigrationPhase::Current,
         )
         .await
         .map_err(MigrationError::CorePreflight)?;
@@ -1233,13 +1172,6 @@ async fn run_evolution_sources(
     {
         let previous = applied.get(source.source()).copied().unwrap_or(i64::MIN);
         run_source_range(&mut transaction, source, vectors, previous, i64::MAX).await?;
-        proxiima_storage_pg::migrations_for_phase(
-            source.migrator(),
-            proxiima_storage_pg::MigrationPhase::Finalize,
-        )
-        .run_direct(None, transaction.as_mut(), false)
-        .await
-        .map_err(|error| source.run_error(error))?;
     }
     sidecars
         .sync_owner_follows(&mut transaction)
@@ -1267,10 +1199,7 @@ async fn run_source_range(
     lower_exclusive: i64,
     upper_inclusive: i64,
 ) -> Result<(), MigrationError> {
-    let migrations = proxiima_storage_pg::migrations_for_phase(
-        source.migrator(),
-        proxiima_storage_pg::MigrationPhase::Current,
-    );
+    let migrations = source.migrator();
     let selected = migrations
         .iter()
         .filter(|migration| {
@@ -1287,127 +1216,12 @@ async fn run_source_range(
         locking: migrations.locking,
         no_tx: migrations.no_tx,
         table_name: migrations.table_name.clone(),
-        create_schemas: migrations.create_schemas,
+        create_schemas: migrations.create_schemas.clone(),
     };
     filtered
         .run_direct(None, transaction.as_mut(), false)
         .await
         .map_err(|error| source.run_error(error))
-}
-
-async fn historical_pending(
-    conn: &mut PgConnection,
-    sources: &[NamedMigrator],
-) -> Result<bool, MigrationError> {
-    for source in sources {
-        source.require_transactional()?;
-        let rows = read_ledger(conn, source, &source.ledger(), true).await?;
-        let migrations =
-            unrecorded(&source.lane(), &rows).map_err(|error| source.run_error(error))?;
-        if migrations.into_iter().any(|migration| {
-            proxiima_storage_pg::migration_phase(source.migrator(), migration)
-                != proxiima_storage_pg::MigrationPhase::Current
-        }) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Replay historical lanes and restore the current catalog in one transaction.
-async fn run_historical_sources(
-    conn: &mut PgConnection,
-    sources: &[NamedMigrator],
-    sidecars: &PgSidecarRegistryFrozen,
-    vectors: VectorStorage,
-) -> Result<(), MigrationError> {
-    if !historical_pending(conn, sources).await? {
-        return Ok(());
-    }
-    let mut attempt = 1;
-    loop {
-        let mut transaction = proxiima_storage_pg::begin_migration_transaction(conn)
-            .await
-            .map_err(MigrationError::CorePreflight)?;
-        let result = run_historical_transaction(&mut transaction, sources, sidecars, vectors).await;
-        let result = match result {
-            Ok(()) => transaction.commit().await.map_err(execute_error),
-            Err(error) => {
-                transaction.rollback().await.map_err(execute_error)?;
-                Err(error)
-            }
-        };
-        match result {
-            Err(MigrationError::Core(ref err) | MigrationError::Spiice { ref err, .. })
-                if attempt < CATALOG_CONTENTION_ATTEMPTS && is_shared_catalog_contention(err) =>
-            {
-                tokio::time::sleep(CATALOG_CONTENTION_BACKOFF * attempt).await;
-                attempt += 1;
-            }
-            result => return result,
-        }
-    }
-}
-
-async fn run_historical_transaction(
-    transaction: &mut Transaction<'_, Postgres>,
-    sources: &[NamedMigrator],
-    sidecars: &PgSidecarRegistryFrozen,
-    vectors: VectorStorage,
-) -> Result<(), MigrationError> {
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(MIGRATION_LOCK_KEY)
-        .execute(transaction.as_mut())
-        .await
-        .map_err(execute_error)?;
-    for source in sources {
-        if source.source() == CORE_SOURCE {
-            proxiima_storage_pg::run_core_phase(
-                transaction,
-                MissingMigrationPolicy::Allow,
-                vectors,
-                proxiima_storage_pg::MigrationPhase::Historical,
-            )
-            .await
-            .map_err(MigrationError::CorePreflight)?;
-            sidecars
-                .sync_historical_owner_follows(transaction)
-                .await
-                .map_err(MigrationError::SidecarOwnerRls)?;
-        } else {
-            prepare_ledger(transaction.as_mut(), source).await?;
-            proxiima_storage_pg::migrations_for_phase(
-                source.migrator(),
-                proxiima_storage_pg::MigrationPhase::Historical,
-            )
-            .run_direct(None, transaction.as_mut(), false)
-            .await
-            .map_err(|error| source.run_error(error))?;
-        }
-        if source.source() == CORE_SOURCE {
-            prepare_ledger(transaction.as_mut(), source).await?;
-        }
-    }
-    proxiima_storage_pg::run_core_phase(
-        transaction,
-        MissingMigrationPolicy::Allow,
-        vectors,
-        proxiima_storage_pg::MigrationPhase::Finalize,
-    )
-    .await
-    .map_err(MigrationError::CorePreflight)?;
-    proxiima_storage_pg::run_core_phase(
-        transaction,
-        MissingMigrationPolicy::Allow,
-        vectors,
-        proxiima_storage_pg::MigrationPhase::Current,
-    )
-    .await
-    .map_err(MigrationError::CorePreflight)?;
-    sidecars
-        .sync_owner_follows(transaction)
-        .await
-        .map_err(MigrationError::SidecarOwnerRls)
 }
 
 async fn sync_owner_follows<'c>(
@@ -1460,7 +1274,6 @@ async fn run_source_with_contention_retry(
     conn: &mut PgConnection,
     source: &NamedMigrator,
     vectors: VectorStorage,
-    phase: proxiima_storage_pg::MigrationPhase,
 ) -> Result<(), MigrationError> {
     let mut attempt = 1;
     loop {
@@ -1498,11 +1311,10 @@ async fn run_source_with_contention_retry(
             .map_err(MigrationError::CorePreflight)?;
             let rows = read_ledger(&mut transaction, source, &source.ledger(), true).await?;
             unrecorded(&source.lane(), &rows).map_err(|err| source.run_error(err))?;
-            proxiima_storage_pg::run_core_phase(
+            proxiima_storage_pg::run_core_migrations(
                 &mut transaction,
                 MissingMigrationPolicy::Allow,
                 vectors,
-                phase,
             )
             .await
             .map_err(MigrationError::CorePreflight)?;
@@ -1511,7 +1323,8 @@ async fn run_source_with_contention_retry(
                 .await
                 .map_err(|err| source.run_error(MigrateError::Execute(err)));
         }
-        let result = proxiima_storage_pg::migrations_for_phase(source.migrator(), phase)
+        let result = source
+            .migrator()
             .run_direct(None, &mut *transaction, false)
             .await;
         let result = match result {
@@ -1616,9 +1429,6 @@ async fn prepare_ledger(
         .execute(tx.as_mut())
         .await
         .map_err(map_err)?;
-    let historical = historical_ledger_if_present(tx.as_mut(), &table_name)
-        .await
-        .map_err(map_err)?;
     let schemas = if is_core_ledger(&table_name) {
         &[][..]
     } else {
@@ -1638,9 +1448,8 @@ async fn prepare_ledger(
             .await
             .map_err(map_err)?;
     }
-    sqlx::query("SELECT set_config('proxiima.spiice_ledger', jsonb_build_object('current', $1::text, 'historical', $2::text)::text, true)")
+    sqlx::query("SELECT set_config('proxiima.spiice_ledger', $1, true)")
         .bind(&table_name)
-        .bind(historical.as_deref())
         .execute(tx.as_mut())
         .await
         .map_err(map_err)?;
@@ -1667,19 +1476,12 @@ const MIGRATION_LOCK_KEY: i64 = i64::from_be_bytes(*b"proxmigr");
 /// interpolates it in `ensure_migrations_table`.
 const PREPARE_LEDGER: &str = r"DO $prepare_ledger$
 DECLARE
-    ledger text := (current_setting('proxiima.spiice_ledger')::jsonb)->>'current';
-    historical_ledger text := (current_setting('proxiima.spiice_ledger')::jsonb)->>'historical';
-    identifiers text[];
+    ledger text := current_setting('proxiima.spiice_ledger');
     ledger_oid regclass;
     grantee oid;
 BEGIN
     IF to_regclass('public._sqlx_migrations') IS NULL THEN
         RAISE EXCEPTION 'core ledger public._sqlx_migrations is missing; core migrates first';
-    END IF;
-    IF historical_ledger IS NOT NULL AND to_regclass(ledger) IS NULL
-       AND to_regclass(historical_ledger) IS NOT NULL THEN
-        identifiers := parse_ident(ledger, true);
-        EXECUTE format('ALTER TABLE %s RENAME TO %I', historical_ledger, identifiers[cardinality(identifiers)]);
     END IF;
     IF to_regclass(ledger) IS DISTINCT FROM 'public._sqlx_migrations'::regclass THEN
         EXECUTE format('CREATE TABLE IF NOT EXISTS %s (LIKE public._sqlx_migrations INCLUDING ALL)', ledger);
@@ -1865,43 +1667,6 @@ fn ledger_versions(rows: &[LedgerRow]) -> Vec<i64> {
 /// plan. It reads what `SQLx`'s run reads (`list_applied_migrations`, every
 /// row whatever its `success`) and adds the `success` that its
 /// `dirty_version` reads separately.
-/// Resolve the old ledger only while the catalog finalizer is still unapplied.
-async fn historical_ledger_if_present(
-    conn: &mut PgConnection,
-    ledger: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    let historical = proxiima_storage_pg::historical_catalog_name(ledger);
-    if historical == ledger {
-        return Ok(None);
-    }
-    let candidate: bool = sqlx::query_scalar(
-        "SELECT to_regclass($1) IS NULL AND to_regclass($2) IS NOT NULL
-                AND to_regclass('public._sqlx_migrations') IS NOT NULL",
-    )
-    .bind(ledger)
-    .bind(&historical)
-    .fetch_one(&mut *conn)
-    .await?;
-    if !candidate {
-        return Ok(None);
-    }
-    let source = proxiima_storage_pg::core_migrator();
-    let finalizer = source
-        .iter()
-        .find(|migration| {
-            proxiima_storage_pg::migration_phase(&source, migration)
-                == proxiima_storage_pg::MigrationPhase::Finalize
-        })
-        .expect("embedded core catalog finalizer");
-    let catalog_is_current: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE version = $1 AND success)",
-    )
-    .bind(finalizer.version)
-    .fetch_one(&mut *conn)
-    .await?;
-    Ok((!catalog_is_current).then_some(historical))
-}
-
 async fn read_ledger(
     conn: &mut PgConnection,
     source: &NamedMigrator,
@@ -1913,10 +1678,6 @@ async fn read_ledger(
         ledger: ledger.to_owned(),
         err: MigrateError::Execute(err),
     };
-    let historical = historical_ledger_if_present(conn, ledger)
-        .await
-        .map_err(read_error)?;
-    let ledger = historical.as_deref().unwrap_or(ledger);
     if may_be_absent {
         let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(ledger)
@@ -2011,6 +1772,16 @@ async fn validate_ledgers(
                 }));
             }
         }
+        // Core rows below the baseline are a previous head that the core
+        // check above accepted for adoption; any other such row it refused.
+        let rows = if ledger.source.source() == CORE_SOURCE {
+            let baseline = ledger.source.lane_versions().first().copied();
+            rows.into_iter()
+                .filter(|row| baseline.is_none_or(|baseline| row.version >= baseline))
+                .collect()
+        } else {
+            rows
+        };
         check_recorded_versions(&ledger.versions, &rows, policy)
             .map_err(|err| ledger.source.run_error(err))?;
     }

@@ -146,11 +146,7 @@ def check_lifecycle_guc(findings: list[Finding]) -> None:
 # of the constructor (call, function value, struct literal, import).
 SQL_ESCAPE_NAMES = re.compile(r"\b(?:AssertSqlSafe|QueryBuilder)\b")
 SQL_ESCAPE_MODULE = "crates/core/src/sql_text.rs"
-SQL_ESCAPE_ALLOWED = (
-    SQL_ESCAPE_MODULE,
-    # Replays released migration text; goes with the schema reset.
-    "crates/storage-pg/src/rename_bootstrap.rs",
-)
+SQL_ESCAPE_ALLOWED = (SQL_ESCAPE_MODULE,)
 
 
 def sql_escape_users(files: dict[str, str]) -> list[tuple[str, int]]:
@@ -210,7 +206,7 @@ def check_sql_escape(findings: list[Finding]) -> None:
             Finding(
                 ROOT / rel,
                 line_no,
-                "sqlx::AssertSqlSafe and sqlx::QueryBuilder are named only in crates/core/src/sql_text.rs and crates/storage-pg/src/rename_bootstrap.rs; build the statement with proxiima_core::SqlText or SqlBuilder",
+                "sqlx::AssertSqlSafe and sqlx::QueryBuilder are named only in crates/core/src/sql_text.rs; build the statement with proxiima_core::SqlText or SqlBuilder",
                 line,
             )
         )
@@ -253,7 +249,6 @@ def run_self_test() -> int:
         failures.append("lifecycle scope: a second writer of app.proxiima_lifecycle was not detected (or a reader was)")
     sql_files = {
         SQL_ESCAPE_MODULE: "pub struct SqlText; fn seal(sql: String) { sqlx::AssertSqlSafe(sql); }",
-        "crates/storage-pg/src/rename_bootstrap.rs": "let q = sqlx::query(sqlx::AssertSqlSafe(sql));",
         "crates/x/src/call.rs": "let q = sqlx::query(sqlx::AssertSqlSafe(sql));",
         "crates/x/src/value.rs": "let q = sqls.map(sqlx::AssertSqlSafe);",
         "crates/x/src/literal.rs": "let q = sqlx::AssertSqlSafe { 0: sql };",

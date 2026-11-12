@@ -20,7 +20,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_EPOCH = "v0.0.48"
+RELEASE_EPOCH = "v0.0.74"
 RELEASE_TAG = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 MIGRATION_FILE = re.compile(r"^(?P<version>\d+)_[A-Za-z0-9][A-Za-z0-9_-]*\.sql$")
 MIGRATION_ROOT = re.compile(r"^(?:crates/storage-pg/migrations|spiices/[^/]+/migrations)/")

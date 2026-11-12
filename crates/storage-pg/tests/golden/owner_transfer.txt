@@ -36,7 +36,7 @@
 {"content_hash":"\\x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b","content_id":"<id040>","owner_id":"<id024>","schema_id":"core/agent-note-v1"}
 {"content_hash":"\\x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c","content_id":"<id041>","owner_id":"<id024>","schema_id":"core/agent-note-v1"}
 ## proxiima_core.delegated_authority_grants (1)
-{"action_name":null,"auth_epoch":1,"by":"<id042>","delegation_id":"<id043>","expires_at":"<ts031>","issued_at":"<ts030>","owner_id":"<id026>","read_ceiling":"fact","revoked_at":null,"revoked_by_user_id":null,"subject_user_id":"<id026>","tool_name":"core_remember","via":null,"write_ceiling":"fact"}
+{"action_name":null,"by":"<id042>","delegation_id":"<id043>","expires_at":"<ts031>","issued_at":"<ts030>","owner_id":"<id026>","read_ceiling":"fact","revoked_at":null,"revoked_by_user_id":null,"subject_user_id":"<id026>","tool_name":"core_remember","via":null,"write_ceiling":"fact"}
 ## proxiima_core.embedding_heads (9)
 {"dim":1024,"embedding_version":1,"entity_id":"<id016>","model_id":"test-embed","owner_id":"<id026>"}
 {"dim":1024,"embedding_version":1,"entity_id":"<id002>","model_id":"test-embed","owner_id":"<id044>"}
@@ -67,14 +67,6 @@
 {"chunk_ordinal":0,"dim":1024,"embedding_version":1,"entity_id":"<id008>","model_id":"test-embed","owner_id":"<id024>"}
 {"chunk_ordinal":0,"dim":1024,"embedding_version":1,"entity_id":"<id020>","model_id":"test-embed","owner_id":"<id024>"}
 {"chunk_ordinal":0,"dim":1024,"embedding_version":1,"entity_id":"<id022>","model_id":"test-embed","owner_id":"<id024>"}
-## proxiima_core.spiice_surface (7)
-{"spiice_id":"core","table_name":"proxiima_core.agent_derivation_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.agent_note_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.goal_change_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.interpretation_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.task_goal_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.utterance_v1"}
-{"spiice_id":"core","table_name":"proxiima_core.write_act_v1"}
 ## proxiima_core.goal (1)
 {"assignment_t":null,"by":"<id042>","close_fact_t":null,"dependency_t":[],"evidence_t":[],"handle":"<id045>","owner_id":"<id026>","parent_handle":null,"request_id":"req-1","schema_id":"core/task-goal-v1","state":"Active","t":"<id045>","title":"a goal","via":null,"write_act_t":null}
 ## proxiima_core.goal_change_v1 (0)
@@ -151,6 +143,14 @@
 {"cursor":"\\x3333333333333333","owner_id":"<id026>","source":"src-a","updated_at":"<ts073>"}
 {"cursor":"\\x3333333333333333","owner_id":"<id044>","source":"src-a","updated_at":"<ts073>"}
 {"cursor":"\\x3333333333333333","owner_id":"<id026>","source":"src-b","updated_at":"<ts073>"}
+## proxiima_core.spiice_surface (7)
+{"spiice_id":"core","table_name":"proxiima_core.agent_derivation_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.agent_note_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.goal_change_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.interpretation_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.task_goal_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.utterance_v1"}
+{"spiice_id":"core","table_name":"proxiima_core.write_act_v1"}
 ## proxiima_core.task_goal_v1 (0)
 ## proxiima_core.utterance_v1 (0)
 ## proxiima_core.write_act_v1 (0)

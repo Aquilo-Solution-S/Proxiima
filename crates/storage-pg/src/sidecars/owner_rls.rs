@@ -2,7 +2,7 @@ use sqlx::{PgConnection, Postgres, Transaction};
 
 use super::PgSidecarRegistryFrozen;
 use crate::error::map_err;
-use proxiima_core::{PgIdent, SqlText, StorageError};
+use proxiima_core::StorageError;
 
 impl PgSidecarRegistryFrozen {
     /// Synchronize sidecars whose owner follows memory in the caller's migration transaction.
@@ -38,40 +38,6 @@ impl PgSidecarRegistryFrozen {
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<(), StorageError> {
         sqlx::query("SELECT proxiima_core.reinstall_owner_rls()")
-            .execute(&mut **tx)
-            .await
-            .map_err(map_err)?;
-        Ok(())
-    }
-
-    /// Synchronize the frozen composition during transaction-local historical replay.
-    ///
-    /// # Errors
-    /// Propagates scope and database errors; the caller finalizes before committing.
-    #[doc(hidden)]
-    pub async fn sync_historical_owner_follows(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-    ) -> Result<(), StorageError> {
-        let schemas = self
-            .spiice_schema_names()
-            .iter()
-            .map(|name| crate::rename_bootstrap::historical_catalog_name(name))
-            .collect::<Vec<_>>();
-        let tables = self
-            .owner_follows_memory_sidecar_tables()
-            .iter()
-            .map(|name| crate::rename_bootstrap::historical_catalog_name(name))
-            .collect::<Vec<_>>();
-        let schema = PgIdent::name(&format!(
-            "{}core",
-            crate::rename_bootstrap::historical_namespace_prefix()
-        ))?;
-        let mut call = SqlText::new("SELECT ");
-        call.push_ident(&schema).push(".sync_owner_follows($1, $2)");
-        sqlx::query(call)
-            .bind(schemas)
-            .bind(tables)
             .execute(&mut **tx)
             .await
             .map_err(map_err)?;

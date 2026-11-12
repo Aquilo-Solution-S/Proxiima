@@ -79,6 +79,73 @@ async fn the_facade_refuses_a_pre_reset_ledger_everywhere() {
     assert_eq!(rows, 24, "the refusals changed nothing");
 }
 
+/// A store at the previous head: the plan shows its adoption into the
+/// baseline as one entry, serving refuses it until the migrate step runs, and
+/// after the run nothing is pending and serving accepts it.
+#[tokio::test]
+async fn an_adoptable_store_is_planned_refused_by_serving_and_adopted_by_the_run() {
+    let db = expect_described(
+        "owned PG required",
+        SplitRoleDb::create("proxiima_policy_adopt", &[]).await,
+    )
+    .await;
+    let pg = storage(&db).await;
+    pg.run_migrations().await.expect("fresh install");
+    let pool = pg.clone_pool_for_backend();
+    proxiima_storage_pg::test_fixtures::stage_previous_head(&pool, VectorStorage::Local)
+        .await
+        .expect("previous head");
+    let sidecars = proxiima::PgSidecarRegistryFrozen::default();
+
+    let plan = pending_migrations(&pool, &[], &sidecars, VectorStorage::Local)
+        .await
+        .expect("the plan reads an adoptable store");
+    assert!(
+        matches!(
+            plan.as_slice(),
+            [proxiima::host::PendingMigration::AdoptPreviousHead { release, .. }]
+                if release == "v0.0.73"
+        ),
+        "{plan:?}"
+    );
+    let refusal = preflight_without_migrations(&pg, Vec::new(), &sidecars)
+        .await
+        .expect_err("serving refuses a store the migrate step has not adopted");
+    assert!(
+        matches!(
+            &refusal,
+            MigrationError::CorePreflight(StorageError::MigrationRequired { .. })
+        ),
+        "got: {refusal}"
+    );
+
+    run_core_and_spiice_migrations(&pg, Vec::new(), &sidecars)
+        .await
+        .expect("the run adopts the store");
+    assert!(
+        pending_migrations(&pool, &[], &sidecars, VectorStorage::Local)
+            .await
+            .expect("plan")
+            .is_empty()
+    );
+    preflight_without_migrations(&pg, Vec::new(), &sidecars)
+        .await
+        .expect("serving accepts the adopted store");
+    let recorded: Vec<i64> = sqlx::query_scalar(
+        "SELECT version FROM public._sqlx_migrations WHERE version <= 9999 ORDER BY version",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("ledger");
+    assert_eq!(
+        recorded,
+        core_migrator()
+            .iter()
+            .map(|migration| migration.version)
+            .collect::<Vec<_>>()
+    );
+}
+
 fn source(id: &'static str, version: i64, shared: bool) -> NamedMigrator {
     let migrator = Migrator {
         migrations: Cow::Owned(vec![Migration::new(

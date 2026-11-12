@@ -1,6 +1,6 @@
 //! The mutable core functions, triggers, policies and views pass.
 
-use proxiima_core::{PgIdent, RELEASE_VERSION, Relation, SqlText, StorageError};
+use proxiima_core::{RELEASE_VERSION, Relation, SqlText, StorageError};
 use sha2::{Digest, Sha384};
 use sqlx::PgConnection;
 
@@ -268,59 +268,6 @@ pub async fn current_matches_with_policy(
         Some(AppliedDefinitions::Current { checksum }) => checksum == checksum_hex(vectors),
         None => false,
     })
-}
-
-/// Invalidate a historical definitions record restored during catalog
-/// finalization so the current definitions bundle is reapplied.
-pub(crate) async fn invalidate_replayed_definitions(
-    connection: &mut PgConnection,
-    policy: crate::MissingMigrationPolicy,
-) -> Result<(), StorageError> {
-    if matches!(
-        AppliedDefinitions::read(connection, policy).await?,
-        Some(AppliedDefinitions::Current { .. })
-    ) {
-        sqlx::query("DROP FUNCTION IF EXISTS proxiima_core.definitions_applied()")
-            .execute(&mut *connection)
-            .await
-            .map_err(internal)?;
-    }
-    Ok(())
-}
-
-/// Preserve the release refusal while replaying the immutable historical catalog.
-pub(crate) async fn validate_historical_release(
-    connection: &mut PgConnection,
-    policy: crate::MissingMigrationPolicy,
-) -> Result<(), StorageError> {
-    let function = PgIdent::table(&format!(
-        "{}core.definitions_applied",
-        crate::rename_bootstrap::historical_namespace_prefix()
-    ))?;
-    let exists: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
-        .bind(format!("{}()", function.as_str()))
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(internal)?;
-    if !exists {
-        return Ok(());
-    }
-    let mut read = SqlText::new("SELECT release FROM ");
-    read.push_ident(&function).push("()");
-    let release: Option<String> = sqlx::query_scalar(read)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(internal)?;
-    if let Some(release) = release {
-        let recorded = Release::parse(&release)?;
-        let binary = Release::parse(RELEASE_VERSION)?;
-        if recorded > binary && policy == crate::MissingMigrationPolicy::Reject {
-            return Err(StorageError::Internal(format!(
-                "database definitions were applied by newer release {release}; this binary is {RELEASE_VERSION}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

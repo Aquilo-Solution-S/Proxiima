@@ -102,22 +102,18 @@ to their runtime role. Candidate functions use indexes; ordinary memory RLS gate
 and score. Goal visibility functions resolve exact publications and bound
 series without widening the principal's owner roles.
 
-A store installed before the rename (core migration 61) has its candidate
-functions owned by the earlier search role, `proxima_search`. Keep the platform
-role's `SET` membership in that role until the store is migrated: migration 61
-drops those functions as their owner and clears the role's default privileges
-and schema grants; the definitions pass recreates the functions as
-`proxiima_search`. If `proxima_search` owns anything else in the store, the
-migration refuses and names the `REASSIGN OWNED` statement for a superuser to
-run. Login and operator roles keep their names, whatever words they contain.
-
-Released migrations are immutable. The core migrations restart at
-`0057_baseline.sql` in v0.0.48; the pgvector column and indexes are
-`0058_pgvector_local_vectors.sql`, which a store with a host vector index never
+Released migrations are immutable. The core migrations start at
+`0069_baseline.sql`; the pgvector column and indexes are
+`0070_pgvector_local_vectors.sql`, which a store with a host vector index never
 applies (`RuntimeBuilder::vector_index`, or `--host-vector-index` for
-`dev-migrate`). There is no upgrade path from a database installed earlier:
-boot refuses it with `SchemaResetRequired`, and the store is installed fresh
-(export what you keep first). A database migrated by a newer release refuses an older
+`dev-migrate`). The migrate step installs the baseline into a blank database
+and adopts, in place and with its data, a store whose core ledger is exactly
+the head the baseline replaced; until it runs, the plan lists that adoption and
+boot refuses the store as not migrated. A store that records the baseline
+continues from it. A store with any other core ledger is
+refused with `SchemaResetRequired`, whose details name the release to migrate
+it with first; the release notes carry the same name. A database migrated by a
+newer release refuses an older
 binary unless the host [allows missing migration versions](configuration.md);
 then the older binary leaves newer core definitions in place. The migrate step
 appends pending migrations to an existing supported database; a migration checksum mismatch

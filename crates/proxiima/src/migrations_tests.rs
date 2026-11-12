@@ -270,6 +270,7 @@ fn evolution_preview_orders_source_sql_around_steps() {
             .map(|operation| match operation {
                 PendingMigration::Sql { version, .. } => version.to_string(),
                 PendingMigration::SchemaEvolution { id, .. } => (*id).to_owned(),
+                PendingMigration::AdoptPreviousHead { .. } => "adopt".to_owned(),
                 PendingMigration::CoreDefinitions { .. } => "definitions".to_owned(),
             })
             .collect::<Vec<_>>(),

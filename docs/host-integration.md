@@ -260,8 +260,11 @@ Migration ledgers are checked before any schema change. A recorded version
 must be shipped by a composed source using that same ledger; sources sharing
 a ledger are checked as one set. Separate ledgers are never populated from
 another ledger.
-Databases with old copies recorded on both shared and separate ledgers also
-require a reset; there is no copy-cutover compatibility path.
+A core ledger that records the baseline continues from it. A core ledger that
+is exactly the head the baseline replaced is adopted: the migrate step brings
+that store onto the baseline in place. Any other core ledger that is not blank
+is refused with `SchemaResetRequired`, whose details name the release to
+migrate the store with first.
 
 A host that deliberately shares a database between releases can explicitly set
 `RuntimeBuilder::missing_migration_policy(MissingMigrationPolicy::Allow)`.

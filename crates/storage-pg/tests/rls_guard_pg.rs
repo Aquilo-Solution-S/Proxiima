@@ -4,8 +4,8 @@ use proxiima_core::{
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, provision_goal_reader, unique_db_name};
 use proxiima_storage_pg::{
-    MigrationPhase, PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgTuning,
-    assert_runtime_rls, begin_owner_transaction, migrations_for_phase,
+    PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgTuning, assert_runtime_rls,
+    begin_owner_transaction,
 };
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -441,39 +441,14 @@ async fn setup_full_schema() -> (String, PgPool, PgPool, PgPool, String, String,
     let mut transaction = proxiima_storage_pg::begin_migration_transaction(&mut connection)
         .await
         .unwrap();
-    proxiima_storage_pg::run_core_phase(
+    proxiima_storage_pg::run_core_migrations(
         &mut transaction,
         proxiima_storage_pg::MissingMigrationPolicy::Reject,
         proxiima_storage_pg::VectorStorage::Local,
-        proxiima_storage_pg::MigrationPhase::Historical,
     )
     .await
     .unwrap();
-    migrations_for_phase(&spiice_migrations, MigrationPhase::Historical)
-        .run_direct(None, transaction.as_mut(), false)
-        .await
-        .unwrap();
-    proxiima_storage_pg::run_core_phase(
-        &mut transaction,
-        proxiima_storage_pg::MissingMigrationPolicy::Reject,
-        proxiima_storage_pg::VectorStorage::Local,
-        proxiima_storage_pg::MigrationPhase::Finalize,
-    )
-    .await
-    .unwrap();
-    proxiima_storage_pg::run_core_phase(
-        &mut transaction,
-        proxiima_storage_pg::MissingMigrationPolicy::Reject,
-        proxiima_storage_pg::VectorStorage::Local,
-        proxiima_storage_pg::MigrationPhase::Current,
-    )
-    .await
-    .unwrap();
-    migrations_for_phase(&spiice_migrations, MigrationPhase::Current)
-        .run_direct(None, transaction.as_mut(), false)
-        .await
-        .unwrap();
-    migrations_for_phase(&spiice_migrations, MigrationPhase::Finalize)
+    spiice_migrations
         .run_direct(None, transaction.as_mut(), false)
         .await
         .unwrap();

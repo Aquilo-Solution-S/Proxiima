@@ -40,10 +40,6 @@ use crate::pgvector::set_hnsw_search_sql;
 #[doc(hidden)]
 pub mod access;
 mod baseline;
-mod rename_bootstrap;
-pub use rename_bootstrap::{
-    MigrationPhase, historical_catalog_name, migration_phase, migrations_for_phase, run_core_phase,
-};
 #[doc(hidden)]
 pub mod definitions;
 mod delegated_authority;
@@ -176,6 +172,9 @@ impl VectorStorage {
 pub enum CoreSchemaAction {
     /// Apply an embedded `SQLx` migration.
     Migration(sqlx::migrate::Migration),
+    /// Adopt a store whose core ledger is exactly the head of `release` into
+    /// the baseline, in place and with its data.
+    AdoptPreviousHead { release: String },
     /// Replace the mutable definitions bundle.
     Definitions { checksum: Vec<u8>, release: String },
 }
@@ -209,7 +208,7 @@ pub fn core_migrator_for(vectors: VectorStorage) -> sqlx::migrate::Migrator {
 
 struct CoreSchemaState {
     migrator: sqlx::migrate::Migrator,
-    recorded: std::collections::BTreeSet<i64>,
+    ledger: baseline::CoreLedger,
 }
 
 impl CoreSchemaState {
@@ -240,12 +239,12 @@ impl CoreSchemaState {
             .next()
             .expect("embedded core baseline")
             .version;
-        let mut recorded = std::collections::BTreeSet::new();
+        let mut ledger = Vec::with_capacity(rows.len());
         for (version, checksum, success) in rows {
-            if !success {
-                return Err(internal(sqlx::migrate::MigrateError::Dirty(version)));
-            }
             if version >= first_version {
+                if !success {
+                    return Err(internal(sqlx::migrate::MigrateError::Dirty(version)));
+                }
                 if let Some(migration) = migrator
                     .iter()
                     .find(|migration| migration.version == version)
@@ -261,22 +260,35 @@ impl CoreSchemaState {
                     )));
                 }
             }
-            recorded.insert(version);
+            ledger.push(baseline::LedgerRow {
+                version,
+                checksum,
+                success,
+            });
         }
-        let has_schema: bool = if recorded.contains(&first_version) {
+        let has_schema: bool = if ledger.iter().any(|row| row.version == first_version) {
             true
         } else {
             sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_namespace
                  WHERE starts_with(nspname, 'proxiima_') OR starts_with(nspname, $1))",
             )
-            .bind(rename_bootstrap::historical_namespace_prefix())
+            .bind(baseline::EARLIER_SCHEMA_PREFIX)
             .fetch_one(&mut *connection)
             .await
             .map_err(internal)?
         };
-        baseline::check(&recorded, has_schema, first_version)?;
-        Ok(Self { migrator, recorded })
+        let ledger = baseline::classify(&ledger, has_schema, first_version)?;
+        Ok(Self { migrator, ledger })
+    }
+
+    /// The core migrations a store of this kind still applies once its ledger
+    /// is adopted, if it needs it.
+    fn pending(&self, vectors: VectorStorage) -> impl Iterator<Item = &sqlx::migrate::Migration> {
+        let recorded = self.ledger.recorded(&self.migrator);
+        self.migrator.iter().filter(move |migration| {
+            vectors.applies(migration) && !recorded.contains(&migration.version)
+        })
     }
 }
 
@@ -295,11 +307,17 @@ pub async fn pending_core_schema(
 ) -> Result<Vec<CoreSchemaAction>, StorageError> {
     let state = CoreSchemaState::read(connection, policy).await?;
     let mut actions = Vec::new();
-    for migration in state.migrator.iter() {
-        if vectors.applies(migration) && !state.recorded.contains(&migration.version) {
-            actions.push(CoreSchemaAction::Migration(migration.clone()));
-        }
+    if let baseline::CoreLedger::PreviousHead(_) = state.ledger {
+        actions.push(CoreSchemaAction::AdoptPreviousHead {
+            release: baseline::PASS_THROUGH_RELEASE.to_owned(),
+        });
     }
+    actions.extend(
+        state
+            .pending(vectors)
+            .cloned()
+            .map(CoreSchemaAction::Migration),
+    );
     if !definitions::current_matches_with_policy(connection, policy, vectors).await? {
         actions.push(CoreSchemaAction::Definitions {
             checksum: definitions::checksum_bytes(vectors),
@@ -309,8 +327,33 @@ pub async fn pending_core_schema(
     Ok(actions)
 }
 
-/// Run the core `SQLx` migrations a store of this kind applies, then its
-/// definitions. The transaction holds the migration lock until commit.
+/// Run the core schema inside the caller's migration transaction, which holds
+/// the migration lock: classify the core ledger, adopt a store at the previous
+/// head into the baseline, apply the core migrations a store of this kind
+/// applies, then its definitions.
+///
+/// # Errors
+///
+/// Refuses incompatible ledgers or definitions and propagates SQL failures.
+pub async fn run_core_migrations(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    policy: MissingMigrationPolicy,
+    vectors: VectorStorage,
+) -> Result<(), StorageError> {
+    let connection = transaction.as_mut();
+    let state = CoreSchemaState::read(connection, policy).await?;
+    if let baseline::CoreLedger::PreviousHead(head) = state.ledger {
+        baseline::adopt(connection, head, &state.migrator).await?;
+    }
+    core_migrator_for(vectors)
+        .run_direct(None, &mut *connection, false)
+        .await
+        .map_err(internal)?;
+    definitions::apply(connection, policy, vectors).await
+}
+
+/// [`run_core_migrations`] under the migration lock it takes itself. The
+/// transaction holds the lock until commit.
 ///
 /// This is test support: a deployment migrates through the facade's migrate
 /// step.
@@ -334,22 +377,12 @@ pub async fn run_core_schema(
     policy: MissingMigrationPolicy,
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
-    let connection = transaction.as_mut();
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(i64::from_be_bytes(*b"proxmigr"))
-        .execute(&mut *connection)
+        .execute(transaction.as_mut())
         .await
         .map_err(internal)?;
-    let state = CoreSchemaState::read(connection, policy).await?;
-    let source = core_migrator_for(vectors);
-    if source.iter().any(|migration| {
-        migration_phase(&source, migration) != MigrationPhase::Current
-            && !state.recorded.contains(&migration.version)
-    }) {
-        run_core_phase(transaction, policy, vectors, MigrationPhase::Historical).await?;
-        run_core_phase(transaction, policy, vectors, MigrationPhase::Finalize).await?;
-    }
-    run_core_phase(transaction, policy, vectors, MigrationPhase::Current).await
+    run_core_migrations(transaction, policy, vectors).await
 }
 
 /// Check core ledger compatibility on the caller's connection and policy.
@@ -361,10 +394,11 @@ pub async fn run_core_schema(
 ///
 /// # Errors
 ///
-/// Refuses unsupported pre-reset ledgers, untracked schemas and changed
-/// migration checksums. [`MissingMigrationPolicy::Reject`] also refuses
-/// unknown current versions; the baseline and known checksums are mandatory
-/// under both policies.
+/// Refuses unsupported ledgers, untracked schemas and changed migration
+/// checksums. [`MissingMigrationPolicy::Reject`] also refuses unknown current
+/// versions; the baseline and known checksums are mandatory under both
+/// policies. A store at the previous head is accepted: a migration run adopts
+/// it, and this check changes nothing.
 pub async fn ensure_core_ledger_compatible_on_connection_with_policy(
     connection: &mut PgConnection,
     policy: MissingMigrationPolicy,
@@ -391,12 +425,16 @@ pub async fn ensure_core_schema_current(
     let mut transaction = begin_migration_transaction(&mut connection).await?;
     let result = async {
         let state = CoreSchemaState::read(&mut transaction, policy).await?;
+        if let baseline::CoreLedger::PreviousHead(_) = state.ledger {
+            return Err(StorageError::MigrationRequired {
+                details: format!(
+                    "the core ledger is the head of {}; a migration run adopts it",
+                    baseline::PASS_THROUGH_RELEASE
+                ),
+            });
+        }
         let pending: Vec<i64> = state
-            .migrator
-            .iter()
-            .filter(|migration| {
-                vectors.applies(migration) && !state.recorded.contains(&migration.version)
-            })
+            .pending(vectors)
             .map(|migration| migration.version)
             .collect();
         if !pending.is_empty() {

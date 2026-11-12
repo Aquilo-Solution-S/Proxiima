@@ -30,7 +30,9 @@ pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")
 }
 
-/// The current-name baseline SQL for tutorial variants; the migrator retains historical SQL.
+/// The tutorial baseline: the lane's baseline without the stamp sidecar, for
+/// tutorial variants that compose [`EXAMPLE_BASELINE_CONTRACT`]. The lane's
+/// baseline begins with this text.
 pub const BASELINE_SQL: &str = include_str!("../fixtures/20261018000011_baseline.sql");
 
 const OWNER_RLS_BEGIN: &str = "-- owner-rls: begin\n";

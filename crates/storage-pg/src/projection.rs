@@ -20,7 +20,7 @@
 //!
 //! Two consumers, deliberately:
 //!
-//! 1. **The migration author.** The core baseline (`migrations/0033_baseline.sql`)
+//! 1. **The migration author.** The core baseline (`migrations/0069_baseline.sql`)
 //!    carries the table and index output; `definitions/triggers.sql` carries
 //!    the language trigger, while each spiice baseline carries its own table
 //!    and index. The generator-output tests pin those contracts so a change
