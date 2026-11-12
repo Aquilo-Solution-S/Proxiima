@@ -182,6 +182,10 @@ async fn main() -> Result<(), proxiima::ProxiimaError> {
 }
 ```
 
+A host that sets options in code, beyond `SpiiceApp::configure`, passes them to
+`Proxiima::configure(|b| b.owner(owner))`; they win over the environment layer
+and over `SpiiceApp::configure`.
+
 `Proxiima::migrate` is the host's migrate step and the only path that changes
 the schema: it resolves the configuration as `build()` does, applies every
 pending core and spiice migration, initializes the store number, and applies

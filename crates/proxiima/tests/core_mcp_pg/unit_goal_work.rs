@@ -30,11 +30,13 @@ async fn an_episode_goal_follows_goal_work_not_administration() {
         let ingest = OwnerId::from(UserId::new(Uuid::now_v7()));
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(worker)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(worker)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

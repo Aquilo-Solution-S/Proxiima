@@ -68,17 +68,19 @@ async fn multi_owner_sessions_bind_owner_palette_and_revocation()
     )?;
 
     let running = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.multi-owner.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+        .configure(|b| {
+            b.served_surface(proxiima_core::ServedSurface::All)
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.multi-owner.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
+                })
+                .mcp_bind("127.0.0.1:0".parse().unwrap())
         })
-        .mcp_bind("127.0.0.1:0".parse().unwrap())
         .run()
         .await?;
 
@@ -303,17 +305,19 @@ async fn multi_owner_core_transfer_needs_admin_on_both_owners_through_the_http_e
     // deployment palette has to be the full surface for it to be served at
     // all — the first thing that must hold for the verb to be reachable.
     let running = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.multi-owner.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+        .configure(|b| {
+            b.served_surface(proxiima_core::ServedSurface::All)
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.multi-owner.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
+                })
+                .mcp_bind("127.0.0.1:0".parse().unwrap())
         })
-        .mcp_bind("127.0.0.1:0".parse().unwrap())
         .run()
         .await?;
 

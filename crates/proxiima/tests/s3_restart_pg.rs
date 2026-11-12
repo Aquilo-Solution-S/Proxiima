@@ -611,17 +611,21 @@ async fn boot(
     let (runtime_url, platform_url) = split_role_urls(database).await?;
     migrated_app::migrate_app::<CoreApp>(&platform_url).await;
     let mut app = Proxiima::<CoreApp>::app()
-        .database_url(runtime_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(runtime_url)
+                .store_number(0)
+                .platform_database_url(platform_url)
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+        })
         // These tests observe debt and expiry, then drive the pass by hand;
         // the runtime's own drain would race them.
-        .object_purge_interval(std::time::Duration::ZERO)
-        .pg_pool_config(fixture_pool_config());
+        .configure(|b| {
+            b.object_purge_interval(std::time::Duration::ZERO)
+                .pg_pool_config(fixture_pool_config())
+        });
     if let Some(s3) = s3 {
-        app = app.s3(s3);
+        app = app.configure(|b| b.s3(s3));
     }
     described("boot", app.build().await).await
 }

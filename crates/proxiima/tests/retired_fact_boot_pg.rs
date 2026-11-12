@@ -389,16 +389,17 @@ impl Fixture {
         }
     }
     fn app(&self, probe: &Probe, skip: bool) -> Proxiima<App> {
-        let app = Proxiima::<App>::app()
-            .database_url(self.db.runtime_url())
-            .platform_database_url(self.db.platform_url())
-            .store_number(0)
-            .owner(self.owner)
-            .authenticator(Arc::new(Auth(self.owner)))
-            .served_surface(ServedSurface::All)
-            .pg_pool_config(example_engine::engine_pool_config())
-            .services(SpiiceServices::with(probe.clone()))
-            .host_state_participant(Arc::new(probe.clone()));
+        let app = Proxiima::<App>::app().configure(|b| {
+            b.database_url(self.db.runtime_url())
+                .platform_database_url(self.db.platform_url())
+                .store_number(0)
+                .owner(self.owner)
+                .authenticator(Arc::new(Auth(self.owner)))
+                .served_surface(ServedSurface::All)
+                .pg_pool_config(example_engine::engine_pool_config())
+                .services(SpiiceServices::with(probe.clone()))
+                .host_state_participant(Arc::new(probe.clone()))
+        });
         let _ = skip;
         app
     }
@@ -533,7 +534,12 @@ async fn run_with_out_of_band_migrations_uses_validated_split_role_pools_before_
         .await
         .unwrap();
     let mut tasks = JoinSet::new();
-    tasks.spawn(fixture.app(&probe, true).mcp_bind(address).run());
+    tasks.spawn(
+        fixture
+            .app(&probe, true)
+            .configure(|b| b.mcp_bind(address))
+            .run(),
+    );
     tokio::time::timeout(PATIENCE, async {
         tokio::select! {
             () = probe.0.entered.notified() => {},

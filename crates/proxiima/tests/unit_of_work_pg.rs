@@ -92,12 +92,14 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
         let admin_pool = sqlx::PgPool::connect(&db_url(&db_name)).await?;
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let authz = built.single_owner_authz().expect("single owner");
@@ -312,12 +314,14 @@ async fn typed_goal_pending_foreign_perspective_rejects_cross_owner_assignment()
         let owner_a = company_owner(Uuid::now_v7());
         let owner_b = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner_a)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner_a)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let authz = proxiima_core::test_fixtures::authenticated_context(

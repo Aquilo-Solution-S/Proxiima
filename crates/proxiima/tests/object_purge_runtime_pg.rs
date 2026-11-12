@@ -89,12 +89,13 @@ async fn app(database: &str, owner: OwnerId) -> TestResult<Proxiima<CoreApp>> {
     let (runtime_url, platform_url) =
         described("split roles", split_role_urls(database).await).await?;
     migrated_app::migrate_app::<CoreApp>(&platform_url).await;
-    Ok(Proxiima::<CoreApp>::app()
-        .database_url(runtime_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .served_surface(ServedSurface::All))
+    Ok(Proxiima::<CoreApp>::app().configure(|b| {
+        b.database_url(runtime_url)
+            .store_number(0)
+            .platform_database_url(platform_url)
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+    }))
 }
 
 /// A server with an object store, health endpoints and no host code.
@@ -103,15 +104,18 @@ async fn serve(
     owner: OwnerId,
     s3: S3RuntimeConfig,
 ) -> TestResult<(RunningProxiima, String)> {
+    let bind = "127.0.0.1:0".parse()?;
     let running = described(
         "serve",
         app(database, owner)
             .await?
-            .s3(s3)
-            .object_purge_interval(TICK)
-            .authenticator(Arc::new(NoBearer))
-            .mcp_bind("127.0.0.1:0".parse()?)
-            .health_endpoints(true)
+            .configure(|b| {
+                b.s3(s3)
+                    .object_purge_interval(TICK)
+                    .authenticator(Arc::new(NoBearer))
+                    .mcp_bind(bind)
+                    .health_endpoints(true)
+            })
             .run()
             .await,
     )
@@ -255,8 +259,7 @@ async fn owe_an_erase(
         "boot",
         app(database, owner)
             .await?
-            .s3(config.clone())
-            .object_purge_interval(Duration::ZERO)
+            .configure(|b| b.s3(config.clone()).object_purge_interval(Duration::ZERO))
             .build()
             .await,
     )
@@ -446,8 +449,7 @@ async fn a_zero_interval_turns_the_drain_off() -> TestResult<()> {
             "boot",
             app(&database, owner)
                 .await?
-                .s3(config.clone())
-                .object_purge_interval(Duration::ZERO)
+                .configure(|b| b.s3(config.clone()).object_purge_interval(Duration::ZERO))
                 .build()
                 .await,
         )
@@ -510,7 +512,12 @@ async fn a_server_refuses_to_start_over_another_stores_debt() -> TestResult<()> 
         .execute(&admin)
         .await?;
         let configured = config.object_store_id()?.to_string();
-        let Err(refused) = app(&database, owner).await?.s3(config).build().await else {
+        let Err(refused) = app(&database, owner)
+            .await?
+            .configure(|b| b.s3(config))
+            .build()
+            .await
+        else {
             return Err("startup must be refused over another store's debt".into());
         };
         let refused = refused.to_string();

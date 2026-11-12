@@ -239,18 +239,20 @@ async fn oidc_host_auth_serves_tools_list() -> Result<(), Box<dyn std::error::Er
     )?;
 
     let running = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .owner(OwnerId::from(subject))
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.end-to-end.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+        .configure(|b| {
+            b.served_surface(proxiima_core::ServedSurface::All)
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .owner(OwnerId::from(subject))
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.end-to-end.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
+                })
+                .mcp_bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
         })
-        .mcp_bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
         .run()
         .await?;
     let addr = running.mcp_addr().ok_or("missing MCP listener address")?;
@@ -628,21 +630,22 @@ async fn idempotency_conflict_names_existing_on_mcp_and_rest()
         owner_access,
     )?;
 
-    let app = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .owner(OwnerId::from(subject))
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.end-to-end.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
-        })
-        .mcp_bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0));
+    let app = Proxiima::<ProxiimaMcpApp>::app().configure(|b| {
+        b.served_surface(proxiima_core::ServedSurface::All)
+            .database_url(runtime_url.clone())
+            .store_number(0)
+            .platform_database_url(platform_url.clone())
+            .owner(OwnerId::from(subject))
+            .authenticator(Arc::new(authn))
+            .resource_metadata(ResourceServerMetadata {
+                public_url: "https://proxiima.end-to-end.test".to_string(),
+                authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                additional_scopes: Vec::new(),
+            })
+            .mcp_bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+    });
     #[cfg(feature = "rest")]
-    let app = app.rest_enabled(true);
+    let app = app.configure(|b| b.rest_enabled(true));
     let running = app.run().await?;
     let addr = running.mcp_addr().ok_or("missing MCP listener address")?;
     let client = reqwest::Client::new();

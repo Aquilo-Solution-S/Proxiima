@@ -31,11 +31,13 @@ async fn a_memory_reads_the_same_from_search_and_by_id() {
         let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(personal)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -183,11 +185,13 @@ async fn lineage_think_and_recall_name_each_memorys_own_space() {
         let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(personal)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

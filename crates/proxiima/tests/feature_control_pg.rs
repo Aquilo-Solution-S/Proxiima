@@ -190,29 +190,30 @@ impl World {
 
     fn app(&self, worker_interval: Duration) -> Proxiima<BareApp> {
         self.base_app(worker_interval)
-            .embed_client(self.client.clone())
+            .configure(|b| b.embed_client(self.client.clone()))
     }
 
     fn base_app(&self, worker_interval: Duration) -> Proxiima<BareApp> {
-        Proxiima::<BareApp>::app()
-            .database_url(self.db.runtime_url())
-            .store_number(0)
-            .platform_database_url(self.db.platform_url())
-            .owner(self.owner)
-            .authenticator(Arc::new(StubAuth {
-                subject: self.subject,
-                owner: self.owner,
-            }))
-            .served_surface(ServedSurface::All)
-            .embedding_runtime_policy(
-                proxiima::EmbeddingRuntimePolicy::new(
-                    Duration::from_mins(2),
-                    32,
-                    worker_interval,
-                    Duration::from_mins(15),
+        Proxiima::<BareApp>::app().configure(|b| {
+            b.database_url(self.db.runtime_url())
+                .store_number(0)
+                .platform_database_url(self.db.platform_url())
+                .owner(self.owner)
+                .authenticator(Arc::new(StubAuth {
+                    subject: self.subject,
+                    owner: self.owner,
+                }))
+                .served_surface(ServedSurface::All)
+                .embedding_runtime_policy(
+                    proxiima::EmbeddingRuntimePolicy::new(
+                        Duration::from_mins(2),
+                        32,
+                        worker_interval,
+                        Duration::from_mins(15),
+                    )
+                    .expect("embedding policy"),
                 )
-                .expect("embedding policy"),
-            )
+        })
     }
 
     /// Accept a write: it enqueues one embedding job.
@@ -343,9 +344,11 @@ async fn configuration_fault_health_tracks_the_worker_and_clears_after_rebinding
         "host runs with a configured client",
         world
             .base_app(Duration::from_hours(1))
-            .embedding_router(router.clone())
-            .mcp_bind("127.0.0.1:0".parse().unwrap())
-            .health_endpoints(true)
+            .configure(|b| {
+                b.embedding_router(router.clone())
+                    .mcp_bind("127.0.0.1:0".parse().unwrap())
+                    .health_endpoints(true)
+            })
             .run()
             .await,
     )
@@ -435,8 +438,10 @@ async fn a_quiescent_worker_claims_nothing_while_serving_continues_and_resume_dr
         "run",
         world
             .app(Duration::from_hours(1))
-            .mcp_bind("127.0.0.1:0".parse().expect("loopback bind"))
-            .health_endpoints(true)
+            .configure(|b| {
+                b.mcp_bind("127.0.0.1:0".parse().expect("loopback bind"))
+                    .health_endpoints(true)
+            })
             .run()
             .await,
     )

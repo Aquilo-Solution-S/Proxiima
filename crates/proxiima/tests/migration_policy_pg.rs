@@ -402,13 +402,14 @@ async fn the_runtime_passes_its_explicit_policy_to_migrating_and_read_only_boot(
     let pg = storage(&db).await;
     let owner = proxiima::company_owner(uuid::Uuid::now_v7());
     let host = || {
-        Proxiima::<PolicyHost>::app()
-            .database_url(db.runtime_url())
-            .store_number(0)
-            .platform_database_url(db.platform_url())
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+        Proxiima::<PolicyHost>::app().configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(owner)
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+        })
     };
     host().migrate().await.expect("migrated core");
     sqlx::query("INSERT INTO public._sqlx_migrations (version, description, success, checksum, execution_time) VALUES (9000, 'other release', true, ''::bytea, 0)")

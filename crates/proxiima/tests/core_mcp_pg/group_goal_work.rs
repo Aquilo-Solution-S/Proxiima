@@ -50,11 +50,13 @@ async fn group_members_work_group_goals_without_writing_group_memory() {
         let outsider = OwnerId::from(UserId::new(Uuid::now_v7()));
         let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(viewer)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(viewer)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

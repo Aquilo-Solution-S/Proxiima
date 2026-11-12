@@ -252,11 +252,13 @@ async fn boot(database: &str, owner: OwnerId) -> TestResult<BuiltProxiima> {
     let (runtime_url, platform_url) = split_role_urls(database).await?;
     migrated_app::migrate_app::<CoreApp>(&platform_url).await;
     Ok(Proxiima::<CoreApp>::app()
-        .database_url(runtime_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(runtime_url)
+                .store_number(0)
+                .platform_database_url(platform_url)
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await?)
 }

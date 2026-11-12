@@ -54,15 +54,16 @@ async fn boot_fixture(
     participant: Option<Arc<dyn PgHostStateParticipant>>,
 ) -> Result<proxiima::BuiltProxiima, Box<dyn std::error::Error>> {
     migrated_app::migrate_app::<HostFixtureApp>(platform_url).await;
-    let mut app = Proxiima::<HostFixtureApp>::app()
-        .database_url(db_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All);
+    let mut app = Proxiima::<HostFixtureApp>::app().configure(|b| {
+        b.database_url(db_url)
+            .store_number(0)
+            .platform_database_url(platform_url)
+            .owner(owner)
+            .allow_insecure_single_owner()
+            .served_surface(ServedSurface::All)
+    });
     if let Some(participant) = participant {
-        app = app.host_state_participant(participant);
+        app = app.configure(|b| b.host_state_participant(participant));
     }
     Ok(app.build().await?)
 }

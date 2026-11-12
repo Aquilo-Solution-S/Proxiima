@@ -391,12 +391,14 @@ async fn write_and_read_a_note<F: SpiiceApp + 'static>(db: &SplitRoleDb, expect:
         .expect("explicit migration before serving");
     let owner = company_owner(Uuid::now_v7());
     let built = Proxiima::<F>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(owner)
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect(expect);
@@ -502,12 +504,14 @@ async fn a_table_added_without_a_call_refuses_boot() {
     migrated_app::migrate_app::<kit_forgotten_table::KitForgottenTableSpiice>(db.platform_url())
         .await;
     let refused = Proxiima::<kit_forgotten_table::KitForgottenTableSpiice>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(company_owner(Uuid::now_v7()))
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(company_owner(Uuid::now_v7()))
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect_err("a table without the policies must refuse the boot");
@@ -561,12 +565,14 @@ async fn a_spiice_definer_view_refuses_boot_and_names_the_view() {
         .expect("PG required");
     migrated_app::migrate_app::<kit_definer_view::KitDefinerViewSpiice>(db.platform_url()).await;
     let refused = Proxiima::<kit_definer_view::KitDefinerViewSpiice>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(company_owner(Uuid::now_v7()))
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(company_owner(Uuid::now_v7()))
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect_err("an ordinary definer view must refuse split-role boot");
@@ -587,12 +593,14 @@ async fn a_spiice_invoker_view_boots_and_hides_other_owners() {
     let owner = company_owner(Uuid::now_v7());
     let other = company_owner(Uuid::now_v7());
     let built = Proxiima::<kit_invoker_view::KitInvokerViewSpiice>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(owner)
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect("a security_invoker view passes split-role boot");

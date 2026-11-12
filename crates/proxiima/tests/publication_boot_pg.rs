@@ -237,12 +237,14 @@ async fn a_listenable_schema_without_a_bound_source_refuses_the_boot() {
 
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let refused = Proxiima::<ListenableApp>::app()
-            .database_url(db_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(company_owner(Uuid::now_v7()))
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(company_owner(Uuid::now_v7()))
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await
             .err()
@@ -255,13 +257,15 @@ async fn a_listenable_schema_without_a_bound_source_refuses_the_boot() {
 
         // The same deployment, with a source, boots.
         let built = Proxiima::<ListenableApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(company_owner(Uuid::now_v7()))
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
-            .publication(PublicationConfig::new(source()))
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(company_owner(Uuid::now_v7()))
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+                    .publication(PublicationConfig::new(source()))
+            })
             .build()
             .await?;
         built.shutdown().await;
@@ -318,12 +322,14 @@ async fn the_publication_env_block_is_read_and_validated_by_the_facade() {
                 ("PROXIIMA_OUTBOX_MAX_PENDING", "12"),
                 ("PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES", "4096"),
             ]))?
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(company_owner(Uuid::now_v7()))
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(company_owner(Uuid::now_v7()))
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let limits = built.host().engine().publication_config().limits;
@@ -360,13 +366,15 @@ async fn an_unauthorized_listenable_write_captures_nothing() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<ListenableApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
-            .publication(PublicationConfig::new(source()))
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+                    .publication(PublicationConfig::new(source()))
+            })
             .build()
             .await?;
         let authz = proxiima_core::test_fixtures::authenticated_context(
@@ -466,18 +474,20 @@ async fn the_configured_payload_ceiling_is_the_one_capture_enforces() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<ListenableApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
-            .publication(
-                PublicationConfig::new(source()).with_limits(PublicationLimits {
-                    max_pending: proxiima_core::publication::DEFAULT_MAX_PENDING,
-                    max_payload_bytes: 4096,
-                }),
-            )
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+                    .publication(
+                        PublicationConfig::new(source()).with_limits(PublicationLimits {
+                            max_pending: proxiima_core::publication::DEFAULT_MAX_PENDING,
+                            max_payload_bytes: 4096,
+                        }),
+                    )
+            })
             .build()
             .await?;
         let authz = proxiima_core::test_fixtures::authenticated_context(

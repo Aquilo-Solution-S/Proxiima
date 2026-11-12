@@ -267,10 +267,12 @@ async fn exercise_full_registry_erase(
 
     let (runtime_url, platform_url) = common::split_roles(database_url).await?;
     Proxiima::<FullRegistryApp>::app()
-        .database_url(&runtime_url)
-        .store_number(0)
-        .platform_database_url(&platform_url)
-        .served_surface(proxiima::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(&runtime_url)
+                .store_number(0)
+                .platform_database_url(&platform_url)
+                .served_surface(proxiima::ServedSurface::All)
+        })
         .migrate()
         .await?;
     let platform_pool = sqlx::PgPool::connect(&platform_url).await?;
@@ -297,13 +299,15 @@ async fn exercise_full_registry_erase(
     .await?;
     let owner_scope = authz.owner_scope().expect("verified owner scope").clone();
     let built = Proxiima::<FullRegistryApp>::app()
-        .database_url(&runtime_url)
-        .store_number(0)
-        .platform_database_url(&platform_url)
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(proxiima::ServedSurface::All)
-        .host_state_participant(Arc::new(Participant(Arc::new(Lifecycle))))
+        .configure(|b| {
+            b.database_url(&runtime_url)
+                .store_number(0)
+                .platform_database_url(&platform_url)
+                .owner(owner)
+                .allow_insecure_single_owner()
+                .served_surface(proxiima::ServedSurface::All)
+                .host_state_participant(Arc::new(Participant(Arc::new(Lifecycle))))
+        })
         .build()
         .await?;
     let pool = sqlx::PgPool::connect(database_url).await?;

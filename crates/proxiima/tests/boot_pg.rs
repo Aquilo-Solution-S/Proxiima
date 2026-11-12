@@ -268,11 +268,7 @@ async fn unknown_pre_reset_ledger_surfaces_typed_reset_error_through_boot() {
         let owner = company_owner(Uuid::now_v7());
 
         let err = Proxiima::<GoalTestApp>::app()
-            .database_url(db_url.clone())
-            .store_number(0)
-            .platform_database_url(db_url.clone())
-            .owner(owner)
-            .served_surface(ServedSurface::All)
+            .configure(|b| b.database_url(db_url.clone()).store_number(0).platform_database_url(db_url.clone()).owner(owner).served_surface(ServedSurface::All))
             .build()
             .await
             .expect_err("stale ledger must fail closed through build()");
@@ -308,14 +304,17 @@ async fn facade_run_with_custom_auth_needs_no_separate_owner_access() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let subject = UserId::new(Uuid::now_v7());
+        let bind = "127.0.0.1:0".parse()?;
         let running = Proxiima::<GoalTestApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .authenticator(Arc::new(TestAuthenticator { subject, owner }))
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:0".parse()?)
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .authenticator(Arc::new(TestAuthenticator { subject, owner }))
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind(bind)
+            })
             .run()
             .await?;
 
@@ -377,11 +376,13 @@ async fn facade_owner_drop_proof_gates_personal_erase() {
         let system = AuthzContext::for_subject(UserId::new(Uuid::now_v7()), AuthPath::System);
 
         let without = Proxiima::<GoalTestApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let payload = drain_note("a dropped person's fact");
@@ -409,15 +410,17 @@ async fn facade_owner_drop_proof_gates_personal_erase() {
         without.shutdown().await;
 
         let with = Proxiima::<GoalTestApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .owner_drop_proof(Arc::new(DroppedPerson {
-                user,
-                drop_event_id: "drop-1",
-            }))
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .owner_drop_proof(Arc::new(DroppedPerson {
+                        user,
+                        drop_event_id: "drop-1",
+                    }))
+            })
             .build()
             .await?;
         let engine = with.host().engine();
@@ -461,24 +464,27 @@ async fn facade_boot_exposes_pg_sidecars_and_drains_embedding_jobs_with_no_extra
         let owner = company_owner(Uuid::now_v7());
         let model_id = "facade-drain-embed";
         let inspection = sqlx::PgPool::connect(&db_url(&db_name)).await?;
+        let drain_policy = proxiima::EmbeddingRuntimePolicy::new(
+            Duration::from_mins(2),
+            32,
+            Duration::from_secs(1),
+            Duration::from_mins(15),
+        )?;
         let built = Proxiima::<GoalTestApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .embed_client(Arc::new(ConstantEmbedding::prefixed(
-                model_id,
-                &[0.25, 0.5, 0.75],
-            )))
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .embed_client(Arc::new(ConstantEmbedding::prefixed(
+                        model_id,
+                        &[0.25, 0.5, 0.75],
+                    )))
+            })
             // The worker's first pass finds the queue empty and idles one
             // interval; the default (5 s) would race the 5 s drain deadline.
-            .embedding_runtime_policy(proxiima::EmbeddingRuntimePolicy::new(
-                Duration::from_mins(2),
-                32,
-                Duration::from_secs(1),
-                Duration::from_mins(15),
-            )?)
+            .configure(|b| b.embedding_runtime_policy(drain_policy))
             .build()
             .await?;
         let note_key = PgSidecarKey::new(
@@ -528,18 +534,19 @@ async fn boot_rejects_embedding_client_with_unsupported_width() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let app = || {
-            Proxiima::<GoalTestApp>::app()
-                .database_url(runtime_url.clone())
-                .store_number(0)
-                .platform_database_url(platform_url.clone())
-                .owner(owner)
-                .served_surface(ServedSurface::All)
+            Proxiima::<GoalTestApp>::app().configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+            })
         };
 
         // A width no lane indexes must fail fast at boot with Config,
         // before any job is claimed and then refused at insert.
         let err = app()
-            .embed_client(Arc::new(FixedDimEmbedding::new("unlaned", 512)))
+            .configure(|b| b.embed_client(Arc::new(FixedDimEmbedding::new("unlaned", 512))))
             .build()
             .await
             .expect_err("an unsupported embedding width must be rejected at boot");
@@ -562,10 +569,12 @@ async fn boot_rejects_embedding_client_with_unsupported_width() {
             FixedDimEmbedding::new("lane-768", 768),
         ))?;
         let err = app()
-            .embed_client(Arc::new(FixedDimEmbedding::new("lane-768", 768)))
-            .embedding_router(Arc::new(proxiima_core::llm::SingleClientRouter::new(
-                lane_768,
-            )))
+            .configure(|b| {
+                b.embed_client(Arc::new(FixedDimEmbedding::new("lane-768", 768)))
+                    .embedding_router(Arc::new(proxiima_core::llm::SingleClientRouter::new(
+                        lane_768,
+                    )))
+            })
             .build()
             .await
             .expect_err("a client and a router together must be rejected at boot");
@@ -576,7 +585,7 @@ async fn boot_rejects_embedding_client_with_unsupported_width() {
 
         // A supported width other than the 1024 default boots.
         let booted = app()
-            .embed_client(Arc::new(FixedDimEmbedding::new("lane-768", 768)))
+            .configure(|b| b.embed_client(Arc::new(FixedDimEmbedding::new("lane-768", 768))))
             .build()
             .await?;
         let route = booted.host().engine().embedding_route(&owner).await?;

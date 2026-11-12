@@ -10,7 +10,7 @@ Public tiers:
 2. Extension API for spiice authors: selected re-exports from core/storage ports.
 
 `PgPoolConfig` is the programmatic pool-policy block. Set it with
-`RuntimeBuilder::pg_pool_config` / `Proxiima::pg_pool_config`, or resolve the
+`RuntimeBuilder::pg_pool_config` (reached through `Proxiima::configure`), or resolve the
 same `PROXIIMA_PG_*` variables through `Proxiima::from_lookup`.
 
 See `src/lib.rs` rustdoc and [`../../docs/host-integration.md`](../../docs/host-integration.md).

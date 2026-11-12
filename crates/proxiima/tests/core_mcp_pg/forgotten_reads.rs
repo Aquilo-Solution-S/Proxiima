@@ -39,11 +39,13 @@ async fn recall_through_a_forgotten_subject_returns_nothing_for_it() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -262,12 +264,7 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         // with no embedding client, so the vector below is the only one.
         let router = Arc::new(TestEmbeddingRouter::default());
         let second = Proxiima::<AgentMemoryApp>::app()
-            .database_url(second_db.runtime_url().to_owned())
-            .store_number(1)
-            .platform_database_url(second_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .embedding_router(router.clone());
+            .configure(|b| b.database_url(second_db.runtime_url().to_owned()).store_number(1).platform_database_url(second_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All).embedding_router(router.clone()));
         second.migrate().await?;
         let second = second.build().await?;
         let tools = second.host().core_mcp_tools();
@@ -324,16 +321,11 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         // Store 0 reads store 1 through its port, and derives from the
         // memory while it is readable.
         let first = Proxiima::<AgentMemoryApp>::app()
-            .database_url(first_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(first_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(Arc::new(ForwardTo {
+            .configure(|b| b.database_url(first_db.runtime_url().to_owned()).store_number(0).platform_database_url(first_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All).other_stores(Arc::new(ForwardTo {
                 tools: tools.clone(),
                 owner,
                 authz: authz.clone(),
-            }))
+            })))
             .build()
             .await?;
         let first_tools = first.host().core_mcp_tools();
@@ -469,11 +461,13 @@ async fn a_new_write_cannot_cite_a_forgotten_memory() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -584,11 +578,7 @@ async fn replaying_a_derived_write_after_forget_answers_forgotten_and_does_not_r
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(split_db.runtime_url().to_owned()).store_number(0).platform_database_url(split_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -695,11 +685,13 @@ async fn goal_evidence_naming_a_forgotten_memory_is_refused_as_absent() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -804,11 +796,7 @@ async fn goal_evidence_naming_a_forgotten_fact_is_refused_as_absent() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(split_db.runtime_url().to_owned()).store_number(0).platform_database_url(split_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -942,11 +930,13 @@ async fn replaying_a_forgotten_older_version_answers_forgotten_and_does_not_revi
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1091,11 +1081,13 @@ async fn a_changed_remember_after_forget_conflicts_and_new_key_supersedes() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1203,11 +1195,13 @@ async fn utterance_and_episode_replays_say_the_memory_is_forgotten() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1273,11 +1267,7 @@ async fn an_episode_replay_over_a_forgotten_remembered_fact_answers_as_a_replay(
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(split_db.runtime_url().to_owned()).store_number(0).platform_database_url(split_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1344,11 +1334,7 @@ async fn a_new_stance_on_a_forgotten_replay_slot_is_refused() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(split_db.runtime_url().to_owned()).store_number(0).platform_database_url(split_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1468,11 +1454,13 @@ async fn a_new_goal_on_a_forgotten_replay_slot_says_entry_not_found() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

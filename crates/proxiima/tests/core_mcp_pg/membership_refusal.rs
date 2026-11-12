@@ -17,11 +17,13 @@ async fn a_manager_adding_a_group_to_itself_is_refused_as_invalid_input() {
     let manager = OwnerId::from(UserId::new(Uuid::now_v7()));
     let group = OwnerId::from(GroupId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .platform_database_url(split_db.platform_url().to_owned())
-        .store_number(0)
-        .owner(manager)
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .platform_database_url(split_db.platform_url().to_owned())
+                .store_number(0)
+                .owner(manager)
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect("host builds");

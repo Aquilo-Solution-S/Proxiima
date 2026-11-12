@@ -205,14 +205,15 @@ impl SpiiceApp for ExampleApp {
 }
 
 fn app(runtime_url: String, platform_url: Option<String>, owner: OwnerId) -> Proxiima<ExampleApp> {
-    let app = Proxiima::<ExampleApp>::app()
-        .store_number(0)
-        .database_url(runtime_url)
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .pg_pool_config(PgPoolConfig::default());
+    let app = Proxiima::<ExampleApp>::app().configure(|b| {
+        b.store_number(0)
+            .database_url(runtime_url)
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+            .pg_pool_config(PgPoolConfig::default())
+    });
     match platform_url {
-        Some(platform_url) => app.platform_database_url(platform_url),
+        Some(platform_url) => app.configure(|b| b.platform_database_url(platform_url)),
         None => app,
     }
 }
@@ -360,12 +361,14 @@ async fn assert_insecure_single_owner_roundtrip(owner: OwnerId) {
     let built = expect_described(
         "insecure single-owner boot with enforcing split roles",
         Proxiima::<ExampleApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await,
     )
@@ -606,15 +609,17 @@ async fn split_role_boot_bounds_the_platform_pool_by_the_pool_config() {
     let booted = expect_described(
         "split-role boot with a two-connection pool policy",
         Proxiima::<ExampleApp>::app()
-            .store_number(0)
-            .database_url(runtime_url)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .pg_pool_config(PgPoolConfig {
-                max_connections: 2,
-                statement_timeout: std::time::Duration::from_millis(7_250),
-                ..PgPoolConfig::default()
+            .configure(|b| {
+                b.store_number(0)
+                    .database_url(runtime_url)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .pg_pool_config(PgPoolConfig {
+                        max_connections: 2,
+                        statement_timeout: std::time::Duration::from_millis(7_250),
+                        ..PgPoolConfig::default()
+                    })
             })
             .build()
             .await,

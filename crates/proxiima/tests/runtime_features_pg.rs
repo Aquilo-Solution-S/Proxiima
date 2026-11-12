@@ -271,11 +271,13 @@ async fn an_unconfigured_boot_starts_nothing_and_says_why_per_feature() {
     let captured = captured();
 
     let built = Proxiima::<BareApp>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(company_owner(Uuid::now_v7()))
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(company_owner(Uuid::now_v7()))
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect("bare boot");
@@ -320,25 +322,30 @@ async fn build_and_run_start_every_configured_feature_and_shutdown_joins_them() 
     let subject = UserId::new(Uuid::now_v7());
     let app = || {
         let app = Proxiima::<WorkerApp>::app()
-            .database_url(db.runtime_url())
-            .store_number(0)
-            .platform_database_url(db.platform_url())
-            .owner(owner)
-            .authenticator(Arc::new(StubAuth { subject, owner }))
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:0".parse().expect("loopback bind"))
-            .embed_client(Arc::new(ConstantEmbedding::prefixed(
-                "features-embed",
-                &[0.25, 0.5, 0.75],
-            )))
+            .configure(|b| {
+                b.database_url(db.runtime_url())
+                    .store_number(0)
+                    .platform_database_url(db.platform_url())
+                    .owner(owner)
+                    .authenticator(Arc::new(StubAuth { subject, owner }))
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:0".parse().expect("loopback bind"))
+                    .embed_client(Arc::new(ConstantEmbedding::prefixed(
+                        "features-embed",
+                        &[0.25, 0.5, 0.75],
+                    )))
+            })
             // An intake makes goal changes listenable, which needs a source.
-            .publication(PublicationConfig::new(
-                PublicationSource::new("urn:proxiima:features-test").expect("publication source"),
-            ))
-            .outbox_intake(Arc::new(DiscardIntake))
-            .published_retention(Duration::from_mins(1));
+            .configure(|b| {
+                b.publication(PublicationConfig::new(
+                    PublicationSource::new("urn:proxiima:features-test")
+                        .expect("publication source"),
+                ))
+                .outbox_intake(Arc::new(DiscardIntake))
+                .published_retention(Duration::from_mins(1))
+            });
         if s3_present() {
-            app.s3(proxiima::S3RuntimeConfig::from_env().expect("S3 test config"))
+            app.configure(|b| b.s3(proxiima::S3RuntimeConfig::from_env().expect("S3 test config")))
         } else {
             app
         }
@@ -405,12 +412,14 @@ async fn a_retention_without_a_publisher_is_off_and_says_so() {
         .expect("PG required");
     migrated_app::migrate_app::<BareApp>(db.platform_url()).await;
     let built = Proxiima::<BareApp>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(company_owner(Uuid::now_v7()))
-        .served_surface(ServedSurface::All)
-        .published_retention(Duration::from_mins(1))
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(company_owner(Uuid::now_v7()))
+                .served_surface(ServedSurface::All)
+                .published_retention(Duration::from_mins(1))
+        })
         .build()
         .await
         .expect("retention-only boot");

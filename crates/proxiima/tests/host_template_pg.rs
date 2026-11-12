@@ -214,13 +214,14 @@ fn code_of(error: &sqlx::Error) -> Option<String> {
 }
 
 async fn boot(db: &SplitRoleDb, owner: OwnerId) -> BuiltProxiima {
-    let builder = Proxiima::<HostApp>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .pg_pool_config(PgPoolConfig::default());
+    let builder = Proxiima::<HostApp>::app().configure(|b| {
+        b.database_url(db.runtime_url())
+            .store_number(0)
+            .platform_database_url(db.platform_url())
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+            .pg_pool_config(PgPoolConfig::default())
+    });
     builder.build().await.expect("split-role boot")
 }
 

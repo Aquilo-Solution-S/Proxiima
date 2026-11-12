@@ -1044,7 +1044,7 @@ fn spiice_sdk_exposes_the_spiice_service_seam() {
 
 #[test]
 fn host_api_can_configure_the_blob_lane_without_the_environment() {
-    // `Proxiima::s3` is a `pub` method and `BuiltProxiima::blobs` is a `pub`
+    // `RuntimeBuilder::s3` is a `pub` method and `BuiltProxiima::blobs` is a `pub`
     // field of type `Option<CitedBlobStore>`, so both types were already
     // part of the public surface — they just could not be NAMED from
     // `proxiima`. A host could reach them by inference and could not write
@@ -1069,11 +1069,8 @@ fn host_api_can_configure_the_blob_lane_without_the_environment() {
 
     // The builder method that takes it is writable, which is the point.
     std::hint::black_box(
-        proxiima::Proxiima::<TierExtensionApp>::s3
-            as fn(
-                proxiima::Proxiima<TierExtensionApp>,
-                proxiima::S3RuntimeConfig,
-            ) -> proxiima::Proxiima<TierExtensionApp>,
+        proxiima::RuntimeBuilder::s3
+            as fn(proxiima::RuntimeBuilder, proxiima::S3RuntimeConfig) -> proxiima::RuntimeBuilder,
     );
 }
 
@@ -1091,13 +1088,6 @@ fn host_api_can_configure_the_pg_pool_without_process_environment() {
     std::hint::black_box(
         proxiima::RuntimeBuilder::pg_pool_config
             as fn(proxiima::RuntimeBuilder, proxiima::PgPoolConfig) -> proxiima::RuntimeBuilder,
-    );
-    std::hint::black_box(
-        proxiima::Proxiima::<TierExtensionApp>::pg_pool_config
-            as fn(
-                proxiima::Proxiima<TierExtensionApp>,
-                proxiima::PgPoolConfig,
-            ) -> proxiima::Proxiima<TierExtensionApp>,
     );
 }
 

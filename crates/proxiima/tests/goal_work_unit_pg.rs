@@ -140,16 +140,18 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
     migrated_app::migrate::<HostFixtureApp>(db.platform_url())
         .await
         .map_err(|error| error.to_string())?;
+    let participant =
+        Arc::new(PgCommandDispatcher::new(PARTICIPANT, TABLES).register::<Arm, _>(ArmHandler)?);
     let built = Proxiima::<HostFixtureApp>::app()
-        .database_url(db.runtime_url())
-        .platform_database_url(db.platform_url())
-        .store_number(0)
-        .owner(UserId::new(Uuid::now_v7()).into())
-        .allow_insecure_single_owner()
-        .served_surface(ServedSurface::All)
-        .host_state_participant(Arc::new(
-            PgCommandDispatcher::new(PARTICIPANT, TABLES).register::<Arm, _>(ArmHandler)?,
-        ))
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .platform_database_url(db.platform_url())
+                .store_number(0)
+                .owner(UserId::new(Uuid::now_v7()).into())
+                .allow_insecure_single_owner()
+                .served_surface(ServedSurface::All)
+                .host_state_participant(participant)
+        })
         .build()
         .await?;
     let engine = built.host().engine();

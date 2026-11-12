@@ -905,15 +905,16 @@ async fn boot(
     s3: Option<S3RuntimeConfig>,
 ) -> TestResult<BuiltProxiima> {
     let (runtime_url, platform_url) = split_role_urls(database).await?;
-    let mut app = Proxiima::<KindRuleApp>::app()
-        .database_url(runtime_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .embedding_router(router);
+    let mut app = Proxiima::<KindRuleApp>::app().configure(|b| {
+        b.database_url(runtime_url)
+            .store_number(0)
+            .platform_database_url(platform_url)
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+            .embedding_router(router)
+    });
     if let Some(s3) = s3 {
-        app = app.s3(s3);
+        app = app.configure(|b| b.s3(s3));
     }
     Ok(app.build().await?)
 }

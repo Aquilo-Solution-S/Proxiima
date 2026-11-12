@@ -32,11 +32,13 @@ async fn boot(
     owner: OwnerId,
 ) -> Result<BuiltProxiima, proxiima::ProxiimaError> {
     Proxiima::<AgentMemoryApp>::app()
-        .database_url(runtime_url.to_owned())
-        .store_number(0)
-        .platform_database_url(platform_url.to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(runtime_url.to_owned())
+                .store_number(0)
+                .platform_database_url(platform_url.to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await
 }

@@ -30,11 +30,13 @@ impl Env {
     async fn in_owner(prefix: &str, owner: OwnerId, subject: OwnerId) -> TestResult<Self> {
         let split_db = clone_split_core_db(prefix).await?;
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url().to_owned())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url().to_owned())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url().to_owned())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url().to_owned())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

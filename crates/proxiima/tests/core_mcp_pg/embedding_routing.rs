@@ -129,12 +129,14 @@ async fn facade_embeds_and_searches_at_a_non_default_width() {
                 ))?),
                 |router| {
                     Proxiima::<AgentMemoryApp>::app()
-                        .database_url(runtime_url.clone())
-                        .store_number(0)
-                        .platform_database_url(platform_url.clone())
-                        .owner(owner)
-                        .embedding_router(router)
-                        .served_surface(proxiima_core::ServedSurface::All)
+                        .configure(|b| {
+                            b.database_url(runtime_url.clone())
+                                .store_number(0)
+                                .platform_database_url(platform_url.clone())
+                                .owner(owner)
+                                .embedding_router(router)
+                                .served_surface(proxiima_core::ServedSurface::All)
+                        })
                         .build()
                 },
             )
@@ -288,12 +290,14 @@ async fn memory_search_embeds_its_query_in_the_default_instruction() {
             )),
             |router| {
                 Proxiima::<AgentMemoryApp>::app()
-                    .database_url(runtime_url.clone())
-                    .store_number(0)
-                    .platform_database_url(platform_url.clone())
-                    .owner(owner)
-                    .embedding_router(router)
-                    .served_surface(proxiima_core::ServedSurface::All)
+                    .configure(|b| {
+                        b.database_url(runtime_url.clone())
+                            .store_number(0)
+                            .platform_database_url(platform_url.clone())
+                            .owner(owner)
+                            .embedding_router(router)
+                            .served_surface(proxiima_core::ServedSurface::All)
+                    })
                     .build()
             },
         )
@@ -392,16 +396,17 @@ impl TwoOwnerFixture {
         let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let router = Arc::new(proxiima_core::test_fixtures::TestEmbeddingRouter::default());
         let (built, held) = HeldWorker::boot(db_name, personal, router.clone(), |router| {
-            let app = Proxiima::<AgentMemoryApp>::app()
-                .database_url(runtime_url)
-                .store_number(0)
-                .platform_database_url(platform_url)
-                .owner(personal)
-                .embedding_router(router)
-                .embedding_runtime_policy(policy)
-                .served_surface(proxiima_core::ServedSurface::All);
+            let app = Proxiima::<AgentMemoryApp>::app().configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(personal)
+                    .embedding_router(router)
+                    .embedding_runtime_policy(policy)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            });
             match index {
-                Some(index) => app.vector_index(index).build(),
+                Some(index) => app.configure(|b| b.vector_index(index)).build(),
                 None => app.build(),
             }
         })

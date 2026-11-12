@@ -5,20 +5,19 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use axum::Router;
-use proxiima_blob_s3::{CitedBlobStore, S3RuntimeConfig};
-use proxiima_core::OwnerId;
+use proxiima_blob_s3::CitedBlobStore;
 use proxiima_core::authz::SystemAuthority;
 use proxiima_core::storage_ports::{
     CitedBlobDeliveryBindingError, CitedBlobDeliveryService, CitedBlobOwnerReconcileService,
-    CitedBlobReadService, CitedBlobService, DelegatedAuthorityService, OwnerDropProofHandle,
+    CitedBlobReadService, CitedBlobService, DelegatedAuthorityService,
 };
 use proxiima_core::{
-    Authenticator, AuthzContext, DelegationRuntimeAuthority, EmbeddingClient, EmbeddingRouter,
-    OwnerAccessPort, RevalidationConfig, ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
+    Authenticator, AuthzContext, DelegationRuntimeAuthority, OwnerAccessPort, RevalidationConfig,
+    ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
 };
 use proxiima_mcp_server::{
-    HostAllowlist, McpEdgeAuth, McpStreamableService, McpToolHost, McpTransportConfig,
-    OriginAllowlist, assert_loopback, default_allowlist, guard_listener,
+    HostAllowlist, McpEdgeAuth, McpStreamableService, McpToolHost, OriginAllowlist,
+    assert_loopback, default_allowlist, guard_listener,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -100,7 +99,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     /// shares the server's environment without starting a listener, building
     /// an authenticator or delivering the outbox, and without being refused
     /// by a setting only serving checks. The object store is not read: a
-    /// command that needs it sets it with [`Self::s3`].
+    /// command that needs it sets it with [`RuntimeBuilder::s3`].
     ///
     /// # Errors
     ///
@@ -114,317 +113,14 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         Ok(self)
     }
 
+    /// Set runtime options through the [`RuntimeBuilder`]: the closure
+    /// receives the options set so far and returns them with its own added,
+    /// like [`SpiiceApp::configure`]. Options set here win over the
+    /// environment layer and over [`SpiiceApp::configure`]; calling it again
+    /// adds to the earlier calls.
     #[must_use]
-    pub fn database_url(mut self, database_url: impl Into<String>) -> Self {
-        self.overlay = self.overlay.database_url(database_url);
-        self
-    }
-
-    /// Assign this store its immutable host-selected number.
-    #[must_use]
-    pub fn store_number(mut self, number: u16) -> Self {
-        self.overlay = self.overlay.store_number(number);
-        self
-    }
-
-    /// Set the separate migration/platform database URL.
-    #[must_use]
-    pub fn platform_database_url(mut self, url: impl Into<String>) -> Self {
-        self.overlay = self.overlay.platform_database_url(url);
-        self
-    }
-
-    /// Migrate (or run the preflight) on this URL instead of the platform
-    /// URL: see [`crate::RuntimeBuilder::migration_database_url`].
-    #[must_use]
-    pub fn migration_database_url(mut self, url: impl Into<String>) -> Self {
-        self.overlay = self.overlay.migration_database_url(url);
-        self
-    }
-
-    #[must_use]
-    pub fn s3(mut self, s3: S3RuntimeConfig) -> Self {
-        self.overlay = self.overlay.s3(s3);
-        self
-    }
-
-    /// Set Postgres pool and per-connection timeout policy.
-    #[must_use]
-    pub fn pg_pool_config(mut self, config: proxiima_storage_pg::PgPoolConfig) -> Self {
-        self.overlay = self.overlay.pg_pool_config(config);
-        self
-    }
-
-    /// [`RuntimeBuilder::pg_tuning`].
-    #[must_use]
-    pub fn pg_tuning(mut self, tuning: proxiima_storage_pg::PgTuning) -> Self {
-        self.overlay = self.overlay.pg_tuning(tuning);
-        self
-    }
-
-    #[must_use]
-    pub fn owner(mut self, owner: OwnerId) -> Self {
-        self.overlay = self.overlay.owner(owner);
-        self
-    }
-
-    #[must_use]
-    pub fn authenticator(mut self, authenticator: Arc<dyn Authenticator>) -> Self {
-        self.overlay = self.overlay.authenticator(authenticator);
-        self
-    }
-
-    /// [`RuntimeBuilder::authenticator_with_platform_scope`].
-    #[must_use]
-    pub fn authenticator_with_platform_scope<F>(mut self, factory: F) -> Self
-    where
-        F: Fn(crate::PlatformAuthContext) -> Result<Arc<dyn Authenticator>, ProxiimaError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.overlay = self.overlay.authenticator_with_platform_scope(factory);
-        self
-    }
-
-    /// [`RuntimeBuilder::host_tools`].
-    #[must_use]
-    pub fn host_tools(mut self, tools: Arc<dyn proxiima_mcp_server::McpHostTools>) -> Self {
-        self.overlay = self.overlay.host_tools(tools);
-        self
-    }
-
-    /// [`RuntimeBuilder::vector_index`].
-    #[must_use]
-    pub fn vector_index(
-        mut self,
-        index: Arc<dyn proxiima_core::storage_ports::VectorIndex>,
-    ) -> Self {
-        self.overlay = self.overlay.vector_index(index);
-        self
-    }
-
-    #[must_use]
-    pub fn resource_metadata(
-        mut self,
-        metadata: proxiima_mcp_server::ResourceServerMetadata,
-    ) -> Self {
-        self.overlay = self.overlay.resource_metadata(metadata);
-        self
-    }
-
-    /// [`RuntimeBuilder::mcp_bind`]: set, MCP starts.
-    #[must_use]
-    pub fn mcp_bind(mut self, bind: SocketAddr) -> Self {
-        self.overlay = self.overlay.mcp_bind(bind);
-        self
-    }
-
-    #[must_use]
-    pub fn expose_network(mut self, expose_network: bool) -> Self {
-        self.overlay = self.overlay.expose_network(expose_network);
-        self
-    }
-
-    #[must_use]
-    pub fn allowed_origins(mut self, allowed_origins: Vec<String>) -> Self {
-        self.overlay = self.overlay.allowed_origins(allowed_origins);
-        self
-    }
-
-    #[must_use]
-    pub fn allowed_hosts(mut self, allowed_hosts: Vec<String>) -> Self {
-        self.overlay = self.overlay.allowed_hosts(allowed_hosts);
-        self
-    }
-
-    /// Configure the deployment's served commands. Declared reads remain
-    /// served; each caller must independently hold its exact scope keys.
-    #[must_use]
-    pub fn served_surface(mut self, served_surface: ServedSurface) -> Self {
-        self.overlay = self.overlay.served_surface(served_surface);
-        self
-    }
-
-    #[must_use]
-    pub fn stream_max_lifetime(mut self, duration: std::time::Duration) -> Self {
-        self.overlay = self.overlay.stream_max_lifetime(duration);
-        self
-    }
-
-    #[must_use]
-    pub fn allow_insecure_single_owner(mut self) -> Self {
-        self.overlay = self.overlay.allow_insecure_single_owner();
-        self
-    }
-
-    /// Grant the runtime role its DML privileges in [`Self::migrate`]. Env
-    /// equivalent: `PROXIIMA_RUNTIME_GRANTS`.
-    #[must_use]
-    pub fn runtime_grants(mut self, runtime_grants: bool) -> Self {
-        self.overlay = self.overlay.runtime_grants(runtime_grants);
-        self
-    }
-
-    /// See [`RuntimeBuilder::missing_migration_policy`].
-    #[must_use]
-    pub fn missing_migration_policy(mut self, policy: crate::MissingMigrationPolicy) -> Self {
-        self.overlay = self.overlay.missing_migration_policy(policy);
-        self
-    }
-
-    /// See [`RuntimeBuilder::request_headers`].
-    #[must_use]
-    pub fn request_headers(mut self, request_headers: Vec<String>) -> Self {
-        self.overlay = self.overlay.request_headers(request_headers);
-        self
-    }
-
-    /// See [`RuntimeBuilder::owner_access`].
-    #[must_use]
-    pub fn owner_access(mut self, owner_access: Arc<dyn OwnerAccessPort>) -> Self {
-        self.overlay = self.overlay.owner_access(owner_access);
-        self
-    }
-
-    /// See [`RuntimeBuilder::owner_drop_proof`].
-    #[must_use]
-    pub fn owner_drop_proof(mut self, owner_drop_proof: OwnerDropProofHandle) -> Self {
-        self.overlay = self.overlay.owner_drop_proof(owner_drop_proof);
-        self
-    }
-
-    /// See [`RuntimeBuilder::forwarder`].
-    #[must_use]
-    pub fn forwarder(mut self, policy: ForwarderPolicy) -> Self {
-        self.overlay = self.overlay.forwarder(policy);
-        self
-    }
-
-    /// See [`RuntimeBuilder::services`].
-    #[must_use]
-    pub fn services(mut self, services: SpiiceServices) -> Self {
-        self.overlay = self.overlay.services(services);
-        self
-    }
-
-    /// See [`RuntimeBuilder::other_stores`].
-    #[must_use]
-    pub fn other_stores(
-        mut self,
-        port: Arc<dyn proxiima_core::storage_ports::other_stores::OtherStores>,
-    ) -> Self {
-        self.overlay = self.overlay.other_stores(port);
-        self
-    }
-
-    /// See [`RuntimeBuilder::health_endpoints`].
-    #[must_use]
-    pub fn health_endpoints(mut self, health_endpoints: bool) -> Self {
-        self.overlay = self.overlay.health_endpoints(health_endpoints);
-        self
-    }
-
-    /// See [`RuntimeBuilder::max_request_body_bytes`].
-    #[must_use]
-    pub fn max_request_body_bytes(mut self, bytes: usize) -> Self {
-        self.overlay = self.overlay.max_request_body_bytes(bytes);
-        self
-    }
-
-    /// See [`RuntimeBuilder::mcp_transport`].
-    #[must_use]
-    pub fn mcp_transport(mut self, transport: McpTransportConfig) -> Self {
-        self.overlay = self.overlay.mcp_transport(transport);
-        self
-    }
-
-    /// Serve `/v1` beside `/mcp`. Env equivalent: `PROXIIMA_REST_ENABLED`.
-    #[must_use]
-    pub fn rest_enabled(mut self, rest_enabled: bool) -> Self {
-        self.overlay = self.overlay.rest_enabled(rest_enabled);
-        self
-    }
-
-    #[must_use]
-    pub fn embed_client(mut self, client: Arc<dyn EmbeddingClient>) -> Self {
-        self.overlay = self.overlay.embed_client(client);
-        self
-    }
-
-    #[must_use]
-    pub fn embedding_router(mut self, router: Arc<dyn EmbeddingRouter>) -> Self {
-        self.overlay = self.overlay.embedding_router(router);
-        self
-    }
-
-    #[must_use]
-    pub fn embedding_runtime_policy(
-        mut self,
-        policy: proxiima_core::EmbeddingRuntimePolicy,
-    ) -> Self {
-        self.overlay = self.overlay.embedding_runtime_policy(policy);
-        self
-    }
-
-    /// Bind the deployment's publication source and capture bounds
-    /// (docs/host-integration.md). Env equivalent: `PROXIIMA_PUBLICATION_SOURCE`,
-    /// `PROXIIMA_OUTBOX_MAX_PENDING`, `PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES`.
-    #[must_use]
-    pub fn publication(
-        mut self,
-        publication: proxiima_core::publication::PublicationConfig,
-    ) -> Self {
-        self.overlay = self.overlay.publication(publication);
-        self
-    }
-
-    /// Register a typed host-state participant on the [`crate::UnitOfWork`]
-    /// write session. Hosts that register none keep existing Fact/sidecar/lock
-    /// behavior with no extra configuration.
-    #[must_use]
-    pub fn host_state_participant(
-        mut self,
-        participant: Arc<dyn proxiima_storage_pg::PgHostStateParticipant>,
-    ) -> Self {
-        self.overlay = self.overlay.host_state_participant(participant);
-        self
-    }
-
-    /// [`RuntimeBuilder::published_retention`]: with the publisher running,
-    /// the prune starts.
-    #[must_use]
-    pub fn published_retention(mut self, horizon: std::time::Duration) -> Self {
-        self.overlay = self.overlay.published_retention(horizon);
-        self
-    }
-
-    /// [`RuntimeBuilder::object_purge_interval`]: how often the runtime sweeps
-    /// expired uploads and drains object purge debt; zero turns it off.
-    #[must_use]
-    pub fn object_purge_interval(mut self, interval: std::time::Duration) -> Self {
-        self.overlay = self.overlay.object_purge_interval(interval);
-        self
-    }
-
-    /// [`RuntimeBuilder::outbox_intake`]: set, the outbox publisher starts and
-    /// delivers to `intake` in this process, as the consumer `default`.
-    #[must_use]
-    pub fn outbox_intake(mut self, intake: Arc<dyn crate::DurableIntake>) -> Self {
-        self.overlay = self.overlay.outbox_intake(intake);
-        self
-    }
-
-    /// [`RuntimeBuilder::outbox_consumer`]: set, the outbox publisher starts
-    /// and delivers every record to `intake` as the consumer `name`, on a
-    /// lane of its own.
-    #[must_use]
-    pub fn outbox_consumer(
-        mut self,
-        name: crate::ConsumerName,
-        intake: Arc<dyn crate::DurableIntake>,
-    ) -> Self {
-        self.overlay = self.overlay.outbox_consumer(name, intake);
+    pub fn configure(mut self, f: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder) -> Self {
+        self.overlay = f(self.overlay);
         self
     }
 
@@ -434,7 +130,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     /// [`crate::RuntimeConfig::migrations_url`], applies every pending core and
     /// spiice migration under the configured missing-migration policy,
     /// initializes the store number, and applies the runtime grants when
-    /// [`Self::runtime_grants`] or `PROXIIMA_RUNTIME_GRANTS` asks for them.
+    /// [`RuntimeBuilder::runtime_grants`] or `PROXIIMA_RUNTIME_GRANTS` asks for them.
     /// Serving ([`Self::build`], [`Self::run`]) and [`Self::connect_storage`]
     /// only validate, and refuse a database this step has not brought
     /// current with [`ProxiimaError::MigrationRequired`].
@@ -1525,7 +1221,7 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use proxiima_blob_s3::S3KeyPair;
+    use proxiima_blob_s3::{S3KeyPair, S3RuntimeConfig};
     use proxiima_core::{
         AuthError, AuthPath, Authenticator, AuthzContext, Credentials, OwnerId, SpiiceRegistry,
         SpiiceRegistryError,
@@ -1584,23 +1280,26 @@ mod tests {
     #[test]
     fn setting_platform_url_keeps_the_supplied_store_number() {
         let app = || {
-            Proxiima::<AlphaApp>::app()
-                .database_url("postgres://unused/db")
-                .served_surface(ServedSurface::All)
+            Proxiima::<AlphaApp>::app().configure(|b| {
+                b.database_url("postgres://unused/db")
+                    .served_surface(ServedSurface::All)
+            })
         };
         let missing = app()
-            .platform_database_url("postgres://unused/platform")
+            .configure(|b| b.platform_database_url("postgres://unused/platform"))
             .overlay
             .resolve()
             .expect_err("platform URL supplies no store identity");
         assert!(missing.to_string().contains("PROXIIMA_STORE_NUMBER"));
         for builder in [
-            app()
-                .store_number(3)
-                .platform_database_url("postgres://unused/platform"),
-            app()
-                .platform_database_url("postgres://unused/platform")
-                .store_number(3),
+            app().configure(|b| {
+                b.store_number(3)
+                    .platform_database_url("postgres://unused/platform")
+            }),
+            app().configure(|b| {
+                b.platform_database_url("postgres://unused/platform")
+                    .store_number(3)
+            }),
         ] {
             assert_eq!(
                 builder
@@ -1613,8 +1312,10 @@ mod tests {
             );
         }
         let (config, _) = app()
-            .store_number(3)
-            .platform_database_url("postgres://unused/platform")
+            .configure(|b| {
+                b.store_number(3)
+                    .platform_database_url("postgres://unused/platform")
+            })
             .resolve()
             .expect("explicit store overrides application defaults");
         assert_eq!(config.store_number, 3);
@@ -1909,7 +1610,7 @@ mod tests {
                     })
             })
             .expect("injected pool lookup")
-            .served_surface(ServedSurface::All)
+            .configure(|b| b.served_surface(ServedSurface::All))
             .resolve()
             .expect("resolved runtime config");
 
@@ -1919,12 +1620,14 @@ mod tests {
     #[tokio::test]
     async fn build_refuses_mcp_without_authenticator_or_insecure_mode_before_storage() {
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner())
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:31415".parse().unwrap())
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner())
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:31415".parse().unwrap())
+            })
             .build()
             .await
             .unwrap_err();
@@ -1935,15 +1638,17 @@ mod tests {
     #[tokio::test]
     async fn build_refuses_insecure_exposed_network_before_storage() {
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner())
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:31415".parse().unwrap())
-            .allow_insecure_single_owner()
-            .expose_network(true)
-            .allowed_origins(vec!["https://app.test".to_string()])
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner())
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:31415".parse().unwrap())
+                    .allow_insecure_single_owner()
+                    .expose_network(true)
+                    .allowed_origins(vec!["https://app.test".to_string()])
+            })
             .build()
             .await
             .unwrap_err();
@@ -1954,13 +1659,15 @@ mod tests {
     #[tokio::test]
     async fn build_refuses_non_loopback_insecure_mcp_before_storage() {
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner())
-            .served_surface(ServedSurface::All)
-            .mcp_bind("0.0.0.0:31415".parse().unwrap())
-            .allow_insecure_single_owner()
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner())
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("0.0.0.0:31415".parse().unwrap())
+                    .allow_insecure_single_owner()
+            })
             .build()
             .await
             .unwrap_err();
@@ -1972,14 +1679,16 @@ mod tests {
     async fn build_refuses_exposed_network_without_origins_before_storage() {
         let owner = owner();
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:31415".parse().unwrap())
-            .expose_network(true)
-            .authenticator(Arc::new(StubAuth { owner }))
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:31415".parse().unwrap())
+                    .expose_network(true)
+                    .authenticator(Arc::new(StubAuth { owner }))
+            })
             .build()
             .await
             .unwrap_err();
@@ -2000,14 +1709,16 @@ mod tests {
     async fn run_refuses_an_unparseable_origin_before_storage() {
         let owner = owner();
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:31415".parse().unwrap())
-            .allowed_origins(vec!["*".to_string()])
-            .authenticator(Arc::new(StubAuth { owner }))
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:31415".parse().unwrap())
+                    .allowed_origins(vec!["*".to_string()])
+                    .authenticator(Arc::new(StubAuth { owner }))
+            })
             .run()
             .await
             .unwrap_err();
@@ -2024,14 +1735,16 @@ mod tests {
     async fn run_refuses_an_unmatchable_host_before_storage() {
         let owner = owner();
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .mcp_bind("127.0.0.1:31415".parse().unwrap())
-            .allowed_hosts(vec!["https://proxy.example.com".to_string()])
-            .authenticator(Arc::new(StubAuth { owner }))
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind("127.0.0.1:31415".parse().unwrap())
+                    .allowed_hosts(vec!["https://proxy.example.com".to_string()])
+                    .authenticator(Arc::new(StubAuth { owner }))
+            })
             .run()
             .await
             .unwrap_err();
@@ -2048,10 +1761,12 @@ mod tests {
         // `.served_surface(...)` gets a config error instead of silently
         // advertising `ServedSurface::All`.
         let err = Proxiima::<AlphaApp>::app()
-            .database_url("postgres://unused:5432/unused")
-            .store_number(0)
-            .platform_database_url("postgres://unused/platform")
-            .owner(owner())
+            .configure(|b| {
+                b.database_url("postgres://unused:5432/unused")
+                    .store_number(0)
+                    .platform_database_url("postgres://unused/platform")
+                    .owner(owner())
+            })
             .build()
             .await
             .unwrap_err();

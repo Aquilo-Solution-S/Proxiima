@@ -46,7 +46,7 @@ pub use crate::runtime_config::{
 ///
 /// [`crate::BuiltProxiima::blobs`] and [`crate::RunningProxiima::blobs`]
 /// expose the configured store to host maintenance and delivery adapters;
-/// [`crate::Proxiima::s3`] takes `S3RuntimeConfig`. Hosts can name these
+/// [`crate::RuntimeBuilder::s3`] takes `S3RuntimeConfig`. Hosts can name these
 /// types in their adapters and configure S3 programmatically.
 ///
 /// `BlobError` comes with them because `from_env` returns it.
@@ -135,9 +135,8 @@ pub use proxiima_core::spiice0::{BAND_EXACT, BAND_RESCUE, BAND_SUBSTRING};
 /// compares them with the engine-stamped permit before any handler runs.
 /// Host API only; Spiice SDK does not export it.
 pub use proxiima_core::storage_ports::HostStatePayloadOwners;
-/// Other-store ports for [`RuntimeBuilder::other_stores`] and
-/// [`Proxiima::other_stores`], with every request, answer and bounded-service
-/// result nameable by hosts implementing or wiring the port.
+/// Other-store ports for [`RuntimeBuilder::other_stores`], with every
+/// request, answer and bounded-service result nameable by hosts implementing or wiring the port.
 pub use proxiima_core::storage_ports::other_stores::{
     OtherStores, OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors,
     RemoteAncestorsPage, RemoteEdge, RemoteEdgeTarget, RemoteGraphRead, RemoteHit,

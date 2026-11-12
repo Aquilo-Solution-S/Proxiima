@@ -22,11 +22,13 @@ async fn recall_unassigned_goals_keeps_space_scope_pages_and_dedupes_subjects() 
     let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
     let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(personal)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(personal)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await
         .expect("host builds");
@@ -123,11 +125,13 @@ async fn recall_question_keeps_the_selected_owner_scope() {
     let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
     let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(personal)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(personal)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await
         .expect("host builds");

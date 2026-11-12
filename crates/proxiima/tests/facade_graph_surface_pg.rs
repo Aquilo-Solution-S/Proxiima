@@ -106,12 +106,14 @@ async fn typed_derivation_separates_conclusions_revisions_and_row_identity() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let authz = authenticated(built.single_owner_authz().expect("one owner"));
@@ -264,12 +266,14 @@ async fn typed_derivation_uow_resolves_uncommitted_kinds_and_keeps_refs() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let authz = authenticated(built.single_owner_authz().expect("one owner"));
@@ -387,12 +391,14 @@ async fn typed_derivation_authorizes_foreign_origins_and_rejects_invalid_inputs(
         let owner = company_owner(Uuid::now_v7());
         let foreign = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let engine = built.host().engine();
@@ -586,12 +592,14 @@ async fn typed_facts_select_destination_and_reuse_uncommitted_natural_keys() {
         let owner = company_owner(Uuid::now_v7());
         let foreign = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let engine = built.host().engine();
@@ -694,12 +702,14 @@ async fn natural_key_selection_uses_the_authorized_payload() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let engine = built.host().engine();
@@ -1242,11 +1252,13 @@ async fn facade_query_checks_primary_sidecar_integrity_without_projecting_payloa
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let authz = authenticated(AuthzContext::for_subject_with_role(
@@ -1674,11 +1686,13 @@ async fn serving_boot_refuses_stale_search_definitions_until_explicit_migration(
 
     let owner = company_owner(Uuid::now_v7());
     let stale_boot = Proxiima::<FacadeSurfaceApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await;
     assert!(
@@ -1697,11 +1711,13 @@ async fn serving_boot_refuses_stale_search_definitions_until_explicit_migration(
     assert_eq!(lexical_body(&repaired_platform).await, original);
     repaired_platform.close().await;
     let repaired = Proxiima::<FacadeSurfaceApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+        })
         .build()
         .await
         .expect("explicit migration repairs generated definitions");
@@ -1769,11 +1785,13 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
     // The migrate step's refusal states the fact; it does not send the
     // operator to the step that just failed.
     let migrate = Proxiima::<FacadeSurfaceApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(company_owner(Uuid::now_v7()))
-        .served_surface(ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(company_owner(Uuid::now_v7()))
+                .served_surface(ServedSurface::All)
+        })
         .migrate()
         .await
         .expect_err("the migrate step refuses the overload");
@@ -1844,12 +1862,14 @@ async fn readable_query_and_typed_candidates_use_only_authenticated_owners() {
             company_owner(Uuid::now_v7()),
         ];
         let built = Proxiima::<FacadeSurfaceApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owners[0])
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owners[0])
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+            })
             .build()
             .await?;
         let engine = built.host().engine();

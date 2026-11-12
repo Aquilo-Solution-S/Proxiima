@@ -36,11 +36,13 @@ async fn idempotency_rule_table() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();
@@ -679,11 +681,13 @@ async fn supersedes_revert_body_does_not_replay_older_version() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();
@@ -750,11 +754,13 @@ async fn citation_only_change_conflicts() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();
@@ -797,11 +803,13 @@ async fn concurrent_same_key_different_citation_one_conflicts() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();
@@ -840,11 +848,13 @@ async fn forgotten_key_replays_and_changed_content_conflicts() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();
@@ -882,11 +892,13 @@ async fn concurrent_same_key_different_content_one_wins() -> TestResult {
         .expect("PG required for tests");
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let built = Proxiima::<AgentMemoryApp>::app()
-        .database_url(split_db.runtime_url().to_owned())
-        .store_number(0)
-        .platform_database_url(split_db.platform_url().to_owned())
-        .owner(owner)
-        .served_surface(proxiima_core::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(split_db.runtime_url().to_owned())
+                .store_number(0)
+                .platform_database_url(split_db.platform_url().to_owned())
+                .owner(owner)
+                .served_surface(proxiima_core::ServedSurface::All)
+        })
         .build()
         .await?;
     let tools = built.host().core_mcp_tools();

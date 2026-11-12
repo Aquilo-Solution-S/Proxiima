@@ -105,18 +105,20 @@ async fn oidc_e2e_discovery_public_and_core_tools_behind_bearer()
     )?;
 
     let running = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .s3(s3)
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.e2e.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+        .configure(|b| {
+            b.served_surface(proxiima_core::ServedSurface::All)
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .s3(s3)
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.e2e.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
+                })
+                .mcp_bind("127.0.0.1:0".parse().unwrap())
         })
-        .mcp_bind("127.0.0.1:0".parse().unwrap())
         .run()
         .await?;
     let addr = running.mcp_addr().ok_or("missing MCP listener address")?;
@@ -500,25 +502,28 @@ async fn oidc_e2e_rest_openapi_matches_the_mcp_scope_on_the_mounted_runtime()
     ]);
     let running = Proxiima::<ProxiimaMcpApp>::app()
         .from_env()
-        .rest_enabled(true)
-        .served_surface(proxiima_core::ServedSurface::Palette(
-            allowed_tools
-                .iter()
-                .map(|tool| {
-                    proxiima_core::ScopeKey::parse(tool).expect("an allowed tool is a scope key")
+        .configure(|b| {
+            b.rest_enabled(true)
+                .served_surface(proxiima_core::ServedSurface::Palette(
+                    allowed_tools
+                        .iter()
+                        .map(|tool| {
+                            proxiima_core::ScopeKey::parse(tool)
+                                .expect("an allowed tool is a scope key")
+                        })
+                        .collect(),
+                ))
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.e2e.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
                 })
-                .collect(),
-        ))
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.e2e.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+                .mcp_bind("127.0.0.1:0".parse().unwrap())
         })
-        .mcp_bind("127.0.0.1:0".parse().unwrap())
         .run()
         .await?;
     let addr = running.mcp_addr().ok_or("missing MCP listener address")?;
@@ -898,18 +903,20 @@ async fn oidc_e2e_group_auth_host_resolved_editor_role_permits_tool_call()
     )?;
 
     let running = Proxiima::<ProxiimaMcpApp>::app()
-        .served_surface(proxiima_core::ServedSurface::All)
-        .database_url(runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(platform_url.clone())
-        .owner(group_owner)
-        .authenticator(Arc::new(authn))
-        .resource_metadata(ResourceServerMetadata {
-            public_url: "https://proxiima.e2e.test".to_string(),
-            authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
-            additional_scopes: Vec::new(),
+        .configure(|b| {
+            b.served_surface(proxiima_core::ServedSurface::All)
+                .database_url(runtime_url.clone())
+                .store_number(0)
+                .platform_database_url(platform_url.clone())
+                .owner(group_owner)
+                .authenticator(Arc::new(authn))
+                .resource_metadata(ResourceServerMetadata {
+                    public_url: "https://proxiima.e2e.test".to_string(),
+                    authorization_servers: AuthorizationServers::Issuers(vec![ISSUER.to_string()]),
+                    additional_scopes: Vec::new(),
+                })
+                .mcp_bind("127.0.0.1:0".parse().unwrap())
         })
-        .mcp_bind("127.0.0.1:0".parse().unwrap())
         .run()
         .await?;
 

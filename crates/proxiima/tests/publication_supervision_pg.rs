@@ -245,16 +245,18 @@ async fn publisher_health_sidecar_fixture_captures_against_real_pg() {
         let owner = company_owner(Uuid::now_v7());
         built = Some(
             Proxiima::<PublisherApp>::app()
-                .database_url(runtime_url)
-                .store_number(0)
-                .platform_database_url(platform_url)
-                .owner(owner)
-                .served_surface(ServedSurface::All)
-                .allow_insecure_single_owner()
-                .publication(PublicationConfig::new(
-                    PublicationSource::new("urn:proxiima:publisher-health-tests")
-                        .expect("absolute source URI"),
-                ))
+                .configure(|b| {
+                    b.database_url(runtime_url)
+                        .store_number(0)
+                        .platform_database_url(platform_url)
+                        .owner(owner)
+                        .served_surface(ServedSurface::All)
+                        .allow_insecure_single_owner()
+                        .publication(PublicationConfig::new(
+                            PublicationSource::new("urn:proxiima:publisher-health-tests")
+                                .expect("absolute source URI"),
+                        ))
+                })
                 .build()
                 .await
                 .expect("publisher health fixture builds and migrates its sidecar"),

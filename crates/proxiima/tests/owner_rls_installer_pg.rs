@@ -845,12 +845,14 @@ async fn automatic_follows_installation_precedes_spiice_lanes_and_serves_skip_bo
 
     let owner = proxiima::OwnerId::from(proxiima::UserId::new(uuid::Uuid::now_v7()));
     let built = Proxiima::<ExampleSpiice>::app()
-        .database_url(db.runtime_url())
-        .platform_database_url(db.platform_url())
-        .store_number(0)
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(proxiima::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .platform_database_url(db.platform_url())
+                .store_number(0)
+                .owner(owner)
+                .allow_insecure_single_owner()
+                .served_surface(proxiima::ServedSurface::All)
+        })
         .build()
         .await
         .expect("skip boot validates generated Follows state without installing it");
@@ -904,10 +906,12 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
             "preflight refuses mismatched deployment: {refused:?}"
         );
         let serving = proxiima::Proxiima::<ExampleSpiice>::app()
-            .database_url(db.runtime_url())
-            .store_number(0)
-            .platform_database_url(db.platform_url())
-            .served_surface(proxiima::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(db.runtime_url())
+                    .store_number(0)
+                    .platform_database_url(db.platform_url())
+                    .served_surface(proxiima::ServedSurface::All)
+            })
             .connect_storage()
             .await;
         assert!(
@@ -986,10 +990,12 @@ async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() 
         "{refused:?}"
     );
     let serving = proxiima::Proxiima::<ExampleSpiice>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .served_surface(proxiima::ServedSurface::All)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .served_surface(proxiima::ServedSurface::All)
+        })
         .connect_storage()
         .await;
     assert!(

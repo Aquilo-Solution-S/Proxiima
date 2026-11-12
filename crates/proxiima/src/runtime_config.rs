@@ -111,64 +111,109 @@ pub struct RuntimeBuilder {
 }
 
 impl std::fmt::Debug for RuntimeBuilder {
+    #[allow(clippy::too_many_lines)] // one line per field, destructured exhaustively
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            database_url,
+            store_number,
+            platform_database_url,
+            migration_database_url,
+            s3,
+            owner,
+            mcp_bind,
+            expose_network,
+            allowed_origins,
+            allowed_hosts,
+            served_surface,
+            stream_max_lifetime,
+            insecure_single_owner,
+            rest_enabled,
+            missing_migration_policy,
+            pg_pool_config,
+            pg_tuning,
+            authenticator,
+            platform_authenticator,
+            host_tools,
+            vector_index,
+            resource_metadata,
+            embed_client,
+            embedding_router,
+            embedding_runtime_policy,
+            publication,
+            published_retention,
+            object_purge_interval,
+            outbox_consumers: _,
+            outbox_http,
+            host_state_participant,
+            duplicate_host_state_participant,
+            runtime_grants,
+            request_headers,
+            owner_access,
+            owner_drop_proof,
+            forwarder,
+            services,
+            health_endpoints,
+            max_request_body_bytes,
+            mcp_transport,
+            oidc_env,
+        } = self;
         f.debug_struct("RuntimeBuilder")
-            .field("has_database_url", &self.database_url.is_some())
-            .field("store_number", &self.store_number)
+            .field("has_database_url", &database_url.is_some())
+            .field("store_number", &store_number)
             .field(
                 "has_platform_database_url",
-                &self.platform_database_url.is_some(),
+                &platform_database_url.is_some(),
             )
             .field(
                 "has_migration_database_url",
-                &self.migration_database_url.is_some(),
+                &migration_database_url.is_some(),
             )
-            .field("s3", &self.s3)
-            .field("owner", &self.owner)
-            .field("mcp_bind", &self.mcp_bind)
-            .field("expose_network", &self.expose_network)
-            .field("allowed_origins", &self.allowed_origins)
-            .field("allowed_hosts", &self.allowed_hosts)
-            .field("served_surface", &self.served_surface)
-            .field("stream_max_lifetime", &self.stream_max_lifetime)
-            .field("insecure_single_owner", &self.insecure_single_owner)
-            .field("rest_enabled", &self.rest_enabled)
-            .field("missing_migration_policy", &self.missing_migration_policy)
-            .field("pg_pool_config", &self.pg_pool_config)
-            .field("pg_tuning", &self.pg_tuning)
-            .field("has_authenticator", &self.authenticator.is_some())
+            .field("s3", &s3)
+            .field("owner", &owner)
+            .field("mcp_bind", &mcp_bind)
+            .field("expose_network", &expose_network)
+            .field("allowed_origins", &allowed_origins)
+            .field("allowed_hosts", &allowed_hosts)
+            .field("served_surface", &served_surface)
+            .field("stream_max_lifetime", &stream_max_lifetime)
+            .field("insecure_single_owner", &insecure_single_owner)
+            .field("rest_enabled", &rest_enabled)
+            .field("missing_migration_policy", &missing_migration_policy)
+            .field("pg_pool_config", &pg_pool_config)
+            .field("pg_tuning", &pg_tuning)
+            .field("has_authenticator", &authenticator.is_some())
             .field(
                 "has_platform_authenticator",
-                &self.platform_authenticator.is_some(),
+                &platform_authenticator.is_some(),
             )
-            .field("host_tools", &self.host_tools)
-            .field("has_vector_index", &self.vector_index.is_some())
-            .field("has_resource_metadata", &self.resource_metadata.is_some())
-            .field("has_embed_client", &self.embed_client.is_some())
-            .field("has_embedding_router", &self.embedding_router.is_some())
-            .field("embedding_runtime_policy", &self.embedding_runtime_policy)
-            .field("publication", &self.publication)
-            .field("published_retention", &self.published_retention)
-            .field("object_purge_interval", &self.object_purge_interval)
-            .field("outbox_http", &self.outbox_http)
+            .field("host_tools", &host_tools)
+            .field("has_vector_index", &vector_index.is_some())
+            .field("has_resource_metadata", &resource_metadata.is_some())
+            .field("has_embed_client", &embed_client.is_some())
+            .field("has_embedding_router", &embedding_router.is_some())
+            .field("embedding_runtime_policy", &embedding_runtime_policy)
+            .field("publication", &publication)
+            .field("published_retention", &published_retention)
+            .field("object_purge_interval", &object_purge_interval)
+            .field("outbox_http", &outbox_http)
             .field(
                 "has_host_state_participant",
-                &self.host_state_participant.is_some(),
+                &host_state_participant.is_some(),
             )
             .field(
                 "duplicate_host_state_participant",
-                &self.duplicate_host_state_participant,
+                &duplicate_host_state_participant,
             )
-            .field("runtime_grants", &self.runtime_grants)
-            .field("request_headers", &self.request_headers)
-            .field("has_owner_access", &self.owner_access.is_some())
-            .field("has_owner_drop_proof", &self.owner_drop_proof.is_some())
-            .field("forwarder", &self.forwarder)
-            .field("services", &self.services)
-            .field("health_endpoints", &self.health_endpoints)
-            .field("max_request_body_bytes", &self.max_request_body_bytes)
-            .field("mcp_transport", &self.mcp_transport)
-            .field("has_oidc_env", &self.oidc_env.is_some())
+            .field("runtime_grants", &runtime_grants)
+            .field("request_headers", &request_headers)
+            .field("has_owner_access", &owner_access.is_some())
+            .field("has_owner_drop_proof", &owner_drop_proof.is_some())
+            .field("forwarder", &forwarder)
+            .field("services", &services)
+            .field("health_endpoints", &health_endpoints)
+            .field("max_request_body_bytes", &max_request_body_bytes)
+            .field("mcp_transport", &mcp_transport)
+            .field("has_oidc_env", &oidc_env.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -392,7 +437,7 @@ impl RuntimeBuilder {
     /// behavior with no extra configuration.
     ///
     /// Exactly one: a second registration — here, through
-    /// [`crate::Proxiima::host_state_participant`], or from another tuple
+    /// [`Self::host_state_participant`], or from another tuple
     /// element's [`crate::SpiiceApp::configure`] — keeps the first and makes
     /// [`Self::resolve`] refuse, instead of silently replacing it.
     #[must_use]
@@ -2049,7 +2094,7 @@ mod tests {
         assert!(twice.to_string().contains("already registered"), "{twice}");
 
         // An overlay's participant over a `SpiiceApp::configure` one, as a
-        // tuple app or `Proxiima::host_state_participant` composes them.
+        // tuple app or `RuntimeBuilder::host_state_participant` composes them.
         let layered = with(RuntimeBuilder::default())
             .merge_over(with(base()))
             .resolve()

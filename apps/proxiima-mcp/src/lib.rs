@@ -319,7 +319,7 @@ async fn run_maintain_blobs(
         ))
     })?;
     let built = maintenance_app(config.database_url, lookup)?
-        .s3(s3)
+        .configure(|b| b.s3(s3))
         .build()
         .await?;
     let outcome = match built.blobs() {
@@ -483,7 +483,7 @@ fn maintenance_app(
 ) -> Result<Proxiima<MaintenanceApp>, CliError> {
     Ok(Proxiima::<MaintenanceApp>::app()
         .from_storage_lookup(lookup)?
-        .database_url(database_url))
+        .configure(|b| b.database_url(database_url)))
 }
 
 /// The `PROXIIMA_S3_*` block a command that cannot run without it requires.
@@ -698,14 +698,17 @@ fn build_app(
     let embedding_policy = embedding_runtime_policy_from_lookup(&lookup)?;
     let mut app = Proxiima::<ProxiimaMcpApp>::app()
         .from_lookup(&lookup)?
-        .database_url(config.database_url)
-        .served_surface(served_surface)
-        .embedding_runtime_policy(embedding_policy);
+        .configure(|b| {
+            b.database_url(config.database_url)
+                .served_surface(served_surface)
+                .embedding_runtime_policy(embedding_policy)
+        });
     if let Some(bind) = config.bind {
-        app = app.mcp_bind(bind);
+        app = app.configure(|b| b.mcp_bind(bind));
     }
     if let Some(client) = embedding_client_from_env(&lookup, embedding_policy)? {
-        app = app.embedding_router(Arc::new(embedding_router_from_env(&lookup, client)?));
+        let router = Arc::new(embedding_router_from_env(&lookup, client)?);
+        app = app.configure(|b| b.embedding_router(router));
     }
     Ok(app)
 }
@@ -1658,7 +1661,7 @@ mod tests {
         .expect("migrate");
         let built = maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
             .expect("maintenance app")
-            .s3(required_s3(&pairs(&env)).expect("the S3 block"))
+            .configure(|b| b.s3(required_s3(&pairs(&env)).expect("the S3 block")))
             .build()
             .await
             .expect("maintain-blobs boots in the serving environment");

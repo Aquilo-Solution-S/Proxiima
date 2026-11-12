@@ -170,13 +170,14 @@ async fn cleanup(fixture: Fixture) {
 /// The facade app over the fixture, the path `PROXIIMA_RUNTIME_GRANTS` takes:
 /// its migrate step grants, its boot only validates.
 fn app(fixture: &Fixture, owner: OwnerId, runtime_grants: bool) -> Proxiima<ExampleGrantsApp> {
-    Proxiima::<ExampleGrantsApp>::app()
-        .database_url(fixture.runtime_url.clone())
-        .store_number(0)
-        .platform_database_url(fixture.platform_url.clone())
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .runtime_grants(runtime_grants)
+    Proxiima::<ExampleGrantsApp>::app().configure(|b| {
+        b.database_url(fixture.runtime_url.clone())
+            .store_number(0)
+            .platform_database_url(fixture.platform_url.clone())
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+            .runtime_grants(runtime_grants)
+    })
 }
 
 /// Boot through the runtime facade.
@@ -463,13 +464,14 @@ async fn runtime_grants_refuse_without_split_roles() {
     let unreachable = |user: &str| format!("postgres://{user}:pw@127.0.0.1:1/runtime_grants");
     let owner = company_owner(Uuid::now_v7());
     let boot = |database_url: String, platform_database_url: Option<String>| {
-        let app = Proxiima::<ExampleGrantsApp>::app()
-            .database_url(database_url)
-            .owner(owner)
-            .served_surface(ServedSurface::All)
-            .runtime_grants(true);
+        let app = Proxiima::<ExampleGrantsApp>::app().configure(|b| {
+            b.database_url(database_url)
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+                .runtime_grants(true)
+        });
         let app = match platform_database_url {
-            Some(url) => app.store_number(0).platform_database_url(url),
+            Some(url) => app.configure(|b| b.store_number(0).platform_database_url(url)),
             None => app,
         };
         async move { app.migrate().await }

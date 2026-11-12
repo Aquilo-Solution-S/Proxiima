@@ -68,13 +68,14 @@ pub async fn build_engine(
     platform_url: &str,
     owner: OwnerId,
 ) -> Result<proxiima::BuiltProxiima, proxiima::ProxiimaError> {
-    let app = proxiima::Proxiima::<crate::ExampleSpiice>::app()
-        .database_url(runtime_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(owner)
-        .allow_insecure_single_owner()
-        .served_surface(proxiima::ServedSurface::All);
+    let app = proxiima::Proxiima::<crate::ExampleSpiice>::app().configure(|b| {
+        b.database_url(runtime_url)
+            .store_number(0)
+            .platform_database_url(platform_url)
+            .owner(owner)
+            .allow_insecure_single_owner()
+            .served_surface(proxiima::ServedSurface::All)
+    });
     app.migrate().await?;
     app.build().await
 }

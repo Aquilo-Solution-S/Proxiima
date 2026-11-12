@@ -45,12 +45,14 @@ impl SpiiceApp for ExampleApp {
 async fn boot(db: &SplitRoleDb, owner: OwnerId) -> BuiltProxiima {
     migrated_app::migrate_app::<ExampleApp>(db.platform_url()).await;
     Proxiima::<ExampleApp>::app()
-        .database_url(db.runtime_url())
-        .store_number(0)
-        .platform_database_url(db.platform_url())
-        .owner(owner)
-        .served_surface(ServedSurface::All)
-        .pg_pool_config(PgPoolConfig::default())
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .store_number(0)
+                .platform_database_url(db.platform_url())
+                .owner(owner)
+                .served_surface(ServedSurface::All)
+                .pg_pool_config(PgPoolConfig::default())
+        })
         .build()
         .await
         .expect("split-role boot")

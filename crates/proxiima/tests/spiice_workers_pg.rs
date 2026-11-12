@@ -86,14 +86,17 @@ async fn run_that_fails_to_bind_spawns_no_spiice_workers() {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0")?;
         let owner = company_owner(Uuid::now_v7());
         let subject = UserId::new(Uuid::now_v7());
+        let occupied_addr = occupied.local_addr()?;
         let err = Proxiima::<BindProbeApp>::app()
-            .database_url(db_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .authenticator(Arc::new(TestAuthenticator { subject, owner }))
-            .served_surface(ServedSurface::All)
-            .mcp_bind(occupied.local_addr()?)
+            .configure(|b| {
+                b.database_url(db_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .authenticator(Arc::new(TestAuthenticator { subject, owner }))
+                    .served_surface(ServedSurface::All)
+                    .mcp_bind(occupied_addr)
+            })
             .run()
             .await
             .expect_err("bind on an occupied port must fail");

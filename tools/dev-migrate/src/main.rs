@@ -82,9 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("{RESET_DEPENDENT_LANES_FLAG} only qualifies {RESET_FLAG}").into());
     }
     compiled_app(&url, store_number, args.host_vector_index)
-        .missing_migration_policy(missing_policy)
-        .pg_pool_config(pool_config)
-        .pg_tuning(tuning)
+        .configure(|b| {
+            b.missing_migration_policy(missing_policy)
+                .pg_pool_config(pool_config)
+                .pg_tuning(tuning)
+        })
         .migrate()
         .await?;
     println!("migrations applied; store number {store_number}");
@@ -96,15 +98,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// A host vector index is only the kind of store here; migrating never calls
 /// it.
 fn compiled_app(url: &str, store_number: u16, host_vector_index: bool) -> Proxiima<ExampleSpiice> {
-    let app = Proxiima::<ExampleSpiice>::app()
-        .database_url(url)
-        .platform_database_url(url)
-        .store_number(store_number)
-        .served_surface(proxiima::ServedSurface::Palette(Vec::new()));
+    let app = Proxiima::<ExampleSpiice>::app().configure(|b| {
+        b.database_url(url)
+            .platform_database_url(url)
+            .store_number(store_number)
+            .served_surface(proxiima::ServedSurface::Palette(Vec::new()))
+    });
     if host_vector_index {
-        app.vector_index(Arc::new(
-            proxiima_core::storage_ports::InMemoryVectorIndex::default(),
-        ))
+        app.configure(|b| {
+            b.vector_index(Arc::new(
+                proxiima_core::storage_ports::InMemoryVectorIndex::default(),
+            ))
+        })
     } else {
         app
     }
@@ -672,7 +677,7 @@ mod tests {
     /// The tool's migrate step on `platform_url`, store number 0.
     async fn run_compiled_migrations(platform_url: &str) -> Result<(), proxiima::ProxiimaError> {
         compiled_app(platform_url, 0, false)
-            .missing_migration_policy(proxiima::MissingMigrationPolicy::Reject)
+            .configure(|b| b.missing_migration_policy(proxiima::MissingMigrationPolicy::Reject))
             .migrate()
             .await
     }

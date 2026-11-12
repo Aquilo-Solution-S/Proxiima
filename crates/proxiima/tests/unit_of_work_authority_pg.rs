@@ -287,17 +287,20 @@ impl Harness {
             .await
             .map_err(|error| error.to_string())?;
         let subject = UserId::new(Uuid::now_v7());
+        let participant = Arc::new(
+            PgCommandDispatcher::new(PARTICIPANT, TABLES)
+                .register::<AuthorityCommand, _>(AuthorityHandler)?,
+        );
         let built = Proxiima::<HostFixtureApp>::app()
-            .database_url(db.runtime_url())
-            .platform_database_url(db.platform_url())
-            .store_number(0)
-            .owner(subject.into())
-            .allow_insecure_single_owner()
-            .served_surface(ServedSurface::All)
-            .host_state_participant(Arc::new(
-                PgCommandDispatcher::new(PARTICIPANT, TABLES)
-                    .register::<AuthorityCommand, _>(AuthorityHandler)?,
-            ))
+            .configure(|b| {
+                b.database_url(db.runtime_url())
+                    .platform_database_url(db.platform_url())
+                    .store_number(0)
+                    .owner(subject.into())
+                    .allow_insecure_single_owner()
+                    .served_surface(ServedSurface::All)
+                    .host_state_participant(participant)
+            })
             .build()
             .await?;
         let runtime = PgPool::connect(db.runtime_url()).await?;

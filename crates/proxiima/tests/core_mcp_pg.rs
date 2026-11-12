@@ -311,12 +311,14 @@ mod embedding_failure_regressions {
             let owner = company_owner(Uuid::now_v7());
             let router = Arc::new(TestEmbeddingRouter::default());
             let built = Proxiima::<AgentMemoryApp>::app()
-                .database_url(runtime_url)
-                .store_number(0)
-                .platform_database_url(platform_url)
-                .owner(owner)
-                .served_surface(proxiima_core::ServedSurface::All)
-                .embedding_router(router.clone())
+                .configure(|b| {
+                    b.database_url(runtime_url)
+                        .store_number(0)
+                        .platform_database_url(platform_url)
+                        .owner(owner)
+                        .served_surface(proxiima_core::ServedSurface::All)
+                        .embedding_router(router.clone())
+                })
                 .build()
                 .await?;
             built
@@ -622,10 +624,7 @@ async fn core_memory_tools_route_by_explicit_space_grants() {
         let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
         let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(personal).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -708,10 +707,7 @@ async fn shared_space_include_body_uses_shared_owner() {
         let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
         let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(personal).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -804,10 +800,7 @@ async fn cross_space_derive_succeeds_when_sources_readable() {
         let personal = OwnerId::from(UserId::new(Uuid::now_v7()));
         let shared = OwnerId::from(GroupId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(personal).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -962,10 +955,7 @@ async fn facade_lists_and_dispatches_core_mcp_tools() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1128,11 +1118,13 @@ async fn facade_reads_core_resources_with_resource_scope() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1226,11 +1218,13 @@ async fn a_remembered_observation_reads_back_when_it_occurred() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1527,11 +1521,13 @@ async fn a_spiice_only_palette_reads_the_owners_memory_and_refuses_writes() {
         let owner = company_owner(Uuid::now_v7());
         let other = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(split_db.runtime_url())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(split_db.runtime_url())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1646,11 +1642,13 @@ async fn facade_core_recall_returns_cue_packet_and_rejects_empty_cue() {
         let admin_pool = sqlx::PgPool::connect(&db_url(&db_name)).await?;
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1872,11 +1870,13 @@ async fn facade_core_think_reaches_an_interpretations_subject_through_its_payloa
         let admin_pool = sqlx::PgPool::connect(&db_url(&db_name)).await?;
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1986,11 +1986,13 @@ async fn facade_core_think_pages_ancestors_from_a_derivation() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2110,11 +2112,13 @@ async fn facade_core_episode_commit_binds_only_listed_members() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2198,11 +2202,13 @@ async fn facade_core_episode_commit_refuses_nested_model_id_against_the_bound_id
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2316,11 +2322,13 @@ async fn facade_core_episode_commit_bound_replay_fails() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2517,11 +2525,13 @@ async fn facade_core_search_memories_degrades_to_lexical_without_embed_client() 
         let owner = company_owner(Uuid::now_v7());
         // No .embed_client(...) — engine.embed_client() is None.
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2610,11 +2620,7 @@ async fn facade_core_citation_readback_is_owner_scoped() {
         let owner = company_owner(Uuid::now_v7());
         let other_owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .embed_client(test_embedding())
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(owner).embed_client(test_embedding()).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let admin_pool = sqlx::PgPool::connect(&db_url(&db_name)).await?;
@@ -2792,10 +2798,7 @@ async fn facade_authorized_read_surfaces_group_transferred_fact_to_group_member(
         let group_owner = OwnerId::from(group);
         let member = UserId::new(Uuid::now_v7());
         let built = Proxiima::<EmptyApp>::app()
-            .database_url(runtime_url.clone()).store_number(0)
-        .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| b.database_url(runtime_url.clone()).store_number(0).platform_database_url(platform_url.clone()).owner(owner).served_surface(proxiima_core::ServedSurface::All))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -2918,16 +2921,19 @@ async fn core_forget_marks_a_remembered_fact() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let admin_pool = sqlx::PgPool::connect(&db_url(&db_name)).await?;
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let s3 = S3RuntimeConfig {
+            force_path_style: true,
+            ..S3RuntimeConfig::from_env()?
+        };
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .s3(S3RuntimeConfig {
-                force_path_style: true,
-                ..S3RuntimeConfig::from_env()?
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .s3(s3)
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
             })
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -3001,12 +3007,14 @@ async fn request_services_reject_duplicate_boot_type() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = company_owner(Uuid::now_v7());
         let built = Proxiima::<MarkApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .allow_insecure_single_owner()
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .allow_insecure_single_owner()
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let mut request = SpiiceServices::new();

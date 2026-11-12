@@ -372,12 +372,14 @@ async fn derive_from_a_local_and_a_remote_fact_names_both_and_survives_remote_er
                 .with(1, remote_id(1, "secret"), Entry::Denied),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(fake.clone())
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake.clone())
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -588,6 +590,7 @@ async fn assert_remote_and_batch_reads(
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one fixture, one fan-out, every assertion on its result
 async fn search_fans_out_tags_stores_and_reports_the_slow_one_unanswered() {
     let split_db = clone_split_core_db("proxiima_other_stores_search")
         .await
@@ -622,14 +625,17 @@ async fn search_fans_out_tags_stores_and_reports_the_slow_one_unanswered() {
                 .slow(3, Duration::from_secs(5)),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .services(SpiiceServices::with(
-                OtherStoresService::new(fake.clone()).with_timeout(Duration::from_millis(300)),
-            ))
+            .configure(|b| {
+                b.database_url(split_db.runtime_url())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .services(SpiiceServices::with(
+                        OtherStoresService::new(fake.clone())
+                            .with_timeout(Duration::from_millis(300)),
+                    ))
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -787,11 +793,13 @@ async fn without_a_port_qualified_handles_and_other_stores_are_refused() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -886,12 +894,14 @@ async fn interpret_about_a_remote_memory_reads_it_first_and_walks_it_through_the
                 .with(1, remote_id(1, "secret"), Entry::Denied),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(fake.clone())
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake.clone())
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1154,12 +1164,14 @@ async fn lineage_ancestors_page_within_limit_over_references_and_remote_leaves()
                 ),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(fake)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1294,11 +1306,13 @@ async fn lineage_nodes_carry_their_hop_distance() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1425,14 +1439,16 @@ async fn a_failed_store_list_is_reported_on_search_and_refuses_named_stores() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(split_db.runtime_url())
-            .store_number(0)
-            .platform_database_url(split_db.platform_url())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .services(SpiiceServices::with(OtherStoresService::new(Arc::new(
-                DownInventory,
-            ))))
+            .configure(|b| {
+                b.database_url(split_db.runtime_url())
+                    .store_number(0)
+                    .platform_database_url(split_db.platform_url())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .services(SpiiceServices::with(OtherStoresService::new(Arc::new(
+                        DownInventory,
+                    ))))
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1533,12 +1549,14 @@ async fn goal_evidence_in_another_store_resolves_to_its_series_head() {
                 .with(2, down, Entry::Unavailable),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(fake.clone())
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake.clone())
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1721,14 +1739,16 @@ async fn goal_evidence_in_another_store_is_read_all_at_once() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(Arc::new(RendezvousStore {
-                meeting: tokio::sync::Barrier::new(2),
-            }))
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url)
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(Arc::new(RendezvousStore {
+                        meeting: tokio::sync::Barrier::new(2),
+                    }))
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1794,12 +1814,14 @@ async fn a_read_in_another_store_is_recorded_as_a_read() {
                 .with(1, secret, Entry::Denied),
         );
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .other_stores(fake.clone())
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake.clone())
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();
@@ -1893,11 +1915,13 @@ async fn a_read_in_another_store_is_recorded_as_a_read() {
 
         // No port: an other-store read is refused, not dropped.
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url)
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(owner)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

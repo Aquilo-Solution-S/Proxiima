@@ -167,7 +167,7 @@ impl World {
     /// it starts no drain, so a test can run its own beside the outbox.
     async fn new(intake: Option<Arc<TestIntake>>) -> Option<Self> {
         Self::configured(|app| match intake {
-            Some(intake) => app.outbox_intake(intake),
+            Some(intake) => app.configure(|b| b.outbox_intake(intake)),
             None => app,
         })
         .await
@@ -196,16 +196,17 @@ impl World {
             .await
             .expect("platform scope");
         let owner = crate::company_owner(Uuid::now_v7());
-        let app = crate::Proxiima::<OutboxProbeApp>::app()
-            .database_url(db_url)
-            .store_number(0)
-            .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(crate::ServedSurface::All)
-            .allow_insecure_single_owner()
-            .publication(PublicationConfig::new(
-                PublicationSource::new(PROBE_SOURCE).expect("publication source"),
-            ));
+        let app = crate::Proxiima::<OutboxProbeApp>::app().configure(|b| {
+            b.database_url(db_url)
+                .store_number(0)
+                .platform_database_url(platform_url)
+                .owner(owner)
+                .served_surface(crate::ServedSurface::All)
+                .allow_insecure_single_owner()
+                .publication(PublicationConfig::new(
+                    PublicationSource::new(PROBE_SOURCE).expect("publication source"),
+                ))
+        });
         let app = configure(app);
         app.migrate().await.expect("Proxiima migrates");
         let built = app.build().await.expect("Proxiima builds");
@@ -549,14 +550,15 @@ async fn an_intake_without_a_publication_source_fails_boot_naming_the_goal_chang
     let (db_url, platform_url) = proxiima_pg_testkit::split_role_urls(&db_name)
         .await
         .expect("split fixture roles");
-    let app = crate::Proxiima::<OutboxProbeApp>::app()
-        .database_url(db_url)
-        .store_number(0)
-        .platform_database_url(platform_url)
-        .owner(crate::company_owner(Uuid::now_v7()))
-        .served_surface(crate::ServedSurface::All)
-        .allow_insecure_single_owner()
-        .outbox_intake(Arc::new(TestIntake::default()));
+    let app = crate::Proxiima::<OutboxProbeApp>::app().configure(|b| {
+        b.database_url(db_url)
+            .store_number(0)
+            .platform_database_url(platform_url)
+            .owner(crate::company_owner(Uuid::now_v7()))
+            .served_surface(crate::ServedSurface::All)
+            .allow_insecure_single_owner()
+            .outbox_intake(Arc::new(TestIntake::default()))
+    });
     app.migrate().await.expect("Proxiima migrates");
     let refused = app.build().await;
     let _ = proxiima_pg_testkit::drop_db(&db_name).await;
@@ -576,8 +578,10 @@ async fn two_consumers_each_receive_every_fact_and_one_failing_does_not_hold_up_
     });
     let audit = ConsumerName::new("audit").expect("valid consumer name");
     let Some(world) = World::configured(|app| {
-        app.outbox_intake(steady.clone())
-            .outbox_consumer(audit.clone(), failing.clone())
+        app.configure(|b| {
+            b.outbox_intake(steady.clone())
+                .outbox_consumer(audit.clone(), failing.clone())
+        })
     })
     .await
     else {
@@ -637,9 +641,10 @@ async fn the_http_sink_retries_a_503_and_publishes_once_the_receiver_accepts() {
     let files = Files::new(&ca);
     files.rotate();
     let sink = Arc::new(intake(&receiver, &files));
-    let Some(world) =
-        World::configured(|app| app.outbox_consumer(crate::outbox_http::consumer_name(), sink))
-            .await
+    let Some(world) = World::configured(|app| {
+        app.configure(|b| b.outbox_consumer(crate::outbox_http::consumer_name(), sink))
+    })
+    .await
     else {
         return;
     };
@@ -680,9 +685,10 @@ async fn the_http_sink_settles_a_422_after_one_request() {
     let files = Files::new(&ca);
     files.rotate();
     let sink = Arc::new(intake(&receiver, &files));
-    let Some(world) =
-        World::configured(|app| app.outbox_consumer(crate::outbox_http::consumer_name(), sink))
-            .await
+    let Some(world) = World::configured(|app| {
+        app.configure(|b| b.outbox_consumer(crate::outbox_http::consumer_name(), sink))
+    })
+    .await
     else {
         return;
     };

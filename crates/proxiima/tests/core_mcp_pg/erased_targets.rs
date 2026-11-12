@@ -31,11 +31,13 @@ async fn a_pin_to_an_erased_memory_reads_erased_target() {
         let group_id = GroupId::new(Uuid::now_v7());
         let group = OwnerId::from(group_id);
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url.clone())
-            .store_number(0)
-            .platform_database_url(platform_url.clone())
-            .owner(personal)
-            .served_surface(proxiima_core::ServedSurface::All)
+            .configure(|b| {
+                b.database_url(runtime_url.clone())
+                    .store_number(0)
+                    .platform_database_url(platform_url.clone())
+                    .owner(personal)
+                    .served_surface(proxiima_core::ServedSurface::All)
+            })
             .build()
             .await?;
         register_abandoned_group(&platform_url, group_id).await?;

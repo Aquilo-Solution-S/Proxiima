@@ -58,12 +58,7 @@ async fn served_hybrid_rescues_bilingual_queries_and_pages_with_raw_leg_floors()
         // can replace the deliberately distinct vectors below.
         let router = Arc::new(TestEmbeddingRouter::default());
         let built = Proxiima::<AgentMemoryApp>::app()
-            .database_url(runtime_url)
-            .store_number(0)
-        .platform_database_url(platform_url)
-            .owner(owner)
-            .served_surface(proxiima_core::ServedSurface::All)
-            .embedding_router(router.clone())
+            .configure(|b| b.database_url(runtime_url).store_number(0).platform_database_url(platform_url).owner(owner).served_surface(proxiima_core::ServedSurface::All).embedding_router(router.clone()))
             .build()
             .await?;
         let tools = built.host().core_mcp_tools();

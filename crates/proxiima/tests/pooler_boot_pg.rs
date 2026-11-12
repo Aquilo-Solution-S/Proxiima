@@ -64,13 +64,14 @@ struct Urls {
 }
 
 fn app(urls: &Urls, owner: OwnerId) -> Proxiima<CoreApp> {
-    Proxiima::<CoreApp>::app()
-        .database_url(&urls.runtime)
-        .store_number(0)
-        .platform_database_url(&urls.platform)
-        .migration_database_url(&urls.migration)
-        .owner(owner)
-        .served_surface(ServedSurface::All)
+    Proxiima::<CoreApp>::app().configure(|b| {
+        b.database_url(&urls.runtime)
+            .store_number(0)
+            .platform_database_url(&urls.platform)
+            .migration_database_url(&urls.migration)
+            .owner(owner)
+            .served_surface(ServedSurface::All)
+    })
 }
 
 async fn boot(urls: &Urls, owner: OwnerId) -> TestResult<BuiltProxiima> {
@@ -193,9 +194,11 @@ async fn migration_url_is_the_one_used(database: &str) -> TestResult<()> {
     };
     let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
     let unreachable_migration = || {
-        app(&urls, owner).pg_pool_config(PgPoolConfig {
-            acquire_timeout: Duration::from_millis(300),
-            ..PgPoolConfig::default()
+        app(&urls, owner).configure(|b| {
+            b.pg_pool_config(PgPoolConfig {
+                acquire_timeout: Duration::from_millis(300),
+                ..PgPoolConfig::default()
+            })
         })
     };
     assert!(

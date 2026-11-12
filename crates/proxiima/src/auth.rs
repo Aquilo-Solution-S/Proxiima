@@ -6,7 +6,7 @@
 //! The only authenticator that ships lives in `proxiima-auth-oidc`, and an
 //! out-of-tree spiice takes exactly ONE dependency on this repository (the
 //! facade) so its lockfile cannot drift between two revisions of the same
-//! tree. The env parse therefore lives here: `Proxiima::app().authenticator(..)`
+//! tree. The env parse therefore lives here: `RuntimeBuilder::authenticator`
 //! would otherwise take an argument no out-of-tree caller can construct.
 //!
 //! IT IS THE ENV CONTRACT, NOT A CONVENIENCE. Single implementation of
@@ -61,7 +61,8 @@ pub type OidcBundle = (Arc<dyn Authenticator>, ResourceServerMetadata);
 /// Low-level OIDC primitives a host authenticator composes, and the two
 /// stock authenticators (`OidcAuthenticator` one route, `OidcBindingSet`
 /// several) with their constructor inputs. The runtime builder reads the
-/// one-audience `PROXIIMA_OIDC_*` env path.
+/// one-audience `PROXIIMA_OIDC_*` env path through [`oidc_from_lookup`], which
+/// a host with its own owner resolution calls for the same authenticator.
 ///
 /// A host reading its own claims uses [`OidcTokenValidator::validate_with`]
 /// (typed [`OidcRejection`] reasons) or an [`OidcRoleShape::Host`]
@@ -113,7 +114,7 @@ pub use proxiima_core::{AccessError, OwnerRoles};
 /// companions, when both JWKS sources are set,
 /// when the subject map or pinned JWKS will not parse, or when the issuer or
 /// JWKS URI is not a secure URL.
-pub(crate) fn oidc_from_lookup(
+pub fn oidc_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
     owner_access: Arc<dyn OwnerAccessPort>,
 ) -> Result<Option<OidcBundle>, ProxiimaError> {
