@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -164,29 +165,38 @@ def sql_escape_users(files: dict[str, str]) -> list[tuple[str, int]]:
     return users
 
 
-SQL_ESCAPE_SKIPPED_DIRS = {"target", ".git", ".local"}
 SQL_ESCAPE_SELF = "scripts/check-architecture-guardrails.py"
 
 
 def sql_escape_files(root: Path) -> dict[str, str]:
-    """Every regular file under `root` that can hold Rust, whatever its name or suffix.
+    """Every file a commit in `root` can contain, whatever its name or suffix.
 
-    A `#[path = ".escape.rs"]` or `include!("escape.inc")` pulls any file into the
-    build, so the scan cannot go by suffix. Skipped: `target`, `.git` and `.local`
-    directories, this script, and files that are not UTF-8.
+    The list comes from git: tracked files plus untracked files that are not
+    ignored, so a new file is checked before it is added. An ignored file (a
+    build directory, an extra worktree, a stale copy) cannot be part of a commit
+    and is never read. A `#[path = ".escape.rs"]` or `include!("escape.inc")`
+    pulls any file into the build, and the pulled file must be in the commit for
+    the build to pass, so the scan cannot go by suffix. Skipped: this script,
+    symlinks, files deleted in the working tree, and files that are not UTF-8.
+    Exits when git cannot answer.
     """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if listing.returncode != 0:
+        raise SystemExit(f"cannot list the files of a commit: git ls-files failed in {root}")
     files: dict[str, str] = {}
-    for directory, subdirs, names in os.walk(root):
-        subdirs[:] = [d for d in subdirs if d not in SQL_ESCAPE_SKIPPED_DIRS]
-        for name in names:
-            path = Path(directory) / name
-            rel = path.relative_to(root).as_posix()
-            if rel == SQL_ESCAPE_SELF or path.is_symlink():
-                continue
-            try:
-                files[rel] = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
+    for rel in sorted(set(os.fsdecode(listing.stdout).split("\0")) - {"", SQL_ESCAPE_SELF}):
+        path = root / rel
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            files[rel] = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
     return files
 
 
@@ -260,21 +270,26 @@ def run_self_test() -> int:
         failures.append(f"sql text: flagged {sql_escape_users(sql_files)}, expected {sql_expected}")
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+        # The sample ignores only what its own .gitignore names.
+        subprocess.run(["git", "config", "core.excludesFile", os.devnull], cwd=tree, check=True)
         for rel_path, content in {
+            ".gitignore": b"target/\n.local/\nstale/\n",
             ".hidden.rs": b"sqlx::AssertSqlSafe",
             "x.inc": b"sqlx::AssertSqlSafe",
             "target/y.rs": b"sqlx::AssertSqlSafe",
             "notes.md": b"sqlx::AssertSqlSafe",
             ".local/z.rs": b"sqlx::AssertSqlSafe",
-            "sub/.git/config": b"sqlx::AssertSqlSafe",
+            "stale/old.rs": b"sqlx::AssertSqlSafe",
             "scripts/check-architecture-guardrails.py": b"sqlx::AssertSqlSafe",
             "blob.bin": b"\xff\xfe\x00sqlx::AssertSqlSafe",
         }.items():
             (tree / rel_path).parent.mkdir(parents=True, exist_ok=True)
             (tree / rel_path).write_bytes(content)
         discovered = sorted(sql_escape_files(tree))
-        if discovered != [".hidden.rs", "notes.md", "x.inc"]:
-            failures.append(f"sql text: discovery returned {discovered}, expected ['.hidden.rs', 'notes.md', 'x.inc']")
+        expected_files = [".gitignore", ".hidden.rs", "notes.md", "x.inc"]
+        if discovered != expected_files:
+            failures.append(f"sql text: discovery returned {discovered}, expected {expected_files}")
     if failures:
         for failure in failures:
             print(f"self-test failed: {failure}: {rel}", file=sys.stderr)
