@@ -15,343 +15,270 @@ belong to the host integration; they are not a fifth memory kind.
 
 ## Identity and ownership
 
-The target is one explainable access decision: **who is calling, whose data
-is involved, and what may this caller do with it?** A person, agent, or service
-is a principal. Each memory or Goal has one owner. The principal's role in
-that owner determines data access; the request's tool permissions determine
-which operations it may invoke.
+Every memory series and every Goal has exactly one owner, a person or a group.
+The owner decides who reaches it. Access is a role resolved for the caller,
+and that role is granted in one of two ways: by membership of the owner, or by
+a grant on one Goal. Both produce the same role shape. Owner roles come from
+memberships and Goal grants are read separately and joined with the owner role,
+but a grant to a group is resolved through the same stored group roles that
+membership uses.
 
-Start here for the model, follow the
-[request flow](host-integration.md#authentication-and-owner-scope) for integration,
-and use [Protocol](protocol.md#owner-scope) for transport behavior. The
-[decisions](decisions.md#identity-and-ownership-have-separate-jobs) explain why
-these boundaries exist.
+Follow the [request flow](host-integration.md#authentication-and-owner-scope)
+for integration and [Protocol](protocol.md#owner-scope) for transport behavior.
+The [decisions](decisions.md#identity-and-ownership-have-separate-jobs) explain
+why these boundaries exist.
 
-### The map
-
-```mermaid
-flowchart TD
-    I["Verified external identity"] -->|maps to| U["Principal: person, agent, or service"]
-    U -->|personal role| PO["Personal owner"]
-    U -->|server-resolved role| GO["Group owner"]
-    PO -->|owns| PM["Private memories and Goals"]
-    GO -->|owns| GM["Shared memories and Goals"]
-    U -.->|attested writer: by and via| W["Attribution on each written version"]
-```
-
-The two owner boxes illustrate separate scopes. A principal may hold roles
-in many group owners; each stored entity still belongs to exactly one owner.
-Writer attribution records how a version was written and grants no access.
-
-| Concept | Question it answers |
-|---|---|
-| Principal (`UserId`) | Who authenticated? A human, agent, and service use the same identity model. |
-| Owner (`OwnerId`) | Whose storage scope contains this memory or Goal? The registry distinguishes a personal owner from a group owner. |
-| Group (`GroupId`) | Which principals participate in this shared owner, directly or through a subgroup? |
-| Role | How high may this principal read and write, and may it manage the group? |
-| Default or selected owner | Which authorized owner is this request acting in, and where does an omitted `space` write? Selection does not change the principal or grant authority. |
-| Tool capability | Which exact tool, action, or resource key may this request reach? |
-| Writer (`by`, `via`) | Which attested principal wrote the version, and through which caller/session, if any? |
+A person, agent, or service is a principal (`UserId`). An owner is an `OwnerId`;
+a group owner is also a `GroupId`. Writer attribution (`by`, `via`) records who
+wrote a version and grants no access.
 
 The host binds external credentials to principals and supplies the trusted
 owner resolver. Proxiima carries the resulting authority through a sealed
 `OwnerScope`, engine command ports, and PostgreSQL row-level security (RLS).
-An owner UUID, group name, token claim interpreted by an application, or model
-label alone is no authorization proof. The stock OIDC adapter verifies the
-credential and maps its issuer/subject pair before owner access is resolved.
+An owner UUID, a group name, a token claim an application interprets, or a
+model label is no authorization proof. The stock OIDC adapter verifies the
+credential and maps its issuer and subject before owner access is resolved.
 
-### Personal and shared owners
+### Owners
 
-A principal's personal owner has the same UUID as that principal. Its role
-is derived: that principal can read and write every kind, and nobody can
-edit its membership. A personal owner is conceptually a one-member group,
-not a shared group waiting for more members.
+A principal's **personal owner** has the same UUID as the principal. It is the
+principal's own space: its role is derived (`Role::personal`), nobody can edit
+its membership, and that role does not manage. A group is the owner for shared
+memory; an organization, department, project, or household maps onto one when it
+needs shared memory. Business labels, account provisioning, and billing remain
+host concerns. There is no universal-read owner.
 
-A shared group owner has explicit membership relations. Giving someone a
-viewer relation lets them read the group's data; it does not change the
-data's owner or give them access to a member's personal data. An organization,
-department, project, or household can be represented by a group when it needs
-shared memory. Those business labels, account provisioning, and billing
-remain host concerns. There is no universal-read owner.
+Choose the owner to match the audience. A role applies to everything the owner
+owns, never to one chosen note, so memory with a narrower audience needs its
+own group.
 
-**Choose the owner to match the audience.** For example, put project-wide
-notes in a project group and restricted notes in a separate group. Viewer
-membership applies to the owner's data, not one chosen note. A pin to another
-owner's memory grants no access to its target; unreadable targets are redacted.
+### Roles
 
-### Roles and operation permissions
+A role has five fields. The role representation and its constructors are in
+[`Role`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs);
+the kernel states it in
+[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean).
 
-Roles have separate read and write ceilings over the memory kinds
-`Fact < Abstraction < Perspective`, and three capabilities beside them: Goal
-access (none, reads, works), owner administration, and group management.
-Writing a kind always implies reading it, and a Goal is no rung: no memory
-ceiling grants Goal access, and Goal access grants no memory. The stored role
-and the row policies hold every such role: the memory settings carry the
-ceilings, one setting the owners whose Goals the role reads and one those whose
-Goals it works. No policy reads administration.
-This access ladder is separate from the [derivation rules](#layering).
+| Field | Values | Governs |
+|---|---|---|
+| Read ceiling | none, Fact, Abstraction, Perspective | Which memory kinds may be read (`Fact < Abstraction < Perspective`) |
+| Write ceiling | none, Fact, Abstraction, Perspective | Which memory kinds may be written; never above the read ceiling |
+| Goals | none, reads, works | What the role may do with the owner's Goals |
+| Administers | yes or no | Administering the owner |
+| Manages | yes or no | Managing the group |
 
-The standard relations illustrate the intended jobs:
+No capability follows from a ceiling. A memory ceiling grants no Goal access,
+and Goal access grants no memory. Writing a kind implies reading it. The access
+ladder is separate from the [derivation rules](#layering).
 
-| Role | Reads | Writes | Goals | Administers | Manages group membership |
+The four membership relations are presets of this role. Authorization reads
+the role, never the relation name; the table is generated from `Relation::role()`.
+
+| Relation | Reads | Writes | Goals | Administers | Manages |
 |---|---|---|---|---|---|
-| Personal (derived) | All memory kinds | All memory kinds | Works | Yes | No; personal membership is fixed |
-| Viewer | All memory kinds | None | Works | No | No |
-| Ingest | Facts | Facts | None | No | No |
-| Editor | All memory kinds | All memory kinds | Works | No | No |
-| Admin | All memory kinds | All memory kinds | Works | Yes | Yes |
+| Personal (derived) | all kinds | all kinds | works | yes | no |
+| Admin | all kinds | all kinds | works | yes | yes |
+| Editor | all kinds | all kinds | works | no | no |
+| Viewer | all kinds | none | works | no | no |
+| Ingest | Facts | Facts | none | no | no |
 
-Thus an ingestion service cannot read Perspectives, and an admin of one group
-has no role in another group merely because it is called an admin.
+An ingestion service therefore cannot read Perspectives. A role belongs to the
+owner it is held in: an admin of one group holds a role in another group only
+through a path that gives one, such as nesting, never because the relation is
+called admin.
 
-Goal work (setting, modifying and transitioning an owner's Goals) follows
-Goal access, not the write ceiling: every directly authenticated member whose
-role works Goals does so. A viewer member sets a group Goal and still
-writes none of the group's Facts or Perspectives. Achieving, decomposing and
-sharing a Goal need administration. A forwarded request reads Goals at most,
-and a delegated request works Goals only where it administers. An action declares Goal work in the
-catalog (`OwnerNeed::GoalWork` on its action spec, `McpHostTool::with_goal_work`
-for a host tool); the owner-role gate and every listing read that declaration,
-and a host-state command declared Goal work (`GoalWorkCommand`) commits on a
-`GoalWorkUnitOfWork` with the Facts it declares for its Goal. Every other
-memory and host-state write keeps the write ceiling. The role representation and its constructors are owned
-by the [access rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs).
+| Operation | Needs |
+|---|---|
+| Read or write a memory of kind *k* | Read or write ceiling covering *k* |
+| Read an owner's Goals | Goals: reads or works |
+| Set, modify, or transition a Goal | Goals: works |
+| Achieve a Goal | Administers on the owner, or the Goal-specific route below |
+| Decompose a Goal; transfer; erase one series; graph overview | Administers |
+| Share a Goal (manage its audience) | Administers on a personal owner, or a Goal role that manages |
+| Change membership; transfer from or to a group | Administers and manages |
 
-An owner role is only one part of a tool call:
+Goal work follows the Goals field, not the write ceiling. A call declares Goal
+work in the catalog (`OwnerNeed::GoalWork` on an action spec,
+`McpHostTool::with_goal_work` on a host tool); the owner-role gate and every
+listing read that declaration. This widens no memory write, with one bounded
+exception: a host-state command declared Goal work (`GoalWorkCommand`) commits
+on a `GoalWorkUnitOfWork` together with the Facts it declares, and those Facts
+are admitted by the Goal-work gate, not the Fact write ceiling. A viewer
+therefore sets a group Goal, and writes Facts only through such a command; every
+other memory and host-state write keeps the write ceiling.
 
-```mermaid
-flowchart TD
-    K["Requested tool, action, or resource key"] --> D{"Deployment serves it?"}
-    D -->|yes| C{"Caller scope permits it?"}
-    C -->|yes| O{"Role permits the effect<br/>on this owner and kind?"}
-    O -->|yes| E["Engine operation and storage enforcement"]
-    D -->|no| R["Refuse"]
-    C -->|no| R
-    O -->|no| R
-```
+A Goal grant adds a second route to Goal edits. A caller whose owner role does
+not work or administer the owner can still work a Goal, or achieve it, when the
+current Goal role from its grants works Goals.
 
-`ServedSurface` controls the deployment's tool surface; `ToolScope` controls
-the caller's exact keys. Neither supplies an owner role. Allowing a tool does
-not make a viewer an editor. Conversely, an admin cannot invoke a command
-excluded from its caller scope. Listings and invocation use the same catalog
-policy. Some operations, such as owner erase, also require explicit host
-authority; the role alone does not authorize them. See
-[capability admission](host-integration.md#capability-admission).
+Erasing a whole owner is not a role question: explicit
+[host authority](data-and-erasure.md#host-authority) decides it, and no role
+authorizes it.
+
+### Granting a role
+
+**On the owner.** A principal holds a relation in a group, which grants the
+relation's role in that group. A principal who holds several relations in one
+group holds the join of their roles. Groups nest, as described next.
+
+**On a smaller object.** A grant on one Goal names a subject and a role. The
+subject is a person or a group. A member of an invited group holds the grant's
+role capped by their own role in that group. Removing a person from the group
+ends what the grant gave them at once, and the grant itself is untouched. A
+grant to a group carries no audience management. Kernel:
+[Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Audience.lean).
+A grant adds access; it never takes away access the owner already gives. Goal
+routes read live grants and live group roles, so removing a person from the
+group, revoking the grant, or the grant's expiry ends the route at the next
+statement. See
+[Goal collaboration](#goal-collaboration).
 
 ### Nested groups: access travels upward
 
-A group may contain a subgroup with a relation that caps inherited authority.
-The runtime forms a forest: several independent trees are allowed. There is
-no fixed nesting-depth maximum in the current group model. Its limit is the
-**shape of the hierarchy**:
+A group may be attached to a parent group with a relation, which caps the
+authority its members inherit there. The groups form a forest with no fixed
+depth limit. The shape is restricted:
 
-| Structure | Supported behavior |
+| Structure | Behavior |
 |---|---|
-| Several levels, such as Team inside Department inside Company | Allowed; each step caps the authority inherited upward |
+| Several levels, such as Team in Department in Company | Allowed; each step caps authority |
 | Several children under one parent | Allowed |
-| One subgroup under two different parents | Refused: a subgroup has at most one parent |
-| A cycle or a group attached to itself | Refused |
-| One person in several unrelated groups | Allowed; the single-parent restriction applies to groups, not people |
-
-The second-parent and cycle refusals are exercised by the
-[nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs).
+| One subgroup under two parents | Refused: a group has at most one parent |
+| A cycle, or a group attached to itself | Refused |
+| One person in several unrelated groups | Allowed |
 
 ```mermaid
 flowchart BT
     A["Alex"] -->|editor membership| T["Team group"]
-    T -->|mounted in parent with viewer cap| P["Department group"]
+    T -->|attached with viewer cap| P["Department group"]
     B["Blair"] -->|direct admin membership| P
     A -.->|effective viewer through Team| P
 ```
 
-Alex is an editor of Team and a viewer of Department. Blair's Department membership
-does **not** grant access to Team. The arrows show authority climbing from a
-member through a child to its parent, not parent administrators acquiring
-every descendant's data.
+Alex is an editor of Team and, through it, a viewer of Department. Blair's
+Department membership grants nothing in Team. Authority climbs from member to
+parent and never descends to a parent's administrators.
 
-Along one path, each cap takes the weaker read/write ceilings and Goal
-access, and requires administration or management on both sides to propagate
-it. Across several relations or membership paths into the same owner,
-capabilities combine using the strongest of each from either path. A viewer path
-therefore does not cancel a separate editor membership. Removing a relation
-removes that path; another membership can still confer access.
+Along one path, each edge takes the minimum of the two roles: the weaker
+ceilings and Goals field, and administration or management only if both sides
+have it. Across several paths into the same owner, the result takes the maximum
+of each field. A viewer path therefore does not cancel an editor membership,
+and removing a relation removes only its path. PostgreSQL stores the folded
+result per person and group, so a read is one lookup.
 
 Attaching a subgroup or changing its relation requires management of both
-groups. Detaching requires management of either endpoint; removing a person
-requires management of the containing group. Membership edits serialize on
-the group tree, recheck the caller's management authority, and preserve a
-group's last manager once one exists. PostgreSQL maintains the effective-role
-projection from the membership tree. See the
-[projection](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/functions.sql)
-and [nested-group behavior tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs).
-
-Moving a subgroup changes inherited access for the people throughout its
-subtree. A team already inside a department cannot also be attached to a
-separate project or hiring panel. Reparenting it changes its organizational
-access; it is not a way to share a few selected memories.
+groups. Detaching requires management of either endpoint, and removing a person
+requires management of the containing group. Membership edits serialize on the
+group tree, recheck the caller's authority, and preserve a group's last manager
+once one exists. Attaching a group elsewhere changes inherited access for its
+whole subtree; it is not a way to share a few memories. The refusals and the
+projection are exercised by the
+[nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs)
+and defined in the
+[projection function](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/functions.sql).
 
 ### Sharing a set of memories
 
-**A group is the audience for the memories it owns.** Nesting composes people
-and their roles; it does not collect memories from several owners into a
-shared folder. A query, tag, list, or pin does not create a new audience.
+A group is the audience for the memories it owns. Nesting composes people and
+roles; it does not gather memories from several owners. A query, tag, list, or
+pin creates no audience, and a pin to another owner's memory grants no access
+to its target (an unreadable target is redacted).
 
-For a durable ownership boundary, choose a group for that audience and place
-the memory series under its ownership. Reuse an existing group when its
-membership and roles match. A separate group is useful when a body of
-knowledge needs its own readers, maintainers, retention, and transfer policy.
-Several sets with the same policy can use the same group.
+To give a body of knowledge its own readers and maintainers, create a group for
+that audience, add its members with roles, and write new series with the group
+as owner. Reuse an existing group when membership and roles match. A panel that
+brings people from two teams together is such a group, with direct person
+memberships and no parent link to either team.
 
-The [Goal collaboration design](#goal-collaboration) adds a second option:
-publish selected exact versions to a Goal audience while their owner stays
-responsible for them. Goal work bindings delegate contribution to selected
-series. They avoid creating a new owner group for each customer conversation.
-They cannot hide information from people who already have owner access.
+**Transfer** moves an existing series to another owner. It is the one way to
+change a series' owner, and the rules are these:
 
-For example, a hiring panel can bring together selected people from two teams
-without moving either team out of its department:
+- The unit is one memory series per call. All its versions move in place, the
+  series keeps its identity and writer attribution, and the previous owner no
+  longer owns it. Transfer is a move, not an additional share.
+- The caller must administer the source owner (for a personal owner, its own
+  principal; for a group, administers and manages) and must administer and
+  manage the destination. The destination must therefore be a group.
+- Goals do not transfer. A series that has a Goal or Perspective causal
+  relation (a version guided by a Goal, or motivating one) does not transfer.
+  A schema that declares `NotTransferable` is refused.
+- Readers of the old owner lose access unless they hold a role in the
+  destination. After the move, removing a member's last path to the group ends
+  their future access; reads already made are not retracted. Destroying data is
+  the separate [host-authorized erasure](data-and-erasure.md#host-authority).
 
-```mermaid
-flowchart TD
-    A["Alex"] -->|team membership| H["People team"]
-    B["Blair"] -->|team membership| E["Engineering team"]
-    A -->|editor membership| S["Hiring panel group"]
-    B -->|viewer membership| S
-    S -->|owns| M["Selected shared memory series"]
-```
+The [transfer command](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/engine/access_admin.rs)
+owns these rules and
+[owner_transfer.rs](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/owner_transfer.rs)
+exercises them. See also [ownership and lifecycle](data-and-erasure.md#ownership-and-lifecycle).
 
-These are direct person memberships in separate groups. The hiring panel has
-no parent link to either team. Panel membership grants access to panel-owned
-memories; it does not grant access to the teams' other memories. Likewise,
-other team members do not gain access to the panel through their team.
-
-| Sharing step | Effect |
-|---|---|
-| Give the panel its members and roles | Establish who can read or contribute to all panel-owned data |
-| Create new shared memories with the panel as owner | They use the panel's access policy from the start |
-| Transfer an existing selected series to the panel | All its versions move; the original owner no longer owns the series |
-| Keep some original readers involved | Give them roles in the destination too; the old owner's membership no longer authorizes the moved series |
-| Leave unselected series with their existing owners | Their access policy stays with those owners |
-| Remove a panel membership | Remove that access path; other roles held through other paths still count |
-
-The current transfer operation handles one memory series per call and needs
-authority at both owners. A selection is therefore moved series by series;
-this is not a collection-level share transaction. Goals do not transfer.
-Transfer refuses a move that would split a live same-owner motivation or
-guidance relationship. An independent adaptation uses the
-[fork contract](#revision-shared-editing-and-fork): a new series starts from
-one exact source version, with explicit source-use and destination-write
-authority. The original proposal is recorded in
-[issue #669](https://github.com/Aquilo-Solution-S/Proxiima/issues/669).
-Selecting a current note also moves its older versions. Writer attribution
-survives, and references to other owners' memories still
-require independent read access. The
-[transfer contract](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/engine/access_admin.rs)
-owns these restrictions.
-
-This produces **shallow, wider ownership groups** alongside the organizational
-trees. Goal audiences then support selected publication and project work
-without reshaping those owner groups. Each audience can change independently. Giving the
-panel a department as parent would instead give panel members capped access
-to department-owned data; it would not give department members panel access.
-
-### Explain the structure to an HR team
-
-> Keep each body of knowledge with the people responsible for it. Teams and
-> departments organize participation. Hiring panels, onboarding cohorts, and
-> projects bring together the people who need a particular body of knowledge.
-> Each group decides who may read, contribute, edit, set Goals, or manage its
-> membership.
-
-The design choice is which people and memories belong together:
-
-| HR need | Group structure | Why it fits |
-|---|---|---|
-| Department-wide guidance | Teams nested in a department with appropriate caps | Team members gain department context without opening each team's work to every department member |
-| A hiring panel across departments | Independent sharing group with direct person memberships | The panel has its own audience without giving a team a second parent |
-| Selected approved guidance for an external audience | Exact-version publications to a Goal | Share the chosen admissions without moving ownership or exposing later drafts |
-| Confidential records hidden from existing department readers | Separate owner group for those series | Goal access is additive; it cannot take away existing owner access |
-| Customer-specific interpretation of common guidance | Fork an approved A/P version into a working Goal | Keep an independent revision history with an exact source anchor |
-| A subset of department memories for a smaller circle | Separate owner group for those series | Adding a viewer to the department would expose all department-owned memories within that role |
-| One person working in a team and several panels | Several person memberships | Organizational placement and collaboration can coexist |
-
-Group names are host-facing labels; the engine enforces the ownership and
-role structure. Choosing boundaries is a host design judgment: group together
-memories whose readers and contributors should change together. For example,
-keep department-wide guidance and restricted panel notes in different owners.
+Two other routes avoid moving a series. A [fork](#revision-shared-editing-and-fork)
+starts an independent series from one exact version. [Goal collaboration](#goal-collaboration)
+publishes exact versions to a Goal audience while the owner keeps the series.
+Neither can hide information from people who already have owner access.
 
 ### Requests, sessions, and workers
 
-Owner selection chooses a default destination from verified authority.
-`X-Proxiima-Owner` selects a raw UUID; a server-issued memory-space key selects
-an owner through the same context. Neither creates a membership, and selecting
-a default does not confine the request: reads stay bounded by the context's
-readable owners and kind limits, and each write targets one owner. Only a host
-that confines the context with `narrowed_to_owner` limits it to one owner, and
-that cannot be undone later. See [owner scope](protocol.md#owner-scope).
+A request carries its roles and its expiry once, in its owner scope. An expired
+context reads, writes, and runs nothing; a token has no revocation before expiry
+([decision](decisions.md#access-ends-at-token-expiry)). A membership change
+applies to roles resolved after it. Open streams end at token expiry or the
+maximum stream lifetime. Goal routes are the exception: they are read live (see
+[granting a role](#granting-a-role)).
 
-Three things called a session or grant have different jobs:
+The owner scope bounds what a request can reach. `X-Proxiima-Owner` selects a
+raw UUID, and a server-issued memory-space key selects an owner through the same
+context. Selection chooses a default destination and does not confine the
+request: reads stay within the context's readable owners and kind limits, and
+each write targets one owner. Only a host that confines the context with
+`narrowed_to_owner` limits it to one owner, and that cannot be undone. See
+[owner scope](protocol.md#owner-scope).
+
+A tool call passes three independent gates: the deployment serves the tool
+(`ServedSurface`), the caller's scope permits the exact key (`ToolScope`), and
+the role permits the effect on this owner and kind. Allowing a tool does not
+make a viewer an editor, and an admin cannot call a command its scope excludes.
+Listing and invocation read the same catalog declaration. Owner administration
+is no read or write bypass in the row policies either: they derive access from
+the memory ceilings and the Goal read and work settings, and none reads
+administration.
+See [capability admission](host-integration.md#capability-admission).
+
+The store holds every role: the group role projection, Goal grants, and
+delegated grants store the five fields in one shape
+([migration 0067](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/migrations/0067_role_columns.sql),
+[`role_columns.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/role_columns.rs)).
 
 | Mechanism | Purpose | Boundary |
 |---|---|---|
 | MCP transport session | Bind protocol requests to a principal and default owner | Later requests reauthenticate and must agree with the binding |
-| Writer `via` | Retain caller/session provenance on a written version | Attested by authentication; not an access grant or an automatic copy of the MCP session ID |
-| Delegation grant and redeemed phase | Let queued work execute a bounded command | Exact owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
+| Writer `via` | Keep caller or session provenance on a written version | Attested by authentication; not an access grant and not copied from the MCP session id |
+| Delegation grant and redeemed phase | Let queued work run one bounded command | One owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
 
-Membership changes affect subsequent role resolution. Open streams end at
-token expiry or the maximum stream lifetime; changing a membership does not
-by itself cancel an already admitted operation.
+A delegated worker holds a `DelegationId` and redeems it when work starts; it
+holds no broad bearer and no reusable authorization context. The
+recorded ceiling never manages and works Goals only where it administers;
+a promotion cannot widen it and a demotion below it refuses the next
+redemption. Revocation blocks later redemption but does not cancel a phase
+already redeemed; expiry still bounds it. See
+[delegated work](host-integration.md#delegated-work).
 
-A delegated worker retains a `DelegationId` and redeems it when work starts;
-it does not retain a broad bearer or reusable authorization context.
-Membership promotion cannot widen the recorded ceiling, and a demotion below
-it refuses the next redemption. A redeemed phase is a bounded in-process
-execution capability. Revocation blocks later redemption; it does not cancel
-an already redeemed phase. Expiry still bounds operations using that phase.
-See [delegated work](host-integration.md#delegated-work).
-
-A **trusted forwarder** is a separate host integration: its verified credential
-binds one registered owner and the attested `by`/`via` pair. The forwarder
-stays the authenticated subject and receives only the configured viewer,
-ingest, or editor ceiling at that owner. Ordinary memberships are not added
-to this request. It cannot manage groups or issue delegation grants. See
-[forwarding](host-integration.md#forwarded-owner-access).
-
-### Map a use case to the model
-
-| Need | Model | Result or limit |
-|---|---|---|
-| Keep personal notes private | Write to the caller's personal owner | A team admin has no ordinary access to them |
-| Collaborate on project knowledge | Write to a project group; add viewer, editor, or admin relations | One owner and shared role policy for the project's data |
-| Let a team read wider department context | Mount Team in Department with a viewer cap | Team members gain capped Department access; Department members gain no Team access |
-| Share selected memories across teams | Use an independent group for that audience; place the selected series there | Direct person memberships span teams without giving a team a second parent |
-| Admit observations from a source | Give the source principal an ingest relation | Facts in and out, without access to interpretations or Goals |
-| Run an agent's queued command | Issue a finite delegation for one owner and command | Redeem against current authority; no delegated group management |
-| Put one private memory into shared work | Transfer its series to a group the caller manages | Ownership changes; writer history does not |
-| Remove a collaborator | Remove every membership path that grants the unwanted role | Future resolution loses that access; prior reads are not retracted |
-| Broadcast an event or delete an account | Use host publication or authorized inverse operations | Delivery and erasure have their own contracts; neither is a membership shortcut |
-
-Transfer moves the whole memory series, including its versions, to one group
-owner. It requires authority on both sides: personal authority or group admin
-at the source, and group administration at the destination. Goals do not
-transfer, and a personal owner cannot be the destination. Transfer is not an
-additional share; the old owner loses the series. Original publication
-attribution is independent. See [ownership and lifecycle](data-and-erasure.md#ownership-and-lifecycle).
-For example, Alex first writes a private observation, then transfers its
-series to Project with both sides authorized. A Project viewer can now read
-it. Removing that viewer's final membership path removes future group access,
-while the stored writer history remains. Destroying the data requires the
-separate [host-authorized erasure path](data-and-erasure.md#host-authority).
+A **trusted forwarder** is a host integration whose verified credential binds
+one registered owner and the attested `by` and `via`. It stays the
+authenticated subject, with writer attribution attested separately, and it
+cannot issue delegation grants. It receives only the
+configured viewer, ingest, or editor role at that owner, capped to read Goals at
+most and never administering or managing. Ordinary memberships are not added.
+See [forwarding](host-integration.md#forwarded-owner-access).
 
 ### Where the guarantees live
 
-| Boundary | Authority or executable evidence |
+| Boundary | Evidence |
 |---|---|
-| One owner, role ceilings, personal membership, capped nesting | [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean) and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Authorization.lean) principles |
-| Verified identity and immutable, narrowing scope | [AuthzContext](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/authz.rs) and [OwnerScope](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/owner_scope.rs) |
+| One owner, role fields, personal membership, capped nesting | [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean), [Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Audience.lean), and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Authorization.lean) |
+| Verified identity and narrowing scope | [AuthzContext](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/authz.rs) and [OwnerScope](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/owner_scope.rs) |
 | Effective memberships and transaction isolation | [Nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs) and [manager race tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/group_manager_race_pg_tests.rs) |
 | Per-owner database isolation | [Owner RLS](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/policies.sql) and [multi-owner host tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/tests/multi_owner_e2e.rs) |
-| Ownership movement | [Transfer command](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/engine/access_admin.rs) and [transfer tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/owner_transfer.rs) |
 
 The Lean kernel states principles; it does not prove that Rust or SQL refines
 them. Runtime types, database policies, and executable tests enforce the
@@ -537,15 +464,17 @@ flowchart TB
 ```
 
 A publication delegates access to the Goal’s managed audience: members of
-its owning Group participate through their existing Roles, alongside explicit
-Goal guests. A guest is a person or a Group; a Group's members hold its grant
-as far as their own Roles allow. This includes people invited later. The two routes combine;
-removing a guest grant does not remove an existing Group Role. A source-owner or Goal-controller transfer invalidates
-that delegation; transferring back does not revive it. Forking a published
+its owning Group participate through their existing Roles, alongside the
+subjects of Goal grants. A grant names a person or a group and a role (see
+[granting a role](#granting-a-role)), a group's members hold the grant as far as their own roles allow, and a
+group subject includes people who join it later. The two routes combine; removing a Goal grant does not remove an
+existing Group Role. A change of source owner (a
+[transfer](#sharing-a-set-of-memories)) or of Goal controller invalidates
+that delegation; changing back does not revive it. Forking a published
 version into another owner requires explicit source-owner fork permission
 and write permission at the destination.
 
-Erasing a person removes their Goal guest access. Sharing decisions and issuer
+Erasing a person removes the Goal grants that name them. Sharing decisions and issuer
 attribution owned by a Group remain with that Group, alongside its Goals and
 memories. Recreating the person's identity does not restore their removed grants.
 
@@ -601,10 +530,10 @@ limit is therefore unnecessary.
 
 | Operation | Authority boundary |
 |---|---|
-| Read a publication | Exact admission, source-owner consent, and an applicable owning-Group Role or Goal guest grant |
+| Read a publication | Exact admission, source-owner consent, and an applicable owning-Group Role or Goal grant |
 | Read a working draft | Explicit series work binding and applicable read ceiling |
 | Create or revise Abstractions or Perspectives | Explicit work destination and applicable write ceiling |
-| Edit a Goal's title or progress | Owning-Group Role or explicit guest Role that works Goals; ordinary lifecycle rules still apply |
+| Edit a Goal's title or progress | Owning-Group Role or Goal grant whose role works Goals; ordinary lifecycle rules still apply |
 | Publish or change an audience | Explicit authority for that sharing operation |
 | Transfer or erase | Existing owner/lifecycle authority; Goal work grants do not provide it |
 
@@ -619,7 +548,7 @@ disclose the surrounding Goal or provenance graph. Hiding source pins does not
 remove sensitive claims or source identifiers from a published payload. Reading
 a named target still requires its own permission.
 
-Revoking one Goal route leaves other valid routes intact. Transfer or controller
+Revoking one Goal route leaves other valid routes intact. Owner or controller
 changes invalidate stale authorizations permanently: changing A to B and back
 to A cannot revive them. Permission changes and writes have a defined atomic
 ordering. Completing a Goal preserves explicitly granted publications.
