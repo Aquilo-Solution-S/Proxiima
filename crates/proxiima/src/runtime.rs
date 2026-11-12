@@ -85,7 +85,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     ///
     /// This is the process-env-equivalent path for hosts whose configuration
     /// source is not global process state. Resolution happens once; storage
-    /// boot consumes the resulting `RuntimeConfig` without another env read.
+    /// boot consumes the resulting configuration without another env read.
     ///
     /// # Errors
     ///
@@ -132,11 +132,13 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
 
     /// Bring the database to this binary: the host's migrate step.
     ///
-    /// Resolves the configuration as [`Self::build`] does, then, on
-    /// [`crate::RuntimeConfig::migrations_url`], applies every pending core and
-    /// spiice migration under the configured missing-migration policy,
-    /// initializes the store number, and applies the runtime grants when
-    /// [`RuntimeBuilder::runtime_grants`] or `PROXIIMA_RUNTIME_GRANTS` asks for them.
+    /// Resolves the storage settings only ([`RuntimeBuilder::resolve_storage`]):
+    /// no serving setting configures or refuses this step, so the app that
+    /// serves runs it. On [`crate::StorageConfig::migrations_url`] it applies
+    /// every pending core and spiice migration under the configured
+    /// missing-migration policy, initializes the store number, and applies
+    /// the runtime grants when [`RuntimeBuilder::runtime_grants`] or
+    /// `PROXIIMA_RUNTIME_GRANTS` asks for them.
     /// Serving ([`Self::build`], [`Self::run`]) and [`Self::connect_storage`]
     /// only validate, and refuse a database this step has not brought
     /// current with [`ProxiimaError::MigrationRequired`].
@@ -147,11 +149,12 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     /// database off the current baseline, and storage errors for a failed
     /// connection, migration, store number or grant.
     pub async fn migrate(&self) -> Result<(), ProxiimaError> {
-        let (config, parts) = self.resolve()?;
+        let (config, parts) = self.merged_builder()?.resolve_storage()?;
         crate::boot::migrate::<A>(&config, &parts).await
     }
 
-    /// Resolve the configuration as [`Self::build`] does, validate the
+    /// Resolve the storage settings only ([`RuntimeBuilder::resolve_storage`];
+    /// no serving setting configures or refuses this call), validate the
     /// schema, and connect the serving storage, without composing an engine
     /// or starting anything: for a one-shot maintenance command.
     ///
@@ -161,8 +164,9 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     /// database [`Self::migrate`] has not brought to this binary,
     /// [`ProxiimaError::SchemaResetRequired`], and storage errors.
     pub async fn connect_storage(&self) -> Result<proxiima_storage_pg::PgStorage, ProxiimaError> {
-        let (config, parts) = self.resolve()?;
-        Ok(crate::boot::connect_storage::<A>(&config, &parts)
+        let (config, parts) = self.merged_builder()?.resolve_storage()?;
+        let registry = crate::boot::compose_registry::<A>(false)?;
+        Ok(crate::boot::connect_storage::<A>(&config, &parts, registry)
             .await?
             .storage)
     }
@@ -309,7 +313,7 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
                 registry: booted.registry.clone(),
                 pool: booted.pool.clone(),
                 platform_scope: booted.platform_scope.clone(),
-                pg_tuning: config.pg_tuning,
+                pg_tuning: config.storage.pg_tuning,
                 pg_sidecars: booted.pg_sidecars.clone(),
                 erase_context: booted.erase_context.clone(),
                 origin_scope: booted.origin_scope,
@@ -358,7 +362,8 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         })
     }
 
-    fn resolve(&self) -> Result<(crate::RuntimeConfig, crate::RuntimeParts), ProxiimaError> {
+    /// The overlay over the environment layer over [`SpiiceApp::configure`].
+    fn merged_builder(&self) -> Result<RuntimeBuilder, ProxiimaError> {
         let base = A::configure(RuntimeBuilder::default());
         let env_layer = if let Some(injected) = &self.injected_env {
             injected.clone()
@@ -367,8 +372,11 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         } else {
             RuntimeBuilder::default()
         };
-        let merged = self.overlay.clone().merge_over(env_layer.merge_over(base));
-        merged.resolve()
+        Ok(self.overlay.clone().merge_over(env_layer.merge_over(base)))
+    }
+
+    fn resolve(&self) -> Result<(crate::RuntimeConfig, crate::RuntimeParts), ProxiimaError> {
+        self.merged_builder()?.resolve()
     }
 }
 
@@ -1316,6 +1324,7 @@ mod tests {
                     .resolve()
                     .expect("complete overlay")
                     .0
+                    .storage
                     .store_number,
                 3
             );
@@ -1327,7 +1336,7 @@ mod tests {
             })
             .resolve()
             .expect("explicit store overrides application defaults");
-        assert_eq!(config.store_number, 3);
+        assert_eq!(config.storage.store_number, 3);
     }
 
     #[tokio::test]
@@ -1623,7 +1632,7 @@ mod tests {
             .resolve()
             .expect("resolved runtime config");
 
-        assert_eq!(config.pg_pool_config.max_connections, 4);
+        assert_eq!(config.storage.pg_pool_config.max_connections, 4);
     }
 
     #[tokio::test]

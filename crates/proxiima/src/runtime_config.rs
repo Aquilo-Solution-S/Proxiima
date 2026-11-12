@@ -1103,13 +1103,10 @@ impl RuntimeBuilder {
         Ok(())
     }
 
-    /// Resolve the builder into pure config plus host-provided runtime parts.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ProxiimaError::Config` for missing required config and
-    /// `ProxiimaError::Security` for fail-closed validation failures.
-    pub fn resolve(mut self) -> Result<(RuntimeConfig, RuntimeParts), ProxiimaError> {
+    /// The storage half of both resolves: the host-state participant, the
+    /// database URLs, the store number and the defaults of the remaining
+    /// storage settings. Not yet validated ([`StorageConfig::validate`]).
+    fn take_storage(&mut self) -> Result<(StorageConfig, StorageParts), ProxiimaError> {
         if self.duplicate_host_state_participant {
             return Err(ProxiimaError::Config(
                 DUPLICATE_HOST_STATE_PARTICIPANT.into(),
@@ -1119,8 +1116,56 @@ impl RuntimeBuilder {
             .database_url
             .take()
             .ok_or_else(|| ProxiimaError::Config("DATABASE_URL is required".into()))?;
-        self.check_platform_authenticator()?;
         let (platform_database_url, migration_database_url) = self.take_platform_urls()?;
+        let store_number = self.store_number.ok_or_else(|| {
+            ProxiimaError::Config(
+                "PROXIIMA_STORE_NUMBER is required: assign this store a number".into(),
+            )
+        })?;
+        let config = StorageConfig {
+            database_url,
+            store_number,
+            platform_database_url,
+            migration_database_url,
+            missing_migration_policy: self.missing_migration_policy.unwrap_or_default(),
+            runtime_grants: self.runtime_grants.unwrap_or(false),
+            pg_pool_config: self.pg_pool_config.unwrap_or_default(),
+            pg_tuning: self.pg_tuning.unwrap_or_default(),
+            embedding_runtime_policy: self.embedding_runtime_policy.unwrap_or_default(),
+        };
+        let parts = StorageParts {
+            vector_index: self.vector_index.take(),
+            host_state_participant: self.host_state_participant.take(),
+        };
+        Ok((config, parts))
+    }
+
+    /// Resolve only the storage settings, for a command that migrates or
+    /// connects storage and serves nothing. Nothing serving refuses it: no
+    /// listener, authenticator, served surface, transport, publication,
+    /// outbox or object-store setting is read.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxiimaError::Config` for a missing database URL, platform
+    /// URL or store number, a second host-state participant, an invalid pool
+    /// configuration, or a migration URL that does not name the platform
+    /// URL's role and database.
+    pub fn resolve_storage(mut self) -> Result<(StorageConfig, StorageParts), ProxiimaError> {
+        let (config, parts) = self.take_storage()?;
+        config.validate()?;
+        Ok((config, parts))
+    }
+
+    /// Resolve the builder into pure config plus host-provided runtime parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxiimaError::Config` for missing required config and
+    /// `ProxiimaError::Security` for fail-closed validation failures.
+    pub fn resolve(mut self) -> Result<(RuntimeConfig, RuntimeParts), ProxiimaError> {
+        self.check_platform_authenticator()?;
+        let (storage_config, storage_parts) = self.take_storage()?;
         self.register_outbox_http()?;
         let ServedPath {
             late_owner_access,
@@ -1148,24 +1193,16 @@ impl RuntimeBuilder {
             authenticator: self.authenticator,
             platform_authenticator: self.platform_authenticator,
             host_tools: self.host_tools,
-            vector_index: self.vector_index,
+            storage: storage_parts,
             embed_client: self.embed_client,
             embedding_router: self.embedding_router,
-            host_state_participant: self.host_state_participant,
             owner_access: self.owner_access,
             owner_drop_proof: self.owner_drop_proof,
             services,
             late_owner_access,
         };
         let config = RuntimeConfig {
-            database_url,
-            store_number: self.store_number.ok_or_else(|| {
-                ProxiimaError::Config(
-                    "PROXIIMA_STORE_NUMBER is required: assign this store a number".into(),
-                )
-            })?,
-            platform_database_url,
-            migration_database_url,
+            storage: storage_config,
             s3: self.s3,
             owner: self.owner,
             mcp: self.mcp_bind.map(|bind| McpSettings { bind }),
@@ -1176,19 +1213,14 @@ impl RuntimeBuilder {
             stream_revalidation,
             insecure_single_owner: self.insecure_single_owner,
             rest_enabled: self.rest_enabled.unwrap_or(false),
-            missing_migration_policy: self.missing_migration_policy.unwrap_or_default(),
-            runtime_grants: self.runtime_grants.unwrap_or(false),
             request_headers,
             forwarder: self.forwarder,
             health_endpoints: self.health_endpoints.unwrap_or(false),
             mcp_transport,
-            pg_pool_config: self.pg_pool_config.unwrap_or_default(),
-            pg_tuning: self.pg_tuning.unwrap_or_default(),
             auth: RuntimeAuthState {
                 has_host_authenticator: parts.has_authenticator(),
             },
             resource_metadata: self.resource_metadata,
-            embedding_runtime_policy: self.embedding_runtime_policy.unwrap_or_default(),
             publication: self.publication.unwrap_or_default(),
             published_retention: Some(
                 self.published_retention
@@ -1215,6 +1247,104 @@ struct ServedPath {
     mcp_transport: McpTransportConfig,
 }
 
+/// The storage settings of the environment's storage block
+/// ([`RuntimeBuilder::apply_storage_lookup`]): all that
+/// [`crate::Proxiima::migrate`] and [`crate::Proxiima::connect_storage`] read.
+#[derive(Clone)]
+pub struct StorageConfig {
+    pub database_url: String,
+    /// Host-assigned immutable store identity, persisted by the first
+    /// migrate step and checked by every boot.
+    pub store_number: u16,
+    pub platform_database_url: String,
+    /// The connection the migrate step migrates and boot validates the
+    /// schema on (`PROXIIMA_MIGRATION_DATABASE_URL`); `None` uses
+    /// [`Self::platform_database_url`]. See [`Self::migrations_url`].
+    pub migration_database_url: Option<String>,
+    /// Missing-version handling for normal boot and read-only preflight.
+    pub missing_migration_policy: MissingMigrationPolicy,
+    /// Grant the runtime role its DML privileges in the migrate step
+    /// (`PROXIIMA_RUNTIME_GRANTS`), after migrating. Off by default: a
+    /// DBA-managed deployment grants out-of-band (docs/operate.md).
+    pub runtime_grants: bool,
+    /// Postgres pool size and timeout policy. Resolved once before storage
+    /// construction; the canonical boot path never re-reads process env.
+    pub pg_pool_config: PgPoolConfig,
+    /// Postgres query tuning (`PROXIIMA_PG_*`). Defaults are this release's
+    /// shipped behaviour, so an unset environment is production.
+    pub pg_tuning: PgTuning,
+    pub embedding_runtime_policy: EmbeddingRuntimePolicy,
+}
+
+impl StorageConfig {
+    /// The URL the migrate step migrates and boot validates the schema on:
+    /// [`Self::migration_database_url`] when set, otherwise
+    /// [`Self::platform_database_url`].
+    #[must_use]
+    pub fn migrations_url(&self) -> &str {
+        self.migration_database_url
+            .as_deref()
+            .unwrap_or(&self.platform_database_url)
+    }
+
+    /// Validate the pool configuration and the migration URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxiimaError::Config` for an invalid pool configuration or a
+    /// migration URL that does not name the platform URL's role and database.
+    pub fn validate(&self) -> Result<(), ProxiimaError> {
+        self.pg_pool_config
+            .validate()
+            .map_err(|error| ProxiimaError::Config(error.to_string()))?;
+        if let Some(migration) = &self.migration_database_url {
+            check_migration_database_url(migration, &self.platform_database_url)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageConfig")
+            .field("database_url", &"<redacted>")
+            .field("store_number", &self.store_number)
+            .field("platform_database_url", &"<redacted>")
+            .field(
+                "migration_database_url",
+                &self.migration_database_url.as_ref().map(|_| "<redacted>"),
+            )
+            .field("missing_migration_policy", &self.missing_migration_policy)
+            .field("runtime_grants", &self.runtime_grants)
+            .field("pg_pool_config", &self.pg_pool_config)
+            .field("pg_tuning", &self.pg_tuning)
+            .field("embedding_runtime_policy", &self.embedding_runtime_policy)
+            .finish()
+    }
+}
+
+/// The host-provided parts storage boot reads.
+#[derive(Clone, Default)]
+pub struct StorageParts {
+    /// The store's host vector index ([`RuntimeBuilder::vector_index`]).
+    pub vector_index: Option<Arc<dyn proxiima_core::storage_ports::VectorIndex>>,
+    /// The host-state participant of the write session
+    /// ([`RuntimeBuilder::host_state_participant`]).
+    pub host_state_participant: Option<Arc<dyn PgHostStateParticipant>>,
+}
+
+impl std::fmt::Debug for StorageParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageParts")
+            .field("has_vector_index", &self.vector_index.is_some())
+            .field(
+                "has_host_state_participant",
+                &self.host_state_participant.is_some(),
+            )
+            .finish()
+    }
+}
+
 /// Pure, validated runtime config.
 ///
 /// The booleans are independent deployment gates — expose the network,
@@ -1225,15 +1355,9 @@ struct ServedPath {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub struct RuntimeConfig {
-    pub database_url: String,
-    /// Host-assigned immutable store identity, persisted by the first
-    /// migrate step and checked by every boot.
-    pub store_number: u16,
-    pub platform_database_url: String,
-    /// The connection the migrate step migrates and boot validates the
-    /// schema on (`PROXIIMA_MIGRATION_DATABASE_URL`); `None` uses
-    /// [`Self::platform_database_url`]. See [`Self::migrations_url`].
-    pub migration_database_url: Option<String>,
+    /// The storage settings, which [`RuntimeBuilder::resolve_storage`]
+    /// resolves alone.
+    pub storage: StorageConfig,
     pub s3: Option<S3RuntimeConfig>,
     pub owner: Option<OwnerId>,
     pub mcp: Option<McpSettings>,
@@ -1256,12 +1380,6 @@ pub struct RuntimeConfig {
     /// transport projection is opt-in twice on purpose — compiling it is a
     /// build decision, exposing it is a deployment one.
     pub rest_enabled: bool,
-    /// Missing-version handling for normal boot and read-only preflight.
-    pub missing_migration_policy: MissingMigrationPolicy,
-    /// Grant the runtime role its DML privileges in the migrate step
-    /// (`PROXIIMA_RUNTIME_GRANTS`), after migrating. Off by default: a
-    /// DBA-managed deployment grants out-of-band (docs/operate.md).
-    pub runtime_grants: bool,
     /// Inbound headers copied to tools as `RequestHeaders`
     /// (`PROXIIMA_REQUEST_HEADERS`). Empty publishes nothing.
     pub request_headers: RequestHeaderAllowlist,
@@ -1274,15 +1392,8 @@ pub struct RuntimeConfig {
     /// rmcp tuning plus the one body cap both the listener guard and rmcp
     /// enforce (`PROXIIMA_MAX_REQUEST_BODY_BYTES`, `PROXIIMA_MCP_*`).
     pub mcp_transport: McpTransportConfig,
-    /// Postgres pool size and timeout policy. Resolved once before storage
-    /// construction; the canonical boot path never re-reads process env.
-    pub pg_pool_config: PgPoolConfig,
-    /// Postgres query tuning (`PROXIIMA_PG_*`). Defaults are this release's
-    /// shipped behaviour, so an unset environment is production.
-    pub pg_tuning: PgTuning,
     pub auth: RuntimeAuthState,
     pub resource_metadata: Option<ResourceServerMetadata>,
-    pub embedding_runtime_policy: EmbeddingRuntimePolicy,
     /// The deployment's `CloudEvents` producer identity and capture bounds
     /// (`PROXIIMA_PUBLICATION_SOURCE`, `PROXIIMA_OUTBOX_*`; docs/host-integration.md).
     ///
@@ -1357,13 +1468,7 @@ pub struct RuntimeAuthState {
 impl std::fmt::Debug for RuntimeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeConfig")
-            .field("database_url", &"<redacted>")
-            .field("store_number", &self.store_number)
-            .field("platform_database_url", &"<redacted>")
-            .field(
-                "migration_database_url",
-                &self.migration_database_url.as_ref().map(|_| "<redacted>"),
-            )
+            .field("storage", &self.storage)
             .field("s3", &self.s3)
             .field("owner", &self.owner)
             .field("mcp", &self.mcp)
@@ -1374,17 +1479,12 @@ impl std::fmt::Debug for RuntimeConfig {
             .field("stream_revalidation", &self.stream_revalidation)
             .field("insecure_single_owner", &self.insecure_single_owner)
             .field("rest_enabled", &self.rest_enabled)
-            .field("missing_migration_policy", &self.missing_migration_policy)
-            .field("runtime_grants", &self.runtime_grants)
             .field("request_headers", &self.request_headers)
             .field("forwarder", &self.forwarder)
             .field("health_endpoints", &self.health_endpoints)
             .field("mcp_transport", &self.mcp_transport)
-            .field("pg_pool_config", &self.pg_pool_config)
-            .field("pg_tuning", &self.pg_tuning)
             .field("auth", &self.auth)
             .field("resource_metadata", &self.resource_metadata)
-            .field("embedding_runtime_policy", &self.embedding_runtime_policy)
             .field("publication", &self.publication)
             .field("published_retention", &self.published_retention)
             .field("object_purge_interval", &self.object_purge_interval)
@@ -1394,16 +1494,6 @@ impl std::fmt::Debug for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// The URL the migrate step migrates and boot validates the schema on:
-    /// [`Self::migration_database_url`] when set, otherwise
-    /// [`Self::platform_database_url`].
-    #[must_use]
-    pub fn migrations_url(&self) -> &str {
-        self.migration_database_url
-            .as_deref()
-            .unwrap_or(&self.platform_database_url)
-    }
-
     /// Validate the fail-closed network/auth matrix.
     ///
     /// # Errors
@@ -1412,12 +1502,7 @@ impl RuntimeConfig {
     /// and `ProxiimaError::Config` for an invalid pool configuration or a
     /// migration URL that does not name the platform URL's role and database.
     pub fn validate(&self) -> Result<(), ProxiimaError> {
-        self.pg_pool_config
-            .validate()
-            .map_err(|error| ProxiimaError::Config(error.to_string()))?;
-        if let Some(migration) = &self.migration_database_url {
-            check_migration_database_url(migration, &self.platform_database_url)?;
-        }
+        self.storage.validate()?;
         let Some(mcp) = &self.mcp else {
             return Ok(());
         };
@@ -1515,11 +1600,10 @@ pub struct RuntimeParts {
     pub platform_authenticator: Option<PlatformAuthenticatorFactory>,
     /// Host tools served on `/mcp` ([`RuntimeBuilder::host_tools`]).
     pub host_tools: Option<Arc<dyn McpHostTools>>,
-    /// The store's host vector index ([`RuntimeBuilder::vector_index`]).
-    pub vector_index: Option<Arc<dyn proxiima_core::storage_ports::VectorIndex>>,
+    /// The parts storage boot reads.
+    pub storage: StorageParts,
     pub embed_client: Option<Arc<dyn EmbeddingClient>>,
     pub embedding_router: Option<Arc<dyn EmbeddingRouter>>,
-    pub host_state_participant: Option<Arc<dyn PgHostStateParticipant>>,
     /// The host's owner-access port; `None` uses the runtime-pool resolver.
     pub owner_access: Option<Arc<dyn OwnerAccessPort>>,
     /// The host's personal-owner drop proof ([`RuntimeBuilder::owner_drop_proof`]).
@@ -1549,13 +1633,9 @@ impl std::fmt::Debug for RuntimeParts {
                 &self.platform_authenticator.is_some(),
             )
             .field("host_tools", &self.host_tools)
-            .field("has_vector_index", &self.vector_index.is_some())
+            .field("storage", &self.storage)
             .field("has_embed_client", &self.embed_client.is_some())
             .field("has_embedding_router", &self.embedding_router.is_some())
-            .field(
-                "has_host_state_participant",
-                &self.host_state_participant.is_some(),
-            )
             .field("has_owner_access", &self.owner_access.is_some())
             .field("has_owner_drop_proof", &self.owner_drop_proof.is_some())
             .field("services", &self.services)
@@ -1889,17 +1969,21 @@ mod tests {
                 .0
         };
         assert_eq!(
-            resolve(RuntimeBuilder::default()).missing_migration_policy,
+            resolve(RuntimeBuilder::default())
+                .storage
+                .missing_migration_policy,
             MissingMigrationPolicy::Reject
         );
         let rolling =
             || RuntimeBuilder::default().missing_migration_policy(MissingMigrationPolicy::Allow);
         assert_eq!(
-            resolve(rolling()).missing_migration_policy,
+            resolve(rolling()).storage.missing_migration_policy,
             MissingMigrationPolicy::Allow
         );
         assert_eq!(
-            resolve(RuntimeBuilder::default().merge_over(rolling())).missing_migration_policy,
+            resolve(RuntimeBuilder::default().merge_over(rolling()))
+                .storage
+                .missing_migration_policy,
             MissingMigrationPolicy::Allow
         );
         assert_eq!(
@@ -1908,6 +1992,7 @@ mod tests {
                     .missing_migration_policy(MissingMigrationPolicy::Reject)
                     .merge_over(rolling())
             )
+            .storage
             .missing_migration_policy,
             MissingMigrationPolicy::Reject
         );
@@ -1972,7 +2057,7 @@ mod tests {
                 .expect("valid store number")
                 .resolve()
                 .expect("number supplied");
-            assert_eq!(config.store_number, number);
+            assert_eq!(config.storage.store_number, number);
         }
         let (config, _) = base()
             .store_number(3)
@@ -1980,7 +2065,7 @@ mod tests {
             .expect("explicit value takes precedence")
             .resolve()
             .expect("complete config");
-        assert_eq!(config.store_number, 3);
+        assert_eq!(config.storage.store_number, 3);
     }
 
     #[test]
@@ -2008,9 +2093,9 @@ mod tests {
         let (config, _) = with_platform(RuntimeBuilder::default())
             .resolve()
             .expect("resolves");
-        assert_eq!(config.migration_database_url, None);
+        assert_eq!(config.storage.migration_database_url, None);
         assert_eq!(
-            config.migrations_url(),
+            config.storage.migrations_url(),
             "postgres://platform@pooler:6432/proxiima"
         );
 
@@ -2025,17 +2110,80 @@ mod tests {
         .resolve()
         .expect("a direct URL for the same role and database resolves");
         assert_eq!(
-            config.migrations_url(),
+            config.storage.migrations_url(),
             "postgres://platform@db:5432/proxiima"
         );
         assert_eq!(
-            config.platform_database_url,
+            config.storage.platform_database_url,
             "postgres://platform@pooler:6432/proxiima"
         );
         assert!(
             !format!("{config:?}").contains("db:5432"),
             "Debug redacts the migration URL"
         );
+    }
+
+    #[test]
+    fn storage_resolves_without_the_serving_settings_that_refuse_a_full_resolve() {
+        let builder = RuntimeBuilder::default()
+            .database_url("postgres://runtime@db/proxiima")
+            .platform_database_url("postgres://platform@db/proxiima")
+            .store_number(5)
+            .runtime_grants(true)
+            .mcp_bind(addr([127, 0, 0, 1]));
+
+        let error = builder.clone().resolve().expect_err("serving is refused");
+        assert!(error.to_string().contains("served_surface is required"));
+
+        let (storage, parts) = builder.resolve_storage().expect("storage resolves");
+        assert_eq!(storage.store_number, 5);
+        assert_eq!(storage.database_url, "postgres://runtime@db/proxiima");
+        assert_eq!(
+            storage.platform_database_url,
+            "postgres://platform@db/proxiima"
+        );
+        assert!(storage.runtime_grants);
+        assert!(parts.vector_index.is_none() && parts.host_state_participant.is_none());
+
+        let error = RuntimeBuilder::default()
+            .database_url("postgres://runtime@db/proxiima")
+            .platform_database_url("postgres://platform@db/proxiima")
+            .store_number(5)
+            .mcp_bind(addr([127, 0, 0, 1]))
+            .served_surface(ServedSurface::All)
+            .resolve()
+            .expect_err("MCP without an authenticator is refused");
+        assert!(
+            error
+                .to_string()
+                .contains("MCP requires a host authenticator")
+        );
+    }
+
+    #[test]
+    fn storage_resolution_refuses_bad_storage_input() {
+        let complete = || {
+            RuntimeBuilder::default()
+                .database_url("postgres://runtime@db/proxiima")
+                .platform_database_url("postgres://platform@db/proxiima")
+                .store_number(0)
+        };
+        let error = complete()
+            .migration_database_url("postgres://admin@db:5432/proxiima")
+            .resolve_storage()
+            .expect_err("a migration URL naming another role is refused");
+        assert!(
+            error
+                .to_string()
+                .contains("PROXIIMA_MIGRATION_DATABASE_URL")
+        );
+
+        let error = RuntimeBuilder::default()
+            .platform_database_url("postgres://platform@db/proxiima")
+            .store_number(0)
+            .resolve_storage()
+            .expect_err("a database URL is required");
+        assert!(error.to_string().contains("DATABASE_URL is required"));
     }
 
     #[test]
@@ -2141,7 +2289,7 @@ mod tests {
         };
 
         let (_, parts) = with(base()).resolve().expect("one participant resolves");
-        assert!(parts.host_state_participant.is_some());
+        assert!(parts.storage.host_state_participant.is_some());
 
         let twice = with(with(base()))
             .resolve()
@@ -2318,11 +2466,14 @@ mod tests {
             .expect("the storage block parses")
             .resolve()
             .expect("nothing serving is configured");
-        assert_eq!(config.store_number, 7);
-        assert!(config.runtime_grants);
-        assert_eq!(config.pg_pool_config.max_connections, 3);
+        assert_eq!(config.storage.store_number, 7);
+        assert!(config.storage.runtime_grants);
+        assert_eq!(config.storage.pg_pool_config.max_connections, 3);
         assert_eq!(
-            config.embedding_runtime_policy.stale_claim_timeout(),
+            config
+                .storage
+                .embedding_runtime_policy
+                .stale_claim_timeout(),
             Duration::from_mins(30)
         );
         assert!(config.s3.is_none());
@@ -2370,14 +2521,21 @@ mod tests {
 
     fn base_config(mcp: Option<SocketAddr>) -> RuntimeConfig {
         RuntimeConfig {
+            storage: StorageConfig {
+                database_url: "postgres://localhost/proxiima".to_string(),
+                store_number: 0,
+                platform_database_url: "postgres://unused/platform".into(),
+                migration_database_url: None,
+                missing_migration_policy: MissingMigrationPolicy::default(),
+                runtime_grants: false,
+                pg_pool_config: PgPoolConfig::default(),
+                pg_tuning: PgTuning::default(),
+                embedding_runtime_policy: EmbeddingRuntimePolicy::default(),
+            },
             publication: PublicationConfig::default(),
             published_retention: None,
             object_purge_interval: Some(crate::config::DEFAULT_OBJECT_PURGE_INTERVAL),
             outbox_consumers: OutboxConsumers::default(),
-            database_url: "postgres://localhost/proxiima".to_string(),
-            store_number: 0,
-            platform_database_url: "postgres://unused/platform".into(),
-            migration_database_url: None,
             s3: None,
             owner: Some(company_owner(uuid::Uuid::now_v7())),
             mcp: mcp.map(|bind| McpSettings { bind }),
@@ -2388,19 +2546,14 @@ mod tests {
             stream_revalidation: RevalidationConfig::default(),
             insecure_single_owner: false,
             rest_enabled: false,
-            missing_migration_policy: MissingMigrationPolicy::default(),
-            runtime_grants: false,
             request_headers: RequestHeaderAllowlist::default(),
             forwarder: None,
             health_endpoints: false,
             mcp_transport: McpTransportConfig::default(),
-            pg_pool_config: PgPoolConfig::default(),
-            pg_tuning: PgTuning::default(),
             auth: RuntimeAuthState {
                 has_host_authenticator: true,
             },
             resource_metadata: None,
-            embedding_runtime_policy: EmbeddingRuntimePolicy::default(),
         }
     }
 
@@ -2687,7 +2840,7 @@ mod tests {
             .resolve()
             .expect("programmatic policy resolves")
             .0;
-        assert_eq!(resolved.embedding_runtime_policy, explicit);
+        assert_eq!(resolved.storage.embedding_runtime_policy, explicit);
     }
 
     #[test]
@@ -2757,9 +2910,9 @@ mod tests {
             .resolve()
             .unwrap();
 
-        assert_eq!(config.pg_pool_config.max_connections, 4);
+        assert_eq!(config.storage.pg_pool_config.max_connections, 4);
         assert_eq!(
-            config.pg_pool_config.acquire_timeout,
+            config.storage.pg_pool_config.acquire_timeout,
             Duration::from_secs(9)
         );
     }
@@ -2831,7 +2984,7 @@ mod tests {
             .resolve()
             .expect("resolved pool policy");
 
-        assert_eq!(config.pg_pool_config.max_connections, 5);
+        assert_eq!(config.storage.pg_pool_config.max_connections, 5);
     }
 
     #[test]

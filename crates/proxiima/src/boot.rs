@@ -22,7 +22,7 @@ use crate::migrations::run_core_and_spiice_migrations_with_policy;
 use crate::runtime_grants::{self, RuntimeGrants};
 use crate::{
     CitedBlobStore, LedgerConflict, MigrationError, NamedMigrator, ProxiimaError, RuntimeConfig,
-    RuntimeParts, preflight_without_migrations_with_policy,
+    RuntimeParts, StorageConfig, StorageParts, preflight_without_migrations_with_policy,
 };
 
 /// A composed engine, ready for host services and retirement before startup.
@@ -84,7 +84,8 @@ impl std::fmt::Debug for Booted {
 /// and maintenance only validate it.
 ///
 /// Everything that can be refused without a connection is refused first:
-/// the registry freeze and the runtime-grant plan.
+/// the registry freeze and the runtime-grant plan. Outbox delivery is
+/// serving, so the registry is composed without a consumer.
 ///
 /// # Errors
 ///
@@ -93,11 +94,11 @@ impl std::fmt::Debug for Booted {
 /// [`ProxiimaError::SchemaResetRequired`] when the target database does not
 /// match the current core baseline (see `docs/contributing.md#migrations`).
 pub(crate) async fn migrate<A: SpiiceBundle>(
-    config: &RuntimeConfig,
-    parts: &RuntimeParts,
+    config: &StorageConfig,
+    parts: &StorageParts,
 ) -> Result<(), ProxiimaError> {
     let migrators = A::migrators();
-    let registry = compose_registry::<A>(config)?;
+    let registry = compose_registry::<A>(false)?;
     let pg_sidecars = compose_pg_sidecars::<A>(&registry)?;
     let grants = config
         .runtime_grants
@@ -127,9 +128,10 @@ pub(crate) struct ValidatedStorage {
     pub(crate) storage: PgStorage,
 }
 
-/// Validate the schema of bundle `A` and connect its serving storage, with
-/// its sidecars and spiices wired. Issues no DDL and writes nothing: a
-/// database the migrate step has not brought to this binary is refused.
+/// Validate the schema of bundle `A` and connect its serving storage over
+/// the caller's frozen `registry`, with its sidecars and spiices wired.
+/// Issues no DDL and writes nothing: a database the migrate step has not
+/// brought to this binary is refused.
 ///
 /// # Errors
 ///
@@ -138,10 +140,10 @@ pub(crate) struct ValidatedStorage {
 /// the current baseline, and [`ProxiimaError::Storage`] for connection and
 /// other validation failures.
 pub(crate) async fn connect_storage<A: SpiiceBundle>(
-    config: &RuntimeConfig,
-    parts: &RuntimeParts,
+    config: &StorageConfig,
+    parts: &StorageParts,
+    registry: proxiima_core::SpiiceRegistryFrozen,
 ) -> Result<ValidatedStorage, ProxiimaError> {
-    let registry = compose_registry::<A>(config)?;
     let pg_sidecars = compose_pg_sidecars::<A>(&registry)?;
     connect_schema(
         config,
@@ -192,7 +194,12 @@ pub(crate) async fn boot<A: SpiiceBundle>(
         registry,
         pg_sidecars,
         storage: pg,
-    } = connect_storage::<A>(config, parts).await?;
+    } = connect_storage::<A>(
+        &config.storage,
+        &parts.storage,
+        compose_registry::<A>(!config.outbox_consumers.is_empty())?,
+    )
+    .await?;
     let erase_context = pg
         .host_state_erase_context()
         .map_err(|error| ProxiimaError::Storage(error.into()))?;
@@ -263,7 +270,7 @@ pub(crate) async fn boot<A: SpiiceBundle>(
 
 /// Serving authority is constructed only after the schema validated.
 async fn connect_serving_storage(
-    config: &RuntimeConfig,
+    config: &StorageConfig,
     registry: &proxiima_core::SpiiceRegistryFrozen,
     vector_index: Option<Arc<dyn proxiima_core::storage_ports::VectorIndex>>,
 ) -> Result<PgStorage, ProxiimaError> {
@@ -369,7 +376,7 @@ enum SchemaStep {
 
 /// Where a store of these parts keeps its vectors: in a host index when one
 /// is configured, else in Postgres.
-fn vector_storage(parts: &RuntimeParts) -> VectorStorage {
+fn vector_storage(parts: &StorageParts) -> VectorStorage {
     match parts.vector_index {
         Some(_) => VectorStorage::HostIndex,
         None => VectorStorage::Local,
@@ -378,7 +385,7 @@ fn vector_storage(parts: &RuntimeParts) -> VectorStorage {
 
 /// Connect the migration storage and run `step` on its schema.
 ///
-/// The migration pool connects to [`RuntimeConfig::migrations_url`]: the
+/// The migration pool connects to [`StorageConfig::migrations_url`]: the
 /// platform role, reached directly when the serving platform pool goes
 /// through a transaction-mode pooler. The migration run and the preflight
 /// hold a session advisory lock and session settings for the whole run.
@@ -386,7 +393,7 @@ fn vector_storage(parts: &RuntimeParts) -> VectorStorage {
 /// The runtime grants run on the migration (platform) pool after migrating;
 /// a serving connect then asserts the runtime role under owner RLS.
 async fn connect_schema(
-    config: &RuntimeConfig,
+    config: &StorageConfig,
     migrators: Vec<NamedMigrator>,
     pg_sidecars: &PgSidecarRegistryFrozen,
     vectors: VectorStorage,
@@ -427,7 +434,7 @@ async fn connect_schema(
 
 /// [`SchemaStep::Migrate`] on a connected migration storage.
 async fn migrate_schema(
-    config: &RuntimeConfig,
+    config: &StorageConfig,
     migration_pg: &PgMigrationStorage,
     migrators: Vec<NamedMigrator>,
     pg_sidecars: &PgSidecarRegistryFrozen,
@@ -453,17 +460,17 @@ async fn migrate_schema(
 
 /// Run every linked spiice's registration callback and freeze the result.
 ///
-/// With an outbox consumer configured, `core/goal-change-v1` is made
-/// listenable before the freeze, so every goal write also feeds the outbox.
-/// That makes the schema subject to the boot publication check: a consumer
-/// without `PROXIIMA_PUBLICATION_SOURCE` is refused in `compose_engine`,
-/// naming it.
-fn compose_registry<A: SpiiceBundle>(
-    config: &RuntimeConfig,
+/// With `publish_goal_changes` (an outbox consumer is configured),
+/// `core/goal-change-v1` is made listenable before the freeze, so every goal
+/// write also feeds the outbox. That makes the schema subject to the boot
+/// publication check: a consumer without `PROXIIMA_PUBLICATION_SOURCE` is
+/// refused in `compose_engine`, naming it.
+pub(crate) fn compose_registry<A: SpiiceBundle>(
+    publish_goal_changes: bool,
 ) -> Result<proxiima_core::SpiiceRegistryFrozen, ProxiimaError> {
     let mut registry = SpiiceRegistry::new();
     A::register(&mut registry)?;
-    if !config.outbox_consumers.is_empty() {
+    if publish_goal_changes {
         registry.publish_goal_changes();
     }
     Ok(registry.try_freeze()?)
@@ -580,7 +587,7 @@ fn compose_engine(
         storage_ports = storage_ports.owner_drop_proof(proof);
     }
     let mut engine = Engine::new(registry, storage_ports.build())
-        .with_embedding_runtime_policy(config.embedding_runtime_policy)
+        .with_embedding_runtime_policy(config.storage.embedding_runtime_policy)
         .try_with_publication_config(config.publication.clone())
         .map_err(|error| ProxiimaError::Config(error.to_string()))?;
     if let Some(router) = embedding_router {

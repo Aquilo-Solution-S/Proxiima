@@ -195,17 +195,21 @@ itself. `proxiima::settings::markdown_table` renders the host's operator table
 from the facade's rows and its own.
 
 `Proxiima::migrate` is the host's migrate step and the only path that changes
-the schema: it resolves the configuration as `build()` does, applies every
-pending core and spiice migration, initializes the store number, and applies
-the runtime grants when they are configured. `build()`, `run()` and
-`Proxiima::connect_storage`, the storage of a one-shot maintenance command,
-only validate and refuse a database the step has not brought current with
-`ProxiimaError::MigrationRequired`. Expose the step as `<host> migrate` and run
-it before starting or replacing servers ([operate](operate.md#postgresql-and-migrations)).
-`from_env()` makes the step read the serving settings too. A step that shares
-the server's environment without them reads it with `from_storage_lookup`, as
-`proxiima-mcp migrate` does. Settings set in code still apply, so that step
-runs through an app whose `configure` binds no listener.
+the schema: it applies every pending core and spiice migration, initializes
+the store number, and applies the runtime grants when they are configured.
+`build()`, `run()` and `Proxiima::connect_storage`, the storage of a one-shot
+maintenance command, only validate and refuse a database the step has not
+brought current with `ProxiimaError::MigrationRequired`. Expose the step as
+`<host> migrate` and run it before starting or replacing servers
+([operate](operate.md#postgresql-and-migrations)).
+
+`migrate` and `connect_storage` resolve the storage settings only
+([`StorageConfig`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs)),
+so the app that serves also runs them: no listener, authenticator or served
+surface it configures refuses them. `from_env()` still parses the whole
+environment. A command that shares the server's environment and must not be
+refused by a malformed serving value reads it with `from_storage_lookup`, as
+`proxiima-mcp migrate` does.
 
 The host normally implements `SpiiceBundle` and links one or more spiices;
 the tuple `SpiiceApp` implementation folds configuration, services, and HTTP
