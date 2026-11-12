@@ -6,7 +6,7 @@
 //! - a successful [`DbGuard`] drop runs `DROP DATABASE … WITH (FORCE)`
 //! - a panicking test **keeps** the database and prints a redacted `psql` URL
 //! - the first admin operation in a process sweeps clones older than
-//!   five minutes with no live backend (`pg_stat_activity`)
+//!   five minutes with nobody connected (`pg_stat_activity`)
 //! - [`ensure_template`] drops other hashes in the same family (`proxiima_tmpl_core_*`
 //!   / `proxiima_tmpl_split_*`), keeping only the current fingerprint
 //! - a host owns a [`TemplateFamily`] of its own: [`ensure_template_in`] builds
@@ -34,6 +34,21 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{Connection, PgConnection, PgPool};
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+/// SQL for "somebody is connected to the database `$datname` names".
+///
+/// An autovacuum worker is nobody: the server sends one into any database
+/// unasked, and `DROP DATABASE` ends it by itself. A backend whose type the
+/// looking role may not read is somebody.
+macro_rules! database_in_use {
+    ($datname:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = ",
+            $datname,
+            " AND a.backend_type IS DISTINCT FROM 'autovacuum worker')"
+        )
+    };
+}
 
 const ADMIN_URL_VAR: &str = "PROXIIMA_TEST_PG_URL";
 /// The one message for an unconfigured admin URL: the panic of [`admin_url`]
@@ -1382,7 +1397,7 @@ pub async fn database_exists(name: &str) -> Result<bool, sqlx::Error> {
     Ok(exists)
 }
 
-/// Wait until `name` has no backends in `pg_stat_activity`.
+/// Wait until nobody is connected to `name`, as collection sees it.
 ///
 /// `PgConnection::close` can return before Postgres drops the session from
 /// the catalog, so collection that keys off idle detection must wait here
@@ -1391,16 +1406,15 @@ pub async fn database_exists(name: &str) -> Result<bool, sqlx::Error> {
 /// # Errors
 ///
 /// Returns admin connection or query errors, or a protocol error if a
-/// backend is still listed after five seconds.
+/// session is still listed after five seconds.
 pub async fn wait_until_database_idle(name: &str) -> Result<(), sqlx::Error> {
     let mut conn = connect_admin().await?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let live: bool =
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = $1)")
-                .bind(name)
-                .fetch_one(&mut conn)
-                .await?;
+        let live: bool = sqlx::query_scalar(concat!("SELECT ", database_in_use!("$1")))
+            .bind(name)
+            .fetch_one(&mut conn)
+            .await?;
         if !live {
             conn.close().await?;
             return Ok(());
@@ -1444,7 +1458,7 @@ pub async fn drop_db(name: &str) -> Result<(), sqlx::Error> {
 /// Called automatically from the first admin operation. Safe to invoke
 /// by hand. Idle `psql` sessions keep a database (it is visible in
 /// `pg_stat_activity`). Tracked rows younger than five minutes
-/// are kept even with no backend: nextest starts many binaries against
+/// are kept even with nobody connected: nextest starts many binaries against
 /// one Postgres, and `created_at < this_process_start` would otherwise
 /// `DROP DATABASE` a sibling's clone in the window between
 /// [`create_db`] and its first connection.
@@ -1683,17 +1697,16 @@ async fn sweep_stale_on(conn: &mut PgConnection) -> Result<usize, sqlx::Error> {
         .await?;
     let tracked_cutoff = now - UNTRACKED_GRACE;
     let cutoff = start - UNTRACKED_GRACE;
-    let tracked: Vec<String> = sqlx::query_scalar(
+    let tracked: Vec<String> = sqlx::query_scalar(concat!(
         "SELECT d.db_name FROM _proxiima_test.databases d
          WHERE d.created_at < $1
-           AND NOT EXISTS (
-             SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.db_name
-           )",
-    )
+           AND NOT ",
+        database_in_use!("d.db_name")
+    ))
     .bind(tracked_cutoff)
     .fetch_all(&mut *conn)
     .await?;
-    let untracked: Vec<String> = sqlx::query_scalar(
+    let untracked: Vec<String> = sqlx::query_scalar(concat!(
         "SELECT datname FROM pg_database
          WHERE datistemplate = false
            AND datname <> current_database()
@@ -1701,10 +1714,9 @@ async fn sweep_stale_on(conn: &mut PgConnection) -> Result<usize, sqlx::Error> {
              datname LIKE 'proxiima\\_%' ESCAPE '\\'
              OR datname LIKE 'pub\\_%' ESCAPE '\\'
            )
-           AND NOT EXISTS (
-             SELECT 1 FROM pg_stat_activity a WHERE a.datname = pg_database.datname
-           )",
-    )
+           AND NOT ",
+        database_in_use!("pg_database.datname")
+    ))
     .fetch_all(&mut *conn)
     .await?;
 
@@ -1755,15 +1767,14 @@ async fn drop_idle_templates_on(
     keep: &str,
 ) -> Result<usize, sqlx::Error> {
     let pattern = format!("{}%", prefix.replace('_', r"\_"));
-    let stale: Vec<String> = sqlx::query_scalar(
+    let stale: Vec<String> = sqlx::query_scalar(concat!(
         "SELECT datname FROM pg_database
          WHERE datname LIKE $1 ESCAPE '\\'
            AND datname <> $2
            AND datistemplate = false
-           AND NOT EXISTS (
-             SELECT 1 FROM pg_stat_activity a WHERE a.datname = pg_database.datname
-           )",
-    )
+           AND NOT ",
+        database_in_use!("pg_database.datname")
+    ))
     .bind(&pattern)
     .bind(keep)
     .fetch_all(&mut *conn)
@@ -2143,6 +2154,43 @@ mod tests {
 
         assert!(!busy.expect("a busy drop is not an error"), "kept");
         assert!(idle.expect("an idle drop"), "dropped once nobody is on it");
+    }
+
+    /// A role without statistics privileges reads no backend type of another
+    /// role's session; the session still occupies its database.
+    #[tokio::test]
+    async fn a_session_whose_backend_type_is_hidden_occupies_its_database() {
+        use sqlx::Connection;
+
+        let name = unique_db_name("tfhidden_unit");
+        create_db(&name).await.expect("create");
+        let session = sqlx::PgConnection::connect(&db_url(&name))
+            .await
+            .expect("a session on the database");
+        let mut observer = connect_admin().await.expect("admin");
+        sqlx::raw_sql("SET ROLE proxiima_search")
+            .execute(&mut observer)
+            .await
+            .expect("look as a role that reads no statistics");
+        let hidden: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+              WHERE datname = $1 AND backend_type IS NULL)",
+        )
+        .bind(&name)
+        .fetch_one(&mut observer)
+        .await
+        .expect("read activity");
+        let in_use: bool = sqlx::query_scalar(concat!("SELECT ", database_in_use!("$1")))
+            .bind(&name)
+            .fetch_one(&mut observer)
+            .await
+            .expect("ask whether somebody is connected");
+        observer.close().await.expect("close the observer");
+        session.close().await.expect("close the session");
+        super::drop_db(&name).await.expect("clean up");
+
+        assert!(hidden, "the observer must not read the session's type");
+        assert!(in_use, "a backend of unknown type is somebody");
     }
 
     /// A database that was created and cannot be recorded (here: it accepts no
