@@ -274,9 +274,10 @@ owner and last error. A background worker (a runtime feature's or a
 spiice's) that ends before shutdown, by panicking or returning, is logged at
 ERROR when it ends and adds the line `ended-workers: <label>, …` until the
 process restarts; nothing restarts it, and serving and the other workers
-continue. The probe shows only labels fixed in code, once per ended worker:
-`outbox-publisher`, `embedding-drain`, `object-purge`, `outbox-prune`, or a
-spiice worker's declared name. The log line carries the label as `worker`
+continue. The probe shows only labels fixed in code: `outbox-publisher`,
+`embedding-drain`, `object-purge`, `outbox-prune`, or a spiice worker's
+declared name, each once, with a count where several workers of that label
+ended (`outbox-publisher x2`). The log line carries the label as `worker`
 and, for an outbox drain, the consumer name as `instance`. Readiness returns
 503 only when the
 database is unavailable or shutdown has started; liveness continues to answer.

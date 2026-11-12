@@ -168,14 +168,29 @@ impl EndedWorkers {
             .push(label);
     }
 
-    /// The readiness line, `ended-workers: <label>, <label>`, a label once
-    /// per ended worker; `None` while every worker runs.
+    /// The readiness line, `ended-workers: <label>, <label> x2`: each label
+    /// once, in the order its first worker ended, with the count where more
+    /// than one worker of that label ended; `None` while every worker runs.
     pub(crate) fn line(&self) -> Option<String> {
         let ended = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (!ended.is_empty()).then(|| format!("ended-workers: {}", ended.join(", ")))
+        let mut counts: Vec<(&'static str, usize)> = Vec::new();
+        for label in ended.iter() {
+            match counts.iter_mut().find(|(seen, _)| seen == label) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((label, 1)),
+            }
+        }
+        let labels: Vec<String> = counts
+            .into_iter()
+            .map(|(label, count)| match count {
+                1 => label.to_owned(),
+                more => format!("{label} x{more}"),
+            })
+            .collect();
+        (!labels.is_empty()).then(|| format!("ended-workers: {}", labels.join(", ")))
     }
 }
 
@@ -662,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn the_readiness_line_lists_one_label_per_ended_worker_in_order() {
+    fn the_readiness_line_lists_each_label_once_in_order_with_its_count() {
         let ended = EndedWorkers::default();
         assert_eq!(ended.line(), None, "no line while every worker runs");
         ended.record("embedding-drain");
@@ -670,7 +685,7 @@ mod tests {
         ended.record("outbox-publisher");
         assert_eq!(
             ended.line().as_deref(),
-            Some("ended-workers: embedding-drain, outbox-publisher, outbox-publisher")
+            Some("ended-workers: embedding-drain, outbox-publisher x2")
         );
     }
 
@@ -723,8 +738,8 @@ mod tests {
         })
     }
 
-    /// Two outbox drains end: the log names each consumer, the probe record
-    /// holds the class label once per drain and no consumer name.
+    /// Two outbox drains end: the log names each consumer, the probe line
+    /// holds the class label with their count and no consumer name.
     #[tokio::test]
     async fn an_ended_drain_is_logged_with_its_consumer_and_listed_by_label() {
         let captured = captured();
@@ -739,7 +754,7 @@ mod tests {
 
         assert_eq!(
             ended.line().as_deref(),
-            Some("ended-workers: outbox-publisher, outbox-publisher")
+            Some("ended-workers: outbox-publisher x2")
         );
         let thread = std::thread::current().id();
         let logged: Vec<String> = captured
