@@ -311,6 +311,59 @@ semantic leg; lexical search keeps working. Pending debt in `proxiima_core.vecto
 paid on the next drain pass after the index is reachable again, and a
 maintenance pass repairs whatever the index lost.
 
+### Scale run
+
+`crates/storage-pg/tests/scale_run.rs` measures vector search under owner scope
+and whole-owner erase. The gates run it small, with a recall floor at the
+default tuning; the size comes from the environment:
+
+```text
+PROXIIMA_SCALE_EMBEDDINGS=200000 PROXIIMA_SCALE_QUERIES=50 \
+PROXIIMA_SCALE_ERASE_MEMORIES=11000 \
+  cargo test -p proxiima-storage-pg --test scale_run --all-features \
+    -- --nocapture --test-threads=1
+```
+
+Each search is one `search_memories` call with a limit of 10 for one of three
+owners holding 1 %, 10 % and 89 % of the corpus; recall is the overlap with the
+exact ten nearest of that owner. One run on PostgreSQL 18.6 with pgvector
+0.8.6, `max_connections` 200 and `fsync` off, on a machine that did other work,
+with 200,000 embeddings and 50 queries per cell:
+
+| Owner rows | `ef_search` | Iterative scan | Recall@10 | Mean ms | p95 ms |
+|---|---|---|---|---|---|
+| 2,000 | 100 | relaxed order | 1.000 | 12.5 | 16.8 |
+| 20,000 | 100 | relaxed order | 0.996 | 59.9 | 130.6 |
+| 20,000 | 400 | relaxed order | 0.994 | 46.5 | 52.4 |
+| 178,000 | 100 | relaxed order | 0.864 | 21.0 | 24.0 |
+| 178,000 | 100 | strict order | 0.658 | 21.2 | 26.8 |
+| 178,000 | 100 | off | 1.000 | 448.9 | 462.7 |
+| 178,000 | 400 | relaxed order | 0.892 | 22.4 | 27.9 |
+| 178,000 | 400 | off | 0.892 | 22.2 | 29.5 |
+
+The first, second and fourth rows are the default tuning. The vectors are
+synthetic (16 cluster centers plus seeded noise, 384 wide), not text
+embeddings, and this is one run: the table shows how the filtered index scan
+behaves on that geometry and says nothing about retrieval quality on real text.
+The candidate function answers from an exact scan of the owner when the index
+scan returns fewer rows than the search asked for, here 200. That scan is the
+448 ms row: with iterative scan off the index returns at most `ef_search` rows,
+and 100 is fewer than 200; at 400 it is not, and the row beside it shows the
+index answering.
+
+Whole-owner erase is one transaction that takes two advisory locks per memory
+(its handle and its version), one per object key, and one per origin Fact the
+owner has since transferred away. On the same server, with
+`max_locks_per_transaction` 64, an owner of 11,000 plain Facts erased in 1.3 s
+holding 22,002 locks, and an owner of 12,000 failed with PostgreSQL's
+`out of shared memory` and rolled back whole, leaving the owner intact.
+PostgreSQL sizes the lock table, shared by all sessions, for
+`max_locks_per_transaction` x (`max_connections` + `max_prepared_transactions`)
+entries, 12,800 there, and lets it grow into spare shared memory, which is how
+22,002 fit. Only the sized part is promised: raise `max_locks_per_transaction`
+(a restart) until that product is well above twice the number of memory and
+Goal versions of the largest owner that must be erasable.
+
 ## Backup and restore
 
 Back up PostgreSQL and every configured object store. PostgreSQL contains the
