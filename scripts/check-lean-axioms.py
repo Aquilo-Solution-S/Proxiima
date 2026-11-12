@@ -106,7 +106,7 @@ def extract_axioms() -> list[str]:
     Callers must ensure the kernel is built first (`build_kernel()`); this
     reads the built environment. Raises `SystemExit` with a diagnosable
     message if the extraction itself fails. An empty list is valid: the Lean
-    printer itself checks for a known Causa declaration before scanning axioms.
+    printer itself refuses when the import exposed no Causa declaration.
     """
     if not (LEAN_DIR / PRINT_AXIOMS_SCRIPT).exists():
         raise SystemExit(f"missing axiom printer: {LEAN_DIR / PRINT_AXIOMS_SCRIPT}")

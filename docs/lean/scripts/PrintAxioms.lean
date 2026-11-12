@@ -25,8 +25,8 @@ Regenerate the checked-in allowlist after an intentional kernel change with:
 
 (`scripts/check-lean-axioms.py` runs the equivalent invocation and diffs
 against that file; see its --help / header for details.) An empty output is a
-valid result: the script first asserts that a known Causa declaration loaded, so
-zero lines means zero Causa axioms, not a silent import miss.
+valid result: the script refuses when the import exposed no Causa declaration,
+so zero lines means zero Causa axioms, not a silent import miss.
 -/
 import Lean
 import Causa
@@ -35,15 +35,18 @@ open Lean
 
 #eval show Lean.Elab.Command.CommandElabM Unit from do
   let env ← getEnv
-  unless env.contains `Causa.principle_1_facts_below_perspective do
-    throwError "Causa import did not expose Causa.principle_1_facts_below_perspective; refusing to print an axiom surface"
+  let mut loaded := false
   let mut names : Array String := #[]
   for (n, ci) in env.constants.toList do
-    match ci with
-    | .axiomInfo v =>
-      if n.getRoot == `Causa && !v.isUnsafe then
-        names := names.push n.toString
-    | _ => pure ()
+    if n.getRoot == `Causa then
+      loaded := true
+      match ci with
+      | .axiomInfo v =>
+        if !v.isUnsafe then
+          names := names.push n.toString
+      | _ => pure ()
+  unless loaded do
+    throwError "the Causa import exposed no Causa declaration; refusing to print an axiom surface"
   let sorted := names.qsort (· < ·)
   for n in sorted do
     logInfo n
