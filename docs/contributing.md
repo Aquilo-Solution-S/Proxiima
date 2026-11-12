@@ -54,7 +54,7 @@ row-security policy text. `scripts/check-architecture-guardrails.py` refuses
 any other read.
 
 Do not add a runtime spiice registry, raw spiice SQL against core tables,
-caller-supplied owner authorization, a fourth edge kind, generic JSON payload
+caller-supplied owner authorization, an edge table, generic JSON payload
 escape hatches, or compatibility aliases for removed ontology. If a feature
 needs a connection with its own reason or confidence, add the node that owns
 that statement; do not add an edge sidecar.

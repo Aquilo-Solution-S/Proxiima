@@ -66,14 +66,16 @@ host may name in its own SQL.
 ## Identity and ownership have separate jobs
 
 Authentication establishes the principal; ownership selects the data scope.
-Each entity has one owner, resolved to the caller's role. Sharing uses group
-membership or explicit transfer rather than entity-side ACLs. This keeps a
-private note private even when its writer also administers a project group.
+Sharing uses group membership or explicit transfer rather than entity-side
+ACLs. This keeps a private note private even when its writer also administers
+a project group.
 Personal ownership is derived from identity and its membership cannot be
 edited. Organization structure and billing belong to the host.
 
 The [identity and ownership map](concepts.md#identity-and-ownership) explains
-the model. The principle is stated in
+the model. The principles are in
+[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean),
+with supporting definitions in
 [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean)
 and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Authorization.lean);
 runtime owner resolution and command ports enforce the implementation.
@@ -214,11 +216,11 @@ of actual influence. See [Goal relationships](concepts.md#goals).
 
 ## Pins are node-owned
 
-Only `origin` and `reference` pins exist. Their kind follows the operation, and
-the node that declares a relation owns it. If a statement needs its own
-meaning, it is a node rather than a new edge kind.
-
-See [Concepts](concepts.md) for the current pin model.
+A pin's kind follows the operation, and the node that declares a relation owns
+it. A statement that needs its own meaning is a node, not a new kind of pin.
+The kinds are the variants of
+[`EdgeKind`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/edge.rs);
+see [Concepts](concepts.md#pins).
 
 ## Schema migrations are spiice-defined representation changes
 
@@ -261,8 +263,8 @@ N:M publication and explicitly delegated N:M editing support overlapping work
 without changing ownership. Independent adaptations fork an exact source
 version into a new series; later refinements revise that series.
 
-Facts stay immutable observations. A publication identifies a Fact itself or
-an exact Abstraction/Perspective version. Private revisions cannot replace a
+A publication identifies a Fact itself or an exact Abstraction/Perspective
+version. Private revisions cannot replace a
 previously published admission in the audience's view. Goal access is additive
 and cannot restrict existing owner membership. Completion is separate from
 revocation and erasure. Source-owner/controller changes must invalidate prior

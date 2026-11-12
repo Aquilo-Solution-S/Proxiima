@@ -26,9 +26,9 @@ change with the host build, so this page does not copy their schemas.
 5. **Keep pins meaningful.** Let the write operation derive origin and
    reference pins from typed payloads. The schema and write contracts enforce
    this; no tool writes an arbitrary connection. Origin and reference pins
-   occupy `origins[]`, `refs[]`, and `goal_refs[]`. The third kind, `read`,
-   records what your session read before a write; your host supplies it, so
-   there is nothing to pass.
+   occupy `origins[]`, `refs[]`, and `goal_refs[]`. `read` pins record what
+   your session read before a write; your host supplies them, so there is
+   nothing to pass.
 6. **Consolidate at a natural break.** If a durable pattern or decision was
    learned, write the smallest typed memory that can be retrieved later. This
    is a judgment call: do not record transient narration or duplicate an
@@ -51,9 +51,9 @@ change with the host build, so this page does not copy their schemas.
 
 - Do not infer authorization from an owner string, organization, Self, or a
   caller-provided role; the host resolves `OwnerRef`.
-- Do not treat similarity as a persisted connection; similarity is query-time.
-- Do not invent a third pin kind or an edge-writing verb; the node-home test
-  says a missing statement needs a node.
+- Do not work around the
+  [principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean);
+  each names what upholds it at runtime.
 - Do not copy the runtime catalog, settings table, defaults, or database schema
   into an agent prompt. Link to the live catalog, [Configuration](configuration.md),
   rustdoc, or migrations respectively.

@@ -1192,8 +1192,8 @@ fn facade_spiice_authoring_symbols_are_reachable() {
     assert!(!key.finish().is_empty());
 
     // The connection vocabulary a spiice is allowed to speak: a reference
-    // field it declares, and the two kinds it may read back. There is no
-    // descriptor to build, because there is no vocabulary to extend.
+    // field it declares, and the kinds it may read back. There is no
+    // descriptor to build: a spiice declares fields, not kinds.
     let reference = PayloadReference::memory(
         "symbol_source",
         EntityKind::Fact,

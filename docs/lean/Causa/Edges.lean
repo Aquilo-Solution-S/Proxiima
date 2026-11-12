@@ -1,13 +1,13 @@
 /-
 Causa — Pins (no Edge table)
 
-v0.0.8: there is no index table. `origins[]` and `refs[]` live on the
-Memory row (UML §5). The closed kinds are three:
+There is no index table: `origins[]`, `refs[]` and `reads[]` live on the
+Memory row. The kinds:
 
   origin    = made-from   (origins)
   reference = points-at   (refs onto Memory, goal_refs onto Goal)
   read      = read-before (reads: memories the host certified the writing
-              session read before this write; #677). Context, not grounding:
+              session read before this write). Context, not grounding:
               it never feeds origins or refs, and a Fact may carry it.
 
 Rebuildability is identity: the pin set IS node content. Goal pins live on

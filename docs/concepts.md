@@ -341,8 +341,7 @@ record explicit motivation and guidance. These are the distinct
 ## Pins
 
 There is no edge table. A pin array stores only target `t` values. The source
-array and the write operation determine direction and the closed mechanical
-role:
+array and the write operation determine direction and mechanical role:
 
 | Pin | Meaning | Stored on |
 |---|---|---|
@@ -352,10 +351,10 @@ role:
 
 The operation determines the pin kind; no public verb writes an edge. Origins
 and references are source-owned and rebuildable from node content. A source may
-remain visible while an unreadable target is independently redacted. The pin
-kinds remain distinct from the meanings of motivation and guidance.
+remain visible while an unreadable target is independently redacted. Pin kinds
+are distinct from the meanings of motivation and guidance.
 `guided_by[]` and `motivated_by[]` are explicit source-owned declarations;
-their pins are ordinary References, not another pin kind.
+their pins are ordinary References.
 
 Read pins are context, not grounding. The host binds the read set to the
 call (`AuthzContext::with_read_set`), never a tool argument, and every memory

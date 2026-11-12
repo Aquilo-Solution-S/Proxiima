@@ -114,7 +114,7 @@ remains an ordinary text column and does not apply that canonicalization.
 
 Implement `references()` when the payload carries node references. Ingest
 resolves the targets and derives pins atomically. A spiice defines neither an
-edge-writing verb nor a new pin kind. See [concepts](concepts.md#pins).
+edge-writing verb nor a pin kind. See [concepts](concepts.md#pins).
 
 ## 2. Persist the typed payload
 

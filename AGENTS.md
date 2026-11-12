@@ -5,9 +5,11 @@ concepts and integration; avoid a second invariant or configuration ledger.
 
 ## Scope and authority
 
-- The Lean kernel in `docs/lean/Causa/` states principles. Rust code and tests
-  define runtime behavior. Change a principle in Lean first; `lake build` and
-  `scripts/check-lean-axioms.py` check the kernel, not a Rust refinement proof.
+- The Lean kernel in `docs/lean/Causa/` states the principles in
+  `Principles.lean`; its other files are supporting definitions and lemmas.
+  Rust code and tests define runtime behavior. Change a principle in Lean
+  first; `lake build` and `scripts/check-lean-axioms.py` check the kernel, not
+  a Rust refinement proof.
 - Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers,
   policies and views: `crates/storage-pg/definitions/`. Settings:
   [configuration](docs/configuration.md), checked bidirectionally by
@@ -64,20 +66,21 @@ concepts and integration; avoid a second invariant or configuration ledger.
 
 ## Boundaries checked by code and review
 
+The principles are in
+[`Principles.lean`](docs/lean/Causa/Principles.lean); each names its runtime
+enforcer there. This table holds the engineering boundaries.
+
 | Boundary | Enforcer |
 |---|---|
-| F/A/P layering, closed pin roles, declared provenance | Typed write/operator ports; Lean principles; graph tests |
-| Server-resolved owner roles and source-owned pins | `AuthzContext`, owner command ports, mandatory owner RLS |
 | Optional kernel witnesses, typed schema contracts | Payload traits, registry freeze, authorized sidecar helpers |
 | Build-time spiices; no raw spiice core SQL | Facade SDK; the sidecar read context refuses core SQL; review |
 | Atomic writes and scoped host state | `UnitOfWork`, private permits, PG rollback tests |
-| Hard deletion through authorized inverses | `wipeable` principle, erase ports, inverse-completeness tests |
-| Independent embeddings; similarity authors no pins | Retrieval/write separation and graph tests |
 | Trusted composed SQL and closed database vocabularies | SQL-policy gate; migration catalog tests |
+| No mirrors: one source of truth | Rust to Rust: one type, the compiler. Rust to wire: the schema derive. Code to prose: link, do not restate (review judgment; example: a docs page listing the pin kinds beside `EdgeKind` went stale when a kind was added) |
 
 Judgment: if a proposed edge needs its own reason/confidence, find the node
 that owns the statement before adding code. Example: an interpretation belongs
-in a Perspective payload, not a fourth edge kind.
+in a Perspective payload, not a new edge kind.
 
 ## Delegation
 

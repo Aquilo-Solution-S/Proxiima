@@ -159,8 +159,8 @@ macro_rules! proxiima_schema_id {
 /// `pub fn register(registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError>`
 /// that adds each schema.
 ///
-/// There is no `relations` or `edge_schemas` arm: edge kinds are a
-/// closed core vocabulary (docs/concepts.md) and edges carry no
+/// There is no `relations` or `edge_schemas` arm: edge kinds are core's
+/// [`EdgeKind`](crate::edge::EdgeKind) and edges carry no
 /// payload. A spiice connects nodes by declaring reference fields on its
 /// payloads, or by authoring an interpretation node.
 ///

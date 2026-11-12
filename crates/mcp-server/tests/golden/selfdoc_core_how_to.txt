@@ -52,7 +52,7 @@ A generalization stored as a Fact flattens the hierarchy and loses its grounding
 
 ## Edge kinds
 
-Three kinds, and the vocabulary is closed. The kind follows the write that produced the row; nobody picks one.
+The kind follows the write that produced the row; nobody picks one.
 
 | Kind | Written by | Direction |
 |---|---|---|

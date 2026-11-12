@@ -3,10 +3,8 @@
 //!
 //! docs/concepts.md is the reference.
 //!
-//! > Edges are fundamental, non-extensible connection patterns. An edge
-//! > carries no information beyond its existence: its endpoints, its
-//! > direction, its creation time, and its kind. All content lives in
-//! > nodes; meaning arises from the synthesis of the connected nodes.
+//! A pin carries no information beyond its existence: its endpoints, its
+//! direction, its creation time, and its kind. All content lives in nodes.
 //!
 //! Two consequences shape every type below:
 //!
@@ -25,10 +23,11 @@
 use crate::entity::EntityRef;
 use crate::{EntityKind, GoalId, MemoryId, OwnerId, SchemaId};
 
-/// Closed substrate vocabulary for what an edge *is*. Three variants, not
-/// extensible — not by spiices, not by core features. A feature that
-/// seems to need a fourth kind fails the node-home test (docs/concepts.md
-/// Thesis) and is missing a node, not a kind.
+/// What a pin *is*; this enum is the one statement of which kinds exist.
+///
+/// A relationship is a named field on the node that declares it. The field
+/// fixes its kind and the target kinds it admits. A new relationship is a new
+/// field, never an edge table.
 ///
 #[derive(
     Clone,
@@ -734,20 +733,6 @@ mod tests {
 
     fn memory(kind: EntityKind) -> EdgeEndpoint {
         EdgeEndpoint::memory(kind, MemoryId::new(uuid::Uuid::now_v7()))
-    }
-
-    /// The vocabulary is closed at three (`read` is #677). A fourth
-    /// variant is a design change (docs/concepts.md), not a patch, and
-    /// this is the test that says so out loud.
-    #[test]
-    fn the_vocabulary_is_exactly_three_kinds() {
-        let all = [EdgeKind::Origin, EdgeKind::Reference, EdgeKind::Read];
-        assert_eq!(all.len(), 3);
-        for kind in all {
-            match kind {
-                EdgeKind::Origin | EdgeKind::Reference | EdgeKind::Read => {}
-            }
-        }
     }
 
     #[test]

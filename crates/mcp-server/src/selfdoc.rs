@@ -439,8 +439,7 @@ fn push_edges(out: &mut String, s: Surface) {
         return;
     }
     out.push_str(
-        "## Edge kinds\n\nThree kinds, and the vocabulary is closed. The kind follows the write \
-         that produced the row; nobody picks one.\n\n",
+        "## Edge kinds\n\nThe kind follows the write that produced the row; nobody picks one.\n\n",
     );
     out.push_str("| Kind | Written by | Direction |\n|---|---|---|\n");
     if s.derive {
