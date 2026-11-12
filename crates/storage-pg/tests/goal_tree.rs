@@ -688,12 +688,10 @@ async fn hold_lifecycle_lock(
     t: Uuid,
 ) -> TestResult<sqlx::Transaction<'static, sqlx::Postgres>> {
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('proxiima-forget:' || $1::text, 0))",
-    )
-    .bind(t)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1])")
+        .bind(t)
+        .execute(&mut *tx)
+        .await?;
     Ok(tx)
 }
 

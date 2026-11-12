@@ -5,21 +5,15 @@ use proxiima_core::scope::ScopeKind;
 use proxiima_core::{OwnerId, StorageError};
 use sqlx::{Postgres, Transaction};
 
-/// Sorted, deduplicated owner UUIDs: the canonical order every multi-owner
-/// fence acquisition takes.
-fn owner_fence_ids(owners: &[OwnerId]) -> Vec<uuid::Uuid> {
-    let mut ids: Vec<uuid::Uuid> = owners.iter().map(|owner| owner.into_inner()).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-}
-
 /// The owner admission fence is a distinct advisory-lock namespace from
 /// lifecycle keys and Memory series handles. Its key is the owner id alone
 /// (`proxiima-owner-fence:<uuid>`): one id is one owner. Memory and Goal admission hold
-/// this lock in shared mode. Source-scoped erase also holds it shared while
-/// taking its source fence exclusively; whole-owner erase takes the
-/// single-owner fence exclusively. Multi-owner transfers use the separate
+/// this lock in shared mode, and so does every transaction that takes a version
+/// lock (`proxiima_core.lock_pin_targets`) on a row of the owner. Source-scoped
+/// erase also holds it shared while taking its source fence exclusively;
+/// whole-owner erase takes the single-owner fence exclusively, which excludes
+/// every version-lock holder on the owner's rows, so it takes no version, handle
+/// or origin locks of its own. Multi-owner transfers use the separate
 /// canonical-order exclusive helper below.
 ///
 /// # Errors
@@ -69,45 +63,18 @@ pub(crate) async fn lock_owner_fences_exclusive_tx(
     lock_owner_fences(tx, owners, true).await
 }
 
-const LOCK_OWNER_FENCES_SHARED_SQL: &str = "\
-SELECT pg_advisory_xact_lock_shared(
-           hashtextextended('proxiima-owner-fence:' || i::text, 0)
-       )
-  FROM unnest($1::uuid[]) AS f(i)";
-
-const LOCK_OWNER_FENCES_EXCLUSIVE_SQL: &str = "\
-SELECT pg_advisory_xact_lock(
-           hashtextextended('proxiima-owner-fence:' || i::text, 0)
-       )
-  FROM unnest($1::uuid[]) AS f(i)";
-
-/// The one owner-fence acquisition. The four entry points above differ only in
-/// arity and lock mode; the key, the ordering rule and the bind chain are
-/// shared, so they live here rather than in four copies. SQL cannot
-/// parameterize a function name, so the mode picks between two constants that
-/// are otherwise identical — the one differing token reads side by side above.
-///
-/// Ordering comes from the Rust sort plus `unnest`, not from an `ORDER BY` —
-/// the same reasoning written on `forget::lock_advisory_ids_tx`: a bare
-/// `Function Scan` yields elements in array order, and both lock functions are
-/// `VOLATILE` + `PARALLEL RESTRICTED`, so the projection is evaluated once per
-/// element, in order.
+/// The one owner-fence acquisition. The entry points above differ only in arity
+/// and lock mode; the key, the sorted order and the exclusive-owner record live
+/// in `proxiima_core.lock_owner_fences`, the one taker of the key.
 async fn lock_owner_fences(
     tx: &mut Transaction<'_, Postgres>,
     owners: &[OwnerId],
     exclusive: bool,
 ) -> Result<(), StorageError> {
-    if owners.is_empty() {
-        return Ok(());
-    }
-    let ids = owner_fence_ids(owners);
-    let sql = if exclusive {
-        LOCK_OWNER_FENCES_EXCLUSIVE_SQL
-    } else {
-        LOCK_OWNER_FENCES_SHARED_SQL
-    };
-    sqlx::query(sql)
+    let ids: Vec<uuid::Uuid> = owners.iter().map(|owner| owner.into_inner()).collect();
+    sqlx::query("SELECT proxiima_core.lock_owner_fences($1, $2)")
         .bind(&ids)
+        .bind(exclusive)
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;

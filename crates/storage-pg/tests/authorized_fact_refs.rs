@@ -1190,9 +1190,7 @@ async fn goal_erase_serializes_against_reference_admission() {
         let pool = pg.pool_for_tests();
         let mut erase_tx = pool.begin().await?;
         sqlx::query(
-            "SELECT pg_advisory_xact_lock(
-                 hashtextextended('proxiima-forget:' || $1::text, 0)
-             )",
+            "SELECT proxiima_core.lock_pin_targets(ARRAY[$1])",
         )
         .bind(goal.into_inner())
         .execute(erase_tx.as_mut())

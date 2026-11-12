@@ -398,18 +398,23 @@ scan returns fewer rows than the search asked for, here 200. That scan is the
 and 100 is fewer than 200; at 400 it is not, and the row beside it shows the
 index answering.
 
-Whole-owner erase is one transaction that takes two advisory locks per memory
-(its handle and its version), one per object key, and one per origin Fact the
-owner has since transferred away. On the same server, with
-`max_locks_per_transaction` 64, an owner of 11,000 plain Facts erased in 1.3 s
-holding 22,002 locks, and an owner of 12,000 failed with PostgreSQL's
-`out of shared memory` and rolled back whole, leaving the owner intact.
-PostgreSQL sizes the lock table, shared by all sessions, for
-`max_locks_per_transaction` x (`max_connections` + `max_prepared_transactions`)
-entries, 12,800 there, and lets it grow into spare shared memory, which is how
-22,002 fit. Only the sized part is promised: raise `max_locks_per_transaction`
-(a restart) until that product is well above twice the number of memory and
-Goal versions of the largest owner that must be erasable.
+Whole-owner erase is one transaction that holds the owner's exclusive fence,
+which excludes every writer that holds a lock on one of the owner's memories or
+Goals, so it takes no lock per memory or per Goal version. Its advisory locks
+are the owner fence, two per upload object key, and one per published Fact the
+owner received by transfer (it excludes an origin check that cannot see the
+owner's row), independent of the number of memories and Goal versions; the
+scale test asserts that the count at a tenth of the size equals the count at
+full size. A source-scoped erase holds
+the fence only shared and keeps its lock per selected memory, Goal version and
+origin Fact, as does a series erase. PostgreSQL sizes the lock table, shared by
+all sessions, for `max_locks_per_transaction` x (`max_connections` +
+`max_prepared_transactions`) entries. When a transaction fills it, PostgreSQL
+answers `out of shared memory` (SQLSTATE 53200) and the transaction rolls back
+whole; that surfaces as `StorageError::Unavailable`. Raise
+`max_locks_per_transaction` (a restart) until that product is well above twice
+the number of object keys, received published Facts, memories and Goal versions
+of the largest owner whose source-scoped erase must succeed.
 
 ## Backup and restore
 

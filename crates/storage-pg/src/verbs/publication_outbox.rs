@@ -822,12 +822,28 @@ impl PublicationOriginEligibilityPort for PgStorage {
         original_owner: proxiima_core::OwnerId,
         fact_id: proxiima_core::MemoryId,
     ) -> Result<PublicationOriginEligibility, StorageError> {
-        // Take the same per-Fact target fence used by hard deletion and keep
-        // it through the caller's host-state write and commit; an erase that
-        // revokes this origin holds it first, so a check either precedes the
-        // erase or sees the revocation. Opening a nested pool transaction here would split the
-        // eligibility decision from that write and permit a time-of-check race.
-        super::forget::lock_lifecycle_targets_tx(tx, &[fact_id.into_inner()]).await?;
+        // Hold, through the caller's host-state write and commit, the shared
+        // fence of the argued original owner (an origin answers Eligible only
+        // for it) and, when the caller can see the row, of the Fact's physical
+        // owner, sorted together, then the Fact's version lock. A whole-owner
+        // erase of the original owner holds its fence exclusively; an erase of
+        // a physical owner the caller cannot see takes the version lock of
+        // the Facts it received by transfer (`lock_received_published_facts`).
+        // Opening a nested pool transaction here would split the eligibility
+        // decision from that write and permit a time-of-check race.
+        let fact = fact_id.into_inner();
+        let physical: Option<Uuid> = sqlx::query_scalar(
+            "SELECT owner_id FROM proxiima_core.memory_including_forgotten WHERE t = $1",
+        )
+        .bind(fact)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_err)?;
+        let owners: Vec<proxiima_core::OwnerId> = std::iter::once(original_owner)
+            .chain(physical.map(Into::into))
+            .collect();
+        crate::access::fences::lock_owner_fences_shared_tx(tx, &owners).await?;
+        super::forget::lock_lifecycle_targets_tx(tx, &[fact]).await?;
         let owner_id = original_owner.into_inner();
         let eligible: bool = sqlx::query_scalar(
             "SELECT EXISTS (

@@ -850,8 +850,8 @@ async fn open_erase_bookkeeping(
 ) -> Result<(), StorageError> {
     // The owner fence below is the first lock of the erase. It protects
     // original-publication provenance against checked host UoWs through
-    // commit: a check takes the per-Fact target fence this erase takes for
-    // every origin it revokes. The scope fence keeps the core selection exact
+    // commit: a check holds the shared fence of the origin's original owner.
+    // The scope fence keeps the core selection exact
     // while preserving different-source concurrency for direct storage
     // admissions that do not carry host lifecycle state, and no other
     // owner's write waits.
@@ -870,9 +870,20 @@ async fn open_erase_bookkeeping(
         }
     }
     create_selected_sets(tx, owner, scope).await?;
-    lock_selected_memory_handles(tx).await?;
-    lock_selected_lifecycle_targets(tx).await?;
-    lock_selected_publication_origins(tx, owner, scope).await?;
+    match scope {
+        // The exclusive owner fence excludes every holder of a handle, version
+        // or origin lock on this owner's rows, and the witness triggers take
+        // nothing more on top of it. The origin check of a Fact transferred
+        // away holds the original owner's fence, so it is excluded too. Only
+        // a check that cannot see this owner's row needs a lock of its own.
+        SelectionScope::Owner => lock_received_published_facts(tx, owner).await?,
+        // The owner fence is only shared here, so each selected row is locked.
+        SelectionScope::Source(_) => {
+            lock_selected_memory_handles(tx).await?;
+            lock_selected_lifecycle_targets(tx).await?;
+            lock_selected_publication_origins(tx, owner, scope).await?;
+        }
+    }
     lock_selected_object_keys(tx, owner, scope).await?;
     capture_selected_handles(tx).await?;
     sqlx::query("CREATE TEMP TABLE erase_counts(name text PRIMARY KEY, count bigint NOT NULL) ON COMMIT DROP")
@@ -929,6 +940,28 @@ async fn lock_selected_publication_origins(
     owner: OwnerId,
     scope: SelectionScope<'_>,
 ) -> Result<(), StorageError> {
+    lock_publication_origins(tx, owner, scope, false).await
+}
+
+/// Whole-owner erase: the version lock of the selected Facts whose origin was
+/// published by another owner and received here by transfer. It excludes an
+/// origin check that runs where this owner's row is hidden, so it holds only
+/// the original owner's fence. Origins of the erased owner need none, since
+/// the check holds that owner's shared fence; the count grows only with
+/// published Facts received by transfer.
+async fn lock_received_published_facts(
+    tx: &mut Tx<'_>,
+    owner: OwnerId,
+) -> Result<(), StorageError> {
+    lock_publication_origins(tx, owner, SelectionScope::Owner, true).await
+}
+
+async fn lock_publication_origins(
+    tx: &mut Tx<'_>,
+    owner: OwnerId,
+    scope: SelectionScope<'_>,
+    received_only: bool,
+) -> Result<(), StorageError> {
     let owner_id = owner.into_inner();
     let ids = sqlx::query_scalar::<_, uuid::Uuid>(concat!(
         "SELECT origin.t
@@ -936,10 +969,12 @@ async fn lock_selected_publication_origins(
           WHERE origin.t IN (",
         selected_origin_ts_sql!(),
         ")
+            AND (NOT $3 OR origin.original_owner_id <> $1)
           ORDER BY origin.t"
     ))
     .bind(owner_id)
     .bind(scope.source_bind())
+    .bind(received_only)
     .fetch_all(&mut **tx)
     .await
     .map_err(map_err)?;
@@ -1000,9 +1035,9 @@ async fn lock_selected_memory_handles(tx: &mut Tx<'_>) -> Result<(), StorageErro
     super::forget::lock_memory_handles_tx(tx, &handles).await
 }
 
-/// Lock the complete Memory ∪ Goal erase footprint before any generated
-/// surface or core row lock. The witness DELETE triggers re-enter these same
-/// locks as a database backstop.
+/// Lock the complete Memory ∪ Goal erase footprint of a source-scoped erase
+/// before any generated surface or core row lock. The witness DELETE triggers
+/// re-enter these same locks as a database backstop.
 async fn lock_selected_lifecycle_targets(tx: &mut Tx<'_>) -> Result<(), StorageError> {
     let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT memory_id FROM selected_memories

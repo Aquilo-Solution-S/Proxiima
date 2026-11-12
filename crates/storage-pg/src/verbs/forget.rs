@@ -10,6 +10,7 @@ use proxiima_core::{
     ColdObjectStore, ObjectStoreId, OwnerId, PgIdent, PurgeDeleted, SqlText, StorageError,
 };
 
+use crate::access::fences::lock_owner_fence_shared_tx;
 use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
 use crate::verbs::maintenance::PurgeBackoff;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -450,11 +451,20 @@ pub(crate) async fn lock_memory_handles_tx(
 /// taking any row/blob lock; sorting makes crossed declarations wait rather
 /// than deadlock. Memory callers acquire all handle locks before entering this
 /// helper; this helper itself never acquires a handle lock.
+///
+/// `proxiima_core.lock_pin_targets` is the one taker of the version lock: it
+/// also holds the shared owner fence of every owner of a target row, so a
+/// whole-owner erase, which holds that fence exclusively, needs no version lock.
 pub(crate) async fn lock_lifecycle_targets_tx(
     tx: &mut Transaction<'_, Postgres>,
     targets: &[Uuid],
 ) -> Result<(), StorageError> {
-    lock_advisory_ids_tx(tx, "proxiima-forget:", targets).await
+    sqlx::query("SELECT proxiima_core.lock_pin_targets($1)")
+        .bind(targets)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_err)?;
+    Ok(())
 }
 
 /// Lock the source and every live or forgotten non-Fact depender before the
@@ -852,6 +862,7 @@ async fn forget_in_lifecycle(
     expected_owner_id: Uuid,
     kinds: Option<&[PgMemoryKind]>,
 ) -> Result<(), StorageError> {
+    lock_owner_fence_shared_tx(tx, &OwnerId::from(expected_owner_id)).await?;
     let handle = probe_memory_handle_for_owner(tx, t, expected_owner_id)
         .await?
         .ok_or(StorageError::NotFound)?;
@@ -931,6 +942,7 @@ async fn restore_in_lifecycle(
     reach: &Reach,
     embeddings: crate::verbs::fact_embeddings::RouteSpaces<'_>,
 ) -> Result<(), StorageError> {
+    lock_owner_fence_shared_tx(tx, &OwnerId::from(reach.owner_id)).await?;
     let handle = probe_memory_handle_for_owner(tx, t, reach.owner_id)
         .await?
         .ok_or(StorageError::NotFound)?;

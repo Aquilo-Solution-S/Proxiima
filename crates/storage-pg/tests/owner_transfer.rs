@@ -2049,11 +2049,11 @@ async fn transfer_retries_when_series_membership_drifts_before_mutation() {
 
         // Hold the first lifecycle key so the transfer has a deterministic
         // window after its membership snapshot and before the exact reread.
+        // Bare lock on purpose: a holder that took the owner's fence would
+        // stop the transfer before its snapshot, which is not the seam here.
         let mut blocker = pool.begin().await?;
         sqlx::query(
-            "SELECT pg_advisory_xact_lock(
-                 hashtextextended('proxiima-forget:' || $1::text, 0)
-             )",
+            "SELECT pg_advisory_xact_lock(hashtextextended('proxiima-forget:' || $1::text, 0))",
         )
         .bind(first_t)
         .execute(&mut *blocker)

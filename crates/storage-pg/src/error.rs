@@ -85,6 +85,11 @@ pub fn map_err(e: sqlx::Error) -> StorageError {
         Error::Database(db) if is_retryable_sqlstate(db.code().as_deref()) => {
             StorageError::Retryable(db.message().to_string())
         }
+        // `out_of_memory` (53200) is how the server reports a full shared
+        // lock table: the backend is out of room, not the caller at fault.
+        Error::Database(db) if db.code().as_deref() == Some("53200") => {
+            StorageError::Unavailable(db.message().to_string())
+        }
         _ => StorageError::Internal(e.to_string()),
     }
 }
@@ -286,6 +291,57 @@ mod tests {
         .await;
         assert!(matches!(result, Err(StorageError::Conflict(_))));
         assert_eq!(calls.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod sqlstate_tests {
+    use super::map_err;
+    use proxiima_core::StorageError;
+
+    #[derive(Debug)]
+    struct Coded(&'static str);
+
+    impl std::fmt::Display for Coded {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "out of shared memory")
+        }
+    }
+
+    impl std::error::Error for Coded {}
+
+    impl sqlx::error::DatabaseError for Coded {
+        fn message(&self) -> &'static str {
+            "out of shared memory"
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn a_full_lock_table_is_unavailable_not_internal() {
+        let mapped = map_err(sqlx::Error::Database(Box::new(Coded("53200"))));
+        assert!(matches!(mapped, StorageError::Unavailable(_)), "{mapped:?}");
+        let other = map_err(sqlx::Error::Database(Box::new(Coded("XX000"))));
+        assert!(matches!(other, StorageError::Internal(_)), "{other:?}");
     }
 }
 

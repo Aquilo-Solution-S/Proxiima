@@ -1002,7 +1002,6 @@ DECLARE
     previous_scope text := current_setting('app.proxiima_scope', true);
 BEGIN
     PERFORM set_config('app.proxiima_scope', 'platform', true);
-    PERFORM proxiima_core.lock_pin_targets(ARRAY[target]);
     SELECT kind INTO existing_kind
       FROM proxiima_core.erased_pin_target
      WHERE t = target;
@@ -1049,7 +1048,7 @@ BEGIN
         PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
         RETURN OLD;
     END IF;
-    PERFORM proxiima_core.lock_pin_targets(ARRAY[OLD.t]);
+    PERFORM proxiima_core.lock_erased_target(OLD.t, OLD.owner_id);
     PERFORM proxiima_core.record_erased_pin_target(OLD.t, 'goal');
     PERFORM set_config('app.proxiima_scope', COALESCE(previous_scope, ''), true);
     RETURN OLD;
@@ -2401,25 +2400,124 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.lock_group_trees(p_left uuid, p_right uuid) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION proxiima_core.lock_pin_targets(targets uuid[])
+-- The one taker of the owner fence key. Fences are taken in sorted order. An
+-- exclusive taker also records its owners in a transaction-local setting that
+-- lock_erased_target reads as a hint; the hint is never trusted.
+CREATE OR REPLACE FUNCTION proxiima_core.lock_owner_fences(owners uuid[], exclusive boolean)
  RETURNS void
  LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
 AS $function$
 DECLARE
-    target uuid;
+    fence_owner uuid;
+    added boolean := false;
+    recorded text[] := string_to_array(
+        COALESCE(current_setting('proxiima_core.owner_fence_exclusive', true), ''), ','
+    );
 BEGIN
-    FOR target IN
+    FOR fence_owner IN
         SELECT DISTINCT id
-          FROM unnest(COALESCE(targets, '{}'::uuid[])) AS pins(id)
+          FROM unnest(COALESCE(owners, '{}'::uuid[])) AS fences(id)
          WHERE id IS NOT NULL
          ORDER BY id
     LOOP
-        PERFORM pg_advisory_xact_lock(
-            hashtextextended('proxiima-forget:' || target::text, 0)
+        IF exclusive THEN
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('proxiima-owner-fence:' || fence_owner::text, 0)
+            );
+            IF NOT fence_owner::text = ANY (recorded) THEN
+                recorded := recorded || fence_owner::text;
+                added := true;
+            END IF;
+        ELSE
+            PERFORM pg_advisory_xact_lock_shared(
+                hashtextextended('proxiima-owner-fence:' || fence_owner::text, 0)
+            );
+        END IF;
+    END LOOP;
+    IF added THEN
+        PERFORM set_config(
+            'proxiima_core.owner_fence_exclusive',
+            array_to_string(recorded, ','),
+            true
         );
+    END IF;
+END;
+$function$;
+
+-- The one taker of the version lock (`proxiima-forget:<t>`). Every holder of a
+-- version lock on a row holds the shared or exclusive fence of that row's
+-- owner, so an owner's exclusive fence excludes every such holder.
+-- Targets without a row have no owner and need no fence. Every writer runs
+-- READ COMMITTED, so each lookup sees rows committed since the last one.
+-- The lookup runs under the caller's row security: the runtime role may not
+-- execute a definer, so the pin triggers, which bind platform scope before
+-- they call this, fence every owner, and a direct caller fences the owners
+-- whose rows it can read.
+CREATE OR REPLACE FUNCTION proxiima_core.lock_pin_targets(targets uuid[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
+AS $function$
+DECLARE
+    ids uuid[];
+    target uuid;
+    owners uuid[];
+    held uuid[] := '{}'::uuid[];
+    version_locked boolean := false;
+BEGIN
+    SELECT COALESCE(array_agg(DISTINCT id ORDER BY id), '{}'::uuid[])
+      INTO ids
+      FROM unnest(COALESCE(targets, '{}'::uuid[])) AS pins(id)
+     WHERE id IS NOT NULL;
+    IF ids = '{}'::uuid[] THEN
+        RETURN;
+    END IF;
+    LOOP
+        SELECT COALESCE(array_agg(DISTINCT row_owner ORDER BY row_owner), '{}'::uuid[])
+          INTO owners
+          FROM (
+              SELECT m.owner_id AS row_owner
+                FROM proxiima_core.memory_including_forgotten m
+               WHERE m.t = ANY (ids)
+              UNION ALL
+              SELECT g.owner_id
+                FROM proxiima_core.goal g
+               WHERE g.t = ANY (ids)
+          ) rows;
+        EXIT WHEN version_locked AND owners <@ held;
+        PERFORM proxiima_core.lock_owner_fences(owners, false);
+        held := held || owners;
+        FOREACH target IN ARRAY ids LOOP
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('proxiima-forget:' || target::text, 0)
+            );
+        END LOOP;
+        version_locked := true;
     END LOOP;
 END;
 $function$;
+
+-- The witness triggers' lock. The setting is a hint: the owner's exclusive
+-- fence is taken again, which is a local no-op when held and a real
+-- acquisition when the setting was forged, so protection is never skipped.
+-- That fence excludes every version-lock holder on the owner's rows.
+CREATE OR REPLACE FUNCTION proxiima_core.lock_erased_target(target uuid, owner uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'proxiima_core', 'pg_temp'
+AS $function$
+BEGIN
+    IF owner::text = ANY (string_to_array(
+        COALESCE(current_setting('proxiima_core.owner_fence_exclusive', true), ''), ','
+    )) THEN
+        PERFORM proxiima_core.lock_owner_fences(ARRAY[owner], true);
+    ELSE
+        PERFORM proxiima_core.lock_pin_targets(ARRAY[target]);
+    END IF;
+END;
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.lock_erased_target(target uuid, owner uuid) FROM PUBLIC;
 
 -- Memory functions
 
@@ -2478,7 +2576,7 @@ BEGIN
     DELETE FROM proxiima_core.publication_origin origin
      USING proxiima_core.schema_evolution_publication link
     WHERE link.memory_t = OLD.t AND origin.t = link.publication_t;
-    PERFORM proxiima_core.lock_pin_targets(ARRAY[OLD.t]);
+    PERFORM proxiima_core.lock_erased_target(OLD.t, OLD.owner_id);
     -- Forget keeps the row (#488), so deleting a memory row is always an
     -- erase and always leaves a witness.
     PERFORM proxiima_core.record_erased_pin_target(

@@ -2240,12 +2240,10 @@ async fn source_erase_allows_different_source_admission_while_lifecycle_locked()
         let erased_t = erased_admission.memory_id.into_inner();
 
         let mut lifecycle_gate = pool.begin().await?;
-        sqlx::query(
-            "SELECT pg_advisory_xact_lock(hashtextextended('proxiima-forget:' || $1::text, 0))",
-        )
-        .bind(erased_t)
-        .execute(&mut *lifecycle_gate)
-        .await?;
+        sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1])")
+            .bind(erased_t)
+            .execute(&mut *lifecycle_gate)
+            .await?;
 
         let erase_pg = pg.clone();
         let erase = tokio::spawn(async move {
@@ -2708,4 +2706,150 @@ async fn owner_erase_includes_a_goal_that_committed_before_its_fence() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("owner erase vs late Goal barrier failed");
+}
+
+/// Advisory locks one backend holds on the owner fence of `owner`, by mode.
+async fn owner_fence_modes_held(
+    pool: &PgPool,
+    pid: i32,
+    owner: OwnerId,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT l.mode
+           FROM pg_locks l,
+                LATERAL (SELECT hashtextextended('proxiima-owner-fence:' || $2::text, 0) AS key) k
+          WHERE l.locktype = 'advisory' AND l.granted AND l.pid = $1
+            AND l.classid::bigint = ((k.key >> 32) & 4294967295)
+            AND l.objid::bigint = (k.key & 4294967295)
+          ORDER BY l.mode",
+    )
+    .bind(pid)
+    .bind(owner.into_inner())
+    .fetch_all(pool)
+    .await
+}
+
+/// A transfer of X to Y commits between a locker's owner lookup and its fence:
+/// the locker looked X up, waited on X's fence behind the transfer, and the
+/// lookup after the version locks finds Y, whose fence it then takes too.
+#[tokio::test]
+async fn a_locker_that_raced_a_transfer_ends_up_holding_the_new_owners_fence() {
+    const TRANSFER_GATE: i64 = 7_514_020;
+
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let source = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let destination = OwnerId::from(GroupId::new(Uuid::now_v7()));
+        let permit = OwnerWritePermit::new_for_tests(source, AccessKind::Fact);
+        let written = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        let t = written.memory_id.into_inner();
+        install_transfer_update_gate(pool, TRANSFER_GATE).await?;
+        let mut transfer_gate = hold_session_advisory_lock(pool, TRANSFER_GATE).await?;
+
+        let transfer_pg = pg.clone();
+        let transfer = tokio::spawn(async move {
+            transfer_pg
+                .transfer_to_owner(
+                    &OwnerWritePermit::transfer_for_tests(source, AccessKind::Fact, destination),
+                    EntityId::Memory(proxiima_core::MemoryId::new(t)),
+                    destination,
+                    &contract_sidecar_tables(),
+                    &[],
+                )
+                .await
+        });
+        wait_for_ungranted_advisory_key(pool, TRANSFER_GATE).await?;
+
+        let locker_pool = pool.clone();
+        let locker = tokio::spawn(async move {
+            let mut tx = locker_pool.begin().await?;
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(tx.as_mut())
+                .await?;
+            sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1])")
+                .bind(t)
+                .execute(tx.as_mut())
+                .await?;
+            Ok::<_, sqlx::Error>((pid, tx))
+        });
+        wait_for_ungranted_advisory_label(pool, &owner_fence_key(source)).await?;
+        assert!(
+            !locker.is_finished(),
+            "the locker waits behind the transfer"
+        );
+
+        release_session_advisory_lock(&mut transfer_gate, TRANSFER_GATE).await?;
+        drop(transfer_gate);
+        assert!(tokio::time::timeout(Duration::from_secs(10), transfer).await???);
+        let (pid, tx) = tokio::time::timeout(Duration::from_secs(10), locker).await???;
+
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, destination).await?,
+            ["ShareLock"],
+            "the locker holds the fence of the owner the Memory moved to"
+        );
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, source).await?,
+            ["ShareLock"]
+        );
+        tx.rollback().await?;
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a locker that raced a transfer holds the new owner's fence");
+}
+
+/// The exclusive-owner setting is a hint: a transaction that sets it without
+/// holding the fence still acquires the owner's exclusive fence when it
+/// deletes that owner's Memory, and an unhinted delete takes only the shared
+/// fence of the version lock.
+#[tokio::test]
+async fn a_forged_exclusive_owner_hint_still_acquires_the_exclusive_fence() {
+    let (db_name, pg) = fresh_owner_erase_pg().await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let permit = OwnerWritePermit::new_for_tests(owner, AccessKind::Fact);
+        let hinted = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+        let unhinted = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
+
+        let mut tx = pool.begin().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(tx.as_mut())
+            .await?;
+        sqlx::query("SET CONSTRAINTS ALL DEFERRED")
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query("DELETE FROM proxiima_core.memory WHERE t = $1")
+            .bind(unhinted.memory_id.into_inner())
+            .execute(tx.as_mut())
+            .await?;
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, owner).await?,
+            ["ShareLock"],
+            "without a hint the delete takes the version lock under the shared fence"
+        );
+
+        // Raw set_config on purpose: the hint is a plain setting any session can write.
+        sqlx::query("SELECT set_config('proxiima_core.owner_fence_exclusive', $1, true)")
+            .bind(owner.into_inner().to_string())
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query("DELETE FROM proxiima_core.memory WHERE t = $1")
+            .bind(hinted.memory_id.into_inner())
+            .execute(tx.as_mut())
+            .await?;
+        assert_eq!(
+            owner_fence_modes_held(pool, pid, owner).await?,
+            ["ExclusiveLock", "ShareLock"],
+            "a forged hint takes the exclusive fence for real"
+        );
+        tx.rollback().await?;
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("a forged hint acquires the exclusive fence");
 }

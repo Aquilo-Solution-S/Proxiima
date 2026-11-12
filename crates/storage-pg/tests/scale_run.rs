@@ -33,8 +33,6 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use proxiima_core::owner_inverse::{
@@ -582,23 +580,30 @@ async fn filtered_vector_search_recall_and_latency_by_owner_share() -> TestResul
 
 // ---- test B: whole-owner erase ---------------------------------------------
 
-/// Advisory locks held in this database by every backend but the caller's.
-/// The test database has no other session, so this is the erase.
-async fn advisory_locks_of_other_backends(pool: &PgPool) -> sqlx::Result<i64> {
+/// Advisory locks held in this database by the backends that wait on a row
+/// lock. The test database has no other session, so that backend is the erase
+/// parked at its first Memory delete: every lock it takes before any row is
+/// deleted is held, and none of the row deletes has run.
+async fn advisory_locks_of_waiting_backends(pool: &PgPool) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "SELECT count(*)
-           FROM pg_locks
-          WHERE locktype = 'advisory'
-            AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
-            AND pid <> pg_backend_pid()",
+           FROM pg_locks l
+          WHERE l.locktype = 'advisory'
+            AND l.granted
+            AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND l.pid IN (SELECT pid FROM pg_stat_activity
+                           WHERE datname = current_database()
+                             AND wait_event_type = 'Lock'
+                             AND wait_event = 'transactionid')",
     )
     .fetch_one(pool)
     .await
 }
 
-#[tokio::test]
-async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
-    let memories = env_count("PROXIIMA_SCALE_ERASE_MEMORIES", 500);
+/// One whole-owner erase of `memories` Facts. Returns the advisory locks the
+/// erase held when it reached its first Memory delete, and its wall time,
+/// which includes one poll interval for that observation.
+async fn erase_owner_of(memories: usize) -> Result<(i64, u128), Box<dyn std::error::Error>> {
     let survivors = 50;
     assert!(memories > 0, "the erased owner needs Facts");
     let (pg, _database) = fresh_pg("scale_run_erase").await;
@@ -610,29 +615,15 @@ async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
     seed_facts(&admin, owner, memories, Shape::Plain).await?;
     seed_facts(&admin, neighbour, survivors, Shape::Plain).await?;
 
-    // The sampler runs on its own connection for the whole erase.
-    let done = Arc::new(AtomicBool::new(false));
-    let max_advisory = Arc::new(AtomicI64::new(0));
-    let failed_samples = Arc::new(AtomicI64::new(0));
-    let sampler = tokio::spawn({
-        let (admin, done) = (admin.clone(), done.clone());
-        let (max_advisory, failed_samples) = (max_advisory.clone(), failed_samples.clone());
-        async move {
-            while !done.load(Ordering::Relaxed) {
-                // A sample can fail for the reason under test: the erase
-                // has filled the lock table. Count it instead of stopping.
-                match advisory_locks_of_other_backends(&admin).await {
-                    Ok(advisory) => {
-                        max_advisory.fetch_max(advisory, Ordering::Relaxed);
-                    }
-                    Err(_) => {
-                        failed_samples.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        }
-    });
+    // A row lock on one Fact parks the erase at its delete, after every lock
+    // it takes up front. NO KEY UPDATE conflicts with DELETE and with nothing
+    // else the erase does earlier.
+    let mut gate = admin.begin().await?;
+    sqlx::query("SELECT t FROM proxiima_core.memory WHERE owner_id = $1 LIMIT 1 FOR NO KEY UPDATE")
+        .bind(owner.into_inner())
+        .fetch_one(&mut *gate)
+        .await?;
+
     let surfaces = OwnerSurfaces::for_registry(
         &proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
     );
@@ -641,19 +632,25 @@ async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
         drop_event_id: "scale-run".into(),
     });
     let started = Instant::now();
-    let outcome = pg.erase_personal_owner(&auth, user, &surfaces).await;
+    let erase = tokio::spawn({
+        let pg = pg.clone();
+        async move { pg.erase_personal_owner(&auth, user, &surfaces).await }
+    });
+    let advisory = tokio::time::timeout(Duration::from_mins(2), async {
+        loop {
+            let held = advisory_locks_of_waiting_backends(&admin).await?;
+            if held > 0 {
+                return Ok::<i64, sqlx::Error>(held);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    gate.rollback().await?;
+    let outcome = erase.await?;
     let wall_ms = started.elapsed().as_millis();
-    done.store(true, Ordering::Relaxed);
-    sampler.await?;
-    let (advisory, failed_samples) = (
-        max_advisory.load(Ordering::Relaxed),
-        failed_samples.load(Ordering::Relaxed),
-    );
     let outcome = outcome.unwrap_or_else(|error| {
-        panic!(
-            "owner erase of {memories} memories failed after {wall_ms} ms \
-             (max advisory locks observed {advisory}, failed samples {failed_samples}): {error}"
-        )
+        panic!("owner erase of {memories} memories failed after {wall_ms} ms: {error}")
     });
     assert!(
         matches!(outcome, OwnerEraseOutcome::Completed { .. }),
@@ -680,31 +677,47 @@ async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
         (expected, expected),
         "the other owner is untouched"
     );
+    Ok((advisory, wall_ms))
+}
 
-    let max_locks_per_transaction = setting(&admin, "max_locks_per_transaction").await?;
-    let max_connections = setting(&admin, "max_connections").await?;
-    let max_prepared_transactions = setting(&admin, "max_prepared_transactions").await?;
+#[tokio::test]
+async fn whole_owner_erase_lock_use_and_wall_time() -> TestResult {
+    let memories = env_count("PROXIIMA_SCALE_ERASE_MEMORIES", 500);
+    let tenth = (memories / 10).max(1);
+    let (small_locks, small_ms) = erase_owner_of(tenth).await?;
+    let (advisory, wall_ms) = erase_owner_of(memories).await?;
+    assert_eq!(
+        advisory, small_locks,
+        "the erase holds {advisory} advisory locks for {memories} memories and \
+         {small_locks} for {tenth}: the count must not grow with the owner"
+    );
+
+    let (pg, _database) = fresh_pg("scale_run_erase_settings").await;
+    let admin = pg.pool_for_tests();
+    let max_locks_per_transaction = setting(admin, "max_locks_per_transaction").await?;
+    let max_connections = setting(admin, "max_connections").await?;
+    let max_prepared_transactions = setting(admin, "max_prepared_transactions").await?;
     let capacity: i64 = sqlx::query_scalar(
         "SELECT current_setting('max_locks_per_transaction')::bigint
               * (current_setting('max_connections')::bigint
                  + current_setting('max_prepared_transactions')::bigint)",
     )
-    .fetch_one(&admin)
+    .fetch_one(admin)
     .await?;
     println!(
         "SCALE_RUN_ERASE {}",
         serde_json::json!({
             "memories": memories,
             "completed": true,
-            "max_advisory_locks_observed": advisory,
-            "failed_lock_samples": failed_samples,
-            "advisory_locks_per_memory": round3(f64::from(u32::try_from(advisory).expect("bounded")) / count(memories)),
+            "advisory_locks_held": advisory,
+            "advisory_locks_held_at_tenth": small_locks,
+            "tenth_memories": tenth,
             "wall_ms": wall_ms,
+            "wall_ms_at_tenth": small_ms,
             "max_locks_per_transaction": max_locks_per_transaction,
             "max_connections": max_connections,
             "max_prepared_transactions": max_prepared_transactions,
             "nominal_lock_table_capacity": capacity,
-            "sample_interval_ms": 5,
         })
     );
     Ok(())

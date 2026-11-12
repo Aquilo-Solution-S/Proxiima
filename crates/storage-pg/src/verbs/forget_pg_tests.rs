@@ -1561,9 +1561,7 @@ async fn forget_blocks_admit_until_its_lifecycle_lock_is_released() {
         // use. The former row-only gate allowed an admission to take the
         // advisory first and deadlock when forget then tried to acquire it.
         sqlx::query(
-            "SELECT pg_advisory_xact_lock(
-                 hashtextextended('proxiima-forget:' || $1::text, 0)
-             )",
+            "SELECT proxiima_core.lock_pin_targets(ARRAY[$1])",
         )
         .bind(a_t)
         .execute(&mut *tx_f)

@@ -2773,3 +2773,573 @@ async fn an_export_queued_behind_the_fence_reads_what_its_holder_committed() {
     close_pg(&db_name).await;
     result.expect("queued export reads its fence holder's commit");
 }
+
+// ---- the owner fence is the coarse lock of its rows -------------------------
+
+const OWNER_FENCE_WAITERS_SQL: &str = "\
+SELECT count(*)::bigint
+  FROM pg_locks l,
+       LATERAL (SELECT hashtextextended('proxiima-owner-fence:' || $1::text, 0) AS key) k
+ WHERE l.locktype = 'advisory'
+   AND NOT l.granted
+   AND l.classid::bigint = ((k.key >> 32) & 4294967295)
+   AND l.objid::bigint = (k.key & 4294967295)";
+
+async fn wait_for_owner_fence_waiters(pool: &PgPool, owner: OwnerId, expected: i64) -> bool {
+    for _ in 0..400 {
+        let count: i64 = sqlx::query_scalar(OWNER_FENCE_WAITERS_SQL)
+            .bind(owner.into_inner())
+            .fetch_one(pool)
+            .await
+            .expect("owner fence waiter probe");
+        if count >= expected {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// Row-lock waiters: a backend parked on a row another transaction holds.
+async fn wait_for_row_lock_waiters(pool: &PgPool, expected: i64) -> bool {
+    for _ in 0..400 {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM pg_locks
+              WHERE locktype = 'transactionid' AND NOT granted",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("row lock waiter probe");
+        if count >= expected {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+async fn erased_witness_count(pool: &PgPool, ts: &[MemoryId]) -> i64 {
+    let ts: Vec<Uuid> = ts.iter().map(|t| t.into_inner()).collect();
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM proxiima_core.erased_pin_target WHERE t = ANY($1)",
+    )
+    .bind(&ts)
+    .fetch_one(pool)
+    .await
+    .expect("witness count")
+}
+
+async fn memory_rows_of(pool: &PgPool, owner: OwnerId) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM proxiima_core.memory_including_forgotten WHERE owner_id = $1",
+    )
+    .bind(owner.into_inner())
+    .fetch_one(pool)
+    .await
+    .expect("memory rows")
+}
+
+/// A one-shot forget, a restore and the forget of a forget-only unit of work,
+/// each on a memory of the owner whose whole-owner erase is in flight, wait on
+/// that owner's fence; once the erase commits there is nothing of the owner
+/// left to forget or restore, and nobody is chosen as a deadlock victim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn forget_restore_and_a_forget_only_unit_wait_for_an_erasing_owners_fence() {
+    let (db_name, pg, lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+        let to_forget = ingest(&pg, erased, "source-a", "to-forget").await;
+        let to_restore = ingest(&pg, erased, "source-a", "to-restore").await;
+        let to_unit_forget = ingest(&pg, erased, "source-a", "to-unit-forget").await;
+        pg.forget_memory(&permit, to_restore).await?;
+
+        let gate = Arc::new(CallbackGate::default());
+        lifecycle.set_erase_gate(Some(gate.clone()));
+        let erase_pg = pg.clone();
+        let erase = tokio::spawn(async move {
+            erase_pg
+                .erase_personal_owner(
+                    &erase_auth(erased, None),
+                    erased.as_user(),
+                    erase_pg.surfaces(),
+                )
+                .await
+        });
+        gate.entered.notified().await;
+
+        let forget = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                pg.forget_memory(&permit, to_forget).await
+            }
+        });
+        let restore = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                pg.restore_memory(&permit, to_restore, &[]).await
+            }
+        });
+        let unit = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                let scope = owner_scope_for_tests(&[erased]);
+                let mut session = WriteSessionFactory::begin(pg.as_ref(), Some(&scope)).await?;
+                session.forget_memory(&permit, to_unit_forget).await
+            }
+        });
+        assert!(
+            wait_for_owner_fence_waiters(pool, erased, 3).await,
+            "forget, restore and the unit's forget wait on the erasing owner's fence"
+        );
+
+        gate.release.notify_one();
+        assert!(matches!(erase.await??, OwnerEraseOutcome::Completed { .. }));
+        lifecycle.set_erase_gate(None);
+        for (name, outcome) in [
+            ("forget", forget.await?),
+            ("restore", restore.await?),
+            ("unit forget", unit.await?),
+        ] {
+            assert!(
+                matches!(outcome, Err(StorageError::NotFound)),
+                "{name} finds nothing left of the erased owner: {outcome:?}"
+            );
+        }
+        assert_eq!(memory_rows_of(pool, erased).await, 0);
+        assert_eq!(
+            erased_witness_count(pool, &[to_forget, to_restore, to_unit_forget]).await,
+            3
+        );
+        Ok(())
+    }
+    .await;
+    lifecycle.set_erase_gate(None);
+    close_pg(&db_name).await;
+    result.expect("lifecycle writers wait for the erasing owner's fence");
+}
+
+/// The reverse order: a forget that already holds its fence, handle and version
+/// locks makes the erase wait for the owner fence, then the erase removes the
+/// forgotten row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_erase_waits_for_a_forget_that_holds_its_locks_and_then_erases() {
+    let (db_name, pg, _lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let target = ingest(&pg, erased, "source-a", "forget-first").await;
+
+        // The forget takes its locks, then parks on the row it updates.
+        let mut parked = pool.begin().await?;
+        sqlx::query("SELECT 1 FROM proxiima_core.memory WHERE t = $1 FOR NO KEY UPDATE")
+            .bind(target.into_inner())
+            .execute(parked.as_mut())
+            .await?;
+        let forget = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let permit = OwnerWritePermit::new_for_tests(erased, AccessKind::Fact);
+                pg.forget_memory(&permit, target).await
+            }
+        });
+        assert!(
+            wait_for_row_lock_waiters(pool, 1).await,
+            "the forget parks on its row"
+        );
+
+        let erase_pg = pg.clone();
+        let erase = tokio::spawn(async move {
+            erase_pg
+                .erase_personal_owner(
+                    &erase_auth(erased, None),
+                    erased.as_user(),
+                    erase_pg.surfaces(),
+                )
+                .await
+        });
+        assert!(
+            wait_for_owner_fence_waiters(pool, erased, 1).await,
+            "the erase waits for the fence the forget holds shared"
+        );
+
+        parked.rollback().await?;
+        forget.await??;
+        assert!(matches!(erase.await??, OwnerEraseOutcome::Completed { .. }));
+        assert_eq!(memory_rows_of(pool, erased).await, 0);
+        assert_eq!(erased_witness_count(pool, &[target]).await, 1);
+        Ok(())
+    }
+    .await;
+    close_pg(&db_name).await;
+    result.expect("an erase waits for a forget that holds its locks");
+}
+
+/// A Fact published by A and transferred to B is revoked by the erase of A (its
+/// original owner) without a lock on the Fact, and removed by the erase of B
+/// (its physical owner). The origin check holds both owners' fences, so it
+/// waits for either erase and then finds the origin revoked.
+async fn origin_check_waits_for_the_erase_of(erased_is_original: bool) {
+    let (db_name, pg, lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let original = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let holder = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let fact = ingest(&pg, original, "source-a", "published").await;
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
+        sqlx::query(
+            "INSERT INTO proxiima_core.publication_origin (t, original_owner_id, source_id)
+             VALUES ($1, $2, 'source-a')",
+        )
+        .bind(fact.into_inner())
+        .bind(original.into_inner())
+        .execute(pool)
+        .await?;
+        assert!(
+            pg.transfer_to_owner(
+                &OwnerWritePermit::transfer_for_tests(original, AccessKind::Fact, holder),
+                EntityId::Memory(fact),
+                holder,
+                pg.surfaces(),
+                &[],
+            )
+            .await?
+        );
+        let erased = if erased_is_original { original } else { holder };
+
+        let gate = Arc::new(CallbackGate::default());
+        lifecycle.set_erase_gate(Some(gate.clone()));
+        let erase_pg = pg.clone();
+        let erase = tokio::spawn(async move {
+            erase_pg
+                .erase_personal_owner(
+                    &erase_auth(erased, None),
+                    erased.as_user(),
+                    erase_pg.surfaces(),
+                )
+                .await
+        });
+        gate.entered.notified().await;
+
+        let check_pg = pg.clone();
+        let check_pool = pool.clone();
+        let check = tokio::spawn(async move {
+            let mut tx = check_pool.begin().await.expect("begin checked UoW");
+            let eligibility = PublicationOriginEligibilityPort::check_in_transaction(
+                check_pg.as_ref(),
+                &mut tx,
+                original,
+                fact,
+            )
+            .await
+            .expect("a revoked origin is a negative answer");
+            tx.commit().await.expect("checked UoW commits");
+            eligibility
+        });
+        assert!(
+            wait_for_owner_fence_waiters(pool, erased, 1).await,
+            "the check waits for the fence of the erased owner"
+        );
+        assert!(!check.is_finished());
+
+        gate.release.notify_one();
+        assert!(matches!(erase.await??, OwnerEraseOutcome::Completed { .. }));
+        lifecycle.set_erase_gate(None);
+        assert_eq!(check.await?, PublicationOriginEligibility::Ineligible);
+        assert_eq!(publication_origin_count(pool, fact).await, 0);
+        Ok(())
+    }
+    .await;
+    lifecycle.set_erase_gate(None);
+    close_pg(&db_name).await;
+    result.expect("the origin check waits for the erase of either owner");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_origin_check_waits_for_the_erase_of_the_original_owner_of_a_transferred_fact() {
+    origin_check_waits_for_the_erase_of(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_origin_check_waits_for_the_erase_of_the_physical_owner_of_a_transferred_fact() {
+    origin_check_waits_for_the_erase_of(false).await;
+}
+
+/// A writer of Y that pins a memory of X meets the whole-owner erase of X on
+/// X's fence, not on a lock per memory of X.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pin_of_an_erasing_owners_memory_waits_for_the_erase_and_is_then_refused() {
+    let (db_name, pg, lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let writer = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let pinned = ingest(&pg, erased, "source-a", "pinned").await;
+
+        let gate = Arc::new(CallbackGate::default());
+        lifecycle.set_erase_gate(Some(gate.clone()));
+        let erase_pg = pg.clone();
+        let erase = tokio::spawn(async move {
+            erase_pg
+                .erase_personal_owner(
+                    &erase_auth(erased, None),
+                    erased.as_user(),
+                    erase_pg.surfaces(),
+                )
+                .await
+        });
+        gate.entered.notified().await;
+
+        let pin = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let mut command = draft("source-w", "pins-x");
+                command.refs = vec![pinned.into_inner()];
+                pg.ingest_fact_atomic(
+                    &OwnerWritePermit::new_for_tests(writer, AccessKind::Fact),
+                    &command,
+                    None,
+                )
+                .await
+            }
+        });
+        assert!(
+            wait_for_owner_fence_waiters(pool, erased, 1).await,
+            "the pin waits on the erasing owner's fence"
+        );
+        assert!(!pin.is_finished());
+
+        gate.release.notify_one();
+        assert!(matches!(erase.await??, OwnerEraseOutcome::Completed { .. }));
+        lifecycle.set_erase_gate(None);
+        let refused = pin.await?;
+        assert!(
+            matches!(
+                refused,
+                Err(StorageError::Refused {
+                    rule: proxiima_core::StorageRule::ReferencePinMissing,
+                    ..
+                })
+            ),
+            "the pin of an erased memory is refused: {refused:?}"
+        );
+        assert_eq!(memory_rows_of(pool, writer).await, 0);
+        Ok(())
+    }
+    .await;
+    lifecycle.set_erase_gate(None);
+    close_pg(&db_name).await;
+    result.expect("a pin of an erasing owner's memory waits and is refused");
+}
+
+/// The writer first: it holds X's fence shared and the pin's version lock, so
+/// the erase of X waits for the fence, then erases and records the witness.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_erase_waits_for_a_writer_that_pins_its_memory_and_then_records_the_witness() {
+    let (db_name, pg, _lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let erased = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let writer = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let pinned = ingest(&pg, erased, "source-a", "pinned").await;
+
+        // The pin checks lock the pin's row after the locks under test, so a
+        // row lock on it parks the writer holding them.
+        let mut parked = pool.begin().await?;
+        sqlx::query("SELECT 1 FROM proxiima_core.memory WHERE t = $1 FOR NO KEY UPDATE")
+            .bind(pinned.into_inner())
+            .execute(parked.as_mut())
+            .await?;
+        let pin = tokio::spawn({
+            let pg = pg.clone();
+            async move {
+                let mut command = draft("source-w", "pins-x");
+                command.refs = vec![pinned.into_inner()];
+                pg.ingest_fact_atomic(
+                    &OwnerWritePermit::new_for_tests(writer, AccessKind::Fact),
+                    &command,
+                    None,
+                )
+                .await
+            }
+        });
+        assert!(
+            wait_for_row_lock_waiters(pool, 1).await,
+            "the writer parks on the pin"
+        );
+
+        let erase_pg = pg.clone();
+        let erase = tokio::spawn(async move {
+            erase_pg
+                .erase_personal_owner(
+                    &erase_auth(erased, None),
+                    erased.as_user(),
+                    erase_pg.surfaces(),
+                )
+                .await
+        });
+        assert!(
+            wait_for_owner_fence_waiters(pool, erased, 1).await,
+            "the erase waits for the fence the writer holds shared"
+        );
+
+        parked.rollback().await?;
+        pin.await??;
+        assert!(matches!(erase.await??, OwnerEraseOutcome::Completed { .. }));
+        assert_eq!(memory_rows_of(pool, erased).await, 0);
+        assert_eq!(erased_witness_count(pool, &[pinned]).await, 1);
+        assert_eq!(memory_rows_of(pool, writer).await, 1);
+        Ok(())
+    }
+    .await;
+    close_pg(&db_name).await;
+    result.expect("an erase waits for a writer that pins its memory");
+}
+
+/// A published Fact transferred from A to B, checked in a transaction scoped to
+/// A alone: row security hides B's row from it, so the check holds A's fence
+/// and the Fact's version lock but not B's fence. The whole-owner erase of B
+/// takes that version lock for the Facts B received by transfer.
+async fn hidden_physical_owner_check(erase_first: bool) {
+    let (db_name, pg, lifecycle) = fresh_pg(8).await;
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pool = pg.pool_for_tests();
+        let (runtime_url, _) = proxiima_pg_testkit::split_role_urls(&db_name).await?;
+        let runtime = PgPool::connect(&runtime_url).await?;
+        let original = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let holder = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let fact = ingest(&pg, original, "source-a", "published").await;
+        // Raw INSERT on purpose: capture writes this row only with its Fact, in one
+        // transaction; this is an origin row for a Fact that already exists.
+        sqlx::query(
+            "INSERT INTO proxiima_core.publication_origin (t, original_owner_id, source_id)
+             VALUES ($1, $2, 'source-a')",
+        )
+        .bind(fact.into_inner())
+        .bind(original.into_inner())
+        .execute(pool)
+        .await?;
+        assert!(
+            pg.transfer_to_owner(
+                &OwnerWritePermit::transfer_for_tests(original, AccessKind::Fact, holder),
+                EntityId::Memory(fact),
+                holder,
+                pg.surfaces(),
+                &[],
+            )
+            .await?
+        );
+
+        let scope = owner_scope_for_tests(&[original]);
+        let mut control = proxiima_storage_pg::begin_owner_transaction(&runtime, &scope).await?;
+        let visible: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM proxiima_core.memory_including_forgotten WHERE t = $1",
+        )
+        .bind(fact.into_inner())
+        .fetch_one(control.as_mut())
+        .await?;
+        assert_eq!(
+            visible, 0,
+            "the check's transaction cannot see the physical owner's row"
+        );
+        control.rollback().await?;
+
+        let check = |pg: Arc<PgStorage>,
+                     runtime: PgPool,
+                     hold: Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>| {
+            let scope = owner_scope_for_tests(&[original]);
+            async move {
+                let mut tx = proxiima_storage_pg::begin_owner_transaction(&runtime, &scope)
+                    .await
+                    .expect("begin scoped UoW");
+                let eligibility = PublicationOriginEligibilityPort::check_in_transaction(
+                    pg.as_ref(),
+                    &mut tx,
+                    original,
+                    fact,
+                )
+                .await
+                .expect("the check answers");
+                if let Some((answered, release)) = hold {
+                    answered.send(()).expect("answer observed");
+                    release.await.expect("release");
+                }
+                tx.commit().await.expect("scoped UoW commits");
+                eligibility
+            }
+        };
+
+        let gate = Arc::new(CallbackGate::default());
+        let erase = |pg: Arc<PgStorage>| {
+            tokio::spawn(async move {
+                pg.erase_personal_owner(&erase_auth(holder, None), holder.as_user(), pg.surfaces())
+                    .await
+            })
+        };
+        if erase_first {
+            lifecycle.set_erase_gate(Some(gate.clone()));
+            let erasing = erase(pg.clone());
+            gate.entered.notified().await;
+            let checking = tokio::spawn(check(pg.clone(), runtime.clone(), None));
+            assert!(
+                wait_for_advisory_waiters(pool, 1).await,
+                "the check waits on the Fact"
+            );
+            assert!(!checking.is_finished());
+            gate.release.notify_one();
+            assert!(matches!(
+                erasing.await??,
+                OwnerEraseOutcome::Completed { .. }
+            ));
+            lifecycle.set_erase_gate(None);
+            assert_eq!(checking.await?, PublicationOriginEligibility::Ineligible);
+        } else {
+            let (release, released) = tokio::sync::oneshot::channel();
+            let (answered_tx, answered) = tokio::sync::oneshot::channel();
+            let checking = tokio::spawn(check(
+                pg.clone(),
+                runtime.clone(),
+                Some((answered_tx, released)),
+            ));
+            // The check holds its locks until released; the erase waits for the Fact.
+            answered.await?;
+            let erasing = erase(pg.clone());
+            assert!(
+                wait_for_advisory_waiters(pool, 1).await,
+                "the erase waits on the Fact"
+            );
+            assert!(!erasing.is_finished());
+            release.send(()).expect("check is waiting for release");
+            assert_eq!(checking.await?, PublicationOriginEligibility::Eligible);
+            assert!(matches!(
+                erasing.await??,
+                OwnerEraseOutcome::Completed { .. }
+            ));
+        }
+        assert_eq!(publication_origin_count(pool, fact).await, 0);
+        runtime.close().await;
+        Ok(())
+    }
+    .await;
+    lifecycle.set_erase_gate(None);
+    close_pg(&db_name).await;
+    result.expect("a check that cannot see the physical owner meets its erase");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_origin_check_that_cannot_see_the_physical_owner_waits_for_its_erase() {
+    hidden_physical_owner_check(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_erase_waits_for_an_origin_check_that_cannot_see_the_physical_owner() {
+    hidden_physical_owner_check(false).await;
+}

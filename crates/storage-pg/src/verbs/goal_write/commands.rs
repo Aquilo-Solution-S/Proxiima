@@ -791,15 +791,11 @@ mod lifecycle_lock_tests {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         t: Uuid,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "SELECT pg_advisory_xact_lock(
-                 hashtextextended('proxiima-forget:' || $1::text, 0)
-             )",
-        )
-        .bind(t)
-        .execute(&mut **tx)
-        .await
-        .map(|_| ())
+        sqlx::query("SELECT proxiima_core.lock_pin_targets(ARRAY[$1])")
+            .bind(t)
+            .execute(&mut **tx)
+            .await
+            .map(|_| ())
     }
 
     async fn assert_stale_successor_not_persisted(
