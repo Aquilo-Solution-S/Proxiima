@@ -413,6 +413,116 @@ async fn a_memory_sidecar_references_another_memory_with_no_action_only() {
     );
 }
 
+/// The same rule holds the other way round: a table that already goes with
+/// another memory, through the installer or a key written by hand, is not
+/// registered as a sidecar, and the refusal names the constraint.
+#[tokio::test]
+async fn a_table_that_cascades_from_another_memory_is_not_installed_as_a_sidecar() {
+    let (_db, mut conn) = migrated_platform().await;
+    let mut tx = migration_scope(&mut conn).await;
+    run(
+        &mut tx,
+        "CREATE TABLE some_schema.part_v1 (t uuid PRIMARY KEY, whole_t uuid NOT NULL);
+         CREATE TABLE some_schema.by_hand_v1 (t uuid PRIMARY KEY, whole_t uuid NOT NULL,
+            CONSTRAINT by_hand_whole FOREIGN KEY (whole_t)
+                REFERENCES proxiima_core.memory (t) ON DELETE CASCADE)",
+    )
+    .await;
+    install(&mut tx, "part_v1", "whole_t", "memory", "cascade")
+        .await
+        .expect("not yet a sidecar");
+
+    for (table, constraint) in [
+        ("part_v1", "part_v1_whole_t_fkey"),
+        ("by_hand_v1", "by_hand_whole"),
+    ] {
+        let mut attempt = tx.begin().await.expect("savepoint");
+        let (code, message) = refusal(
+            install_sidecar(&mut attempt, table).await,
+            "a sidecar that cascades from another memory",
+        );
+        assert_eq!(code, REFUSED, "{message}");
+        assert!(
+            message.contains(&format!("goes with another memory through {constraint}")),
+            "{message}"
+        );
+        assert!(message.contains("'no_action'"), "{message}");
+        drop(attempt);
+        assert!(
+            surface_rows(&mut tx, table).await.is_empty(),
+            "{table} stays unregistered"
+        );
+    }
+}
+
+/// A sidecar that references another memory with `no_action` before it is
+/// installed is a sidecar, and installing it again changes nothing.
+#[tokio::test]
+async fn a_no_action_reference_before_the_sidecar_is_installed_is_kept() {
+    let (_db, mut conn) = migrated_platform().await;
+    let mut tx = migration_scope(&mut conn).await;
+    run(
+        &mut tx,
+        "CREATE TABLE some_schema.part_v1 (t uuid PRIMARY KEY REFERENCES proxiima_core.memory (t) ON DELETE CASCADE,
+            whole_t uuid NOT NULL)",
+    )
+    .await;
+    install(&mut tx, "part_v1", "whole_t", "memory", "no_action")
+        .await
+        .expect("the reference");
+
+    install_sidecar(&mut tx, "part_v1")
+        .await
+        .expect("a cascade on the memory key itself and a no_action reference");
+    let before = (
+        foreign_keys(&mut tx, "part_v1").await,
+        surface_rows(&mut tx, "part_v1").await,
+    );
+    install_sidecar(&mut tx, "part_v1").await.expect("second");
+
+    assert_eq!(
+        (
+            foreign_keys(&mut tx, "part_v1").await,
+            surface_rows(&mut tx, "part_v1").await
+        ),
+        before
+    );
+    assert_eq!(
+        before.0,
+        [
+            key(
+                "part_v1_t_fkey",
+                "FOREIGN KEY (t) REFERENCES proxiima_core.memory(t) ON DELETE CASCADE"
+            ),
+            key(
+                "part_v1_whole_t_fkey",
+                "FOREIGN KEY (whole_t) REFERENCES proxiima_core.memory(t)"
+            ),
+        ]
+    );
+    assert_eq!(before.1, ["some_schema.part_v1"]);
+}
+
+async fn install_sidecar(conn: &mut PgConnection, table: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT proxiima_core.install_sidecar($1, $2, 'some-spiice')")
+        .bind(SCHEMA)
+        .bind(table)
+        .execute(conn)
+        .await
+        .map(|_| ())
+}
+
+async fn surface_rows(conn: &mut PgConnection, table: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT table_name FROM proxiima_core.spiice_surface WHERE table_name = $1 || '.' || $2",
+    )
+    .bind(SCHEMA)
+    .bind(table)
+    .fetch_all(conn)
+    .await
+    .expect("surface rows")
+}
+
 /// The owner policies of a table follow its one memory key. A second
 /// reference that leaves that key undecided is refused by the call that adds
 /// it, and the table keeps what it had.

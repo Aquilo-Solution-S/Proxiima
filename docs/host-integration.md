@@ -734,7 +734,7 @@ actions state different things about an erase:
 | `referenced` | `on_delete` | Meaning |
 |---|---|---|
 | `memory` | `no_action` | The row holds its memory. An erase removes the row with or before the memory, or is refused whole: a [spiice-scoped erase](data-and-erasure.md#spiice-scoped-erase-and-retention) takes the series of a referencing sidecar row along, and refuses while a row of a table without a memory key names the memory |
-| `memory` | `cascade` | The row goes with its memory. Declare the surface `EraseRule::Cascade` with this constraint as its `via`. Refused on a table `install_sidecar` has registered: a sidecar row goes with its own memory only |
+| `memory` | `cascade` | The row goes with its memory. Declare the surface `EraseRule::Cascade` with this constraint as its `via`. Refused on a memory sidecar, whichever call comes first: `install_reference` refuses it on a table `install_sidecar` has registered, and `install_sidecar` refuses a table that already cascades from a memory on a column other than its memory key, naming the constraint. A sidecar row goes with its own memory only; reference the other memory with `no_action` |
 | `owner` | `no_action` | The row names a registered owner. A person is registered by their first core write or by the host's `ensure_owner_row`; a group when it is created. No erase deletes the registration, so the reference never blocks one |
 | `owner` | `cascade` | Refused: the table's declared erase rule removes an owner's rows, not a cascade that never runs |
 

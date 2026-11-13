@@ -1808,6 +1808,7 @@ AS $function$
 DECLARE
     rel_oid oid;
     key_attnum smallint;
+    cascading name;
     derived text;
     stored_spiice text;
     has_owner_id boolean;
@@ -1869,6 +1870,22 @@ BEGIN
         RAISE EXCEPTION 'install_sidecar: %.% has no column %', target_schema, target_table, memory_key
             USING ERRCODE = 'PX002';
     END IF;
+    -- A sidecar row goes with its own memory and with nothing else, whichever
+    -- installer ran first: install_reference refuses a cascade on a
+    -- registered sidecar, this one a cascade the table already has.
+    SELECT k.conname INTO cascading
+      FROM pg_constraint AS k
+     WHERE k.conrelid = rel_oid AND k.contype = 'f'
+       AND k.confrelid = 'proxiima_core.memory'::regclass
+       AND k.confdeltype = 'c'
+       AND k.conkey <> ARRAY[key_attnum]
+     ORDER BY k.conname
+     LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'install_sidecar: %.% goes with another memory through %, but a memory sidecar''s rows go with their own memory only; drop that constraint in this migration and reference the other memory with install_reference(..., ''no_action''), and an erase takes both series together',
+            target_schema, target_table, cascading
+            USING ERRCODE = 'PX002';
+    END IF;
 
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint AS k
@@ -1922,7 +1939,7 @@ BEGIN
 END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) FROM PUBLIC;
-COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
+COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), refusing a table that cascades from a memory on any other column, the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
 
 -- One call gives a column of a spiice or host table its foreign key to a core
 -- row, so a migration names no core table. referenced and on_delete are closed
