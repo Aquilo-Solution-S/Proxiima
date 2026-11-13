@@ -328,6 +328,24 @@ fn host_tier_implements_the_rmcp_server_handler_around_the_dynamic_handler() {
     );
 }
 
+/// A host mounts its handler on the edge's service and derives the auth layer
+/// from that same value, with facade names only.
+#[test]
+fn host_tier_mounts_its_handler_on_the_edge_service() {
+    fn mounted(edge: &proxiima::McpEdge) -> (proxiima::AuthLayer, impl Clone + Send + 'static) {
+        let service: proxiima::McpStreamableService<HostHandler> =
+            edge.mcp_service_wrapping(|inner| HostHandler { inner });
+        let layer = proxiima::auth_layer_with_metadata(
+            &service,
+            Arc::clone(edge.edge_auth()),
+            edge.revalidation(),
+            edge.resource_metadata(),
+        );
+        (layer, service)
+    }
+    std::hint::black_box(mounted);
+}
+
 /// `proxiima::rmcp` is the `rmcp` the workspace resolves, not a second copy:
 /// a bound written against the crate by its own name accepts a type that
 /// implements the facade's trait.

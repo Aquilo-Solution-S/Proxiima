@@ -29,39 +29,48 @@ use crate::server::ToolHost;
 /// The rmcp service `/mcp` is served by ([`streamable_http_service`]) with
 /// the session bindings that own its sessions. Mount it as a tower service;
 /// derive its auth layer with [`crate::auth_layer_with_metadata`].
-#[derive(Clone)]
-pub struct McpStreamableService {
-    inner: StreamableHttpService<DynamicHandler, LocalSessionManager>,
+///
+/// `H` is the handler each session is served by: the native
+/// [`DynamicHandler`], or a host's handler around it
+/// ([`streamable_http_service_wrapping`]).
+pub struct McpStreamableService<H = DynamicHandler> {
+    inner: StreamableHttpService<H, LocalSessionManager>,
     sessions: McpSessionBindings,
 }
 
-impl McpStreamableService {
+impl<H> McpStreamableService<H> {
     pub(crate) const fn sessions(&self) -> &McpSessionBindings {
         &self.sessions
     }
 }
 
-impl std::fmt::Debug for McpStreamableService {
+impl<H> Clone for McpStreamableService<H> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            sessions: self.sessions.clone(),
+        }
+    }
+}
+
+impl<H> std::fmt::Debug for McpStreamableService<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpStreamableService")
             .finish_non_exhaustive()
     }
 }
 
-impl<B> tower::Service<http::Request<B>> for McpStreamableService
+impl<H, B> tower::Service<http::Request<B>> for McpStreamableService<H>
 where
-    StreamableHttpService<DynamicHandler, LocalSessionManager>: tower::Service<http::Request<B>>,
+    StreamableHttpService<H, LocalSessionManager>: tower::Service<http::Request<B>>,
 {
-    type Response =
-        <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
-            http::Request<B>,
-        >>::Response;
-    type Error = <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
+    type Response = <StreamableHttpService<H, LocalSessionManager> as tower::Service<
         http::Request<B>,
-    >>::Error;
-    type Future = <StreamableHttpService<DynamicHandler, LocalSessionManager> as tower::Service<
-        http::Request<B>,
-    >>::Future;
+    >>::Response;
+    type Error =
+        <StreamableHttpService<H, LocalSessionManager> as tower::Service<http::Request<B>>>::Error;
+    type Future =
+        <StreamableHttpService<H, LocalSessionManager> as tower::Service<http::Request<B>>>::Future;
 
     fn poll_ready(
         &mut self,
@@ -107,6 +116,37 @@ pub fn streamable_http_service_with_transport(
     cancel: &CancellationToken,
     transport: &McpTransportConfig,
 ) -> McpStreamableService {
+    streamable_http_service_wrapping(
+        server,
+        allowlist,
+        host_allowlist,
+        cancel,
+        transport,
+        std::convert::identity,
+    )
+}
+
+/// [`streamable_http_service_with_transport`] serving each session by the
+/// handler `wrap` builds around the native one.
+///
+/// Proxiima builds the session store, the allowlists, the cancellation and
+/// the [`DynamicHandler`] over `server` as it does for the native service;
+/// `wrap` receives that handler once per session and returns the host's
+/// [`rmcp::ServerHandler`] around it. The returned service owns its sessions
+/// like the native one: derive its auth layer with
+/// [`crate::auth_layer_with_metadata`].
+#[must_use]
+pub fn streamable_http_service_wrapping<H>(
+    server: ToolHost,
+    allowlist: &OriginAllowlist,
+    host_allowlist: &HostAllowlist,
+    cancel: &CancellationToken,
+    transport: &McpTransportConfig,
+    wrap: impl Fn(DynamicHandler) -> H + Send + Sync + 'static,
+) -> McpStreamableService<H>
+where
+    H: rmcp::ServerHandler + Send + 'static,
+{
     service_over_sessions(
         server,
         allowlist,
@@ -114,18 +154,24 @@ pub fn streamable_http_service_with_transport(
         cancel,
         transport,
         McpSessionBindings::new,
+        wrap,
     )
 }
 
-/// The service over the bindings `bindings` builds around its session store.
-fn service_over_sessions(
+/// The service over the bindings `bindings` builds around its session store,
+/// each session served by the handler `wrap` builds around the native one.
+fn service_over_sessions<H>(
     server: ToolHost,
     allowlist: &OriginAllowlist,
     host_allowlist: &HostAllowlist,
     cancel: &CancellationToken,
     transport: &McpTransportConfig,
     bindings: impl FnOnce(Arc<LocalSessionManager>) -> McpSessionBindings,
-) -> McpStreamableService {
+    wrap: impl Fn(DynamicHandler) -> H + Send + Sync + 'static,
+) -> McpStreamableService<H>
+where
+    H: rmcp::ServerHandler + Send + 'static,
+{
     let config = StreamableHttpServerConfig::default()
         .with_allowed_origins(allowlist.origins())
         .with_allowed_hosts(host_allowlist.hosts().iter().cloned())
@@ -140,7 +186,11 @@ fn service_over_sessions(
     let progress_heartbeat = transport.progress_heartbeat();
     let sessions = Arc::new(sessions);
     let inner = StreamableHttpService::new(
-        move || Ok(DynamicHandler::new(server.clone()).with_progress_heartbeat(progress_heartbeat)),
+        move || {
+            Ok(wrap(
+                DynamicHandler::new(server.clone()).with_progress_heartbeat(progress_heartbeat),
+            ))
+        },
         Arc::clone(&sessions),
         config,
     );

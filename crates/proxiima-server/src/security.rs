@@ -566,9 +566,10 @@ pub struct AuthLayerState {
 /// apply it directly with [`axum::Router::layer`].
 ///
 /// The layer uses `service`'s session bindings, so a refused or evicted
-/// binding closes that service's session.
-pub fn auth_layer_with_config(
-    service: &McpStreamableService,
+/// binding closes that service's session, whichever handler `H` it serves
+/// its sessions by.
+pub fn auth_layer_with_config<H>(
+    service: &McpStreamableService<H>,
     auth: Arc<EdgeAuth>,
     revalidation: RevalidationConfig,
 ) -> AuthLayer {
@@ -576,8 +577,8 @@ pub fn auth_layer_with_config(
 }
 
 #[must_use = "apply the returned layer to the MCP router"]
-pub fn auth_layer_with_metadata(
-    service: &McpStreamableService,
+pub fn auth_layer_with_metadata<H>(
+    service: &McpStreamableService<H>,
     auth: Arc<EdgeAuth>,
     revalidation: RevalidationConfig,
     metadata: Option<&ResourceServerMetadata>,

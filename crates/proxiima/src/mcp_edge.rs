@@ -8,8 +8,9 @@ use std::sync::Arc;
 use axum::Router;
 use proxiima_core::RevalidationConfig;
 use proxiima_server::{
-    EdgeAuth, HostAllowlist, McpStreamableService, McpTransportConfig, OriginAllowlist,
-    ResourceServerMetadata, ToolHost, guard_listener, streamable_http_service_with_transport,
+    DynamicHandler, EdgeAuth, HostAllowlist, McpStreamableService, McpTransportConfig,
+    OriginAllowlist, ResourceServerMetadata, ToolHost, guard_listener,
+    streamable_http_service_wrapping,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -98,12 +99,28 @@ impl McpEdge {
     /// [`auth_layer_with_metadata`](proxiima_server::auth_layer_with_metadata).
     #[must_use]
     pub fn mcp_service(&self) -> McpStreamableService {
-        streamable_http_service_with_transport(
+        self.mcp_service_wrapping(std::convert::identity)
+    }
+
+    /// [`Self::mcp_service`] serving each session by the handler `wrap`
+    /// builds around the native [`DynamicHandler`]: a host's own
+    /// [`rmcp::ServerHandler`]. The service owns its sessions the same way,
+    /// so the auth layer is derived from this value too.
+    #[must_use]
+    pub fn mcp_service_wrapping<H>(
+        &self,
+        wrap: impl Fn(DynamicHandler) -> H + Send + Sync + 'static,
+    ) -> McpStreamableService<H>
+    where
+        H: rmcp::ServerHandler + Send + 'static,
+    {
+        streamable_http_service_wrapping(
             self.tool_host.clone(),
             &self.origin_allowlist,
             &self.host_allowlist,
             &self.cancel,
             &self.transport,
+            wrap,
         )
     }
 

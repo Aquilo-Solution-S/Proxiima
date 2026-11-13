@@ -73,6 +73,19 @@ fn transport_app(
     owner: OwnerId,
     bindings: impl FnOnce(Arc<LocalSessionManager>) -> McpSessionBindings,
 ) -> (Router, Arc<LocalSessionManager>, OwnerId, OwnerId) {
+    transport_app_wrapping(owner, bindings, std::convert::identity)
+}
+
+/// [`transport_app`] with each session served by the handler `wrap` builds
+/// around the native one.
+fn transport_app_wrapping<H>(
+    owner: OwnerId,
+    bindings: impl FnOnce(Arc<LocalSessionManager>) -> McpSessionBindings,
+    wrap: impl Fn(crate::DynamicHandler) -> H + Send + Sync + 'static,
+) -> (Router, Arc<LocalSessionManager>, OwnerId, OwnerId)
+where
+    H: rmcp::ServerHandler + Send + 'static,
+{
     let first = UserId::new(uuid::Uuid::now_v7());
     let second = UserId::new(uuid::Uuid::now_v7());
     let outsider = UserId::new(uuid::Uuid::now_v7());
@@ -93,6 +106,7 @@ fn transport_app(
             store = Some(Arc::clone(&manager));
             bindings(manager)
         },
+        wrap,
     );
     let router =
         Router::new()
@@ -467,6 +481,119 @@ async fn evicting_a_binding_ends_its_open_stream() {
     );
     open_authenticated_session(&app, "first-token", owner, "three").await;
     assert!(stream.ends_within(std::time::Duration::from_secs(5)).await);
+}
+
+/// A host's handler around the native one: it introduces itself under its
+/// own name and leaves the tools to the native handler. Neither `Clone` nor
+/// `Debug`, which the service asks of no handler.
+struct RenamingHandler(crate::DynamicHandler);
+
+const RENAMED: &str = "wrapping-host";
+
+impl rmcp::ServerHandler for RenamingHandler {
+    fn get_info(&self) -> rmcp::model::ServerConfig {
+        let mut info = self.0.get_info();
+        info.server_info.name = RENAMED.into();
+        info
+    }
+
+    fn supported_protocol_versions(
+        &self,
+    ) -> std::borrow::Cow<'static, [rmcp::model::ProtocolVersion]> {
+        self.0.supported_protocol_versions()
+    }
+
+    fn list_tools(
+        &self,
+        request: Option<rmcp::model::PaginatedRequestParams>,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::ListToolsResult, rmcp::model::ErrorData>>
+    + rmcp::service::MaybeSendFuture
+    + '_ {
+        self.0.list_tools(request, context)
+    }
+
+    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
+        self.0.get_tool(name)
+    }
+
+    fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData>>
+    + rmcp::service::MaybeSendFuture
+    + '_ {
+        self.0.call_tool(request, context)
+    }
+}
+
+/// A service built around a host's handler answers through it: the wrapper
+/// names the server, and the native handler it wraps runs the tool.
+#[tokio::test]
+async fn a_wrapping_service_serves_through_the_wrapper() {
+    let service = super::streamable_http_service_wrapping(
+        stub_host(),
+        &default_allowlist(),
+        &HostAllowlist::default(),
+        &tokio_util::sync::CancellationToken::new(),
+        &super::McpTransportConfig::default(),
+        RenamingHandler,
+    );
+    let app = Router::new().nest_service("/mcp", service);
+
+    let discover = per_request_rpc("2026-07-28", "server/discover", serde_json::json!({}));
+    let message = first_router_message(app.clone(), discover).await;
+    assert_eq!(
+        message["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], RENAMED,
+        "{message}"
+    );
+
+    let mut call = per_request_rpc(
+        "2026-07-28",
+        "tools/call",
+        serde_json::json!({ "name": "proxiima-stub_ping", "arguments": {} }),
+    );
+    call.headers_mut()
+        .insert("Mcp-Name", "proxiima-stub_ping".parse().unwrap());
+    call.extensions_mut().insert(auth_for(personal_owner()));
+    let message = first_router_message(app, call).await;
+    assert_eq!(
+        message["result"]["structuredContent"],
+        serde_json::json!({"client_name": "claude-code"}),
+        "{message}"
+    );
+}
+
+/// The layer derived from a wrapping service owns that service's sessions:
+/// an evicted binding and a refused one each close their rmcp session.
+#[tokio::test]
+async fn a_wrapping_service_closes_the_sessions_its_layer_unbinds() {
+    let owner = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+    let (app, store, _, _) = transport_app_wrapping(
+        owner,
+        |manager| {
+            McpSessionBindings::with_limits(manager, crate::mcp::session::SESSION_IDLE_TTL, 2)
+        },
+        RenamingHandler,
+    );
+    let oldest = open_authenticated_session(&app, "first-token", owner, "oldest").await;
+    let oldest_id: Arc<str> = oldest.to_str().unwrap().into();
+    let kept = open_authenticated_session(&app, "first-token", owner, "two").await;
+    assert!(store.has_session(&oldest_id).await.unwrap());
+    assert!(!session_answers_404(&app, owner, &kept).await);
+
+    open_authenticated_session(&app, "first-token", owner, "three").await;
+    assert!(!store.has_session(&oldest_id).await.unwrap());
+    assert!(session_answers_404(&app, owner, &oldest).await);
+
+    let refused = app
+        .clone()
+        .oneshot(authenticated_initialize("second-token", owner, "newcomer"))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(store_len(&store).await, 2);
 }
 
 async fn first_router_message(app: Router, request: Request<Body>) -> serde_json::Value {

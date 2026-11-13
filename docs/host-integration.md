@@ -479,6 +479,12 @@ let (judged, reply) = handler.call_tool_observed(request, &context).await;
 // `judged: Option<ScopeKey>`, also when `reply` is `Err`.
 ```
 
+Such a host mounts its handler with `McpEdge::mcp_service_wrapping`, which
+builds the same service as `McpEdge::mcp_service` and passes each session's
+native handler to the host's closure. The service owns its sessions either
+way, so the auth layer is derived from that same value with
+`auth_layer_with_metadata`.
+
 An in-process host keeps the whole `ToolReply` and the same observation with
 `ToolHost::call_tool_reply_observed_in_request`:
 
