@@ -691,6 +691,7 @@ in `proxiima_core` is internal. What code outside core may name:
 |---|---|
 | Install a memory sidecar from a migration | `proxiima_core.install_sidecar(schema, table, spiice id)`: the foreign key to the memory, the declaration triggers, the surface registration and its [owner policy](#owner-policy), in one call. `class` overrides the row-security class, `memory_key` names a key column other than `t`. Platform scope only; names are plain lower-case identifiers |
 | Owner row security for any other table | `proxiima_core.install_owner_rls_table`, or `install_owner_rls` for a whole schema; see [owner policy](#owner-policy) |
+| A column that names a memory or an owner | `proxiima_core.install_reference(schema, table, column, referenced, on_delete)`: the foreign key of one `uuid` column to the memory or to the owner; see [core references](#core-references) |
 | Memory rows in a view or trigger function | The view `proxiima_core.memory_version`: `t`, `handle`, `kind`, `owner_id`, `schema_id`, `origins`, `refs`, `forgotten_at`, `head` |
 | Lexical text in a spiice's own query | The pure functions `lexical_scrub`, `lexical_tsv`, `lexical_config`, `lexical_join`, `lexical_text_array` and `memory_entity_kind` |
 | A read on a transaction the caller holds | The functions below, in `proxiima::spiice` |
@@ -722,6 +723,34 @@ again. After a Postgres major upgrade, or a change that alters how a predicate
 prints (a renamed column the predicate reads), serving refuses until one
 migration run has completed. Policy DDL run after a binary has booted is not
 seen until its next boot.
+
+### Core references
+
+`install_reference` adds the foreign key `<table>_<column>_fkey` of one `uuid`
+column to a core row, in a migration (platform scope), after the table exists.
+Both vocabularies are closed, and `on_delete` has no default, because the two
+actions state different things about an erase:
+
+| `referenced` | `on_delete` | Meaning |
+|---|---|---|
+| `memory` | `no_action` | The row holds its memory. An erase removes the row with or before the memory, or is refused whole: a [spiice-scoped erase](data-and-erasure.md#spiice-scoped-erase-and-retention) takes the series of a referencing sidecar row along, and refuses while a row of a table without a memory key names the memory |
+| `memory` | `cascade` | The row goes with its memory. Declare the surface `EraseRule::Cascade` with this constraint as its `via`. Refused on a table `install_sidecar` has registered: a sidecar row goes with its own memory only |
+| `owner` | `no_action` | The row names a registered owner. A person is registered by their first core write or by the host's `ensure_owner_row`; a group when it is created. No erase deletes the registration, so the reference never blocks one |
+| `owner` | `cascade` | Refused: the table's declared erase rule removes an owner's rows, not a cascade that never runs |
+
+Forget keeps the memory row, so neither action fires on it. The constraint is
+the only record: erase reads the foreign keys to a memory from the catalog,
+`DROP TABLE` takes the constraint along, and `ALTER TABLE … DROP CONSTRAINT`
+retires the reference alone. A second call changes nothing. Foreign keys the
+column already has to the same row are kept under their own names when each
+has the delete action the call names; any other is refused by name.
+
+The [owner policy](#owner-policy) of a table reads its foreign keys into
+core, so the call regenerates the policies of a recorded table. On a class
+`owner_id` table the referenced memory becomes the row's memory: whoever a
+Goal publication admits to that memory of the same owner reads the row too.
+A second memory reference that leaves the table's memory or parent undecided
+(neither on the leading primary-key column) is refused by the call that adds it.
 
 `memory_version` is read-only: it joins a memory to its series head, so
 PostgreSQL refuses a write through it whatever a role was granted. The serving

@@ -1924,6 +1924,135 @@ $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) FROM PUBLIC;
 COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
 
+-- One call gives a column of a spiice or host table its foreign key to a core
+-- row, so a migration names no core table. referenced and on_delete are closed
+-- vocabularies. The constraint is the record: erase reads the foreign keys to
+-- a memory from the catalog, and the table's DROP takes the constraint along.
+CREATE OR REPLACE FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    rel_oid oid;
+    column_attnum smallint;
+    column_type oid;
+    referenced_table regclass;
+    referenced_key text;
+    constraint_name text;
+    existing record;
+    recorded record;
+BEGIN
+    IF current_setting('app.proxiima_scope', true) IS DISTINCT FROM 'platform' THEN
+        RAISE EXCEPTION 'install_reference: runs in platform scope only'
+            USING ERRCODE = 'PX002';
+    END IF;
+    IF target_schema IS NULL OR target_schema IN ('proxiima_core', 'public', 'information_schema')
+       OR target_schema LIKE 'pg\_%' THEN
+        RAISE EXCEPTION 'install_reference: % is not a spiice schema', COALESCE(target_schema, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+    CASE referenced
+        WHEN 'memory' THEN
+            referenced_table := 'proxiima_core.memory';
+            referenced_key := 't';
+        WHEN 'owner' THEN
+            referenced_table := 'proxiima_core.owners';
+            referenced_key := 'owner_id';
+        ELSE
+            RAISE EXCEPTION 'install_reference: %.% references %, which is neither memory nor owner',
+                target_schema, COALESCE(target_table, 'NULL'), COALESCE(referenced, 'NULL')
+                USING ERRCODE = 'PX002';
+    END CASE;
+    IF on_delete IS NULL OR on_delete NOT IN ('no_action', 'cascade') THEN
+        RAISE EXCEPTION 'install_reference: %.% has the delete action %, which is neither no_action nor cascade',
+            target_schema, COALESCE(target_table, 'NULL'), COALESCE(on_delete, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+    IF referenced = 'owner' AND on_delete = 'cascade' THEN
+        RAISE EXCEPTION 'install_reference: %.% cannot cascade from its owner; no erase deletes the owner''s registration, so the table''s declared erase rule removes its rows',
+            target_schema, COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+
+    SELECT c.oid INTO rel_oid
+      FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = target_schema AND c.relname = target_table AND c.relkind IN ('r', 'p');
+    IF rel_oid IS NULL THEN
+        RAISE EXCEPTION 'install_reference: %.% is not an existing base table',
+            target_schema, COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+    SELECT a.attnum, a.atttypid INTO column_attnum, column_type
+      FROM pg_attribute AS a
+     WHERE a.attrelid = rel_oid AND a.attname = reference_column AND NOT a.attisdropped AND a.attnum > 0;
+    IF column_attnum IS NULL THEN
+        RAISE EXCEPTION 'install_reference: %.% has no column %',
+            target_schema, target_table, COALESCE(reference_column, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+    IF column_type <> 'uuid'::regtype THEN
+        RAISE EXCEPTION 'install_reference: %.%.% is %, not uuid; a memory and an owner are named by their uuid',
+            target_schema, target_table, reference_column, format_type(column_type, NULL)
+            USING ERRCODE = 'PX002';
+    END IF;
+    -- A registered sidecar row goes with its own memory and with nothing else:
+    -- the stamp of that memory would otherwise name a row a cascade deleted.
+    IF on_delete = 'cascade' AND EXISTS (
+        SELECT 1 FROM proxiima_core.spiice_surface AS s
+         WHERE s.table_name = target_schema || '.' || target_table
+    ) THEN
+        RAISE EXCEPTION 'install_reference: %.% is a memory sidecar, whose rows go with their own memory only; reference the other memory with no_action, and an erase takes both series together',
+            target_schema, target_table
+            USING ERRCODE = 'PX002';
+    END IF;
+    constraint_name := target_table || '_' || reference_column || '_fkey';
+    IF octet_length(constraint_name) > 63 THEN
+        RAISE EXCEPTION 'install_reference: %.% would need the name %, longer than 63 bytes; shorten the table or column name',
+            target_schema, target_table, constraint_name
+            USING ERRCODE = 'PX002';
+    END IF;
+
+    -- A write locks the core row before the row that names it; so does this.
+    EXECUTE format('LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE', referenced_table);
+    SELECT k.conname,
+           CASE k.confdeltype WHEN 'a' THEN 'no_action' WHEN 'c' THEN 'cascade'
+                              ELSE pg_get_constraintdef(k.oid) END AS delete_action
+      INTO existing
+      FROM pg_constraint AS k
+     WHERE k.conrelid = rel_oid AND k.contype = 'f'
+       AND k.confrelid = referenced_table
+       AND k.conkey = ARRAY[column_attnum]
+       AND k.confkey = ARRAY[(SELECT a.attnum FROM pg_attribute AS a
+                               WHERE a.attrelid = referenced_table AND a.attname = referenced_key)]
+     -- A key with another delete action first: one that matches hides none.
+     ORDER BY (k.confdeltype = CASE on_delete WHEN 'cascade' THEN 'c' ELSE 'a' END), k.conname
+     LIMIT 1;
+    IF NOT FOUND THEN
+        EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %s (%I)%s',
+            target_schema, target_table, constraint_name, reference_column, referenced_table, referenced_key,
+            CASE on_delete WHEN 'cascade' THEN ' ON DELETE CASCADE' ELSE '' END);
+    ELSIF existing.delete_action <> on_delete THEN
+        RAISE EXCEPTION 'install_reference: %.%.% already references its % through %, whose delete action is %, not %; drop that constraint in this migration before the call',
+            target_schema, target_table, reference_column, referenced, existing.conname, existing.delete_action, on_delete
+            USING ERRCODE = 'PX002';
+    END IF;
+
+    -- The owner policies of a table read its foreign keys into core. A
+    -- reference that leaves the recorded class without one parent is refused
+    -- here, in the migration that adds it, instead of by every later run.
+    SELECT r.class, r.owner_column INTO recorded
+      FROM proxiima_core.owner_rls_table AS r
+     WHERE r.schema_name = target_schema AND r.table_name = target_table;
+    IF FOUND THEN
+        PERFORM proxiima_core.install_owner_rls_table(
+            target_schema, target_table, recorded.class, recorded.owner_column);
+    END IF;
+END
+$function$;
+REVOKE ALL ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) FROM PUBLIC;
+COMMENT ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) IS 'Installs the foreign key of one uuid column of a spiice or host table to a core row, in a migration: referenced is memory (proxiima_core.memory.t) or owner (proxiima_core.owners.owner_id), on_delete is no_action or cascade. An owner reference and a reference of a registered memory sidecar take no_action only. The constraint is named <table>_<column>_fkey; foreign keys the column already has are kept when each has the same delete action, and refused otherwise. Idempotent; platform scope only (docs/host-integration.md §Core references).';
+
 -- A core view is read-only for every role but its owner. Blanket grants and
 -- default privileges on a schema's tables also cover its views, so whatever
 -- grants them (the views definitions, the runtime grant step, an operator's
