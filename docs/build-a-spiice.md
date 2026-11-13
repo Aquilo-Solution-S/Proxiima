@@ -186,7 +186,10 @@ The host's migrate step (`Proxiima::migrate`) freezes them from the bundle;
 test templates must supply the same frozen sidecars; see
 [host integration](host-integration.md#boot-a-composed-host).
 
-Use `PgMemorySidecar` directly for computed or multi-row sidecars. Authorized
+Use `PgMemorySidecar` directly for computed or multi-row sidecars. A
+hand-written insert of one row calls `insert_memory_sidecar_row`, which
+stamps `owner_id` as the macro does
+([SQL contract](host-integration.md#sql-contract)). Authorized
 helpers and private permits bind reads/writes to admitted rows; do not query
 `proxiima_core` from spiice SQL. A generic JSON column is not a typed sidecar.
 

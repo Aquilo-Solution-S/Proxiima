@@ -1,6 +1,11 @@
 use std::num::NonZeroU16;
 
-use super::{PgIdent, SqlText, StorageError};
+use sqlx::postgres::PgArguments;
+
+use super::{
+    MemoryId, PgIdent, PgMemoryPayload, Postgres, SidecarInsertPermit, SqlText, StorageError,
+    Transaction,
+};
 
 /// Convert a byte slice into a fixed 32-byte array.
 ///
@@ -91,6 +96,53 @@ pub fn memory_insert_sql(
         sql.push(")");
     }
     Ok(sql)
+}
+
+/// The statement [`insert_memory_sidecar_row`] hands its `bind` step: `$1`
+/// is already bound, and each payload column takes the next placeholder.
+pub type SidecarRowQuery = sqlx::query::Query<'static, Postgres, PgArguments>;
+
+/// Insert one row of `P`'s memory sidecar, from a hand-written
+/// [`PgMemorySidecar::insert_memory_sidecar`](super::PgMemorySidecar::insert_memory_sidecar).
+///
+/// The statement names `table`, `P::MEMORY_KEY_COLUMN` and `columns` as
+/// checked identifiers, and binds the memory as `$1`. `bind` adds the payload
+/// values in the order of `columns` (`$2`, `$3`, …); the optional cast of a
+/// column is a type name, also checked as an identifier. When `P::OWNER`
+/// stamps the owner (`Pinned`, `Follows`), the statement writes the owner of
+/// the row's memory into `owner_id`, so no caller supplies it, and a memory
+/// the transaction cannot see is refused instead of writing nothing. The
+/// permit is the one the registry passed in: the row is written only where
+/// the registry writes its search projection.
+///
+/// # Errors
+///
+/// `StorageError::Internal` for a name that is not a plain identifier,
+/// `StorageError::ConstraintViolation` for an owner-stamping row whose
+/// memory is absent, what `bind` returns, and the database's refusal.
+pub async fn insert_memory_sidecar_row<P: PgMemoryPayload + ?Sized>(
+    tx: &mut Transaction<'_, Postgres>,
+    memory_id: MemoryId,
+    _permit: SidecarInsertPermit,
+    table: &str,
+    columns: &[(&str, Option<&str>)],
+    bind: impl FnOnce(SidecarRowQuery) -> Result<SidecarRowQuery, StorageError>,
+) -> Result<(), StorageError> {
+    let stamp_owner = P::OWNER.stamps_owner_at_insert();
+    let sql = memory_insert_sql(table, P::MEMORY_KEY_COLUMN, columns, stamp_owner)?;
+    let result = bind(sqlx::query(sql).bind(memory_id.into_inner()))?
+        .execute(tx.as_mut())
+        .await
+        .map_err(crate::error::map_err)?;
+    // A stamping insert reads the owner out of the memory row, so a missing
+    // memory writes nothing instead of tripping the foreign key. Refuse
+    // rather than lose the row.
+    if stamp_owner && result.rows_affected() != 1 {
+        return Err(StorageError::ConstraintViolation(format!(
+            "owner-stamping sidecar {table} has no Memory row to take its owner from"
+        )));
+    }
+    Ok(())
 }
 
 /// Build a batched memory sidecar select statement.

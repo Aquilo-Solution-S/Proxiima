@@ -694,6 +694,7 @@ in `proxiima_core` is internal. What code outside core may name:
 | A column that names a memory or an owner | `proxiima_core.install_reference(schema, table, column, referenced, on_delete)`: the foreign key of one `uuid` column to the memory or to the owner; see [core references](#core-references) |
 | Memory rows in a view or trigger function | The view `proxiima_core.memory_version`: `t`, `handle`, `kind`, `owner_id`, `schema_id`, `origins`, `refs`, `forgotten_at`, `head` |
 | Lexical text in a spiice's own query | The pure functions `lexical_scrub`, `lexical_tsv`, `lexical_config`, `lexical_join`, `lexical_text_array` and `memory_entity_kind` |
+| The owner of a sidecar row's memory, in a hand-written insert | `proxiima::spiice::insert_memory_sidecar_row::<P>(tx, memory_id, permit, table, columns, bind)`: the insert `pg_sidecar!` runs. It takes the key column and the owner stamp from `P`'s `MEMORY_KEY_COLUMN` and `OWNER`, writes the memory's owner into `owner_id` when `OWNER` stamps one, and refuses a row whose memory is absent; table, column and cast names are checked identifiers, and `bind` adds the values from `$2` |
 | A read on a transaction the caller holds | The functions below, in `proxiima::spiice` |
 
 ### Owner policy

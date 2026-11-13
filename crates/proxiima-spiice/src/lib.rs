@@ -280,6 +280,10 @@ pub use proxiima_storage_pg::sidecars::{
     ForkPolicy, PgGoalSidecar, PgMemoryPayload, PgMemoryPayloadFuture, PgMemorySidecar,
     PgRetiredFactSidecar, PgSidecarFuture, PgSidecarReadCtx, SidecarInsertPermit, SidecarOwnerMode,
 };
+/// The row insert `pg_sidecar!` runs, for a hand-written
+/// [`PgMemorySidecar`]: it stamps the owner of the row's memory as the
+/// payload's [`SidecarOwnerMode`] declares, without naming a core relation.
+pub use proxiima_storage_pg::sidecars::{SidecarRowQuery, insert_memory_sidecar_row};
 /// Typed reads on the caller's transaction.
 pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,

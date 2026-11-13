@@ -36,6 +36,8 @@ mod sql;
 mod traits;
 
 #[cfg(test)]
+mod insert_row_pg_tests;
+#[cfg(test)]
 mod tests;
 
 pub use core_sidecars::{core_pg_sidecars, register_core_pg_sidecars};
@@ -53,8 +55,8 @@ pub use registry::PgSidecarRegistry;
 pub use retired::PgRetiredFactSidecar;
 use search_definitions::SearchDefinitions;
 pub use sql::{
-    bytes32, int_to_u32, int_to_u64, memory_insert_sql, memory_select_batch_owner_pinned_sql,
-    memory_select_batch_sql,
+    SidecarRowQuery, bytes32, insert_memory_sidecar_row, int_to_u32, int_to_u64, memory_insert_sql,
+    memory_select_batch_owner_pinned_sql, memory_select_batch_sql,
 };
 pub use traits::{ForkPolicy, PgGoalSidecar, PgMemoryPayload, PgMemorySidecar};
 

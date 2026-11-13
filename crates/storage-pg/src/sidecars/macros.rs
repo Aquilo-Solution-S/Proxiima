@@ -45,6 +45,9 @@ macro_rules! pg_sidecar_row_ty {
     (i32) => {
         i32
     };
+    (opt_i32) => {
+        ::std::option::Option<i32>
+    };
     (i64) => {
         i64
     };
@@ -53,6 +56,9 @@ macro_rules! pg_sidecar_row_ty {
     };
     (timestamptz) => {
         $crate::__private::time::OffsetDateTime
+    };
+    (opt_timestamptz) => {
+        ::std::option::Option<$crate::__private::time::OffsetDateTime>
     };
     (bytea32) => {
         ::std::vec::Vec<u8>
@@ -216,6 +222,9 @@ macro_rules! pg_sidecar_bind {
     ((i32), $self:ident, $field:ident) => {
         $self.$field
     };
+    ((opt_i32), $self:ident, $field:ident) => {
+        $self.$field
+    };
     ((i64), $self:ident, $field:ident) => {
         $self.$field
     };
@@ -223,6 +232,9 @@ macro_rules! pg_sidecar_bind {
         $self.$field
     };
     ((timestamptz), $self:ident, $field:ident) => {
+        $self.$field
+    };
+    ((opt_timestamptz), $self:ident, $field:ident) => {
         $self.$field
     };
     ((bytea32), $self:ident, $field:ident) => {
@@ -353,6 +365,9 @@ macro_rules! pg_sidecar_decode {
     ((i32), $row:ident, $field:ident) => {
         $row.$field
     };
+    ((opt_i32), $row:ident, $field:ident) => {
+        $row.$field
+    };
     ((i64), $row:ident, $field:ident) => {
         $row.$field
     };
@@ -360,6 +375,9 @@ macro_rules! pg_sidecar_decode {
         $row.$field
     };
     ((timestamptz), $row:ident, $field:ident) => {
+        $row.$field
+    };
+    ((opt_timestamptz), $row:ident, $field:ident) => {
         $row.$field
     };
     ((bytea32), $row:ident, $field:ident) => {
@@ -529,48 +547,27 @@ macro_rules! pg_sidecar {
                 &'t self,
                 tx: &'t mut $crate::__private::sqlx::Transaction<'_, $crate::__private::sqlx::Postgres>,
                 memory_id: $crate::core::MemoryId,
-                _permit: $crate::sidecars::SidecarInsertPermit,
+                permit: $crate::sidecars::SidecarInsertPermit,
             ) -> $crate::sidecars::PgSidecarFuture<'t> {
                 ::std::boxed::Box::pin(async move {
-                    // Same tokens as the OWNER const below: one macro
-                    // invocation emits both, so they cannot drift.
-                    const OWNER: $crate::sidecars::SidecarOwnerMode = $crate::__sidecar_owner_mode!(
-                        $(owner_pinned: $owner_pinned,)?
-                        $(owner: $owner_mode,)?
-                    );
-                    let stamp_owner = OWNER.stamps_owner_at_insert();
-                    let sql = $crate::sidecars::memory_insert_sql(
+                    // `table` and the column names are macro literals the
+                    // helper checks as identifiers; every value is bound.
+                    $crate::sidecars::insert_memory_sidecar_row::<Self>(
+                        tx,
+                        memory_id,
+                        permit,
                         $table,
-                        ::std::stringify!($key_column),
                         &[$(
                             (::std::stringify!($column), $crate::pg_sidecar_cast! $column_kind),
                         )+],
-                        stamp_owner,
-                    )?;
-                    // `sql` is built by memory_insert_sql from macro-literal
-                    // table/column names validated as PgIdent; every value
-                    // below is bound.
-                    let result = $crate::__private::sqlx::query(sql)
-                        .bind(memory_id.into_inner())
-                        $(
-                            .bind($crate::pg_sidecar_bind!($column_kind, self, $field))
-                        )+
-                        .execute(tx.as_mut())
-                        .await
-                        .map_err($crate::map_err)?;
-                    // A stamp_owner insert reads the owner out of the Memory
-                    // row, so a missing Memory writes nothing instead of
-                    // tripping the foreign key. Refuse rather than lose the
-                    // row (Pinned audit or Follows RLS stamp).
-                    if stamp_owner && result.rows_affected() != 1 {
-                        return ::std::result::Result::Err(
-                            $crate::core::StorageError::ConstraintViolation(::std::format!(
-                                "owner-stamping sidecar {} has no Memory row to take its owner from",
-                                $table,
-                            )),
-                        );
-                    }
-                    ::std::result::Result::Ok(())
+                        |query| {
+                            ::std::result::Result::Ok(query
+                                $(
+                                    .bind($crate::pg_sidecar_bind!($column_kind, self, $field))
+                                )+)
+                        },
+                    )
+                    .await
                 })
             }
         }

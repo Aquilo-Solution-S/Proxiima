@@ -123,3 +123,39 @@ fn pg_sidecar_owner_follows_token_is_accepted() {
     assert!(<FacadeFollowsFact as PgMemoryPayload>::OWNER.stamps_owner_at_insert());
     assert!(!<FacadeFollowsFact as PgMemoryPayload>::OWNER.is_pinned());
 }
+
+/// A payload whose insert is written by hand writes its row through the
+/// SDK's insert, which stamps the owner as `OWNER` declares.
+struct FacadeEnvelope {
+    envelope: serde_json::Value,
+}
+
+impl PgMemorySidecar for FacadeEnvelope {
+    fn insert_memory_sidecar<'t>(
+        &'t self,
+        tx: &'t mut sqlx::Transaction<'_, sqlx::Postgres>,
+        memory_id: proxiima::spiice::MemoryId,
+        permit: proxiima::spiice::SidecarInsertPermit,
+    ) -> proxiima::spiice::PgSidecarFuture<'t> {
+        Box::pin(proxiima::spiice::insert_memory_sidecar_row::<Self>(
+            tx,
+            memory_id,
+            permit,
+            "public.facade_envelope_v1",
+            &[("envelope", None)],
+            |query| Ok(query.bind(&self.envelope)),
+        ))
+    }
+}
+
+impl PgMemoryPayload for FacadeEnvelope {
+    const OWNER: proxiima::spiice::SidecarOwnerMode = proxiima::spiice::SidecarOwnerMode::Follows;
+    const MEMORY_KEY_COLUMN: &'static str = "t";
+}
+
+fn assert_hand_written_sidecar<T: PgMemorySidecar + PgMemoryPayload>() {}
+
+#[test]
+fn a_hand_written_sidecar_inserts_through_the_facade() {
+    assert_hand_written_sidecar::<FacadeEnvelope>();
+}
