@@ -2240,7 +2240,7 @@ async fn versioned_cold_delete_removes_exact_key_versions_and_preserves_prefix_c
 /// because it is not.
 fn hex32(hex: &str) -> [u8; 32] {
     let mut out = [0u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
         *slot = u8::from_str_radix(std::str::from_utf8(pair).expect("hex"), 16).expect("hex byte");
     }
     out

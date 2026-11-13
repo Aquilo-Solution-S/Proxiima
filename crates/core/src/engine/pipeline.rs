@@ -96,6 +96,7 @@ impl Engine {
     /// Returns `Forbidden` when `authz` cannot write `kind` on `owner`.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the owner-write gate on the async Engine authorization seam"
     )]
     pub async fn authorize_owner_write(
@@ -112,6 +113,7 @@ impl Engine {
     /// Write gate: the rule for `kind` on `owner`.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the write gate on the async Engine authorization seam"
     )]
     pub(in crate::engine) async fn authorize_write<A>(
@@ -131,6 +133,7 @@ impl Engine {
     /// and carries none of its memory writes.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the Goal work gate on the async Engine authorization seam"
     )]
     pub(in crate::engine) async fn authorize_goal_work<A>(
@@ -152,6 +155,7 @@ impl Engine {
     /// and storage answers `NotFound` for a row above it.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the write gate on the async Engine authorization seam"
     )]
     pub(in crate::engine) async fn authorize_write_limit<A>(
@@ -176,6 +180,7 @@ impl Engine {
     /// sharing the owner's Goals.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the owner-admin gate on the async Engine authorization seam"
     )]
     pub(in crate::engine) async fn authorize_owner_admin<A>(
@@ -235,6 +240,7 @@ impl Engine {
     /// owner.
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the read gate on the async Engine authorization seam"
     )]
     pub(in crate::engine) async fn authorize_owner_read<A>(
@@ -341,6 +347,7 @@ impl Engine {
     /// context, or no readable owner at all).
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "keeps the shared read gate source-compatible with async Engine callers"
     )]
     pub(in crate::engine) async fn authorize_read<A>(

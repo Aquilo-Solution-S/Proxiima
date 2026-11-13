@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::rsa::KeySize;
 use aws_lc_rs::signature::{KeyPair as _, RSA_PKCS1_SHA256, RsaKeyPair};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::DecodingKey;
 use proxiima_core::{
     AccessError, ActionName, AuthPath, MemoryKind, OwnerId, OwnerRoles, Role, ScopeKey, ToolName,

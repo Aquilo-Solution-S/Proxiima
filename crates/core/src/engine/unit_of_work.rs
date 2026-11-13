@@ -422,7 +422,11 @@ impl Engine {
     ///
     /// Storage faults from beginning the transaction (deferred to the first
     /// write).
-    #[allow(clippy::unused_async)] // async is part of the port contract, not of this body
+    #[allow(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "async is part of the port contract, not of this body"
+    )]
     pub async fn unit_of_work<'a>(
         &'a self,
         authz: &'a AuthzContext,

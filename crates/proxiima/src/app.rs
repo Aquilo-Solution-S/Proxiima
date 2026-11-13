@@ -186,12 +186,17 @@ where
 {
     type Rejection = StatusCode;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<AuthContext>()
-            .map(|ctx| Self(ctx.authz.clone()))
-            .ok_or(StatusCode::UNAUTHORIZED)
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        std::future::ready(
+            parts
+                .extensions
+                .get::<AuthContext>()
+                .map(|ctx| Self(ctx.authz.clone()))
+                .ok_or(StatusCode::UNAUTHORIZED),
+        )
     }
 }
 

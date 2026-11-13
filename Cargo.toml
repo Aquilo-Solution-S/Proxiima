@@ -17,6 +17,8 @@ missing_debug_implementations = "deny"
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 module_name_repetitions = "allow"
+# `assert!(x.is_empty())` states the intent; the lint's `assert_eq!(x, [])` needs `[] as [T; 0]` where `T` is not inferred.
+assert_is_empty = "allow"
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

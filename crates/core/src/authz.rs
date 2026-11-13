@@ -1535,7 +1535,6 @@ impl<I> Stream for RevalidatedStream<I> {
 
 /// Wrap a long-lived stream with expiry and max-lifetime termination.
 /// Termination is a silent stream end.
-#[must_use]
 pub fn revalidate_stream<S>(
     stream: S,
     expires_at: Option<SystemTime>,

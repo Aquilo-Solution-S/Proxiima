@@ -140,7 +140,9 @@ async fn presign_config_probe(config: &S3RuntimeConfig, client: &Client) -> reqw
         .take()
         .expect("configured resolver ran");
     assert_eq!(credentials.access_key_id(), config.key_pair.access_key_id);
-    assert!(credentials.secret_access_key() == config.key_pair.secret_access_key);
+    // Not `assert_eq!`: a failure would print the secret.
+    let secret_matches = credentials.secret_access_key() == config.key_pair.secret_access_key;
+    assert!(secret_matches);
     assert!(credentials.session_token().is_none());
     assert!(credentials.expiry().is_none());
     reqwest::Url::parse(request.uri()).expect("the SDK emits a valid request URI")
@@ -173,12 +175,12 @@ async fn client_uses_only_configured_credentials_region_and_endpoint() {
         let url = presign_config_probe(&config, &client).await;
         assert_eq!(url.host_str(), Some(host));
         assert_eq!(url.path(), path);
-        assert!(
-            signed_query_value(&url, "X-Amz-Credential")
-                == format!(
-                    "{}/20231114/{}/s3/aws4_request",
-                    config.key_pair.access_key_id, config.region
-                )
+        assert_eq!(
+            signed_query_value(&url, "X-Amz-Credential"),
+            format!(
+                "{}/20231114/{}/s3/aws4_request",
+                config.key_pair.access_key_id, config.region
+            )
         );
         assert!(
             signed_query_value(&url, "X-Amz-SignedHeaders")

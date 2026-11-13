@@ -71,7 +71,6 @@ pub trait PgMemoryPayload: Send + Sync + 'static {
     /// and the projection INSERT on the other.
     const MEMORY_KEY_COLUMN: &'static str;
 
-    #[must_use]
     fn load_batch<'t>(
         ctx: PgSidecarReadCtx<'t>,
         kind: PayloadKind,
@@ -91,7 +90,6 @@ pub trait PgMemoryPayload: Send + Sync + 'static {
         })
     }
 
-    #[must_use]
     fn load_memory_payload(
         ctx: PgSidecarReadCtx<'_>,
         memory_id: MemoryId,

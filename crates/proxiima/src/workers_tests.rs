@@ -17,9 +17,13 @@ struct Scripted {
 }
 
 impl WorkerPass for Scripted {
-    async fn once(&mut self, _gate: &GateWorker, _cancel: &CancellationToken) -> Pass {
+    fn once(
+        &mut self,
+        _gate: &GateWorker,
+        _cancel: &CancellationToken,
+    ) -> impl Future<Output = Pass> {
         self.starts.lock().unwrap().push(Instant::now());
-        self.script.next().unwrap_or(Pass::Idle)
+        std::future::ready(self.script.next().unwrap_or(Pass::Idle))
     }
 }
 
@@ -33,17 +37,25 @@ fn scripted(script: Vec<Pass>, starts: &Starts) -> Scripted {
 struct Panics;
 
 impl WorkerPass for Panics {
-    async fn once(&mut self, _gate: &GateWorker, _cancel: &CancellationToken) -> Pass {
-        panic!("a pass that panics")
+    fn once(
+        &mut self,
+        _gate: &GateWorker,
+        _cancel: &CancellationToken,
+    ) -> impl Future<Output = Pass> {
+        std::future::poll_fn(|_| panic!("a pass that panics"))
     }
 }
 
 struct Counts(Arc<AtomicUsize>);
 
 impl WorkerPass for Counts {
-    async fn once(&mut self, _gate: &GateWorker, _cancel: &CancellationToken) -> Pass {
+    fn once(
+        &mut self,
+        _gate: &GateWorker,
+        _cancel: &CancellationToken,
+    ) -> impl Future<Output = Pass> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Pass::Idle
+        std::future::ready(Pass::Idle)
     }
 }
 

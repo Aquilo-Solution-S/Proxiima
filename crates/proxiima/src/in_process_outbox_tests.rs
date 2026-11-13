@@ -29,7 +29,7 @@ use proxiima_core::{
 /// Spends one unit of `counter`, if any is left.
 fn take(counter: &AtomicUsize) -> bool {
     counter
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
         .is_ok()
 }
 

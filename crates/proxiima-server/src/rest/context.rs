@@ -66,13 +66,18 @@ where
 {
     type Rejection = Problem;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<AuthContext>()
-            .cloned()
-            .map(Self)
-            .ok_or_else(|| Problem::auth_required(parts.uri.path()))
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
+        std::future::ready(
+            parts
+                .extensions
+                .get::<AuthContext>()
+                .cloned()
+                .map(Self)
+                .ok_or_else(|| Problem::auth_required(parts.uri.path())),
+        )
     }
 }
 
