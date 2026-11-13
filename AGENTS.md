@@ -60,13 +60,12 @@ concepts and integration; avoid a second invariant or configuration ledger.
    land meanwhile. It advances only over recorded commits: each commit past
    `verified` needs a `Reviewed-By` trailer, on itself or on a later commit,
    whose address is neither the commit's author nor one of its
-   `Co-Authored-By` (`scripts/verify-review.py`); the workflow's own revert
-   needs none. Green on such a range atomically fast-forwards `verified` and
-   moves the lightweight `nightly` tag to the same tested commit; without the
-   record `verified` stays until a later push carries it. Red re-runs CI on commits
-   in the batch, reverts the first red one on `main`, or opens an issue naming the
-   range. Only verify runs save Rust caches. PRs remain for outside
-   contributors.
+   `Co-Authored-By` (`scripts/verify-review.py`). Green on such a range
+   atomically fast-forwards `verified` and moves the lightweight `nightly` tag
+   to the same tested commit; without the record `verified` stays until a
+   later push carries it. Red leaves `verified` where it is, and `main` stays
+   red until a commit fixes it. Only verify runs save Rust caches. PRs remain
+   for outside contributors.
 4. Routine changes leave the workspace version in `Cargo.toml` (exposed as
    `proxiima_core::RELEASE_VERSION`) unchanged and ship through `nightly`,
    without creating a GitHub Release. A deliberate bump cuts `v${VERSION}`

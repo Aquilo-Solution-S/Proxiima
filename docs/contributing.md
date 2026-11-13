@@ -136,7 +136,6 @@ python3 scripts/check-doc-links.py
 python3 scripts/check-upgrade-notes.py --self-test
 python3 scripts/check-release-version.py --self-test
 python3 scripts/check-release-version.py
-python3 scripts/verify-culprit.py --self-test
 python3 scripts/verify-review.py --self-test
 python3 scripts/check-architecture-guardrails.py --self-test
 python3 scripts/check-architecture-guardrails.py

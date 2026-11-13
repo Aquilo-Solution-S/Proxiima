@@ -4,19 +4,14 @@ on:
   # Outside contributions still arrive as PRs.
   pull_request:
     branches: [main]
-  # verify.yml calls this for each `main` commit it tests. Checkout uses
-  # github.sha (the PR merge commit, or the verify caller commit). A probe
-  # may then pin a historical main SHA. Rust caches save only when that SHA
-  # is main's HEAD: a PR can restore the base branch cache but cannot write
-  # it, and a probe cannot poison main's cache with an older tree.
+  # verify.yml calls this for the `main` commit it tests. Checkout uses
+  # github.sha (the PR merge commit, or the verify caller commit). Rust caches
+  # save only on `main`: a PR can restore the base branch cache but cannot
+  # write it.
   workflow_call:
     inputs:
       base:
         description: Last verified commit; path filters diff the commit against it.
-        type: string
-        required: true
-      ref:
-        description: Commit to validate.
         type: string
         required: true
 
@@ -25,10 +20,9 @@ on:
 permissions:
   contents: read
 
-# A new PR revision supersedes its previous validation run. Verify's probes
-# validate several commits at once, so the commit is part of the group.
+# A new PR revision supersedes its previous validation run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -53,27 +47,14 @@ jobs:
       all: ${{ steps.paths.outputs.all }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # Do not pass `ref:` to actions/checkout. CodeQL treats checkout of a
-      # caller-supplied ref in a reusable workflow invoked from a default-
-      # branch cache-write event (verify.yml's workflow_dispatch) as
-      # untrusted HEAD checkout plus poisonable `cargo`. github.sha is the
-      # PR merge or the verify caller commit; probes pin a different main
-      # SHA below.
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # dorny/paths-filter@v4; resolve the PR diff through the GitHub API.
-      # Under verify, diff the commit against the last verified one.
+      # Under verify, diff the commit against the last verified one; a PR
+      # passes neither end.
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
         id: paths
         with:
           base: ${{ inputs.base }}
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.base != '' && github.sha || '' }}
           predicate-quantifier: some-with-excludes
           filters: .github/ci-paths.yml
 
@@ -90,19 +71,11 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # rust-toolchain.toml pins the channel (1.96.0) + components (rustfmt, clippy).
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' && inputs.ref == github.sha }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
@@ -136,14 +109,6 @@ jobs:
           # <tag>`); checkout fetches `+refs/tags/*` at depth 1, which carries
           # every tag's commit and tree, and the check fails closed without them.
           fetch-tags: true
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       - name: install docs dependencies
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.docs == 'true' }}
         run: python3 -m pip install -r requirements-docs.txt
@@ -170,7 +135,6 @@ jobs:
       - name: release version
         run: |
           python3 scripts/check-release-version.py --self-test
-          python3 scripts/verify-culprit.py --self-test
           python3 scripts/verify-review.py --self-test
           python3 scripts/check-release-version.py
       - name: architecture guardrails
@@ -206,14 +170,6 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # cargo-deny-action v2.0.20 pinned by commit SHA (bundles cargo-deny 0.19.8,
       # the schema deny.toml targets). Dependabot's github-actions ecosystem keeps
       # this current via reviewable PRs.
@@ -231,14 +187,6 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # Build only, never push. Dependabot bumps the pinned base-image digests
       # weekly (see .github/dependabot.yml); without this job those bumps land
       # with zero validation and the first person to discover a broken image is
@@ -307,18 +255,10 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' && inputs.ref == github.sha }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: relax test Postgres durability, size its connections
         # Disposable database: crash safety buys nothing here. Every per-test
         # DROP DATABASE forces a checkpoint, and with fsync on each one waits
@@ -403,18 +343,10 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: check out the commit under test
-        if: ${{ inputs.ref != '' && inputs.ref != github.sha }}
-        env:
-          TIP: ${{ inputs.ref }}
-        run: |
-          git fetch --depth=1 origin "$TIP"
-          git checkout --detach "$TIP"
-          test "$(git rev-parse HEAD)" = "$TIP"
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' && inputs.ref == github.sha }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: start pgbouncer in transaction mode
         # Not a service container: PgBouncer is configured by its ini file,
         # and a service takes no file or command line. It runs as the runner
