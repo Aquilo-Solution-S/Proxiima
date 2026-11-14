@@ -140,8 +140,8 @@ the surface registration and owner row security; serving boot refuses a
 sidecar whose triggers differ from its registration. Declare the owner-RLS
 class of every other table with `install_owner_rls_table`
 ([owner policy](host-integration.md#owner-policy)), and close the
-migration with the schema census. A column that names another memory, or an
-owner, gets its foreign key from `install_reference`
+migration with the schema census. A column that names another memory, an
+owner or a lexical language gets its foreign key from `install_reference`
 ([core references](host-integration.md#core-references)). The example
 spiice's `fixtures/` directory shows a baseline;
 [the SQL contract](host-integration.md#sql-contract) lists what a migration

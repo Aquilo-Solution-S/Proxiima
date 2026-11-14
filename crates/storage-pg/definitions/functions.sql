@@ -1942,7 +1942,8 @@ REVOKE ALL ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_
 COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class, memory_key text) IS 'Installs one memory sidecar in a spiice migration: the foreign key to proxiima_core.memory (kept when the table already has one), refusing a table that cascades from a memory on any other column, the spiice_surface row, the declaration and key-repoint triggers, the delete guard and presence trigger unless the table has its own owner_id and is not a Follows table, and its owner-RLS policies through install_owner_rls_table. Idempotent; platform scope only. class defaults to owner_id for a table with an owner_id column, else fk_parent.';
 
 -- One call gives a column of a spiice or host table its foreign key to a core
--- row, so a migration names no core table. referenced and on_delete are closed
+-- row (a memory, an owner or a lexical language), so a migration names no
+-- core table. referenced and on_delete are closed
 -- vocabularies. The constraint is the record: erase reads the foreign keys to
 -- a memory from the catalog, and the table's DROP takes the constraint along.
 CREATE OR REPLACE FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text)
@@ -1956,6 +1957,7 @@ DECLARE
     column_type oid;
     referenced_table regclass;
     referenced_key text;
+    referenced_type regtype;
     constraint_name text;
     existing record;
     recorded record;
@@ -1973,11 +1975,17 @@ BEGIN
         WHEN 'memory' THEN
             referenced_table := 'proxiima_core.memory';
             referenced_key := 't';
+            referenced_type := 'uuid';
         WHEN 'owner' THEN
             referenced_table := 'proxiima_core.owners';
             referenced_key := 'owner_id';
+            referenced_type := 'uuid';
+        WHEN 'lexical_language' THEN
+            referenced_table := 'proxiima_core.lexical_languages';
+            referenced_key := 'config';
+            referenced_type := 'regconfig';
         ELSE
-            RAISE EXCEPTION 'install_reference: %.% references %, which is neither memory nor owner',
+            RAISE EXCEPTION 'install_reference: %.% references %, which is not memory, owner or lexical_language',
                 target_schema, COALESCE(target_table, 'NULL'), COALESCE(referenced, 'NULL')
                 USING ERRCODE = 'PX002';
     END CASE;
@@ -1988,6 +1996,11 @@ BEGIN
     END IF;
     IF referenced = 'owner' AND on_delete = 'cascade' THEN
         RAISE EXCEPTION 'install_reference: %.% cannot cascade from its owner; no erase deletes the owner''s registration, so the table''s declared erase rule removes its rows',
+            target_schema, COALESCE(target_table, 'NULL')
+            USING ERRCODE = 'PX002';
+    END IF;
+    IF referenced = 'lexical_language' AND on_delete = 'cascade' THEN
+        RAISE EXCEPTION 'install_reference: %.% cannot cascade from its lexical language; lexical_language_forget refuses a language while a row holds it, so a cascade would never run',
             target_schema, COALESCE(target_table, 'NULL')
             USING ERRCODE = 'PX002';
     END IF;
@@ -2008,9 +2021,9 @@ BEGIN
             target_schema, target_table, COALESCE(reference_column, 'NULL')
             USING ERRCODE = 'PX002';
     END IF;
-    IF column_type <> 'uuid'::regtype THEN
-        RAISE EXCEPTION 'install_reference: %.%.% is %, not uuid; a memory and an owner are named by their uuid',
-            target_schema, target_table, reference_column, format_type(column_type, NULL)
+    IF column_type <> referenced_type THEN
+        RAISE EXCEPTION 'install_reference: %.%.% is %, not %; a memory and an owner are named by their uuid, a lexical language by its regconfig',
+            target_schema, target_table, reference_column, format_type(column_type, NULL), referenced_type
             USING ERRCODE = 'PX002';
     END IF;
     -- A registered sidecar row goes with its own memory and with nothing else:
@@ -2068,7 +2081,7 @@ BEGIN
 END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) FROM PUBLIC;
-COMMENT ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) IS 'Installs the foreign key of one uuid column of a spiice or host table to a core row, in a migration: referenced is memory (proxiima_core.memory.t) or owner (proxiima_core.owners.owner_id), on_delete is no_action or cascade. An owner reference and a reference of a registered memory sidecar take no_action only. The constraint is named <table>_<column>_fkey; foreign keys the column already has are kept when each has the same delete action, and refused otherwise. Idempotent; platform scope only (docs/host-integration.md §Core references).';
+COMMENT ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) IS 'Installs the foreign key of one column of a spiice or host table to a core row, in a migration: referenced is memory (a uuid column, to proxiima_core.memory.t), owner (a uuid column, to proxiima_core.owners.owner_id) or lexical_language (a regconfig column, to proxiima_core.lexical_languages.config), on_delete is no_action or cascade. An owner reference, a lexical-language reference and a reference of a registered memory sidecar take no_action only. The constraint is named <table>_<column>_fkey; foreign keys the column already has are kept when each has the same delete action, and refused otherwise. Idempotent; platform scope only (docs/host-integration.md §Core references).';
 
 -- A core view is read-only for every role but its owner. Blanket grants and
 -- default privileges on a schema's tables also cover its views, so whatever

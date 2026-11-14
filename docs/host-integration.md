@@ -691,7 +691,7 @@ in `proxiima_core` is internal. What code outside core may name:
 |---|---|
 | Install a memory sidecar from a migration | `proxiima_core.install_sidecar(schema, table, spiice id)`: the foreign key to the memory, the declaration triggers, the surface registration and its [owner policy](#owner-policy), in one call. `class` overrides the row-security class, `memory_key` names a key column other than `t`. Platform scope only; names are plain lower-case identifiers |
 | Owner row security for any other table | `proxiima_core.install_owner_rls_table`, or `install_owner_rls` for a whole schema; see [owner policy](#owner-policy) |
-| A column that names a memory or an owner | `proxiima_core.install_reference(schema, table, column, referenced, on_delete)`: the foreign key of one `uuid` column to the memory or to the owner; see [core references](#core-references) |
+| A column that names a memory, an owner or a lexical language | `proxiima_core.install_reference(schema, table, column, referenced, on_delete)`: the foreign key of one column to the memory, the owner or the registered lexical language; see [core references](#core-references) |
 | Memory rows in a view or trigger function | The view `proxiima_core.memory_version`: `t`, `handle`, `kind`, `owner_id`, `schema_id`, `origins`, `refs`, `forgotten_at`, `head` |
 | Lexical text in a spiice's own query | The pure functions `lexical_scrub`, `lexical_tsv`, `lexical_config`, `lexical_join`, `lexical_text_array` and `memory_entity_kind` |
 | The owner of a sidecar row's memory, in a hand-written insert | `proxiima::spiice::insert_memory_sidecar_row::<P>(tx, memory_id, permit, table, columns, bind)`: the insert `pg_sidecar!` runs. It takes the key column and the owner stamp from `P`'s `MEMORY_KEY_COLUMN` and `OWNER`, writes the memory's owner into `owner_id` when `OWNER` stamps one, and refuses a row whose memory is absent; table, column and cast names are checked identifiers, and `bind` adds the values from `$2` |
@@ -727,8 +727,10 @@ seen until its next boot.
 
 ### Core references
 
-`install_reference` adds the foreign key `<table>_<column>_fkey` of one `uuid`
-column to a core row, in a migration (platform scope), after the table exists.
+`install_reference` adds the foreign key `<table>_<column>_fkey` of one column
+to a core row, in a migration (platform scope), after the table exists: a
+`uuid` column for a memory or an owner, a `regconfig` column for a lexical
+language.
 Both vocabularies are closed, and `on_delete` has no default, because the two
 actions state different things about an erase:
 
@@ -738,6 +740,8 @@ actions state different things about an erase:
 | `memory` | `cascade` | The row goes with its memory. Declare the surface `EraseRule::Cascade` with this constraint as its `via`. Refused on a memory sidecar, whichever call comes first: `install_reference` refuses it on a table `install_sidecar` has registered, and `install_sidecar` refuses a table that already cascades from a memory on a column other than its memory key, naming the constraint. A sidecar row goes with its own memory only; reference the other memory with `no_action` |
 | `owner` | `no_action` | The row names a registered owner. A person is registered by their first core write or by the host's `ensure_owner_row`; a group when it is created. No erase deletes the registration, so the reference never blocks one |
 | `owner` | `cascade` | Refused: the table's declared erase rule removes an owner's rows, not a cascade that never runs |
+| `lexical_language` | `no_action` | The row is stamped in a registered text-search configuration. `lexical_language_forget` refuses a language while a row holds it |
+| `lexical_language` | `cascade` | Refused: forgetting a language never deletes a row that holds it, so the cascade would never run |
 
 Forget keeps the memory row, so neither action fires on it. The constraint is
 the only record: erase reads the foreign keys to a memory from the catalog,

@@ -1,6 +1,6 @@
 //! `proxiima_core.install_reference`: one call gives a column of a spiice or
-//! host table its foreign key to a memory or to an owner, so a migration
-//! names no core table.
+//! host table its foreign key to a memory, an owner or a lexical language,
+//! so a migration names no core table.
 
 #[path = "fixtures/example_engine.rs"]
 #[allow(dead_code, reason = "each suite uses part of the shared fixture")]
@@ -17,7 +17,8 @@ const REFUSED: &str = "PX002";
 const FOREIGN_KEY_VIOLATION: &str = "23503";
 
 const STEP: &str = "CREATE TABLE some_schema.step (
-    id bigint PRIMARY KEY, owner_id uuid NOT NULL, source_t uuid, label text)";
+    id bigint PRIMARY KEY, owner_id uuid NOT NULL, source_t uuid, label text,
+    language regconfig)";
 
 async fn migrated_platform() -> (SplitRoleDb, PgConnection) {
     let db = example_engine::migrated_db("proxiima_install_reference").await;
@@ -230,6 +231,40 @@ async fn an_owner_reference_admits_a_registered_owner_only() {
 }
 
 #[tokio::test]
+async fn a_lexical_language_reference_admits_a_registered_language_only() {
+    let (_db, mut conn) = migrated_platform().await;
+    let mut tx = migration_scope(&mut conn).await;
+    run(&mut tx, STEP).await;
+
+    install(&mut tx, "step", "language", "lexical_language", "no_action")
+        .await
+        .expect("the installer takes the regconfig column");
+
+    assert_eq!(
+        foreign_keys(&mut tx, "step").await,
+        [key(
+            "step_language_fkey",
+            "FOREIGN KEY (language) REFERENCES proxiima_core.lexical_languages(config)"
+        )]
+    );
+    sqlx::query("INSERT INTO some_schema.step (id, owner_id, language) VALUES (1, $1, 'english')")
+        .bind(Uuid::now_v7())
+        .execute(&mut *tx)
+        .await
+        .expect("a registered language is admitted");
+    let mut attempt = tx.begin().await.expect("savepoint");
+    let unknown = sqlx::query(
+        "INSERT INTO some_schema.step (id, owner_id, language) VALUES (2, $1, 'german')",
+    )
+    .bind(Uuid::now_v7())
+    .execute(&mut *attempt)
+    .await
+    .map(|_| ());
+    let (code, message) = refusal(unknown, "a language that is not registered");
+    assert_eq!(code, FOREIGN_KEY_VIOLATION, "{message}");
+}
+
+#[tokio::test]
 async fn a_second_call_changes_nothing() {
     let (_db, mut conn) = migrated_platform().await;
     let mut tx = migration_scope(&mut conn).await;
@@ -312,8 +347,18 @@ async fn a_call_outside_the_contract_is_refused() {
     .await;
 
     let cases = [
-        (VALID.referenced(Some("goal")), "neither memory nor owner"),
-        (VALID.referenced(None), "neither memory nor owner"),
+        (
+            VALID.referenced(Some("goal")),
+            "not memory, owner or lexical_language",
+        ),
+        (
+            VALID.referenced(None),
+            "not memory, owner or lexical_language",
+        ),
+        (
+            VALID.referenced(Some("lexical_languages")),
+            "not memory, owner or lexical_language",
+        ),
         (
             VALID.on_delete(Some("set_null")),
             "neither no_action nor cascade",
@@ -330,6 +375,18 @@ async fn a_call_outside_the_contract_is_refused() {
                 .on_delete(Some("cascade")),
             "cannot cascade from its owner",
         ),
+        (
+            VALID
+                .column(Some("language"))
+                .referenced(Some("lexical_language"))
+                .on_delete(Some("cascade")),
+            "cannot cascade from its lexical language",
+        ),
+        (
+            VALID.referenced(Some("lexical_language")),
+            "is uuid, not regconfig",
+        ),
+        (VALID.column(Some("language")), "is regconfig, not uuid"),
         (VALID.table("missing"), "is not an existing base table"),
         (VALID.column(Some("missing")), "has no column missing"),
         (VALID.column(None), "has no column NULL"),
