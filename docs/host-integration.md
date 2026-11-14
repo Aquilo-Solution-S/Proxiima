@@ -723,7 +723,9 @@ have none; the repair is a migration run, which reinstalls and records them
 again. After a Postgres major upgrade, or a change that alters how a predicate
 prints (a renamed column the predicate reads), serving refuses until one
 migration run has completed. Policy DDL run after a binary has booted is not
-seen until its next boot.
+seen until its next boot. The record guards against drift, not against the
+deployment's own migrations: a migration runs in platform scope as the owner of
+these tables and is trusted like the schema it creates.
 
 ### Core references
 

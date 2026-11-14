@@ -107,6 +107,13 @@ are admitted by the Goal-work gate, not the Fact write ceiling. A viewer
 therefore sets a group Goal, and writes Facts only through such a command; every
 other memory and host-state write keeps the write ceiling.
 
+Owner roles are read once, at admission, and row security holds an owner's
+transaction to them. Goal work by membership alone is written outside row
+security, as a Goal route is, so storage reads the membership again under the
+owner fence where the write commits: a member removed since admission works no
+Goal. A Goal an episode commits is written in the owner's transaction, on the
+roles of admission.
+
 A Goal grant adds a second route to Goal edits. A caller whose owner role does
 not work or administer the owner can still work a Goal, or achieve it, when the
 current Goal role from its grants works Goals.
