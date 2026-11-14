@@ -102,9 +102,10 @@ pub async fn ensure_core_template(vectors: VectorStorage) -> Result<String, sqlx
 
 /// Turn a store freshly installed from this tree into one at the previous
 /// head, the shape [`crate::run_core_migrations`] adopts: the column the
-/// baseline dropped is back, and the core ledger is exactly the previous
-/// head's, with its pgvector row when `vectors` is
-/// [`VectorStorage::Local`]. `pool` connects as the store's migration role.
+/// baseline dropped and the type a later migration dropped are back, and the
+/// core ledger is exactly the previous head's, with its pgvector row when
+/// `vectors` is [`VectorStorage::Local`]. `pool` connects as the store's
+/// migration role.
 ///
 /// # Errors
 ///
@@ -117,6 +118,12 @@ pub async fn stage_previous_head(
     sqlx::query(
         "ALTER TABLE proxiima_core.delegated_authority_grants
              ADD COLUMN auth_epoch bigint NOT NULL DEFAULT 0",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "CREATE TYPE proxiima_core.access_ceiling AS ENUM
+             ('none', 'fact', 'abstraction', 'perspective', 'goal')",
     )
     .execute(&mut *transaction)
     .await?;

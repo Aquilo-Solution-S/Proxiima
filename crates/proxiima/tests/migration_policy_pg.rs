@@ -80,8 +80,9 @@ async fn the_facade_refuses_a_pre_reset_ledger_everywhere() {
 }
 
 /// A store at the previous head: the plan shows its adoption into the
-/// baseline as one entry, serving refuses it until the migrate step runs, and
-/// after the run nothing is pending and serving accepts it.
+/// baseline as one entry ahead of the migrations after the baseline, serving
+/// refuses it until the migrate step runs, and after the run nothing is
+/// pending and serving accepts it.
 #[tokio::test]
 async fn an_adoptable_store_is_planned_refused_by_serving_and_adopted_by_the_run() {
     let db = expect_described(
@@ -100,13 +101,19 @@ async fn an_adoptable_store_is_planned_refused_by_serving_and_adopted_by_the_run
     let plan = pending_migrations(&pool, &[], &sidecars, VectorStorage::Local)
         .await
         .expect("the plan reads an adoptable store");
+    let [
+        proxiima::host::PendingMigration::AdoptPreviousHead { release, .. },
+        after_the_baseline @ ..,
+    ] = plan.as_slice()
+    else {
+        panic!("the plan starts with the adoption: {plan:?}");
+    };
+    assert_eq!(release, "v0.0.73");
     assert!(
-        matches!(
-            plan.as_slice(),
-            [proxiima::host::PendingMigration::AdoptPreviousHead { release, .. }]
-                if release == "v0.0.73"
-        ),
-        "{plan:?}"
+        after_the_baseline
+            .iter()
+            .all(|step| matches!(step, proxiima::host::PendingMigration::Sql { .. })),
+        "the adoption is one entry: {plan:?}"
     );
     let refusal = preflight_without_migrations(&pg, Vec::new(), &sidecars)
         .await
