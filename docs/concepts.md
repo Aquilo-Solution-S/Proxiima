@@ -111,8 +111,10 @@ Owner roles are read once, at admission, and row security holds an owner's
 transaction to them. Goal work by membership alone is written outside row
 security, as a Goal route is, so storage reads the membership again under the
 owner fence where the write commits: a member removed since admission works no
-Goal. A Goal an episode commits is written in the owner's transaction, on the
-roles of admission.
+Goal. Either way, a `GoalWorkUnitOfWork`'s transaction names its one owner in
+`app.work_goal` for its host-state handler and declared Facts; no other
+platform-scope transaction names an owner there. A Goal an episode commits is
+written in the owner's transaction, on the roles of admission.
 
 A Goal grant adds a second route to Goal edits. A caller whose owner role does
 not work or administer the owner can still work a Goal, or achieve it, when the

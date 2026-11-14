@@ -154,6 +154,30 @@ pub(crate) async fn live_memory_owners_as(
     .map_err(map_err)
 }
 
+/// Name `owner` as the one owner whose Goal this transaction works, in
+/// `app.work_goal`, for every later statement of the Goal work unit:
+/// `scope` must work `owner`'s Goals ([`OwnerScope::goal_working_owners`]),
+/// or it names none. Under platform scope the platform policy already
+/// admits every row, so the setting widens nothing; an owner transaction's
+/// Goal writes narrow to `owner`.
+pub(crate) async fn bind_goal_work_owner(
+    connection: &mut PgConnection,
+    scope: &OwnerScope,
+    owner: OwnerId,
+) -> Result<(), StorageError> {
+    let worked: Vec<OwnerId> = scope
+        .goal_working_owners()
+        .into_iter()
+        .filter(|worked| *worked == owner)
+        .collect();
+    sqlx::query("SELECT set_config('app.work_goal', $1::uuid[]::text, true)")
+        .bind(owner_ids(worked))
+        .execute(connection)
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
 pub(crate) async fn bind_owner_scope(
     connection: &mut PgConnection,
     scope: &OwnerScope,

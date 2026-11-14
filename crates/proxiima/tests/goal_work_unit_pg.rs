@@ -1,6 +1,8 @@
 //! A host command declared Goal work commits for every member who works the
 //! Goal owner's Goals, together with the Facts it declares, owned by the
 //! Goal's owner. The member's other writes keep the relation's ceiling.
+//! The unit names that one owner to the participant in `app.work_goal`; no
+//! other platform-scope transaction names one there.
 #![allow(clippy::too_many_lines)]
 
 #[path = "fixtures/host_state/mod.rs"]
@@ -53,7 +55,8 @@ struct Arm {
 impl HostStateCommand for Arm {
     const PARTICIPANT_ID: proxiima::HostStateParticipantId = PARTICIPANT;
     const TABLES: &'static [StateSurfaceName] = TABLES;
-    type Outcome = ();
+    /// The owners the transaction names in `app.work_goal`.
+    type Outcome = Vec<Uuid>;
 
     fn owner(&self) -> OwnerId {
         self.owner
@@ -83,15 +86,30 @@ impl HostStateHandler<Arm> for ArmHandler {
         session: &mut PgHostStateSession<'_, '_>,
         permit: &HostStateWritePermit,
         command: AgreedCommand<Arm>,
-    ) -> Result<HostStateOutcome<()>, StorageError> {
+    ) -> Result<HostStateOutcome<Vec<Uuid>>, StorageError> {
         sqlx::query("INSERT INTO host_fixture.auxiliary (invocation_id, owner_id) VALUES ($1, $2)")
             .bind(command.into_inner().invocation)
             .bind(permit.owner().into_inner())
             .execute(&mut **session.transaction())
             .await
             .map_err(proxiima_storage_pg::map_err)?;
-        Ok(HostStateOutcome::Permitted(()))
+        let work_goal = work_goal(session.transaction()).await?;
+        Ok(HostStateOutcome::Permitted(work_goal))
     }
+}
+
+async fn work_goal(tx: &mut sqlx::PgConnection) -> Result<Vec<Uuid>, StorageError> {
+    sqlx::query_scalar("SELECT current_setting('app.work_goal')::uuid[]")
+        .fetch_one(tx)
+        .await
+        .map_err(proxiima_storage_pg::map_err)
+}
+
+fn named(outcome: &HostStateOutcome<Vec<Uuid>>) -> &[Uuid] {
+    let HostStateOutcome::Permitted(owners) = outcome else {
+        panic!("the arm applies: {outcome:?}");
+    };
+    owners
 }
 
 fn member(user: UserId, roles: &[(OwnerId, Role)]) -> AuthzContext {
@@ -161,7 +179,8 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
     )
     .await?;
 
-    let (admin_user, viewer_user, outsider_user) = (
+    let (admin_user, editor_user, viewer_user, outsider_user) = (
+        UserId::new(Uuid::now_v7()),
         UserId::new(Uuid::now_v7()),
         UserId::new(Uuid::now_v7()),
         UserId::new(Uuid::now_v7()),
@@ -173,6 +192,7 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
             group,
             &[
                 (admin_user, Relation::Admin),
+                (editor_user, Relation::Editor),
                 (viewer_user, Relation::Viewer),
             ][..],
         ),
@@ -189,6 +209,7 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
         admin_user,
         &[(group, Role::admin()), (secret, Role::admin())],
     );
+    let editor = member(editor_user, &[(group, Role::editor())]);
     let viewer = member(viewer_user, &[(group, Role::viewer())]);
     let outsider = authenticated_context(AuthzContext::for_subject(
         outsider_user,
@@ -204,7 +225,8 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
         .goal_id;
 
     // The viewer arms the group's Goal: the host row and the declared Fact
-    // commit together, both owned by the group.
+    // commit together, both owned by the group, and the participant reads
+    // the group as the one owner whose Goal the unit works.
     let armed = arm(group, goal);
     let invocation = armed.invocation;
     let mut unit = engine.goal_work_unit_of_work(&viewer, group, goal);
@@ -214,7 +236,7 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
             [proxiima::FactWrite::new(group, "goal-arm", &note("armed"))],
         )
         .await?;
-    assert!(matches!(outcome.state, HostStateOutcome::Permitted(())));
+    assert_eq!(named(&outcome.state), [group.into_inner()]);
     let [fact] = outcome.facts.as_slice() else {
         panic!("one declared Fact: {:?}", outcome.facts);
     };
@@ -239,6 +261,12 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
         group.into_inner(),
         "the group owns the declared Fact"
     );
+
+    // The editor works it as the viewer does.
+    let mut unit = engine.goal_work_unit_of_work(&editor, group, goal);
+    let outcome = unit.apply_goal_work(arm(group, goal), []).await?;
+    assert_eq!(named(&outcome.state), [group.into_inner()]);
+    unit.commit().await?;
 
     // The same command undeclared, a plain Fact and a Perspective keep the
     // viewer's ceiling.
@@ -343,7 +371,8 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
     assert_eq!(refused.code, ErrorCode::Forbidden);
     drop(unit);
 
-    // The admin works it too.
+    // The admin works it too, and its unit names the group alone, though
+    // the admin also works the other group's Goals.
     let mut unit = engine.goal_work_unit_of_work(&admin, group, goal);
     let outcome = unit
         .apply_goal_work(
@@ -352,14 +381,28 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
         )
         .await?;
     assert_eq!(outcome.facts.len(), 1);
+    assert_eq!(named(&outcome.state), [group.into_inner()]);
     unit.commit().await?;
+
+    // A platform-scope transaction that is not Goal work names no owner:
+    // a maintenance unit of the group, and a plain platform transaction.
+    let maintenance = engine
+        .host_state_maintenance_authority(built.system_authority())?
+        .expect("the participant is registered");
+    let mut unit = engine.host_state_unit_of_work(&maintenance, group)?;
+    let outcome = unit.apply_host_state(arm(group, goal)).await?;
+    assert_eq!(named(&outcome), [] as [Uuid; 0]);
+    drop(unit);
+    let mut tx = platform.begin().await?;
+    assert_eq!(work_goal(&mut tx).await?, [] as [Uuid; 0]);
+    tx.rollback().await?;
 
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM host_fixture.auxiliary")
         .fetch_one(&admin_pool)
         .await?;
     assert_eq!(
-        rows, 2,
-        "only the viewer's and the admin's Goal work committed"
+        rows, 3,
+        "only the viewer's, the editor's and the admin's Goal work committed"
     );
     built.shutdown().await;
     admin_pool.close().await;

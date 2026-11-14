@@ -221,13 +221,9 @@ impl WriteSessionFactory for PgStorage {
             memories: Vec::new(),
             carried_from: None,
         };
-        let mut tx = verbs::goal_write::authority::begin_goal_work(
-            self,
-            crate::owner_scope::require_owner_scope(permit.owner_scope())?,
-            owner,
-            &named,
-        )
-        .await?;
+        let scope = crate::owner_scope::require_owner_scope(permit.owner_scope())?;
+        let mut tx =
+            verbs::goal_write::authority::begin_goal_work(self, scope, owner, &named).await?;
         // The named Goal was read under the caller's scope; it must be the
         // unit owner's, so a Goal of another owner is not found.
         let of_owner: Option<i32> =
@@ -240,6 +236,9 @@ impl WriteSessionFactory for PgStorage {
         if of_owner.is_none() {
             return Err(StorageError::NotFound);
         }
+        // The host-state dispatch and the declared Facts read whose Goal the
+        // unit works from the transaction, under either scope.
+        crate::owner_scope::bind_goal_work_owner(&mut tx, scope, owner).await?;
         Ok(self.session_from_transaction(tx))
     }
 
