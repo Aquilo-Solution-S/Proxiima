@@ -421,6 +421,13 @@ scan returns fewer rows than the search asked for, here 200. That scan is the
 and 100 is fewer than 200; at 400 it is not, and the row beside it shows the
 index answering.
 
+A cosine similarity below zero is reported as a score of 0, and candidates that
+tie on their score are ordered by descending id. When the retrieved candidates
+hold fewer memories of positive similarity than the search's limit, the rest of
+the page is therefore filled in id order, not by distance, and the recall
+figure counts those as misses: at the gate's size the 30-row owner, whose rows
+are all candidates, reaches 0.96 for that reason alone.
+
 Whole-owner erase is one transaction that holds the owner's exclusive fence,
 which excludes every writer that holds a lock on one of the owner's memories or
 Goals, so it takes no lock per memory or per Goal version. Its advisory locks

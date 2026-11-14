@@ -1054,7 +1054,7 @@ async fn an_expired_lease_is_reclaimed_and_fences_out_the_first_holder() {
     let _ = drop_db(&db).await;
 }
 
-/// Migration 0025: `publication_outbox_published_chk` ties
+/// `publication_outbox_published_chk` ties
 /// `state = 'published'` to `published_at` alone, from either side; the mark
 /// that published `published` wrote no broker receipt.
 async fn published_is_exactly_published_at(pg: &PgStorage, owner: &OwnerId, published: Uuid) {

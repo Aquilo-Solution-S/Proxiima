@@ -352,7 +352,7 @@ async fn register_outbox_consumers(
 /// An unreadable scope fails the boot. A publisher that cannot stamp
 /// produces events no cleaner is ever allowed to act on — retained forever,
 /// every cycle unhealthy — and entering that state silently is worse than
-/// not starting. Migration 0012 writes the row, so its absence means the
+/// not starting. The core baseline writes the row, so its absence means the
 /// schema was tampered with, not that a feature is switched off.
 async fn publication_origin_ports(
     pg: &PgStorage,

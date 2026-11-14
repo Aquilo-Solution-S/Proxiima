@@ -669,8 +669,7 @@ pub async fn dump_database(
         // owner (`TransferRule::StaysOnKey`), as the generated leg declares.
         if matches!(
             table.as_str(),
-            // These are the four tables introduced by migrations 0063/0064;
-            // the pinned baseline predates them. Their dedicated transfer
+            // These four tables were introduced after the pinned baseline. Their dedicated transfer
             // and export tests cover the new contracts.
             "goal_access_grant"
                 | "goal_memory_publication"

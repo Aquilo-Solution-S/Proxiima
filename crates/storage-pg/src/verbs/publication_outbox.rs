@@ -909,7 +909,7 @@ impl PgStorage {
     /// check degenerates into comparing a configuration value with itself.
     ///
     /// Read once at boot rather than per message: the row is written by
-    /// migration 0012 and a trigger refuses to change or remove it, so a
+    /// the core baseline and a trigger refuses to change or remove it, so a
     /// second read can only return the same answer.
     ///
     /// # Errors

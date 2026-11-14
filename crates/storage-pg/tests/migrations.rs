@@ -100,7 +100,7 @@ fn core_relations_named_in_storage_sql() -> BTreeSet<String> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src").as_path(),
         &mut found,
     );
-    // These relations were removed by migration 0031; their historical
+    // These relations were removed in an earlier release; their historical
     // source references are intentionally retained only in release history.
     for retired in ["announce", "mcp_call_logged_v1", "wake_config"] {
         found.remove(retired);

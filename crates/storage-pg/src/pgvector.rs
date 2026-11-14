@@ -38,7 +38,7 @@ pub(crate) fn set_hnsw_search_sql(tuning: &PgTuning) -> SqlText {
 /// One width lane's fixed SQL, for a statement that aliases
 /// `proxiima_core.embeddings` as `emb`.
 ///
-/// Migration 0015 indexes each supported width with a partial expression
+/// The pgvector migration indexes each supported width with a partial expression
 /// index, `(vec::vector(N)) WHERE dim = N` (`halfvec` above 2000 dims). The
 /// planner serves a query from that index only when the statement text names
 /// the same expression and a predicate that implies `dim = N`, including
