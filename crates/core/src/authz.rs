@@ -62,7 +62,7 @@ where
 /// WHO the caller is. What the caller may reach, and until when, lives once
 /// in the context's owner scope; ask [`AuthzContext`] for either.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Identity {
+struct Identity {
     subject: Option<UserId>,
     writer: Option<WriterAttribution>,
     principal: OwnerId,
@@ -475,9 +475,8 @@ pub struct AuthzContext {
     ///
     /// Deliberately NOT part of [`Identity`]: it is deployment-shaped
     /// context about the run that produced a write, not a claim about who
-    /// the caller is, so it must not travel through
-    /// [`AuthzContext::identity_for_revalidation`] and be re-presented as
-    /// authenticated identity material.
+    /// the caller is, so it is never presented as authenticated identity
+    /// material.
     publication_extensions: PublicationExtensions,
     /// The memories the HOST says this session read before it writes
     /// (#677). Like `publication_extensions`, context about the run, not
@@ -891,11 +890,6 @@ impl AuthzContext {
         }
         self.identity.writer = Some(writer);
         Some(self)
-    }
-
-    #[must_use]
-    pub fn identity_for_revalidation(&self) -> Identity {
-        self.identity.clone()
     }
 
     #[must_use]

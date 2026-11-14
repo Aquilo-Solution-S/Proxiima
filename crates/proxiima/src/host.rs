@@ -539,11 +539,10 @@ pub use proxiima_core::{
     MemorySketch, PinNode, StoragePorts, UploadCompleted, UploadCompletionExpectation,
     query::FactCitationPage, storage_ports::StoragePortsBuilder,
 };
-/// What [`AuthzContext`] reports about its caller: the identity and invoking
-/// tool [`AuthzContext::identity_for_revalidation`] and
-/// [`AuthzContext::invoking_tool`] return, and the refusal
+/// What [`AuthzContext`] reports about its caller: the invoking tool
+/// [`AuthzContext::invoking_tool`] returns, and the refusal
 /// [`AuthzContext::with_trusted_model_id`] gives.
-pub use proxiima_core::{Identity, InvokingTool, TrustedModelIdError};
+pub use proxiima_core::{InvokingTool, TrustedModelIdError};
 /// The publication extension set and plan the Fact write path carries
 /// ([`PublicationExtensions::iter`], [`AuthorizedFactWrite`]'s `publication`):
 /// a host that binds extensions through

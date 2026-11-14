@@ -88,7 +88,7 @@ async fn writer_is_sealed_once_and_preserved_by_narrowing_and_revalidation() {
     let narrowed = sealed.clone().narrowed_to_owner(group).unwrap();
     assert_eq!(narrowed.writer(), Some(writer));
     assert_eq!(narrowed.owner_scope().unwrap().writer(), writer);
-    assert_eq!(narrowed.identity_for_revalidation().writer, Some(writer));
+    assert_eq!(narrowed.identity.writer, Some(writer));
     assert_eq!(narrowed.subject(), Some(subject));
     assert_eq!(narrowed.principal(), OwnerId::from(subject));
     assert!(
@@ -340,10 +340,7 @@ async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
             assert_eq!(port.probes.load(Ordering::SeqCst), 1);
             assert_eq!(bound.subject(), Some(subject));
             assert_eq!(bound.writer(), Some(forwarded_writer()));
-            assert_eq!(
-                bound.identity_for_revalidation().writer,
-                Some(forwarded_writer())
-            );
+            assert_eq!(bound.identity.writer, Some(forwarded_writer()));
             assert_eq!(bound.principal(), OwnerId::from(subject));
             assert_eq!(bound.verified_forwarded_owner(), Some(owner));
             assert_eq!(bound.role_for_owner(&owner), Some(role));
@@ -813,7 +810,7 @@ fn a_trusted_model_id_survives_owner_narrowing_and_revalidation() {
 
     assert_eq!(ctx.trusted_model_id(), Some("runner/pinned"));
     assert_eq!(
-        ctx.identity_for_revalidation().trusted_model_id.as_deref(),
+        ctx.identity.trusted_model_id.as_deref(),
         Some("runner/pinned"),
         "a revalidated stream keeps the bound model identity"
     );
@@ -1460,9 +1457,7 @@ fn bound_publication_extensions_merge_and_never_overwrite() {
     // stream does not — they are run context, not identity material.
     let narrowed = ctx
         .clone()
-        .narrowed_to_owner(OwnerId::from(
-            ctx.identity_for_revalidation().subject.expect("a subject"),
-        ))
+        .narrowed_to_owner(OwnerId::from(ctx.identity.subject.expect("a subject")))
         .expect("a subject may narrow to itself");
     assert_eq!(narrowed.publication_extensions().len(), 2);
 }
