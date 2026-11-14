@@ -530,9 +530,7 @@ fn spiice_sdk_constructs_contract_goal_and_session_values() {
     };
     assert_eq!(request.text, "text");
     let outcome: Option<proxiima::spiice::GoalWriteOutcome> = None;
-    let authorship = GoalAuthorship::System(proxiima::spiice::SystemOrigin::Tool {
-        tool_id: proxiima::spiice::ToolId::new("sdk_test/tool"),
-    });
+    let authorship = GoalAuthorship::System(proxiima::spiice::SystemOrigin::Tool);
     assert!(matches!(authorship, GoalAuthorship::System(_)));
     assert!(outcome.is_none());
 

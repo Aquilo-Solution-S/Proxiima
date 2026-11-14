@@ -166,9 +166,9 @@ pub use proxiima_core::{
     PlaintextHostsError, RequestHeaders, ResourceKey, SchemaId, SchemaVersion, ScopeKey,
     ScopeKeyError, SearchProjectionColumnKind, ServedSurface, SidecarPayload, SpiiceDescriptor,
     SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen,
-    SpiiceServiceError, SpiiceServices, Tool, ToolCaller, ToolCtx, ToolError, ToolId, ToolName,
-    ToolScope, TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice,
-    validate_endpoint_url, validate_endpoint_url_for_hosts,
+    SpiiceServiceError, SpiiceServices, Tool, ToolCaller, ToolCtx, ToolError, ToolName, ToolScope,
+    TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice, validate_endpoint_url,
+    validate_endpoint_url_for_hosts,
 };
 /// Query / ingest types a spiice names next to [`proxiima_core::Engine`]
 /// (Host API). `Engine` itself stays off this module (`docs/protocol.md`).

@@ -444,7 +444,7 @@ pub use proxiima_core::{
     AbstractionPayload, CitedObjectPayload, EntityId, FactPayload, FactReceiptId, FactTombstone,
     GoalId, GoalPayload, InputContractId, ModelId, OperatorId, PayloadReference,
     PerspectivePayload, ReferenceBinding, SchemaVersion, ScopeRef, SearchProjectionColumnKind,
-    SidecarPayload, ToolId,
+    SidecarPayload,
 };
 /// Request, row and outcome types the storage-port methods take and return
 /// ([`FactIngestPort`], [`MemoryAuthoringPort`], [`GoalWritePort`],

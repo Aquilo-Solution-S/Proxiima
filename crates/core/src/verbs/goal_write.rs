@@ -10,7 +10,7 @@ use crate::storage_ports::other_stores::ReadOrigin;
 use crate::text_bounds::{TrimmedLenViolation, check_trimmed_len};
 use crate::{
     GoalChange, GoalId, GoalPayload, MemoryId, OwnerId, PendingWork, SchemaId, SchemaVersion,
-    SidecarPayload, ToolId,
+    SidecarPayload,
 };
 
 /// The in-transaction refusal of goal evidence whose memory row the owner
@@ -190,7 +190,7 @@ impl From<GoalTransitionKind> for GoalChange {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SystemOrigin {
     Operator,
-    Tool { tool_id: ToolId },
+    Tool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

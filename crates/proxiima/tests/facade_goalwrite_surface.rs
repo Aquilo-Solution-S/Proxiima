@@ -3,7 +3,7 @@ use proxiima::{
     GoalAuthorship, GoalCreateRequest, GoalMotivationRef, GoalPayloadWrite, IdempotencyKey,
     MemoryId, OwnerId, SystemOrigin,
 };
-use proxiima_core::{ToolId, UserId};
+use proxiima_core::UserId;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct FacadeGoalPayload {
@@ -63,9 +63,7 @@ fn facade_reexports_typed_goalwrite_surface_for_embedded_hosts() {
         &[GoalMotivationRef::perspective(target_self)]
     );
 
-    let system_request = request.with_authorship(GoalAuthorship::System(SystemOrigin::Tool {
-        tool_id: ToolId::new("product/onboarding"),
-    }));
+    let system_request = request.with_authorship(GoalAuthorship::System(SystemOrigin::Tool));
     assert!(matches!(
         system_request.authorship,
         GoalAuthorship::System(_)

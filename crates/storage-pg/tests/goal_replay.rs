@@ -24,7 +24,7 @@ use proxiima_core::verbs::goal_write::{
 use proxiima_core::{
     DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId, GoalPayload, KeyField,
     OwnerId, PayloadDisplay, PayloadProjection, PendingWork, SchemaId, SchemaVersion,
-    SimpleTextGoalV1, SpiiceRegistry, StorageError, ToolId, UserId,
+    SimpleTextGoalV1, SpiiceRegistry, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -1149,9 +1149,7 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
             "metadata rotation",
             vec![GoalEvidenceRef::new(abstraction.memory_id)],
         )?;
-        category_changed_draft.authorship = GoalAuthorship::System(SystemOrigin::Tool {
-            tool_id: ToolId::new("test/tool"),
-        });
+        category_changed_draft.authorship = GoalAuthorship::System(SystemOrigin::Tool);
         let err = pg
             .create_goal_atomic(
                 &CreateGoalAtomicRequest {

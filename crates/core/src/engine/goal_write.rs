@@ -797,7 +797,7 @@ mod tests {
     use crate::verbs::goal_write::{
         GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, SystemOrigin,
     };
-    use crate::{Engine, GoalId, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry, ToolId};
+    use crate::{Engine, GoalId, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry};
 
     fn engine() -> Engine {
         Engine::new(
@@ -864,9 +864,7 @@ mod tests {
     }
 
     fn tool_authorship() -> GoalAuthorship {
-        GoalAuthorship::System(SystemOrigin::Tool {
-            tool_id: ToolId::new("test/tool"),
-        })
+        GoalAuthorship::System(SystemOrigin::Tool)
     }
 
     fn assert_forbidden(err: &ProtocolError) {

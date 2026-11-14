@@ -11,7 +11,7 @@ use crate::verbs::goal_write::{
     GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome, IdempotencyKey, SystemOrigin,
 };
 use crate::verbs::schema::PayloadKind;
-use crate::{GoalHandle, PendingWork, SchemaId, SchemaVersion, ToolId};
+use crate::{GoalHandle, PendingWork, SchemaId, SchemaVersion};
 use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -777,9 +777,7 @@ async fn goal_mark_achieved(
             &GoalMarkAchievedRequest {
                 owner,
                 prior_goal_id: prior,
-                authorship: GoalAuthorship::System(SystemOrigin::Tool {
-                    tool_id: ToolId::new(protocol_action::CORE_GOAL_MARK_ACHIEVED),
-                }),
+                authorship: GoalAuthorship::System(SystemOrigin::Tool),
                 request_id,
                 evidence,
                 author_self_perspective_id: ctx.caller_self_perspective(),
