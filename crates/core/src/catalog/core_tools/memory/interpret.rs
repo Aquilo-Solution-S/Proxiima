@@ -231,7 +231,7 @@ async fn prepare_interpretation(
     let planning_namespace = match destination {
         crate::MemoryDestination::Owner(owner) => owner.into_inner(),
         crate::MemoryDestination::WorkingGoal(goal) => {
-            super::derive::goal_planning_namespace(ctx, goal)?
+            super::derive::goal_planning_namespace(ctx, goal)
         }
     };
     let memory_id = MemoryId::new(interpretation_memory_id(

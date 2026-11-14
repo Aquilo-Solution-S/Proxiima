@@ -185,7 +185,7 @@ async fn accepted_token_uses_issuer_subject_map_and_owner_roles() {
         .expect("authenticate valid token");
 
     assert_eq!(ctx.auth_path(), AuthPath::HostBearer);
-    assert_eq!(ctx.subject(), Some(subject));
+    assert_eq!(ctx.subject(), subject);
     assert!(ctx.may_manage(&OwnerId::from(group)));
     assert!(ctx.expires_at().is_some());
 }
@@ -363,7 +363,7 @@ async fn mapped_subject_authenticates_with_personal_owner_access() {
         .expect("authenticate valid token");
 
     assert_eq!(ctx.auth_path(), AuthPath::HostBearer);
-    assert_eq!(ctx.subject(), Some(subject));
+    assert_eq!(ctx.subject(), subject);
     assert_eq!(ctx.principal(), owner);
     assert!(ctx.can_access_owner(&owner));
     assert!(ctx.expires_at().is_some());
@@ -400,7 +400,7 @@ async fn a_mapped_runner_principal_carries_its_trusted_model_id() {
         .await
         .expect("authenticate valid token");
 
-    assert_eq!(ctx.subject(), Some(subject));
+    assert_eq!(ctx.subject(), subject);
     assert_eq!(ctx.trusted_model_id(), Some("acme/runner-v3"));
 }
 

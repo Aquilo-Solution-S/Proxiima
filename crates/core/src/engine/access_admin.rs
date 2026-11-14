@@ -417,7 +417,7 @@ impl Engine {
         }
         // The one role rule: the caller's own id holds the personal role,
         // which never manages, so it can never consent as a destination.
-        if authz.subject().map(OwnerId::from) == Some(to_owner) {
+        if OwnerId::from(authz.subject()) == to_owner {
             return Err(ProtocolError::invalid_argument(
                 "to_owner",
                 "transfer destination must be a group owner: receiving-side consent is \
@@ -440,7 +440,7 @@ impl Engine {
             .map_err(|err| storage_error("visible_home_owner", &err))?
             .ok_or_else(|| ProtocolError::not_found("entity not found"))?;
         let mut permit = self.authorize_owner_admin(authz, &current_owner).await?;
-        if authz.subject().map(OwnerId::from) != Some(current_owner) {
+        if OwnerId::from(authz.subject()) != current_owner {
             require_group_manage(authz, &current_owner)?;
         }
         // Receiving side: the destination consents by the caller holding
@@ -582,9 +582,7 @@ impl Engine {
         if authz.auth_path() == AuthPath::Delegated || authz.verified_forwarded_owner().is_some() {
             return Err(refused());
         }
-        let Some(subject) = authz.subject() else {
-            return Err(refused());
-        };
+        let subject = authz.subject();
         let memberships = self
             .storage()
             .access_admin
@@ -652,9 +650,7 @@ fn member_manage_authority(authz: &AuthzContext, member: OwnerId) -> MembershipM
 }
 
 fn actor_uuid(authz: &AuthzContext) -> uuid::Uuid {
-    authz
-        .subject()
-        .map_or_else(|| authz.principal().into_inner(), UserId::into_inner)
+    authz.subject().into_inner()
 }
 
 fn storage_error(context: &str, err: &StorageError) -> ProtocolError {
@@ -683,9 +679,9 @@ fn with_parent_caller<'a>(
     permit: MembershipWritePermit<'a>,
     authz: &AuthzContext,
 ) -> MembershipWritePermit<'a> {
-    match (permit.endpoint_authority(), authz.subject()) {
-        (MembershipEndpointAuthority::Parent, Some(caller)) => permit.with_caller(caller),
-        _ => permit,
+    match permit.endpoint_authority() {
+        MembershipEndpointAuthority::Parent => permit.with_caller(authz.subject()),
+        MembershipEndpointAuthority::Member => permit,
     }
 }
 
@@ -849,8 +845,7 @@ mod tests {
                 via: None,
             },
         )
-        .seal_verified_scope()
-        .expect("a forwarded context seals");
+        .seal_verified_scope();
 
         let refusal = engine
             .authorize_transfer_destination_out_of_band(&forwarded, &destination.into())

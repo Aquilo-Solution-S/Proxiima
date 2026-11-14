@@ -168,7 +168,7 @@ async fn forwarded_owner_resolves_exact_policy_role_and_preserves_authenticated_
 
         let ctx = auth.resolve("host-token", owner).await.unwrap();
         assert_eq!(ctx.owner, owner);
-        assert_eq!(ctx.authz.subject(), Some(subject));
+        assert_eq!(ctx.authz.subject(), subject);
         assert_eq!(ctx.authz.principal(), OwnerId::from(subject));
         assert_eq!(ctx.authz.verified_forwarded_owner(), Some(owner));
         assert_eq!(
@@ -430,7 +430,7 @@ async fn host_principal_cannot_narrow_to_unauthorized_personal_or_group() {
         .resolve("host-token", authorized)
         .await
         .expect("authorized group narrows");
-    assert_eq!(selected.authz.subject(), Some(subject));
+    assert_eq!(selected.authz.subject(), subject);
     assert!(
         selected
             .authz

@@ -328,11 +328,7 @@ fn resolve_group(ctx: &ToolCtx, raw: &str) -> Result<GroupId, ToolError> {
     // The caller's own id is its personal owner, never a group. Whether any
     // other id names a group is the registry's to say: a membership write
     // under a user's id is refused by the database.
-    if ctx
-        .authz()
-        .subject()
-        .is_some_and(|subject| owner == subject.into())
-    {
+    if owner == ctx.authz().subject().into() {
         return Err(ToolError::InvalidInput("not a group".into()));
     }
     Ok(owner.as_group())

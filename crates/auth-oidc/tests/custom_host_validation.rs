@@ -306,7 +306,7 @@ async fn a_mapped_runner_principal_reaches_the_edge_with_its_trusted_model_id() 
         .expect("mapped principal authenticates");
 
     assert_eq!(ctx.trusted_model_id(), Some(RUNNER_MODEL));
-    assert_eq!(ctx.subject(), Some(user_id));
+    assert_eq!(ctx.subject(), user_id);
 
     // Owner narrowing is the last thing the edge does before dispatch; the
     // bound identity must still be there afterwards.
@@ -333,7 +333,7 @@ async fn a_principal_the_map_declares_no_runner_for_carries_none() {
         .expect("mapped principal authenticates");
 
     assert_eq!(ctx.trusted_model_id(), None);
-    assert_eq!(ctx.subject(), Some(user_id));
+    assert_eq!(ctx.subject(), user_id);
 }
 
 /// A caller that merely *presents* the runner's `sub` gains nothing: an
@@ -597,14 +597,14 @@ async fn forwarded_owner_remains_pending_in_single_and_multiple_bindings() {
             .await
             .expect("a verified owner claim authenticates");
         assert_eq!(context.verified_claims(), claims.as_object(), "{path}");
-        assert_eq!(context.subject(), Some(forwarding_subject()), "{path}");
+        assert_eq!(context.subject(), forwarding_subject(), "{path}");
         assert_eq!(
             context.principal(),
             OwnerId::from(forwarding_subject()),
             "{path}"
         );
         assert_eq!(context.verified_forwarded_owner(), Some(owner), "{path}");
-        assert_eq!(context.writer(), Some(forwarded_writer()), "{path}");
+        assert_eq!(context.writer(), forwarded_writer(), "{path}");
         assert_eq!(
             context.owner_scope().unwrap().writer(),
             forwarded_writer(),
@@ -686,7 +686,7 @@ async fn forwarded_writer_requires_by_and_a_present_nullable_via() {
                     forwarded_writer().via
                 },
             };
-            assert_eq!(context.writer(), Some(writer), "{path}");
+            assert_eq!(context.writer(), writer, "{path}");
             assert_eq!(context.owner_scope().unwrap().writer(), writer, "{path}");
             assert_eq!(
                 context.principal(),
@@ -745,15 +745,15 @@ async fn forwarded_owner_claim_is_ignored_for_an_ordinary_subject() {
                 .authenticate(&Credentials::Bearer(signed_claims(&keys, &claims, "JWT")))
                 .await
                 .expect("an ordinary subject ignores the owner claim");
-            assert_eq!(context.subject(), Some(ordinary_subject()), "{path}");
+            assert_eq!(context.subject(), ordinary_subject(), "{path}");
             assert_eq!(context.verified_forwarded_owner(), None, "{path}");
             assert_eq!(context.default_owner(), None, "{path}");
             assert_eq!(
                 context.writer(),
-                Some(WriterAttribution {
+                WriterAttribution {
                     by: ordinary_subject().into_inner(),
                     via: None,
-                }),
+                },
                 "{path}"
             );
             assert_eq!(
@@ -788,7 +788,7 @@ async fn ordinary_writer_ignores_forwarded_attribution_claims() {
                 by: ordinary_subject().into_inner(),
                 via: None,
             };
-            assert_eq!(context.writer(), Some(direct), "{path}");
+            assert_eq!(context.writer(), direct, "{path}");
             assert_eq!(context.owner_scope().unwrap().writer(), direct, "{path}");
         }
     }
@@ -874,7 +874,7 @@ impl OidcRoleShaper for ForwardingShape {
         context: AuthzContext,
         _token: &ValidatedOidcToken<OidcClaimMap>,
     ) -> Result<AuthzContext, AuthError> {
-        let subject = context.subject().expect("authenticated subject");
+        let subject = context.subject();
         let owner = context.verified_forwarded_owner().expect("verified owner");
         let context = match self {
             Self::Preserve => {
@@ -884,7 +884,7 @@ impl OidcRoleShaper for ForwardingShape {
             Self::Change => AuthzContext::from_verified_forwarded_owner(
                 subject,
                 OwnerId::from(UserId::new(Uuid::now_v7())),
-                context.writer().expect("attested writer"),
+                context.writer(),
             ),
             Self::ChangeWriter => context
                 .with_attested_writer(WriterAttribution {
@@ -929,8 +929,8 @@ async fn forwarded_owner_host_shaping_preserves_the_pending_binding() {
         .await
         .expect("narrowing shape");
     assert_eq!(context.verified_forwarded_owner(), Some(owner));
-    assert_eq!(context.subject(), Some(forwarding_subject()));
-    assert_eq!(context.writer(), Some(forwarded_writer()));
+    assert_eq!(context.subject(), forwarding_subject());
+    assert_eq!(context.writer(), forwarded_writer());
     assert_eq!(context.trusted_model_id(), Some(FORWARDING_MODEL));
     assert_eq!(
         context.publication_extensions().get("forwarding"),

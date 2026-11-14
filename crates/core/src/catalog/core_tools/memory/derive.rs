@@ -348,7 +348,7 @@ async fn derive_call(ctx: ToolCtx, args: DeriveArgs) -> Result<DeriveOutput, Too
     )?;
     let planning_namespace = match destination {
         crate::MemoryDestination::Owner(owner) => owner.into_inner(),
-        crate::MemoryDestination::WorkingGoal(goal) => goal_planning_namespace(&ctx, goal)?,
+        crate::MemoryDestination::WorkingGoal(goal) => goal_planning_namespace(&ctx, goal),
     };
     let plan = plan_derivation(
         &ctx,
@@ -665,18 +665,12 @@ fn derived_memory_id(namespace: uuid::Uuid, kind: &str, key: &str) -> uuid::Uuid
     uuid::Uuid::new_v5(&DERIVED_NAMESPACE, &buf)
 }
 
-pub(crate) fn goal_planning_namespace(
-    ctx: &ToolCtx,
-    goal: crate::GoalHandle,
-) -> Result<uuid::Uuid, ToolError> {
-    let subject = ctx
-        .authz()
-        .subject()
-        .ok_or_else(|| ToolError::InvalidInput("working_goal requires a subject".into()))?;
+pub(crate) fn goal_planning_namespace(ctx: &ToolCtx, goal: crate::GoalHandle) -> uuid::Uuid {
+    let subject = ctx.authz().subject();
     let mut identity = ctx.owner().into_inner().as_bytes().to_vec();
     identity.extend_from_slice(goal.into_inner().as_bytes());
     identity.extend_from_slice(subject.into_inner().as_bytes());
-    Ok(uuid::Uuid::new_v5(&DERIVED_NAMESPACE, &identity))
+    uuid::Uuid::new_v5(&DERIVED_NAMESPACE, &identity)
 }
 
 #[cfg(test)]

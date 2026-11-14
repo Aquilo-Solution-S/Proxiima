@@ -447,7 +447,7 @@ mod pinned_jwks {
             .await
             .expect("pinned key verifies its token");
 
-        assert_eq!(ctx.subject(), Some(UserId::new(user)));
+        assert_eq!(ctx.subject(), UserId::new(user));
         issuer.assert_never_contacted();
     }
 

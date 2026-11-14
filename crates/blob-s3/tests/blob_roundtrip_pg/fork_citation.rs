@@ -153,7 +153,7 @@ async fn prepare_fork(
         .create_goal(
             source_auth,
             GoalCreateRequest {
-                owner: OwnerId::from(source_auth.subject().expect("source subject")),
+                owner: OwnerId::from(source_auth.subject()),
                 topology: GoalTopologyWrite::new(Vec::new(), Vec::new(), Vec::new())
                     .expect("empty topology"),
                 title: "fork citation".into(),

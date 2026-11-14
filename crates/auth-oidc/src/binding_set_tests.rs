@@ -458,7 +458,7 @@ async fn a_host_role_shape_sees_every_verified_claim() {
         )))
         .await
         .expect("the shaper admits a tenant token");
-    assert_eq!(ctx.subject(), Some(owner));
+    assert_eq!(ctx.subject(), owner);
     assert!(ctx.tool_scope().allows(&key("acme_tool")));
     assert!(!ctx.tool_scope().allows(&key("core_membership")));
 
@@ -508,7 +508,7 @@ impl OidcRoleShaper for Reshape {
         context: AuthzContext,
         _token: &ValidatedOidcToken<OidcClaimMap>,
     ) -> Result<AuthzContext, AuthError> {
-        let subject = context.subject().expect("resolved subject");
+        let subject = context.subject();
         Ok(match self {
             Self::Widen => AuthzContext::for_subject_with_role(
                 subject,
@@ -707,7 +707,7 @@ async fn only_the_bindings_of_the_claimed_issuer_look_up_keys() {
         .expect("the owner binding of ISSUER accepts");
     assert_eq!(ctx.auth_path(), AuthPath::HostBearer);
     assert_eq!(ctx.verified_claims(), claims.as_object());
-    let owner = OwnerId::from(ctx.subject().expect("mapped subject"));
+    let owner = OwnerId::from(ctx.subject());
     let narrowed = ctx.narrowed_to_owner(owner).expect("own personal owner");
     assert_eq!(narrowed.verified_claims(), claims.as_object());
     assert_eq!(lookups(&counters), [1, 1, 0]);

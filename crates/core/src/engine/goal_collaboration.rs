@@ -260,12 +260,7 @@ impl Engine {
     ) -> Result<crate::storage_ports::OwnerWritePermit, ProtocolError> {
         let permit = self.authorize_owner_admin(authz, &owner).await?;
         if *permit.owner() != owner
-            || !(OwnerId::from(
-                authz
-                    .subject()
-                    .ok_or_else(|| ProtocolError::forbidden("authenticated subject required"))?,
-            ) == owner
-                || authz.may_manage(&owner))
+            || !(OwnerId::from(authz.subject()) == owner || authz.may_manage(&owner))
         {
             return Err(ProtocolError::forbidden(
                 "source-owner sharing authority required",

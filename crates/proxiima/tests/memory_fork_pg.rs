@@ -205,8 +205,8 @@ async fn erase_grounding_and_clean_fork(
     fact: MemoryId,
     fork_head: MemoryId,
 ) -> MemoryId {
-    let source_owner = OwnerId::from(source_auth.subject().expect("source subject"));
-    let destination_owner = OwnerId::from(destination_auth.subject().expect("destination subject"));
+    let source_owner = OwnerId::from(source_auth.subject());
+    let destination_owner = OwnerId::from(destination_auth.subject());
     let mut erase = host
         .engine
         .unit_of_work(source_auth)
@@ -329,7 +329,7 @@ async fn publish_cited_fork(
     memory: MemoryId,
     recipient: UserId,
 ) -> GoalHandle {
-    let owner = OwnerId::from(auth.subject().expect("source subject"));
+    let owner = OwnerId::from(auth.subject());
     let goal = create_goal(host, auth, owner, "citation fork").await;
     host.engine
         .grant_goal_access(

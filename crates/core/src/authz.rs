@@ -63,8 +63,8 @@ where
 /// in the context's owner scope; ask [`AuthzContext`] for either.
 #[derive(Debug, Clone, PartialEq)]
 struct Identity {
-    subject: Option<UserId>,
-    writer: Option<WriterAttribution>,
+    subject: UserId,
+    writer: WriterAttribution,
     principal: OwnerId,
     /// Model/runner identity the authenticator bound to this principal.
     ///
@@ -666,14 +666,13 @@ impl AuthzContext {
     ///
     /// # Errors
     ///
-    /// Returns the host authentication error, or `InvalidCredentials` when
-    /// the host returned a context without an attested writer.
+    /// Returns the host authentication error.
     pub async fn authenticate(
         authenticator: &dyn Authenticator,
         credentials: &Credentials,
     ) -> Result<Self, AuthError> {
         let context = authenticator.authenticate(credentials).await?;
-        context.seal_verified_scope()
+        Ok(context.seal_verified_scope())
     }
 
     /// A sealed [`AuthPath::System`] context for backend work that has no
@@ -736,8 +735,8 @@ impl AuthzContext {
             .expect("single owner's verified role is self-accessible")
     }
 
-    pub(crate) fn seal_verified_scope(mut self) -> Result<Self, AuthError> {
-        let writer = self.writer().ok_or(AuthError::InvalidCredentials)?;
+    pub(crate) fn seal_verified_scope(mut self) -> Self {
+        let writer = self.writer();
         self.owner_scope = self.owner_scope.sealed_by(writer);
         if self.auth_path == AuthPath::HostBearer
             && self.forwarded_owner.is_none()
@@ -749,7 +748,7 @@ impl AuthzContext {
                     crate::goal_collaboration::GoalPrincipalScope::new(subject),
                 ));
         }
-        Ok(self)
+        self
     }
 
     #[must_use]
@@ -758,7 +757,7 @@ impl AuthzContext {
     }
 
     #[must_use]
-    pub fn subject(&self) -> Option<UserId> {
+    pub fn subject(&self) -> UserId {
         self.identity.subject
     }
 
@@ -875,7 +874,7 @@ impl AuthzContext {
 
     /// The writer attested by the authenticator, before or after scope sealing.
     #[must_use]
-    pub const fn writer(&self) -> Option<WriterAttribution> {
+    pub const fn writer(&self) -> WriterAttribution {
         self.identity.writer
     }
 
@@ -888,7 +887,7 @@ impl AuthzContext {
         if self.owner_scope().is_some() {
             return None;
         }
-        self.identity.writer = Some(writer);
+        self.identity.writer = writer;
         Some(self)
     }
 
@@ -1020,8 +1019,8 @@ impl AuthzContext {
         let subject = owner_roles.subject();
         Self {
             identity: Identity {
-                subject: Some(subject),
-                writer: Some(writer),
+                subject,
+                writer,
                 principal: OwnerId::from(subject),
                 trusted_model_id: None,
             },
@@ -1078,7 +1077,7 @@ impl AuthzContext {
         if self.forwarded_owner != Some(owner) || scope.is_expired() {
             return None;
         }
-        let subject = self.subject()?;
+        let subject = self.subject();
         if !port
             .is_forwarder(subject)
             .inspect_err(|error| {
@@ -1315,7 +1314,7 @@ impl AuthzContext {
         if scope.is_expired() {
             return None;
         }
-        let subject = self.subject()?;
+        let subject = self.subject();
         let role = port.resolve_group_role(subject, group).await.ok()??;
         let scope = scope.add_group_role(group, role)?;
         let mut next = self.clone();
@@ -1375,8 +1374,7 @@ pub trait Authenticator: Send + Sync {
 ///
 /// # Errors
 ///
-/// Returns the host authentication error, or `InvalidCredentials` when the
-/// host returned a context without an attested writer.
+/// Returns the host authentication error.
 pub async fn authenticate(
     authenticator: &dyn Authenticator,
     credentials: &Credentials,

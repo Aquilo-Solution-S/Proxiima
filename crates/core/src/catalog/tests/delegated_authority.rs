@@ -230,7 +230,6 @@ fn source(
         .with_expires_at(Some(expires_at))
         .with_tool_scope(scope)
         .seal_verified_scope()
-        .expect("synthetic verified identity")
 }
 
 fn runtime(
@@ -350,8 +349,7 @@ async fn writer_survives_durable_delegation_and_redemption() {
         .with_attested_writer(writer)
         .unwrap()
         .with_expires_at(Some(SystemTime::now() + Duration::from_mins(1)))
-        .seal_verified_scope()
-        .unwrap();
+        .seal_verified_scope();
         let issued = service
             .issue(&caller, owner, command.clone(), Role::editor())
             .await
@@ -386,9 +384,9 @@ async fn writer_survives_durable_delegation_and_redemption() {
             .await
             .unwrap();
         let operation = crate::authz::context_for_engine_operation(&phase).unwrap();
-        assert_eq!(operation.authz().writer(), Some(writer));
+        assert_eq!(operation.authz().writer(), writer);
         assert_eq!(operation.authz().owner_scope().unwrap().writer(), writer);
-        assert_eq!(operation.authz().subject(), Some(subject));
+        assert_eq!(operation.authz().subject(), subject);
         let authorized = engine
             .authorize_fact_ingest(&phase, fact(), &[])
             .await
@@ -484,8 +482,7 @@ async fn a_managing_ceiling_is_refused_at_issue_and_at_decode() {
         AuthPath::HostBearer,
     )
     .with_expires_at(Some(expires_at))
-    .seal_verified_scope()
-    .expect("synthetic verified identity");
+    .seal_verified_scope();
     assert!(matches!(
         service
             .issue(&admin, owner, command.clone(), Role::admin())
@@ -701,8 +698,7 @@ async fn forwarded_owner_cannot_delegate_even_with_ordinary_membership() {
         },
     )
     .with_expires_at(Some(SystemTime::now() + Duration::from_mins(1)))
-    .seal_verified_scope()
-    .unwrap();
+    .seal_verified_scope();
     let forwarded = pending
         .with_authenticated_forwarded_owner(&policy, owner)
         .await

@@ -248,8 +248,6 @@ pub enum DelegationRevocation {
 pub enum DelegatedAuthorityError {
     #[error("only a host bearer may issue or revoke delegated authority")]
     HostBearerRequired,
-    #[error("authenticated subject is missing")]
-    MissingSubject,
     #[error("the source bearer has no finite expiry")]
     MissingBearerExpiry,
     #[error("the source bearer or delegated grant has expired")]
@@ -631,8 +629,7 @@ impl DelegatedAuthorityService {
         // The durable grant was issued from a verified bearer. Redemption
         // rechecks expiry, current membership and ceiling above.
         // Seal only after those checks; never reconstruct from a queued owner.
-        .seal_verified_scope()
-        .map_err(|_| DelegatedAuthorityError::MembershipRevoked)?;
+        .seal_verified_scope();
         Ok(DelegatedPhase::new(authz, self.runtime_binding.clone()))
     }
 
@@ -692,9 +689,7 @@ impl DelegatedAuthorityService {
         {
             return Err(DelegatedAuthorityError::HostBearerRequired);
         }
-        let subject = source
-            .subject()
-            .ok_or(DelegatedAuthorityError::MissingSubject)?;
+        let subject = source.subject();
         let scope = source
             .owner_scope()
             .ok_or(DelegatedAuthorityError::HostBearerRequired)?;

@@ -70,10 +70,10 @@ async fn writer_is_sealed_once_and_preserved_by_narrowing_and_revalidation() {
     );
     assert_eq!(
         context.writer(),
-        Some(WriterAttribution {
+        WriterAttribution {
             by: subject.into_inner(),
             via: None
-        })
+        }
     );
     let writer = forwarded_writer();
     let context = context.with_attested_writer(writer).unwrap();
@@ -83,13 +83,13 @@ async fn writer_is_sealed_once_and_preserved_by_narrowing_and_revalidation() {
     )
     .await
     .unwrap();
-    assert_eq!(sealed.writer(), Some(writer));
+    assert_eq!(sealed.writer(), writer);
     assert_eq!(sealed.owner_scope().unwrap().writer(), writer);
     let narrowed = sealed.clone().narrowed_to_owner(group).unwrap();
-    assert_eq!(narrowed.writer(), Some(writer));
+    assert_eq!(narrowed.writer(), writer);
     assert_eq!(narrowed.owner_scope().unwrap().writer(), writer);
-    assert_eq!(narrowed.identity.writer, Some(writer));
-    assert_eq!(narrowed.subject(), Some(subject));
+    assert_eq!(narrowed.identity.writer, writer);
+    assert_eq!(narrowed.subject(), subject);
     assert_eq!(narrowed.principal(), OwnerId::from(subject));
     assert!(
         sealed
@@ -98,21 +98,6 @@ async fn writer_is_sealed_once_and_preserved_by_narrowing_and_revalidation() {
                 via: None,
             })
             .is_none()
-    );
-}
-
-#[tokio::test]
-async fn writer_missing_at_authentication_refuses_to_seal() {
-    let subject = UserId::new(uuid::Uuid::now_v7());
-    let mut context = AuthzContext::for_subject(subject, AuthPath::HostBearer);
-    context.identity.writer = None;
-    assert_eq!(
-        authenticate(
-            &VerifiedAuthenticator { context },
-            &Credentials::Bearer("verified".into()),
-        )
-        .await,
-        Err(AuthError::InvalidCredentials)
     );
 }
 
@@ -128,12 +113,12 @@ fn a_system_context_is_sealed_from_the_witness_without_a_bearer() {
     let context = AuthzContext::for_system(&authority, roles);
 
     assert_eq!(context.auth_path(), AuthPath::System);
-    assert_eq!(context.subject(), Some(subject));
+    assert_eq!(context.subject(), subject);
     let writer = WriterAttribution {
         by: subject.into_inner(),
         via: None,
     };
-    assert_eq!(context.writer(), Some(writer));
+    assert_eq!(context.writer(), writer);
     assert_eq!(context.owner_scope().unwrap().writer(), writer);
     assert!(context.owner_scope().is_some(), "the owner scope is sealed");
     assert!(context.may_write(&group, MemoryKind::Fact));
@@ -162,12 +147,12 @@ fn insecure_single_owner_scope_cannot_expand_beyond_its_owner() {
     assert_eq!(scope.writable_owners(MemoryKind::Fact), vec![group]);
     assert_eq!(
         context.writer(),
-        Some(WriterAttribution {
+        WriterAttribution {
             by: group.into_inner(),
             via: None
-        })
+        }
     );
-    assert_eq!(scope.writer(), context.writer().unwrap());
+    assert_eq!(scope.writer(), context.writer());
     assert!(!context.can_access_owner(&personal));
     assert!(!scope.may_write(&personal, MemoryKind::Fact));
     assert!(
@@ -338,9 +323,9 @@ async fn forwarded_owner_scope_is_exact_and_keeps_the_forwarding_identity() {
                 .await
                 .unwrap();
             assert_eq!(port.probes.load(Ordering::SeqCst), 1);
-            assert_eq!(bound.subject(), Some(subject));
-            assert_eq!(bound.writer(), Some(forwarded_writer()));
-            assert_eq!(bound.identity.writer, Some(forwarded_writer()));
+            assert_eq!(bound.subject(), subject);
+            assert_eq!(bound.writer(), forwarded_writer());
+            assert_eq!(bound.identity.writer, forwarded_writer());
             assert_eq!(bound.principal(), OwnerId::from(subject));
             assert_eq!(bound.verified_forwarded_owner(), Some(owner));
             assert_eq!(bound.role_for_owner(&owner), Some(role));
@@ -388,8 +373,7 @@ async fn forwarded_owner_refuses_expiry_unknown_owners_and_unconfigured_subjects
     };
     let expired = AuthzContext::from_verified_forwarded_owner(subject, owner, forwarded_writer())
         .with_expires_at(Some(SystemTime::UNIX_EPOCH))
-        .seal_verified_scope()
-        .unwrap();
+        .seal_verified_scope();
     assert!(
         expired
             .with_authenticated_forwarded_owner(&port, owner)
@@ -401,8 +385,7 @@ async fn forwarded_owner_refuses_expiry_unknown_owners_and_unconfigured_subjects
         owner,
         forwarded_writer(),
     )
-    .seal_verified_scope()
-    .unwrap();
+    .seal_verified_scope();
     assert!(
         unconfigured
             .with_authenticated_forwarded_owner(&port, owner)
@@ -411,8 +394,7 @@ async fn forwarded_owner_refuses_expiry_unknown_owners_and_unconfigured_subjects
     );
     assert_eq!(port.probes.load(Ordering::SeqCst), 0);
     let unknown = AuthzContext::from_verified_forwarded_owner(subject, owner, forwarded_writer())
-        .seal_verified_scope()
-        .unwrap();
+        .seal_verified_scope();
     assert!(
         unknown
             .with_authenticated_forwarded_owner(&port, owner)
@@ -436,8 +418,7 @@ async fn forwarded_owner_binding_cannot_extend_the_sealed_expiry() {
     let sealed_expiry = SystemTime::now() + Duration::from_mins(2);
     let pending = AuthzContext::from_verified_forwarded_owner(subject, owner, forwarded_writer())
         .with_expires_at(Some(sealed_expiry))
-        .seal_verified_scope()
-        .unwrap();
+        .seal_verified_scope();
     let earlier = sealed_expiry - Duration::from_mins(1);
     for (changed, expected) in [
         (None, sealed_expiry),
@@ -512,7 +493,7 @@ fn resolved_subject_context_gets_role_ceilings() {
 
     let ctx = AuthzContext::server_resolved(roles, AuthPath::HostBearer);
 
-    assert_eq!(ctx.subject(), Some(subject));
+    assert_eq!(ctx.subject(), subject);
     assert!(ctx.may_administer(&OwnerId::from(subject)));
     assert!(ctx.may_write(&group, MemoryKind::Perspective));
     assert!(ctx.may_work_goals(&group));
@@ -539,7 +520,6 @@ fn the_bound_reader_follows_the_contexts_deadline() {
     )
     .with_expires_at(Some(SystemTime::now() + Duration::from_mins(5)))
     .seal_verified_scope()
-    .unwrap()
     .with_read_set(crate::ReadSet::default())
     .unwrap();
     let narrowed = bound.narrowed_to_owner(group).unwrap();
@@ -571,8 +551,7 @@ fn roles_accessible_owners_and_expiry_answer_from_one_state() {
         AuthPath::HostBearer,
     )
     .with_expires_at(Some(deadline))
-    .seal_verified_scope()
-    .unwrap();
+    .seal_verified_scope();
 
     let narrowed = sealed.clone().narrowed_to_owner(group).unwrap();
     let scope = narrowed.owner_scope().unwrap();
@@ -625,7 +604,7 @@ fn a_host_resolved_role_narrows_to_exactly_that_owner() {
         .narrowed_to_owner(group)
         .expect("the one narrowing path now finds the role");
 
-    assert_eq!(narrowed.subject(), Some(subject));
+    assert_eq!(narrowed.subject(), subject);
     assert_eq!(narrowed.auth_path(), AuthPath::HostBearer);
     assert_eq!(narrowed.role_for_owner(&group), Some(Role::editor()));
     assert!(narrowed.may_write(&group, MemoryKind::Perspective));
@@ -820,7 +799,7 @@ fn a_trusted_model_id_survives_owner_narrowing_and_revalidation() {
         .narrowed_to_owner(group)
         .expect("editor narrows to the group owner");
     assert_eq!(narrowed.trusted_model_id(), Some("runner/pinned"));
-    assert_eq!(narrowed.subject(), Some(subject));
+    assert_eq!(narrowed.subject(), subject);
 
     let personal = ctx
         .narrowed_to_owner(OwnerId::from(subject))
@@ -1457,7 +1436,7 @@ fn bound_publication_extensions_merge_and_never_overwrite() {
     // stream does not — they are run context, not identity material.
     let narrowed = ctx
         .clone()
-        .narrowed_to_owner(OwnerId::from(ctx.identity.subject.expect("a subject")))
+        .narrowed_to_owner(OwnerId::from(ctx.identity.subject))
         .expect("a subject may narrow to itself");
     assert_eq!(narrowed.publication_extensions().len(), 2);
 }

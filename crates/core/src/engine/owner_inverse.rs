@@ -43,7 +43,7 @@ impl Engine {
         OwnerEraseContext::new(
             uuid::Uuid::now_v7(),
             target,
-            authz.subject(),
+            Some(authz.subject()),
             authz.auth_path(),
             time::OffsetDateTime::now_utc(),
         )
@@ -53,7 +53,7 @@ impl Engine {
         OwnerExportContext::new(
             uuid::Uuid::now_v7(),
             target,
-            authz.subject(),
+            Some(authz.subject()),
             authz.auth_path(),
             time::OffsetDateTime::now_utc(),
         )

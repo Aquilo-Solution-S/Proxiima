@@ -58,7 +58,7 @@ impl ResolvedAuth {
     /// Resolve one missing Group role through the host access port and merge it
     /// into the authenticated map; missing answers leave the map unchanged.
     async fn filled_from(self, port: Option<&dyn OwnerAccessPort>, group: GroupId) -> Option<Self> {
-        let (Some(port), Some(_subject)) = (port, self.authz.subject()) else {
+        let Some(port) = port else {
             return Some(self);
         };
         Some(Self {
@@ -152,10 +152,9 @@ impl EdgeAuth {
                 .await?;
             return Some(AuthContext::bound(authz, owner));
         }
-        if let (Some(port), Some(subject)) =
-            (self.owner_access.as_deref(), resolved.authz.subject())
+        if let Some(port) = self.owner_access.as_deref()
             && port
-                .is_forwarder(subject)
+                .is_forwarder(resolved.authz.subject())
                 .inspect_err(|error| {
                     tracing::warn!(%error, "mcp edge: forwarding policy resolution failed");
                 })
