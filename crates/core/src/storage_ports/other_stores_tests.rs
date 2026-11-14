@@ -343,7 +343,7 @@ impl OtherStores for SlowOrigins {
 #[tokio::test(start_paused = true)]
 async fn origin_batch_deadline_bounds_255_slow_foreign_origins() {
     let owner = OwnerId::new(uuid::Uuid::now_v7());
-    let authz = AuthzContext::denied_for_owner(&owner);
+    let authz = crate::test_fixtures::no_access_context();
     let caller = StoreCaller {
         owner,
         authz: &authz,
@@ -373,7 +373,7 @@ async fn origin_batch_deadline_bounds_255_slow_foreign_origins() {
 #[tokio::test(start_paused = true)]
 async fn origin_batch_keeps_two_second_per_read_timeout() {
     let owner = OwnerId::new(uuid::Uuid::now_v7());
-    let authz = AuthzContext::denied_for_owner(&owner);
+    let authz = crate::test_fixtures::no_access_context();
     let caller = StoreCaller {
         owner,
         authz: &authz,
@@ -391,7 +391,7 @@ async fn origin_batch_keeps_two_second_per_read_timeout() {
 #[tokio::test(start_paused = true)]
 async fn origin_batch_reads_different_stores_concurrently() {
     let owner = OwnerId::new(uuid::Uuid::now_v7());
-    let authz = AuthzContext::denied_for_owner(&owner);
+    let authz = crate::test_fixtures::no_access_context();
     let caller = StoreCaller {
         owner,
         authz: &authz,

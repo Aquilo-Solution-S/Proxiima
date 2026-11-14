@@ -528,11 +528,7 @@ impl Engine {
         A: EngineAuthority + ?Sized,
     {
         let authz = self.operation_authority(authority)?.authz();
-        let owners = if authz.auth_path() == crate::authz::AuthPath::Denied {
-            Vec::new()
-        } else {
-            authz.writable_owners(MemoryKind::Fact)
-        };
+        let owners = authz.writable_owners(MemoryKind::Fact);
         match owners.as_slice() {
             [owner] => Ok(*owner),
             [] => Err(ProtocolError::forbidden(

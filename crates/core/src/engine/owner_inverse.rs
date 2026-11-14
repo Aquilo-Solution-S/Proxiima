@@ -66,12 +66,10 @@ impl Engine {
         match authz.auth_path() {
             AuthPath::Delegated => Authority::Settled(false),
             AuthPath::System => Authority::Settled(true),
-            AuthPath::HostBearer | AuthPath::Denied => {
-                match &self.storage.owner_inverse.erase_authority {
-                    Some(port) => Authority::Ask(port),
-                    None => Authority::Settled(false),
-                }
-            }
+            AuthPath::HostBearer => match &self.storage.owner_inverse.erase_authority {
+                Some(port) => Authority::Ask(port),
+                None => Authority::Settled(false),
+            },
         }
     }
 

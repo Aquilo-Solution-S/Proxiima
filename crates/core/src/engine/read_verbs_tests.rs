@@ -262,12 +262,15 @@ async fn search_rejects_a_fusion_weight_no_mode_would_use() {
 }
 
 #[tokio::test]
-async fn search_denies_denied_context() {
+async fn search_denies_a_context_without_access() {
     let owner = owner();
     let err = engine()
-        .search(&AuthzContext::denied_for_owner(&owner), &search_req(&owner))
+        .search(
+            &crate::test_fixtures::no_access_context(),
+            &search_req(&owner),
+        )
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
     assert_forbidden(&err);
 }
 
@@ -285,17 +288,16 @@ async fn search_body_or_neighbor_hydration_requires_viewer_relation() {
 }
 
 #[tokio::test]
-async fn get_memory_denies_denied_context() {
-    let owner = owner();
+async fn get_memory_denies_a_context_without_access() {
     let req = GetMemoryReadRequest {
         memory_id: MemoryId::new(uuid::Uuid::now_v7()),
         include_neighbor_edges: false,
         at: crate::storage_ports::other_stores::ReadAt::Version,
     };
     let err = engine()
-        .get_memory(&AuthzContext::denied_for_owner(&owner), &req)
+        .get_memory(&crate::test_fixtures::no_access_context(), &req)
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
     assert_forbidden(&err);
 }
 
@@ -338,47 +340,45 @@ async fn embedding_job_diagnostics_of_no_units_is_empty_after_authorization() {
         .expect("no units");
     assert!(rows.is_empty());
     let err = engine()
-        .embedding_job_diagnostics(&AuthzContext::denied_for_owner(&owner), &owner, &[])
+        .embedding_job_diagnostics(&crate::test_fixtures::no_access_context(), &owner, &[])
         .await
-        .expect_err("denied");
+        .expect_err("a context without access");
     assert_forbidden(&err);
 }
 
 #[tokio::test]
-async fn get_graph_denies_denied_context() {
+async fn get_graph_denies_a_context_without_access() {
     let owner = owner();
     let req = GetGraphReadRequest { owner };
     let err = engine()
-        .get_graph(&AuthzContext::denied_for_owner(&owner), &req)
+        .get_graph(&crate::test_fixtures::no_access_context(), &req)
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
     assert_forbidden(&err);
 }
 
 #[tokio::test]
-async fn read_fact_citation_denies_denied_context() {
-    let owner = owner();
+async fn read_fact_citation_denies_a_context_without_access() {
     let req = FactCitationReadRequest {
         fact_memory_id: MemoryId::new(uuid::Uuid::now_v7()),
     };
     let err = engine()
-        .read_fact_citation(&AuthzContext::denied_for_owner(&owner), &req)
+        .read_fact_citation(&crate::test_fixtures::no_access_context(), &req)
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
     assert_forbidden(&err);
 }
 
 #[tokio::test]
-async fn facts_citing_object_denies_denied_context() {
-    let owner = owner();
+async fn facts_citing_object_denies_a_context_without_access() {
     let req = FactsCitingObjectReadRequest {
         cited_object_id: uuid::Uuid::now_v7(),
         limit: 50,
         after: None,
     };
     let err = engine()
-        .facts_citing_object(&AuthzContext::denied_for_owner(&owner), &req)
+        .facts_citing_object(&crate::test_fixtures::no_access_context(), &req)
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
     assert_forbidden(&err);
 }

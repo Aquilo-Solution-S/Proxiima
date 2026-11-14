@@ -34,20 +34,24 @@ async fn host_tier_mints_an_owner_scope_through_authenticate() {
     assert_eq!(scope.subject(), proxiima::UserId::new(uuid::Uuid::nil()));
 
     // No ordinary constructor carries the witness.
-    let owner = proxiima::company_owner(uuid::Uuid::nil());
     assert!(
-        proxiima::AuthzContext::denied_for_owner(&owner)
-            .owner_scope()
-            .is_none()
+        proxiima::AuthzContext::for_subject(
+            proxiima::UserId::new(uuid::Uuid::nil()),
+            proxiima::AuthPath::HostBearer,
+        )
+        .owner_scope()
+        .is_none()
     );
 }
 
 #[test]
 fn host_tier_binds_publication_extensions() {
-    let owner = proxiima::company_owner(uuid::Uuid::nil());
     let bound: Result<proxiima::AuthzContext, proxiima::PublicationExtensionsError> =
-        proxiima::AuthzContext::denied_for_owner(&owner)
-            .with_publication_extensions(proxiima::PublicationExtensions::new());
+        proxiima::AuthzContext::for_subject(
+            proxiima::UserId::new(uuid::Uuid::nil()),
+            proxiima::AuthPath::HostBearer,
+        )
+        .with_publication_extensions(proxiima::PublicationExtensions::new());
     let bound = bound.expect("the empty set always binds");
     let value: Option<&proxiima::ExtensionValue> = bound.publication_extensions().get("tenant");
     assert!(value.is_none());

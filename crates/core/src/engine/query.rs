@@ -33,8 +33,8 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns `Forbidden` when the context authorizes no reads (a denied
-    /// context authorizes nothing), `InvalidArgument` when `req.limit == 0`
+    /// Returns `Forbidden` when the context reads no owner,
+    /// `InvalidArgument` when `req.limit == 0`
     /// or a selector is used outside its supported stream, or `Internal`
     /// when the storage query fails. A read set the host vetoes
     /// down to nothing answers an empty page, not an error.
@@ -72,8 +72,8 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns `Forbidden` when the context authorizes no reads (a denied
-    /// context authorizes nothing). An all-vetoed set is `Ok` and empty.
+    /// Returns `Forbidden` when the context reads no owner. An all-vetoed
+    /// set is `Ok` and empty.
     pub async fn authorized_read_owners(
         &self,
         authz: &AuthzContext,

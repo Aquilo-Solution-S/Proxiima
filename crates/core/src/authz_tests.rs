@@ -99,9 +99,6 @@ async fn writer_is_sealed_once_and_preserved_by_narrowing_and_revalidation() {
             })
             .is_none()
     );
-    let denied = AuthzContext::denied_for_owner(&group);
-    assert_eq!(denied.writer(), None);
-    assert!(denied.with_attested_writer(writer).is_none());
 }
 
 #[tokio::test]
@@ -191,12 +188,11 @@ fn receiver_stream<T: Send + 'static>(
 }
 
 #[test]
-fn single_owner_context_is_server_resolved_and_owner_accessible() {
+fn single_owner_context_is_owner_accessible() {
     let o = owner();
     let ctx = AuthzContext::single_owner(&o, AuthPath::System);
 
     assert_eq!(ctx.auth_path, AuthPath::System);
-    assert!(ctx.is_server_resolved());
     assert!(ctx.may_write(&o, MemoryKind::Fact));
     assert!(ctx.can_access_owner(&o));
     assert!(ctx.expires_at().is_none());
@@ -511,48 +507,6 @@ async fn only_core_authentication_seals_an_owner_scope() {
     );
 }
 
-#[tokio::test]
-async fn authentication_rejects_a_context_without_server_resolved_roles() {
-    let result = authenticate(
-        &VerifiedAuthenticator {
-            context: AuthzContext::denied_for_owner(&owner()),
-        },
-        &Credentials::Bearer("opaque".to_string()),
-    )
-    .await;
-    assert_eq!(result, Err(AuthError::InvalidCredentials));
-}
-
-#[test]
-fn denied_context_has_denied_path_and_no_accessible_principals() {
-    let o = owner();
-    let ctx = AuthzContext::denied_for_owner(&o);
-
-    assert_eq!(ctx.auth_path, AuthPath::Denied);
-    assert!(ctx.accessible_owners().next().is_none());
-    assert!(!ctx.can_access_owner(&o));
-    assert!(
-        !ctx.capabilities
-            .tool_scope
-            .allows(&key(protocol_resource::MEMORY))
-    );
-}
-
-#[test]
-fn unauthenticated_denied_context_grants_no_owner_access() {
-    let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
-    let ctx = AuthzContext::denied_for_owner(&owner);
-
-    assert_eq!(ctx.auth_path(), AuthPath::Denied);
-    assert_eq!(ctx.subject(), None);
-    assert!(!ctx.may_read(&owner, MemoryKind::Fact));
-    assert!(!ctx.may_write(&owner, MemoryKind::Fact));
-    assert!(!ctx.may_manage(&owner));
-    assert!(ctx.readable_owners(MemoryKind::Fact).is_empty());
-    assert!(ctx.writable_owners(MemoryKind::Fact).is_empty());
-    assert!(!ctx.may_read_goals(&owner) && !ctx.may_administer(&owner));
-}
-
 #[test]
 fn resolved_subject_context_gets_role_ceilings() {
     let subject = UserId::new(uuid::Uuid::now_v7());
@@ -749,16 +703,18 @@ fn a_host_resolved_role_never_authorizes_a_foreign_personal_owner() {
     assert!(!own.may_manage(&OwnerId::from(subject)));
 }
 
-/// Only host-resolved paths narrow. A denied (or otherwise
-/// non-server-resolved) context carries no map to fold into and no
-/// subject to resolve against, so no offered role can revive it.
+/// A role is folded in before authentication seals the context; a sealed
+/// context takes none.
 #[test]
-fn a_context_that_is_not_host_resolved_cannot_be_narrowed_by_a_role() {
+fn a_sealed_context_takes_no_host_resolved_role() {
     let group = GroupId::new(uuid::Uuid::now_v7());
-    let denied = AuthzContext::denied_for_owner(&owner());
+    let sealed = crate::test_fixtures::authenticated_context(AuthzContext::for_subject(
+        UserId::new(uuid::Uuid::now_v7()),
+        AuthPath::HostBearer,
+    ));
 
     assert!(
-        denied
+        sealed
             .with_host_resolved_role(group, Role::admin())
             .is_none()
     );
@@ -785,11 +741,6 @@ fn a_default_owner_must_be_one_the_context_carries() {
             .is_none(),
         "another subject's personal owner is never carried"
     );
-    assert!(
-        AuthzContext::denied_for_owner(&tenant)
-            .with_default_owner(tenant)
-            .is_none()
-    );
 }
 
 /// A narrowed context is bound to one owner; a default left on it would
@@ -811,13 +762,8 @@ fn narrowing_drops_the_default() {
 
 #[test]
 fn contexts_carry_no_verified_claims_by_default() {
-    let owner = owner();
-    for context in [
-        AuthzContext::single_owner(&owner, AuthPath::HostBearer),
-        AuthzContext::denied_for_owner(&owner),
-    ] {
-        assert_eq!(context.verified_claims(), None);
-    }
+    let context = AuthzContext::single_owner(&owner(), AuthPath::HostBearer);
+    assert_eq!(context.verified_claims(), None);
 }
 
 #[test]
@@ -897,10 +843,6 @@ fn contexts_carry_no_trusted_model_id_by_default() {
     assert_eq!(
         AuthzContext::for_subject(UserId::new(uuid::Uuid::now_v7()), AuthPath::HostBearer)
             .trusted_model_id(),
-        None
-    );
-    assert_eq!(
-        AuthzContext::denied_for_owner(&owner).trusted_model_id(),
         None
     );
 }
@@ -1523,15 +1465,6 @@ fn bound_publication_extensions_merge_and_never_overwrite() {
         ))
         .expect("a subject may narrow to itself");
     assert_eq!(narrowed.publication_extensions().len(), 2);
-}
-
-#[test]
-fn a_denied_context_binds_no_publication_extensions() {
-    assert!(
-        AuthzContext::denied_for_owner(&owner())
-            .publication_extensions()
-            .is_empty()
-    );
 }
 
 #[tokio::test]

@@ -69,8 +69,10 @@ fn host_api_imports_from_root() {
     assert_send_sync::<proxiima::DelegatedPhase>();
     assert_send_sync::<proxiima::DelegatedAuthorityService>();
     let owner: proxiima::OwnerId = proxiima::company_owner(uuid::Uuid::nil());
-    let _authz: proxiima::AuthzContext = proxiima::AuthzContext::denied_for_owner(&owner);
-    let _narrowed = proxiima::AuthzContext::denied_for_owner(&owner).narrowed_to_owner(owner);
+    let _authz: proxiima::AuthzContext =
+        proxiima::AuthzContext::single_owner(&owner, proxiima::AuthPath::HostBearer);
+    let _narrowed = proxiima::AuthzContext::single_owner(&owner, proxiima::AuthPath::HostBearer)
+        .narrowed_to_owner(owner);
     let _cursor: proxiima::Cursor = proxiima::Cursor::empty();
     let _host_allowlist = proxiima::HostAllowlist::new(["proxiima.example.com"]);
     let _cancel = proxiima::CancellationToken::new();

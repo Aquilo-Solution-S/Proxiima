@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::authz::AuthzContext;
 use crate::error::ErrorCode;
 use crate::{
     AbstractionPayload, AgentDerivationV1, EntityKind, InterpretationV1, MemoryKind, OwnerId,
@@ -197,16 +196,16 @@ async fn a_write_with_no_origins_carries_no_operator_manifest() {
 }
 
 #[tokio::test]
-async fn derive_memory_denies_denied_context() {
+async fn derive_memory_denies_a_context_without_access() {
     let engine = engine();
     let owner = owner();
     let err = engine
         .derive_memory(
-            &AuthzContext::denied_for_owner(&owner),
+            &crate::test_fixtures::no_access_context(),
             request(owner, &[]).into_typed().expect("synthetic request"),
         )
         .await
-        .expect_err("denied context must fail before storage");
+        .expect_err("a context without access must fail before storage");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }

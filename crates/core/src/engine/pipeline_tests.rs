@@ -277,15 +277,15 @@ async fn authorize_write_veto_denies() {
 }
 
 #[tokio::test]
-async fn authorize_write_denied_context_forbidden() {
+async fn authorize_write_refuses_a_context_without_access() {
     let p = owner();
     let engine = engine();
-    let authz = AuthzContext::denied_for_owner(&p);
+    let authz = crate::test_fixtures::no_access_context();
 
     let err = engine
         .authorize_write(&authz, &p, MemoryKind::Fact)
         .await
-        .expect_err("denied context should reject write authorization");
+        .expect_err("a context without access should reject write authorization");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
@@ -514,48 +514,46 @@ async fn every_set_read_answers_an_all_vetoed_set_with_nothing() {
 }
 
 #[tokio::test]
-async fn authorize_read_denied_forbidden() {
-    let p = owner();
+async fn authorize_read_refuses_a_context_that_reads_no_owner() {
     let engine = engine();
-    let authz = AuthzContext::denied_for_owner(&p);
+    let authz = crate::test_fixtures::no_access_context();
 
     let err = engine
         .authorize_read(&authz)
         .await
-        .expect_err("denied context should reject read authorization");
+        .expect_err("a context that reads no owner should reject read authorization");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
 
 #[tokio::test]
-async fn denied_context_returns_forbidden() {
+async fn a_context_without_access_returns_forbidden() {
     let engine = engine();
     let owner = owner();
-    let authz = AuthzContext::denied_for_owner(&owner);
+    let authz = crate::test_fixtures::no_access_context();
 
     let err = engine
         .authorize_owner_read(&authz, &owner, MemoryKind::Fact)
         .await
-        .expect_err("denied context should reject authorization");
+        .expect_err("a context without access should reject authorization");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
 
 #[tokio::test]
-async fn denied_context_notifies_observers() {
-    let owner = owner();
+async fn a_context_that_reads_no_owner_notifies_observers() {
     let outcomes = Arc::new(Mutex::new(Vec::new()));
     let mut registry = SpiiceRegistry::new();
     registry.add_authorization_hook(Arc::new(RecordingAnyHook {
         outcomes: outcomes.clone(),
     }));
     let engine = engine_from_registry(registry);
-    let authz = AuthzContext::denied_for_owner(&owner);
+    let authz = crate::test_fixtures::no_access_context();
 
     let err = engine
-        .authorize_owner_read(&authz, &owner, MemoryKind::Fact)
+        .authorize_read(&authz)
         .await
-        .expect_err("denied context should reject authorization");
+        .expect_err("a context that reads no owner should reject read authorization");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
     assert_eq!(
@@ -618,7 +616,7 @@ async fn observer_records_allowed_and_denied_outcomes() {
     let err = engine
         .authorize_owner_read(&denied, &denied_owner, MemoryKind::Fact)
         .await
-        .expect_err("denied context should reject authorization");
+        .expect_err("a context without a role on the owner should reject authorization");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
     assert_eq!(

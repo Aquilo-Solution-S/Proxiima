@@ -148,14 +148,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_a_denied_readable_scope_before_storage() {
+    async fn refuses_an_empty_readable_scope_before_storage() {
         let engine = engine();
-        let subject = UserId::new(uuid::Uuid::new_v4());
-        let authz = AuthzContext::for_subject_with_role(subject, [], AuthPath::Denied);
+        let authz = crate::test_fixtures::no_access_context();
         let error = engine
             .sidecar_heads_by_key(&authz, &request())
             .await
-            .expect_err("denied scope must fail before the unsupported storage backend");
+            .expect_err("an empty scope must fail before the unsupported storage backend");
         assert_eq!(error.code, ErrorCode::Forbidden);
     }
 

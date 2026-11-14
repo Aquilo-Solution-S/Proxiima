@@ -220,8 +220,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// `Forbidden` when the context authorizes no reads (a denied context
-    /// authorizes nothing); `Internal` on storage.
+    /// `Forbidden` when the context reads no owner; `Internal` on storage.
     pub async fn memory_counts(&self, authz: &AuthzContext) -> Result<MemoryCounts, ProtocolError> {
         let read_owners = self.authorize_row_read(authz).await?;
         if read_owners.is_empty() {

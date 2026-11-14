@@ -300,13 +300,6 @@ impl Engine {
                 ),
             );
         }
-        if authz.auth_path() == AuthPath::Denied {
-            return refuse(
-                owner,
-                AuthzOutcome::DeniedResolution,
-                ProtocolError::forbidden("denied context authorizes nothing"),
-            );
-        }
         let resolved = match self.registry.resolve_owner(authz, owner) {
             Ok(resolved) => resolved,
             Err(err) => return refuse(owner, AuthzOutcome::DeniedResolution, err),
@@ -343,8 +336,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// `Forbidden` only when the context itself authorizes nothing (a denied
-    /// context, or no readable owner at all).
+    /// `Forbidden` only when the context reads no owner at all.
     #[allow(
         clippy::unused_async,
         clippy::unused_async_trait_impl,
@@ -412,11 +404,7 @@ impl Engine {
     /// A context that reads nothing is refused here, with one
     /// `DeniedResolution` decision for its principal.
     fn readable_set(&self, authz: &AuthzContext) -> Result<Vec<OwnerId>, ProtocolError> {
-        let read = if authz.auth_path() == AuthPath::Denied {
-            Vec::new()
-        } else {
-            authz.readable_owners(MemoryKind::Fact)
-        };
+        let read = authz.readable_owners(MemoryKind::Fact);
         if read.is_empty() {
             let principal = authz.principal();
             let input = AuthzInput {
@@ -429,9 +417,7 @@ impl Engine {
             };
             self.registry
                 .run_authorization_observers(&input, AuthzOutcome::DeniedResolution);
-            return Err(ProtocolError::forbidden(
-                "denied context authorizes nothing",
-            ));
+            return Err(ProtocolError::forbidden("this context reads no owner"));
         }
         Ok(read)
     }

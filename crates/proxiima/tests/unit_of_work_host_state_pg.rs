@@ -371,15 +371,17 @@ async fn unauthorized_unregistered_and_invalid_binding_refuse_before_mutation() 
         let other = PgPool::connect(&db_url(&db_name)).await?;
         let invocation = proxiima_core::MemoryId::new(Uuid::now_v7());
 
-        let denied = AuthzContext::denied_for_owner(&owner);
-        let mut unauthorized = engine.unit_of_work(&denied).await?;
+        let no_access = proxiima_core::test_fixtures::authenticated_context(
+            proxiima_core::test_fixtures::no_access_context(),
+        );
+        let mut unauthorized = engine.unit_of_work(&no_access).await?;
         let err = unauthorized
             .apply_host_state(FixtureHostCommand::Create {
                 owner,
                 invocation_id: invocation,
             })
             .await
-            .expect_err("denied authz");
+            .expect_err("a context without access");
         assert_eq!(err.code, ErrorCode::Forbidden, "{err:?}");
         drop(unauthorized);
         assert_eq!(count_execution(&other, invocation).await?, 0);
@@ -982,7 +984,7 @@ async fn ordinary_group_editor_provenance_is_not_target_or_command_metadata() {
 }
 
 #[tokio::test]
-async fn subjectless_denied_ordinary_host_write_never_dispatches() {
+async fn refused_ordinary_host_write_never_dispatches() {
     let split_db = clone_split_core_db("proxiima_uow_hs_denied_origin")
         .await
         .expect("PG required");
@@ -995,8 +997,9 @@ async fn subjectless_denied_ordinary_host_write_never_dispatches() {
         let owner = company_owner(Uuid::now_v7());
         let participant = Arc::new(HostFixtureParticipant::default());
         let built = boot_fixture(&url, &platform_url, owner, Some(participant.clone())).await?;
-        let authz = AuthzContext::denied_for_owner(&owner);
-        assert_eq!(authz.subject(), None);
+        let authz = proxiima_core::test_fixtures::authenticated_context(
+            proxiima_core::test_fixtures::no_access_context(),
+        );
         let engine = built.host().engine();
         let mut unit = engine.unit_of_work(&authz).await?;
         let invocation_id = proxiima_core::MemoryId::new(Uuid::now_v7());
@@ -1006,7 +1009,7 @@ async fn subjectless_denied_ordinary_host_write_never_dispatches() {
                 invocation_id,
             })
             .await
-            .expect_err("subjectless denied context has no ordinary host-write authority");
+            .expect_err("a context without access has no ordinary host-write authority");
         assert_eq!(error.code, ErrorCode::Forbidden, "{error:?}");
         drop(unit);
         assert_eq!(participant.callback_calls(), 0);
@@ -1018,7 +1021,7 @@ async fn subjectless_denied_ordinary_host_write_never_dispatches() {
         Ok(())
     }
     .await;
-    result.expect("denied ordinary host state");
+    result.expect("refused ordinary host state");
 }
 
 #[tokio::test]

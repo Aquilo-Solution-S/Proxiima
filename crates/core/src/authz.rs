@@ -261,9 +261,6 @@ pub enum AuthPath {
     /// A durable, narrowly scoped grant redeemed by a background worker.
     Delegated,
     System,
-    /// Fail-closed sentinel for a context that carries no real
-    /// credentials (see [`AuthzContext::denied_for_owner`]).
-    Denied,
 }
 
 /// Runtime-held witness for issuing owner-write permits from
@@ -358,8 +355,6 @@ impl std::fmt::Debug for VerifiedClaims {
 /// form the context has reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OwnerScopeState {
-    /// No roles: a denied context.
-    Denied,
     /// Roles the host resolved, not yet sealed by authentication.
     Unsealed(ScopeGrant),
     Sealed(OwnerScope),
@@ -368,23 +363,21 @@ enum OwnerScopeState {
 impl OwnerScopeState {
     const fn sealed(&self) -> Option<&OwnerScope> {
         match self {
-            Self::Denied | Self::Unsealed(_) => None,
+            Self::Unsealed(_) => None,
             Self::Sealed(scope) => Some(scope),
         }
     }
 
-    const fn grant(&self) -> Option<&ScopeGrant> {
+    const fn grant(&self) -> &ScopeGrant {
         match self {
-            Self::Denied => None,
-            Self::Unsealed(grant) => Some(grant),
-            Self::Sealed(scope) => Some(scope.grant()),
+            Self::Unsealed(grant) => grant,
+            Self::Sealed(scope) => scope.grant(),
         }
     }
 
-    /// Sealed under `writer`; a denied state has nothing to seal.
+    /// Sealed under `writer`.
     fn sealed_by(self, writer: WriterAttribution) -> Self {
         match self {
-            Self::Denied => Self::Denied,
             Self::Unsealed(grant) => Self::Sealed(OwnerScope::seal(grant, writer)),
             Self::Sealed(scope) => Self::Sealed(OwnerScope::seal(scope.into_grant(), writer)),
         }
@@ -392,7 +385,6 @@ impl OwnerScopeState {
 
     fn narrowed(self, owner: OwnerId) -> Option<Self> {
         match self {
-            Self::Denied => None,
             Self::Unsealed(grant) => grant.narrow(owner).map(Self::Unsealed),
             Self::Sealed(scope) => scope.narrow(owner).map(Self::Sealed),
         }
@@ -401,7 +393,6 @@ impl OwnerScopeState {
     /// The expiry moves earlier or stays ([`ScopeGrant::clamped_to`]).
     fn clamped_to(self, expires_at: Option<SystemTime>) -> Self {
         match self {
-            Self::Denied => Self::Denied,
             Self::Unsealed(grant) => Self::Unsealed(grant.clamped_to(expires_at)),
             Self::Sealed(scope) => Self::Sealed(scope.clamped_to(expires_at)),
         }
@@ -677,7 +668,7 @@ impl AuthzContext {
     /// # Errors
     ///
     /// Returns the host authentication error, or `InvalidCredentials` when
-    /// the host returned a context without server-resolved roles.
+    /// the host returned a context without an attested writer.
     pub async fn authenticate(
         authenticator: &dyn Authenticator,
         credentials: &Credentials,
@@ -747,9 +738,6 @@ impl AuthzContext {
     }
 
     pub(crate) fn seal_verified_scope(mut self) -> Result<Self, AuthError> {
-        if self.owner_scope.grant().is_none() {
-            return Err(AuthError::InvalidCredentials);
-        }
         let writer = self.writer().ok_or(AuthError::InvalidCredentials)?;
         self.owner_scope = self.owner_scope.sealed_by(writer);
         if self.auth_path == AuthPath::HostBearer
@@ -786,12 +774,12 @@ impl AuthzContext {
     }
 
     pub(crate) fn is_expired(&self) -> bool {
-        self.owner_scope.grant().is_some_and(ScopeGrant::is_expired)
+        self.owner_scope.grant().is_expired()
     }
 
     #[must_use]
     pub fn expires_at(&self) -> Option<SystemTime> {
-        self.owner_scope.grant().and_then(ScopeGrant::expires_at)
+        self.owner_scope.grant().expires_at()
     }
 
     /// Model/runner identity certified by the authenticating token, if the
@@ -898,7 +886,7 @@ impl AuthzContext {
     /// request header or publication extension. A sealed scope cannot be rebound.
     #[must_use]
     pub fn with_attested_writer(mut self, writer: WriterAttribution) -> Option<Self> {
-        if self.owner_scope().is_some() || self.auth_path == AuthPath::Denied {
+        if self.owner_scope().is_some() {
             return None;
         }
         self.identity.writer = Some(writer);
@@ -937,22 +925,13 @@ impl AuthzContext {
     }
 
     #[must_use]
-    pub(crate) const fn is_server_resolved(&self) -> bool {
-        self.owner_scope.grant().is_some()
-    }
-
-    #[must_use]
     pub fn may_read(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
-        self.owner_scope
-            .grant()
-            .is_some_and(|grant| grant.may_read(owner, kind))
+        self.owner_scope.grant().may_read(owner, kind)
     }
 
     #[must_use]
     pub fn may_write(&self, owner: &OwnerId, kind: MemoryKind) -> bool {
-        self.owner_scope
-            .grant()
-            .is_some_and(|grant| grant.may_write(owner, kind))
+        self.owner_scope.grant().may_write(owner, kind)
     }
 
     /// The owner-role rule for a tool call: a declared read needs read
@@ -1009,9 +988,7 @@ impl AuthzContext {
 
     #[must_use]
     pub fn may_manage(&self, owner: &OwnerId) -> bool {
-        self.owner_scope
-            .grant()
-            .is_some_and(|grant| grant.may_manage(owner))
+        self.owner_scope.grant().may_manage(owner)
     }
 
     /// Server-resolved role for one owner, if the authenticated subject has
@@ -1019,21 +996,17 @@ impl AuthzContext {
     /// resolves it again at every redemption.
     #[must_use]
     pub fn role_for_owner(&self, owner: &OwnerId) -> Option<crate::access::Role> {
-        self.owner_scope.grant()?.role_for(owner)
+        self.owner_scope.grant().role_for(owner)
     }
 
     #[must_use]
     pub fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
-        self.owner_scope
-            .grant()
-            .map_or_else(Vec::new, |grant| grant.readable_owners(kind))
+        self.owner_scope.grant().readable_owners(kind)
     }
 
     #[must_use]
     pub fn writable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
-        self.owner_scope
-            .grant()
-            .map_or_else(Vec::new, |grant| grant.writable_owners(kind))
+        self.owner_scope.grant().writable_owners(kind)
     }
 
     #[must_use]
@@ -1054,10 +1027,7 @@ impl AuthzContext {
         Self {
             identity: Identity {
                 subject: Some(subject),
-                writer: match auth_path {
-                    AuthPath::HostBearer | AuthPath::Delegated | AuthPath::System => Some(writer),
-                    AuthPath::Denied => None,
-                },
+                writer: Some(writer),
                 principal: OwnerId::from(subject),
                 trusted_model_id: None,
             },
@@ -1317,7 +1287,8 @@ impl AuthzContext {
     /// rules as every eagerly resolved one. Typed on [`GroupId`] because a
     /// Personal role is a kernel rule, never a resolver's answer.
     ///
-    /// `None` when the context is not host-resolved (nothing to fold into).
+    /// `None` once authentication sealed the context, and for a confined or
+    /// forwarded one.
     /// The accessible set is recomputed from the map the same way
     /// [`Self::server_resolved`] computes it.
     ///
@@ -1391,39 +1362,6 @@ impl AuthzContext {
     pub fn single_owner(owner: &OwnerId, auth_path: AuthPath) -> Self {
         Self::for_subject(owner.as_user(), auth_path)
     }
-
-    /// Fail-closed, zero-capability context. Carries `owner`'s identity for
-    /// audit but grants no roles, an empty tool palette, and no accessible
-    /// principals — every capability check and every owner-scope check
-    /// denies.
-    ///
-    /// There is no owner-less `denied()`: a denied context still names the
-    /// principal the denial was about, and no owner kind exists to stand in
-    /// as a placeholder.
-    #[must_use]
-    pub fn denied_for_owner(owner: &OwnerId) -> Self {
-        Self {
-            identity: Identity {
-                subject: None,
-                writer: None,
-                principal: *owner,
-                trusted_model_id: None,
-            },
-            capabilities: CapabilitySet {
-                tool_scope: ToolScope::Palette(Vec::new()),
-                served_surface: ServedSurface::Palette(Vec::new()),
-            },
-            auth_path: AuthPath::Denied,
-            owner_scope: OwnerScopeState::Denied,
-            forwarded_owner: None,
-            publication_extensions: PublicationExtensions::new(),
-            read_set: BoundReadSet::default(),
-            verified_claims: None,
-            default_owner: None,
-            invoking_tool: None,
-            system_binding: None,
-        }
-    }
 }
 
 /// The host contract: validate credential material, return an
@@ -1444,7 +1382,7 @@ pub trait Authenticator: Send + Sync {
 /// # Errors
 ///
 /// Returns the host authentication error, or `InvalidCredentials` when the
-/// host returned a context without server-resolved roles.
+/// host returned a context without an attested writer.
 pub async fn authenticate(
     authenticator: &dyn Authenticator,
     credentials: &Credentials,

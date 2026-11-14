@@ -874,7 +874,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_goal_from_payload_write_denies_denied_context() {
+    async fn create_goal_from_payload_write_denies_a_context_without_access() {
         let owner = owner();
         let req = GoalCreatePayloadWriteRequest {
             owner,
@@ -885,14 +885,14 @@ mod tests {
             author_self_perspective_id: None,
         };
         let err = engine()
-            .create_goal_from_payload_write(&AuthzContext::denied_for_owner(&owner), &req)
+            .create_goal_from_payload_write(&crate::test_fixtures::no_access_context(), &req)
             .await
-            .expect_err("denied context must fail before schema or storage");
+            .expect_err("a context without access must fail before schema or storage");
         assert_forbidden(&err);
     }
 
     #[tokio::test]
-    async fn transition_goal_denies_denied_context() {
+    async fn transition_goal_denies_a_context_without_access() {
         let owner = owner();
         let req = GoalTransitionRequest {
             owner,
@@ -905,14 +905,14 @@ mod tests {
             author_self_perspective_id: None,
         };
         let err = engine()
-            .transition_goal(&AuthzContext::denied_for_owner(&owner), &req)
+            .transition_goal(&crate::test_fixtures::no_access_context(), &req)
             .await
-            .expect_err("denied context must fail before storage");
+            .expect_err("a context without access must fail before storage");
         assert_forbidden(&err);
     }
 
     #[tokio::test]
-    async fn modify_goal_denies_denied_context() {
+    async fn modify_goal_denies_a_context_without_access() {
         let owner = owner();
         let req = GoalModifyRequest {
             owner,
@@ -925,14 +925,14 @@ mod tests {
             author_self_perspective_id: None,
         };
         let err = engine()
-            .modify_goal(&AuthzContext::denied_for_owner(&owner), &req)
+            .modify_goal(&crate::test_fixtures::no_access_context(), &req)
             .await
-            .expect_err("denied context must fail before schema or storage");
+            .expect_err("a context without access must fail before schema or storage");
         assert_forbidden(&err);
     }
 
     #[tokio::test]
-    async fn mark_goal_achieved_denies_denied_context() {
+    async fn mark_goal_achieved_denies_a_context_without_access() {
         let owner = owner();
         let req = GoalMarkAchievedRequest {
             owner,
@@ -943,14 +943,14 @@ mod tests {
             author_self_perspective_id: None,
         };
         let err = engine()
-            .mark_goal_achieved(&AuthzContext::denied_for_owner(&owner), &req)
+            .mark_goal_achieved(&crate::test_fixtures::no_access_context(), &req)
             .await
-            .expect_err("denied context must fail before storage");
+            .expect_err("a context without access must fail before storage");
         assert_forbidden(&err);
     }
 
     #[tokio::test]
-    async fn decompose_goal_denies_denied_context() {
+    async fn decompose_goal_denies_a_context_without_access() {
         let owner = owner();
         let req = GoalDecomposeRequest {
             owner,
@@ -965,9 +965,9 @@ mod tests {
             author_self_perspective_id: None,
         };
         let err = engine()
-            .decompose_goal(&AuthzContext::denied_for_owner(&owner), &req)
+            .decompose_goal(&crate::test_fixtures::no_access_context(), &req)
             .await
-            .expect_err("denied context must fail before target lookup or storage");
+            .expect_err("a context without access must fail before target lookup or storage");
         assert_forbidden(&err);
     }
 }

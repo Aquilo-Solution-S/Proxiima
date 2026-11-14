@@ -254,15 +254,16 @@ async fn a_context_that_reads_nothing_is_forbidden() {
     let result: TestResult = async {
         let (_, owner) = personal();
         seed(&pg, owner, 0).await?;
-        let denied = AuthzContext::denied_for_owner(&owner);
+        let reads_nothing =
+            authenticated_context(proxiima_core::test_fixtures::no_access_context());
         let error = engine(&pg)
-            .memory_counts(&denied)
+            .memory_counts(&reads_nothing)
             .await
-            .expect_err("a denied context reads nothing");
+            .expect_err("a context that reads no owner is refused");
         assert_eq!(error.code, ErrorCode::Forbidden, "{error}");
         Ok(())
     }
     .await;
     let _ = drop_db(&db_name).await;
-    result.expect("denied context test failed");
+    result.expect("empty read set test failed");
 }

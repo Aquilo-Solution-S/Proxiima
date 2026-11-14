@@ -5,8 +5,8 @@ use proxiima_core::embedding::{EmbeddingClient, EmbeddingDim, LlmError};
 use std::sync::Arc;
 
 use proxiima_core::{
-    AuthPath, AuthzContext, Engine, OwnerId, OwnerScope, Role, SpiiceRegistryFrozen,
-    SpiiceServices, StoragePorts, ToolCaller, ToolCtx, UserId,
+    AccessCeiling, AuthPath, AuthzContext, Engine, GroupId, OwnerId, OwnerScope, Role,
+    SpiiceRegistryFrozen, SpiiceServices, StoragePorts, ToolCaller, ToolCtx, UserId,
 };
 
 /// Fixture embeddings sit on the default 1024-wide lane.
@@ -27,6 +27,26 @@ pub fn owner_scope_for_tests(owners: &[OwnerId]) -> OwnerScope {
     .owner_scope()
     .expect("fixture verifier seals the supplied roles")
     .clone()
+}
+
+/// A caller that holds no access to any owner: a member whose role in its
+/// one group reads, writes and works nothing, narrowed to that group. Every
+/// gate refuses it before schema validation or storage.
+///
+/// # Panics
+/// Panics if a role that holds nothing no longer narrows to its group.
+#[must_use]
+pub fn no_access_context() -> AuthzContext {
+    let group = OwnerId::from(GroupId::new(uuid::Uuid::now_v7()));
+    let nothing = Role::new(AccessCeiling::None, AccessCeiling::None)
+        .expect("a write limit of none is not above a read limit of none");
+    AuthzContext::for_subject_with_role(
+        UserId::new(uuid::Uuid::now_v7()),
+        [(group, nothing)],
+        AuthPath::HostBearer,
+    )
+    .narrowed_to_owner(group)
+    .expect("a member narrows to its group")
 }
 
 /// Model a successful verifier for a synthetic fixture principal.

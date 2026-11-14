@@ -573,18 +573,13 @@ impl Engine {
     ///   refuses raw delegated contexts and `transfer_to_owner` takes no
     ///   `DelegatedPhase`, so this is the second lock on a shut door —
     ///   worth keeping, because the first one lives in another module.
-    /// * `Denied` and any context that is not server-resolved — fail
-    ///   closed; a denied context authorizes nothing.
     async fn authorize_transfer_destination_out_of_band(
         &self,
         authz: &AuthzContext,
         to_owner: &OwnerId,
     ) -> Result<(), ProtocolError> {
         let refused = || ProtocolError::forbidden("requires manage on this owner");
-        if matches!(authz.auth_path(), AuthPath::Delegated | AuthPath::Denied)
-            || !authz.is_server_resolved()
-            || authz.verified_forwarded_owner().is_some()
-        {
+        if authz.auth_path() == AuthPath::Delegated || authz.verified_forwarded_owner().is_some() {
             return Err(refused());
         }
         let Some(subject) = authz.subject() else {

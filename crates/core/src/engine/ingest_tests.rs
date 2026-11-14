@@ -263,8 +263,7 @@ async fn fact_ingest_refuses_a_goal_change_a_goal_write_did_not_make() {
 }
 
 #[tokio::test]
-async fn authorize_fact_ingest_denies_denied_context() {
-    let owner = test_owner();
+async fn authorize_fact_ingest_denies_a_context_without_access() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
     let engine = Engine::new(
@@ -279,16 +278,15 @@ async fn authorize_fact_ingest_denies_denied_context() {
     );
 
     let err = engine
-        .authorize_fact_ingest(&AuthzContext::denied_for_owner(&owner), draft, &[])
+        .authorize_fact_ingest(&crate::test_fixtures::no_access_context(), draft, &[])
         .await
-        .expect_err("denied context must fail");
+        .expect_err("a context without access must fail");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
 
 #[tokio::test]
-async fn denied_context_precedes_invalid_fact_kind() {
-    let owner = test_owner();
+async fn a_context_without_access_precedes_invalid_fact_kind() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
     let engine = Engine::new(
@@ -304,7 +302,7 @@ async fn denied_context_precedes_invalid_fact_kind() {
     draft.kind = crate::MemoryKind::Abstraction;
 
     let error = engine
-        .authorize_fact_ingest(&AuthzContext::denied_for_owner(&owner), draft, &[])
+        .authorize_fact_ingest(&crate::test_fixtures::no_access_context(), draft, &[])
         .await
         .expect_err("authorization must fail before validating the supplied kind");
 
@@ -312,8 +310,7 @@ async fn denied_context_precedes_invalid_fact_kind() {
 }
 
 #[tokio::test]
-async fn authorize_fact_with_citation_denies_denied_context() {
-    let owner = test_owner();
+async fn authorize_fact_with_citation_denies_a_context_without_access() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
     let engine = Engine::new(
@@ -334,13 +331,13 @@ async fn authorize_fact_with_citation_denies_denied_context() {
 
     let err = engine
         .authorize_fact_with_citation(
-            &AuthzContext::denied_for_owner(&owner),
+            &crate::test_fixtures::no_access_context(),
             draft,
             cited_object,
             &[],
         )
         .await
-        .expect_err("denied context must fail before schema validation");
+        .expect_err("a context without access must fail before schema validation");
 
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
