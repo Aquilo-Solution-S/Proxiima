@@ -1357,6 +1357,58 @@ async fn a_recreated_recorded_table_gets_the_generated_policies_back() {
     pg.clone_pool_for_backend().close().await;
 }
 
+const ELSEWHERE_POLICIES: &str = "SELECT p.polname::text,
+        COALESCE(pg_get_expr(p.polqual, p.polrelid), ''),
+        COALESCE(pg_get_expr(p.polwithcheck, p.polrelid), '')
+   FROM pg_policy AS p
+  WHERE p.polrelid = 'proxiima_elsewhere.ledger'::regclass
+  ORDER BY 1";
+
+/// A recorded table in a schema this binary does not compose has the
+/// generated policies again after a migration run: the reinstall follows the
+/// record, not the composition.
+#[tokio::test]
+async fn a_migration_run_reinstalls_a_recorded_table_outside_the_composed_schemas() {
+    let db = example_engine::migrated_db("proxiima_owner_rls_uncomposed").await;
+    let pg = migration_storage(&db).await;
+    let mut conn = PgConnection::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    sqlx::raw_sql(
+        "CREATE SCHEMA proxiima_elsewhere;
+         CREATE TABLE proxiima_elsewhere.ledger (owner_id uuid NOT NULL);
+         BEGIN;
+         SELECT set_config('app.proxiima_scope', 'platform', true);
+         SELECT proxiima_core.install_owner_rls_table('proxiima_elsewhere', 'ledger', 'owner_id');
+         COMMIT;",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("a recorded table in a schema the example does not compose");
+    let generated: Vec<(String, String, String)> = sqlx::query_as(ELSEWHERE_POLICIES)
+        .fetch_all(&mut conn)
+        .await
+        .expect("generated policies");
+    assert!(!generated.is_empty(), "precondition: installed");
+    sqlx::raw_sql("ALTER POLICY proxiima_owner_read ON proxiima_elsewhere.ledger USING (true)")
+        .execute(&mut conn)
+        .await
+        .expect("hand-edited predicate");
+    let edited: Vec<(String, String, String)> = sqlx::query_as(ELSEWHERE_POLICIES)
+        .fetch_all(&mut conn)
+        .await
+        .expect("edited policies");
+    assert_ne!(edited, generated, "precondition: edited");
+    migrate_example(&pg).await;
+    let reinstalled: Vec<(String, String, String)> = sqlx::query_as(ELSEWHERE_POLICIES)
+        .fetch_all(&mut conn)
+        .await
+        .expect("reinstalled policies");
+    assert_eq!(reinstalled, generated);
+    conn.close().await.expect("close");
+    pg.clone_pool_for_backend().close().await;
+}
+
 async fn migrate_example(pg: &proxiima_storage_pg::PgMigrationStorage) {
     use proxiima::spiice::SpiiceBundle;
     use proxiima_example::ExampleSpiice;
