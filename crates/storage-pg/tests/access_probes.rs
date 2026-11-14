@@ -7,8 +7,11 @@
 //! to their join), they see rows written earlier in the caller's open
 //! transaction, and they leave that transaction open and usable.
 
+use proxiima_core::storage_ports::OwnerAccessReadPort;
+use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::{
-    AccessError, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, Relation, Role, UserId,
+    AccessError, AuthPath, AuthzContext, GroupId, OwnerAccessPort, OwnerId, OwnerRoles, Relation,
+    Role, StorageError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::test_fixtures::{add_member, create_core_db};
@@ -309,6 +312,21 @@ async fn group_registered_subject_is_refused_before_personal_role_derivation() {
                 Err(AccessError::SubjectIsGroup(found)) if found == subject
             ));
         }
+        // The storage port's membership lookup refuses the same subject.
+        let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
+        let scope =
+            authenticated_context(AuthzContext::for_subject(subject, AuthPath::HostBearer))
+                .owner_scope()
+                .expect("the fixture verifier seals the scope")
+                .clone();
+        let looked_up = pg
+            .resolve_membership(Some(&scope), &OwnerId::from(subject))
+            .await;
+        assert!(matches!(
+            looked_up,
+            Err(StorageError::ConstraintViolation(message))
+                if message.contains("registered as a group")
+        ));
         Ok::<(), Box<dyn std::error::Error>>(())
     }
     .await;

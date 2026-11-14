@@ -25,25 +25,25 @@ pub(crate) async fn resolve_membership(
     conn: &mut PgConnection,
     owner: &OwnerId,
 ) -> Result<Vec<MembershipRow>, StorageError> {
-    let resolved = resolve_subject_membership(conn, owner.as_user(), None).await?;
-    if resolved.subject_is_group {
-        return Err(StorageError::ConstraintViolation(
+    match resolve_subject_membership(conn, owner.as_user(), None).await? {
+        SubjectMemberships::Group => Err(StorageError::ConstraintViolation(
             "membership lookup subject is registered as a group".into(),
-        ));
+        )),
+        SubjectMemberships::Person(memberships) => Ok(memberships
+            .into_iter()
+            .map(|(group, role)| MembershipRow { group, role })
+            .collect()),
     }
-    Ok(resolved
-        .memberships
-        .into_iter()
-        .map(|(group, role)| MembershipRow { group, role })
-        .collect())
 }
 
-/// The subject kind and the memberships visible to one resolution probe.
-/// The kind is read in the same query as the resolved projection so a
-/// group-shaped subject is refused without a second round trip.
-pub(crate) struct SubjectMemberships {
-    pub(crate) subject_is_group: bool,
-    pub(crate) memberships: Vec<(GroupId, Role)>,
+/// What one resolution probe finds for a subject: it is registered as a
+/// group, which holds no membership roles of its own to act with, or it is a
+/// person with the memberships the probe sees. The kind is read in the same
+/// query as the projection, and a caller reaches the memberships only
+/// through the person case.
+pub(crate) enum SubjectMemberships {
+    Group,
+    Person(Vec<(GroupId, Role)>),
 }
 
 /// Resolve a subject's registered kind and projected roles in one query.
@@ -96,10 +96,13 @@ pub(crate) async fn resolve_subject_membership(
     };
     let rows = query.fetch_all(&mut *conn).await.map_err(map_err)?;
 
-    let subject_is_group = match rows.first() {
+    let subject_is_group: bool = match rows.first() {
         Some(row) => row.try_get("subject_is_group").map_err(map_err)?,
         None => false,
     };
+    if subject_is_group {
+        return Ok(SubjectMemberships::Group);
+    }
     let mut memberships = Vec::with_capacity(rows.len());
     for row in &rows {
         let Some(group) = row
@@ -111,10 +114,7 @@ pub(crate) async fn resolve_subject_membership(
         let role = RoleColumns::from_row(row).map_err(map_err)?.role()?;
         memberships.push((GroupId::new(group), role));
     }
-    Ok(SubjectMemberships {
-        subject_is_group,
-        memberships,
-    })
+    Ok(SubjectMemberships::Person(memberships))
 }
 
 /// # Errors

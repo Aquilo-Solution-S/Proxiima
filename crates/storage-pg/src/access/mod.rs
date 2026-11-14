@@ -139,19 +139,18 @@ async fn resolve_subject_roles(
     subject: UserId,
     group: Option<GroupId>,
 ) -> Result<OwnerRoles, AccessError> {
-    let resolved = owner_columns::resolve_subject_membership(&mut *conn, subject, group)
+    match owner_columns::resolve_subject_membership(&mut *conn, subject, group)
         .await
-        .map_err(|err| resolution_error(&err))?;
-    if resolved.subject_is_group {
-        return Err(AccessError::SubjectIsGroup(subject));
+        .map_err(|err| resolution_error(&err))?
+    {
+        owner_columns::SubjectMemberships::Group => Err(AccessError::SubjectIsGroup(subject)),
+        owner_columns::SubjectMemberships::Person(memberships) => OwnerRoles::for_subject(
+            subject,
+            memberships
+                .into_iter()
+                .map(|(group, role)| (OwnerId::from(group), role)),
+        ),
     }
-    OwnerRoles::for_subject(
-        subject,
-        resolved
-            .memberships
-            .into_iter()
-            .map(|(group, role)| (OwnerId::from(group), role)),
-    )
 }
 
 /// The role `subject` holds in `group`, resolved on the caller's connection;
