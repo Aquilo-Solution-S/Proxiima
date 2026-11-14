@@ -285,7 +285,10 @@ through `proxiima_spiice::projection_artifacts(contract)`. Reuse
 core-comparable bands; `LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT` explicitly selects
 the deployment's lexical configuration on a memory write.
 Keep the projection table and its owner/text and owner/tag GIN indexes in
-versioned migrations. The explicit host migration run installs current search
+versioned migrations. The block names no core table: its `CREATE TABLE` is
+followed by the `install_reference` calls for the memory (`cascade`, so a
+projection row goes with its memory), the owner and the lexical language
+(both `no_action`). The explicit host migration run installs current search
 candidate functions from the same frozen composition after those migrations.
 Their schema sets, score bands, and authorization SQL come from the contract;
 a consumer does not copy their bodies into a new migration when Proxiima changes.

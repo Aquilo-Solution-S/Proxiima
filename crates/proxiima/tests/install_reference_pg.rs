@@ -7,6 +7,7 @@
 mod example_engine;
 
 use proxiima::testkit::SplitRoleDb;
+use proxiima_core::{PgIdent, SqlText};
 use sqlx::{Connection, PgConnection, Postgres, SqlSafeStr, Transaction};
 use uuid::Uuid;
 
@@ -609,4 +610,205 @@ async fn a_reference_that_makes_the_tables_memory_ambiguous_is_refused() {
     drop(attempt);
 
     assert_eq!(foreign_keys(&mut tx, "verdict").await, before);
+}
+
+/// The projection block a spiice carried before its keys into core went
+/// through the installer: the generator's earlier output, `{s}` for the
+/// schema.
+const INLINE_KEYS_PROJECTION: &str = "CREATE TABLE {s}.projection (
+    memory_id        uuid      NOT NULL
+                     REFERENCES proxiima_core.memory (t) ON DELETE CASCADE,
+    schema_id        text      NOT NULL,
+    owner_id         uuid      NOT NULL
+                     REFERENCES proxiima_core.owners (owner_id),
+    search_tsv       tsvector  NOT NULL,
+    tag              text[]    NOT NULL DEFAULT '{}',
+    lexical_language regconfig NOT NULL DEFAULT proxiima_core.lexical_config()
+                     REFERENCES proxiima_core.lexical_languages (config),
+    PRIMARY KEY (memory_id, schema_id)
+);
+
+CREATE INDEX projection_owner_tsv_gin ON {s}.projection USING gin (owner_id, search_tsv);
+
+CREATE INDEX projection_owner_tsv_gin_tag ON {s}.projection USING gin (owner_id, tag);
+
+CREATE OR REPLACE TRIGGER projection_remember_lang
+    BEFORE INSERT ON {s}.projection
+    FOR EACH ROW
+    EXECUTE FUNCTION proxiima_core.remember_lexical_language();";
+
+/// The upgrade of a store that applied [`INLINE_KEYS_PROJECTION`]: drop the
+/// three keys, then the installer calls the current block ends with.
+const DROP_INLINE_KEYS: &str = "ALTER TABLE {s}.projection
+    DROP CONSTRAINT projection_memory_id_fkey,
+    DROP CONSTRAINT projection_owner_id_fkey,
+    DROP CONSTRAINT projection_lexical_language_fkey;";
+const INSTALL_KEYS: &str = "
+SELECT proxiima_core.install_reference('{s}', 'projection', 'memory_id', 'memory', 'cascade');
+SELECT proxiima_core.install_reference('{s}', 'projection', 'owner_id', 'owner', 'no_action');
+SELECT proxiima_core.install_reference('{s}', 'projection', 'lexical_language', 'lexical_language', 'no_action');";
+
+/// `template` with `{s}` filled with `schema`.
+fn in_schema(template: &'static str, schema: &str) -> SqlText {
+    SqlText::fill(
+        template,
+        &[(
+            "{s}",
+            &SqlText::from(&PgIdent::name(schema).expect("a plain schema name")),
+        )],
+    )
+}
+
+/// Core's contract with its projection moved into `table`'s schema, and
+/// nothing else changed.
+fn spiice_projection(table: &'static str) -> proxiima::spiice::ProjectionArtifacts {
+    let spec = *proxiima_core::SPIICE_0
+        .projection
+        .spec()
+        .expect("core declares a projection");
+    let mut contract = proxiima_core::SPIICE_0;
+    contract.projection =
+        proxiima_core::spiice::ProjectionDecl::Table(proxiima_core::spiice::ProjectionSpec {
+            table,
+            index: "projection_owner_tsv_gin",
+            ..spec
+        });
+    proxiima::spiice::projection_artifacts(&contract)
+        .expect("the declaration is valid")
+        .expect("the contract declares a projection")
+}
+
+/// A platform-scope transaction, as a migration runs in.
+async fn platform_scope(conn: &mut PgConnection) -> Transaction<'_, Postgres> {
+    let mut tx = conn.begin().await.expect("transaction");
+    sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("platform scope");
+    tx
+}
+
+/// What a spiice migration does around its projection block: the schema,
+/// the block, the owner policy of the table.
+async fn install_projection(conn: &mut PgConnection, schema: &str, block: &SqlText) {
+    let mut sql = in_schema("CREATE SCHEMA {s};\n", schema);
+    sql.push_text(block).push_text(&in_schema(
+        "\nSELECT proxiima_core.install_owner_rls_table('{s}', 'projection', 'owner_id');",
+        schema,
+    ));
+    run(conn, sql).await;
+}
+
+/// The projection table of `schema` as the catalog has it, with the schema
+/// name taken out: columns, constraints and their delete actions, indexes,
+/// triggers, row security and owner policies.
+async fn projection_catalog(conn: &mut PgConnection, schema: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "WITH t AS (SELECT ($1 || '.projection')::regclass AS oid)
+         SELECT 'column ' || a.attname || ' ' || format_type(a.atttypid, a.atttypmod)
+                || CASE WHEN a.attnotnull THEN ' not null' ELSE '' END
+                || COALESCE(' default ' || pg_get_expr(d.adbin, d.adrelid), '')
+           FROM t JOIN pg_attribute AS a ON a.attrelid = t.oid
+           LEFT JOIN pg_attrdef AS d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+          WHERE a.attnum > 0 AND NOT a.attisdropped
+         UNION ALL
+         SELECT 'constraint ' || k.conname || ' ' || pg_get_constraintdef(k.oid)
+                || ' delete ' || k.confdeltype::text || ' update ' || k.confupdtype::text
+           FROM t JOIN pg_constraint AS k ON k.conrelid = t.oid
+         UNION ALL
+         SELECT 'index ' || replace(pg_get_indexdef(i.indexrelid), $1 || '.', '')
+           FROM t JOIN pg_index AS i ON i.indrelid = t.oid
+         UNION ALL
+         SELECT 'trigger ' || replace(pg_get_triggerdef(g.oid), $1 || '.', '')
+           FROM t JOIN pg_trigger AS g ON g.tgrelid = t.oid
+          WHERE NOT g.tgisinternal
+         UNION ALL
+         SELECT 'row security ' || c.relrowsecurity || ' ' || c.relforcerowsecurity
+           FROM t JOIN pg_class AS c ON c.oid = t.oid
+         UNION ALL
+         SELECT 'policy ' || p.policyname || ' ' || p.cmd || ' ' || p.permissive
+                || ' ' || array_to_string(p.roles, ',')
+                || ' using ' || COALESCE(replace(p.qual, $1 || '.', ''), '')
+                || ' check ' || COALESCE(replace(p.with_check, $1 || '.', ''), '')
+           FROM pg_policies AS p
+          WHERE p.schemaname = $1 AND p.tablename = 'projection'
+         ORDER BY 1",
+    )
+    .bind(schema)
+    .fetch_all(conn)
+    .await
+    .expect("the projection catalog")
+}
+
+/// The table the generator's block for a spiice makes is the one the inline
+/// keys made: the same columns, the same constraints under the same names
+/// with the same delete actions, the same indexes, trigger and owner
+/// policies.
+#[tokio::test]
+async fn a_projection_keyed_through_the_installer_is_the_table_the_inline_keys_made() {
+    let (_db, mut conn) = migrated_platform().await;
+    let mut tx = platform_scope(&mut conn).await;
+    install_projection(
+        &mut tx,
+        "inline_keys",
+        &in_schema(INLINE_KEYS_PROJECTION, "inline_keys"),
+    )
+    .await;
+    install_projection(
+        &mut tx,
+        "installed_keys",
+        &spiice_projection("installed_keys.projection").render(),
+    )
+    .await;
+
+    let installed = projection_catalog(&mut tx, "installed_keys").await;
+    assert_eq!(projection_catalog(&mut tx, "inline_keys").await, installed);
+    for key in [
+        "constraint projection_memory_id_fkey FOREIGN KEY (memory_id) REFERENCES proxiima_core.memory(t) ON DELETE CASCADE delete c update a",
+        "constraint projection_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES proxiima_core.owners(owner_id) delete a update a",
+        "constraint projection_lexical_language_fkey FOREIGN KEY (lexical_language) REFERENCES proxiima_core.lexical_languages(config) delete a update a",
+    ] {
+        assert!(
+            installed.iter().any(|row| row == key),
+            "{key}: {installed:#?}"
+        );
+    }
+}
+
+/// A store that applied the inline-keys block ends as a fresh install of the
+/// current block does, whether its new migration drops the three keys before
+/// the installer calls or runs the calls alone, which keep keys that already
+/// have the delete action they name.
+#[tokio::test]
+async fn a_store_with_the_inline_keys_upgrades_to_the_installer_block() {
+    let (_db, mut conn) = migrated_platform().await;
+    let mut tx = platform_scope(&mut conn).await;
+    let fresh = spiice_projection("fresh.projection");
+    assert!(
+        fresh
+            .table
+            .forward
+            .as_str()
+            .ends_with(in_schema(INSTALL_KEYS, "fresh").as_str()),
+        "the upgrade runs the installer calls the block ends with: {}",
+        fresh.table.forward.as_str()
+    );
+    install_projection(&mut tx, "fresh", &fresh.render()).await;
+    let expected = projection_catalog(&mut tx, "fresh").await;
+
+    for (schema, drop_first) in [("dropped_first", true), ("calls_alone", false)] {
+        install_projection(&mut tx, schema, &in_schema(INLINE_KEYS_PROJECTION, schema)).await;
+        let mut upgrade = SqlText::new("");
+        if drop_first {
+            upgrade.push_text(&in_schema(DROP_INLINE_KEYS, schema));
+        }
+        upgrade.push_text(&in_schema(INSTALL_KEYS, schema));
+        run(&mut tx, upgrade).await;
+
+        assert_eq!(
+            projection_catalog(&mut tx, schema).await,
+            expected,
+            "{schema}"
+        );
+    }
 }

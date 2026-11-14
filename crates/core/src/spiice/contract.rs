@@ -1481,7 +1481,9 @@ impl ProjectionSpec {
     }
 }
 
-/// The name `PostgreSQL` mints for the projection's memory FK.
+/// The name of the projection's memory FK: `<table>_<column>_fkey`, which
+/// `PostgreSQL` mints for core's inline key and `install_reference` gives a
+/// spiice's.
 ///
 /// Identical for every spiice because the table is always named
 /// `projection` and the column is always `memory_id`, and constraint names
@@ -1500,11 +1502,11 @@ pub const PROJECTION_TABLE_NAME: &str = "projection";
 ///
 /// It is NOT the single source of the column name. [`PROJECTION_MEMORY_FK`]
 /// is a separate literal, derived from nothing, and the generator spells
-/// `memory_id` inline four more times — in the `CREATE TABLE` column list,
-/// in its `PRIMARY KEY`, in the projection `INSERT`'s column list, and in
-/// `PROJECTION_COLUMNS`, the catalog check's expected list. Those are fixed
-/// SQL text by design; interpolating a constant into them would move four
-/// spellings into four `format!` holes and buy nothing.
+/// `memory_id` inline four more times — in the `CREATE TABLE` column's name
+/// and definition, in its `PRIMARY KEY`, and in the projection `INSERT`'s
+/// column list. Those are fixed SQL text by design; interpolating a
+/// constant into them would move four spellings into four `format!` holes
+/// and buy nothing.
 ///
 /// What keeps the spellings agreeing is a test rather than a definition:
 /// `the_projection_column_name_has_one_spelling` in `storage-pg`'s

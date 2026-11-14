@@ -23,8 +23,11 @@
 //! 1. **The migration author.** The core baseline (`migrations/0069_baseline.sql`)
 //!    carries the table and index output; `definitions/triggers.sql` carries
 //!    the language trigger, while each spiice baseline carries its own table
-//!    and index. The generator-output tests pin those contracts so a change
-//!    fails the build rather than the next boot.
+//!    and index. A spiice's table names no core table: its three foreign
+//!    keys into core are `install_reference` calls after the `CREATE TABLE`,
+//!    while core's own table, which that installer does not serve, names
+//!    them inline. The generator-output tests pin those contracts so a
+//!    change fails the build rather than the next boot.
 //! 2. **The boot guardrail** (`ensure_projection_schema`), which re-runs it
 //!    and compares against `information_schema` in the same bidirectional
 //!    style as `ensure_lexical_language_stamps`.
@@ -130,27 +133,11 @@ pub fn projection_artifacts(
     let (schema, relation) = split_qualified(spec.table)?;
     let trigger = format!("{relation}_remember_lang");
     let trigger_ident = PgIdent::column(&trigger)?;
+    let schema_ident = PgIdent::name(schema)?;
 
     // Every spliced name above went through `PgIdent`, which rejects
     // anything that is not a bare (optionally schema-qualified) identifier.
-    // The rest of the text is fixed: the column list, the types and the
-    // constraints are the same characters for every spiice, which is the
-    // slimness property stated as code.
-    let mut create = SqlText::new("CREATE TABLE ");
-    create.push_ident(&table).push(
-        " (
-    memory_id        uuid      NOT NULL
-                     REFERENCES proxiima_core.memory (t) ON DELETE CASCADE,
-    schema_id        text      NOT NULL,
-    owner_id         uuid      NOT NULL
-                     REFERENCES proxiima_core.owners (owner_id),
-    search_tsv       tsvector  NOT NULL,
-    tag              text[]    NOT NULL DEFAULT '{}',
-    lexical_language regconfig NOT NULL DEFAULT proxiima_core.lexical_config()
-                     REFERENCES proxiima_core.lexical_languages (config),
-    PRIMARY KEY (memory_id, schema_id)
-);",
-    );
+    let create = create_table_sql(&table, schema, relation)?;
 
     let mut create_index = SqlText::new("CREATE INDEX ");
     create_index
@@ -172,10 +159,9 @@ pub fn projection_artifacts(
 
     let mut drop_table = SqlText::new("DROP TABLE IF EXISTS ");
     drop_table.push_ident(&table).push(";");
-    let schema = PgIdent::name(schema)?;
     let mut drop_index = SqlText::new("DROP INDEX IF EXISTS ");
     drop_index
-        .push_ident(&schema)
+        .push_ident(&schema_ident)
         .push(".")
         .push_ident(&index)
         .push(";");
@@ -187,7 +173,7 @@ pub fn projection_artifacts(
         .push(" USING gin (owner_id, tag);");
     let mut drop_tag_index = SqlText::new("DROP INDEX IF EXISTS ");
     drop_tag_index
-        .push_ident(&schema)
+        .push_ident(&schema_ident)
         .push(".")
         .push_ident(&tag_index)
         .push(";");
@@ -217,6 +203,135 @@ pub fn projection_artifacts(
         },
     }))
 }
+
+/// The `CREATE TABLE` of a projection table and, in a spiice's schema, the
+/// installer calls for its keys into core.
+fn create_table_sql(
+    table: &PgIdent,
+    schema: &str,
+    relation: &str,
+) -> Result<SqlText, StorageError> {
+    // The table name went through `PgIdent`. The rest of the text is fixed:
+    // the column list, the types and the constraints are the same characters
+    // for every spiice, which is the slimness property stated as code.
+    let keys = if schema == CORE_SCHEMA {
+        CoreKeys::Inline
+    } else {
+        CoreKeys::Installer
+    };
+    let mut create = SqlText::new("CREATE TABLE ");
+    create.push_ident(table).push(" (");
+    for (index, column) in PROJECTION_TABLE.iter().enumerate() {
+        if index > 0 {
+            create.push(",");
+        }
+        create.push("\n    ").push(column.definition);
+        if let (CoreKeys::Inline, Some(key)) = (keys, &column.core_key) {
+            create.push("\n                     ").push(key.inline);
+        }
+    }
+    create.push(",\n    PRIMARY KEY (memory_id, schema_id)\n);");
+    if keys == CoreKeys::Installer {
+        let schema_ident = PgIdent::name(schema)?;
+        let relation_ident = PgIdent::name(relation)?;
+        for (column, key) in PROJECTION_TABLE
+            .iter()
+            .filter_map(|column| Some((column.name, column.core_key.as_ref()?)))
+        {
+            create
+                .push("\nSELECT proxiima_core.install_reference('")
+                .push_ident(&schema_ident)
+                .push("', '")
+                .push_ident(&relation_ident)
+                .push("', '")
+                .push(column)
+                .push("', '")
+                .push(key.referenced)
+                .push("', '")
+                .push(key.on_delete)
+                .push("');");
+        }
+    }
+    Ok(create)
+}
+
+/// The schema `install_reference` does not serve: core's own projection
+/// table, released in the core baseline, names the core tables it references.
+const CORE_SCHEMA: &str = "proxiima_core";
+
+/// How a projection table's foreign keys into core are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoreKeys {
+    /// In the column list: core's own table, in core's own schema.
+    Inline,
+    /// One `install_reference` call each, after the `CREATE TABLE`: a
+    /// spiice's table, whose migration names no core table.
+    Installer,
+}
+
+/// One column of the projection table.
+struct ProjectionColumn {
+    name: &'static str,
+    /// Name, type, nullability and default, as the `CREATE TABLE` spells it.
+    definition: &'static str,
+    core_key: Option<CoreKey>,
+}
+
+/// One foreign key into core, in both of its spellings.
+struct CoreKey {
+    inline: &'static str,
+    /// `install_reference`'s closed vocabularies.
+    referenced: &'static str,
+    on_delete: &'static str,
+}
+
+/// The projection table's columns, in `CREATE TABLE` order. Erase reaches a
+/// projection row through the memory key's cascade
+/// ([`proxiima_core::spiice::PROJECTION_MEMORY_FK`]).
+const PROJECTION_TABLE: [ProjectionColumn; 6] = [
+    ProjectionColumn {
+        name: "memory_id",
+        definition: "memory_id        uuid      NOT NULL",
+        core_key: Some(CoreKey {
+            inline: "REFERENCES proxiima_core.memory (t) ON DELETE CASCADE",
+            referenced: "memory",
+            on_delete: "cascade",
+        }),
+    },
+    ProjectionColumn {
+        name: "schema_id",
+        definition: "schema_id        text      NOT NULL",
+        core_key: None,
+    },
+    ProjectionColumn {
+        name: "owner_id",
+        definition: "owner_id         uuid      NOT NULL",
+        core_key: Some(CoreKey {
+            inline: "REFERENCES proxiima_core.owners (owner_id)",
+            referenced: "owner",
+            on_delete: "no_action",
+        }),
+    },
+    ProjectionColumn {
+        name: "search_tsv",
+        definition: "search_tsv       tsvector  NOT NULL",
+        core_key: None,
+    },
+    ProjectionColumn {
+        name: "tag",
+        definition: "tag              text[]    NOT NULL DEFAULT '{}'",
+        core_key: None,
+    },
+    ProjectionColumn {
+        name: "lexical_language",
+        definition: "lexical_language regconfig NOT NULL DEFAULT proxiima_core.lexical_config()",
+        core_key: Some(CoreKey {
+            inline: "REFERENCES proxiima_core.lexical_languages (config)",
+            referenced: "lexical_language",
+            on_delete: "no_action",
+        }),
+    },
+];
 
 fn split_qualified(table: &str) -> Result<(&str, &str), StorageError> {
     table.split_once('.').ok_or_else(|| {
@@ -658,9 +773,10 @@ pub async fn ensure_projection_schema(
         .fetch_all(pool)
         .await
         .map_err(crate::error::map_err)?;
-        if columns != PROJECTION_COLUMNS {
+        let emitted = projection_columns();
+        if columns != emitted {
             return Err(StorageError::Internal(format!(
-                "{} has columns {columns:?}, the generator emits {PROJECTION_COLUMNS:?}; \
+                "{} has columns {columns:?}, the generator emits {emitted:?}; \
                  the baseline was hand-edited away from the generator",
                 spec.table
             )));
@@ -686,20 +802,20 @@ pub async fn ensure_projection_schema(
     Ok(())
 }
 
-/// The generator's column list, in `information_schema` order.
-const PROJECTION_COLUMNS: [&str; 6] = [
-    "lexical_language",
-    "memory_id",
-    "owner_id",
-    "schema_id",
-    "search_tsv",
-    "tag",
-];
+/// The generator's column names, in the boot check's `ORDER BY 1` order.
+fn projection_columns() -> Vec<&'static str> {
+    let mut names = PROJECTION_TABLE
+        .iter()
+        .map(|column| column.name)
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names
+}
 
 #[cfg(test)]
 mod tests {
     use super::{
-        PROJECTION_COLUMNS, projection_artifacts, projection_insert_sql, projection_vector_sql,
+        projection_artifacts, projection_columns, projection_insert_sql, projection_vector_sql,
     };
     use proxiima_core::SPIICE_0;
     use proxiima_core::spiice::{SchemaContract, SearchProjectionDecl};
@@ -710,8 +826,8 @@ mod tests {
     /// Being a constant buys no agreement here: it is read in exactly one
     /// place (`ProjectionSpec::surface`). The FK name is an independent literal,
     /// and the generator writes `memory_id` inline in the `CREATE TABLE`
-    /// column list, in its `PRIMARY KEY`, in the projection `INSERT`, and in
-    /// `PROJECTION_COLUMNS`. Interpolating the constant into fixed SQL text
+    /// column's name and definition, in its `PRIMARY KEY` and in the
+    /// projection `INSERT`. Interpolating the constant into fixed SQL text
     /// would trade four spellings for four `format!` holes and buy nothing,
     /// so the agreement is asserted instead of engineered.
     ///
@@ -731,8 +847,8 @@ mod tests {
              is checked"
         );
         assert!(
-            PROJECTION_COLUMNS.contains(&PROJECTION_MEMORY_COLUMN),
-            "the catalog boot check compares against PROJECTION_COLUMNS, so a \
+            projection_columns().contains(&PROJECTION_MEMORY_COLUMN),
+            "the catalog boot check compares against projection_columns(), so a \
              renamed column that missed that list would pass boot and fail the \
              surface"
         );
@@ -871,6 +987,61 @@ mod tests {
                 "DROP INDEX IF EXISTS proxiima_core.core_projection_owner_tsv_gin;",
                 "DROP TABLE IF EXISTS proxiima_core.projection;",
             ]
+        );
+    }
+
+    /// Spiice #0's contract with its projection table moved into a spiice's
+    /// own schema, and nothing else changed.
+    fn a_spiice_projection_contract() -> proxiima_core::spiice::SpiiceContract {
+        let spec = *SPIICE_0.projection.spec().expect("core declares a spec");
+        let mut contract = SPIICE_0;
+        contract.projection =
+            proxiima_core::spiice::ProjectionDecl::Table(proxiima_core::spiice::ProjectionSpec {
+                table: "some_spiice.projection",
+                index: "some_spiice_projection_owner_tsv_gin",
+                ..spec
+            });
+        contract
+    }
+
+    /// A spiice's table names no core table: its keys into core go through
+    /// `install_reference`, with the delete actions core's inline keys have.
+    #[test]
+    fn a_spiice_table_gets_its_core_keys_from_the_installer() {
+        let artifacts = projection_artifacts(&a_spiice_projection_contract())
+            .expect("artifacts")
+            .expect("the contract declares a projection");
+        assert_eq!(
+            artifacts.table.forward.as_str(),
+            "CREATE TABLE some_spiice.projection (
+    memory_id        uuid      NOT NULL,
+    schema_id        text      NOT NULL,
+    owner_id         uuid      NOT NULL,
+    search_tsv       tsvector  NOT NULL,
+    tag              text[]    NOT NULL DEFAULT '{}',
+    lexical_language regconfig NOT NULL DEFAULT proxiima_core.lexical_config(),
+    PRIMARY KEY (memory_id, schema_id)
+);
+SELECT proxiima_core.install_reference('some_spiice', 'projection', 'memory_id', 'memory', 'cascade');
+SELECT proxiima_core.install_reference('some_spiice', 'projection', 'owner_id', 'owner', 'no_action');
+SELECT proxiima_core.install_reference('some_spiice', 'projection', 'lexical_language', 'lexical_language', 'no_action');"
+        );
+        // Everything else in the block that names core is a function the SQL
+        // contract provides.
+        let rendered = artifacts.render();
+        let rest = [
+            "proxiima_core.install_reference(",
+            "proxiima_core.lexical_config()",
+            "proxiima_core.remember_lexical_language()",
+        ]
+        .iter()
+        .fold(rendered.as_str().to_owned(), |text, call| {
+            text.replace(call, "")
+        });
+        assert!(
+            !rest.contains("proxiima_core."),
+            "the block names a core table: {}",
+            rendered.as_str()
         );
     }
 
