@@ -470,6 +470,55 @@ async fn foreign_runtime_phase_is_denied_before_engine_work() {
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
 
+/// A delegated ceiling never manages: issue refuses one before the store is
+/// touched, and a stored row that carries one does not decode.
+#[tokio::test]
+async fn a_managing_ceiling_is_refused_at_issue_and_at_decode() {
+    let (subject, owner, store, access) = fixtures();
+    let (_engine, service, command) =
+        runtime(registry(true), store.clone(), access, ServedSurface::All);
+    let expires_at = SystemTime::now() + Duration::from_secs(30);
+    let admin = AuthzContext::for_subject_with_role(
+        subject,
+        [(owner, Role::admin())],
+        AuthPath::HostBearer,
+    )
+    .with_expires_at(Some(expires_at))
+    .seal_verified_scope()
+    .expect("synthetic verified identity");
+    assert!(matches!(
+        service
+            .issue(&admin, owner, command.clone(), Role::admin())
+            .await,
+        Err(DelegatedAuthorityError::ManagementNotDelegable)
+    ));
+    assert_eq!(store.inserts.load(Ordering::SeqCst), 0);
+
+    let editor = source(subject, owner, expires_at, ToolScope::All);
+    service
+        .issue(&editor, owner, command, Role::editor())
+        .await
+        .expect("an editor ceiling is issued");
+    let stored = store.grant.lock().unwrap().clone().unwrap();
+    let decoded = DelegationGrant::from_storage(
+        service.mutation_permit_for_tests(),
+        &DelegationGrantStorage {
+            delegation_id: stored.delegation_id(),
+            subject: stored.subject(),
+            writer: stored.writer(),
+            owner: stored.owner(),
+            tool: stored.command().tool().as_str().to_owned(),
+            action: None,
+            role_ceiling: Role::admin(),
+            expires_at: stored.expires_at(),
+            issued_at: stored.issued_at(),
+            revoked_at: None,
+            revoked_by: None,
+        },
+    );
+    assert!(matches!(decoded, Err(StorageError::ConstraintViolation(_))));
+}
+
 #[tokio::test]
 async fn denials_precede_store_mutation_and_adapter_subject_is_rechecked() {
     let (subject, owner, store, access) = fixtures();
