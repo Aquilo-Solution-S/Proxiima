@@ -173,7 +173,7 @@ pub use proxiima_core::verbs::goal_write::{
     ChildGoalDraft, DecomposeGoalOutcome, GoalAuthorship, GoalCreateRequest, GoalDependencyRef,
     GoalEvidenceRef, GoalMotivationRef, GoalPayloadWrite, GoalState, GoalTopologyWrite,
     GoalWriteBuildError, GoalWriteOutcome, IdempotencyKey, MAX_GOAL_TEXT_CHARS,
-    MAX_GOAL_TITLE_CHARS, OperatorKind, SystemOrigin,
+    MAX_GOAL_TITLE_CHARS, SystemOrigin,
 };
 /// Spiice-scoped erase for the host's retention schedule: open a unit with
 /// `Engine::system_unit_of_work` and call [`UnitOfWork::erase_own_series`].
@@ -443,8 +443,8 @@ pub use proxiima_core::publication::{
 pub use proxiima_core::{
     AbstractionPayload, CitedObjectPayload, EntityId, FactPayload, FactReceiptId, FactTombstone,
     GoalId, GoalPayload, InputContractId, ModelId, OperatorId, PayloadReference,
-    PerspectivePayload, PromptVersion, ReferenceBinding, SchemaVersion, ScopeRef,
-    SearchProjectionColumnKind, SidecarPayload, ToolId,
+    PerspectivePayload, ReferenceBinding, SchemaVersion, ScopeRef, SearchProjectionColumnKind,
+    SidecarPayload, ToolId,
 };
 /// Request, row and outcome types the storage-port methods take and return
 /// ([`FactIngestPort`], [`MemoryAuthoringPort`], [`GoalWritePort`],

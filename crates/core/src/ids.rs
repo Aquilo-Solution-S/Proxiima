@@ -250,22 +250,3 @@ impl ModelId {
         &self.0
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct PromptVersion(String);
-
-impl PromptVersion {
-    pub fn new(inner: impl Into<String>) -> Self {
-        Self(inner.into())
-    }
-
-    #[must_use]
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}

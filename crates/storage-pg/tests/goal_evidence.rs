@@ -13,11 +13,11 @@ use proxiima_core::verbs::goal_write::{
     AchieveGoalAtomicRequest, ChildGoalDraft, CreateGoalAtomicRequest, DecomposeGoalAtomicRequest,
     GoalAtomicContext, GoalAuthorship, GoalDraft, GoalEvidenceRef, GoalMotivationRef,
     GoalPayloadWrite, GoalState, GoalTopologyWrite, IdempotencyKey, ModifyGoalAtomicRequest,
-    OperatorKind, SystemOrigin,
+    SystemOrigin,
 };
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, InputContractId, ModelId, OperatorId, OwnerId, PromptVersion,
-    SchemaId, SchemaVersion, SpiiceRegistry, StorageError, UserId,
+    EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry, StorageError,
+    UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -250,13 +250,7 @@ async fn perspective_evidence_is_rejected_in_tx() {
         .await
         .expect("host mark-achieved must accept Fact evidence");
 
-        let operator = GoalAuthorship::System(SystemOrigin::Operator {
-            operator_id: OperatorId::new(Uuid::now_v7()),
-            operator_kind: OperatorKind::AtoGoal,
-            input_contract_id: InputContractId::new(Uuid::now_v7()),
-            model_id: ModelId::new("test-model"),
-            prompt_version: PromptVersion::new("v1"),
-        });
+        let operator = GoalAuthorship::System(SystemOrigin::Operator);
         let operator_fact_topology = GoalTopologyWrite::new(
             vec![GoalMotivationRef::perspective(perspective.memory_id)],
             Vec::new(),
@@ -544,13 +538,7 @@ async fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
 }
 
 fn operator_authorship() -> GoalAuthorship {
-    GoalAuthorship::System(SystemOrigin::Operator {
-        operator_id: OperatorId::new(Uuid::now_v7()),
-        operator_kind: OperatorKind::AtoGoal,
-        input_contract_id: InputContractId::new(Uuid::now_v7()),
-        model_id: ModelId::new("test-model"),
-        prompt_version: PromptVersion::new("v1"),
-    })
+    GoalAuthorship::System(SystemOrigin::Operator)
 }
 
 fn payload(title: &str) -> GoalPayloadWrite {

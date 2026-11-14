@@ -19,14 +19,12 @@ use proxiima_core::verbs::goal_write::{
     AchieveGoalAtomicRequest, ChildGoalDraft, CreateGoalAtomicRequest, DecomposeGoalAtomicRequest,
     GoalAtomicContext, GoalAuthorship, GoalDraft, GoalEvidenceRef, GoalMotivationRef,
     GoalPayloadWrite, GoalState, GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome,
-    IdempotencyKey, ModifyGoalAtomicRequest, OperatorKind, SystemOrigin,
-    TransitionGoalAtomicRequest,
+    IdempotencyKey, ModifyGoalAtomicRequest, SystemOrigin, TransitionGoalAtomicRequest,
 };
 use proxiima_core::{
-    DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId, GoalPayload,
-    InputContractId, KeyField, ModelId, OperatorId, OwnerId, PayloadDisplay, PayloadProjection,
-    PendingWork, PromptVersion, SchemaId, SchemaVersion, SimpleTextGoalV1, SpiiceRegistry,
-    StorageError, ToolId, UserId,
+    DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId, GoalPayload, KeyField,
+    OwnerId, PayloadDisplay, PayloadProjection, PendingWork, SchemaId, SchemaVersion,
+    SimpleTextGoalV1, SpiiceRegistry, StorageError, ToolId, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -165,14 +163,8 @@ fn active_draft(
     })
 }
 
-fn operator_authorship(model_id: &str, prompt_version: &str) -> GoalAuthorship {
-    GoalAuthorship::System(SystemOrigin::Operator {
-        operator_id: OperatorId::new(Uuid::now_v7()),
-        operator_kind: OperatorKind::AtoGoal,
-        input_contract_id: InputContractId::new(Uuid::now_v7()),
-        model_id: ModelId::new(model_id),
-        prompt_version: PromptVersion::new(prompt_version),
-    })
+fn operator_authorship() -> GoalAuthorship {
+    GoalAuthorship::System(SystemOrigin::Operator)
 }
 
 fn assert_exact_replay(first: &GoalWriteOutcome, replay: &GoalWriteOutcome) {
@@ -1110,7 +1102,7 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
             "metadata rotation",
             vec![GoalEvidenceRef::new(abstraction.memory_id)],
         )?;
-        first_draft.authorship = operator_authorship("model-a", "prompt-a");
+        first_draft.authorship = operator_authorship();
         let first = pg
             .create_goal_atomic(
                 &CreateGoalAtomicRequest {
@@ -1133,7 +1125,7 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
             "metadata rotation",
             vec![GoalEvidenceRef::new(abstraction.memory_id)],
         )?;
-        replay_draft.authorship = operator_authorship("model-b", "prompt-b");
+        replay_draft.authorship = operator_authorship();
         let replay = pg
             .create_goal_atomic(
                 &CreateGoalAtomicRequest {

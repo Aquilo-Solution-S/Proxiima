@@ -8,14 +8,10 @@ use crate::engine::{
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::verbs::goal_write::{
     ChildGoalDraft, GoalAuthorship, GoalEvidenceRef, GoalMotivationRef, GoalPayloadWrite,
-    GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome, IdempotencyKey, OperatorKind,
-    SystemOrigin,
+    GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome, IdempotencyKey, SystemOrigin,
 };
 use crate::verbs::schema::PayloadKind;
-use crate::{
-    GoalHandle, InputContractId, ModelId, OperatorId, PendingWork, PromptVersion, SchemaId,
-    SchemaVersion, ToolId,
-};
+use crate::{GoalHandle, PendingWork, SchemaId, SchemaVersion, ToolId};
 use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,12 +34,6 @@ const fn decimal_digits(mut n: usize) -> usize {
     }
     digits
 }
-const MCP_OPERATOR_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
-    0x3f, 0x61, 0xde, 0x85, 0x4e, 0x09, 0x45, 0x62, 0x97, 0xc4, 0x8a, 0x74, 0xaa, 0xf9, 0x4a, 0x2c,
-]);
-const MCP_GOAL_INPUT_CONTRACT_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
-    0xb2, 0x3f, 0x07, 0xef, 0xeb, 0x6f, 0x4f, 0xe7, 0xa9, 0xd3, 0x67, 0xa9, 0x53, 0xf3, 0x4a, 0x6d,
-]);
 const CORE_GOAL_PRODUCES_SCHEMA_IDS: &[&str] = &[];
 pub const CORE_GOAL_ACTIONS: &[CoreActionMeta] = &[
     CoreActionMeta {
@@ -454,7 +444,7 @@ async fn goal_set(ctx: ToolCtx, args: GoalSetArgs) -> Result<GoalWriteOutput, To
         GoalTopologyWrite::new(motivated_by, Vec::new(), evidence).map_err(ToolError::Protocol)?;
     let request_id = IdempotencyKey::optional_or_generated("goal_set", args.idempotency_key)
         .map_err(ToolError::InvalidInput)?;
-    let authorship = system_operator_authorship(&ctx, "goal_set");
+    let authorship = OPERATOR_AUTHORSHIP;
     let engine = ctx.engine();
     let outcome = engine
         .create_goal_from_payload_write(
@@ -844,7 +834,7 @@ async fn goal_modify(ctx: ToolCtx, args: GoalModifyArgs) -> Result<GoalWriteOutp
                 owner,
                 prior_goal_id: prior,
                 replacement: payload,
-                authorship: system_operator_authorship(&ctx, "goal_modify"),
+                authorship: OPERATOR_AUTHORSHIP,
                 request_id,
                 evidence,
                 motivated_by,
@@ -945,7 +935,7 @@ async fn goal_decompose(
             &GoalDecomposeRequest {
                 owner: space.owner,
                 parent_goal_id: parent,
-                authorship: system_operator_authorship(&ctx, "goal_decompose"),
+                authorship: OPERATOR_AUTHORSHIP,
                 topology,
                 children,
                 author_self_perspective_id: ctx.caller_self_perspective(),
@@ -1059,50 +1049,11 @@ fn resolve_goal_motivations(
         .collect::<Result<Vec<_>, _>>()
 }
 
-/// Operator identity for a Goal write.
-///
-/// Deliberately *not* routed through
-/// [`operator_label`](super::memory::util::operator_label), unlike every
-/// authoring path that records a label. Nothing here is persisted as a
-/// label: `SystemOrigin::Operator` has no goal-authorship column, and
-/// replay collapses it to `system_operator`, so the only thing the label
-/// reaches is the v5 hash below. Validating it would buy no provenance and
-/// would turn a blank or over-long request-context `model_id` into a
-/// refused `goal_set` — a caller told its intent was rejected over a field
-/// the goal never keeps.
-///
-/// The bound identity already reaches this: `ctx.caller().model_id` is the
-/// trusted id when the token binds one.
-///
-/// The input-contract label (`fact-or-abstraction-evidence-v1`, #513) feeds
-/// only that hash: no stored column carries it, so renaming it changes no
-/// replay.
-pub(crate) fn system_operator_authorship(ctx: &ToolCtx, prompt_version: &str) -> GoalAuthorship {
-    let model_id = &ctx.caller().model_id;
-    let operator_key = format!(
-        "{}\0{}\0{}\0{}",
-        ctx.caller().client_name,
-        ctx.caller().client_version,
-        model_id,
-        prompt_version
-    );
-    let operator_id = uuid::Uuid::new_v5(&MCP_OPERATOR_NAMESPACE, operator_key.as_bytes());
-    let input_contract_id = uuid::Uuid::new_v5(
-        &MCP_GOAL_INPUT_CONTRACT_NAMESPACE,
-        format!(
-            "{}:{prompt_version}:fact-or-abstraction-evidence-v1",
-            protocol_tool::CORE_GOAL
-        )
-        .as_bytes(),
-    );
-    GoalAuthorship::System(SystemOrigin::Operator {
-        operator_id: OperatorId::new(operator_id),
-        operator_kind: OperatorKind::AtoGoal,
-        input_contract_id: InputContractId::new(input_contract_id),
-        model_id: ModelId::new(model_id.clone()),
-        prompt_version: PromptVersion::new(prompt_version),
-    })
-}
+/// The authorship every Goal action of the model-facing tools hands
+/// storage. It names the category only: no Goal column keeps who the
+/// operator was.
+pub(crate) const OPERATOR_AUTHORSHIP: GoalAuthorship =
+    GoalAuthorship::System(SystemOrigin::Operator);
 
 fn format_goal_write_output(_ctx: &ToolCtx, outcome: &GoalWriteOutcome) -> GoalWriteOutput {
     GoalWriteOutput {
@@ -1215,29 +1166,6 @@ mod tests {
                 .await
                 .expect_err("bare UUID required");
             assert!(matches!(err, ToolError::InvalidInput(_)), "{err}");
-        }
-    }
-
-    /// The authorship every direct Goal action hands storage: a system
-    /// operator that carries the request's model and the action's prompt
-    /// version, and a different operator per prompt version.
-    #[test]
-    fn operator_authorship_carries_the_model_and_the_prompt_version() {
-        let ctx = test_ctx();
-        let mut operators = std::collections::HashSet::new();
-        for prompt in ["goal_set", "goal_modify", "goal_decompose"] {
-            let GoalAuthorship::System(SystemOrigin::Operator {
-                operator_id,
-                prompt_version,
-                model_id,
-                ..
-            }) = system_operator_authorship(&ctx, prompt)
-            else {
-                panic!("{prompt}: expected operator authorship");
-            };
-            assert_eq!(prompt_version.as_str(), prompt);
-            assert_eq!(model_id.as_str(), ctx.caller().model_id);
-            assert!(operators.insert(operator_id), "{prompt}: operator reused");
         }
     }
 }

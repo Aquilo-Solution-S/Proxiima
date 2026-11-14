@@ -173,10 +173,7 @@ pub(crate) async fn transition_goal_atomic_in_pool(
     // ever carry a shape it refuses, and probing for one is pure cost.
     // (`Achieved` is not a `GoalTransitionKind`, so a transition to it is
     // unrepresentable and needs no screen.)
-    if matches!(
-        &req.authorship,
-        GoalAuthorship::System(SystemOrigin::Operator { .. })
-    ) {
+    if req.authorship == GoalAuthorship::System(SystemOrigin::Operator) {
         return Err(StorageError::ConstraintViolation(
             "operator-authored Goal transition is not supported".into(),
         ));

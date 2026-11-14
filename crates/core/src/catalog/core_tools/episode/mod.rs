@@ -7,7 +7,7 @@ use futures::future::BoxFuture;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::goal::{GoalPayloadArgs, encode_goal_payload, system_operator_authorship};
+use super::goal::{GoalPayloadArgs, OPERATOR_AUTHORSHIP, encode_goal_payload};
 use super::memory::derive::{
     self, DerivedKind, MAX_SOURCE_HANDLES, core_derive_input_contract_id, core_derive_operator_id,
     map_derive_authoring_error,
@@ -594,7 +594,7 @@ impl EpisodeWrite<'_> {
                         topology,
                         payload,
                         request_id,
-                        authorship: system_operator_authorship(ctx, "episode_commit"),
+                        authorship: OPERATOR_AUTHORSHIP,
                         author_self_perspective_id: ctx.caller_self_perspective(),
                     },
                     pin.then_some(act_id),

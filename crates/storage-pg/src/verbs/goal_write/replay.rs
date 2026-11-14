@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 fn authorship_declaration(authorship: &GoalAuthorship) -> &'static str {
-    // Replay identity records only the logical author category. The operator
-    // fields and caller Self are host/session metadata, so including them
-    // would turn a retry after a host rotation into an idempotency conflict.
+    // Replay identity records only the logical author category. The tool id
+    // and caller Self are host/session metadata, so including them would turn
+    // a retry after a host rotation into an idempotency conflict.
     match authorship {
         GoalAuthorship::User => "user",
-        GoalAuthorship::System(SystemOrigin::Operator { .. }) => "system_operator",
+        GoalAuthorship::System(SystemOrigin::Operator) => "system_operator",
         GoalAuthorship::System(SystemOrigin::Tool { .. }) => "system_tool",
         GoalAuthorship::External => "external",
     }

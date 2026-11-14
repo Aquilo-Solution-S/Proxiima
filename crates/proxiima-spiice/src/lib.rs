@@ -133,7 +133,7 @@ pub use proxiima_core::verbs::fact_ingest::{
 pub use proxiima_core::verbs::goal_write::{
     ChildGoalDraft, DecomposeGoalOutcome, GoalAuthorship, GoalCreateRequest, GoalDependencyRef,
     GoalEvidenceRef, GoalMotivationRef, GoalPayloadWrite, GoalState, GoalTopologyWrite,
-    GoalWriteBuildError, GoalWriteOutcome, IdempotencyKey, OperatorKind, SystemOrigin,
+    GoalWriteBuildError, GoalWriteOutcome, IdempotencyKey, SystemOrigin,
 };
 /// Spiice-scoped erase ([`UnitOfWork::erase_own_series`]): the selection,
 /// the mode, the receipt, the refusal, and the per-call caps a caller pages
@@ -163,9 +163,9 @@ pub use proxiima_core::{
     DelegationRevocation, EndpointUrlError, EndpointUrlPolicy, EngineAuthority, FactPayload,
     FactReceiptId, FactTombstone, GoalId, GoalPayload, GroupId, InputContractId, MemoryId, ModelId,
     OperatorId, OwnerId, PayloadKeyBuilder, PerspectivePayload, PlaintextHosts,
-    PlaintextHostsError, PromptVersion, RequestHeaders, ResourceKey, SchemaId, SchemaVersion,
-    ScopeKey, ScopeKeyError, SearchProjectionColumnKind, ServedSurface, SidecarPayload,
-    SpiiceDescriptor, SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen,
+    PlaintextHostsError, RequestHeaders, ResourceKey, SchemaId, SchemaVersion, ScopeKey,
+    ScopeKeyError, SearchProjectionColumnKind, ServedSurface, SidecarPayload, SpiiceDescriptor,
+    SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError, SpiiceRegistryFrozen,
     SpiiceServiceError, SpiiceServices, Tool, ToolCaller, ToolCtx, ToolError, ToolId, ToolName,
     ToolScope, TrustedModelIdError, UserId, WriterAttribution, proxiima_spiice,
     validate_endpoint_url, validate_endpoint_url_for_hosts,
