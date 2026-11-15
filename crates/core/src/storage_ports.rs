@@ -38,8 +38,8 @@ pub(crate) use bundle::{
 pub use bundle::{StoragePorts, StoragePortsBuildError, StoragePortsBuilder};
 pub use cited_blob::{
     CitedBlobHeld, CitedBlobPort, CitedBlobService, CitedBlobStaged, CitedBlobUploadAborted,
-    CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadPrepared,
-    MAX_HELD_BLOB_DIGESTS,
+    CitedBlobUploadCompleted, CitedBlobUploadHeader, CitedBlobUploadOrigin,
+    CitedBlobUploadPrepared, CitedBlobUploadRequest, MAX_HELD_BLOB_DIGESTS,
 };
 pub use cited_blob_delivery::{
     AdmittedCitedBlobDelivery, CitedBlobDeliveryBindingError, CitedBlobDeliveryPermit,

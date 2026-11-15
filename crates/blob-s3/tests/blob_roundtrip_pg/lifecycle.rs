@@ -14,12 +14,9 @@ impl CitedBlobPort for AbortAfterStagePort {
     async fn prepare_upload(
         &self,
         authz: &AuthzContext,
-        owner: OwnerId,
-        filename: &str,
-        mime: &str,
-        byte_len: u64,
+        request: proxiima_core::storage_ports::CitedBlobUploadRequest<'_>,
     ) -> Result<CitedBlobUploadPrepared, StorageError> {
-        CitedBlobPort::prepare_upload(&self.inner, authz, owner, filename, mime, byte_len).await
+        CitedBlobPort::prepare_upload(&self.inner, authz, request).await
     }
 
     async fn stage_upload(

@@ -27,6 +27,62 @@ use crate::authz::{
 };
 use crate::storage::StorageError;
 
+/// An origin a host selects for upload signatures, never for object I/O.
+/// HTTPS is required except on loopback. Paths, credentials, queries and fragments are refused.
+/// Insert this into a request's services for `core_upload` `prepare`, or derive a service with
+/// [`CitedBlobService::for_upload_origin`] for an in-process prepare.
+///
+/// ```
+/// proxiima_core::storage_ports::CitedBlobUploadOrigin::parse("https://uploads.example").unwrap();
+/// ```
+///
+/// ```compile_fail
+/// proxiima_core::storage_ports::CitedBlobUploadOrigin(String::new());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitedBlobUploadOrigin(String);
+
+impl CitedBlobUploadOrigin {
+    /// Parse host configuration before it enters an upload request.
+    ///
+    /// # Errors
+    /// Refuses anything other than an HTTPS origin or a loopback HTTP origin.
+    pub fn parse(raw: &str) -> Result<Self, crate::EndpointUrlError> {
+        crate::validate_endpoint_url(raw, crate::EndpointUrlPolicy::AllowLoopbackHttp)?;
+        let uri = raw
+            .parse::<http::Uri>()
+            .map_err(|error| crate::EndpointUrlError::InvalidUrl(error.to_string()))?;
+        if uri
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+            || !matches!(uri.path(), "" | "/")
+            || uri.query().is_some()
+            || raw.contains('#')
+        {
+            return Err(crate::EndpointUrlError::InvalidUrl(
+                "expected an origin".into(),
+            ));
+        }
+        Ok(Self(raw.trim_end_matches('/').to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The admitted prepare's metadata and its host-selected signing origin.
+#[derive(Clone, Copy, Debug)]
+pub struct CitedBlobUploadRequest<'a> {
+    pub owner: OwnerId,
+    pub filename: &'a str,
+    pub mime: &'a str,
+    pub byte_len: u64,
+    /// None uses the backend's configured endpoint.
+    pub origin: Option<&'a CitedBlobUploadOrigin>,
+}
+
 /// Prepared presigned upload: `PUT` the raw bytes to `upload_url` with
 /// exactly `headers` before `expires_at`, then complete with `upload_id`.
 /// The request signs the declared `byte_len` as its `Content-Length`: a body
@@ -143,10 +199,7 @@ pub trait CitedBlobPort: Send + Sync {
     async fn prepare_upload(
         &self,
         authz: &AuthzContext,
-        owner: OwnerId,
-        filename: &str,
-        mime: &str,
-        byte_len: u64,
+        request: CitedBlobUploadRequest<'_>,
     ) -> Result<CitedBlobUploadPrepared, StorageError>;
 
     /// Verify the uploaded bytes and move them to the canonical key derived
@@ -264,6 +317,7 @@ pub trait CitedBlobPort: Send + Sync {
 pub struct CitedBlobService {
     port: Arc<dyn CitedBlobPort>,
     runtime_binding: Option<DelegationRuntimeBinding>,
+    upload_origin: Option<CitedBlobUploadOrigin>,
 }
 
 impl std::fmt::Debug for CitedBlobService {
@@ -289,6 +343,7 @@ impl CitedBlobService {
         Self {
             port,
             runtime_binding: None,
+            upload_origin: None,
         }
     }
 
@@ -303,6 +358,17 @@ impl CitedBlobService {
         Self {
             port,
             runtime_binding: Some(authority.binding()),
+            upload_origin: None,
+        }
+    }
+
+    /// A request-scoped service that signs uploads for `origin`. Admission, runtime authority
+    /// and all other operations keep the same backend; the original service is unchanged.
+    #[must_use]
+    pub fn for_upload_origin(&self, origin: CitedBlobUploadOrigin) -> Self {
+        Self {
+            upload_origin: Some(origin),
+            ..self.clone()
         }
     }
 
@@ -338,7 +404,16 @@ impl CitedBlobService {
     {
         let authz = self.operation_context(authority)?;
         self.port
-            .prepare_upload(authz, owner, filename, mime, byte_len)
+            .prepare_upload(
+                authz,
+                CitedBlobUploadRequest {
+                    owner,
+                    filename,
+                    mime,
+                    byte_len,
+                    origin: self.upload_origin.as_ref(),
+                },
+            )
             .await
     }
 
@@ -421,5 +496,37 @@ impl CitedBlobService {
         self.port
             .find_held_blobs(authz, owner, content_hashes)
             .await
+    }
+}
+
+#[cfg(test)]
+mod upload_origin_tests {
+    use super::CitedBlobUploadOrigin;
+
+    #[test]
+    fn only_origins_with_safe_transport_are_admitted() {
+        for raw in [
+            "https://uploads.example",
+            "https://uploads.example:8443/",
+            "http://127.0.0.1:9000",
+            "http://[::1]:9000",
+        ] {
+            assert_eq!(
+                CitedBlobUploadOrigin::parse(raw).unwrap().as_str(),
+                raw.trim_end_matches('/')
+            );
+        }
+        for raw in [
+            "/relative",
+            "https:///",
+            "ftp://uploads.example",
+            "http://uploads.example",
+            "https://user:pass@uploads.example",
+            "https://uploads.example/path",
+            "https://uploads.example?query",
+            "https://uploads.example#fragment",
+        ] {
+            assert!(CitedBlobUploadOrigin::parse(raw).is_err(), "{raw}");
+        }
     }
 }

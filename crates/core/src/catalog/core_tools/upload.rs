@@ -212,6 +212,11 @@ impl Tool for CoreUploadTool {
                 CoreUploadArgs::Prepare(args) => {
                     let (authz, owner) = narrowed_space(&ctx, args.space.as_deref())?;
                     let service = blob_service(&ctx)?;
+                    let service = match ctx.service::<crate::storage_ports::CitedBlobUploadOrigin>()
+                    {
+                        Some(origin) => Arc::new(service.for_upload_origin((*origin).clone())),
+                        None => service,
+                    };
                     let outcome = service
                         .prepare_upload(
                             &authz,
@@ -351,15 +356,23 @@ mod tests {
         async fn prepare_upload(
             &self,
             authz: &AuthzContext,
-            owner: OwnerId,
-            _filename: &str,
-            _mime: &str,
-            _byte_len: u64,
+            request: crate::storage_ports::CitedBlobUploadRequest<'_>,
         ) -> Result<CitedBlobUploadPrepared, StorageError> {
+            let crate::storage_ports::CitedBlobUploadRequest {
+                owner,
+                filename: _filename,
+                mime: _mime,
+                byte_len: _byte_len,
+                origin: _,
+            } = request;
             self.record("prepare", authz, owner);
             Ok(CitedBlobUploadPrepared {
                 upload_id: "0198c0de-0000-7000-8000-000000000001".into(),
-                upload_url: "https://s3.test/put".into(),
+                upload_url: request
+                    .origin
+                    .map_or("https://s3.test", |origin| origin.as_str())
+                    .to_owned()
+                    + "/put",
                 expires_at: time::OffsetDateTime::UNIX_EPOCH,
                 headers: Vec::new(),
             })
@@ -438,6 +451,30 @@ mod tests {
             byte_len: 4,
             space: space.map(ToOwned::to_owned),
         })
+    }
+
+    #[tokio::test]
+    async fn a_hosts_per_request_origin_selects_only_that_prepares_link() {
+        let subject = UserId::new(uuid::Uuid::now_v7());
+        let (mut public, _) = ctx_with_port(subject, vec![]);
+        public
+            .try_insert_service(
+                crate::storage_ports::CitedBlobUploadOrigin::parse("https://uploads.example")
+                    .unwrap(),
+            )
+            .unwrap();
+        let (internal, _) = ctx_with_port(subject, vec![]);
+        for (ctx, expected) in [
+            (public, "https://uploads.example/put"),
+            (internal, "https://s3.test/put"),
+        ] {
+            let CoreUploadOutput::Prepare(answer) =
+                CoreUploadTool::call(ctx, prepare_args(None)).await.unwrap()
+            else {
+                panic!("prepared upload")
+            };
+            assert_eq!(answer.upload_url, expected);
+        }
     }
 
     #[tokio::test]

@@ -360,6 +360,15 @@ impl CitedBlobStore {
         ctx: &AuthzContext,
         req: CitedBlobUploadPrepareTs,
     ) -> Result<CitedBlobUploadPrepareOutcomeTs, BlobError> {
+        self.prepare_upload_at(ctx, req, None).await
+    }
+
+    pub(super) async fn prepare_upload_at(
+        &self,
+        ctx: &AuthzContext,
+        req: CitedBlobUploadPrepareTs,
+        origin: Option<&proxiima_core::storage_ports::CitedBlobUploadOrigin>,
+    ) -> Result<CitedBlobUploadPrepareOutcomeTs, BlobError> {
         validate_prepare(&req, self.max_blob_bytes)?;
         let owner = req.owner();
         ensure_owner_write_access(ctx, &owner)?;
@@ -369,7 +378,8 @@ impl CitedBlobStore {
             + time::Duration::seconds(
                 i64::try_from(self.config.upload_ttl_seconds).unwrap_or(i64::MAX),
             );
-        let client = self.client();
+        let signing_client = origin.map(|origin| self.config.upload_client(Some(origin)));
+        let client = signing_client.as_ref().unwrap_or_else(|| self.client());
         let presigned = client
             .put_object()
             .bucket(&self.config.bucket)

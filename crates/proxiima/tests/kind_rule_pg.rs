@@ -621,10 +621,7 @@ impl CitedBlobPort for StagedBlobs {
     async fn prepare_upload(
         &self,
         _: &AuthzContext,
-        _: OwnerId,
-        _: &str,
-        _: &str,
-        _: u64,
+        _: proxiima::CitedBlobUploadRequest<'_>,
     ) -> Result<CitedBlobUploadPrepared, StorageError> {
         Err(StorageError::Internal("completion only".into()))
     }

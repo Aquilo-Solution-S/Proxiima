@@ -54,12 +54,16 @@ impl CitedBlobPort for CitedBlobStore {
     async fn prepare_upload(
         &self,
         authz: &AuthzContext,
-        owner: OwnerId,
-        filename: &str,
-        mime: &str,
-        byte_len: u64,
+        request: proxiima_core::storage_ports::CitedBlobUploadRequest<'_>,
     ) -> Result<CitedBlobUploadPrepared, StorageError> {
-        let outcome = Self::prepare_upload(
+        let proxiima_core::storage_ports::CitedBlobUploadRequest {
+            owner,
+            filename,
+            mime,
+            byte_len,
+            origin,
+        } = request;
+        let outcome = Self::prepare_upload_at(
             self,
             authz,
             CitedBlobUploadPrepareTs {
@@ -68,6 +72,7 @@ impl CitedBlobPort for CitedBlobStore {
                 mime: mime.to_string(),
                 byte_len,
             },
+            origin,
         )
         .await
         .map_err(blob_error_to_storage)?;

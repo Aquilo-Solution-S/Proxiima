@@ -78,7 +78,7 @@ pub struct S3RuntimeConfig {
     pub bucket: String,
     pub region: String,
     pub key_pair: S3KeyPair,
-    /// Endpoint for internal object I/O and for presigned upload links.
+    /// Endpoint for internal object I/O and default presigned upload links.
     /// `None` uses AWS endpoint resolution.
     pub endpoint_url: Option<String>,
     /// Hosts, besides loopback, that may be named in the endpoint over
@@ -212,6 +212,17 @@ impl S3RuntimeConfig {
     #[must_use]
     pub fn client(&self) -> Client {
         self.client_for_endpoint(self.endpoint_url.as_deref())
+    }
+
+    pub(crate) fn upload_client(
+        &self,
+        origin: Option<&proxiima_core::storage_ports::CitedBlobUploadOrigin>,
+    ) -> Client {
+        self.client_for_endpoint(
+            origin
+                .map(proxiima_core::storage_ports::CitedBlobUploadOrigin::as_str)
+                .or(self.endpoint_url.as_deref()),
+        )
     }
 
     fn client_for_endpoint(&self, endpoint_url: Option<&str>) -> Client {

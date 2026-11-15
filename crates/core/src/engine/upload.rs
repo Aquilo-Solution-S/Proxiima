@@ -419,10 +419,7 @@ mod tests {
         async fn prepare_upload(
             &self,
             _authz: &crate::AuthzContext,
-            _owner: crate::OwnerId,
-            _filename: &str,
-            _mime: &str,
-            _byte_len: u64,
+            _request: crate::storage_ports::CitedBlobUploadRequest<'_>,
         ) -> Result<CitedBlobUploadPrepared, StorageError> {
             Err(StorageError::Internal("test port: unused".to_owned()))
         }

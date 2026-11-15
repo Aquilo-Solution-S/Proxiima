@@ -562,7 +562,8 @@ pub use proxiima_core::{
     UploadedBlobPayload, storage_ports::CitedBlobHeld, storage_ports::CitedBlobPort,
     storage_ports::CitedBlobService, storage_ports::CitedBlobStaged,
     storage_ports::CitedBlobUploadAborted, storage_ports::CitedBlobUploadCompleted,
-    storage_ports::CitedBlobUploadHeader, storage_ports::CitedBlobUploadPrepared,
+    storage_ports::CitedBlobUploadHeader, storage_ports::CitedBlobUploadOrigin,
+    storage_ports::CitedBlobUploadPrepared, storage_ports::CitedBlobUploadRequest,
 };
 /// The Fact-with-citation write path: [`FactWriteCommand`],
 /// [`Engine::authorize_fact_with_citation`],

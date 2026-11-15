@@ -352,3 +352,26 @@ fn unset_setting_leaves_s3_config_as_before() {
         "PROXIIMA_S3_ENDPOINT_URL must use https (plaintext http allowed only for loopback): http://s3.example.com"
     );
 }
+
+#[tokio::test]
+async fn a_selected_upload_origin_leaves_default_signing_and_io_internal() {
+    let config = S3RuntimeConfig::from_lookup(&env(&bucketed(&[
+        ("PROXIIMA_S3_ENDPOINT_URL", "http://127.0.0.1:9000"),
+        ("PROXIIMA_S3_FORCE_PATH_STYLE", "true"),
+    ])))
+    .unwrap()
+    .unwrap();
+    let origin =
+        proxiima_core::storage_ports::CitedBlobUploadOrigin::parse("https://uploads.example:8443")
+            .unwrap();
+    let selected = presign_config_probe(&config, &config.upload_client(Some(&origin))).await;
+    assert_eq!(selected.host_str(), Some("uploads.example"));
+    assert_eq!(selected.port(), Some(8443));
+    assert_eq!(selected.path(), "/b/config-probe");
+    for client in [config.upload_client(None), config.client()] {
+        let internal = presign_config_probe(&config, &client).await;
+        assert_eq!(internal.host_str(), Some("127.0.0.1"));
+        assert_eq!(internal.port(), Some(9000));
+        assert_eq!(internal.path(), "/b/config-probe");
+    }
+}
