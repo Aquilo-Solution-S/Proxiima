@@ -93,6 +93,19 @@ pub trait MemoryReadPort: Send + Sync {
     /// The persisted number this backend uses when minting memory UUIDs.
     fn store_number(&self) -> u16;
 
+    /// Readable-source declarations touching `endpoint`, in ascending
+    /// (source UUID, target UUID, field) order. Includes inbound and outbound
+    /// Goal and Memory pins. Targets are raw internal selectors, not an
+    /// authorization to disclose them. `offset` and `limit` page this star.
+    async fn surrounding_pins(
+        &self,
+        owner_scope: Option<&OwnerScope>,
+        read_owners: &[OwnerId],
+        endpoint: crate::EntityRef,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<crate::verbs::query::SurroundingPin>, StorageError>;
+
     async fn load_fact_text(
         &self,
         owner_scope: Option<&OwnerScope>,

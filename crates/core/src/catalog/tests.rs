@@ -26,6 +26,7 @@ mod manifest_tests {
             protocol_resource::MEMORY_LINEAGE,
             protocol_resource::GOALS,
             protocol_resource::GOAL,
+            protocol_resource::GOAL_SURROUNDINGS,
         ]);
         let actual = all_core_resources()
             .map(|resource| resource.scope_key)

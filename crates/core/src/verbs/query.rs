@@ -860,6 +860,16 @@ pub struct EdgeReadResponse {
     pub next_cursor: Option<EdgeReadCursor>,
 }
 
+/// A declared pin incident on an entity. The source is readable; the target
+/// still needs admission before its identity leaves the read implementation.
+/// `field` is the declaring column, not a separately authored relation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SurroundingPin {
+    pub source: EntityRef,
+    pub target: EntityRef,
+    pub field: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EdgeExistsRequest {
     #[serde(default)]

@@ -132,6 +132,17 @@ impl FakePins {
 
 #[async_trait::async_trait]
 impl MemoryReadPort for FakePins {
+    async fn surrounding_pins(
+        &self,
+        _scope: Option<&crate::OwnerScope>,
+        _owners: &[crate::OwnerId],
+        _endpoint: crate::EntityRef,
+        _offset: u32,
+        _limit: u32,
+    ) -> Result<Vec<crate::verbs::query::SurroundingPin>, StorageError> {
+        Ok(Vec::new())
+    }
+
     fn store_number(&self) -> u16 {
         0
     }

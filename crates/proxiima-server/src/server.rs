@@ -7,6 +7,7 @@ use proxiima_core::catalog::core_tools::{
     get_memories::{GetMemoriesArgs, get_memories},
     get_memory::{GetMemoryArgs, get_memory},
     goal_reads::{ListGoalsArgs, get_goal, list_goals},
+    goal_surroundings::{GoalSurroundingsArgs, goal_surroundings},
     list_schemas::{ListSchemasArgs, get_schema, list_schemas},
     list_substrate_tools::{ListSubstrateToolsArgs, list_substrate_tools},
     memory_counts::memory_counts,
@@ -654,6 +655,9 @@ async fn dispatch_resource(
         }
         ParsedResource::Goals(args) => resource_output_value(list_goals(ctx, args).await?),
         ParsedResource::Goal(reference) => resource_output_value(get_goal(ctx, &reference).await?),
+        ParsedResource::GoalSurroundings(args) => {
+            resource_output_value(goal_surroundings(ctx, args).await?)
+        }
     }
 }
 
@@ -767,6 +771,7 @@ enum ParsedResource {
     MemoryLineage(WalkMemoryLineageArgs),
     Goals(ListGoalsArgs),
     Goal(String),
+    GoalSurroundings(GoalSurroundingsArgs),
 }
 
 impl ParsedResource {
@@ -782,6 +787,7 @@ impl ParsedResource {
             Self::MemoryLineage(_) => protocol_resource::MEMORY_LINEAGE,
             Self::Goals(_) => protocol_resource::GOALS,
             Self::Goal(_) => protocol_resource::GOAL,
+            Self::GoalSurroundings(_) => protocol_resource::GOAL_SURROUNDINGS,
         }
     }
 }
@@ -892,6 +898,12 @@ fn parse_id_resource(
         return parse_memory_resource_path(rest, query);
     }
     if let Some(id) = resource_path::tail(path, resource_path::GOAL) {
+        if let Some(goal) = id.strip_suffix("/surroundings") {
+            if goal.is_empty() || goal.contains('/') {
+                return Err(ResourceUriError::UnknownPath);
+            }
+            return query_args("goal", goal, query).map(ParsedResource::GoalSurroundings);
+        }
         if id.is_empty() || id.contains('/') {
             return Err(ResourceUriError::UnknownPath);
         }
@@ -909,12 +921,12 @@ fn parse_memory_resource_path(
         if id.is_empty() || id.contains('/') {
             return Err(ResourceUriError::UnknownPath);
         }
-        return query_args(id, query).map(ParsedResource::MemoryLineage);
+        return query_args("memory", id, query).map(ParsedResource::MemoryLineage);
     }
     if rest.is_empty() || rest.contains('/') {
         return Err(ResourceUriError::UnknownPath);
     }
-    query_args(rest, query).map(ParsedResource::Memory)
+    query_args("memory", rest, query).map(ParsedResource::Memory)
 }
 
 fn parse_query(query: Option<&str>) -> Result<Vec<(&str, &str)>, ResourceUriError> {
@@ -962,15 +974,16 @@ where
     })
 }
 
-/// The arguments of a memory resource: its id from the path, then the query
+/// The arguments of an id-bearing resource: its id from the path, then the query
 /// pairs, deserialized into core's own argument type. Core owns the fields,
 /// their defaults and enum spellings, so `resources/read` and `tools/call`
 /// cannot disagree about any of them.
 fn query_args<T: serde::de::DeserializeOwned>(
-    memory: &str,
+    id_key: &'static str,
+    id: &str,
     query: &[(&str, &str)],
 ) -> Result<T, ResourceUriError> {
-    let pairs = std::iter::once(("memory", memory))
+    let pairs = std::iter::once((id_key, id))
         .chain(query.iter().copied())
         .map(|(key, value)| (key, QueryValue { key, value }));
     T::deserialize(serde::de::value::MapDeserializer::new(pairs))
@@ -1011,6 +1024,17 @@ impl<'de> serde::de::Deserializer<'de> for QueryValue<'_> {
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         visitor.visit_str(self.value)
+    }
+
+    fn deserialize_u8<V: serde::de::Visitor<'de>>(
+        self,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        let number = self
+            .value
+            .parse()
+            .map_err(|_| self.invalid("an integer from 0 through 255"))?;
+        visitor.visit_u8(number)
     }
 
     fn deserialize_u32<V: serde::de::Visitor<'de>>(
@@ -1055,7 +1079,7 @@ impl<'de> serde::de::Deserializer<'de> for QueryValue<'_> {
     }
 
     serde::forward_to_deserialize_any! {
-        i8 i16 i32 i64 i128 u8 u16 u64 u128 f32 f64 char str string bytes
+        i8 i16 i32 i64 i128 u16 u64 u128 f32 f64 char str string bytes
         byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
         struct identifier ignored_any
     }

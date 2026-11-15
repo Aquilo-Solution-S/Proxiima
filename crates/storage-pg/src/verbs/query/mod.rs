@@ -12,6 +12,7 @@ mod rows;
 mod search;
 mod series_handle;
 mod sidecar_heads;
+mod surroundings;
 
 pub(crate) use citations::citations_of_facts_on_connection;
 pub(crate) use citations::facts_citing_object_on_connection;
@@ -48,6 +49,7 @@ pub use search::{
 pub use series_handle::explain_owned_head_handle_for_tests;
 pub(crate) use series_handle::{owned_head_handle, owned_head_memory_id, push_atom};
 pub(crate) use sidecar_heads::sidecar_heads_by_key_on_connection;
+pub(crate) use surroundings::surrounding_pins_on_connection;
 
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]

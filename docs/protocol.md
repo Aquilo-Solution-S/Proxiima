@@ -156,6 +156,15 @@ fields. Generic memory-source edge traversal includes Perspective guidance;
 Goal-owned motivation is read through the Goal resource. Owner export keeps
 the stored declarations, including historical assignments.
 
+`proxiima://goal/{id}/surroundings` reads the declarations around a Goal in both
+directions, including dependencies, evidence, motivation, guidance and memory
+pins. It reports distances from the Goal and pages the declarations without a
+client-side walk. Other-store memories are leaves read there as the caller.
+Unreadable leaves contribute only an anonymous count; an unanswered store is
+reported separately. Its continuation identifies the read and position,
+never an unreadable endpoint. Like other pages, later calls see current data
+rather than a retained snapshot.
+
 Goal transitions append a later version. `transition` `abandon` takes an
 Active or Paused goal in one write, so a paused goal never becomes Active on
 its way out; `mark_achieved` takes only an Active goal. `core_goal`

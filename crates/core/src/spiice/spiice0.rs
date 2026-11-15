@@ -20,6 +20,7 @@ use crate::catalog::core_tools::get_graph::GetGraphOutput;
 use crate::catalog::core_tools::get_memories::GetMemoriesOutput;
 use crate::catalog::core_tools::get_memory::GetMemoryOutput;
 use crate::catalog::core_tools::goal_reads::{GoalItem, ListGoalsOutput};
+use crate::catalog::core_tools::goal_surroundings::GoalSurroundingsOutput;
 use crate::catalog::core_tools::list_schemas::{GetSchemaOutput, ListSchemasOutput};
 use crate::catalog::core_tools::list_substrate_tools::ListSubstrateToolsOutput;
 use crate::catalog::core_tools::memory_counts::MemoryCountsOutput;
@@ -1473,6 +1474,24 @@ const RESOURCES: &[ResourceContract] = &[
             "proxiima_core.owners",
         ],
         answer: ResourceAnswer::of::<GoalItem>(),
+    },
+    ResourceContract {
+        uri_template: "proxiima://goal/{id}/surroundings{?depth,limit,cursor}",
+        path: "goal",
+        name: "proxiima-goal-surroundings",
+        title: "Proxiima Goal Surroundings",
+        description: "Declared Goal and memory links in both directions to a bounded depth, page by page. Other stores' memories are caller-authorized leaves; unreadable leaves are counted without identities.",
+        scope_key: scope::GOAL_SURROUNDINGS,
+        is_template: true,
+        read_only: true,
+        reads: &[
+            "proxiima_core.goal",
+            "proxiima_core.goal_head",
+            "proxiima_core.memory",
+            "proxiima_core.memory_head",
+            "proxiima_core.memory_external_origin",
+        ],
+        answer: ResourceAnswer::of::<GoalSurroundingsOutput>(),
     },
     ResourceContract {
         uri_template: "proxiima://memories/counts",

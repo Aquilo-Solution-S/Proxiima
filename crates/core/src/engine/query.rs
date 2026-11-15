@@ -12,6 +12,31 @@ use crate::verbs::schema::{SchemaRequest, SchemaResponse};
 use crate::{OwnerId, OwnerScope, SchemaId};
 
 impl Engine {
+    /// Read declared pins both ways around one entity under the ordinary
+    /// row-read authority. Targets remain unadmitted internal selectors.
+    ///
+    /// # Errors
+    /// Returns authorization or storage failures. The catalog read supplies
+    /// its already-resolved page limit.
+    pub(crate) async fn surrounding_pins(
+        &self,
+        authz: &AuthzContext,
+        endpoint: crate::EntityRef,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<crate::verbs::query::SurroundingPin>, ProtocolError> {
+        let owners = self.authorize_row_read(authz).await?;
+        if owners.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.storage
+            .query
+            .memory_read
+            .surrounding_pins(authz.owner_scope(), &owners, endpoint, offset, limit)
+            .await
+            .map_err(|error| super::errors::internal_storage_error("surrounding_pins", &error))
+    }
+
     /// docs/protocol.md
     /// default. Owner is not consulted.
     #[must_use]

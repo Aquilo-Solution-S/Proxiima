@@ -172,6 +172,17 @@ impl MemoryAuthoringPort for RejectingStorage {
 
 #[async_trait::async_trait]
 impl MemoryReadPort for RejectingStorage {
+    async fn surrounding_pins(
+        &self,
+        _scope: Option<&crate::OwnerScope>,
+        _owners: &[OwnerId],
+        _endpoint: crate::EntityRef,
+        _offset: u32,
+        _limit: u32,
+    ) -> Result<Vec<crate::verbs::query::SurroundingPin>, StorageError> {
+        Ok(Vec::new())
+    }
+
     fn store_number(&self) -> u16 {
         0
     }

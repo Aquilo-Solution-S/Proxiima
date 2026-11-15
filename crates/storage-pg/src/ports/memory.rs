@@ -339,6 +339,30 @@ impl MemoryReadPort for PgStorage {
         crate::owner_scope::finish_transaction(tx, result).await
     }
 
+    async fn surrounding_pins(
+        &self,
+        owner_scope: Option<&proxiima_core::OwnerScope>,
+        read_owners: &[OwnerId],
+        endpoint: proxiima_core::EntityRef,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<proxiima_core::verbs::query::SurroundingPin>, StorageError> {
+        let mut tx = crate::owner_scope::begin_owner_transaction(
+            &self.pool,
+            crate::owner_scope::require_owner_scope(owner_scope)?,
+        )
+        .await?;
+        let result = verbs::query::surrounding_pins_on_connection(
+            &mut tx,
+            read_owners,
+            endpoint,
+            offset,
+            limit,
+        )
+        .await;
+        crate::owner_scope::finish_transaction(tx, result).await
+    }
+
     async fn load_visible_goal_ids(
         &self,
         owner_scope: Option<&proxiima_core::OwnerScope>,

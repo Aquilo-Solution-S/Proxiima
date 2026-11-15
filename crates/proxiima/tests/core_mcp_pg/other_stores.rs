@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use proxiima::host::{
-    OtherStores, OtherStoresError, OtherStoresService, ReadAt, RemoteHit, RemoteMemory, RemoteRead,
+    OtherStores, OtherStoresError, OtherStoresService, ReadAt, RemoteAncestors,
+    RemoteAncestorsPage, RemoteEdge, RemoteGraphRead, RemoteHit, RemoteMemory, RemoteRead,
     RemoteSearch, RemoteSearchResult, StoreCaller, StoreInfo,
 };
 use proxiima::{Proxiima, SpiiceServices};
@@ -45,6 +46,8 @@ struct FakeStore {
 struct FakeStores {
     stores: Mutex<BTreeMap<u16, FakeStore>>,
     searches: Mutex<Vec<(u16, RemoteSearch)>>,
+    reads: Mutex<Vec<(OwnerId, UserId, Uuid)>>,
+    graph_reads: Mutex<u32>,
 }
 
 fn remote_id(store: u16, key: &str) -> Uuid {
@@ -84,6 +87,14 @@ impl FakeStores {
 
     fn searches(&self) -> Vec<(u16, RemoteSearch)> {
         self.searches.lock().expect("searches").clone()
+    }
+
+    fn take_reads(&self) -> Vec<(OwnerId, UserId, Uuid)> {
+        std::mem::take(&mut *self.reads.lock().expect("reads"))
+    }
+
+    fn graph_reads(&self) -> u32 {
+        *self.graph_reads.lock().expect("graph reads")
     }
 
     fn with(self, store: u16, handle: Uuid, entry: Entry) -> Self {
@@ -214,11 +225,15 @@ impl OtherStores for FakeStores {
 
     fn read<'a>(
         &'a self,
-        _caller: StoreCaller<'a>,
+        caller: StoreCaller<'a>,
         handle: Uuid,
         at: ReadAt,
     ) -> BoxFuture<'a, Result<RemoteRead, OtherStoresError>> {
         Box::pin(async move {
+            self.reads
+                .lock()
+                .expect("reads")
+                .push((caller.owner, caller.authz.subject(), handle));
             let stores = self.stores.lock().expect("lock");
             let fake = stores.get(&proxiima_core::memory_store_number(handle));
             let entry = fake.and_then(|fake| fake.entries.get(&handle).cloned());
@@ -247,6 +262,31 @@ impl OtherStores for FakeStores {
             })
         })
     }
+
+    fn neighbor_edges<'a>(
+        &'a self,
+        _caller: StoreCaller<'a>,
+        _id: Uuid,
+    ) -> BoxFuture<'a, Result<RemoteGraphRead<Vec<RemoteEdge>>, OtherStoresError>> {
+        Box::pin(async move {
+            *self.graph_reads.lock().expect("graph reads") += 1;
+            Err(OtherStoresError::Unavailable(
+                "neighbor edges not served".into(),
+            ))
+        })
+    }
+
+    fn ancestors<'a>(
+        &'a self,
+        _caller: StoreCaller<'a>,
+        _id: Uuid,
+        _page: &'a RemoteAncestorsPage,
+    ) -> BoxFuture<'a, Result<RemoteGraphRead<RemoteAncestors>, OtherStoresError>> {
+        Box::pin(async move {
+            *self.graph_reads.lock().expect("graph reads") += 1;
+            Err(OtherStoresError::Unavailable("ancestors not served".into()))
+        })
+    }
 }
 
 fn remote_matches(memory: &RemoteMemory, args: &RemoteSearch) -> bool {
@@ -263,6 +303,286 @@ fn remote_matches(memory: &RemoteMemory, args: &RemoteSearch) -> bool {
                 TagMatch::Any => args.tags.iter().any(|tag| memory.tags.contains(tag)),
                 TagMatch::All => args.tags.iter().all(|tag| memory.tags.contains(tag)),
             })
+}
+
+fn surroundings_nodes(page: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
+    page["nodes"]
+        .as_array()
+        .expect("surroundings nodes")
+        .iter()
+        .map(|node| {
+            (
+                node["id"].as_str().expect("node id").to_owned(),
+                node.clone(),
+            )
+        })
+        .collect()
+}
+
+fn surroundings_edges(
+    page: &serde_json::Value,
+) -> std::collections::BTreeSet<(String, String, String)> {
+    page["edges"]
+        .as_array()
+        .expect("surroundings edges")
+        .iter()
+        .map(|edge| {
+            (
+                edge["source"].as_str().expect("source").to_owned(),
+                edge["target"].as_str().expect("target").to_owned(),
+                edge["field"].as_str().expect("field").to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn surroundings_hides(page: &serde_json::Value, id: &str, title: &str) {
+    use base64::Engine as _;
+
+    let rendered = page.to_string();
+    assert!(!rendered.contains(id), "unreadable id escaped: {page}");
+    assert!(
+        !rendered.contains(title),
+        "unreadable title escaped: {page}"
+    );
+    if let Some(cursor) = page["next_cursor"].as_str() {
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(cursor)
+            .expect("a cursor is base64url");
+        let decoded = String::from_utf8(decoded).expect("a cursor is JSON");
+        assert!(!decoded.contains(id), "unreadable id escaped in cursor");
+        assert!(
+            !decoded.contains(title),
+            "unreadable title escaped in cursor"
+        );
+    }
+}
+
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real-PG graph proves caller authority, both directions, depth and complete paging"
+)]
+async fn goal_surroundings_reads_both_ways_pages_and_hides_unreadable_leaves() {
+    use super::goal_evidence_kinds::handle_of;
+
+    let split_db = clone_split_core_db("proxiima_goal_surroundings")
+        .await
+        .expect("PG required for tests");
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let author = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let viewer = OwnerId::from(UserId::new(Uuid::now_v7()));
+        let shared = OwnerId::from(proxiima_core::GroupId::new(Uuid::now_v7()));
+        let remote = remote_id(1, "goal-surroundings-remote");
+        let remote_fact = fact(remote, "basis on another store");
+        let remote_owner = remote_fact.owner;
+        let fake = Arc::new(FakeStores::default().with(1, remote, Entry::Readable(remote_fact)));
+        let built = Proxiima::<AgentMemoryApp>::app()
+            .configure(|b| {
+                b.database_url(split_db.runtime_url())
+                    .platform_database_url(split_db.platform_url())
+                    .store_number(0)
+                    .owner(author)
+                    .served_surface(proxiima_core::ServedSurface::All)
+                    .other_stores(fake.clone())
+            })
+            .build()
+            .await?;
+        let tools = built.host().core_mcp_tools();
+        let author_authz = space_authz(author, vec![author, shared], Role::admin());
+        let write = |name: &'static str, args: serde_json::Value| {
+            call_test_model_tool(&tools, author_authz.clone(), author, name, args)
+        };
+        let hidden_title = "personal evidence must stay unnamed";
+        let hidden = handle_of(
+            &write(
+                "core_remember",
+                serde_json::json!({"title": hidden_title, "body": hidden_title}),
+            )
+            .await?,
+        )?;
+        let mut facts = Vec::new();
+        for title in ["first shared evidence", "second shared evidence"] {
+            facts.push(handle_of(
+                &write(
+                    "core_remember",
+                    serde_json::json!({"space": shared.to_string(), "title": title, "body": title}),
+                )
+                .await?,
+            )?);
+        }
+        let motivation = handle_of(
+            &write(
+                "core_interpret",
+                serde_json::json!({
+                    "space": shared.to_string(), "claim": "the evidence motivates this Goal",
+                    "confidence": 80, "subjects": [facts[0]],
+                }),
+            )
+            .await?,
+        )?;
+        let goal = handle_of(
+            &write(
+                "core_goal",
+                serde_json::json!({
+                    "action": "set", "space": shared.to_string(), "schema_id": "core/simple-text-v1",
+                    "title": "surrounded Goal", "text": "follow the evidence", "body": {},
+                    "evidence": [facts[0], facts[1], hidden], "motivated_by": [motivation],
+                    "idempotency_key": "surroundings-goal",
+                }),
+            )
+            .await?,
+        )?;
+        let decomposed = write(
+            "core_goal",
+            serde_json::json!({
+                "action": "decompose", "space": shared.to_string(), "parent_goal": goal,
+                "children": [{"schema_id": "core/simple-text-v1", "title": "child Goal",
+                    "text": "one part of the Goal", "body": {}}],
+                "idempotency_key": "surroundings-child",
+            }),
+        )
+        .await?;
+        let child = handle_of(&decomposed["children"][0])?;
+        let mut guided = Vec::new();
+        for (claim, subjects) in [
+            ("guided cross-store thought", serde_json::json!([facts[0], remote])),
+            ("second guided thought", serde_json::json!([facts[1]])),
+        ] {
+            guided.push(handle_of(
+                &write(
+                    "core_interpret",
+                    serde_json::json!({
+                        "space": shared.to_string(), "claim": claim, "confidence": 80,
+                        "subjects": subjects, "guided_by": [goal],
+                    }),
+                )
+                .await?,
+            )?);
+        }
+        let other_goal = handle_of(
+            &write(
+                "core_goal",
+                serde_json::json!({
+                    "action": "set", "space": shared.to_string(), "schema_id": "core/simple-text-v1",
+                    "title": "unrelated Goal", "text": "outside the surroundings", "body": {},
+                    "idempotency_key": "surroundings-other-goal",
+                }),
+            )
+            .await?,
+        )?;
+        drop(fake.take_reads());
+        let viewer_authz = space_authz(viewer, vec![viewer, shared], Role::viewer())
+            .with_tool_scope(super::palette_of(&["resource:goal-surroundings"]));
+        let read = |args: serde_json::Value| {
+            let goal = args["goal"].as_str().expect("Goal selector");
+            let mut uri = reqwest::Url::parse(&format!("proxiima://goal/{goal}/surroundings"))
+                .expect("surroundings URI");
+            for (key, value) in args.as_object().expect("read selectors") {
+                if key != "goal" {
+                    let value = value.as_str().map_or_else(|| value.to_string(), str::to_owned);
+                    uri.query_pairs_mut().append_pair(key, &value);
+                }
+            }
+            let authz = viewer_authz.clone();
+            let tools = &tools;
+            async move { read_test_model_resource(tools, authz, viewer, uri.as_str()).await }
+        };
+        let whole = read(serde_json::json!({"goal": goal, "depth": 2, "limit": 50})).await?;
+        assert_eq!(whole["goal"], goal);
+        assert_eq!(whole["unreadable"], 1, "{whole}");
+        assert_eq!(whole["unanswered"], serde_json::json!([]), "{whole}");
+        assert_eq!(whole["has_more"], false, "{whole}");
+        assert!(whole["next_cursor"].is_null(), "{whole}");
+        surroundings_hides(&whole, &hidden, hidden_title);
+        assert!(!whole.to_string().contains(&other_goal), "{whole}");
+        let nodes = surroundings_nodes(&whole);
+        let remote_text = remote.to_string();
+        let expected_nodes: std::collections::BTreeSet<_> = [
+            goal.clone(), child.clone(), facts[0].clone(), facts[1].clone(),
+            motivation.clone(), guided[0].clone(), guided[1].clone(), remote_text.clone(),
+        ].into_iter().collect();
+        assert_eq!(nodes.keys().cloned().collect::<std::collections::BTreeSet<_>>(), expected_nodes);
+        for (id, node) in &nodes {
+            let expected_distance = if id == &goal { 0 } else if id == &remote_text { 2 } else { 1 };
+            assert_eq!(node["distance"], expected_distance, "{node}");
+            assert_eq!(node["store"], u16::from(id == &remote_text), "{node}");
+            let expected_owner = if id == &remote_text { remote_owner } else { shared };
+            assert_eq!(node["owner"], expected_owner.to_string(), "{node}");
+        }
+        assert_eq!(nodes[&goal]["kind"], "Goal");
+        assert_eq!(nodes[&child]["kind"], "Goal");
+        assert_eq!(nodes[&remote_text]["kind"], "Fact");
+        assert_eq!(fake.take_reads(), [(viewer, viewer.as_user(), remote)], "only the remote leaf is read, as the viewer");
+
+        let expected_edges: std::collections::BTreeSet<_> = [
+            (goal.clone(), facts[0].clone(), "evidence_t"),
+            (goal.clone(), facts[1].clone(), "evidence_t"),
+            (goal.clone(), motivation.clone(), "motivated_by"),
+            (child.clone(), goal.clone(), "dependency_t"),
+            (motivation.clone(), facts[0].clone(), "refs"),
+            (guided[0].clone(), goal.clone(), "guided_by"),
+            (guided[0].clone(), facts[0].clone(), "refs"),
+            (guided[0].clone(), remote_text.clone(), "reference"),
+            (guided[1].clone(), goal.clone(), "guided_by"),
+            (guided[1].clone(), facts[1].clone(), "refs"),
+        ].into_iter().map(|(source, target, field)| (source, target, field.to_owned())).collect();
+        assert_eq!(surroundings_edges(&whole), expected_edges, "{whole}");
+
+        let shallow = read(serde_json::json!({"goal": goal, "depth": 1})).await?;
+        assert!(!surroundings_nodes(&shallow).contains_key(&remote_text), "{shallow}");
+        assert!(fake.take_reads().is_empty(), "a depth-one read never reaches the other store");
+
+        let first = read(serde_json::json!({"goal": goal, "depth": 2, "limit": 6})).await?;
+        assert_eq!(first["has_more"], true, "{first}");
+        let cursor = first["next_cursor"].as_str().ok_or("continuation")?;
+        let second = read(serde_json::json!({"goal": goal, "depth": 2, "limit": 6, "cursor": cursor})).await?;
+        assert_eq!(second["has_more"], false, "{second}");
+        assert!(second["next_cursor"].is_null(), "{second}");
+        let mut paged_nodes = BTreeMap::new();
+        let mut paged_edges = std::collections::BTreeSet::new();
+        let mut unreadable = 0;
+        for page in [&first, &second] {
+            surroundings_hides(page, &hidden, hidden_title);
+            paged_nodes.extend(surroundings_nodes(page));
+            let edges = surroundings_edges(page);
+            assert!(edges.len() <= 6, "{page}");
+            for edge in edges { assert!(paged_edges.insert(edge), "no repeated pin across pages"); }
+            unreadable += page["unreadable"].as_u64().ok_or("unreadable count")?;
+        }
+        assert_eq!(paged_nodes, nodes, "two calls answer every readable Brick");
+        assert_eq!(paged_edges, expected_edges, "two calls answer every readable pin");
+        assert_eq!(unreadable, 1);
+
+        for args in [
+            serde_json::json!({"goal": goal, "depth": 0}),
+            serde_json::json!({"goal": goal, "depth": 9}),
+            serde_json::json!({"goal": goal, "limit": 0}),
+            serde_json::json!({"goal": goal, "expand_neighbors": true}),
+            serde_json::json!({"goal": goal, "cursor": "not-a-cursor"}),
+            serde_json::json!({"goal": goal, "depth": 1, "cursor": cursor}),
+            serde_json::json!({"goal": other_goal, "depth": 2, "cursor": cursor}),
+        ] {
+            let refused = read(args).await.expect_err("invalid read selector refuses");
+            assert_eq!(refused.kind(), proxiima::CoreMcpErrorKind::InvalidInput, "{refused}");
+        }
+
+        fake.put(1, remote, Entry::Denied);
+        let denied = read(serde_json::json!({"goal": goal, "depth": 2})).await?;
+        assert_eq!(denied["unreadable"], 2, "{denied}");
+        surroundings_hides(&denied, &remote_text, "basis on another store");
+        fake.put(1, remote, Entry::Unavailable);
+        let unavailable = read(serde_json::json!({"goal": goal, "depth": 2})).await?;
+        assert_eq!(unavailable["unreadable"], 1, "{unavailable}");
+        assert_eq!(unavailable["unanswered"], serde_json::json!([
+            {"store": 1, "reason": "store unavailable", "count": 1}
+        ]), "{unavailable}");
+        surroundings_hides(&unavailable, &remote_text, "basis on another store");
+        assert_eq!(fake.graph_reads(), 0, "another store's memory is a leaf");
+        built.shutdown().await;
+        Ok(())
+    }.await;
+    result.expect("Goal surroundings workflow failed");
 }
 
 /// Rows of the derived-memory tables, counted as the platform role.

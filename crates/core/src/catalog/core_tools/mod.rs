@@ -14,6 +14,7 @@ pub mod get_memories;
 pub mod get_memory;
 pub mod goal;
 pub mod goal_reads;
+pub mod goal_surroundings;
 pub mod list_schemas;
 pub mod list_substrate_tools;
 pub mod membership;

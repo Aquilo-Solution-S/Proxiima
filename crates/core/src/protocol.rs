@@ -63,6 +63,7 @@ pub mod resource {
     pub const SCHEMA: &str = "resource:schema";
     pub const GOALS: &str = "resource:goals";
     pub const GOAL: &str = "resource:goal";
+    pub const GOAL_SURROUNDINGS: &str = "resource:goal-surroundings";
 }
 
 pub mod profile {

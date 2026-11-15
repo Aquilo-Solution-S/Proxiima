@@ -474,6 +474,62 @@ fn memory_counts_tail_is_the_contract_template() {
 
 const MEMORY: &str = "018f0000-0000-7000-8000-000000000001";
 
+#[test]
+fn goal_surroundings_resource_parses_defaults_and_pagination() {
+    let parsed = parse_resource_uri(&format!("proxiima://goal/{MEMORY}/surroundings"))
+        .expect("Goal surroundings resource");
+    assert_eq!(parsed.scope_key(), protocol_resource::GOAL_SURROUNDINGS);
+    let ParsedResource::GoalSurroundings(args) = parsed else {
+        panic!("expected Goal surroundings");
+    };
+    assert_eq!(args.goal, MEMORY);
+    assert_eq!(args.depth, 3);
+    assert_eq!(args.limit, 50);
+    assert_eq!(args.cursor, None);
+
+    let parsed = parse_resource_uri(&format!(
+        "proxiima://goal/{MEMORY}/surroundings?depth=2&limit=7&cursor=next-page"
+    ))
+    .expect("Goal surroundings page");
+    let ParsedResource::GoalSurroundings(args) = parsed else {
+        panic!("expected Goal surroundings");
+    };
+    assert_eq!(args.goal, MEMORY);
+    assert_eq!(args.depth, 2);
+    assert_eq!(args.limit, 7);
+    assert_eq!(args.cursor.as_deref(), Some("next-page"));
+}
+
+#[test]
+fn goal_surroundings_resource_refuses_malformed_arguments() {
+    for query in [
+        "depth=deep",
+        "depth=-1",
+        "depth=256",
+        "limit=many",
+        "limit=-1",
+        "limit=4294967296",
+        "other=value",
+        "depth=2&depth=3",
+        "goal=another-goal",
+    ] {
+        assert!(
+            parse_resource_uri(&format!("proxiima://goal/{MEMORY}/surroundings?{query}")).is_err(),
+            "{query}"
+        );
+    }
+    for path in [
+        "/surroundings",
+        "one/two/surroundings",
+        "one/surroundings/more",
+    ] {
+        assert_eq!(
+            parse_resource_uri(&format!("proxiima://goal/{path}")).unwrap_err(),
+            ResourceUriError::UnknownPath,
+        );
+    }
+}
+
 /// A resource read with no query is the tool call with no optional
 /// arguments: core's defaults apply to both, none is restated here.
 #[test]
