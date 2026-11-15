@@ -20,6 +20,7 @@ mod detached;
 mod migrator;
 mod owner_transaction;
 mod sidecar_heads;
+mod space;
 mod worker;
 
 pub use bundle::SpiiceBundle;
@@ -27,6 +28,14 @@ pub use migrator::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
 /// An owner-scoped transaction for the spiice's own tables, begun for the
 /// calling owner ([`owner_transaction`]), and the statements it runs.
 pub use owner_transaction::owner_transaction;
+/// The owner a call's optional `space` argument names. A tool declares a
+/// top-level `space: Option<String>` argument and resolves it here: for a
+/// read with [`resolve_space_for_read`], for a write with
+/// [`resolve_space_for_write`]. The scope gate judges the caller's role on
+/// the owner both return, so the tool acts on the owner it was judged on.
+pub use proxiima_core::catalog::core_tools::memory_spaces::{
+    ResolvedMemorySpace, resolve_space_for_write,
+};
 /// Transport-neutral tool metadata.
 /// Implement [`Tool`] with [`ToolCtx`] / [`ToolError`]; MCP and REST adapt it.
 /// Declare what the tool does once, as a [`ToolEffect`]: `Tool::EFFECT` on a
@@ -306,6 +315,7 @@ pub use authorized_read::{
 /// Cancel-safe Fact ingest after an upstream side effect.
 pub use detached::ingest_fact_detached;
 pub use sidecar_heads::sidecar_heads_by_key;
+pub use space::resolve_space_for_read;
 
 /// Types of the [`Tool::ARGV_ACTION_SPECS`] and [`Tool::AUDIENCE`] consts,
 /// and of an action spec's `need`.

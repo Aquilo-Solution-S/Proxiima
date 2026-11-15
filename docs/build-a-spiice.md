@@ -350,6 +350,15 @@ statements with their binds, refuses one that names the core schema, and
 rolls back unless committed; its rustdoc lists the methods. The example's
 `src/tool.rs` lists notebooks this way.
 
+A tool acts on the calling owner unless it declares a top-level `space`
+argument, as the core tools do. The scope gate then judges the caller's role
+on the owner that key names, and the tool resolves the key with the same
+resolver: `proxiima_spiice::resolve_space_for_read` for a read,
+`resolve_space_for_write` for a write. A key that names no space, or an owner
+the caller cannot read, is refused as an unknown space. The example's
+[`tests/space_argument.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/spiices/example/tests/space_argument.rs)
+calls such a tool through the host.
+
 ## 4. Link into the host
 
 Implement the host's `SpiiceApp` with `proxiima::spiice_app!`, behind a
