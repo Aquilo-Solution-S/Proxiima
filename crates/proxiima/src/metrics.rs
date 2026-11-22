@@ -1,16 +1,5 @@
-//! The runtime's metrics, reported through the OpenTelemetry API.
-//!
-//! This crate only records. The host installs the meter provider
-//! (`opentelemetry::global::set_meter_provider`) before it calls
-//! `Proxiima::build` or `run`; without one every instrument is a no-op and
-//! nothing here costs a database query. The instruments are listed in
-//! `docs/operate.md`.
-//!
-//! An observable gauge's callback runs when a reader collects, and it is
-//! synchronous, so it cannot ask the database. The two database gauges
-//! therefore report the [`Sample`] the [`Metrics::sampler`] worker last
-//! stored, and each asks that worker for a fresh one unless a read is
-//! outstanding. With no reader there is no collection and so no read.
+//! OpenTelemetry instruments (docs/operate.md).
+//! Collection callbacks are synchronous, so a worker owns the database reads.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -66,6 +55,7 @@ impl Shared {
         if let Some(sample) = &state.sample {
             observe(sample);
         }
+        // `Proxiima.Operations.requestSample`
         if !std::mem::replace(&mut state.outstanding, true) {
             self.wanted.notify_one();
         }
@@ -198,7 +188,7 @@ impl Metrics {
                     () = cancel.cancelled() => return,
                     () = shared.wanted.notified() => {}
                 }
-                // A read in flight does not hold shutdown up.
+                // `Proxiima.Operations.finishSample`
                 let read = tokio::select! {
                     () = cancel.cancelled() => return,
                     read = read() => read,

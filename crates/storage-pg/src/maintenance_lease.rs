@@ -1,8 +1,8 @@
 //! Store-wide maintenance singletons held as a lease row, not a session lock.
 //!
 //! A maintenance pass (the object-purge drain and upload sweep, the embedding
-//! maintenance commands) must not overlap another pass of its family on the
-//! same database, and it deletes objects with no database transaction open
+//! maintenance commands) takes one live lease per family on the database.
+//! Storage maintenance deletes objects with no database transaction open
 //! (#482), so no transaction-scoped lock can span it. A session advisory lock
 //! did, on a connection detached from the pool; behind a transaction-mode
 //! pooler such a lock stays on a shared server connection and is granted again
@@ -26,12 +26,15 @@ use crate::error::map_err;
 /// How long a lease outlives its last renewal. A pass renews every third of
 /// it, so a holder must miss two renewals in a row before another process
 /// can take the lease.
-pub(crate) const MAINTENANCE_LEASE_TTL: Duration = Duration::from_mins(1);
+pub(crate) const MAINTENANCE_LEASE_TTL: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Operations.maintenanceLeaseSeconds
+));
 
-const RENEW_EVERY: Duration = Duration::from_secs(20);
+const RENEW_EVERY: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Operations.maintenanceRenewSeconds
+));
 
-/// Which maintenance family a lease serializes. The two families may run
-/// concurrently; each never overlaps itself.
+/// Maintenance families take independent leases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LeaseName {
     Storage,
@@ -68,6 +71,7 @@ impl MaintenanceLease {
         let (ttl, renew_every) = (MAINTENANCE_LEASE_TTL, RENEW_EVERY);
         let holder = Uuid::now_v7();
         let mut tx = platform.begin().await?;
+        // `Proxiima.Operations.acquireLease`
         let taken: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO proxiima_core.maintenance_lease AS lease (name, holder, expires_at)
                   VALUES ($1, $2, clock_timestamp() + make_interval(secs => $3))
@@ -112,7 +116,7 @@ impl MaintenanceLease {
     ///
     /// [`StorageError::Unavailable`] when the lease is no longer this
     /// holder's: it expired and another process took it, or it was released.
-    /// A pass stops on this error rather than run beside another pass.
+    /// A pass that loses its lease stops at its next renewal check.
     pub(crate) async fn renew(&self) -> Result<(), StorageError> {
         if self.lost.load(Ordering::Acquire)
             || !renew(&self.platform, self.name, self.holder, self.ttl).await?
@@ -169,6 +173,7 @@ async fn renew(
     ttl: Duration,
 ) -> Result<bool, StorageError> {
     let mut tx = platform.begin().await?;
+    // `Proxiima.Operations.renewLease`
     let renewed = sqlx::query(
         "UPDATE proxiima_core.maintenance_lease
             SET expires_at = clock_timestamp() + make_interval(secs => $3)
@@ -192,6 +197,7 @@ async fn release(
     holder: Uuid,
 ) -> Result<(), StorageError> {
     let mut tx = platform.begin().await?;
+    // `Proxiima.Operations.releaseLease`
     sqlx::query("DELETE FROM proxiima_core.maintenance_lease WHERE name = $1 AND holder = $2")
         .bind(name.as_str())
         .bind(holder)

@@ -11,7 +11,9 @@ use tokio_util::sync::CancellationToken;
 /// shutdown, not a control over it: it is a child of the runtime's own
 /// token, so it fires when the runtime shuts down, but cancelling it
 /// only reaches this context's clones. Every worker spawned from this
-/// context MUST observe it and terminate when it is cancelled.
+/// context MUST observe it and terminate when it is cancelled. The runtime
+/// aborts a contributed task that exceeds its shutdown grace
+/// (`Proxiima.Operations.contributedWorkerShutdown`).
 ///
 /// `service::<T>()` resolves from the same composed service set used by MCP
 /// and REST tools. `CitedBlobService` and `CitedBlobReadService` are absent

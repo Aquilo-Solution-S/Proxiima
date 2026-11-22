@@ -236,13 +236,11 @@ impl Workers {
             let joined = tokio::select! {
                 result = &mut handle => result,
                 () = cancel.cancelled() => {
-                    match tokio::time::timeout(grace, &mut handle).await {
-                        Ok(result) => result,
-                        Err(_) => {
-                            tracing::warn!(worker = name, "worker exceeded shutdown grace; aborting");
-                            return;
-                        }
-                    }
+                    let Ok(result) = tokio::time::timeout(grace, &mut handle).await else {
+                        tracing::warn!(worker = name, "worker exceeded shutdown grace; aborting");
+                        return;
+                    };
+                    result
                 }
             };
             if let Err(error) = joined {
@@ -275,6 +273,7 @@ impl Workers {
                     label: "unnamed-worker",
                     instance: Some(id.to_string()),
                 });
+                // Serving and peer workers continue after an exit.
                 // `Proxiima.Operations.reportWorkerExit`
                 match (cancel.is_cancelled(), failure) {
                     (false, failure) => {

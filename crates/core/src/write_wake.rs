@@ -4,8 +4,8 @@
 //! writes enqueue. Instead of claiming on a short fixed interval, they sleep
 //! until a write commits in this process, and otherwise poll on a fallback
 //! interval that backs off while their claims come back empty. A storage
-//! adapter passes its commit to [`commit_and_wake`]; a drain holds a
-//! [`WriteWake`] and awaits [`WriteWake::changed`] beside its fallback sleep.
+//! adapter passes its commit to [`commit_and_wake`]. A drain awaits
+//! [`WriteWake::changed`] beside its fallback sleep.
 //!
 //! The signal is process-wide and carries no data: any committed write wakes
 //! every drain in the process, and a drain that wakes for a write it has no
@@ -72,7 +72,6 @@ impl WriteWake {
 
     /// A private signal for a test drain, independent of concurrent database writes.
     #[cfg(feature = "testkit")]
-    #[must_use]
     pub fn channel_for_tests() -> (Self, impl Fn()) {
         let writes = Writes::new();
         (writes.subscribe(), move || writes.committed())

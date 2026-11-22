@@ -59,6 +59,7 @@ pub(crate) fn router(
 }
 
 async fn ready(State(probe): State<Probe>) -> (StatusCode, String) {
+    // `Proxiima.Operations.ready`
     if probe.cancel.is_cancelled() {
         return (StatusCode::SERVICE_UNAVAILABLE, "shutting down".into());
     }

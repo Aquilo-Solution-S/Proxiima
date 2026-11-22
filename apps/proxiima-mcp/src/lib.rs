@@ -270,9 +270,7 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     }
     let config = parse_args(args).map_err(cli_error(usage))?;
     init_logging(LogSink::Stdout);
-    // Installed before the runtime starts, which records through the global
-    // meter, and shut down after the runtime has, so its last interval is
-    // exported.
+    // `Proxiima.Operations.meterLifecycle`
     let metrics = telemetry::install(&proxiima_core::ProcessEnv)?;
     let served = serve(config).await;
     if let Some(metrics) = metrics {
@@ -830,6 +828,7 @@ fn resolve_served_surface(
     let deny = parse_tool_id_csv(deny_raw, &PROXIIMA_TOOL_DENY)?;
     reject_unknown_tool_ids(&allow, registered_ids, &PROXIIMA_TOOL_ALLOW)?;
     reject_unknown_tool_ids(&deny, registered_ids, &PROXIIMA_TOOL_DENY)?;
+    // `Proxiima.Operations.servedRead`
     reject_served_read_denials(&deny, &registered.served_reads)?;
 
     if profile == ToolProfile::Full && allow.is_empty() && deny.is_empty() {
@@ -853,6 +852,7 @@ fn resolve_served_surface(
 }
 
 fn parse_tool_profile(raw: &str) -> Result<ToolProfile, CliError> {
+    // `Proxiima.Operations.ToolProfile`
     match raw.trim() {
         protocol_profile::FULL => Ok(ToolProfile::Full),
         protocol_profile::MEMORY => Ok(ToolProfile::Memory),

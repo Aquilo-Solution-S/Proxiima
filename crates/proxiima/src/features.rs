@@ -399,6 +399,9 @@ impl Features {
 /// boot step, so an early return can never leave a task running detached.
 /// Every task observes a child of `cancel`, so none can trigger shutdown.
 pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInputs<'_>) -> Features {
+    const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(proxiima_core::ledger!(
+        Proxiima.Operations.workerShutdownGraceSeconds
+    ));
     let worker_ctx = SpiiceWorkerContext::new(
         inputs.engine.clone(),
         inputs.cancel.child_token(),
@@ -419,9 +422,6 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
             format!("linked spiices contribute {}", names.join(", ")),
         )
     };
-    const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(proxiima_core::ledger!(
-        Proxiima.Operations.workerShutdownGraceSeconds
-    ));
     for worker in spiice_workers {
         workers.adopt(worker, inputs.cancel.clone(), WORKER_SHUTDOWN_GRACE);
     }

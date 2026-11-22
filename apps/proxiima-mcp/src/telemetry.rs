@@ -1,9 +1,7 @@
 //! Metric export over OTLP: the serving command's meter provider.
 //!
-//! The runtime records through the global meter, so the provider is installed
-//! before the runtime starts. The OpenTelemetry SDK reads the standard
-//! `OTEL_EXPORTER_OTLP_*` variables from the process environment itself; the
-//! host decides only whether to install one.
+//! The OpenTelemetry SDK reads the standard `OTEL_EXPORTER_OTLP_*` variables
+//! from the process environment.
 
 use opentelemetry::global;
 use opentelemetry_otlp::MetricExporter;
@@ -15,7 +13,7 @@ use proxiima::ProxiimaError;
 use crate::CliError;
 use crate::settings::{OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME};
 
-const DEFAULT_SERVICE_NAME: &str = "proxiima-mcp";
+const DEFAULT_SERVICE_NAME: &str = proxiima_core::ledger!(Proxiima.Operations.defaultServiceName);
 
 /// The installed meter provider; [`Guard::shutdown`] flushes its last interval.
 #[derive(Debug)]
@@ -68,8 +66,7 @@ fn build_provider(
         .build())
 }
 
-/// The service name is `OTEL_SERVICE_NAME`, else `service.name` of
-/// `OTEL_RESOURCE_ATTRIBUTES`, else `proxiima-mcp`.
+// `Proxiima.Operations.serviceNamePrecedence`
 fn resource(lookup: &(impl proxiima_core::EnvLookup + ?Sized)) -> Resource {
     let named = Resource::builder_empty()
         .with_service_name(DEFAULT_SERVICE_NAME)

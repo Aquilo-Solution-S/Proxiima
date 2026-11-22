@@ -103,7 +103,7 @@ inductive BackoffInterval where
   | floor | doubled | ceiling
   deriving DecidableEq
 
-/-- The floor wins when it exceeds the ceiling; otherwise the doubled interval is bounded by both. -/
+/-- The floor takes precedence over the ceiling when the bounds are reversed. -/
 def backoffBound : BackoffCase → BackoffInterval
   | .reversedBounds | .belowFloor => .floor
   | .withinBounds => .doubled
@@ -199,7 +199,7 @@ inductive WorkerExitReport where
   | degraded | joinDiagnostic | normal
   deriving DecidableEq
 
-/-- Premature worker exit is reported as degraded without stopping or restarting its peers. -/
+/-- Premature exit is degraded and a failed join during shutdown is diagnostic. -/
 def reportWorkerExit : (shuttingDown : Bool) → (failedJoin : Bool) → WorkerExitReport
   | false, false | false, true => .degraded
   | true, true => .joinDiagnostic
@@ -207,11 +207,11 @@ def reportWorkerExit : (shuttingDown : Bool) → (failedJoin : Bool) → WorkerE
 
 /-- Fields projected for an ended worker in anonymous readiness. -/
 inductive EndedWorkerField where
-  | staticLabel | count
+  | labelInFirstExitOrder | multiplicity
   deriving DecidableEq
 
-/-- Anonymous readiness groups ended workers by their first-ended label and shows each label's count. -/
-def endedWorkerProjection : List EndedWorkerField := [.staticLabel, .count]
+/-- The fields anonymous readiness projects for ended workers. -/
+def endedWorkerProjection : List EndedWorkerField := [.labelInFirstExitOrder, .multiplicity]
 
 /-- Ordered responsibilities when a runtime explicitly shuts down. -/
 inductive ShutdownStep where
@@ -239,7 +239,7 @@ inductive MetricComponent where
   | library | servingHost
   deriving DecidableEq
 
-/-- The serving host owns the metrics SDK and exporter; libraries use the instruments API. -/
+/-- Only the serving host installs the metrics SDK and exporter. -/
 def installsMetricSdk : MetricComponent → Bool
   | .servingHost => true
   | .library => false

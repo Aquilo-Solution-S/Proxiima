@@ -131,6 +131,7 @@ impl QuiesceGate {
     pub async fn quiesce(&self) -> Result<(), FeatureControlError> {
         let mut watcher = self.state.subscribe();
         let mut cycle = 0;
+        // `Proxiima.Operations.gateTransition`
         self.state.send_if_modified(|state| {
             let closes = state.status == FeatureStatus::Running;
             if closes {
@@ -142,6 +143,7 @@ impl QuiesceGate {
         });
         loop {
             let state = *watcher.borrow_and_update();
+            // `Proxiima.Operations.pauseOutcome`
             if state.cycle != cycle {
                 return Err(FeatureControlError::Resumed);
             }
@@ -204,6 +206,7 @@ impl GateWorker {
     pub async fn checkpoint(&mut self, cancelled: impl Future<Output = ()>) -> Checkpoint {
         let mut cancelled = std::pin::pin!(cancelled);
         loop {
+            // `Proxiima.Operations.proceedWithClaim`
             if poll_once(cancelled.as_mut()).is_ready() {
                 return Checkpoint::Cancelled;
             }

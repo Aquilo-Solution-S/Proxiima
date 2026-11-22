@@ -5,9 +5,12 @@ use std::future::Future;
 
 use tokio::time::Instant;
 
+const TARGET: &str = crate::ledger!(Proxiima.Operations.stageTimingTarget);
+
 /// Timing owns the awaited future's lifetime, including cancellation by an
 /// outer deadline. A disabled target does not read the clock.
 pub(crate) async fn timed<T>(stage: &'static str, future: impl Future<Output = T>) -> T {
+    // `Proxiima.Operations.stageTiming`
     let mut timing = Timing::start(stage);
     let result = future.await;
     timing.completed = true;
@@ -22,13 +25,12 @@ struct Timing {
 
 impl Timing {
     fn start(stage: &'static str) -> Self {
-        let active = tracing::enabled!(target: "proxiima::stage_timing", tracing::Level::DEBUG)
-            .then(|| {
-                let span = tracing::Span::current();
-                tracing::debug!(target: "proxiima::stage_timing", parent: &span,
+        let active = tracing::enabled!(target: TARGET, tracing::Level::DEBUG).then(|| {
+            let span = tracing::Span::current();
+            tracing::debug!(target: TARGET, parent: &span,
                     stage, outcome = "started", "stage timing");
-                (Instant::now(), span)
-            });
+            (Instant::now(), span)
+        });
         Self {
             stage,
             active,
@@ -40,7 +42,7 @@ impl Timing {
 impl Drop for Timing {
     fn drop(&mut self) {
         if let Some((started, span)) = &self.active {
-            tracing::debug!(target: "proxiima::stage_timing", parent: span,
+            tracing::debug!(target: TARGET, parent: span,
                 stage = self.stage,
                 outcome = if self.completed { "finished" } else { "cancelled" },
                 elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -88,7 +90,7 @@ mod tests {
 
     impl Subscriber for Capture {
         fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-            metadata.target() == "proxiima::stage_timing"
+            metadata.target() == TARGET
         }
         fn new_span(&self, _: &Attributes<'_>) -> Id {
             Id::from_u64(1)
