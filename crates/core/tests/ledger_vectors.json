@@ -1,4 +1,68 @@
-{"Proxiima.Goals.stateLabel":
+{"Proxiima.Identity.versionWriter":
+ [{"out": "attested", "in": ["admission"]},
+  {"out": "attested", "in": ["revision"]},
+  {"out": "stored", "in": ["replay"]},
+  {"out": "stored", "in": ["transfer"]},
+  {"out": "stored", "in": ["forget"]},
+  {"out": "stored", "in": ["restore"]}],
+ "Proxiima.Identity.storeNumberLifecycle":
+ [{"out": "persist", "in": ["absent", "migrate"]},
+  {"out": "requireMigration", "in": ["absent", "validate"]},
+  {"out": "useExisting", "in": ["matching", "migrate"]},
+  {"out": "useExisting", "in": ["matching", "validate"]},
+  {"out": "refuseMismatch", "in": ["different", "migrate"]},
+  {"out": "refuseMismatch", "in": ["different", "validate"]}],
+ "Proxiima.Identity.sortJsonKeys":
+ [{"out": true, "in": ["object"]}, {"out": false, "in": ["array"]}],
+ "Proxiima.Identity.seriesContract":
+ [{"out": ["handle", "owner", "schema", "kind"], "in": ["memory"]},
+  {"out": ["handle", "owner", "schema"], "in": ["goal"]}],
+ "Proxiima.Identity.schemaAuthority":
+ [{"out": "memoryCatalog", "in": ["memoryVersion"]},
+  {"out": "goalCatalog", "in": ["goalVersion"]},
+  {"out": "blob", "in": ["blob"]}],
+ "Proxiima.Identity.readRevision":
+ [{"out": "readableHead", "in": ["series"]},
+  {"out": "exact", "in": ["version"]}],
+ "Proxiima.Identity.publicationCounterUpdate":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Identity.objectStoreSource":
+ [{"out": "operator", "in": [true]},
+  {"out": "endpointAndBucket", "in": [false]}],
+ "Proxiima.Identity.monotonicMint":
+ [{"out": {"ok": "reseedAtClock"},
+   "in": ["aheadOrUnbound", "available", "fits"]},
+  {"out": {"error": "timestampOverflow"},
+   "in": ["aheadOrUnbound", "available", "overflow"]},
+  {"out": {"ok": "reseedAtClock"},
+   "in": ["aheadOrUnbound", "exhausted", "fits"]},
+  {"out": {"error": "timestampOverflow"},
+   "in": ["aheadOrUnbound", "exhausted", "overflow"]},
+  {"out": {"ok": "incrementCounter"},
+   "in": ["atOrBehind", "available", "fits"]},
+  {"out": {"error": "timestampOverflow"},
+   "in": ["atOrBehind", "available", "overflow"]},
+  {"out": {"ok": "reseedNextMillisecond"},
+   "in": ["atOrBehind", "exhausted", "fits"]},
+  {"out": {"error": "timestampOverflow"},
+   "in": ["atOrBehind", "exhausted", "overflow"]}],
+ "Proxiima.Identity.collectContent":
+ [{"out": false, "in": ["live"]},
+  {"out": false, "in": ["forgottenOnly"]},
+  {"out": true, "in": ["absent"]}],
+ "Proxiima.Identity.admissionIdAvailable":
+ [{"out": false, "in": [true, true, true]},
+  {"out": false, "in": [true, true, false]},
+  {"out": false, "in": [true, false, true]},
+  {"out": false, "in": [true, false, false]},
+  {"out": false, "in": [false, true, true]},
+  {"out": false, "in": [false, true, false]},
+  {"out": false, "in": [false, false, true]},
+  {"out": true, "in": [false, false, false]}],
+ "Proxiima.Goals.stateLabel":
  [{"out": "Active", "in": ["Active"]},
   {"out": "Paused", "in": ["Paused"]},
   {"out": "Achieved", "in": ["Achieved"]},

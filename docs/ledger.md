@@ -687,7 +687,7 @@ Causa — Provenance grounding
 
 ✓ **origin kind**
 
-✓ **memory goal ids disjoint**: Disjointness of Memory and Goal version identities.
+✓ **memory goal ids disjoint**: Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
 
 ✓ **abstraction has origins**: The origin requirement for an Abstraction.
 
@@ -715,7 +715,7 @@ Causa — Provenance grounding
 
 ✓ **origin kind**
 
-✓ **memory goal ids disjoint**: Disjointness of retained Memory and Goal version identities.
+✓ **memory goal ids disjoint**: Retained Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
 
 ✓ **erased memory disjoint**
 

@@ -1,0 +1,248 @@
+/-! # Identity -/
+
+namespace Proxiima.Identity
+
+/-- A series keeps its handle as later admissions append with immutable, time-ordered IDs. -/
+structure SeriesAndVersion where
+  handle : String
+  t : String
+
+/-- A Memory admission's layer. -/
+inductive MemoryKind where
+  | Fact
+  | Abstraction
+  | Perspective
+  deriving DecidableEq
+
+/-- An embedding uses a Memory ID with its layer, or a Goal ID. -/
+inductive EmbeddableEntity where
+  | memory (kind : MemoryKind)
+  | goal
+  deriving DecidableEq
+
+/-- Which identity a read names. -/
+inductive ReadTarget where
+  | series
+  | version
+  deriving DecidableEq
+
+/-- The revision selected by an authorized read. -/
+inductive ReadRevision where
+  | readableHead
+  | exact
+  deriving DecidableEq
+
+/-- A series read selects the newest readable revision and a version read or pin keeps its exact admission. -/
+def readRevision : ReadTarget → ReadRevision
+  | .series => .readableHead
+  | .version => .exact
+
+/-- An admission ID is available only when absent from both spines and the retained erase witnesses. -/
+def admissionIdAvailable : (memory : Bool) → (goal : Bool) → (erased : Bool) → Bool
+  | false, false, false => true
+  | false, false, true | false, true, false | false, true, true
+  | true, false, false | true, false, true | true, true, false | true, true, true => false
+
+/-- The kind of series whose versions align with its head. -/
+inductive SeriesKind where
+  | memory
+  | goal
+  deriving DecidableEq
+
+/-- The catalog fields shared by all versions of a series. -/
+inductive HeadField where
+  | handle
+  | owner
+  | kind
+  | schema
+  deriving DecidableEq
+
+/-- Versions align with their series head via `goal_schema_head_alignment` for Goals. Memory accepts intermediate images allowed by `schema_evolution_intermediate_memory_image_permits`. -/
+def seriesContract : SeriesKind → List HeadField
+  | .memory => [.handle, .owner, .schema, .kind]
+  | .goal => [.handle, .owner, .schema]
+
+/-- Records whose stored schema selects the typed shape. -/
+inductive SchemaRecord where
+  | memoryVersion
+  | goalVersion
+  | blob
+  deriving DecidableEq
+
+/-- The source of a record's schema tag. -/
+inductive SchemaAuthority where
+  | memoryCatalog
+  | goalCatalog
+  | blob
+  deriving DecidableEq
+
+/-- Memory validates its version's schema against the catalog, Goal stamps or validates it there, and Blob carries its own schema. -/
+def schemaAuthority : SchemaRecord → SchemaAuthority
+  | .memoryVersion => .memoryCatalog
+  | .goalVersion => .goalCatalog
+  | .blob => .blob
+
+/-- An admission stores the attested writer separately from its owner and credential subject. -/
+structure WriterAttribution where
+  /-- The attested principal UUID. -/
+  «by» : String
+  /-- An attested caller UUID or null for a direct write, always present on serialized reads. -/
+  via : Option String
+
+/-- Events that capture or retain writer attribution. -/
+inductive WriterEvent where
+  | admission
+  | revision
+  | replay
+  | transfer
+  | forget
+  | restore
+  deriving DecidableEq
+
+/-- Whether an event takes its writer from the request or the version. -/
+inductive WriterSource where
+  | attested
+  | stored
+  deriving DecidableEq
+
+/-- Each new version captures its own writer, and replay, transfer, forget and restore keep stored authorship. -/
+def versionWriter : WriterEvent → WriterSource
+  | .admission | .revision => .attested
+  | .replay | .transfer | .forget | .restore => .stored
+
+/-- Owner, schema and hash key immutable Content inserted or reused under admission-scoped visibility. Admissions can share Content while retaining distinct admission identities. -/
+structure OwnerScopedContent where
+  owner : String
+  schema : String
+  hash : String
+
+/-- Which admissions still name a Content row. -/
+inductive ContentReference where
+  | live
+  | forgottenOnly
+  | absent
+  deriving DecidableEq
+
+/-- Collect Content only once no live or forgotten admission names it. -/
+def collectContent : ContentReference → Bool
+  | .live | .forgottenOnly => false
+  | .absent => true
+
+/-- The ordered components of a Fact receipt digest. -/
+inductive ReceiptField where
+  | source
+  | owner
+  | payload
+  deriving DecidableEq
+
+/-- A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes. -/
+def receiptFields : List ReceiptField := [.source, .owner, .payload]
+
+/-- JSON values whose order is relevant to canonical payload bytes. -/
+inductive JsonCollection where
+  | object
+  | array
+  deriving DecidableEq
+
+/-- Canonical JSON sorts object keys recursively and preserves array order. -/
+def sortJsonKeys : JsonCollection → Bool
+  | .object => true
+  | .array => false
+
+/-- Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch. -/
+def uuidTimestampBits : Nat := 48
+
+/-- Counter width in the time-ordered UUIDv8 layout. -/
+def uuidCounterBits : Nat := 12
+
+/-- The clock relative to the greater of the last mint and the supplied revision floor. -/
+inductive MintClock where
+  | aheadOrUnbound
+  | atOrBehind
+  deriving DecidableEq
+
+/-- Whether another counter fits in the chosen logical millisecond. -/
+inductive CounterSpace where
+  | available
+  | exhausted
+  deriving DecidableEq
+
+/-- Where the shared generator mints the next admission. -/
+inductive MintStep where
+  | reseedAtClock
+  | incrementCounter
+  | reseedNextMillisecond
+  deriving DecidableEq
+
+/-- Range of the clock or the logical millisecond selected for admission. -/
+inductive MintRange where
+  | fits
+  | overflow
+  deriving DecidableEq
+
+/-- A mint that exceeds the timestamp range leaves the generator unchanged. -/
+inductive MintRefusal where
+  | timestampOverflow
+  deriving DecidableEq
+
+/-- A mint advances past the revision floor and the last mint, even when the clock stalls. -/
+def monotonicMint : MintClock → CounterSpace → MintRange → Except MintRefusal MintStep
+  | _, _, .overflow => .error .timestampOverflow
+  | .aheadOrUnbound, .available, .fits | .aheadOrUnbound, .exhausted, .fits => .ok .reseedAtClock
+  | .atOrBehind, .available, .fits => .ok .incrementCounter
+  | .atOrBehind, .exhausted, .fits => .ok .reseedNextMillisecond
+
+/-- Smallest host-assigned store number in an admission UUID. -/
+def storeNumberMin : Nat := 0
+
+/-- Largest 16-bit host-assigned store number in an admission UUID. -/
+def storeNumberMax : Nat := 65535
+
+/-- The persisted store number relative to the configured number. -/
+inductive StoreNumberState where
+  | absent
+  | matching
+  | different
+  deriving DecidableEq
+
+/-- Operations that open a numbered store. -/
+inductive StoreNumberEvent where
+  | migrate
+  | validate
+  deriving DecidableEq
+
+/-- The result of applying the configured number. -/
+inductive StoreNumberAction where
+  | persist
+  | useExisting
+  | requireMigration
+  | refuseMismatch
+  deriving DecidableEq
+
+/-- The first migration persists the number and subsequent migrations, serving and maintenance require agreement. -/
+def storeNumberLifecycle : StoreNumberState → StoreNumberEvent → StoreNumberAction
+  | .absent, .migrate => .persist
+  | .absent, .validate => .requireMigration
+  | .matching, .migrate | .matching, .validate => .useExisting
+  | .different, .migrate | .different, .validate => .refuseMismatch
+
+/-- Direct mutation or deletion of a persisted store number is refused. -/
+def storeNumberMutable : Bool := false
+
+/-- Publication counters retain their series handle and never regress. -/
+def publicationCounterUpdate : (sameHandle : Bool) → (nondecreasing : Bool) → Bool
+  | true, true => true
+  | true, false | false, true | false, false => false
+
+/-- Whether S3 store identity comes from the operator or the configured target. -/
+inductive ObjectStoreSource where
+  | operator
+  | endpointAndBucket
+  deriving DecidableEq
+
+/-- An explicit validated identity takes precedence over derivation from endpoint and bucket. -/
+def objectStoreSource : (overridePresent : Bool) → ObjectStoreSource
+  | true => .operator
+  | false => .endpointAndBucket
+
+end Proxiima.Identity

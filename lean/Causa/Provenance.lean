@@ -32,7 +32,7 @@ structure MemoryGraphValid
   guidanceValid :
     ∀ m : Memory, m ∈ memories → perspective_guidance_valid memories goals m
   originKind : ∀ m : Memory, m ∈ memories → OriginKindValid memories m
-  /-- Disjointness of Memory and Goal version identities. -/
+  /-- Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`. -/
   memoryGoalIdsDisjoint :
     ∀ (m : Memory) (g : Goal), m ∈ memories → g ∈ goals → memory_t m ≠ goal_t g
   /-- The origin requirement for an Abstraction. -/
@@ -82,7 +82,7 @@ structure RetainedMemoryGraphValid
   originKind :
     ∀ m : Memory, m ∈ memories →
       RetainedOriginKindValid memories targets m
-  /-- Disjointness of retained Memory and Goal version identities. -/
+  /-- Retained Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`. -/
   memoryGoalIdsDisjoint :
     ∀ (m : Memory) (g : Goal), m ∈ memories → g ∈ goals → memory_t m ≠ goal_t g
   erasedMemoryDisjoint : ErasedTargetsDisjointMemories targets memories

@@ -1,3 +1,4 @@
+import Proxiima.Identity
 import Causa.Prelude
 import Causa.Owner
 
@@ -5,7 +6,7 @@ import Causa.Owner
 
 namespace Causa
 
-/-- The kernel's opaque identity token. -/
+/-- The proof library’s opaque identity token. -/
 opaque Id : Type := String
 
 /-- Identifier of one Memory version. -/
@@ -16,15 +17,12 @@ abbrev Handle            : Type := Id
 abbrev BlobId            : Type := Id
 /-- Identifier of a typed sidecar payload. -/
 abbrev ContentId         : Type := Id
-/-- The engine digest of a content payload. -/
-opaque ContentHash : Type := String
+
 /-- The version identities describing a retrieval situation. -/
 abbrev Cue : Type := Set MemoryId
 
-/-- Authenticated authorship of a write. -/
-structure WriterAttribution where
-  «by» : User
-  via  : Option Id
+/-- Proof representation of `Proxiima.Identity.WriterAttribution`. -/
+abbrev WriterAttribution := Proxiima.Identity.WriterAttribution
 
 /-- Stable identifier used for a persisted owner. -/
 structure OwnerRef where

@@ -37,4 +37,24 @@ macro_rules! ledger {
     (Proxiima.Goals.transferGoal) => {
         false
     };
+    // Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
+    (Proxiima.Identity.uuidTimestampBits) => {
+        48
+    };
+    // Counter width in the time-ordered UUIDv8 layout.
+    (Proxiima.Identity.uuidCounterBits) => {
+        12
+    };
+    // Smallest host-assigned store number in an admission UUID.
+    (Proxiima.Identity.storeNumberMin) => {
+        0
+    };
+    // Largest 16-bit host-assigned store number in an admission UUID.
+    (Proxiima.Identity.storeNumberMax) => {
+        65535
+    };
+    // Direct mutation or deletion of a persisted store number is refused.
+    (Proxiima.Identity.storeNumberMutable) => {
+        false
+    };
 }

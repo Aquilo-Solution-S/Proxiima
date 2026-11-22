@@ -160,25 +160,6 @@ def evidenceDeclaration : String := "goal.evidence_t"
 /-- The authoritative field behind the reverse index, with targets governed by `Causa.goal_motivations_valid`. -/
 def motivationDeclaration : String := "goal.motivated_by"
 
-/-- Which Goal identity a read surface selects. -/
-inductive ReadGoal where
-  | read
-  | list
-  | declaredReference
-  deriving DecidableEq
-
-/-- The revision selected by an authorized read. -/
-inductive ReadRevision where
-  | readableHead
-  | exact
-  deriving DecidableEq
-
-/-- Goal reads and lists select readable heads while declared references keep their exact revision. -/
-def readRevision : ReadGoal → ReadRevision
-  | .read => .readableHead
-  | .list => .readableHead
-  | .declaredReference => .exact
-
 /-- Operators use their authorship category in the durable command and its replay identity. -/
 def operatorAuthorship : String := "system_operator"
 

@@ -6,11 +6,8 @@ import Causa.Identity
 
 namespace Causa
 
-inductive MemoryKind where
-  | Fact
-  | Abstraction
-  | Perspective
-  deriving DecidableEq, Repr
+/-- The ledger vocabulary used by Memory proofs. -/
+abbrev MemoryKind := Proxiima.Identity.MemoryKind
 
 /-- The target kinds recorded by erase witnesses. -/
 inductive PinTargetKind where
@@ -76,12 +73,10 @@ def recordedGoalTargetExists
     erased_pin_target_t e = id ∧
     erased_pin_target_kind e = .Goal
 
-/-- An owner-scoped payload that can be shared across admissions. -/
+/-- An immutable Content row, with a row ID and the ledger's owner-scoped key. -/
 structure Content where
-  id     : ContentId
-  owner  : Owner
-  schema : SchemaRef
-  hash   : ContentHash
+  id : ContentId
+  key : Proxiima.Identity.OwnerScopedContent
 
 def content_id : Content → ContentId := Content.id
 
