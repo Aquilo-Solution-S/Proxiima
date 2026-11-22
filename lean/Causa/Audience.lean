@@ -31,10 +31,10 @@ theorem Role.has_meet (x y : Role) (c : Capability) :
   | write k => simp only [Role.has, Role.mayWrite, Role.meet]; omega
   | readsGoals =>
     simp only [Role.has, Role.readsGoals, Role.meet]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank]
   | worksGoals =>
     simp only [Role.has, Role.worksGoals, Role.meet]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank]
   | administers => simp [Role.has, Role.administers, Role.meet]
   | manages => simp [Role.has, Role.manages, Role.meet]
 
@@ -46,24 +46,24 @@ theorem Role.has_join (x y : Role) (c : Capability) :
   | write k => simp only [Role.has, Role.mayWrite, Role.join]; omega
   | readsGoals =>
     simp only [Role.has, Role.readsGoals, Role.join]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank]
   | worksGoals =>
     simp only [Role.has, Role.worksGoals, Role.join]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank]
   | administers => simp [Role.has, Role.administers, Role.join]
   | manages => simp [Role.has, Role.manages, Role.join]
 
 /-- Read access follows from write access at the same memory kind. -/
 theorem Role.has_write_read (r : Role) (k : AccessKind) :
     r.has (.write k) → r.has (.read k) := fun h =>
-  Nat.lt_of_lt_of_le h r.write_le_read
+  Nat.le_trans h r.write_le_read
 
 /-- The capabilities of the unrestricted group role. -/
 theorem Role.admin_has (c : Capability) : Role.admin.has c := by
   cases c with
-  | read k => show k.rank < 3; cases k <;> decide
-  | write k => show k.rank < 3; cases k <;> decide
-  | readsGoals => show GoalAccess.works ≠ GoalAccess.none; decide
+  | read k => change (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ 3; cases k <;> decide
+  | write k => change (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ 3; cases k <;> decide
+  | readsGoals => change Proxiima.OwnerAuthority.GoalAccess.works ≠ .none; decide
   | worksGoals => rfl
   | administers => rfl
   | manages => rfl
@@ -216,7 +216,7 @@ theorem may_manage_iff_gives (r : User) (o : Owner) :
     by_cases h : r = u
     · simp [Owner.ofUser, h] at hx
       subst hx
-      simp [Role.has, Role.manages, Role.personal] at hm
+      simp [Role.has, Role.manages, Role.personal, Role.ofPreset, Proxiima.OwnerAuthority.rolePresets] at hm
     · simp [Owner.ofUser, h] at hx
 
 end Causa

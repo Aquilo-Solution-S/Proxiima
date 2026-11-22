@@ -798,6 +798,447 @@ stateDiagram-v2
 
 - object store source: An explicit validated identity takes precedence over derivation from endpoint and bucket.
 
+## Owner authority
+
+**Access ceiling**: The highest memory kind a role can read or write.
+
+- none
+- fact
+- abstraction
+- perspective
+
+**Goal access**: Goal access is independent of memory access.
+
+- none
+- reads
+- works
+
+**Role preset**: The role's memory ceilings, Goal access and independent administration and management bits.
+
+- read
+- write
+- goals
+- administers
+- manages
+- ok
+
+**Relation**: The names accepted for direct membership relations.
+
+- admin
+- editor
+- viewer
+- ingest
+
+**Member add relation**: Whether member-add supplies a relation.
+
+- omitted
+- supplied
+
+**Preset**: How a personal role or one of the group presets is acquired.
+
+- personal
+- member
+
+**Space key**: A space key labels the actual row owner, with the current key reserved for the session's bound owner.
+
+- current
+- ownerUuid
+
+**Space default**: The owner selected when a tool omits its space argument.
+
+- current: The session-bound owner.
+- identity: The request's authenticated principal owner.
+
+**Space write step**: Write selection resolves the space and narrows to its owner before the concrete verb checks its own authority.
+
+- resolve
+- narrow
+- authorizeVerb
+
+**Owner kind**: A stored owner reference is classified by the owner registry.
+
+- personal
+- group
+
+**Registration**: Ordinary admission registers unknown owners as personal, and groups require explicit registration.
+
+- admit
+- createGroup
+
+**Registration state**: The registration state of an owner ID.
+
+- unregistered
+- registered
+
+**Owner spine**: The spine selected for a stored entity's owner probe.
+
+- memory
+- goal
+
+**Group forest invariant**: The invariants checked when an edge is written to the group forest.
+
+- singleParent: A subgroup has at most one parent.
+- distinctEndpoints: A group cannot contain itself.
+- acyclic: A parent cannot be a descendant of its own child.
+
+**Authority fact**: Authorization facts obtained without changing the caller's transaction or treating the facts as permits.
+
+- currentPersonRole
+- directRelations
+- registeredOwnerKind
+- containment
+
+**Membership read**: The available membership read shapes.
+
+- direct: Written relations and the parent edge, from the caller's snapshot.
+- fencedEffective: Current roles compose upward under `Causa.Group.mount` and `Causa.Group.union`. Fenced person reads require a person.
+- unitSubject: A host-state unit reads and fences only its own authenticated subject, who must be a person.
+
+**Authority fence step**: The steps that protect a declared membership authority footprint in a caller-owned read-committed transaction.
+
+- lockGroupTrees
+- verifyRoots: Verify that the captured roots still match after locking the trees.
+- lockOwnerKinds
+- lockPersonProjections
+- verifyDirectGroupRoots: Re-read direct groups and refuse any root outside the locked footprint.
+
+**Membership endpoint**: Engine group edits carry authority for both endpoints while storage resolves member kind under the tree fence.
+
+- parent: Recheck a named caller's management after locking when the parent has stored managers.
+- member: Detach under the subgroup's admission when the request is authorized on that endpoint.
+
+**Membership change**: The closed effects of group membership administration.
+
+- bootstrapFirstAdmin: Host-only bootstrap with an atomic refusal when an Admin already exists.
+- add: Insert the requested person relation or attach a subgroup under its cap.
+- removeAll: Remove all direct relations for the member.
+- removeOne: Remove only the named relation, succeeding on absence.
+- replace: Require the old relation and run remove then add vetoes before replacing it atomically.
+
+**Membership consent**: The role gates for a membership change once the member kind is resolved.
+
+- hostBootstrap
+- parent
+- bothGroups: Administration and management on the parent, and management on the subgroup.
+- eitherGroup: Administration and management on the selected endpoint, with the parent tried first.
+
+**Member page key**: A membership cursor orders by member ID then relation and resumes strictly after that pair.
+
+- memberId
+- relation
+
+**Owner gate step**: A resolved owner gate checks the effect before running ordered host vetoes and observing the decision.
+
+- resolve
+- checkEffect
+- hostVeto
+- observe
+
+**Owner access rule**: Owner roles give ordinary access to the whole owning scope, and the owner resolver is separate from Goal audience grants.
+
+- roleOfOwner: Every Memory series and Goal has one durable owner, resolved to the caller's role for that owner.
+- memoryCeilings: Direction-specific ceilings bound memory reads and writes, including in storage, independently of Goal work and administration.
+- exactWriteCeiling: A write by exact ID cannot reveal a row above the write ceiling.
+- sidecarScan: Readable owners can prefilter a sidecar scan. No authority yields a refusal, and an all-vetoed set is empty.
+
+**Goal work path**: The request paths with different owner Goal-work requirements.
+
+- hostBearer
+- delegated
+- system
+
+**Owner read**: The read gate's treatment of a candidate owner's stored identity.
+
+- set: Veto each candidate once at Fact-read standing and let storage apply the actual kind ceiling.
+- exact: Veto the stored owner for the actual kind. Absent, unreadable and vetoed targets have the same public absence.
+
+**Owner resolution**: The authority used to interpret an entity's bare owner reference.
+
+- personal: The principal's own ID has a derived singleton role and refuses a resolver override.
+- group: A fresh full group membership resolution replaces the prior role.
+- eagerGroupLookup: The default single-group lookup uses the host's eager map, where an absent role grants no access.
+
+**Owner list key**: Owner lists put the subject's owner first and then sort by owner ID.
+
+- personalFirst
+- ownerId
+
+**Default owner rule**: A selected default must already be in scope and explicit narrowing clears the default.
+
+- selectAccessibleOwner
+- clearOnNarrow
+
+**Scope restriction**: Restrictions that keep a scoped role grant from widening.
+
+- expiry: Expired grants authorize nothing and expiry can only move earlier.
+- confinement: Explicit confinement admits only one owner and cannot add raw group roles.
+- sealed: A verified, sealed scope cannot add raw group roles.
+
+**Transfer endpoint**: The endpoint whose role gives consent to an owner transfer.
+
+- source
+- destination
+
+**Transfer role source**: The source of the role offered for transfer consent.
+
+- personalRole
+- groupRole
+
+**Transfer consent**: Consent needed at one endpoint of an owner transfer.
+
+- administer
+- administerAndManage
+- refuse
+
+**Destination authority**: Request authority considered when a transfer looks up destination consent.
+
+- rolePresent
+- eligibleSubjectWithoutRole
+- ineligibleSubjectWithoutRole: Delegated and verified forwarded requests cannot use stored destination membership.
+
+**Destination route**: The role route used for destination consent.
+
+- requestRole
+- storedMembership
+- refuse
+
+**Transfer step**: A memory transfer may reach these admission checks in order.
+
+- checkEntityKind
+- refuseOwnPersonalDestination
+- findVisibleSource: Find the source among the caller's readable owners, including a selected forgotten version.
+- authorizeSource
+- authorizeDestination
+- checkSchema
+- refuseSameOwner
+- applyVetoes
+- resolveDestinationEmbeddings
+- moveSeries: Ensure the destination owner row and move the series in the same transaction.
+
+**Transfer class**: The Memory series eligibility checked by transfer admission.
+
+- schemaRefuses
+- linkedToGoal
+- eligibleMemory
+
+**Transfer fence**: The storage checks that keep a captured transfer bound to its original series.
+
+- lockBothOwners
+- lockSeriesVersions
+- requireSelectedVersion
+- compareHeadOwner
+
+**Sidecar transfer**: The ownership outcomes of declared transfer surfaces.
+
+- follows: Move keyed data with its series under the destination owner.
+- retainAtSource: Export and erasure follow the row's own owner. Transfer and forget/restore skip the row.
+
+**memory ceiling ranks** = [0, 1, 2, 3]: Memory ceiling ranks in declaration order for Rust.
+
+**goal access ranks** = [0, 1, 2]: Goal capability ranks in declaration order for Rust.
+
+**owner id bytes** = 36: The hyphenated owner UUID's length in bytes.
+
+**current space key** = "current": The key selecting the session's current memory space.
+
+**space write order** = [resolve, narrow, authorizeVerb]: The admission order of a write into a selected space.
+
+**group forest** = [singleParent, distinctEndpoints, acyclic]: Multiple children and arbitrary nesting depth are allowed under these group edge invariants.
+
+**authority facts** = [currentPersonRole, directRelations, registeredOwnerKind, containment]: An authority session fences the declared targets before returning role, registry and topology facts.
+
+**authority fence order** = [lockGroupTrees, verifyRoots, lockOwnerKinds, lockPersonProjections, verifyDirectGroupRoots]: The group authority locks persist through transaction completion and footprint drift requires retrying the transaction.
+
+**member page order** = [memberId, relation]: The ordered key of a member page, with one excess row read to detect continuation.
+
+**owner gate order** = [resolve, checkEffect, hostVeto, observe]: One optional resolver precedes the role gate. Hooks veto in registration order and observers receive the outcome.
+
+**owner list order** = [personalFirst, ownerId]: Ordering across read, write and Goal owner lists.
+
+**transfer order** = [checkEntityKind, refuseOwnPersonalDestination, findVisibleSource, authorizeSource, authorizeDestination, checkSchema, refuseSameOwner, applyVetoes, resolveDestinationEmbeddings, moveSeries]: An authorized transfer changes all versions and the head in place, preserving identities, writer attribution and forgotten status.
+
+**captured transfer** = [lockBothOwners, lockSeriesVersions, requireSelectedVersion, compareHeadOwner]: A stale capture cannot transfer a replacement series at the same handle.
+
+| access ceiling | rank |
+| --- | --- |
+| none | 0 |
+| fact | 1 |
+| abstraction | 2 |
+| perspective | 3 |
+
+- rank: The ordinal of a ceiling, with zero covering no memory.
+
+| memory kind | covering ceiling |
+| --- | --- |
+| Fact | fact |
+| Abstraction | abstraction |
+| Perspective | perspective |
+
+- covering ceiling: The lowest ceiling covering each of the three memory kinds.
+
+| access ceiling | memory kind | covers |
+| --- | --- | --- |
+| none | Fact | no |
+| none | Abstraction | no |
+| none | Perspective | no |
+| fact | Fact | yes |
+| fact | Abstraction | no |
+| fact | Perspective | no |
+| abstraction | Fact | yes |
+| abstraction | Abstraction | yes |
+| abstraction | Perspective | no |
+| perspective | Fact | yes |
+| perspective | Abstraction | yes |
+| perspective | Perspective | yes |
+
+- covers: A direction-specific ceiling covers the selected memory kind and every lower kind.
+
+| goal access | rank | can read | can work |
+| --- | --- | --- | --- |
+| none | 0 | no | no |
+| reads | 1 | yes | no |
+| works | 2 | yes | yes |
+
+- rank: The ordering used to cap or join Goal access.
+- can read: An owner role with Goal access reads the owner's Goals.
+- can work: Only the work capability admits owner Goal work.
+
+| access ceiling | access ceiling | ceiling admitted |
+| --- | --- | --- |
+| none | none | yes |
+| none | fact | no |
+| none | abstraction | no |
+| none | perspective | no |
+| fact | none | yes |
+| fact | fact | yes |
+| fact | abstraction | no |
+| fact | perspective | no |
+| abstraction | none | yes |
+| abstraction | fact | yes |
+| abstraction | abstraction | yes |
+| abstraction | perspective | no |
+| perspective | none | yes |
+| perspective | fact | yes |
+| perspective | abstraction | yes |
+| perspective | perspective | yes |
+
+- ceiling admitted: An owner role cannot write above its read ceiling.
+
+| relation | relation label |
+| --- | --- |
+| admin | "admin" |
+| editor | "editor" |
+| viewer | "viewer" |
+| ingest | "ingest" |
+
+- relation label: Relation labels are stored lowercase and parsed without ASCII case distinctions.
+
+| member add relation | member add relation |
+| --- | --- |
+| omitted | viewer |
+| supplied (admin) | admin |
+| supplied (editor) | editor |
+| supplied (viewer) | viewer |
+| supplied (ingest) | ingest |
+
+- member add relation: Member-add uses the supplied relation and defaults an omitted relation to Viewer.
+
+| preset | role presets |
+| --- | --- |
+| personal | read: perspective, write: perspective, goals: works, administers: yes, manages: no |
+| member (admin) | read: perspective, write: perspective, goals: works, administers: yes, manages: yes |
+| member (editor) | read: perspective, write: perspective, goals: works, administers: no, manages: no |
+| member (viewer) | read: perspective, write: none, goals: works, administers: no, manages: no |
+| member (ingest) | read: fact, write: fact, goals: none, administers: no, manages: no |
+
+- role presets: The derived personal role and the available group membership presets.
+
+| registration state | registration | register owner |
+| --- | --- | --- |
+| unregistered | admit | personal |
+| unregistered | createGroup | group |
+| registered (personal) | admit | personal |
+| registered (personal) | createGroup | — |
+| registered (group) | admit | group |
+| registered (group) | createGroup | group |
+
+- register owner: The first owner registration fixes the kind. Explicit group creation refuses a personal ID.
+
+| embeddable entity | owner spine |
+| --- | --- |
+| memory (Fact) | memory |
+| memory (Abstraction) | memory |
+| memory (Perspective) | memory |
+| goal | goal |
+
+- owner spine: A typed owner probe searches only the spine for its entity kind.
+
+| membership change | owner kind | membership consent |
+| --- | --- | --- |
+| bootstrapFirstAdmin | personal | hostBootstrap |
+| bootstrapFirstAdmin | group | hostBootstrap |
+| add | personal | parent |
+| add | group | bothGroups |
+| removeAll | personal | parent |
+| removeAll | group | eitherGroup |
+| removeOne | personal | parent |
+| removeOne | group | eitherGroup |
+| replace | personal | parent |
+| replace | group | bothGroups |
+
+- membership consent: Adding or changing a group edge needs both groups. Detaching needs either group, and person edits need the parent.
+
+| bool | bool | preserves manager |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | yes |
+| no | no | yes |
+
+- preserves manager: An engine membership removal or replacement preserves a previously managed group.
+
+| goal work path | bool | bool | goal work admitted |
+| --- | --- | --- | --- |
+| hostBearer | yes | yes | yes |
+| hostBearer | yes | no | yes |
+| hostBearer | no | yes | no |
+| hostBearer | no | no | no |
+| delegated | yes | yes | yes |
+| delegated | yes | no | no |
+| delegated | no | yes | no |
+| delegated | no | no | no |
+| system | yes | yes | yes |
+| system | yes | no | no |
+| system | no | yes | no |
+| system | no | no | no |
+
+- goal work admitted: Goal work requires its own capability, with administration also required for delegated and system work.
+
+| transfer endpoint | transfer role source | transfer consent |
+| --- | --- | --- |
+| source | personalRole | administer |
+| source | groupRole | administerAndManage |
+| destination | personalRole | refuse |
+| destination | groupRole | administerAndManage |
+
+- transfer consent: A source administers and group endpoints must also manage. Receiving consent requires the group role.
+
+| destination authority | destination route |
+| --- | --- |
+| rolePresent | requestRole |
+| eligibleSubjectWithoutRole | storedMembership |
+| ineligibleSubjectWithoutRole | refuse |
+
+- destination route: Stored membership supplies destination consent only for an eligible subject whose request carries no destination role.
+
+| transfer class | transfer admitted |
+| --- | --- |
+| schemaRefuses | no |
+| linkedToGoal | no |
+| eligibleMemory | yes |
+
+- transfer admitted: A Memory series with Goal causality or a refusal in its schema cannot transfer.
+
 ## Repository
 
 **Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
@@ -1451,7 +1892,7 @@ Causa — Goals
 
 Causa — Identity
 
-✓ **personal resolves**: The personal-owner resolution law.
+✓ **personal resolves**: Resolution of the singleton under `Causa.Owner.ofUser`.
 
 Causa — Memory
 

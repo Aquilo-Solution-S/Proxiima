@@ -24,7 +24,7 @@ abbrev Cue : Type := Set MemoryId
 /-- Proof representation of `Proxiima.Identity.WriterAttribution`. -/
 abbrev WriterAttribution := Proxiima.Identity.WriterAttribution
 
-/-- Stable identifier used for a persisted owner. -/
+/-- Stable owner reference resolved under `Causa.OwnerState`. -/
 structure OwnerRef where
   id : Id
 
@@ -36,7 +36,7 @@ structure OwnerState where
   resolve : OwnerRef → ResolvedOwner
   /-- The identifier by which the owner registry knows a user. -/
   own : User → OwnerRef
-  /-- The personal-owner resolution law. -/
+  /-- Resolution of the singleton under `Causa.Owner.ofUser`. -/
   personal_resolves : ∀ u : User, resolve (own u) = Owner.ofUser u
 
 /-- Identifier of the operator that produced a derived memory. -/

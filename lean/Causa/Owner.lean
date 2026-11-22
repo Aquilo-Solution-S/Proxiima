@@ -1,8 +1,11 @@
 import Causa.Prelude
+import Proxiima.OwnerAuthority
 
 /-! Causa — Owner -/
 
 namespace Causa
+
+open Proxiima.OwnerAuthority (RolePreset rolePresets)
 
 /-- The opaque identity of a user, agent or service actor. -/
 structure User where
@@ -16,29 +19,19 @@ def User.ofToken (t : String) : User := ⟨t⟩
 /-- The synthetic identity used by closed proof witnesses. -/
 instance : Inhabited User := ⟨User.ofToken "causa-kernel-witness"⟩
 
-/-- Memory kinds ranked for access control. -/
-inductive AccessKind where
-  | fact | abstraction | perspective
-  deriving DecidableEq, Repr
+/-- The memory kinds ranked by `Proxiima.OwnerAuthority.coveringCeiling`. -/
+abbrev AccessKind := Proxiima.Identity.MemoryKind
 
-def AccessKind.rank : AccessKind → Nat
-  | .fact => 0 | .abstraction => 1 | .perspective => 2
-
-/-- The Goal capability axis of an owner role. -/
-inductive GoalAccess where
-  | none | reads | works
-  deriving DecidableEq, Repr
-
-def GoalAccess.rank : GoalAccess → Nat
-  | .none => 0 | .reads => 1 | .works => 2
+/-- The Goal capability used by the proof lattice. -/
+abbrev GoalAccess := Proxiima.OwnerAuthority.GoalAccess
 
 /-- The lower Goal capability. -/
 def GoalAccess.meet (x y : GoalAccess) : GoalAccess :=
-  if x.rank ≤ y.rank then x else y
+  if Proxiima.OwnerAuthority.GoalAccess.rank x ≤ Proxiima.OwnerAuthority.GoalAccess.rank y then x else y
 
 /-- The higher Goal capability. -/
 def GoalAccess.join (x y : GoalAccess) : GoalAccess :=
-  if x.rank ≤ y.rank then y else x
+  if Proxiima.OwnerAuthority.GoalAccess.rank x ≤ Proxiima.OwnerAuthority.GoalAccess.rank y then y else x
 
 /-- The capabilities supplied by a resolved membership. -/
 structure Role where
@@ -49,8 +42,8 @@ structure Role where
   manage : Bool
   write_le_read : write ≤ read
 
-def Role.mayRead  (x : Role) (k : AccessKind) : Prop := k.rank < x.read
-def Role.mayWrite (x : Role) (k : AccessKind) : Prop := k.rank < x.write
+def Role.mayRead  (x : Role) (k : AccessKind) : Prop := (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ x.read
+def Role.mayWrite (x : Role) (k : AccessKind) : Prop := (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ x.write
 /-- The capability to read the owner's Goals. -/
 def Role.readsGoals (x : Role) : Prop := x.goals ≠ .none
 /-- The capability to work on the owner's Goals. -/
@@ -65,16 +58,23 @@ theorem Role.worksGoals_readsGoals (x : Role) (h : x.worksGoals) : x.readsGoals 
   simp only [Role.worksGoals] at h
   simp [Role.readsGoals, h]
 
-/-- The role assigned in a personal group. -/
-def Role.personal : Role := ⟨3, 3, .works, true, false, by omega⟩
+/-- The numerical proof projection of a ledger role preset. -/
+def Role.ofPreset (preset : RolePreset) : Role :=
+  ⟨preset.read.rank, preset.write.rank, preset.goals, preset.administers, preset.manages, by
+    obtain ⟨read, write, _, _, _, ok⟩ := preset
+    change write.rank ≤ read.rank
+    cases read <;> cases write <;> first | decide | contradiction⟩
+
+/-- The role derived from personal ownership. -/
+def Role.personal : Role := .ofPreset (rolePresets .personal)
 /-- The memory viewer role. -/
-def Role.viewer   : Role := ⟨3, 0, .works, false, false, by omega⟩
+def Role.viewer : Role := .ofPreset (rolePresets (.member .viewer))
 /-- The Fact ingest role. -/
-def Role.ingest   : Role := ⟨1, 1, .none, false, false, by omega⟩
+def Role.ingest : Role := .ofPreset (rolePresets (.member .ingest))
 /-- The memory editor role. -/
-def Role.editor   : Role := ⟨3, 3, .works, false, false, by omega⟩
+def Role.editor : Role := .ofPreset (rolePresets (.member .editor))
 /-- The unrestricted group role. -/
-def Role.admin    : Role := ⟨3, 3, .works, true, true, by omega⟩
+def Role.admin : Role := .ofPreset (rolePresets (.member .admin))
 
 /-- The intersection of capabilities used to cap inherited authority. -/
 def Role.meet (x y : Role) : Role :=
@@ -97,7 +97,7 @@ theorem Role.meet_capped (x cap : Role) :
   · simp only [Role.worksGoals, Role.meet, GoalAccess.meet]
     generalize x.goals = a
     generalize cap.goals = c
-    cases a <;> cases c <;> simp [GoalAccess.rank]
+    cases a <;> cases c <;> simp [Proxiima.OwnerAuthority.GoalAccess.rank]
   · simp only [Role.administers, Role.meet, Bool.and_eq_true]
     exact fun h => h.2
   · simp only [Role.manages, Role.meet, Bool.and_eq_true]

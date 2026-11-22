@@ -31,7 +31,7 @@ theorem may_write_implies_read :
     ∀ (r : User) (o : Owner) (k : AccessKind),
       may_write r o k → may_read r o k := by
   rintro r o k ⟨x, hx, hw⟩
-  exact ⟨x, hx, Nat.lt_of_lt_of_le hw x.write_le_read⟩
+  exact ⟨x, hx, Nat.le_trans hw x.write_le_read⟩
 
 /-- Roles available to verified forwarders. -/
 inductive ForwardingRole where
@@ -121,6 +121,6 @@ def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
 /-- Authorization for Fact effects declared by a host-state Goal work command. -/
 def request_may_write_goal_work (s : OwnerState) (p : ForwardingPolicy) (r : User)
     (a : RequestAuthority) (o : OwnerRef) (declared : Bool) (k : AccessKind) : Prop :=
-  k = .fact ∧ declared = true ∧ request_may_work_goals s p r a o
+  k = .Fact ∧ declared = true ∧ request_may_work_goals s p r a o
 
 end Causa

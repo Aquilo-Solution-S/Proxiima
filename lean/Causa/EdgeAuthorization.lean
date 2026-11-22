@@ -6,11 +6,6 @@ import Causa.Audience
 
 namespace Causa
 
-def MemoryKind.accessKind : MemoryKind → AccessKind
-  | .Fact => .fact
-  | .Abstraction => .abstraction
-  | .Perspective => .perspective
-
 structure GoalControllerEpoch where
   goal_handle : Handle
   owner : Owner
@@ -54,7 +49,7 @@ def goal_publication_read_admitted
     (grants : List GoalAudienceGrant) (current_controller_generation : Nat)
     (memory_owner_generation : Nat) (memory : Memory) : Prop :=
   goal_route s requester publication.goal.owner publication.goal
-    current_controller_generation grants (.read memory.kind.accessKind) ∧
+    current_controller_generation grants (.read memory.kind) ∧
   publication.memory_t = memory_t memory ∧
   publication.source_owner = memory_owner memory ∧
   publication.goal.generation = current_controller_generation ∧
@@ -122,7 +117,7 @@ def goal_work_write_admitted
     (current_controller_generation memory_owner_generation : Nat)
     (memory : Memory) : Prop :=
   goal_route s requester (goal_owner goal) binding.goal
-    current_controller_generation grants (.write memory.kind.accessKind) ∧
+    current_controller_generation grants (.write memory.kind) ∧
   binding.goal.goal_handle = goal_handle goal ∧
   binding.source_owner = goal_owner goal ∧
   binding.memory_handle = memory_handle memory ∧
@@ -139,7 +134,7 @@ def goal_work_read_admitted
     (current_controller_generation memory_owner_generation : Nat)
     (memory : Memory) : Prop :=
   goal_route s requester (goal_owner goal) binding.goal
-    current_controller_generation grants (.read memory.kind.accessKind) ∧
+    current_controller_generation grants (.read memory.kind) ∧
   binding.goal.goal_handle = goal_handle goal ∧
   binding.source_owner = goal_owner goal ∧
   binding.memory_handle = memory_handle memory ∧
@@ -180,7 +175,7 @@ theorem goal_work_write_implies_read
     hgoalgen, hbindctrl, hsource, _active⟩
   have hread :
       goal_route s requester (goal_owner goal) binding.goal
-        controller_generation grants (.read memory.kind.accessKind) := by
+        controller_generation grants (.read memory.kind) := by
     unfold goal_route at hroute ⊢
     cases hroute with
     | inl owner => exact Or.inl (may_write_implies_read _ _ _ owner)
@@ -223,6 +218,6 @@ def fork_admitted (permission : ForkSourcePermission)
   permission.destination_write permission.requester
 
 def fork_source_ancestor_read_admitted (requester : User) (source : Memory) : Prop :=
-  may_read requester (memory_owner source) source.kind.accessKind
+  may_read requester (memory_owner source) source.kind
 
 end Causa

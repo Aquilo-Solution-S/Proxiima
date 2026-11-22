@@ -65,6 +65,22 @@ macro_rules! ledger {
     (Proxiima.Identity.storeNumberMutable) => {
         false
     };
+    // Memory ceiling ranks in declaration order for Rust.
+    (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
+        [0, 1, 2, 3]
+    };
+    // Goal capability ranks in declaration order for Rust.
+    (Proxiima.OwnerAuthority.goalAccessRanks) => {
+        [0, 1, 2]
+    };
+    // The hyphenated owner UUID's length in bytes.
+    (Proxiima.OwnerAuthority.ownerIdBytes) => {
+        36
+    };
+    // The key selecting the session's current memory space.
+    (Proxiima.OwnerAuthority.currentSpaceKey) => {
+        "current"
+    };
     // Minimum age in seconds for stale test clones considered by the sweeper.
     (Proxiima.Repository.cloneGraceSeconds) => {
         300
