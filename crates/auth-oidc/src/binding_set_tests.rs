@@ -15,6 +15,81 @@ fn host_shaping_cannot_widen_either_tool_policy() {
     assert_eq!(narrowed.served_surface(), &served);
 }
 
+#[test]
+fn host_shaping_matches_ledger_vectors() {
+    use proxiima_core::WriterAttribution;
+    use std::time::{Duration, SystemTime};
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Authentication.hostShape"]
+        .as_array()
+        .expect("rows");
+    let subject = UserId::new(Uuid::now_v7());
+    let owner = OwnerId::from(subject);
+    let group = OwnerId::new(Uuid::now_v7());
+    let writer = WriterAttribution {
+        by: subject.into_inner(),
+        via: None,
+    };
+    let expiry = SystemTime::now() + Duration::from_mins(1);
+    let context = |role| {
+        AuthzContext::for_subject_with_role(subject, [(group, role)], AuthPath::HostBearer)
+            .with_expires_at(Some(expiry))
+    };
+    let resolved = context(Role::viewer());
+    let narrower_expiry = expiry - Duration::from_secs(10);
+    let tool_scope = ToolScope::Palette(vec![ScopeKey::parse("core_search_memories").unwrap()]);
+
+    for row in rows {
+        let field = row["in"][0].as_str().expect("shaped field");
+        let shaped = match field {
+            "identity" => {
+                AuthzContext::for_subject(UserId::new(Uuid::now_v7()), AuthPath::HostBearer)
+            }
+            "writer" => resolved
+                .clone()
+                .with_attested_writer(WriterAttribution {
+                    by: Uuid::now_v7(),
+                    via: None,
+                })
+                .expect("unsealed context"),
+            "path" => AuthzContext::for_subject(subject, AuthPath::Delegated),
+            "runner" => resolved.clone().with_trusted_model_id("runner").unwrap(),
+            "requiredOwner" => AuthzContext::from_verified_forwarded_owner(subject, owner, writer),
+            "roles" => context(Role::ingest()),
+            "tools" => resolved.clone().with_tool_scope(tool_scope.clone()),
+            "expiry" => resolved.clone().with_expires_at(Some(narrower_expiry)),
+            other => panic!("unknown shaped field {other}"),
+        };
+        let result = super::narrowed_by_host(&resolved, shaped, expiry);
+        match row["out"].as_str().expect("shape policy") {
+            "preserve" => assert_eq!(result.err(), Some(AuthError::InvalidCredentials), "{field}"),
+            "narrow" => match field {
+                "roles" => {
+                    // A role drop is admitted and the resolved role is the ceiling.
+                    assert_eq!(result.err(), Some(AuthError::InvalidCredentials));
+                    let reduced = AuthzContext::for_subject(subject, AuthPath::HostBearer);
+                    assert!(super::narrowed_by_host(&resolved, reduced, expiry).is_ok());
+                    assert!(
+                        super::narrowed_by_host(
+                            &resolved,
+                            context(Role::viewer().administering()),
+                            expiry,
+                        )
+                        .is_err()
+                    );
+                }
+                "tools" => assert_eq!(result.unwrap().tool_scope(), &tool_scope),
+                "expiry" => assert_eq!(result.unwrap().expires_at(), Some(narrower_expiry)),
+                other => panic!("unexpected narrowable field {other}"),
+            },
+            other => panic!("unknown shape policy {other}"),
+        }
+    }
+}
+
 use std::collections::HashMap;
 
 use async_trait::async_trait;

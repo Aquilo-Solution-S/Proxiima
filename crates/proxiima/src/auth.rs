@@ -32,7 +32,7 @@ use crate::settings::{
 };
 
 /// How much clock skew a token may carry, in seconds.
-const LEEWAY_SECS: u64 = 60;
+const LEEWAY_SECS: u64 = proxiima_core::ledger!(Proxiima.Authentication.clockSkewSeconds);
 
 /// Every variable [`oidc_from_lookup`] reads. The runtime environment layer
 /// captures exactly these, so the authenticator it builds at resolve sees
@@ -80,9 +80,8 @@ pub use proxiima_core::{AccessError, OwnerRoles};
 /// Returns `Ok(None)` when `PROXIIMA_OIDC_ISSUER` is unset — a host with no
 /// issuer is not misconfigured, it simply is not serving authenticated MCP,
 /// and an embedded host using the Host API needs no issuer at all. Once an
-/// issuer IS set, every companion variable becomes required and its absence
-/// is an error rather than a silent downgrade to something less
-/// authenticated than the operator asked for.
+/// issuer is set, audience, public URL and subject map are required. The
+/// remaining settings are optional.
 ///
 /// Variables:
 /// - `PROXIIMA_OIDC_ISSUER` — the issuer URL; presence switches this on.
@@ -116,16 +115,17 @@ pub fn oidc_from_lookup(
     let Some(issuer) = PROXIIMA_OIDC_ISSUER.read_source(lookup) else {
         return Ok(None);
     };
+    // `Proxiima.Authentication.requiredIssuerCompanions`.
     let audience = PROXIIMA_OIDC_AUDIENCE.read_source(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_OIDC_AUDIENCE".into())
     })?;
     let public_url = public_url(&PROXIIMA_PUBLIC_URL.read_source(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_PUBLIC_URL".into())
     })?)?;
+    // `Proxiima.Authentication.optionalIssuerCompanions`.
     let jwks_uri = JWKS_URI.read_source(lookup);
     let jwks_json = JWKS_JSON.read_source(lookup);
-    // Both is an error rather than a precedence rule: one says fetch keys
-    // from the issuer, the other says never contact it.
+    // `Proxiima.Authentication.keySource`.
     if jwks_uri.is_some() && jwks_json.is_some() {
         return Err(ProxiimaError::Config(format!(
             "{JWKS_JSON} and {JWKS_URI} are mutually exclusive"
@@ -140,17 +140,12 @@ pub fn oidc_from_lookup(
         allowed_subjects,
         leeway_secs: LEEWAY_SECS,
     };
-    // Keep the URL security boundary ahead of non-security companion parsing.
-    // `with_request_timeout` validates it again so its standalone low-level
-    // contract does not depend on this facade.
+    // `Proxiima.Authentication.bootstrapUrlChecks`.
     config
         .validate()
         .map_err(|err| ProxiimaError::Config(err.to_string()))?;
     let request_timeout = oidc_http_timeout(lookup)?;
     let require_access_token_typ = oidc_require_access_token_typ(lookup)?;
-    // The issuer/JWKS URL boundary is validated BEFORE the subject map and
-    // before storage, so an insecure-URL rejection short-circuits rather
-    // than being reported after two other things have already been parsed.
     let resolver: Arc<dyn KeyResolver> = match jwks_json {
         Some(json) => Arc::new(
             StaticJwksResolver::from_jwks_json(&json)
@@ -189,6 +184,7 @@ pub fn oidc_from_lookup(
 /// with a host, and no credentials, query or fragment. The value is not
 /// echoed: a URL could carry a password.
 fn public_url(raw: &str) -> Result<String, ProxiimaError> {
+    // `Proxiima.Authentication.bootstrapUrlChecks`.
     let refused = |reason: &str| {
         ProxiimaError::Config(format!(
             "PROXIIMA_PUBLIC_URL must be an http(s) URL with a host and no credentials, \
@@ -237,7 +233,9 @@ pub(crate) fn oidc_require_access_token_typ(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<bool, ProxiimaError> {
     let Some(raw) = OIDC_REQUIRE_ACCESS_TOKEN_TYP.read_source(lookup) else {
-        return Ok(false);
+        return Ok(proxiima_core::ledger!(
+            Proxiima.Authentication.requireAccessTokenType
+        ));
     };
     parse_bool_value(&OIDC_REQUIRE_ACCESS_TOKEN_TYP, &raw)
 }

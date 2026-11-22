@@ -69,6 +69,7 @@ impl OidcAuthConfig {
 }
 
 pub(crate) fn validate_issuer_url(raw: &str) -> Result<(), OidcConfigError> {
+    // `Proxiima.Authentication.issuerTransport`.
     validate_https_url("issuer", raw)?;
     // OIDC Discovery 1.0 §3 excludes query/fragment components from issuers.
     // Inspect raw delimiters because the transport parser drops fragments.
@@ -99,6 +100,7 @@ pub fn validate_jwks_url(
     raw: &str,
     issuer: &str,
 ) -> Result<(), OidcConfigError> {
+    // `Proxiima.Authentication.keyTransport`.
     if proxiima_core::is_loopback_endpoint(issuer) {
         return validate_https_url(field, raw);
     }
@@ -154,6 +156,44 @@ pub fn validate_https_url(field: &'static str, raw: &str) -> Result<(), OidcConf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_transport_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let url = |transport: &serde_json::Value| match transport.as_str().expect("transport") {
+            "https" => "https://issuer.example/keys",
+            "loopbackHttp" => "http://localhost/keys",
+            "other" => "http://issuer.example/keys",
+            other => panic!("unknown transport {other}"),
+        };
+        for row in vectors["Proxiima.Authentication.issuerTransport"]
+            .as_array()
+            .expect("rows")
+        {
+            assert_eq!(
+                serde_json::json!(validate_issuer_url(url(&row["in"][0])).is_ok()),
+                row["out"]
+            );
+        }
+        for row in vectors["Proxiima.Authentication.keyTransport"]
+            .as_array()
+            .expect("rows")
+        {
+            let issuer = if row["in"][0].as_bool().expect("issuer loopback status") {
+                "http://localhost"
+            } else {
+                "https://issuer.example"
+            };
+            assert_eq!(
+                serde_json::json!(
+                    validate_jwks_url("jwks_uri", url(&row["in"][1]), issuer).is_ok()
+                ),
+                row["out"]
+            );
+        }
+    }
 
     fn config(issuer: &str, jwks_uri: Option<&str>) -> OidcAuthConfig {
         OidcAuthConfig {

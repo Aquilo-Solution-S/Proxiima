@@ -187,6 +187,7 @@ impl CitedBlobReadService {
     where
         A: EngineAuthority + ?Sized,
     {
+        // `Proxiima.Authentication.delegateBlobOperation`.
         let operation = context_for_engine_operation(authority)
             .map_err(|_| CitedBlobReadError::AccessDenied)?;
         operation

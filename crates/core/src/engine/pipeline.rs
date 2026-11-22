@@ -234,6 +234,7 @@ impl Engine {
                 authz.bound_reads(),
             )
         };
+        // `Proxiima.Authentication.enginePermits`.
         Ok(WritePermit { owner_write })
     }
 
@@ -512,6 +513,7 @@ impl Engine {
                 };
                 self.veto_read(authz, &owner, operation)
                     .map_err(|_| ProtocolError::forbidden(ENTRY_NOT_FOUND_MESSAGE))?;
+                // `Proxiima.Authentication.enginePermits`.
                 Ok(EntryReadPermit {
                     owner,
                     kind,

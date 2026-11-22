@@ -641,6 +641,7 @@ impl<'a> EngineOperationAuthority<'a> {
         &self,
         expected: Option<&DelegationRuntimeBinding>,
     ) -> Result<(), ProtocolError> {
+        // `Proxiima.Authentication.phaseChecks`.
         match (self.runtime_binding, expected) {
             (None, _) => Ok(()),
             (Some(actual), Some(expected)) if actual == expected => Ok(()),
@@ -719,9 +720,8 @@ impl AuthzContext {
     /// Panics only if the exact owner role constructed here cannot be narrowed.
     #[must_use]
     pub fn for_insecure_single_owner(authority: &SystemAuthority, owner: OwnerId) -> Self {
+        // `Proxiima.Authentication.scopeSources`.
         let _ = authority;
-        // The one role rule: the owner is the synthetic subject's own id, so
-        // it holds the personal role, which never manages.
         let subject = owner.as_user();
         let roles = OwnerRoles::scoped_to(subject, owner, Role::personal());
         let writer = WriterAttribution {
@@ -736,6 +736,7 @@ impl AuthzContext {
     }
 
     pub(crate) fn seal_verified_scope(mut self) -> Self {
+        // `Proxiima.Authentication.scopeSources`.
         let writer = self.writer();
         self.owner_scope = self.owner_scope.sealed_by(writer);
         if self.auth_path == AuthPath::HostBearer
@@ -814,6 +815,7 @@ impl AuthzContext {
         mut self,
         claims: serde_json::Map<String, serde_json::Value>,
     ) -> Self {
+        // `Proxiima.Authentication.verifiedContext`.
         self.verified_claims = Some(VerifiedClaims(Arc::new(claims)));
         self
     }
@@ -1083,6 +1085,7 @@ impl AuthzContext {
         owner: OwnerId,
     ) -> Option<Self> {
         let scope = self.owner_scope()?;
+        // `Proxiima.Authentication.forwardingChecks`.
         if self.forwarded_owner != Some(owner) || scope.is_expired() {
             return None;
         }
@@ -1193,6 +1196,7 @@ impl AuthzContext {
         mut self,
         extensions: PublicationExtensions,
     ) -> Result<Self, PublicationExtensionsError> {
+        // `Proxiima.Authentication.maxHostRunExtensions`.
         self.publication_extensions =
             std::mem::take(&mut self.publication_extensions).merged(extensions)?;
         Ok(self)
@@ -1394,11 +1398,10 @@ pub async fn authenticate(
     AuthzContext::authenticate(authenticator, credentials).await
 }
 
-/// Revalidation cadence for long-lived authenticated streams.
+/// Maximum lifetime of a long-lived authenticated stream.
 ///
-/// Streams terminate silently at the context's expiry when present, and
-/// after `max_stream_lifetime` regardless of identity state. Nothing ends a
-/// stream earlier: there is no revocation before expiry.
+/// The wrapper terminates silently at the earlier of the context's expiry
+/// and maximum stream lifetime. See `Proxiima.Authentication.streamLifetime`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevalidationConfig {
     pub max_stream_lifetime: Duration,
@@ -1407,7 +1410,9 @@ pub struct RevalidationConfig {
 impl Default for RevalidationConfig {
     fn default() -> Self {
         Self {
-            max_stream_lifetime: Duration::from_hours(1),
+            max_stream_lifetime: Duration::from_secs(crate::ledger!(
+                Proxiima.Authentication.defaultStreamLifetimeSeconds
+            )),
         }
     }
 }
@@ -1422,6 +1427,7 @@ impl<I> Stream for RevalidatedStream<I> {
     type Item = I;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // `Proxiima.Authentication.streamLifetime`.
         if self.closed
             || self.deadline.as_mut().poll(cx).is_ready()
             || Instant::now() >= self.deadline.deadline()

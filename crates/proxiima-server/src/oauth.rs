@@ -40,13 +40,14 @@ pub const MCP_AUTHORIZATION_SERVER_METADATA_PATH: &str =
 pub const REGISTRATION_PATH: &str = "/oauth/register";
 
 /// What a registration grants: the authorization-code flow with refresh.
-const GRANT_TYPES: [&str; 2] = ["authorization_code", "refresh_token"];
+const GRANT_TYPES: [&str; 2] = proxiima_core::ledger!(Proxiima.Authentication.publicGrantTypes);
 
 /// Scopes a client requests: `openid` for the OIDC sign-in, `offline_access`
 /// for a refresh token. A client that finds no `scopes_supported` requests
 /// none, and its session ends with the first access token. A deployment adds
 /// its own after these ([`ResourceServerMetadata::additional_scopes`]).
-pub const SCOPES_SUPPORTED: [&str; 2] = ["openid", "offline_access"];
+pub const SCOPES_SUPPORTED: [&str; 2] =
+    proxiima_core::ledger!(Proxiima.Authentication.defaultScopes);
 
 /// Which protected resource a document or a 401 challenge describes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +76,7 @@ impl ProtectedResource {
         }
     }
 
+    // `Proxiima.Authentication.metadataPath`.
     const fn metadata_path(self) -> &'static str {
         match self {
             Self::Origin => PROTECTED_RESOURCE_METADATA_PATH,
@@ -102,11 +104,16 @@ impl ScopeToken {
     /// Returns [`ScopeTokenError::Invalid`] when `raw` is empty or holds a
     /// character outside the `scope-token` grammar.
     pub fn parse(raw: impl Into<String>) -> Result<Self, ScopeTokenError> {
+        const BOUNDS: [u8; 2] =
+            proxiima_core::ledger!(Proxiima.Authentication.scopeTokenByteBounds);
+        const EXCLUDED: [u8; 2] =
+            proxiima_core::ledger!(Proxiima.Authentication.scopeTokenExcludedBytes);
+        let [first, last] = BOUNDS;
         let value = raw.into();
         let is_scope_token = !value.is_empty()
             && value
                 .bytes()
-                .all(|byte| matches!(byte, 0x21 | 0x23..=0x5B | 0x5D..=0x7E));
+                .all(|byte| (first..=last).contains(&byte) && !EXCLUDED.contains(&byte));
         if is_scope_token {
             Ok(Self(value))
         } else {
@@ -187,6 +194,7 @@ impl ResourceServerMetadata {
     /// [`SCOPES_SUPPORTED`], then each additional scope not already listed.
     #[must_use]
     pub fn scopes_supported(&self) -> Vec<&str> {
+        // `Proxiima.Authentication.defaultScopes`.
         let mut scopes = SCOPES_SUPPORTED.to_vec();
         for scope in &self.additional_scopes {
             if !scopes.contains(&scope.as_str()) {
@@ -361,6 +369,7 @@ pub fn public_discovery_router(metadata: &ResourceServerMetadata) -> Router {
                 }),
             )
         });
+    // `Proxiima.Authentication.publicClientRoutes`.
     let AuthorizationServers::PublicClient(facade) = &metadata.authorization_servers else {
         return router;
     };
@@ -427,6 +436,7 @@ where
 ///
 /// Redirect hosts are deliberately not filtered here: the upstream public
 /// client's redirect allowlist is the single enforcer and this facade is stateless.
+// `Proxiima.Authentication.registrationChecks`.
 fn register(body: &[u8], facade: &PublicClientFacade) -> Response {
     let Ok(request) = serde_json::from_slice::<RegistrationRequest>(body) else {
         return registration_error("invalid_client_metadata", "Request body must be JSON");
@@ -500,6 +510,24 @@ mod tests {
         AuthorizationServers, ProtectedResource, PublicClientFacade, PublicClientFacadeError,
         ResourceChallenges, ResourceServerMetadata, ScopeToken, ScopeTokenError, register,
     };
+
+    #[test]
+    fn protected_resource_path_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows = vectors["Proxiima.Authentication.metadataPath"]
+            .as_array()
+            .expect("rows");
+        for row in rows {
+            let resource = match row["in"][0].as_str().expect("resource") {
+                "origin" => ProtectedResource::Origin,
+                "mcp" => ProtectedResource::Mcp,
+                other => panic!("unknown protected resource {other}"),
+            };
+            assert_eq!(resource.metadata_path(), row["out"]);
+        }
+    }
 
     fn metadata() -> ResourceServerMetadata {
         ResourceServerMetadata {

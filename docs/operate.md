@@ -331,8 +331,9 @@ refusal. The request deadline covers the provider call.
 `proxiima::serve` and `RunningProxiima::until_shutdown_signal` drain on
 SIGTERM/SIGINT: readiness fails, listeners stop accepting, requests and streams
 finish, then workers join. Set the orchestrator's grace above the longest
-allowed request. Stream authorization is rechecked during long-lived streams;
-expiry or revoked access terminates them.
+allowed request. Authenticated streams end at token expiry or the configured
+maximum stream lifetime, whichever comes first. See the
+[authentication ledger](ledger.md#authentication).
 
 ## Embeddings
 

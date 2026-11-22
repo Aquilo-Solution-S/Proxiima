@@ -212,7 +212,8 @@ impl PublicationConfig {
 /// Small on purpose: these attributes travel on EVERY captured Fact of a
 /// listenable schema, and an envelope that grows with the host's
 /// imagination is a cost every consumer pays forever.
-pub const MAX_PUBLICATION_EXTENSIONS: usize = 8;
+pub const MAX_PUBLICATION_EXTENSIONS: usize =
+    crate::ledger!(Proxiima.Authentication.maxHostRunExtensions);
 
 /// `CloudEvents` 1.0.2 §3.1 ceiling on an extension attribute NAME.
 pub const MAX_EXTENSION_NAME_CHARS: usize = 20;

@@ -572,3 +572,79 @@ async fn rejects_unknown_kid() {
         Err(AuthError::InvalidCredentials)
     );
 }
+
+#[test]
+fn signature_algorithms_match_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Authentication.signatureAlgorithms"]
+        .as_array()
+        .expect("rows");
+    for row in rows {
+        let family = match row["in"][0].as_str().expect("key family") {
+            "rsa" => AlgorithmFamily::Rsa,
+            "p256" => AlgorithmFamily::Ec,
+            "ed25519" => AlgorithmFamily::Ed,
+            "sharedSecret" => AlgorithmFamily::Hmac,
+            other => panic!("unknown key family {other}"),
+        };
+        assert_eq!(serde_json::json!(verified_algorithms(family)), row["out"]);
+    }
+}
+
+#[test]
+fn token_type_admission_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Authentication.admitTokenType"]
+        .as_array()
+        .expect("rows");
+    for row in rows {
+        let strict = row["in"][0].as_bool().expect("strict type policy");
+        let headers: &[Option<&str>] = match row["in"][1].as_str().expect("token type") {
+            "absentOrGeneric" => &[None, Some("jWt")],
+            "access" => &[Some("at+jwt"), Some("APPLICATION/AT+JWT")],
+            "other" => &[Some("id+jwt")],
+            other => panic!("unknown token type {other}"),
+        };
+        for header in headers {
+            assert_eq!(
+                serde_json::json!(check_token_type(*header, strict).is_ok()),
+                row["out"]
+            );
+        }
+    }
+}
+
+#[test]
+fn subject_admission_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Authentication.subjectAdmission"]
+        .as_array()
+        .expect("rows");
+    let keys: Arc<dyn KeyResolver> = Arc::new(StaticJwksResolver::new(HashMap::new()));
+    let claims = ValidatedOidcClaims {
+        issuer: ISSUER.into(),
+        audience: AUDIENCE.into(),
+        subject: "actor".into(),
+        expires_at: SystemTime::now(),
+    };
+    for row in rows {
+        let present = row["in"][0].as_bool().expect("allowlist presence");
+        let listed = row["in"][1].as_bool().expect("subject listed");
+        let mut config = config();
+        config.allowed_subjects =
+            present.then(|| [if listed { "actor" } else { "another-actor" }.into()].into());
+        let validator = OidcTokenValidator::new(config, keys.clone()).expect("validator");
+        let actual = if validator.check_subject(&claims).is_ok() {
+            "allow"
+        } else {
+            "refuse"
+        };
+        assert_eq!(actual, row["out"]);
+    }
+}

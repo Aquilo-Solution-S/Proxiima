@@ -70,6 +70,7 @@ impl AuthorizedPartyPolicy {
     /// Apply the policy to the claims of a token whose signature, `iss`,
     /// `aud`, `exp` and `nbf` have already been verified.
     pub(crate) fn check(&self, verified: &Value) -> Result<(), OidcRejection> {
+        // `Proxiima.Authentication.admitAuthorizedParty`.
         match verified.get("azp") {
             None if distinct_audiences(verified)? > 1 => Err(OidcRejection::MissingAuthorizedParty),
             None => Ok(()),
@@ -107,6 +108,27 @@ mod tests {
 
     fn policy() -> AuthorizedPartyPolicy {
         AuthorizedPartyPolicy::new(["web", "cli"]).expect("policy")
+    }
+
+    #[test]
+    fn authorized_party_admission_matches_ledger_vectors() {
+        let vectors: Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows = vectors["Proxiima.Authentication.admitAuthorizedParty"]
+            .as_array()
+            .expect("rows");
+        for row in rows {
+            let claims = match row["in"][0].as_str().expect("party check") {
+                "missingSingleAudience" => json!({"aud": ["resource", "resource"]}),
+                "missingMultipleAudiences" => json!({"aud": ["resource", "other"]}),
+                "listed" => json!({"aud": "resource", "azp": "web"}),
+                "unlisted" => json!({"aud": "resource", "azp": "other"}),
+                "malformed" => json!({"aud": "resource", "azp": false}),
+                other => panic!("unknown party check {other}"),
+            };
+            assert_eq!(json!(policy().check(&claims).is_ok()), row["out"]);
+        }
     }
 
     #[test]

@@ -16,7 +16,8 @@ use std::sync::Arc;
 /// system-operator identity, which no replay reads back) is not routed
 /// through a resolver, because bounding it would turn a caller's long
 /// label into a failed write with nothing gained.
-pub const MAX_OPERATOR_LABEL_CHARS: usize = 120;
+pub const MAX_OPERATOR_LABEL_CHARS: usize =
+    crate::ledger!(Proxiima.Authentication.maxTrustedModelChars);
 
 /// Recorded operator label when neither the authenticated edge nor the
 /// caller names one.
@@ -104,6 +105,7 @@ pub fn resolve_operator_label(
     supplied: Option<&str>,
 ) -> Result<String, OperatorLabelConflict> {
     let supplied = supplied.map(str::trim).filter(|value| !value.is_empty());
+    // `Proxiima.Authentication.modelLabelSource`.
     match (trusted.map(str::trim), supplied) {
         (Some(trusted), Some(supplied)) if supplied != trusted => Err(OperatorLabelConflict {
             trusted: trusted.to_string(),
@@ -160,6 +162,34 @@ impl JudgedKey {
 #[cfg(test)]
 mod tests {
     use super::{MAX_OPERATOR_LABEL_CHARS, UNKNOWN_OPERATOR_LABEL, resolve_operator_label};
+
+    #[test]
+    fn model_label_source_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows = vectors["Proxiima.Authentication.modelLabelSource"]
+            .as_array()
+            .expect("rows");
+        for row in rows {
+            let attested = row["in"][0].as_bool().expect("credential attestation");
+            let trusted = attested.then_some("attested");
+            let supplied = match row["in"][1].as_str().expect("caller claim") {
+                "absent" => Some("  "),
+                "matching" => Some(" attested "),
+                "supplied" => Some(" caller "),
+                other => panic!("unknown caller claim {other}"),
+            };
+            let actual = resolve_operator_label(trusted, supplied);
+            match row["out"].as_str().expect("label source") {
+                "credential" => assert_eq!(actual.unwrap(), trusted.unwrap()),
+                "caller" => assert_eq!(actual.unwrap(), supplied.unwrap().trim()),
+                "unknown" => assert_eq!(actual.unwrap(), UNKNOWN_OPERATOR_LABEL),
+                "conflict" => assert!(actual.is_err()),
+                other => panic!("unknown label source {other}"),
+            }
+        }
+    }
 
     #[test]
     fn the_trusted_id_wins_over_a_caller_supplied_label() {

@@ -106,6 +106,7 @@ impl RequestHeaderAllowlist {
             return Ok(None);
         }
         let mut pairs = Vec::new();
+        // `Proxiima.Authentication.requestHeaderExposure`.
         for name in headers.keys().filter(|name| self.allows(name)) {
             let mut values = headers.get_all(name).iter();
             let Some(value) = values.next() else {

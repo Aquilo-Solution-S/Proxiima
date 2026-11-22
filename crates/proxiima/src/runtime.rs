@@ -297,6 +297,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
             parts.owner_access.clone(),
             config.forwarder.clone(),
         );
+        // `Proxiima.Authentication.ownerResolverConsumers`.
         if let Some(late) = &parts.late_owner_access {
             late.bind(owner_access.clone());
         }
@@ -1086,6 +1087,7 @@ fn assemble_services<A: SpiiceApp>(
                 .into(),
         ));
     }
+    // `Proxiima.Authentication.publishDelegationService`.
     if authenticator.is_some() {
         let store = Arc::new(PgDelegationStore::new(host.platform_scope.clone()));
         services.try_insert(DelegatedAuthorityService::new(

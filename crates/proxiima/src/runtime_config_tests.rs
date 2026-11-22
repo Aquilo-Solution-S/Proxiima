@@ -1216,17 +1216,43 @@ fn an_overlay_authenticator_replaces_a_base_platform_authenticator() {
     let merged =
         platform().merge_over(RuntimeBuilder::default().authenticator(Arc::new(TestAuthenticator)));
     assert!(merged.authenticator.is_none() && merged.platform_authenticator.is_some());
+}
 
-    // One layer naming both is still ambiguous.
-    let refused = platform()
-        .authenticator(Arc::new(TestAuthenticator))
-        .database_url("postgres://unused/proxiima")
-        .store_number(0)
-        .platform_database_url("postgres://unused/platform")
-        .served_surface(ServedSurface::All)
-        .resolve()
-        .expect_err("both in one layer");
-    assert!(refused.to_string().contains("not both"), "{refused}");
+#[test]
+fn authenticator_slot_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Authentication.authenticatorSlot"]
+        .as_array()
+        .expect("rows");
+    let direct = |builder: RuntimeBuilder| builder.authenticator(Arc::new(TestAuthenticator));
+    let factory = |builder: RuntimeBuilder| {
+        builder.authenticator_with_platform_scope(|_| Ok(Arc::new(TestAuthenticator)))
+    };
+    for row in rows {
+        let builder = served_builder();
+        let builder = match row["in"][0].as_str().expect("authenticator forms") {
+            "neither" => builder,
+            "direct" => direct(builder),
+            "factory" => factory(builder),
+            "both" => direct(factory(builder)),
+            other => panic!("unknown authenticator forms {other}"),
+        };
+        let actual = match builder.resolve() {
+            Err(error) => {
+                assert!(error.to_string().contains("not both"), "{error}");
+                "conflict"
+            }
+            Ok((_, parts)) if parts.authenticator.is_some() => {
+                assert!(parts.platform_authenticator.is_none());
+                "useDirect"
+            }
+            Ok((_, parts)) if parts.platform_authenticator.is_some() => "buildWithPlatform",
+            Ok(_) => "inherit",
+        };
+        assert_eq!(actual, row["out"]);
+    }
 }
 
 fn served_builder() -> RuntimeBuilder {

@@ -21,7 +21,8 @@ use uuid::Uuid;
 use crate::authz::DelegationRuntimeBinding;
 use crate::text_bounds::check_trimmed_len;
 
-pub(crate) const MAX_TOOL_ID_CHARS: usize = 200;
+pub(crate) const MAX_TOOL_ID_CHARS: usize =
+    crate::ledger!(Proxiima.Authentication.maxDelegatedCommandChars);
 use crate::{
     AccessError, ActionName, AuthPath, AuthzContext, CapabilitySet, DelegatedPhase,
     DelegationRuntimeAuthority, OwnerAccessPort, OwnerId, OwnerRoles, ProtocolError, Role,
@@ -55,6 +56,7 @@ fn registered_tool_key(
             NOT_CANONICAL
         }));
     };
+    // `Proxiima.Authentication.delegatedCommands`.
     match &key {
         // Both halves resolve through the descriptor's own `action_arg_specs`
         // rather than the substrate `CoreActionMeta` tables, so a spiice
@@ -336,6 +338,7 @@ impl DelegationGrant {
         issued_at: SystemTime,
     ) -> Self {
         Self {
+            // `Proxiima.Authentication.GrantHandle`.
             delegation_id: DelegationId::from_uuid(Uuid::now_v7()),
             subject: source.subject(),
             writer: source.writer(),
@@ -537,6 +540,7 @@ impl DelegatedAuthorityService {
         command: DelegatedCommand,
         role_ceiling: Role,
     ) -> Result<DelegationIssued, DelegatedAuthorityError> {
+        // `Proxiima.Authentication.grantIssueChecks`.
         let (subject, expires_at) = Self::validate_host_bearer(source)?;
         let scope = source
             .owner_scope()
@@ -595,6 +599,7 @@ impl DelegatedAuthorityService {
         if grant.delegation_id() != delegation_id || grant.owner() != expected_owner {
             return Err(DelegatedAuthorityError::NotFound);
         }
+        // `Proxiima.Authentication.grantRedemptionChecks`.
         if grant.command() != expected_command {
             return Err(DelegatedAuthorityError::CommandMismatch);
         }
@@ -659,6 +664,7 @@ impl DelegatedAuthorityService {
         let current_role = current_roles
             .role_for(&expected_owner)
             .ok_or(DelegatedAuthorityError::RevocationDenied)?;
+        // `Proxiima.Authentication.grantRevokers`.
         if caller_subject != grant.subject() && !current_role.manages() {
             return Err(DelegatedAuthorityError::RevocationDenied);
         }

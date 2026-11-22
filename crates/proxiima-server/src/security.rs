@@ -717,6 +717,7 @@ async fn selected_owner(
     let owner_header = headers
         .get(PROXIIMA_OWNER_HEADER)
         .map(|raw| raw.to_str().ok().and_then(parse_owner_key));
+    // `Proxiima.Authentication.sessionChecks`.
     if let Some(raw_session_id) = headers.get(MCP_SESSION_ID_HEADER) {
         let Ok(session_id) = raw_session_id.to_str() else {
             return OwnerSelection::UnknownSession;

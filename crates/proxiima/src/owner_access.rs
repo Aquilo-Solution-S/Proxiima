@@ -102,6 +102,7 @@ impl OwnerRegistry for proxiima_storage_pg::PgOwnerAccessResolver {
 pub(crate) fn forwarder_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<ForwarderPolicy>, ProxiimaError> {
+    // `Proxiima.Authentication.ForwardingRole`.
     match (
         FORWARDER_SUBJECTS.read_source(lookup),
         FORWARDER_ROLE.read_source(lookup),

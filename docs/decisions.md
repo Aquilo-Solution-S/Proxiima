@@ -55,28 +55,14 @@ publications and work. Use a separate group for data that existing owner readers
 
 ### Capabilities and delegation only narrow authority
 
-A deployment's served surface and a caller's exact operation keys do not
-grant data access. Owner roles remain a separate gate. A delegated grant
-additionally binds one owner, one command, a non-managing role ceiling, and
-finite expiry. Fresh checks at redemption prevent a queued job from gaining
-rights through a later promotion or running after a demotion below its
-recorded ceiling. The opaque redeemed phase bounds in-process execution;
-revoking the grant prevents future redemption rather than cancelling work
-already admitted. See [delegated work](host-integration.md#delegated-work)
-for its enforcing types and service.
+The served surface, caller capability and owner role are independent gates.
+Grant admission and redemption follow [`Proxiima.Authentication`](ledger.md#authentication).
 
 ### Access ends at token expiry
 
-There is no revocation before expiry. A token's access ends when the token
-expires; a long-lived stream ends at token expiry or after the maximum stream
-lifetime (`PROXIIMA_STREAM_MAX_LIFETIME`), whichever comes first. A delegated
-grant ends when it is revoked. The host shortens exposure with short-lived
-tokens, not with a revocation signal.
-
-A request context holds its roles and its expiry once, in its owner scope, and
-checks expiry in two places: at admission, and again wherever a permit is
-minted for a write or a read. An expired context reads, writes and runs
-nothing, whichever check asks.
+Credential and stream deadlines follow [`Proxiima.Authentication`](ledger.md#authentication),
+and permit expiry follows [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+Hosts can shorten the authorization window by issuing short-lived tokens.
 
 ### Blob downloads separate authorization from delivery
 

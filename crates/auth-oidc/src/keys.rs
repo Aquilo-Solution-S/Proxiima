@@ -16,30 +16,41 @@ use crate::config::{OidcConfigError, validate_issuer_url, validate_jwks_url};
 /// Minimum spacing between JWKS refetches. Bounds the outbound-fetch rate so a
 /// flood of tokens carrying random unknown `kid`s cannot amplify into one
 /// upstream JWKS request per inbound request.
-const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_mins(1);
+const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Authentication.refreshCooldownSeconds
+));
 
 /// Maximum age of a cached JWKS before a hit opportunistically refreshes. Picks
 /// up key rotation even when every presented `kid` is already cached (so the
 /// unknown-kid miss path never fires).
-const JWKS_MAX_AGE: Duration = Duration::from_hours(1);
+const JWKS_MAX_AGE: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Authentication.freshKeySeconds
+));
 
 /// How long after its last successful fetch a key set is trusted. Between
 /// [`JWKS_MAX_AGE`] and this bound a failed or throttled refresh still serves
 /// the cached key, so a short issuer outage does not fail valid requests.
 /// Past it the set resolves nothing until a fetch succeeds.
-const JWKS_TRUST_BOUND: Duration = Duration::from_hours(4);
+const JWKS_TRUST_BOUND: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Authentication.trustedKeySeconds
+));
 
 /// Complete-request timeout used by [`HttpJwksResolver::new`]. It covers DNS,
 /// connection establishment, response headers, and response-body reads for
 /// both discovery and JWKS requests.
-pub const DEFAULT_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const DEFAULT_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Authentication.defaultKeyRequestSeconds
+));
 
 /// Largest discovery or JWKS response body read. A real key set is a few
 /// kilobytes; the cap bounds what an issuer can make the host buffer.
-const MAX_RESPONSE_BYTES: usize = 1 << 20;
+const MAX_RESPONSE_BYTES: usize =
+    proxiima_core::ledger!(Proxiima.Authentication.maxKeyResponseBytes);
 
 /// Largest complete-request timeout accepted by [`HttpJwksResolver`].
-pub const MAX_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_mins(5);
+pub const MAX_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Authentication.maxKeyRequestSeconds
+));
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeyError {
@@ -111,6 +122,7 @@ impl StaticJwksResolver {
             return Err(KeyError::Config("jwks contains no keys".into()));
         }
         let mut keys = HashMap::with_capacity(set.keys.len());
+        // `Proxiima.Authentication.invalidKeyEntry`.
         for (index, entry) in set.keys.into_iter().enumerate() {
             let jwk = serde_json::from_value::<Jwk>(entry).map_err(|err| {
                 KeyError::Config(format!("key {index} is not a well-formed JWK: {err}"))
@@ -175,7 +187,7 @@ struct Jwk {
 }
 
 /// Length of a P-256 coordinate and of an Ed25519 public key.
-const COORDINATE_LEN: usize = 32;
+const COORDINATE_LEN: usize = proxiima_core::ledger!(Proxiima.Authentication.keyCoordinateBytes);
 
 impl Jwk {
     /// The members every verification key shares, whatever its type: an `alg`
@@ -431,6 +443,7 @@ impl HttpJwksResolver {
     }
 
     async fn jwks_endpoint(&self) -> Result<String, KeyError> {
+        // `Proxiima.Authentication.keySource`.
         if let Some(uri) = &self.jwks_uri {
             return Ok(uri.clone());
         }
@@ -439,6 +452,7 @@ impl HttpJwksResolver {
             self.issuer.trim_end_matches('/')
         );
         let cfg: OpenIdConfig = self.fetch_json(url).await?;
+        // `Proxiima.Authentication.discoveredIssuerAgrees`.
         if cfg.issuer != self.issuer {
             return Err(KeyError::Config(
                 "discovered issuer does not match configured issuer".into(),
@@ -454,6 +468,7 @@ impl HttpJwksResolver {
         let endpoint = self.jwks_endpoint().await?;
         let set: JwkSet = self.fetch_json(endpoint).await?;
         let mut next = HashMap::new();
+        // `Proxiima.Authentication.invalidKeyEntry`.
         for (index, entry) in set.keys.into_iter().enumerate() {
             // Tolerant parse: an unnamed, unsupported or malformed entry (a
             // wrong-typed member, an undecodable modulus, another curve, a
@@ -519,6 +534,7 @@ impl HttpJwksResolver {
     async fn key_at(&self, kid: &str, now: Instant) -> Result<Arc<DecodingKey>, KeyError> {
         let began = Instant::now();
         let cached = self.state.read().await.lookup(kid, now);
+        // `Proxiima.Authentication.cachedKeyLookup`.
         let _refresh_guard = match cached {
             Cached::Fresh(key) => return Ok(key),
             // Another request is already fetching: an aging key does not wait
@@ -534,8 +550,6 @@ impl HttpJwksResolver {
         if let Cached::Fresh(key) = cached {
             return Ok(key);
         }
-        // The cooldown spaces attempts, so a stream of unknown-kid tokens
-        // can't drive one upstream JWKS fetch per request.
         let (refreshed, now) = self.refresh(now, began).await;
         // Resolve against the set as it is when the attempt ends: a fetched
         // set no longer holds a kid the issuer rotated out, and a set that
@@ -596,6 +610,7 @@ fn build_http_client(
     builder: reqwest::ClientBuilder,
 ) -> Result<reqwest::Client, OidcConfigError> {
     let issuer = issuer.to_owned();
+    // `Proxiima.Authentication.keyTransport`.
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         if let Err(error) = validate_jwks_url("redirect target", attempt.url().as_str(), &issuer) {
             return attempt.error(error);
@@ -609,6 +624,7 @@ fn build_http_client(
 }
 
 fn validate_request_timeout(request_timeout: Duration) -> Result<(), OidcConfigError> {
+    // Programmatic callers may supply positive subsecond durations.
     if request_timeout.is_zero() || request_timeout > MAX_HTTP_REQUEST_TIMEOUT {
         return Err(OidcConfigError::InvalidTimeout {
             field: "OIDC HTTP request timeout",

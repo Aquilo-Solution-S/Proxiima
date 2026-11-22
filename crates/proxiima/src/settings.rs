@@ -108,7 +108,7 @@ crate::settings! {
         when_needed: "OIDC/public serving",
     }
     PROXIIMA_OIDC_ISSUER: Url {
-        purpose: "OIDC issuer; setting it turns on OIDC authentication",
+        purpose: "fallback OIDC issuer; requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON`",
         when_needed: "OIDC serving",
     }
     PROXIIMA_OIDC_AUDIENCE: Text {
@@ -116,7 +116,15 @@ crate::settings! {
         when_needed: "OIDC serving",
     }
     PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP: Boolean {
-        purpose: "require JWT `typ` `at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused",
+        purpose: concat!(
+            "require JWT `typ` `",
+            proxiima_core::ledger!(Proxiima.Authentication.shortAccessTokenType),
+            "` or `",
+            proxiima_core::ledger!(Proxiima.Authentication.fullAccessTokenType),
+            "`; off, an absent `typ` or `",
+            proxiima_core::ledger!(Proxiima.Authentication.genericTokenType),
+            "` also passes and any other is refused"
+        ),
         when_needed: "whenever the issuer sends RFC 9068 access tokens",
         default: "false",
     }
@@ -129,7 +137,7 @@ crate::settings! {
         when_needed: "issuer network unavailable",
     }
     PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS: Seconds {
-        purpose: "OIDC discovery and JWKS request timeout, 1 to 300 seconds",
+        purpose: concat!("OIDC discovery and JWKS request timeout, 1 to ", proxiima_core::ledger!(Proxiima.Authentication.maxKeyRequestSeconds), " seconds"),
         when_needed: "tune issuer requests",
         default: "10",
     }

@@ -276,9 +276,7 @@ impl Role {
         }
     }
 
-    /// What no forwarded request exceeds: it reads Goals at most, and neither
-    /// administers nor manages (`Role.forwardingCap` in
-    /// `lean/Causa/Authorization.lean`).
+    /// `Proxiima.Authentication.forwardingCap`.
     const fn forwarding_cap() -> Self {
         Self {
             read: AccessCeiling::Perspective,

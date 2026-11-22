@@ -48,9 +48,9 @@ variable is ignored.
 | PROXIIMA_MCP_SESSIONS | server-side session switch | stateful MCP clients | boolean | `true` |
 | PROXIIMA_MCP_JSON_RESPONSE | JSON response switch | stateless MCP clients | boolean | `false` |
 | PROXIIMA_PUBLIC_URL | public OAuth URL: `http` or `https`, with a host and no credentials, query or fragment | OIDC/public serving | URL |  |
-| PROXIIMA_OIDC_ISSUER | OIDC issuer; setting it turns on OIDC authentication | OIDC serving | URL |  |
+| PROXIIMA_OIDC_ISSUER | fallback OIDC issuer; requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON` | OIDC serving | URL |  |
 | PROXIIMA_OIDC_AUDIENCE | token audience: this resource server, never an OAuth client id | OIDC serving | text |  |
-| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | boolean | `false` |
+| PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt` or `application/at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | boolean | `false` |
 | PROXIIMA_OIDC_JWKS_URI | explicit JWKS endpoint; discovered from the issuer when unset | pinned discovery override | URL |  |
 | PROXIIMA_OIDC_JWKS_JSON | pinned JWKS document; nothing is fetched from the issuer; excludes `PROXIIMA_OIDC_JWKS_URI` | issuer network unavailable | JSON |  |
 | PROXIIMA_OIDC_HTTP_TIMEOUT_SECONDS | OIDC discovery and JWKS request timeout, 1 to 300 seconds | tune issuer requests | seconds | `10` |

@@ -31,13 +31,8 @@ use crate::config::{OidcAuthConfig, OidcConfigError};
 use crate::keys::KeyResolver;
 use crate::subject_map::OidcSubjectMap;
 
-/// The signature algorithms a key of this family verifies: RSA keys RS256,
-/// RS384 and RS512, EC keys ES256 (P-256), Ed25519 keys `EdDSA`. A shared
-/// secret verifies none, so `HS*` is refused whatever the key. The resolvers
-/// fix the family from the JWK's `kty`; the token header is only checked
-/// against this set, and a pinned JWKS entry naming any other `alg` is refused
-/// against the same set, so the two cannot drift.
 pub(crate) const fn verified_algorithms(family: AlgorithmFamily) -> &'static [Algorithm] {
+    // `Proxiima.Authentication.signatureAlgorithms`.
     match family {
         AlgorithmFamily::Rsa => &[Algorithm::RS256, Algorithm::RS384, Algorithm::RS512],
         AlgorithmFamily::Ec => &[Algorithm::ES256],
@@ -46,31 +41,15 @@ pub(crate) const fn verified_algorithms(family: AlgorithmFamily) -> &'static [Al
     }
 }
 
-/// What a token's `typ` header says the token is. The list is closed: a
-/// header naming any other type is refused before a key is resolved, whether
-/// or not the access-token type is required.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TokenType {
-    /// No `typ`, or the generic `JWT`: the token does not say.
-    Unspecified,
-    /// `at+jwt` or `application/at+jwt`, the RFC 9068 access token.
-    AccessToken,
-}
-
-impl TokenType {
-    fn parse(typ: Option<&str>) -> Result<Self, OidcRejection> {
-        let Some(typ) = typ else {
-            return Ok(Self::Unspecified);
-        };
-        if typ.eq_ignore_ascii_case("JWT") {
-            Ok(Self::Unspecified)
-        } else if typ.eq_ignore_ascii_case("at+jwt")
-            || typ.eq_ignore_ascii_case("application/at+jwt")
-        {
-            Ok(Self::AccessToken)
-        } else {
-            Err(OidcRejection::WrongTokenType)
-        }
+fn check_token_type(header: Option<&str>, strict: bool) -> Result<(), OidcRejection> {
+    const GENERIC: &str = proxiima_core::ledger!(Proxiima.Authentication.genericTokenType);
+    const ACCESS: [&str; 2] = proxiima_core::ledger!(Proxiima.Authentication.accessTokenTypes);
+    // `Proxiima.Authentication.admitTokenType`.
+    match header {
+        Some(typ) if ACCESS.iter().any(|access| typ.eq_ignore_ascii_case(access)) => Ok(()),
+        Some(typ) if !strict && typ.eq_ignore_ascii_case(GENERIC) => Ok(()),
+        None if !strict => Ok(()),
+        _ => Err(OidcRejection::WrongTokenType),
     }
 }
 
@@ -150,6 +129,7 @@ pub enum OidcRejection {
 
 impl From<OidcRejection> for AuthError {
     fn from(_: OidcRejection) -> Self {
+        // `Proxiima.Authentication.publicTokenRefusal`.
         Self::InvalidCredentials
     }
 }
@@ -216,7 +196,9 @@ impl OidcTokenValidator {
             allowed_subjects: config.allowed_subjects,
             keys,
             authorized_party: None,
-            require_access_token_typ: false,
+            require_access_token_typ: proxiima_core::ledger!(
+                Proxiima.Authentication.requireAccessTokenType
+            ),
         })
     }
 
@@ -242,9 +224,9 @@ impl OidcTokenValidator {
 
     /// # Errors
     ///
-    /// `AuthError::InvalidCredentials` for any malformed, unsigned,
-    /// wrong-issuer, wrong-audience, or expired token, a disallowed subject, or an unresolvable
-    /// key id. [`Self::validate_with`] says which.
+    /// `AuthError::InvalidCredentials` for malformed or unsigned tokens, a
+    /// wrong issuer or audience, expiry, a disallowed subject, or an
+    /// unresolvable key id. [`Self::validate_with`] gives the specific reason.
     pub async fn validate(&self, token: &str) -> Result<ValidatedOidcClaims, AuthError> {
         self.validate_with::<serde::de::IgnoredAny>(token)
             .await
@@ -280,10 +262,7 @@ impl OidcTokenValidator {
     ) -> Result<ValidatedOidcToken<C>, OidcRejection> {
         let header = decode_header(token)
             .map_err(|err| OidcRejection::from_jwt(&err, &self.issuer, &self.audience))?;
-        let token_type = TokenType::parse(header.typ.as_deref())?;
-        if self.require_access_token_typ && token_type != TokenType::AccessToken {
-            return Err(OidcRejection::WrongTokenType);
-        }
+        check_token_type(header.typ.as_deref(), self.require_access_token_typ)?;
         let kid = header.kid.ok_or(OidcRejection::MissingKeyId)?;
         let key = self
             .keys
@@ -294,15 +273,11 @@ impl OidcTokenValidator {
                 kid,
             })?;
 
-        // The algorithms come from the resolved key's type, which the resolver
-        // fixed from the JWK's `kty`. The attacker-controlled token header is
-        // only checked against that set, never the source of it: that is what
-        // stops alg-confusion (an HS256 token signed with the public RSA key,
-        // `alg: none`, an ES256 token against an Ed25519 key).
         let algorithms = verified_algorithms(key.family());
         if !algorithms.contains(&header.alg) {
             return Err(OidcRejection::DisallowedAlgorithm);
         }
+        // `Proxiima.Authentication.tokenChecks`.
         let mut validation = Validation {
             algorithms: algorithms.to_vec(),
             ..Validation::default()
@@ -310,9 +285,6 @@ impl OidcTokenValidator {
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
         validation.set_required_spec_claims(&["exp", "aud", "iss", "sub"]);
-        // Reject a token presented before its `nbf` (honoring `leeway`). `nbf`
-        // stays out of required_spec_claims, so tokens that omit it are still
-        // accepted; only a present-and-future `nbf` fails.
         validation.validate_nbf = true;
         validation.leeway = self.leeway_secs;
 
@@ -341,6 +313,7 @@ impl OidcTokenValidator {
     }
 
     pub(crate) fn check_subject(&self, claims: &ValidatedOidcClaims) -> Result<(), OidcRejection> {
+        // `Proxiima.Authentication.subjectAdmission`.
         if self
             .allowed_subjects
             .as_ref()

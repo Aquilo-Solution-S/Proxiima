@@ -86,21 +86,10 @@ Listing and invocation read the same catalog declaration. See [capability admiss
 | Writer `via` | [Writer attribution](ledger.md#identity) | The authenticator supplies it independently of the MCP transport session |
 | Delegation grant and redeemed phase | Let queued work run one bounded command | One owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
 
-A delegated worker holds a `DelegationId` and redeems it when work starts; it
-holds no broad bearer and no reusable authorization context. The
-recorded ceiling never manages and works Goals only where it administers;
-a promotion cannot widen it and a demotion below it refuses the next
-redemption. Revocation blocks later redemption but does not cancel a phase
-already redeemed; expiry still bounds it. See
-[delegated work](host-integration.md#delegated-work).
-
-A **trusted forwarder** is a host integration whose verified credential binds
-one registered owner and the attested `by` and `via`. It stays the
-authenticated subject, with writer attribution attested separately, and it
-cannot issue delegation grants. It receives only the
-configured viewer, ingest, or editor role at that owner, capped to read Goals at
-most and never administering or managing. Ordinary memberships are not added.
-See [forwarding](host-integration.md#forwarded-owner-access).
+Delegated workers and credential-verified forwarding follow
+[`Proxiima.Authentication`](ledger.md#authentication). See
+[delegated work](host-integration.md#delegated-work) and
+[forwarded owner access](host-integration.md#forwarded-owner-access) for host integration.
 
 ### Where the guarantees live
 

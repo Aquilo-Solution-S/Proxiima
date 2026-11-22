@@ -104,6 +104,7 @@ fn narrowed_by_host(
     shaped: AuthzContext,
     token_expires_at: std::time::SystemTime,
 ) -> Result<AuthzContext, AuthError> {
+    // `Proxiima.Authentication.hostShape`.
     if shaped.auth_path() != AuthPath::HostBearer
         || shaped.subject() != resolved.subject()
         || shaped.writer() != resolved.writer()
@@ -162,6 +163,7 @@ async fn context_for_verified_token(
         tracing::warn!(error = %err, "oidc auth: forwarding policy resolution failed");
         AuthError::InvalidCredentials
     })?;
+    // `Proxiima.Authentication.requestRoleSource`.
     let context = if is_forwarder {
         let owner = OwnerId::new(signed_uuid_claim(
             token
@@ -291,6 +293,7 @@ impl OidcBinding {
     ) -> Result<AuthzContext, AuthError> {
         let claims = &token.claims;
         self.validator.check_subject(claims)?;
+        // `Proxiima.Authentication.SubjectBinding`.
         let Some(binding) = self
             .subject_map
             .resolve_binding(&claims.issuer, &claims.subject)
@@ -400,6 +403,7 @@ impl Authenticator for OidcBindingSet {
         // The unverified `iss` skips bindings for other issuers, so their key
         // resolvers never look up (or fetch) keys for a token they cannot
         // accept. It is never an identity: the bindings left validate in full.
+        // `Proxiima.Authentication.bindingCandidates`.
         let claimed = ClaimedIssuer::read(token);
         let candidates = self.bindings.iter().filter(|binding| {
             claimed

@@ -674,8 +674,9 @@ impl RuntimeBuilder {
     /// Build the host authenticator at boot, after the runtime validated
     /// its platform scope, from that scope and the runtime's owner-access
     /// port — for an authenticator whose resolver runs platform-scoped
-    /// queries. Requires `platform_database_url`; exclusive with
-    /// [`Self::authenticator`] and the `PROXIIMA_OIDC_*` environment.
+    /// queries. Requires `platform_database_url`. Supply either
+    /// [`Self::authenticator`] or a factory in one layer. Environment OIDC
+    /// is the fallback when code supplies neither form.
     #[must_use]
     pub fn authenticator_with_platform_scope<F>(mut self, factory: F) -> Self
     where
@@ -1022,6 +1023,7 @@ impl RuntimeBuilder {
     /// [`Self::authenticator_with_platform_scope`] runs at boot against the
     /// platform scope; refuse before storage what could never reach it.
     fn check_platform_authenticator(&self) -> Result<(), ProxiimaError> {
+        // `Proxiima.Authentication.authenticatorSlot`.
         if self.platform_authenticator.is_none() {
             return Ok(());
         }
@@ -1949,6 +1951,7 @@ pub fn embedding_runtime_policy_from_lookup(
 }
 
 fn validate_revalidation_config(config: RevalidationConfig) -> Result<(), ProxiimaError> {
+    // `Proxiima.Authentication.streamLifetime`.
     if config.max_stream_lifetime.is_zero() {
         return Err(ProxiimaError::Config(
             "stream max lifetime must be greater than 0 seconds".into(),

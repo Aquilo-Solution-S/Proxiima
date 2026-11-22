@@ -195,7 +195,7 @@ macro_rules! settings {
     ($(
         $(#[$meta:meta])*
         $name:ident: $kind:ident {
-            purpose: $purpose:literal,
+            purpose: $purpose:expr,
             when_needed: $when_needed:literal,
             $(default: $default:literal,)?
         }

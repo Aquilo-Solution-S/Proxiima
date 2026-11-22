@@ -246,6 +246,7 @@ impl CitedBlobOwnerReconcileService {
         authz: &AuthzContext,
         owner: OwnerId,
     ) -> Result<CitedBlobOwnerReconcileOutcome, StorageError> {
+        // `Proxiima.Authentication.delegateBlobOperation`.
         if authz.auth_path() == AuthPath::Delegated {
             return Err(StorageError::ConstraintViolation(
                 "raw delegated authorization contexts are not blob authority".into(),
