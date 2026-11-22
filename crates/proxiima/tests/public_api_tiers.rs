@@ -930,7 +930,7 @@ fn spiice_sdk_exposes_the_derived_memory_write_lane() {
 /// could only ever be islands.
 #[test]
 fn spiice_sdk_exposes_the_payload_reference_lane() {
-    use proxiima::spiice::{EdgeKind, EntityKind, MemoryId, PayloadReference, ReferenceBinding};
+    use proxiima::spiice::{EdgeKind, MemoryId, MemoryKind, PayloadReference, ReferenceBinding};
 
     struct TierReferrer {
         parent: MemoryId,
@@ -940,7 +940,7 @@ fn spiice_sdk_exposes_the_payload_reference_lane() {
         fn references(&self) -> Vec<PayloadReference> {
             vec![PayloadReference::memory(
                 "parent",
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 self.parent,
             )]
         }

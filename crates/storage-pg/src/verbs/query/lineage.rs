@@ -450,7 +450,7 @@ struct HopRow {
 #[derive(Debug, Clone)]
 struct WalkHop {
     src: Uuid,
-    src_kind: EntityKind,
+    src_kind: proxiima_core::MemoryKind,
     tgt: Uuid,
     kind: EdgeKind,
     dist: u8,

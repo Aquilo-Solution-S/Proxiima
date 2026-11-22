@@ -74,9 +74,9 @@ impl FactPayload for ReferencedFactV1 {
             PayloadReference::memory(
                 "fact_id",
                 if self.target_kind == "abstraction" {
-                    EntityKind::Abstraction
+                    MemoryKind::Abstraction
                 } else {
-                    EntityKind::Fact
+                    MemoryKind::Fact
                 },
                 MemoryId::new(self.fact_id),
             ),
@@ -292,7 +292,10 @@ async fn seed_abstraction(
     draft.ingest_key = None;
     draft.receipt = None;
     draft.refs.clear();
-    draft.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, origin)];
+    draft.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Fact,
+        origin,
+    )];
     Ok(TestMemory::from_command(draft)
         .create(pg, owner)
         .await?
@@ -312,7 +315,10 @@ async fn seed_perspective(pg: &PgStorage, owner: OwnerId) -> Result<MemoryId, St
     draft.ingest_key = None;
     draft.receipt = None;
     draft.refs.clear();
-    draft.additional_references = vec![EdgeEndpoint::memory(EntityKind::Abstraction, abstraction)];
+    draft.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Abstraction,
+        abstraction,
+    )];
     Ok(TestMemory::from_command(draft)
         .create(pg, owner)
         .await?
@@ -517,9 +523,7 @@ async fn authorized_links_are_persisted_by_engine_uow() {
                 && matches!(
                     edge.target,
                     EdgeTargetProjection::Visible {
-                        target: EdgeEndpoint {
-                            entity: EntityRef::Goal(id), ..
-                        }
+                        target: EdgeEndpoint::Goal(id)
                     } if id == goal
                 )
         }));
@@ -554,9 +558,7 @@ async fn authorized_links_are_persisted_by_engine_uow() {
         assert!(outbound.edges.iter().any(|edge| matches!(
             edge.target,
             EdgeTargetProjection::Visible {
-                target: EdgeEndpoint {
-                    entity: EntityRef::Goal(id), ..
-                }
+                target: EdgeEndpoint::Goal(id)
             } if id == goal
         )));
 
@@ -578,9 +580,7 @@ async fn authorized_links_are_persisted_by_engine_uow() {
         assert!(inbound_goal.edges.iter().all(|edge| matches!(
             edge.target,
             EdgeTargetProjection::Visible {
-                target: EdgeEndpoint {
-                    entity: EntityRef::Goal(id), ..
-                }
+                target: EdgeEndpoint::Goal(id)
             } if id == goal
         )));
         Ok(())
@@ -973,12 +973,10 @@ async fn target_kind_and_visibility_are_checked_before_fact_write() {
 }
 
 #[tokio::test]
-async fn malformed_fact_source_and_endpoints_are_rejected_before_write() {
+async fn non_fact_source_is_rejected_before_write() {
     let (db_name, pg, registry) = bootstrap().await;
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let owner = owner();
-        let target = seed_fact(&pg, owner).await?;
-        let goal = create_goal(&pg, &registry, owner, seed_perspective(&pg, owner).await?).await?;
         let authz = proxiima_core::test_fixtures::authenticated_context(
             AuthzContext::single_owner(&owner, AuthPath::HostBearer),
         );
@@ -992,17 +990,6 @@ async fn malformed_fact_source_and_endpoints_are_rejected_before_write() {
             .expect_err("Fact authorization must reject non-Fact source");
         assert_eq!(error.code, proxiima_core::error::ErrorCode::InvalidArgument);
 
-        let payload = payload("malformed-endpoint", target.into_inner(), goal.into_inner());
-        let mut malformed = custom_draft(&payload);
-        malformed.additional_references = vec![EdgeEndpoint {
-            kind: EntityKind::Goal,
-            entity: EntityRef::Memory(target),
-        }];
-        let error = engine
-            .authorize_fact_ingest(&authz, malformed, &[SidecarPayload::fact(payload)])
-            .await
-            .expect_err("malformed Goal/Memory endpoint must be rejected");
-        assert_eq!(error.code, proxiima_core::error::ErrorCode::InvalidArgument);
         Ok(())
     }
     .await;
@@ -1409,7 +1396,7 @@ async fn storage_persists_authorized_links_not_draft_refs() {
         let links = AuthorizedNodeLinks::new_for_tests(
             Vec::new(),
             vec![
-                EdgeEndpoint::memory(EntityKind::Fact, fact_a),
+                EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_a),
                 EdgeEndpoint::goal(goal),
             ],
         );
@@ -1479,7 +1466,7 @@ async fn receipt_replay_requires_identical_authorized_refs() {
         let first_links = AuthorizedNodeLinks::new_for_tests(
             Vec::new(),
             vec![
-                EdgeEndpoint::memory(EntityKind::Fact, fact_a),
+                EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_a),
                 EdgeEndpoint::goal(goal),
             ],
         );
@@ -1513,7 +1500,7 @@ async fn receipt_replay_requires_identical_authorized_refs() {
             AuthorizedNodeLinks::new_for_tests(
                 Vec::new(),
                 vec![
-                    EdgeEndpoint::memory(EntityKind::Fact, fact_b),
+                    EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_b),
                     EdgeEndpoint::goal(goal),
                 ],
             ),
@@ -1560,7 +1547,7 @@ async fn forgotten_replay_requires_known_identical_refs() {
             AuthorizedNodeLinks::new_for_tests(
                 Vec::new(),
                 vec![
-                    EdgeEndpoint::memory(EntityKind::Fact, fact_a),
+                    EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_a),
                     EdgeEndpoint::goal(goal),
                 ],
             ),
@@ -1581,7 +1568,7 @@ async fn forgotten_replay_requires_known_identical_refs() {
             AuthorizedNodeLinks::new_for_tests(
                 Vec::new(),
                 vec![
-                    EdgeEndpoint::memory(EntityKind::Fact, fact_a),
+                    EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_a),
                     EdgeEndpoint::goal(goal),
                 ],
             ),
@@ -1600,7 +1587,7 @@ async fn forgotten_replay_requires_known_identical_refs() {
             AuthorizedNodeLinks::new_for_tests(
                 Vec::new(),
                 vec![
-                    EdgeEndpoint::memory(EntityKind::Fact, fact_b),
+                    EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact_b),
                     EdgeEndpoint::goal(goal),
                 ],
             ),

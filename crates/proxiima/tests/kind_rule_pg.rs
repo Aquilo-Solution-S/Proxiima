@@ -382,9 +382,9 @@ async fn assert_reads(
                 assert!(readable(kind), "{name} reads a {kind:?}");
                 assert_eq!(response.memory.map(|m| m.kind), Some(kind));
                 for edge in response.neighbor_edges {
-                    assert!(readable(edge.source.kind), "{name} neighbour {edge:?}");
+                    assert!(readable(edge.source.kind()), "{name} neighbour {edge:?}");
                     if let EdgeTargetProjection::Visible { target } = edge.target {
-                        assert!(readable(target.kind), "{name} neighbour {edge:?}");
+                        assert!(readable(target.kind()), "{name} neighbour {edge:?}");
                     }
                 }
             }
@@ -410,7 +410,7 @@ async fn assert_reads(
         .neighbor_edges;
     let from_abstraction = neighbours
         .iter()
-        .any(|edge| edge.source.entity == EntityRef::Memory(MemoryId::new(ids[1].1)));
+        .any(|edge| edge.source.entity() == EntityRef::Memory(MemoryId::new(ids[1].1)));
     assert_eq!(
         from_abstraction,
         readable(EntityKind::Abstraction),
@@ -497,7 +497,7 @@ async fn assert_reads(
         .collect();
     assert_eq!(seen, expected, "{name} query");
     for edge in &memories.edges {
-        assert!(readable(edge.source.kind), "{name} query edge {edge:?}");
+        assert!(readable(edge.source.kind()), "{name} query edge {edge:?}");
     }
     let goals = engine
         .query(

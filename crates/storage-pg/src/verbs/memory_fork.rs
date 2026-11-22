@@ -138,7 +138,7 @@ async fn load_fork_source(
         payload,
         lexical_language: source.get("lexical_language"),
         consent,
-        source_endpoint: [EdgeEndpoint::memory(entity_kind, request.source)],
+        source_endpoint: [EdgeEndpoint::memory(memory_kind, request.source)],
         origins,
         references,
         external_origins,
@@ -510,7 +510,7 @@ async fn copied_memory_endpoints(
                 .iter()
                 .find(|(t, _)| t == id)
                 .ok_or(StorageError::NotFound)?;
-            Ok(EdgeEndpoint::memory(kind(raw)?.1, MemoryId::new(*id)))
+            Ok(EdgeEndpoint::memory(kind(raw)?.0, MemoryId::new(*id)))
         })
         .collect()
 }

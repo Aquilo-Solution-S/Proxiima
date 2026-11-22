@@ -196,7 +196,7 @@ impl PerspectivePayload for InterpretationV1 {
     fn references(&self) -> Vec<PayloadReference> {
         self.subjects
             .iter()
-            .map(|&(id, kind)| PayloadReference::memory("subject_memory_ids", kind.into(), id))
+            .map(|&(id, kind)| PayloadReference::memory("subject_memory_ids", kind, id))
             .collect()
     }
 
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(references.len(), payload.subjects.len());
         for (reference, &(id, kind)) in references.iter().zip(&payload.subjects) {
             assert_eq!(reference.binding, ReferenceBinding::Pin);
-            assert_eq!(reference.target.kind, EntityKind::from(kind));
+            assert_eq!(reference.target.kind(), EntityKind::from(kind));
             assert_eq!(reference.target.memory_id(), Some(id));
         }
     }

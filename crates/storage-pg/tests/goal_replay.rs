@@ -22,9 +22,9 @@ use proxiima_core::verbs::goal_write::{
     IdempotencyKey, ModifyGoalAtomicRequest, SystemOrigin, TransitionGoalAtomicRequest,
 };
 use proxiima_core::{
-    DurablePayload, DurablePayloadBuilder, EdgeEndpoint, EntityKind, GoalId, GoalPayload, KeyField,
-    OwnerId, PayloadDisplay, PayloadProjection, PendingWork, SchemaId, SchemaVersion,
-    SimpleTextGoalV1, SpiiceRegistry, StorageError, UserId,
+    DurablePayload, DurablePayloadBuilder, EdgeEndpoint, GoalId, GoalPayload, KeyField, OwnerId,
+    PayloadDisplay, PayloadProjection, PendingWork, SchemaId, SchemaVersion, SimpleTextGoalV1,
+    SpiiceRegistry, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -62,11 +62,16 @@ async fn ingest_grounded_perspective(
         .ingest_fact_atomic(permit, &memory_draft(MemoryKind::Fact), None)
         .await?;
     let mut abs = memory_draft(MemoryKind::Abstraction);
-    abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+    abs.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Fact,
+        fact.memory_id,
+    )];
     let abs = pg.ingest_fact_atomic(permit, &abs, None).await?;
     let mut perspective = memory_draft(MemoryKind::Perspective);
-    perspective.additional_references =
-        vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
+    perspective.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Abstraction,
+        abs.memory_id,
+    )];
     pg.ingest_fact_atomic(permit, &perspective, None).await
 }
 
@@ -1095,8 +1100,10 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
             .ingest_fact_atomic(&permit, &memory_draft(MemoryKind::Fact), None)
             .await?;
         let mut abstraction = memory_draft(MemoryKind::Abstraction);
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
 
         let mut first_draft = active_draft(

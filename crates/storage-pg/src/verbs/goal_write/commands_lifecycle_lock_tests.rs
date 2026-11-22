@@ -16,8 +16,8 @@ use proxiima_core::verbs::goal_write::{
     GoalAtomicContext, GoalAuthorship, GoalDraft, GoalState, GoalTopologyWrite,
 };
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, MemoryKind, OwnerId, SchemaId, SchemaVersion, SimpleTextGoalV1,
-    SpiiceRegistry, StorageError, StorageRule, UserId,
+    EdgeEndpoint, MemoryKind, OwnerId, SchemaId, SchemaVersion, SimpleTextGoalV1, SpiiceRegistry,
+    StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -50,13 +50,15 @@ async fn grounded_perspective(
     let fact_out = pg.ingest_fact_atomic(permit, &fact(), None).await?;
     let mut abstraction = fact();
     abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-    abstraction.additional_references =
-        vec![EdgeEndpoint::memory(EntityKind::Fact, fact_out.memory_id)];
+    abstraction.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Fact,
+        fact_out.memory_id,
+    )];
     let abstraction = pg.ingest_fact_atomic(permit, &abstraction, None).await?;
     let mut perspective = fact();
     perspective.kind = proxiima_core::MemoryKind::Perspective;
     perspective.additional_references = vec![EdgeEndpoint::memory(
-        EntityKind::Abstraction,
+        proxiima_core::MemoryKind::Abstraction,
         abstraction.memory_id,
     )];
     pg.ingest_fact_atomic(permit, &perspective, None).await

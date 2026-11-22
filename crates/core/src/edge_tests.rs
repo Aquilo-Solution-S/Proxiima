@@ -6,7 +6,10 @@ use super::{
 use crate::{EntityKind, GoalId, MemoryId};
 
 fn memory(kind: EntityKind) -> EdgeEndpoint {
-    EdgeEndpoint::memory(kind, MemoryId::new(uuid::Uuid::now_v7()))
+    EdgeEndpoint::memory(
+        crate::MemoryKind::of(kind).unwrap(),
+        MemoryId::new(uuid::Uuid::now_v7()),
+    )
 }
 
 #[test]
@@ -75,37 +78,40 @@ fn a_read_set_refuses_more_than_its_cap() {
 }
 
 #[test]
-fn layering_admits_downward_and_level_memory_edges() {
-    for (source, target) in [
-        (EntityKind::Perspective, EntityKind::Abstraction),
-        (EntityKind::Perspective, EntityKind::Fact),
-        (EntityKind::Abstraction, EntityKind::Fact),
-        (EntityKind::Abstraction, EntityKind::Abstraction),
-        (EntityKind::Fact, EntityKind::Fact),
-        (EntityKind::Perspective, EntityKind::Perspective),
-    ] {
-        validate_edge_layering(memory(source), memory(target))
-            .expect("source layer at least target layer is admitted");
-    }
-}
-
-#[test]
-fn layering_rejects_upward_memory_edges() {
-    for (source, target) in [
-        (EntityKind::Fact, EntityKind::Abstraction),
-        (EntityKind::Fact, EntityKind::Perspective),
-        (EntityKind::Abstraction, EntityKind::Perspective),
-    ] {
-        validate_edge_layering(memory(source), memory(target))
-            .expect_err("an upward memory edge is a layering violation");
-    }
-}
-
-#[test]
 fn a_self_loop_is_rejected() {
     let endpoint = memory(EntityKind::Perspective);
     validate_not_self_loop(endpoint, endpoint).expect_err("self-loop");
     validate_not_self_loop(endpoint, memory(EntityKind::Fact)).expect("distinct endpoints");
+}
+
+#[test]
+fn endpoint_wire_shape_preserves_valid_addresses_and_refuses_mismatched_kinds() {
+    let id = uuid::Uuid::now_v7();
+    for kind in crate::MemoryKind::ALL {
+        let endpoint = EdgeEndpoint::memory(kind, MemoryId::new(id));
+        let wire = serde_json::json!({"kind": kind, "entity": {"Memory": id}});
+        assert_eq!(serde_json::to_value(endpoint).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<EdgeEndpoint>(wire).unwrap(),
+            endpoint
+        );
+        assert!(
+            serde_json::from_value::<EdgeEndpoint>(
+                serde_json::json!({"kind": kind, "entity": {"Goal": id}}),
+            )
+            .is_err()
+        );
+    }
+    let goal = EdgeEndpoint::goal(GoalId::new(id));
+    let wire = serde_json::json!({"kind": "Goal", "entity": {"Goal": id}});
+    assert_eq!(serde_json::to_value(goal).unwrap(), wire);
+    assert_eq!(serde_json::from_value::<EdgeEndpoint>(wire).unwrap(), goal);
+    assert!(
+        serde_json::from_value::<EdgeEndpoint>(
+            serde_json::json!({"kind": "Goal", "entity": {"Memory": id}}),
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -118,33 +124,6 @@ fn a_redacted_target_yields_no_endpoint() {
     assert_eq!(EdgeTargetProjection::Redacted.endpoint(), None);
     assert_eq!(EdgeTargetProjection::Forgotten.endpoint(), None);
     assert_eq!(EdgeTargetProjection::Erased.endpoint(), None);
-}
-
-/// Live wins, then forgotten, then erased; a target nothing names is
-/// redacted.
-#[test]
-fn a_target_projects_live_then_forgotten_then_erased_else_redacted() {
-    let [live, forgotten, erased, unknown] =
-        std::array::from_fn(|_| MemoryId::new(uuid::Uuid::now_v7()));
-    let readable = std::collections::HashMap::from([(live, EntityKind::Fact)]);
-    let unread = crate::verbs::query::UnreadTargets {
-        forgotten: vec![crate::verbs::query::MemoryLineageNode {
-            memory_id: forgotten,
-            kind: EntityKind::Fact,
-            schema_id: crate::SchemaId::new("test/pin-v1".into()),
-            snippet: String::new(),
-            distance: 0,
-        }],
-        erased: vec![erased],
-    };
-    let project = |target| project_memory_target(target, &readable, &unread);
-    assert_eq!(
-        project(live),
-        EdgeTargetProjection::visible(EdgeEndpoint::memory(EntityKind::Fact, live))
-    );
-    assert_eq!(project(forgotten), EdgeTargetProjection::Forgotten);
-    assert_eq!(project(erased), EdgeTargetProjection::Erased);
-    assert_eq!(project(unknown), EdgeTargetProjection::Redacted);
 }
 
 #[test]
@@ -208,7 +187,7 @@ fn unresolved_goal_reference_stays_a_redactable_raw_id() {
     assert!(node.goal_refs.is_empty());
     assert_eq!(node.refs, vec![MemoryId::new(goal.into_inner())]);
     let edges = project_listed_edge(
-        node.kind,
+        crate::MemoryKind::Fact,
         node.id,
         node.refs[0],
         EdgeKind::Reference,
@@ -327,4 +306,133 @@ fn unresolved_guidance_stays_a_redactable_raw_id() {
     node.resolve_visible_goal_refs(&[]);
     assert!(node.guided_by.is_empty());
     assert_eq!(node.refs, vec![MemoryId::new(goal.into_inner())]);
+}
+
+#[derive(serde::Deserialize)]
+struct LedgerRow<I, O> {
+    #[serde(rename = "in")]
+    input: I,
+    out: O,
+}
+
+fn ledger_rows<I, O>(key: &str, count: usize) -> Vec<LedgerRow<I, O>>
+where
+    I: serde::de::DeserializeOwned,
+    O: serde::de::DeserializeOwned,
+{
+    let root: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<_> = serde_json::from_value(root[key].clone()).unwrap();
+    assert_eq!(rows.len(), count, "{key}");
+    rows
+}
+
+#[test]
+fn pin_labels_match_ledger_vectors() {
+    for row in ledger_rows::<[EdgeKind; 1], String>("Proxiima.Edges.pinLabel", EdgeKind::ALL.len())
+    {
+        let [kind] = row.input;
+        assert_eq!(kind.as_str(), row.out);
+        assert_eq!(EdgeKind::parse(&row.out), Some(kind));
+    }
+}
+
+#[test]
+fn pin_field_table_matches_ledger_vectors() {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FieldSpec {
+        column: String,
+        kind: EdgeKind,
+        scalar: bool,
+        fact: Vec<EntityKind>,
+        abstraction: Vec<EntityKind>,
+        perspective: Vec<EntityKind>,
+    }
+    let fields = MemoryPinField::ALL;
+    for row in
+        ledger_rows::<[MemoryPinField; 1], FieldSpec>("Proxiima.Edges.pinField", fields.len())
+    {
+        let [field] = row.input;
+        let spec = field.spec();
+        assert_eq!(spec.column, row.out.column, "{field:?}");
+        assert_eq!(spec.kind, row.out.kind, "{field:?}");
+        assert_eq!(
+            matches!(spec.shape, super::PinShape::Scalar),
+            row.out.scalar,
+            "{field:?}"
+        );
+        assert_eq!(
+            spec.admits,
+            [
+                row.out.fact.as_slice(),
+                row.out.abstraction.as_slice(),
+                row.out.perspective.as_slice()
+            ],
+            "{field:?}",
+        );
+    }
+}
+
+#[test]
+fn reference_layering_matches_ledger_vectors() {
+    let endpoint = |kind| {
+        crate::MemoryKind::of(kind).map_or_else(
+            || EdgeEndpoint::goal(GoalId::new(uuid::Uuid::now_v7())),
+            |kind| EdgeEndpoint::memory(kind, MemoryId::new(uuid::Uuid::now_v7())),
+        )
+    };
+    for row in ledger_rows::<[EntityKind; 2], bool>("Proxiima.Edges.admitsReferenceLayer", 16) {
+        let [source, target] = row.input;
+        assert_eq!(
+            validate_edge_layering(endpoint(source), endpoint(target)).is_ok(),
+            row.out,
+            "{source:?} → {target:?}",
+        );
+    }
+}
+
+#[test]
+fn projected_target_precedence_matches_ledger_vectors() {
+    let id = MemoryId::new(uuid::Uuid::now_v7());
+    for row in ledger_rows::<[bool; 3], String>("Proxiima.Edges.projectTarget", 8) {
+        let [live, forgotten, erased] = row.input;
+        let readable = live
+            .then_some((id, EntityKind::Fact))
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
+        let unread = crate::verbs::query::UnreadTargets {
+            forgotten: forgotten
+                .then(|| crate::verbs::query::MemoryLineageNode {
+                    memory_id: id,
+                    kind: EntityKind::Fact,
+                    schema_id: crate::SchemaId::new("test/pin-v1".into()),
+                    snippet: String::new(),
+                    distance: 0,
+                })
+                .into_iter()
+                .collect(),
+            erased: erased.then_some(id).into_iter().collect(),
+        };
+        let projected = project_memory_target(id, &readable, &unread);
+        assert_eq!(
+            serde_json::to_value(projected).unwrap()["state"],
+            row.out,
+            "{:?}",
+            row.input
+        );
+        if live {
+            assert_eq!(
+                projected.endpoint(),
+                Some(EdgeEndpoint::memory(crate::MemoryKind::Fact, id))
+            );
+        }
+    }
+}
+
+#[test]
+fn a_read_set_without_session_observations_defaults_empty() {
+    let defaults: [&str; 0] = crate::ledger!(Proxiima.Edges.defaultReadSet);
+    assert_eq!(super::ReadSet::new_empty().pins().len(), defaults.len());
+    assert_eq!(super::ReadSet::default().pins().len(), defaults.len());
 }

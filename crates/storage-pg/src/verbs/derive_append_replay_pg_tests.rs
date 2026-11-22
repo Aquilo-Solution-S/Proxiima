@@ -149,8 +149,14 @@ async fn same_first_originsnd_refs_replay() {
         let callee = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let handle = Uuid::now_v7();
         let draft = derived_draft(owner, handle);
-        let origins = [EdgeEndpoint::memory(EntityKind::Fact, origin.memory_id)];
-        let references = [EdgeEndpoint::memory(EntityKind::Fact, callee.memory_id)];
+        let origins = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            origin.memory_id,
+        )];
+        let references = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            callee.memory_id,
+        )];
         let first = append_with_edges(pool, &permit, &draft, &origins, &references).await?;
         assert!(!first.idempotent_replay);
         let replay = append_with_edges(pool, &permit, &draft, &origins, &references).await?;
@@ -173,14 +179,16 @@ async fn changed_perspective_guidance_appends_with_same_origins() {
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
         abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let goal_one = goal_target(&pg, owner).await?;
         let goal_two = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abstraction.memory_id,
         )];
         let first_guidance = [goal_one];
@@ -209,11 +217,13 @@ async fn perspective_guidance_naming_no_goal_is_refused() {
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
         abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let origins = [EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abstraction.memory_id,
         )];
         let guidance = [GoalId::new(Uuid::now_v7())];
@@ -268,7 +278,10 @@ async fn replay_metadata_mismatch_never_replays_or_mutates() {
         let pool = pg.pool_for_tests();
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let handle = Uuid::now_v7();
-        let origins = [EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        let origins = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let first =
             append_with_edges(pool, &permit, &derived_draft(owner, handle), &origins, &[]).await?;
         let before = head_snapshot(pool, handle).await?;
@@ -281,7 +294,10 @@ async fn replay_metadata_mismatch_never_replays_or_mutates() {
         assert_eq!(head_snapshot(pool, handle).await?, before);
 
         let premise = first.memory_id;
-        let premise_origin = [EdgeEndpoint::memory(EntityKind::Abstraction, premise)];
+        let premise_origin = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Abstraction,
+            premise,
+        )];
         let second_handle = Uuid::now_v7();
         let second_draft = derived_draft(owner, second_handle);
         let second = append_with_edges(pool, &permit, &second_draft, &premise_origin, &[]).await?;
@@ -332,13 +348,19 @@ async fn same_origins_different_refs_is_conflict() {
         let callee_b = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let handle = Uuid::now_v7();
         let draft = derived_draft(owner, handle);
-        let origins = [EdgeEndpoint::memory(EntityKind::Fact, origin.memory_id)];
+        let origins = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            origin.memory_id,
+        )];
         let first = append_with_edges(
             pool,
             &permit,
             &draft,
             &origins,
-            &[EdgeEndpoint::memory(EntityKind::Fact, callee_a.memory_id)],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                callee_a.memory_id,
+            )],
         )
         .await?;
         assert!(!first.idempotent_replay);
@@ -347,7 +369,10 @@ async fn same_origins_different_refs_is_conflict() {
             &permit,
             &draft,
             &origins,
-            &[EdgeEndpoint::memory(EntityKind::Fact, callee_b.memory_id)],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                callee_b.memory_id,
+            )],
         )
         .await
         .expect_err("changed refs must not replay");
@@ -374,14 +399,16 @@ async fn changed_guidance_appends_and_exact_guidance_replays() {
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
         abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let origin = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let goal_a = goal_target(&pg, owner).await?;
         let goal_b = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             origin.memory_id,
         )];
         let guidance_a = [goal_a];
@@ -433,14 +460,16 @@ async fn keyed_reuse_with_changed_guidance_conflicts() {
         let fact = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
         abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let origin = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let goal_a = goal_target(&pg, owner).await?;
         let goal_b = goal_target(&pg, owner).await?;
         let handle = Uuid::now_v7();
         let origins = [EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             origin.memory_id,
         )];
         let guided_a = [goal_a];
@@ -501,13 +530,19 @@ async fn different_first_originsppend_new_t_and_each_key_replays_its_version() {
             ));
             Ok(draft)
         };
-        let first_origins = [EdgeEndpoint::memory(EntityKind::Fact, origin_a.memory_id)];
+        let first_origins = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            origin_a.memory_id,
+        )];
         let first = append_with_edges(pool, &permit, &keyed("k1")?, &first_origins, &[]).await?;
         let second = append_with_edges(
             pool,
             &permit,
             &keyed("k2")?,
-            &[EdgeEndpoint::memory(EntityKind::Fact, origin_b.memory_id)],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                origin_b.memory_id,
+            )],
             &[],
         )
         .await?;

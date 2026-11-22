@@ -5,7 +5,6 @@ use proxiima_core::owner_inverse::{ExportAuthorization, OwnerExportTarget, Owner
 use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerInversePort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
-use proxiima_core::verbs::query::EntityKind;
 use proxiima_core::{
     AccessCeiling, EdgeEndpoint, GoalAccess, MemoryId, MemoryKind, OwnerId, Role, SchemaId,
     SchemaVersion, UserId,
@@ -70,7 +69,7 @@ fn draft(kind: MemoryKind, refs: Vec<Uuid>, origins: Vec<Uuid>) -> FactWriteComm
         citation: None,
         additional_references: origins
             .into_iter()
-            .map(|t| EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(t)))
+            .map(|t| EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, MemoryId::new(t)))
             .collect(),
         refs,
         blob_id: None,

@@ -1,34 +1,9 @@
-//! Pins — `memory.origins` / `memory.refs` / `memory.reads`. There is no
-//! edge table.
-//!
-//! docs/concepts.md is the reference.
-//!
-//! A pin carries no information beyond its existence: its endpoints, its
-//! direction, its creation time, and its kind. All content lives in nodes.
-//!
-//! Two consequences shape every type below:
-//!
-//! - **Kind follows operation.** [`EdgeKind`] is never a parameter a
-//!   writer chooses. `Origin` is what a derivation declaration produces;
-//!   `Reference` is what a schema-declared reference field produces;
-//!   `Read` is what the host's [`ReadSet`] produces. No public API takes
-//!   an `EdgeKind` from a caller.
-//! - **The pin is its own identity.** There is no edge row and no edge
-//!   id: a pin is a `MemoryId` in the source row's `origins`, `refs` or
-//!   `reads` column, so replaying a write re-asserts the same column values and
-//!   idempotency is structural rather than derived from a content hash.
-//!   The [`Edge`] / [`EdgeKind`] types below are the read-side
-//!   projection of those columns, not a table.
+//! Read projections of the pins carried by exact version rows.
 
 use crate::entity::EntityRef;
-use crate::{EntityKind, GoalId, MemoryId, OwnerId, SchemaId};
+use crate::{EntityKind, GoalId, MemoryId, MemoryKind, OwnerId, SchemaId};
 
-/// What a pin *is*; this enum is the one statement of which kinds exist.
-///
-/// A relationship is a named field on the node that declares it. The field
-/// fixes its kind and the target kinds it admits. A new relationship is a new
-/// field, never an edge table.
-///
+/// The projection kind assigned by the declaring field or operation.
 #[derive(
     Clone,
     Copy,
@@ -57,7 +32,7 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
-    /// Every kind, in the order pins are listed: origins, references, reads.
+    /// `Proxiima.Edges.pinOrder`.
     pub const ALL: [Self; 3] = [Self::Origin, Self::Reference, Self::Read];
 
     /// The kind a wire label names; the inverse of [`Self::as_str`].
@@ -71,6 +46,7 @@ impl EdgeKind {
     /// other-store pin.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
+        // `Proxiima.Edges.pinLabel`.
         match self {
             Self::Origin => "origin",
             Self::Reference => "reference",
@@ -102,15 +78,7 @@ impl ReadPin {
     }
 }
 
-/// The memories a session read before it wrote (#677): the source of every
-/// [`EdgeKind::Read`] pin.
-///
-/// Host-supplied call context, never a tool argument. A host binds it with
-/// [`crate::AuthzContext::with_read_set`]; every memory write the context
-/// authorizes keeps it, and the whole write is refused when the caller
-/// cannot read one of the named memories: a local one in its named space,
-/// inside the write's transaction; an other-store one through the port.
-/// Sorted by memory, one entry per memory; empty by default.
+/// The host-certified exact session observations for an authorized write.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadSet(Vec<ReadPin>);
 
@@ -133,7 +101,7 @@ impl ReadSet {
     /// The most memories one read set names. Every pin is probed inside the
     /// write's transaction and stored on the written row, so the set is
     /// bounded where it is built.
-    pub const MAX_PINS: usize = 1024;
+    pub const MAX_PINS: usize = crate::ledger!(Proxiima.Edges.maxReadPins);
 
     /// The empty read set: what a write no host session made carries.
     #[must_use]
@@ -150,6 +118,7 @@ impl ReadSet {
     /// spaces; [`ReadSetError::TooMany`] above [`Self::MAX_PINS`] distinct
     /// memories.
     pub fn new(pins: impl IntoIterator<Item = ReadPin>) -> Result<Self, ReadSetError> {
+        // Normalize by exact Memory ID before checking for conflicting observations.
         let mut pins: Vec<ReadPin> = pins.into_iter().collect();
         pins.sort_unstable_by_key(|pin| (pin.memory(), *pin));
         pins.dedup();
@@ -205,79 +174,94 @@ impl ReadSet {
     }
 }
 
-/// One end of an edge: where it points ([`EntityRef`] — a memory row or
-/// a Goal) plus the entity kind stored there.
-///
-/// A `Memory`/`Goal` address pins the row. There is no follow-head address.
-///
-/// The kind travels with the address because the F/A/P layering rule and
-/// every wire projection need it, and re-deriving it per read is what
-/// made edge reads a second query.
+/// A typed address of one exact version for a graph pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct EdgeEndpoint {
-    pub kind: EntityKind,
-    pub entity: EntityRef,
+#[serde(try_from = "WireEndpoint", into = "WireEndpoint")]
+pub enum EdgeEndpoint {
+    Memory {
+        kind: MemoryKind,
+        memory_id: MemoryId,
+    },
+    Goal(GoalId),
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename = "EdgeEndpoint")]
+struct WireEndpoint {
+    kind: EntityKind,
+    entity: EntityRef,
+}
+
+impl TryFrom<WireEndpoint> for EdgeEndpoint {
+    type Error = &'static str;
+
+    fn try_from(wire: WireEndpoint) -> Result<Self, Self::Error> {
+        // `Proxiima.Identity.EmbeddableEntity`.
+        match wire.entity {
+            EntityRef::Memory(id) => MemoryKind::of(wire.kind)
+                .map(|kind| Self::memory(kind, id))
+                .ok_or("a Goal endpoint must address a Goal"),
+            EntityRef::Goal(id) if wire.kind == EntityKind::Goal => Ok(Self::goal(id)),
+            EntityRef::Goal(_) => Err("a memory endpoint must carry an F/A/P kind"),
+        }
+    }
+}
+
+impl From<EdgeEndpoint> for WireEndpoint {
+    fn from(endpoint: EdgeEndpoint) -> Self {
+        Self {
+            kind: endpoint.kind(),
+            entity: endpoint.entity(),
+        }
+    }
 }
 
 impl EdgeEndpoint {
     /// A pinned memory row.
     #[must_use]
-    pub const fn memory(kind: EntityKind, memory_id: MemoryId) -> Self {
-        Self {
-            kind,
-            entity: EntityRef::Memory(memory_id),
+    pub const fn memory(kind: MemoryKind, memory_id: MemoryId) -> Self {
+        Self::Memory { kind, memory_id }
+    }
+
+    /// A pinned Goal row.
+    #[must_use]
+    pub const fn goal(goal_id: GoalId) -> Self {
+        Self::Goal(goal_id)
+    }
+
+    /// The kind stored at this address.
+    #[must_use]
+    pub const fn kind(self) -> EntityKind {
+        match self {
+            Self::Memory { kind, .. } => kind.entity_kind(),
+            Self::Goal(_) => EntityKind::Goal,
         }
     }
 
-    /// A Goal row. Goal endpoints sit outside the F/A/P layer comparison.
+    /// The exact row address.
     #[must_use]
-    pub const fn goal(goal_id: GoalId) -> Self {
-        Self {
-            kind: EntityKind::Goal,
-            entity: EntityRef::Goal(goal_id),
+    pub const fn entity(self) -> EntityRef {
+        match self {
+            Self::Memory { memory_id, .. } => EntityRef::Memory(memory_id),
+            Self::Goal(id) => EntityRef::Goal(id),
         }
     }
 
     /// The stable id stored in a pin column for this endpoint.
     #[must_use]
     pub const fn entity_id(self) -> uuid::Uuid {
-        match self.entity {
+        match self.entity() {
             EntityRef::Memory(memory_id) => memory_id.into_inner(),
             EntityRef::Goal(goal_id) => goal_id.into_inner(),
-        }
-    }
-
-    /// Check that the endpoint's kind agrees with the entity address.
-    ///
-    /// Memory endpoints carry an F/A/P kind; Goal endpoints carry `Goal`.
-    /// Keeping this check next to the address constructors prevents a caller
-    /// from authorizing one entity while declaring another kind.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the declared kind and addressed entity disagree.
-    pub fn validate_shape(self) -> Result<(), String> {
-        match (self.kind, self.entity) {
-            (EntityKind::Goal, EntityRef::Goal(_))
-            | (
-                EntityKind::Fact | EntityKind::Abstraction | EntityKind::Perspective,
-                EntityRef::Memory(_),
-            ) => Ok(()),
-            (EntityKind::Goal, EntityRef::Memory(_)) => {
-                Err("a Goal endpoint must address a Goal".to_string())
-            }
-            (_, EntityRef::Goal(_)) => {
-                Err("a memory endpoint must carry an F/A/P kind".to_string())
-            }
         }
     }
 
     /// The memory row this endpoint pins, if it pins one.
     #[must_use]
     pub const fn memory_id(self) -> Option<MemoryId> {
-        match self.entity {
-            EntityRef::Memory(memory_id) => Some(memory_id),
-            EntityRef::Goal(_) => None,
+        match self {
+            Self::Memory { memory_id, .. } => Some(memory_id),
+            Self::Goal(_) => None,
         }
     }
 
@@ -285,23 +269,25 @@ impl EdgeEndpoint {
     /// separate entity axis (docs/concepts.md) and never enter the comparison.
     #[must_use]
     pub const fn layer(self) -> Option<u8> {
-        match self.kind {
-            EntityKind::Fact => Some(0),
-            EntityKind::Abstraction => Some(1),
-            EntityKind::Perspective => Some(2),
-            EntityKind::Goal => None,
+        match self {
+            Self::Memory {
+                kind: MemoryKind::Fact,
+                ..
+            } => Some(0),
+            Self::Memory {
+                kind: MemoryKind::Abstraction,
+                ..
+            } => Some(1),
+            Self::Memory {
+                kind: MemoryKind::Perspective,
+                ..
+            } => Some(2),
+            Self::Goal(_) => None,
         }
     }
 }
 
-/// Target side of an edge as projected to one reader. A readable edge
-/// may still have an endpoint the reader may not see; the row is
-/// returned with the endpoint withheld rather than suppressed, so the
-/// existence of a connection is not itself leaked or hidden by accident.
-/// A target the reader could read but which is forgotten is `Forgotten`;
-/// an erased one is `Erased`, since the edge already shows it existed;
-/// any other target the reader cannot read stays `Redacted`.
-/// [`project_memory_target`] is the one rule that picks the variant.
+/// The read projection of a pin target, with an address only when visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum EdgeTargetProjection {
@@ -349,6 +335,7 @@ pub enum PinTargetKind {
 /// it may target; [`Self::spec`] is the one place that says so, and the
 /// storage SQL is rendered from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(test, derive(serde::Deserialize), serde(rename_all = "camelCase"))]
 pub enum MemoryPinField {
     Origins,
     Refs,
@@ -387,7 +374,7 @@ impl MemoryPinField {
         Self::ForkedFrom,
     ];
 
-    /// The table: what each pin column is, stored as, and may target.
+    /// `Proxiima.Edges.pinField`.
     #[must_use]
     pub const fn spec(self) -> PinFieldSpec {
         const NONE: &[EntityKind] = &[];
@@ -541,8 +528,7 @@ impl PinNode {
         })
     }
 
-    /// Memory pins: origins first, then references (the fork source after
-    /// `refs`), then reads.
+    /// Memory pins following `Proxiima.Edges.pinOrder`, with the fork anchor after ordinary references.
     pub fn pins(&self) -> impl Iterator<Item = (MemoryId, EdgeKind)> + '_ {
         Self::fields_targeting(PinTargetKind::Memory).flat_map(move |(field, kind)| {
             let ids = match self.slot(field) {
@@ -567,14 +553,8 @@ impl PinNode {
     /// Drop the Goal references this reader may not see into the raw
     /// carrier, keeping only the readable ones typed as Goals.
     ///
-    /// NON-DISCLOSURE. Storage knows which references are Goals, but a
-    /// reader must not learn that about a target it cannot read: an
-    /// unreadable Goal and an unreadable Memory have to be indistinguishable.
-    /// So an unreadable Goal is pushed back into `refs`, where projection
-    /// redacts it through the very same path as an unreadable Memory. The
-    /// stored column narrows which spine gets probed and nothing else — it
-    /// is never an authorization or projection input.
     pub fn resolve_visible_goal_refs(&mut self, visible: &[GoalId]) {
+        // `Causa.unreadable_goal_reference_resolves_like_a_memory_reference`.
         if self.goal_refs.is_empty() && self.guided_by.is_empty() {
             return;
         }
@@ -611,16 +591,21 @@ pub fn pin_created_at(source: MemoryId) -> time::OffsetDateTime {
 /// are omitted, not redacted.
 #[must_use]
 pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
-    let visible: std::collections::HashMap<MemoryId, EntityKind> =
-        nodes.iter().map(|node| (node.id, node.kind)).collect();
+    let visible: std::collections::HashMap<MemoryId, MemoryKind> = nodes
+        .iter()
+        .filter_map(|node| MemoryKind::of(node.kind).map(|kind| (node.id, kind)))
+        .collect();
     let mut edges = Vec::new();
     for source in nodes {
+        let Some(source_kind) = visible.get(&source.id).copied() else {
+            continue;
+        };
         for (target, kind) in source.pins() {
             let Some(target_kind) = visible.get(&target).copied() else {
                 continue;
             };
             edges.push(Edge {
-                source: EdgeEndpoint::memory(source.kind, source.id),
+                source: EdgeEndpoint::memory(source_kind, source.id),
                 target: EdgeTargetProjection::visible(EdgeEndpoint::memory(target_kind, target)),
                 kind,
                 created_at: pin_created_at(source.id),
@@ -631,7 +616,7 @@ pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
         }
         for (target, kind) in source.goal_pins() {
             edges.push(Edge {
-                source: EdgeEndpoint::memory(source.kind, source.id),
+                source: EdgeEndpoint::memory(source_kind, source.id),
                 target: EdgeTargetProjection::visible(EdgeEndpoint::goal(target)),
                 kind,
                 created_at: pin_created_at(source.id),
@@ -644,16 +629,15 @@ pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
     edges
 }
 
-/// How one reader sees a pin's memory target: visible when `live` holds
-/// it, else forgotten or erased as `unread` says, else redacted. The one
-/// rule every edge read (pins, neighbours, lineage) projects through.
+/// Project an exact target using the admitted read results.
 #[must_use]
 pub fn project_memory_target<S: std::hash::BuildHasher>(
     target: MemoryId,
     live: &std::collections::HashMap<MemoryId, EntityKind, S>,
     unread: &crate::verbs::query::UnreadTargets,
 ) -> EdgeTargetProjection {
-    if let Some(kind) = live.get(&target).copied() {
+    // `Proxiima.Edges.projectTarget`.
+    if let Some(kind) = live.get(&target).copied().and_then(MemoryKind::of) {
         EdgeTargetProjection::visible(EdgeEndpoint::memory(kind, target))
     } else if unread.forgotten.iter().any(|node| node.memory_id == target) {
         EdgeTargetProjection::Forgotten
@@ -668,7 +652,7 @@ pub fn project_memory_target<S: std::hash::BuildHasher>(
 /// [`project_memory_target`].
 #[must_use]
 pub fn project_listed_edge<S: std::hash::BuildHasher>(
-    source_kind: EntityKind,
+    source_kind: MemoryKind,
     source: MemoryId,
     target: MemoryId,
     kind: EdgeKind,
@@ -683,13 +667,7 @@ pub fn project_listed_edge<S: std::hash::BuildHasher>(
     }
 }
 
-/// Enforce the layering rule for a proposed edge: `ℓ(source) ≥
-/// ℓ(target)` for memory endpoints, with Goal endpoints outside the
-/// comparison (docs/concepts.md).
-///
-/// This is what keeps a Fact from being an interpretation *source*: a
-/// Fact asserts no judgment, and every interpretation is a Perspective
-/// referring downward.
+/// Check the declared reference under `Proxiima.Edges.admitsReferenceLayer`.
 ///
 /// # Errors
 ///
@@ -702,8 +680,8 @@ pub fn validate_edge_layering(source: EdgeEndpoint, target: EdgeEndpoint) -> Res
     if source_layer < target_layer {
         return Err(format!(
             "layering violation: a {} cannot point at a {} (source layer must be at least the target layer)",
-            source.kind.as_str(),
-            target.kind.as_str(),
+            source.kind().as_str(),
+            target.kind().as_str(),
         ));
     }
     Ok(())
@@ -716,7 +694,7 @@ pub fn validate_edge_layering(source: EdgeEndpoint, target: EdgeEndpoint) -> Res
 ///
 /// Returns a message when both endpoints address the same entity.
 pub fn validate_not_self_loop(source: EdgeEndpoint, target: EdgeEndpoint) -> Result<(), String> {
-    if source.entity == target.entity {
+    if source.entity() == target.entity() {
         return Err("an edge cannot point at its own source".to_string());
     }
     Ok(())

@@ -115,7 +115,7 @@ async fn raw_fact_refs_cannot_disagree_with_payload_refs() {
     let raw = MemoryId::new(uuid::Uuid::now_v7());
     let payload = ReferencedTestFact {
         fact_id: "raw-mismatch".to_owned(),
-        targets: vec![EdgeEndpoint::memory(EntityKind::Fact, typed)],
+        targets: vec![EdgeEndpoint::memory(crate::MemoryKind::Fact, typed)],
     };
     let sidecars = [SidecarPayload::fact(payload.clone())];
     let engine = reference_engine();
@@ -139,7 +139,7 @@ async fn uow_session_visible_fact_reference_checks_kind() {
     let target = MemoryId::new(uuid::Uuid::now_v7());
     let payload = ReferencedTestFact {
         fact_id: "session-kind".to_owned(),
-        targets: vec![EdgeEndpoint::memory(EntityKind::Fact, target)],
+        targets: vec![EdgeEndpoint::memory(crate::MemoryKind::Fact, target)],
     };
     let sidecars = [SidecarPayload::fact(payload.clone())];
     let engine = reference_engine();
@@ -177,36 +177,6 @@ async fn non_fact_source_cannot_mint_authorized_fact_write() {
     }
     .await
     .expect_err("a non-Fact source must not mint a Fact witness");
-
-    assert_eq!(error.code, ErrorCode::InvalidArgument);
-}
-
-#[tokio::test]
-async fn malformed_goal_endpoint_stops_before_port() {
-    let owner = test_owner();
-    let payload = ReferencedTestFact {
-        fact_id: "malformed-goal".to_owned(),
-        targets: Vec::new(),
-    };
-    let engine = reference_engine();
-    let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-    let malformed = EdgeEndpoint {
-        kind: EntityKind::Fact,
-        entity: crate::EntityRef::Goal(crate::GoalId::new(uuid::Uuid::now_v7())),
-    };
-
-    let error = async {
-        let authorized = engine
-            .authorize_fact_ingest(
-                &authz,
-                referenced_draft(&payload).with_additional_references(vec![malformed]),
-                &[],
-            )
-            .await?;
-        engine.ingest_authorized_fact(&authorized).await
-    }
-    .await
-    .expect_err("a malformed Goal endpoint must fail before persistence");
 
     assert_eq!(error.code, ErrorCode::InvalidArgument);
 }

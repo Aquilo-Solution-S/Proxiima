@@ -87,12 +87,14 @@ impl Harness {
             .ingest_fact_atomic(&permit, &memory_draft(MemoryKind::Fact), None)
             .await?;
         let mut abstraction = memory_draft(MemoryKind::Abstraction);
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let mut perspective = memory_draft(MemoryKind::Perspective);
         perspective.additional_references = vec![EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abstraction.memory_id,
         )];
         let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;

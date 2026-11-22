@@ -15,9 +15,9 @@ use proxiima_core::storage_ports::{
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AccessCeiling, ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GoalAccess, GroupId,
-    MemoryId, MemoryKind, OwnerId, Relation, Role, SchemaId, SchemaVersion, SourceId, SqlText,
-    StorageError, UserId,
+    AccessCeiling, ColdObjectStore, EdgeEndpoint, EntityId, GoalAccess, GroupId, MemoryId,
+    MemoryKind, OwnerId, Relation, Role, SchemaId, SchemaVersion, SourceId, SqlText, StorageError,
+    UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::test_fixtures::{
@@ -590,7 +590,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         let abstraction = TestMemory::fact()
             .kind(MemoryKind::Abstraction)
             .references(vec![EdgeEndpoint::memory(
-                EntityKind::Fact,
+                proxiima_core::MemoryKind::Fact,
                 MemoryId::new(fact),
             )])
             .create(&pg, other)
@@ -598,7 +598,7 @@ async fn erasing_goal_controller_or_participant_revokes_their_grants() {
         let perspective_written = TestMemory::fact()
             .kind(MemoryKind::Perspective)
             .references(vec![EdgeEndpoint::memory(
-                EntityKind::Abstraction,
+                proxiima_core::MemoryKind::Abstraction,
                 abstraction.memory_id,
             )])
             .create(&pg, other)

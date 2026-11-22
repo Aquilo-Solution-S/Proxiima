@@ -1,6 +1,4 @@
-//! Coarse pin-lock mode: a transaction holding SHARE ROW EXCLUSIVE or
-//! stronger on `memory` and `goal` stops taking one advisory lock
-//! per pin target once it has taken 256. Requires local PG.
+//! Coarse pin-lock integration tests against an owned PostgreSQL server.
 #![allow(clippy::too_many_lines)]
 
 use std::error::Error;
@@ -9,7 +7,7 @@ use std::time::Duration;
 
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, MemoryId, MemoryKind, OwnerId, StorageError, StorageRule, UserId,
+    EdgeEndpoint, MemoryId, MemoryKind, OwnerId, StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{create_db, db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
@@ -25,7 +23,7 @@ const COARSE: &str = "LOCK TABLE proxiima_core.memory, proxiima_core.goal \
                       IN SHARE ROW EXCLUSIVE MODE";
 
 /// Target locks a transaction takes before it reads `pg_locks`.
-const DECIDE_AFTER: i64 = 256;
+const DECIDE_AFTER: i64 = proxiima_core::ledger!(Proxiima.Edges.finePinLockBudget);
 
 // Raw INSERT on purpose: the test needs bulk row volume inside one locked
 // transaction, which the one-memory-per-call write path cannot produce.
@@ -424,7 +422,10 @@ async fn concurrent_forget_waits_for_the_bulk_transaction() {
         let pool = pg.pool_for_tests();
         let abstraction = TestMemory::fact()
             .kind(MemoryKind::Abstraction)
-            .references(vec![EdgeEndpoint::memory(EntityKind::Fact, fact)])
+            .references(vec![EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                fact,
+            )])
             .create(&pg, owner)
             .await?
             .memory_id;

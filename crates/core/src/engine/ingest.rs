@@ -312,14 +312,7 @@ impl Engine {
         ))
     }
 
-    /// Resolve the index rows a Fact write is admitted to assert: its
-    /// declared origins, and the references its typed payloads carry.
-    ///
-    /// A Fact sits at the bottom of the F/A/P order, so its pins may target
-    /// Facts or Goals. Origins come from the derivation declaration and
-    /// references from payload content; every declared endpoint kind is
-    /// checked against the resolved target before the authorized carrier is
-    /// minted.
+    /// Resolve typed payload references and explicit Fact references before minting the carrier.
     async fn authorize_fact_node_links<A>(
         &self,
         authority: &A,
@@ -348,7 +341,7 @@ impl Engine {
             .refs
             .iter()
             .copied()
-            .map(|id| EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(id)))
+            .map(|id| EdgeEndpoint::memory(crate::MemoryKind::Fact, MemoryId::new(id)))
             .fold(Vec::new(), |mut references, target| {
                 if !references.contains(&target) {
                     references.push(target);
@@ -404,6 +397,7 @@ impl Engine {
                 references.push(target);
             }
         }
+        // `Causa.principle_1_fact_has_no_origins`.
         Ok(AuthorizedNodeLinks::new(Vec::new(), references))
     }
 
@@ -428,32 +422,29 @@ impl Engine {
             // A repeated declaration names the same endpoint, and the first
             // occurrence already validated and admitted it. Skipping here and
             // not at the push below is what keeps a duplicate off the read
-            // path: shape, layering and `authorize_entry_read` all run once.
+            // path: layering and `authorize_entry_read` all run once.
             if out.contains(target) {
                 continue;
             }
-            target
-                .validate_shape()
-                .map_err(|err| ProtocolError::invalid_argument(field, err))?;
-            if field == "derived_from" && matches!(target.entity, crate::EntityRef::Goal(_)) {
+            if field == "derived_from" && matches!(target.entity(), crate::EntityRef::Goal(_)) {
                 return Err(ProtocolError::invalid_argument(
                     field,
                     "Fact origins must target a Memory",
                 ));
             }
-            match target.kind {
+            match target.kind() {
                 EntityKind::Fact | EntityKind::Goal => {}
                 EntityKind::Abstraction | EntityKind::Perspective => {
                     return Err(ProtocolError::invalid_argument(
                         field,
                         format!(
                             "layering violation: a Fact cannot point at a {}",
-                            target.kind.as_str()
+                            target.kind().as_str()
                         ),
                     ));
                 }
             }
-            match target.entity {
+            match target.entity() {
                 crate::EntityRef::Memory(memory_id) if session_visible.contains(&memory_id) => {
                     let actual = session_visible_kinds
                         .iter()
@@ -463,12 +454,12 @@ impl Engine {
                                 "session-visible Fact reference is missing its stored kind",
                             )
                         })?;
-                    if actual != target.kind {
+                    if actual != target.kind() {
                         return Err(ProtocolError::invalid_argument(
                             field,
                             format!(
                                 "declared target kind {} does not match stored kind {}",
-                                target.kind.as_str(),
+                                target.kind().as_str(),
                                 actual.as_str()
                             ),
                         ));
@@ -483,8 +474,8 @@ impl Engine {
                         .iter_mut()
                         .find(|(admitted, _)| *admitted == owner)
                     {
-                        Some((_, declared)) => declared.push((memory_id, target.kind)),
-                        None => deferred_kinds.push((owner, vec![(memory_id, target.kind)])),
+                        Some((_, declared)) => declared.push((memory_id, target.kind())),
+                        None => deferred_kinds.push((owner, vec![(memory_id, target.kind())])),
                     }
                 }
                 crate::EntityRef::Goal(goal_id) => {

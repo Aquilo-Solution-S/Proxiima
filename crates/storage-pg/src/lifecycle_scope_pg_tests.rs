@@ -49,7 +49,7 @@ async fn seed(pg: &crate::PgStorage, permit: &OwnerWritePermit) -> Seeded {
     let mut cites = draft(None);
     cites.kind = proxiima_core::MemoryKind::Abstraction;
     cites.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-        proxiima_core::EntityKind::Fact,
+        proxiima_core::MemoryKind::Fact,
         proxiima_core::MemoryId::new(parent),
     )];
     let derive = OwnerWritePermit::new_for_tests(*permit.owner(), MemoryKind::Abstraction);

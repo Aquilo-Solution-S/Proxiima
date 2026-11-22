@@ -232,13 +232,13 @@ async fn goal_route_counts_latest_visible_series_once() {
         note_neighbors
             .neighbor_edges
             .iter()
-            .any(|edge| edge.source.entity == proxiima_core::EntityRef::Memory(first))
+            .any(|edge| edge.source.entity() == proxiima_core::EntityRef::Memory(first))
     );
     assert!(
         note_neighbors
             .neighbor_edges
             .iter()
-            .all(|edge| edge.source.entity != proxiima_core::EntityRef::Memory(private.memory_id))
+            .all(|edge| edge.source.entity() != proxiima_core::EntityRef::Memory(private.memory_id))
     );
     host.engine
         .publish_to_goal(

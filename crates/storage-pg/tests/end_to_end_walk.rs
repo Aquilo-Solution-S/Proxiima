@@ -10,9 +10,7 @@ use proxiima_core::storage_ports::FactIngestPort;
 use proxiima_core::storage_ports::{OwnerTransferPort, OwnerWritePermit};
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::verbs::goal_write::GoalState;
-use proxiima_core::{
-    EntityId, EntityKind, GroupId, MemoryKind, OwnerId, SchemaId, SchemaVersion, UserId,
-};
+use proxiima_core::{EntityId, GroupId, MemoryKind, OwnerId, SchemaId, SchemaVersion, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::create_core_db;
@@ -46,7 +44,7 @@ fn fact(schema: &str, refs: Vec<Uuid>, origins: Vec<Uuid>, kind: MemoryKind) -> 
             .into_iter()
             .map(|t| {
                 proxiima_core::EdgeEndpoint::memory(
-                    EntityKind::Fact,
+                    proxiima_core::MemoryKind::Fact,
                     proxiima_core::MemoryId::new(t),
                 )
             })

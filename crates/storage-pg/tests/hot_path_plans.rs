@@ -256,7 +256,7 @@ async fn hot_path_plans_use_expected_indexes() {
         let leaf = leaf_id.into_inner();
         let child = TestMemory::fact()
             .kind(MemoryKind::Abstraction)
-            .references(vec![EdgeEndpoint::memory(EntityKind::Fact, leaf_id)])
+            .references(vec![EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, leaf_id)])
             .create(&pg, owner)
             .await?
             .memory_id

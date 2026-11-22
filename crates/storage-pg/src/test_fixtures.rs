@@ -1111,7 +1111,7 @@ impl TestDerived {
     pub fn abstraction(origin: MemoryId) -> Self {
         Self::new(
             MemoryKind::Abstraction,
-            EdgeEndpoint::memory(proxiima_core::EntityKind::Fact, origin),
+            EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, origin),
         )
     }
 
@@ -1120,7 +1120,7 @@ impl TestDerived {
     pub fn perspective(origin: MemoryId) -> Self {
         Self::new(
             MemoryKind::Perspective,
-            EdgeEndpoint::memory(proxiima_core::EntityKind::Abstraction, origin),
+            EdgeEndpoint::memory(proxiima_core::MemoryKind::Abstraction, origin),
         )
     }
 

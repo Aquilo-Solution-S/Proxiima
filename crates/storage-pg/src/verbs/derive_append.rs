@@ -132,7 +132,7 @@ pub(crate) fn new_references(
         .copied()
         .filter(|pin| {
             retained.is_none_or(|kept| {
-                if let proxiima_core::EntityRef::Goal(id) = pin.entity {
+                if let proxiima_core::EntityRef::Goal(id) = pin.entity() {
                     !kept.goal_references().contains(&id)
                 } else {
                     !kept.references().contains(pin)
@@ -147,6 +147,7 @@ pub(crate) async fn validate_retained_pins_in_tx(
     draft: &DerivedDraft<'_>,
     retained: Option<&proxiima_core::RetainedPins>,
 ) -> Result<(), StorageError> {
+    // `Proxiima.Edges.pinAdmissionWitness`.
     let Some(retained) = retained else {
         return Ok(());
     };
@@ -698,6 +699,7 @@ pub(crate) async fn record_external_edges(
         )
         .collect();
     if outcome.idempotent_replay {
+        // `Proxiima.Edges.externalReplayKinds`.
         // A forgotten memory's edges are hidden from owner reads; the replay
         // compares them in the lifecycle scope, as it compared the pins.
         let lifecycle = if outcome.forgotten {
@@ -892,7 +894,7 @@ fn assert_declared_kinds_match_stored(
             continue;
         };
         match stored.get(&memory_id.into_inner()).copied() {
-            Some(kind) if kind == pin.kind => {}
+            Some(kind) if kind == pin.kind() => {}
             Some(_) => {
                 return Err(StorageError::ConstraintViolation(
                     "declared pin kind must match the stored row".into(),

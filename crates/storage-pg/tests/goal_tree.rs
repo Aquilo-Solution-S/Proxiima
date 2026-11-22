@@ -15,8 +15,8 @@ use proxiima_core::verbs::goal_write::{
     GoalWriteOutcome, IdempotencyKey, ModifyGoalAtomicRequest, TransitionGoalAtomicRequest,
 };
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, GoalId, MemoryId, OwnerId, PendingWork, SchemaId, SchemaVersion,
-    SpiiceRegistry, SpiiceRegistryFrozen, StorageError, UserId,
+    EdgeEndpoint, GoalId, MemoryId, OwnerId, PendingWork, SchemaId, SchemaVersion, SpiiceRegistry,
+    SpiiceRegistryFrozen, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -105,11 +105,16 @@ impl Tree {
             .ingest_fact_atomic(&permit, &fact_draft(MemoryKind::Fact), None)
             .await?;
         let mut abs = fact_draft(MemoryKind::Abstraction);
-        abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abs.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abs = pg.ingest_fact_atomic(&permit, &abs, None).await?;
         let mut perspective = fact_draft(MemoryKind::Perspective);
-        perspective.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
+        perspective.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Abstraction,
+            abs.memory_id,
+        )];
         let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
         Ok(Self {
             db_name,

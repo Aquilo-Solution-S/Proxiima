@@ -66,7 +66,7 @@ fn default_limit() -> u32 {
 }
 
 fn default_include_neighbor_edges() -> bool {
-    false
+    crate::ledger!(Proxiima.Edges.defaultNeighborExpansion)
 }
 
 fn default_supersession() -> SearchMemoriesSupersession {
@@ -152,7 +152,7 @@ pub struct SearchMemoriesArgs {
     pub semantic_weight: Option<f32>,
     #[serde(default = "default_include_neighbor_edges")]
     #[schemars(
-        description = "Also return origin/reference links (source, target, kind) touching the results."
+        description = "Also return one-hop pins (source, target, kind) touching the exact result versions."
     )]
     pub include_neighbor_edges: bool,
     #[serde(default)]

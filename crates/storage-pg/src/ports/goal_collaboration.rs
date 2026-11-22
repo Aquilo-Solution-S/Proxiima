@@ -220,9 +220,9 @@ fn retained_endpoint(
         .iter()
         .find(|(stored, _)| *stored == id)
         .and_then(|(_, kind)| match kind.as_str() {
-            "fact" => Some(proxiima_core::EntityKind::Fact),
-            "abstraction" => Some(proxiima_core::EntityKind::Abstraction),
-            "perspective" => Some(proxiima_core::EntityKind::Perspective),
+            "fact" => Some(proxiima_core::MemoryKind::Fact),
+            "abstraction" => Some(proxiima_core::MemoryKind::Abstraction),
+            "perspective" => Some(proxiima_core::MemoryKind::Perspective),
             _ => None,
         })
         .ok_or(StorageError::NotFound)?;

@@ -148,9 +148,7 @@ fn access_kind(kind: EntityKind) -> Result<crate::MemoryKind, ProtocolError> {
 
 const ORIGIN_KINDS: &str = "an Abstraction needs Fact or Abstraction origins; a derived Perspective needs Abstraction origins";
 
-/// The phase that derives a `kind` memory from `origins`: the output kind
-/// alone names it, and every origin must be a kind that phase admits. Only a
-/// Perspective may have no origin (an interpretation).
+/// Derivation admission follows `Proxiima.Edges.requiresOrigins` and `Proxiima.Memory.operatorAdmitsInput`.
 fn derivation_phase(
     kind: EntityKind,
     origins: &[EdgeEndpoint],
@@ -161,7 +159,7 @@ fn derivation_phase(
     if (origins.is_empty() && !empty_allowed)
         || origins
             .iter()
-            .any(|origin| !phase.admits_input(origin.kind))
+            .any(|origin| !phase.admits_input(origin.kind()))
     {
         return Err(refusal());
     }
@@ -192,8 +190,7 @@ fn admitted_external_origins(
         .collect())
 }
 
-/// An other-store memory is an origin or a reference of one memory, never
-/// both: `memory_external_origin` keys on `(t, memory)`.
+/// Reject conflicting roles for one external pin in the same admission.
 fn external_references(
     origins: &[uuid::Uuid],
     references: &[crate::storage_ports::other_stores::ReadOrigin],
@@ -233,7 +230,7 @@ fn validate_typed_invocation(
         input_contract_id: identity.input_contract_id,
         inputs: origins
             .iter()
-            .map(|endpoint| (MemoryId::new(endpoint.entity_id()), endpoint.kind))
+            .map(|endpoint| (MemoryId::new(endpoint.entity_id()), endpoint.kind()))
             .collect(),
         output_memory_id: output,
         output_kind: kind,
@@ -636,6 +633,7 @@ impl Engine {
                 resolved
                     .get(&id)
                     .copied()
+                    .and_then(crate::MemoryKind::of)
                     .map(|kind| EdgeEndpoint::memory(kind, id))
                     .ok_or_else(|| {
                         ProtocolError::internal("authorized memory kind was not resolved")
@@ -853,7 +851,7 @@ impl Engine {
                 continue;
             };
             if !retained.iter().any(|(seen, _)| *seen == id) {
-                retained.push((id, endpoint.kind));
+                retained.push((id, endpoint.kind()));
             }
         }
         Ok(retained)
@@ -977,7 +975,7 @@ impl Engine {
             .as_ref()
             .into_iter()
             .flat_map(|pins| pins.origins().iter())
-            .filter_map(|endpoint| endpoint.memory_id().map(|id| (id, endpoint.kind)));
+            .filter_map(|endpoint| endpoint.memory_id().map(|id| (id, endpoint.kind())));
         let resolution_kinds = session_kinds
             .iter()
             .copied()
@@ -993,7 +991,9 @@ impl Engine {
             external_references(&external_origins, &memory.external_references)?;
         // A new version's t is allocated by storage. The layer check needs only
         // the output kind; neither a handle nor the prior t is its source row.
-        let source = EdgeEndpoint::memory(kind, memory_id);
+        let memory_kind = crate::MemoryKind::of(kind)
+            .ok_or_else(|| ProtocolError::internal("derived memory must have a memory kind"))?;
+        let source = EdgeEndpoint::memory(memory_kind, memory_id);
         let references = self
             .prepare_derived_references(
                 authority,
@@ -1075,7 +1075,7 @@ impl Engine {
         resolved.extend(retained_declared);
         let mut references = Vec::new();
         for reference in declared {
-            let target = match reference.target.entity {
+            let target = match reference.target.entity() {
                 crate::EntityRef::Memory(id) => {
                     let actual = resolved
                         .iter()
@@ -1083,14 +1083,14 @@ impl Engine {
                         .ok_or_else(|| {
                             ProtocolError::internal("declared memory reference was not resolved")
                         })?;
-                    if actual.kind != reference.target.kind {
+                    if actual.kind() != reference.target.kind() {
                         return Err(ProtocolError::invalid_argument(
                             "references",
                             format!(
                                 "reference {} declares {}, but the readable target is {}",
                                 reference.field,
-                                reference.target.kind.as_str(),
-                                actual.kind.as_str(),
+                                reference.target.kind().as_str(),
+                                actual.kind().as_str(),
                             ),
                         ));
                     }
@@ -1304,7 +1304,7 @@ fn validate_operator_memory_invocation_request(
                 "an operator provenance origin must name a memory row".into(),
             ));
         };
-        inputs.push((target_memory_id, origin.kind));
+        inputs.push((target_memory_id, origin.kind()));
         output_edges.push(OutputEdgeManifest::memory_to_memory(
             req.memory_id,
             target_memory_id,

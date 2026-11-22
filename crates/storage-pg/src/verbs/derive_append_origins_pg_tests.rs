@@ -133,11 +133,16 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact), None)
             .await?;
         let mut abs = draft(MemoryKind::Abstraction);
-        abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abs.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let abs = pg.ingest_fact_atomic(&permit, &abs, None).await?;
         let mut perspective = draft(MemoryKind::Perspective);
-        perspective.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
+        perspective.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Abstraction,
+            abs.memory_id,
+        )];
         let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
 
         let spoof = derived_draft(owner, Uuid::now_v7(), EntityKind::Abstraction);
@@ -146,7 +151,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             &permit,
             &spoof,
             &[EdgeEndpoint::memory(
-                EntityKind::Fact,
+                proxiima_core::MemoryKind::Fact,
                 perspective.memory_id,
             )],
             &[],
@@ -160,9 +165,12 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             pool,
             &permit,
             &spoofed_ref,
-            &[EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)],
             &[EdgeEndpoint::memory(
-                EntityKind::Fact,
+                proxiima_core::MemoryKind::Fact,
+                fact.memory_id,
+            )],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
                 perspective.memory_id,
             )],
         )
@@ -176,7 +184,7 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             &permit,
             &honest_wrong_phase,
             &[EdgeEndpoint::memory(
-                EntityKind::Perspective,
+                proxiima_core::MemoryKind::Perspective,
                 perspective.memory_id,
             )],
             &[],
@@ -198,7 +206,10 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             pool,
             &permit,
             &honest,
-            &[EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                fact.memory_id,
+            )],
             &[],
         )
         .await
@@ -212,8 +223,8 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             &permit,
             &mixed,
             &[
-                EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id),
-                EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id),
+                EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact.memory_id),
+                EdgeEndpoint::memory(proxiima_core::MemoryKind::Abstraction, abs.memory_id),
             ],
             &[],
         )
@@ -226,7 +237,10 @@ async fn declared_fact_on_perspective_origin_is_rejected() {
             pool,
             &permit,
             &fact_perspective,
-            &[EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)],
+            &[EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                fact.memory_id,
+            )],
             &[],
         )
         .await
@@ -275,7 +289,10 @@ async fn a_reference_to_no_readable_live_row_is_refused() {
         let foreign = pg
             .ingest_fact_atomic(&stranger_permit, &draft(MemoryKind::Fact), None)
             .await?;
-        let origins = [EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        let origins = [EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact.memory_id,
+        )];
         let validate = |references: Vec<EdgeEndpoint>, memory_id: Uuid| async move {
             let mut tx = crate::owner_scope::begin_owner_transaction(pool, scope).await?;
             let draft = derived_draft(owner, memory_id, EntityKind::Abstraction);
@@ -287,7 +304,7 @@ async fn a_reference_to_no_readable_live_row_is_refused() {
             ("nonexistent", proxiima_core::MemoryId::new(Uuid::now_v7())),
         ] {
             let err = validate(
-                vec![EdgeEndpoint::memory(EntityKind::Fact, id)],
+                vec![EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, id)],
                 Uuid::now_v7(),
             )
             .await
@@ -300,7 +317,10 @@ async fn a_reference_to_no_readable_live_row_is_refused() {
             }
         }
         validate(
-            vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)],
+            vec![EdgeEndpoint::memory(
+                proxiima_core::MemoryKind::Fact,
+                fact.memory_id,
+            )],
             Uuid::now_v7(),
         )
         .await

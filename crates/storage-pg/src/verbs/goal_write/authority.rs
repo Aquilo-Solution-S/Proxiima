@@ -3,8 +3,8 @@
 use proxiima_core::goal_collaboration::GoalEditPermit;
 use proxiima_core::verbs::goal_write::GoalEvidenceRef;
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, GoalCommandPermit, GoalId, MemoryId, MemoryKind, OwnerId, OwnerRoles,
-    OwnerScope, Role, StorageError,
+    EdgeEndpoint, GoalCommandPermit, GoalId, MemoryId, MemoryKind, OwnerId, OwnerRoles, OwnerScope,
+    Role, StorageError,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -167,7 +167,7 @@ async fn memory_endpoints(
     }
     Ok(rows
         .into_iter()
-        .map(|(id, kind)| EdgeEndpoint::memory(EntityKind::from(kind), MemoryId::new(id)))
+        .map(|(id, kind)| EdgeEndpoint::memory(kind.into(), MemoryId::new(id)))
         .collect())
 }
 
@@ -224,11 +224,14 @@ pub(crate) async fn begin_goal_edit<'a>(
     }
     let mut endpoints: Vec<_> = rows
         .into_iter()
-        .map(|(id, kind)| EdgeEndpoint::memory(EntityKind::from(kind), MemoryId::new(id)))
+        .map(|(id, kind)| EdgeEndpoint::memory(kind.into(), MemoryId::new(id)))
         .collect();
     endpoints.push(EdgeEndpoint::goal(prior));
     if let Some(id) = author_self {
-        endpoints.push(EdgeEndpoint::memory(EntityKind::Perspective, id));
+        endpoints.push(EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Perspective,
+            id,
+        ));
     }
     let sources = SourceReads::discover(storage, &mut tx, command.scope(), &endpoints).await?;
     let owners: Vec<_> = sources.owners().chain([command.controller()]).collect();

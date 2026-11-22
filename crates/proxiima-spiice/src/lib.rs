@@ -221,7 +221,7 @@ pub use proxiima_core::{
 /// — off a listed [`Edge`], or when filtering — never passed to a writer,
 /// because the kind follows the operation.
 pub use proxiima_core::{
-    Edge, EdgeEndpoint, EdgeKind, EdgeTargetProjection, EntityRef, PayloadReference,
+    Edge, EdgeEndpoint, EdgeKind, EdgeTargetProjection, EntityRef, MemoryKind, PayloadReference,
     ReferenceBinding,
 };
 /// One embedding job of one memory, including claim age while it is processing.

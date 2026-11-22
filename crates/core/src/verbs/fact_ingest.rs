@@ -407,7 +407,7 @@ impl AuthorizedFactWrite {
             .refs
             .iter()
             .copied()
-            .map(|id| EdgeEndpoint::memory(crate::EntityKind::Fact, MemoryId::new(id)))
+            .map(|id| EdgeEndpoint::memory(crate::MemoryKind::Fact, MemoryId::new(id)))
             .collect();
         Self::new_with_links_for_tests(
             owner_write,

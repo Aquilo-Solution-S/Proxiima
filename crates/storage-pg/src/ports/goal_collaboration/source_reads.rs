@@ -37,7 +37,7 @@ impl SourceReads {
             .collect();
         let goals: Vec<_> = endpoints
             .iter()
-            .filter(|e| e.kind == EntityKind::Goal)
+            .filter(|e| e.kind() == EntityKind::Goal)
             .map(|e| e.entity_id())
             .collect();
         let rows = sqlx::query(
@@ -85,7 +85,7 @@ impl SourceReads {
         if endpoints.iter().any(|e| {
             !sources
                 .iter()
-                .any(|s| s.id == e.entity_id() && s.kind == e.kind)
+                .any(|s| s.id == e.entity_id() && s.kind == e.kind())
         }) {
             return Err(StorageError::NotFound);
         }

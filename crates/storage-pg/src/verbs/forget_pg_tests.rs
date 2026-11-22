@@ -21,8 +21,8 @@ use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerTransferPort, Owner
 use proxiima_core::verbs::fact_ingest::{CitationSpec, FactWriteCommand};
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    ColdObjectStore, EdgeEndpoint, EntityId, EntityKind, GroupId, MemoryKind, OwnerId, SchemaId,
-    SchemaVersion, StorageError, StorageRule, UserId,
+    ColdObjectStore, EdgeEndpoint, EntityId, GroupId, MemoryKind, OwnerId, SchemaId, SchemaVersion,
+    StorageError, StorageRule, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use uuid::Uuid;
@@ -126,7 +126,7 @@ pub(crate) async fn ingest_stamped(
             if goal_ids.contains(&id) {
                 EdgeEndpoint::goal(proxiima_core::GoalId::new(id))
             } else {
-                EdgeEndpoint::memory(EntityKind::Fact, proxiima_core::MemoryId::new(id))
+                EdgeEndpoint::memory(MemoryKind::Fact, proxiima_core::MemoryId::new(id))
             }
         })
         .collect::<Vec<_>>();
@@ -237,7 +237,7 @@ pub(crate) fn draft(source: Option<(&str, &str)>) -> FactWriteCommand {
         additional_references: Vec::new(),
         refs: Vec::new(),
         blob_id: None,
-        kind: proxiima_core::MemoryKind::Fact,
+        kind: MemoryKind::Fact,
         request: None,
     }
 }
@@ -999,9 +999,9 @@ async fn non_head_erase_racing_append_preserves_the_greatest_head() {
     result.expect("non-head erase raced append incorrectly");
 }
 
-fn derived_abstraction(origin_kind: EntityKind, origin: Uuid) -> FactWriteCommand {
+fn derived_abstraction(origin_kind: MemoryKind, origin: Uuid) -> FactWriteCommand {
     let mut cmd = draft(None);
-    cmd.kind = proxiima_core::MemoryKind::Abstraction;
+    cmd.kind = MemoryKind::Abstraction;
     cmd.additional_references = vec![EdgeEndpoint::memory(
         origin_kind,
         proxiima_core::MemoryId::new(origin),
@@ -1011,9 +1011,9 @@ fn derived_abstraction(origin_kind: EntityKind, origin: Uuid) -> FactWriteComman
 
 fn derived_perspective(origin: Uuid) -> FactWriteCommand {
     let mut cmd = draft(None);
-    cmd.kind = proxiima_core::MemoryKind::Perspective;
+    cmd.kind = MemoryKind::Perspective;
     cmd.additional_references = vec![EdgeEndpoint::memory(
-        EntityKind::Abstraction,
+        MemoryKind::Abstraction,
         proxiima_core::MemoryId::new(origin),
     )];
     cmd
@@ -1035,7 +1035,7 @@ async fn hard_erase_witnesses_each_hot_memory_kind() {
         let abstraction = pg
             .ingest_fact_atomic(
                 &permit,
-                &derived_abstraction(EntityKind::Fact, fact.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Fact, fact.memory_id.into_inner()),
                 None,
             )
             .await?;
@@ -1272,7 +1272,7 @@ async fn forgetting_every_source_keeps_what_rests_on_them_live() {
         let abs = pg
             .ingest_fact_atomic(
                 &permit,
-                &derived_abstraction(EntityKind::Fact, fact.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Fact, fact.memory_id.into_inner()),
                 None,
             )
             .await
@@ -1280,7 +1280,7 @@ async fn forgetting_every_source_keeps_what_rests_on_them_live() {
         let abs2 = pg
             .ingest_fact_atomic(
                 &permit,
-                &derived_abstraction(EntityKind::Abstraction, abs.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Abstraction, abs.memory_id.into_inner()),
                 None,
             )
             .await
@@ -1514,22 +1514,22 @@ async fn concurrent_forgets_of_both_sources_both_commit() {
         let a1 = pg
             .ingest_fact_atomic(
                 &p1,
-                &derived_abstraction(EntityKind::Fact, f1.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Fact, f1.memory_id.into_inner()),
                 None,
             )
             .await?;
         let a2 = pg
             .ingest_fact_atomic(
                 &p2,
-                &derived_abstraction(EntityKind::Fact, f2.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Fact, f2.memory_id.into_inner()),
                 None,
             )
             .await?;
         let mut both = draft(None);
-        both.kind = proxiima_core::MemoryKind::Abstraction;
+        both.kind = MemoryKind::Abstraction;
         both.additional_references = vec![
-            EdgeEndpoint::memory(EntityKind::Abstraction, a1.memory_id),
-            EdgeEndpoint::memory(EntityKind::Abstraction, a2.memory_id),
+            EdgeEndpoint::memory(MemoryKind::Abstraction, a1.memory_id),
+            EdgeEndpoint::memory(MemoryKind::Abstraction, a2.memory_id),
         ];
         let dep = pg.ingest_fact_atomic(&p3, &both, None).await?;
 
@@ -1627,7 +1627,7 @@ async fn forget_blocks_admit_until_its_lifecycle_lock_is_released() {
         let pool = pg.pool_for_tests().clone();
         let fact = pg.ingest_fact_atomic(&permit, &draft(None), None).await?;
         let abs = pg.ingest_fact_atomic(&permit,
-            &derived_abstraction(EntityKind::Fact, fact.memory_id.into_inner()),
+            &derived_abstraction(MemoryKind::Fact, fact.memory_id.into_inner()),
             None,
         )
         .await?;
@@ -1738,15 +1738,15 @@ async fn admission_locks_pins_before_series_head() {
         let target = pg
             .ingest_fact_atomic(
                 &permit,
-                &derived_abstraction(EntityKind::Fact, origin.memory_id.into_inner()),
+                &derived_abstraction(MemoryKind::Fact, origin.memory_id.into_inner()),
                 None,
             )
             .await?;
         let target_t = target.memory_id.into_inner();
-        let mut append = derived_abstraction(EntityKind::Fact, target_t);
+        let mut append = derived_abstraction(MemoryKind::Fact, target_t);
         append.handle = Some(target.handle);
         append.additional_references = vec![EdgeEndpoint::memory(
-            EntityKind::Fact,
+            MemoryKind::Fact,
             proxiima_core::MemoryId::new(origin.memory_id.into_inner()),
         )];
         append.refs = vec![target_t];

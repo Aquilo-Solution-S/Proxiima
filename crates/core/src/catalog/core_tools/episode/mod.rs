@@ -66,6 +66,18 @@ pub struct EpisodeRememberItem {
     pub supersedes: Option<String>,
 }
 
+fn episode_source_description() -> String {
+    let kinds = crate::MemoryPinField::Origins
+        .admitted(crate::EntityKind::Abstraction)
+        .iter()
+        .map(|kind| format!("{}s", kind.as_str()))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    format!(
+        "What the Abstraction is made from: at least one source. Mix {kinds} by UUID as needed. A Fact written in this call can also be named by its 0-based `remember:N` key."
+    )
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EpisodeDeriveItem {
     #[schemars(length(max = AUTHORING_TITLE_MAX), description = "Abstraction title, 1 to 240 chars.")]
@@ -79,7 +91,7 @@ pub struct EpisodeDeriveItem {
     #[schemars(description = "Search tags, at most 16, 1 to 48 chars each; stored lowercase.")]
     pub tags: Vec<String>,
     #[schemars(
-        description = "What the Abstraction is made from, at least one and all one kind: Facts (`<uuid>` or this call's 0-based `remember:N`) or Abstractions (`<uuid>`)."
+        description = episode_source_description()
     )]
     pub source_handles: Vec<String>,
     #[serde(default)]

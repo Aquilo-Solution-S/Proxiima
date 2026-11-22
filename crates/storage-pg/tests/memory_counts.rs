@@ -10,8 +10,8 @@ use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::{
-    AuthPath, AuthzContext, EdgeEndpoint, Engine, EntityKind, GroupId, MemoryId, MemoryKind,
-    OwnerId, Role, SpiiceRegistry, UserId,
+    AuthPath, AuthzContext, EdgeEndpoint, Engine, GroupId, MemoryId, MemoryKind, OwnerId, Role,
+    SpiiceRegistry, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db};
 use proxiima_storage_pg::PgStorage;
@@ -57,7 +57,7 @@ async fn seed(pg: &PgStorage, owner: OwnerId, extra_facts: u64) -> TestResult<Se
     let abstraction = TestMemory::fact()
         .kind(MemoryKind::Abstraction)
         .references(vec![EdgeEndpoint::memory(
-            EntityKind::Fact,
+            proxiima_core::MemoryKind::Fact,
             series.memory_id,
         )])
         .create(pg, owner)

@@ -8,9 +8,9 @@ use proxiima_core::authz::{AuthorizationHook, AuthzInput, AuthzOperation, AuthzO
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_core::verbs::fact_ingest::FactWriteCommand;
 use proxiima_core::{
-    AuthPath, AuthzContext, EdgeEndpoint, Engine, EntityKind, ErrorCode, FactPayload, GoalId,
-    MemoryId, OwnerId, PayloadKeyBuilder, PayloadReference, ReferenceBinding, SidecarPayload,
-    SpiiceRegistry, UserId,
+    AuthPath, AuthzContext, EdgeEndpoint, Engine, ErrorCode, FactPayload, GoalId, MemoryId,
+    OwnerId, PayloadKeyBuilder, PayloadReference, ReferenceBinding, SidecarPayload, SpiiceRegistry,
+    UserId,
 };
 use proxiima_pg_testkit::DbGuard;
 use proxiima_storage_pg::PgStorage;
@@ -142,7 +142,7 @@ fn draft(payload: &ReferencedFact) -> FactWriteCommand {
 }
 
 fn fact_target(memory: MemoryId) -> EdgeEndpoint {
-    EdgeEndpoint::memory(EntityKind::Fact, memory)
+    EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, memory)
 }
 
 #[tokio::test]

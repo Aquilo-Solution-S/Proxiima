@@ -362,8 +362,7 @@ pub(crate) async fn prepare_memory_admission_at(
     let kind = validated_admission_kind(draft)?;
     let mut persisted_origins = pin_memory_ids(admission.origins)?;
     let (mut refs, goal_refs) = pin_reference_ids(admission.references);
-    // CHECK memory_fact_origins_chk: Facts cannot carry origins. Pins
-    // a Fact declares (activation, evidence, prior request) live in refs.
+    // `Causa.principle_1_fact_has_no_origins`. Classify Fact evidence and prior requests as references.
     if kind == PgMemoryKind::Fact {
         for id in persisted_origins.drain(..) {
             if !refs.contains(&id) {
@@ -411,7 +410,7 @@ pub(crate) async fn prepare_memory_admission_at(
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_err)?;
-    // A revision of a forked series retains its original exact source anchor.
+    // `Causa.ForkAnchorAligned`.
     // The anchor is provenance, not a new edge kind, and is copied only from
     // the series head already held by this admission's owner fence.
     let inherited_fork_anchor =
@@ -442,7 +441,7 @@ pub(crate) async fn prepare_memory_admission_at(
         &guided_by,
         inherited_fork_anchor.as_slice(),
     ];
-    let read_pins = stored_local_reads(admission.reads, &stronger);
+    let read_pins = stored_local_reads(admission.reads.reads(), &stronger);
     // A local read a stronger pin already names is a target through it.
     let targets: Vec<Uuid> = std::iter::once(t)
         .chain(expected_head_t)
@@ -965,12 +964,9 @@ pub(crate) async fn materialize_prepared_memory_admission_after_locks(
     })
 }
 
-/// The local reads of `reads` that no pin of `stronger` already names, in
-/// order: a memory that is an origin, a reference or the fork anchor of the
-/// row is stored once, as that pin, as an other-store one is in `memory_external_origin`.
-fn stored_local_reads(reads: &BoundReadSet, stronger: &[&[Uuid]]) -> Vec<Uuid> {
+/// Keep local reads in observation order under `Proxiima.Edges.keepReadPin`.
+fn stored_local_reads(reads: &proxiima_core::ReadSet, stronger: &[&[Uuid]]) -> Vec<Uuid> {
     reads
-        .reads()
         .local()
         .map(|(id, _)| id.into_inner())
         .filter(|id| !stronger.iter().any(|pins| pins.contains(id)))
@@ -1225,9 +1221,10 @@ fn pin_memory_ids(pins: &[EdgeEndpoint]) -> Result<Vec<Uuid>, StorageError> {
 pub(crate) fn pin_reference_ids(pins: &[EdgeEndpoint]) -> (Vec<Uuid>, Vec<Uuid>) {
     let mut memory_ids = Vec::with_capacity(pins.len());
     let mut goal_ids = Vec::new();
+    // `Causa.principle_4_the_field_fixes_the_kind`.
     for pin in pins {
         let id = pin.entity_id();
-        let column = if matches!(pin.entity, proxiima_core::EntityRef::Goal(_)) {
+        let column = if matches!(pin.entity(), proxiima_core::EntityRef::Goal(_)) {
             &mut goal_ids
         } else {
             &mut memory_ids

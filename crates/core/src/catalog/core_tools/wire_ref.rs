@@ -8,7 +8,7 @@ pub(crate) const FORGOTTEN_TARGET: &str = "forgotten target";
 pub(crate) const ERASED_TARGET: &str = "erased target";
 
 pub(crate) fn format_endpoint(_ctx: &ToolCtx, endpoint: EdgeEndpoint) -> String {
-    match endpoint.entity {
+    match endpoint.entity() {
         EntityRef::Memory(id) => id.into_inner().to_string(),
         EntityRef::Goal(id) => id.into_inner().to_string(),
     }

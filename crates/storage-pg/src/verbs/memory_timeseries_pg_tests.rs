@@ -409,7 +409,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut abs = draft(None);
         abs.kind = proxiima_core::MemoryKind::Abstraction;
         abs.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Fact,
+            proxiima_core::MemoryKind::Fact,
             chunk_out.memory_id,
         )];
         let abs_out = pg
@@ -421,10 +421,10 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         abs_many.kind = proxiima_core::MemoryKind::Abstraction;
         abs_many.additional_references = vec![
             proxiima_core::EdgeEndpoint::memory(
-                proxiima_core::EntityKind::Fact,
+                proxiima_core::MemoryKind::Fact,
                 chunk_out.memory_id,
             ),
-            proxiima_core::EdgeEndpoint::memory(proxiima_core::EntityKind::Fact, other.memory_id),
+            proxiima_core::EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, other.memory_id),
         ];
         pg.ingest_fact_atomic(&permit, &abs_many, None)
             .await
@@ -433,7 +433,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut abs_from_abs = draft(None);
         abs_from_abs.kind = proxiima_core::MemoryKind::Abstraction;
         abs_from_abs.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abs_out.memory_id,
         )];
         pg.ingest_fact_atomic(&permit, &abs_from_abs, None)
@@ -443,7 +443,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut persp_from_fact = draft(None);
         persp_from_fact.kind = proxiima_core::MemoryKind::Perspective;
         persp_from_fact.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Fact,
+            proxiima_core::MemoryKind::Fact,
             chunk_out.memory_id,
         )];
         let err = pg
@@ -460,7 +460,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut persp_ok = draft(None);
         persp_ok.kind = proxiima_core::MemoryKind::Perspective;
         persp_ok.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abs_out.memory_id,
         )];
         let persp_out = pg
@@ -471,7 +471,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut abs_from_p = draft(None);
         abs_from_p.kind = proxiima_core::MemoryKind::Abstraction;
         abs_from_p.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Perspective,
+            proxiima_core::MemoryKind::Perspective,
             persp_out.memory_id,
         )];
         let err = pg
@@ -501,7 +501,7 @@ async fn memory_timeseries_pins_blob_and_closed_handle() {
         let mut persp = draft(None);
         persp.kind = proxiima_core::MemoryKind::Perspective;
         persp.additional_references = vec![proxiima_core::EdgeEndpoint::memory(
-            proxiima_core::EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abs_out.memory_id,
         )];
         persp.blob_id = Some(blob_id);
@@ -602,4 +602,44 @@ async fn ensure_owner_row_returns_under_concurrent_first_insert() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("concurrent ensure_owner_row must not RowNotFound");
+}
+
+#[test]
+fn read_pin_precedence_matches_ledger_vectors() {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        #[serde(rename = "in")]
+        stronger: [bool; 3],
+        out: bool,
+    }
+    let root: serde_json::Value =
+        serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<Row> =
+        serde_json::from_value(root["Proxiima.Edges.keepReadPin"].clone()).unwrap();
+    assert_eq!(rows.len(), 8);
+    let id = Uuid::now_v7();
+    let reads = proxiima_core::ReadSet::new([proxiima_core::ReadPin::Local {
+        memory: proxiima_core::MemoryId::new(id),
+        space: OwnerId::new(Uuid::now_v7()),
+    }])
+    .unwrap();
+    for row in rows {
+        let slots = row.stronger.map(|pinned| {
+            if pinned {
+                std::slice::from_ref(&id)
+            } else {
+                &[]
+            }
+        });
+        assert_eq!(
+            super::stored_local_reads(&reads, &slots).as_slice(),
+            if row.out {
+                std::slice::from_ref(&id)
+            } else {
+                &[]
+            },
+            "{:?}",
+            row.stronger,
+        );
+    }
 }

@@ -986,10 +986,13 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
         .edges;
     assert!(fork_edges.iter().any(|edge| {
         edge.kind == EdgeKind::Reference
-            && edge.source.entity == EntityRef::Memory(goal_fork.memory_id)
+            && edge.source.entity() == EntityRef::Memory(goal_fork.memory_id)
             && edge.target
                 == proxiima_core::EdgeTargetProjection::Visible {
-                    target: proxiima_core::EdgeEndpoint::memory(EntityKind::Fact, fact),
+                    target: proxiima_core::EdgeEndpoint::memory(
+                        proxiima_core::MemoryKind::Fact,
+                        fact,
+                    ),
                 }
     }));
 
@@ -1058,10 +1061,13 @@ async fn cross_owner_fork_requires_fork_consent_and_goal_write_role() {
         .edges;
     assert!(revised_edges.iter().any(|edge| {
         edge.kind == EdgeKind::Reference
-            && edge.source.entity == EntityRef::Memory(revised_goal_fork)
+            && edge.source.entity() == EntityRef::Memory(revised_goal_fork)
             && edge.target
                 == proxiima_core::EdgeTargetProjection::Visible {
-                    target: proxiima_core::EdgeEndpoint::memory(EntityKind::Perspective, source),
+                    target: proxiima_core::EdgeEndpoint::memory(
+                        proxiima_core::MemoryKind::Perspective,
+                        source,
+                    ),
                 }
     }));
 

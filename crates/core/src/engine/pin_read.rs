@@ -18,13 +18,13 @@ use super::errors::internal_storage_error;
 /// Floor on incoming `read_edges` source pages so a small hop `limit`
 /// still amortizes GIN. Single-edge probes need only two source rows to
 /// establish whether the returned edge has a continuation.
-const INBOUND_SOURCE_PAGE_MIN: u32 = 256;
+const INBOUND_SOURCE_PAGE_MIN: u32 = crate::ledger!(Proxiima.Edges.inboundSourceFloor);
 
 type HopKey = (time::OffsetDateTime, uuid::Uuid, uuid::Uuid, &'static str);
 
 struct PinHop {
     source_id: MemoryId,
-    source_kind: EntityKind,
+    source_kind: crate::MemoryKind,
     target: PinTarget,
     kind: EdgeKind,
 }
@@ -106,15 +106,18 @@ async fn resolve_visible_goal_refs(
 fn expand_hops<'a>(nodes: impl IntoIterator<Item = &'a PinNode>) -> Vec<PinHop> {
     let mut hops = Vec::new();
     for node in nodes {
+        let Some(source_kind) = crate::MemoryKind::of(node.kind) else {
+            continue;
+        };
         hops.extend(node.pins().map(|(target_id, kind)| PinHop {
             source_id: node.id,
-            source_kind: node.kind,
+            source_kind,
             target: PinTarget::Memory(target_id),
             kind,
         }));
         hops.extend(node.goal_pins().map(|(target_id, kind)| PinHop {
             source_id: node.id,
-            source_kind: node.kind,
+            source_kind,
             target: PinTarget::Goal(target_id),
             kind,
         }));
@@ -123,6 +126,7 @@ fn expand_hops<'a>(nodes: impl IntoIterator<Item = &'a PinNode>) -> Vec<PinHop> 
 }
 
 fn hop_key(hop: &PinHop) -> HopKey {
+    // `Proxiima.Edges.pageKey`.
     (
         pin_created_at(hop.source_id),
         hop.source_id.into_inner(),
@@ -307,7 +311,7 @@ pub(in crate::engine) async fn edge_exists_from_nodes(
 
 fn inbound_source_page_limit(req: &EdgeReadRequest) -> u32 {
     if req.limit == 1 && req.cursor.is_none() {
-        2
+        crate::ledger!(Proxiima.Edges.singlePinProbeRows)
     } else {
         req.limit.saturating_add(1).max(INBOUND_SOURCE_PAGE_MIN)
     }

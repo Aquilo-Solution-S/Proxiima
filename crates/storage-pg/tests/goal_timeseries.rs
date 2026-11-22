@@ -248,13 +248,15 @@ async fn goal_query_projects_motivation_and_evidence_filters() {
         let base = pg.ingest_fact_atomic(&permit, &fact_draft(), None).await?;
         let mut abstraction = fact_draft();
         abstraction.kind = proxiima_core::MemoryKind::Abstraction;
-        abstraction.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Fact, base.memory_id)];
+        abstraction.additional_references = vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            base.memory_id,
+        )];
         let abstraction = pg.ingest_fact_atomic(&permit, &abstraction, None).await?;
         let mut perspective = fact_draft();
         perspective.kind = proxiima_core::MemoryKind::Perspective;
         perspective.additional_references = vec![EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abstraction.memory_id,
         )];
         let assignment = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
@@ -325,7 +327,7 @@ async fn goal_query_projects_motivation_and_evidence_filters() {
         let mut second = fact_draft();
         second.kind = proxiima_core::MemoryKind::Perspective;
         second.additional_references = vec![EdgeEndpoint::memory(
-            EntityKind::Abstraction,
+            proxiima_core::MemoryKind::Abstraction,
             abstraction.memory_id,
         )];
         let second = pg.ingest_fact_atomic(&permit, &second, None).await?;

@@ -6,7 +6,7 @@ use super::plan::{BlobTarget, GoalTarget, MemoryTarget};
 use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
 
-fn memory_refs(target: &MemoryTarget) -> Result<(Vec<Uuid>, Vec<Uuid>), StorageError> {
+fn memory_refs(target: &MemoryTarget) -> (Vec<Uuid>, Vec<Uuid>) {
     let mut refs = target
         .pins
         .references
@@ -20,11 +20,7 @@ fn memory_refs(target: &MemoryTarget) -> Result<(Vec<Uuid>, Vec<Uuid>), StorageE
         .map(|id| id.into_inner())
         .collect::<Vec<_>>();
     for reference in target.payload.references() {
-        reference
-            .target
-            .validate_shape()
-            .map_err(StorageError::ConstraintViolation)?;
-        let (ids, id) = match reference.target.entity {
+        let (ids, id) = match reference.target.entity() {
             EntityRef::Memory(id) => (&mut refs, id.into_inner()),
             EntityRef::Goal(id) => (&mut goal_refs, id.into_inner()),
         };
@@ -32,7 +28,7 @@ fn memory_refs(target: &MemoryTarget) -> Result<(Vec<Uuid>, Vec<Uuid>), StorageE
             ids.push(id);
         }
     }
-    Ok((refs, goal_refs))
+    (refs, goal_refs)
 }
 
 async fn content_id(
@@ -64,7 +60,7 @@ pub(super) async fn memory(
     target: &MemoryTarget,
     sidecar_tables: &[String],
 ) -> Result<(), StorageError> {
-    let (refs, goal_refs) = memory_refs(target)?;
+    let (refs, goal_refs) = memory_refs(target);
     let content_id = content_id(tx, target).await?;
     let source = &target.source.row;
     let kind = proxiima_core::MemoryKind::of(source.kind)

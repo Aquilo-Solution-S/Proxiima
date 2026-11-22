@@ -62,7 +62,7 @@ fn other_store_origins_are_of_an_admitted_kind() {
     let abstraction_id = crate::new_memory_uuid(5);
     let perspective_id = crate::new_memory_uuid(5);
     let facts = [EdgeEndpoint::memory(
-        EntityKind::Fact,
+        crate::MemoryKind::Fact,
         MemoryId::new(crate::new_memory_uuid(3)),
     )];
     let mixed = admitted_external_origins(
@@ -87,7 +87,7 @@ fn other_store_origins_are_of_an_admitted_kind() {
     assert_eq!(err.code, ErrorCode::InvalidArgument);
     assert!(err.message.contains(&perspective_id.to_string()), "{err:?}");
     let abstractions = [EdgeEndpoint::memory(
-        EntityKind::Abstraction,
+        crate::MemoryKind::Abstraction,
         MemoryId::new(crate::new_memory_uuid(3)),
     )];
     admitted_external_origins(
@@ -112,9 +112,12 @@ fn other_store_origins_are_of_an_admitted_kind() {
 /// origins are one to-Abstraction derivation.
 #[test]
 fn the_output_kind_names_the_derivation_phase() {
-    let fact = EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(crate::new_memory_uuid(3)));
+    let fact = EdgeEndpoint::memory(
+        crate::MemoryKind::Fact,
+        MemoryId::new(crate::new_memory_uuid(3)),
+    );
     let abstraction = EdgeEndpoint::memory(
-        EntityKind::Abstraction,
+        crate::MemoryKind::Abstraction,
         MemoryId::new(crate::new_memory_uuid(3)),
     );
     assert_eq!(
@@ -155,7 +158,7 @@ async fn author_derived_toa_with_origins_passes_manifest_validation() {
         crate::BoundReadSet::default(),
     );
     let origins = [EdgeEndpoint::memory(
-        EntityKind::Fact,
+        crate::MemoryKind::Fact,
         MemoryId::new(uuid::Uuid::now_v7()),
     )];
     let err = engine
@@ -310,11 +313,11 @@ async fn a_node_write_hands_storage_its_origins_and_references() {
     );
     let prior = MemoryId::new(uuid::Uuid::now_v7());
     let origins = [
-        EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(uuid::Uuid::now_v7())),
-        EdgeEndpoint::memory(EntityKind::Fact, MemoryId::new(uuid::Uuid::now_v7())),
+        EdgeEndpoint::memory(crate::MemoryKind::Fact, MemoryId::new(uuid::Uuid::now_v7())),
+        EdgeEndpoint::memory(crate::MemoryKind::Fact, MemoryId::new(uuid::Uuid::now_v7())),
     ];
     let references = [EdgeEndpoint::memory(
-        EntityKind::Abstraction,
+        crate::MemoryKind::Abstraction,
         MemoryId::new(uuid::Uuid::now_v7()),
     )];
     let mut req = request(owner, &origins);

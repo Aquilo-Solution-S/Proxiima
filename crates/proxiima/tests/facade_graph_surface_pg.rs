@@ -953,7 +953,7 @@ impl AbstractionPayload for FacadeAbstraction {
     fn references(&self) -> Vec<PayloadReference> {
         vec![PayloadReference::memory(
             "observed_entity",
-            EntityKind::Fact,
+            proxiima_core::MemoryKind::Fact,
             MemoryId::new(self.observed_entity),
         )]
     }
@@ -1205,13 +1205,17 @@ fn facade_spiice_authoring_symbols_are_reachable() {
     // descriptor to build: a spiice declares fields, not kinds.
     let reference = PayloadReference::memory(
         "symbol_source",
-        EntityKind::Fact,
+        proxiima_core::MemoryKind::Fact,
         MemoryId::new(Uuid::nil()),
     );
     assert_eq!(reference.binding, ReferenceBinding::Pin);
     assert_eq!(EdgeKind::Origin.as_str(), "origin");
     assert_eq!(
-        EdgeEndpoint::memory(EntityKind::Abstraction, MemoryId::new(Uuid::nil())).layer(),
+        EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Abstraction,
+            MemoryId::new(Uuid::nil())
+        )
+        .layer(),
         Some(1)
     );
 

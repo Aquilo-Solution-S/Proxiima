@@ -14,9 +14,19 @@ use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::{EdgeKind, InboundPinQuery, MemoryId};
 use crate::{Tool, ToolCtx, ToolError};
 
-const MAX_SEEDS: usize = 8;
-const MAX_DEPTH: u32 = 8;
-const DEFAULT_DEPTH: u32 = 3;
+const MAX_SEEDS: usize = crate::ledger!(Proxiima.Edges.maxThinkSeeds);
+const MAX_DEPTH: u32 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
+const DEFAULT_DEPTH: u32 = crate::ledger!(Proxiima.Edges.defaultWalkDepth);
+
+fn think_direction_description() -> String {
+    use EdgeKind::{Origin, Read, Reference};
+    format!(
+        "ancestors (default): recursively follow {origin}, subject {reference}, and {read} pins. descendants: recursively follow local {origin} and {read} pins inbound. episode_siblings: other memories that reference what a seed references, such as items bound in one core_episode_commit.",
+        origin = Origin.as_str(),
+        reference = Reference.as_str(),
+        read = Read.as_str(),
+    )
+}
 
 #[derive(Debug, Default)]
 pub struct ThinkTool;
@@ -24,13 +34,13 @@ pub struct ThinkTool;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ThinkArgs {
     #[schemars(
-        length(min = 1, max = 8),
+        length(min = 1, max = MAX_SEEDS),
         description = "Start memories: memory UUIDs. Every direction walks from all seeds."
     )]
     pub seeds: Vec<String>,
     #[serde(default)]
     #[schemars(
-        description = "ancestors (default): what the seeds were made from or are about, recursively. descendants: memories made from the seeds, recursively. episode_siblings: other memories that reference what a seed references, e.g. items bound in one core_episode_commit."
+        description = think_direction_description()
     )]
     pub direction: ThinkDirection,
     #[serde(default = "default_depth")]
@@ -423,6 +433,7 @@ async fn next_hop(
             .collect()),
         ThinkDirection::Descendants => {
             let mut next = Vec::new();
+            // `Proxiima.Edges.localDescendantKinds`.
             for kind in [EdgeKind::Origin, EdgeKind::Read] {
                 let inbound = engine
                     .inbound_pin_nodes(

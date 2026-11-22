@@ -7,8 +7,8 @@
 use proxiima_core::storage_ports::{MemoryAuthoringPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::{authenticated_context, owner_scope_for_tests};
 use proxiima_core::{
-    AuthPath, AuthzContext, EdgeEndpoint, EmbeddingDim, EmbeddingSpace, EntityKind, MemoryId,
-    MemoryKind, OwnerId, OwnerScope, Role, UserId,
+    AuthPath, AuthzContext, EdgeEndpoint, EmbeddingDim, EmbeddingSpace, MemoryId, MemoryKind,
+    OwnerId, OwnerScope, Role, UserId,
 };
 use proxiima_pg_testkit::DbGuard;
 use proxiima_storage_pg::test_fixtures::{TestMemory, TestNote, create_embedding_of, fresh_pg};
@@ -408,7 +408,10 @@ async fn memory_reads_omit_a_memory_of_a_kind_the_caller_may_not_read() {
     let (fact, _) = w.write(w.owner, TestMemory::fact()).await;
     let grounded = TestMemory::fact()
         .kind(MemoryKind::Abstraction)
-        .references(vec![EdgeEndpoint::memory(EntityKind::Fact, fact)]);
+        .references(vec![EdgeEndpoint::memory(
+            proxiima_core::MemoryKind::Fact,
+            fact,
+        )]);
     let (abstraction, _) = w.write(w.owner, grounded).await;
     for id in [fact, abstraction] {
         w.give_vector(w.owner, id, "small", 384).await;

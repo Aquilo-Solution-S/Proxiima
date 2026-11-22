@@ -11,7 +11,7 @@
 use crate::count_u64;
 use crate::edge::EdgeEndpoint;
 use crate::scope::{ScopeKind, ScopeRef};
-use crate::{EntityKind, GoalId, MemoryId, SchemaId};
+use crate::{GoalId, MemoryId, MemoryKind, SchemaId};
 
 /// How a schema-declared reference field addresses the node it points
 /// at. A binding is a property of the *field*, decided by the schema
@@ -61,7 +61,7 @@ pub struct PayloadReference {
 impl PayloadReference {
     /// Reference a pinned memory row.
     #[must_use]
-    pub const fn memory(field: &'static str, kind: EntityKind, memory_id: MemoryId) -> Self {
+    pub const fn memory(field: &'static str, kind: MemoryKind, memory_id: MemoryId) -> Self {
         Self {
             field,
             binding: ReferenceBinding::Pin,
@@ -536,7 +536,7 @@ pub trait FactPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::new()
+        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -610,7 +610,7 @@ pub trait AbstractionPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::new()
+        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -670,7 +670,7 @@ pub trait PerspectivePayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::new()
+        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -737,7 +737,7 @@ pub trait GoalPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::new()
+        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
     }
     /// Per-schema typed Goal sidecar table, or `None` when the Goal's
     /// typed payload has no schema-specific storage beyond

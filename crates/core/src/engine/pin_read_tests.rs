@@ -11,7 +11,7 @@ use std::sync::Arc;
 fn hop(source: MemoryId, target: MemoryId, kind: EdgeKind) -> PinHop {
     PinHop {
         source_id: source,
-        source_kind: EntityKind::Abstraction,
+        source_kind: crate::MemoryKind::Abstraction,
         target: PinTarget::Memory(target),
         kind,
     }

@@ -15,8 +15,7 @@ use proxiima_core::verbs::goal_write::{
     SystemOrigin,
 };
 use proxiima_core::{
-    EdgeEndpoint, EntityKind, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry, StorageError,
-    UserId,
+    EdgeEndpoint, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry, StorageError, UserId,
 };
 use proxiima_core::{GoalEditPermit, MemoryKind};
 use proxiima_pg_testkit::{db_url, drop_db};
@@ -63,11 +62,11 @@ async fn perspective_evidence_is_rejected_in_tx() {
         let permit = OwnerWritePermit::admin_for_tests(owner);
         let fact = pg.ingest_fact_atomic(&permit, &draft(MemoryKind::Fact), None).await?;
         let mut abs = draft(MemoryKind::Abstraction);
-        abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+        abs.additional_references = vec![EdgeEndpoint::memory(proxiima_core::MemoryKind::Fact, fact.memory_id)];
         let abs = pg.ingest_fact_atomic(&permit, &abs, None).await?;
         let mut perspective = draft(MemoryKind::Perspective);
         perspective.additional_references =
-            vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
+            vec![EdgeEndpoint::memory(proxiima_core::MemoryKind::Abstraction, abs.memory_id)];
         let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let topology = GoalTopologyWrite::new(
@@ -520,11 +519,16 @@ async fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
         .ingest_fact_atomic(&permit, &draft(MemoryKind::Fact), None)
         .await?;
     let mut abs = draft(MemoryKind::Abstraction);
-    abs.additional_references = vec![EdgeEndpoint::memory(EntityKind::Fact, fact.memory_id)];
+    abs.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Fact,
+        fact.memory_id,
+    )];
     let abs = pg.ingest_fact_atomic(&permit, &abs, None).await?;
     let mut perspective = draft(MemoryKind::Perspective);
-    perspective.additional_references =
-        vec![EdgeEndpoint::memory(EntityKind::Abstraction, abs.memory_id)];
+    perspective.additional_references = vec![EdgeEndpoint::memory(
+        proxiima_core::MemoryKind::Abstraction,
+        abs.memory_id,
+    )];
     let perspective = pg.ingest_fact_atomic(&permit, &perspective, None).await?;
     Ok(Fixture {
         db_name,

@@ -12,18 +12,24 @@ use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest};
 use crate::{ToolCtx, ToolError};
 
-const MAX_LINEAGE_DEPTH: u32 = 8;
-const DEFAULT_LINEAGE_DEPTH: u32 = 3;
+const MAX_LINEAGE_DEPTH: u32 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
+const DEFAULT_LINEAGE_DEPTH: u32 = crate::ledger!(Proxiima.Edges.defaultWalkDepth);
+
+fn lineage_direction_description() -> String {
+    use crate::EdgeKind::{Origin, Read, Reference};
+    format!(
+        "ancestors (default): follow {origin} pins, declared subjects as {reference} pins, and {read} pins. Other-store targets are leaves. descendants: follow local {origin} and {read} pins inbound.",
+        origin = Origin.as_str(),
+        reference = Reference.as_str(),
+        read = Read.as_str(),
+    )
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalkMemoryLineageArgs {
     /// Memory UUID.
     pub memory: String,
-    /// Walk direction: `ancestors` walks toward what this memory was made
-    /// from or is about (default), the edges `core_think` follows:
-    /// `origin`, declared subjects as `reference`, and other stores'
-    /// memories as leaves; `descendants` follows `origin` edges toward
-    /// what was made from it.
+    #[schemars(description = lineage_direction_description())]
     #[serde(default = "default_direction")]
     pub direction: WalkMemoryLineageDirectionArg,
     /// Maximum hop distance from the start memory; clamped to 1..=8,
@@ -117,9 +123,7 @@ pub struct LineageNodeOutput {
     pub unavailable_reason: Option<UnavailableReason>,
 }
 
-/// One hop of the walk: `origin` (made from) or, toward ancestors,
-/// `reference` (a declared subject, e.g. an interpretation's). An edge to
-/// another store's memory carries its recorded kind (#480).
+/// One hop of the walk: an origin, a declared subject reference, or a session read.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LineageEdgeOutput {
     pub source: String,
