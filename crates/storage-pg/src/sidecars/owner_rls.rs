@@ -65,6 +65,7 @@ impl PgSidecarRegistryFrozen {
         let expected = self.owner_follows_memory_sidecar_tables();
         // A registered table the database does not have is not generated
         // state: synchronizing skips it, and no migration run re-creates it.
+        // `Proxiima.Payloads.followsBootRefusal`.
         let absent: Vec<String> = sqlx::query_scalar(
             "SELECT expected.table_name FROM unnest($1::text[]) AS expected(table_name)
               WHERE NOT EXISTS (

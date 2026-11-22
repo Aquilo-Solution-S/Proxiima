@@ -116,6 +116,7 @@ fn atom_from_row(row: &PgRow, index: usize) -> Result<SidecarAtom, StorageError>
             "natural-key column is null".into(),
         ));
     }
+    // `Proxiima.Payloads.decodeStoredKey`.
     match raw.type_info().name() {
         "UUID" => row.try_get(index).map(SidecarAtom::Uuid),
         "TEXT" | "VARCHAR" => row.try_get(index).map(SidecarAtom::Text),

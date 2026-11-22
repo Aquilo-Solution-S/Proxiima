@@ -244,8 +244,7 @@ pub(crate) async fn ingest_unpinned_fact_at(
     Ok((outcome, occurred_at))
 }
 
-/// Take every declared scope's fence shared, then run each scope's
-/// generated liveness probe under it.
+/// `Proxiima.Payloads.scopeAdmissionOrder`.
 ///
 /// The probe is the spiice's declaration made executable — `SELECT
 /// EXISTS(...)` over the registry table, id column and owner columns the

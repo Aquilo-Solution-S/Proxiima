@@ -96,8 +96,7 @@ pub struct MemorySchemaSpec {
 }
 
 impl MemorySchemaSpec {
-    /// A spec with no declared display fields; reads fall back to the
-    /// legacy payload keys. See [`Self::with_display_fields`].
+    /// A spec with no declared SQL display fields. See [`Self::with_display_fields`].
     #[must_use]
     pub const fn new(
         kind: EntityKind,
@@ -135,6 +134,7 @@ impl MemorySchemaSpec {
         payload: Option<&SidecarPayload>,
         fallback: Option<&str>,
     ) -> Option<String> {
+        // `Proxiima.Payloads.displaySources`.
         payload
             .and_then(|payload| payload.display().body)
             .or_else(|| fallback.map(ToOwned::to_owned))

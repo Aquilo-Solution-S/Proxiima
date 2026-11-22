@@ -42,6 +42,7 @@ use super::{
 /// when it declares no `Surface` or no owner column, when the predicate list
 /// is empty, or when a table/column name is not a legal identifier.
 /// `Internal` on query failure.
+// `Proxiima.Payloads.sessionReadFilters`.
 pub(crate) async fn read_own_sidecar(
     connection: &mut PgConnection,
     sidecars: &PgSidecarRegistryFrozen,

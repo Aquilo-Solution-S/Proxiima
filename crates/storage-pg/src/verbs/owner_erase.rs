@@ -381,12 +381,7 @@ async fn delete_keyed_surfaces(
 
 /// Erase surfaces the contract says carry their own owner.
 ///
-/// The owner-pinned half is the transfer doctrine: these rows record an act,
-/// not a Memory. An owner transfer moves the Memory and leaves them behind,
-/// so reaching them through `selected_memories` would make them unerasable
-/// by the owner that wrote them (its Memory is gone) and erasable by the
-/// owner that received it (which never owned them) — zombie rows on one
-/// side, someone else's audit trail on the other.
+/// `Proxiima.Payloads.pinnedInverse`.
 ///
 /// Source-scoped erase still asks the Memory which source a call belongs to,
 /// deliberately without an owner predicate on that lookup: the row being
@@ -527,11 +522,6 @@ async fn erase_selected(
     let source_cursors = delete_source_cursors(tx, owner, scope).await?;
     record_count(tx, "source_cursors", source_cursors).await?;
 
-    // The whole sidecar story, read off the declarations. A surface whose
-    // inverse is `ByKey` and whose key is a memory or goal `t` is deleted
-    // through the matching selection set; owner-pinned surfaces are held out
-    // of it, because their rows do not follow a transfer and the selection
-    // set is the wrong set for them in both directions.
     delete_keyed_surfaces(tx, surfaces, KeyedSet::Memories).await?;
     delete_keyed_surfaces(tx, surfaces, KeyedSet::Goals).await?;
     delete_keyed_surfaces(tx, surfaces, KeyedSet::GoalHandles).await?;

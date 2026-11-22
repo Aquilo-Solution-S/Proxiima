@@ -102,6 +102,7 @@ where
     .await
 }
 
+// `Proxiima.Payloads.ownedHeadColumns`.
 async fn owned_head_column<'e, E>(
     executor: E,
     owner: OwnerId,

@@ -217,6 +217,7 @@ impl PgSidecarRegistry {
     /// `OWNER` mode contradicts its schema's declared transfer / Keep rule,
     /// or its `pg_sidecar!(key: …)` column contradicts the `Surface` that
     /// declares the same table.
+    // `Proxiima.Payloads.sidecarAgreement`.
     pub fn freeze_against(
         mut self,
         registry: &proxiima_core::SpiiceRegistryFrozen,

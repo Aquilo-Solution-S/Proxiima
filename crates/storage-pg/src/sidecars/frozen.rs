@@ -340,16 +340,12 @@ impl PgSidecarRegistryFrozen {
         tables
     }
 
-    /// Memory sidecar tables that carry their own `owner_id` (see
-    /// [`super::PgMemoryPayload::OWNER`] is [`crate::sidecars::SidecarOwnerMode::Pinned`]),
-    /// in name order.
+    /// Pinned Memory sidecar tables in name order, keyed by stamped owner for whole-owner inverses.
     ///
-    /// Owner erase and export select these by the sidecar's OWN owner
-    /// rather than through the Memory, because a transfer leaves them
-    /// behind: joining through the Memory would put them out of the writing
-    /// owner's reach and into the receiving owner's bundle.
+    /// A Memory transfer can leave the row with its original owner.
     #[must_use]
     pub fn owner_pinned_memory_sidecar_tables(&self) -> Vec<String> {
+        // `Proxiima.Payloads.pinnedInverse`.
         let mut tables: Vec<String> = self
             .entries
             .values()
@@ -1002,6 +998,7 @@ impl PgSidecarWriter {
     /// not match the registered Rust type, or when the schema declares
     /// `LanguagePolicy::PerRow` and the write declares no language. Returns
     /// storage errors from the concrete inserter.
+    // `Proxiima.Payloads.sidecarWrite`.
     pub(crate) async fn insert_memory_sidecar(
         &self,
         tx: &mut Transaction<'_, Postgres>,

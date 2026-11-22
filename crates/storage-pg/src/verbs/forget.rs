@@ -71,19 +71,7 @@ pub(crate) fn kinds_within(limit: Option<proxiima_core::MemoryKind>) -> Vec<PgMe
         .collect()
 }
 
-/// Owner-pinned sidecars do not take part in forget/restore at all.
-///
-/// They are not the Memory's data: they belong to the owner that acted, and
-/// after a transfer that is not the owner doing the forgetting. Hiding them
-/// with the Memory would let the receiving owner hide — or, by erasing the
-/// Memory, destroy — another owner's audit trail. They simply stay where
-/// they are and stay visible, which is safe because they hold no foreign key
-/// into `memory`.
-///
-/// The same predicate decides which stamps get a presence trigger: an
-/// owner-pinned stamp is a record of a past write, not a claim about the
-/// present, so `stamp ⊆ rows` cannot be asked of it. One function, so the
-/// forget lane and the write-time constraint cannot drift apart.
+/// `Proxiima.Payloads.pinnedInverse`. A pinned audit row can outlive its Memory.
 fn is_owner_pinned(sidecars: &PgSidecarRegistryFrozen, table: &str) -> bool {
     sidecars.is_owner_pinned_memory_sidecar_table(table)
 }

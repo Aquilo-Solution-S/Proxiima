@@ -202,6 +202,7 @@ impl SchemaInfo {
 /// calls it to run the same checks or grants on the same set.
 #[must_use]
 pub fn composed_schema_names(registry: &SpiiceRegistryFrozen) -> Vec<String> {
+    // `Proxiima.Payloads.storageSchemaCensus`.
     let mut schemas = vec!["proxiima_core".to_owned()];
     for contract in registry.contracts() {
         for surface in contract.all_surfaces() {
@@ -439,6 +440,7 @@ impl FrozenIndex {
         embed_units: &[MemoryEmbedUnit],
     ) -> Self {
         let mut index = Self::default();
+        // `Proxiima.Payloads.schemaIndices`.
         for (position, schema) in schemas.iter().enumerate() {
             index
                 .schema_by_id_version
@@ -948,10 +950,10 @@ impl SpiiceRegistryFrozen {
 
     /// The descriptor registered under `name`, if any.
     ///
-    /// Exact-name only: the REST router keeps its own lookup because it also
-    /// accepts a request's provider-safe alias for a canonical name.
+    /// The REST router also resolves provider-safe aliases.
     #[must_use]
     pub fn mcp_tool(&self, name: &str) -> Option<&ToolDescriptor> {
+        // `Proxiima.Payloads.descriptorMatches`.
         self.mcp_tools.iter().find(|tool| tool.name == name)
     }
 

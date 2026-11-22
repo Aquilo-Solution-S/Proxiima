@@ -79,10 +79,7 @@ impl SpiiceRegistry {
                 });
             }
         }
-        // Every Memory/Goal schema is typed; only cited-object schemas may be
-        // opaque. A typed descriptor whose ingress parser was dropped is
-        // unusable at the protocol boundary, so catch that internal drift
-        // at startup rather than at first write.
+        // `Proxiima.Payloads.IngressShape`.
         for schema in &self.schemas {
             if !schema.has_typed_ingress && schema.kind != PayloadKind::CitedObject {
                 return Err(SpiiceRegistryError::OpaqueSchemaKind {

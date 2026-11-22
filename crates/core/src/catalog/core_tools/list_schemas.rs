@@ -68,6 +68,7 @@ pub async fn list_schemas(
     ctx: ToolCtx,
     args: ListSchemasArgs,
 ) -> Result<ListSchemasOutput, ToolError> {
+    // `Proxiima.Payloads.listSchemaInventory`.
     let schemas = ctx
         .registry()
         .list()
@@ -121,6 +122,7 @@ pub async fn get_schema(
     let id = SchemaId::new(schema_id.to_string());
     let version = SchemaVersion::new(schema_version);
     let missing = || ToolError::NotFound(format!("schema {schema_id}/{schema_version} not found"));
+    // `Proxiima.Payloads.versionedSchemaAvailable`.
     let info = ctx.registry().lookup(&id, version).ok_or_else(missing)?;
     let json_schema = ctx
         .registry()

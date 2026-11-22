@@ -131,6 +131,7 @@ async fn payload_subjects(
             continue;
         };
         for reference in payload.references() {
+            // `Proxiima.Payloads.payloadSubjects`.
             if columns.contains(&reference.field)
                 && let Some(id) = reference.target.memory_id()
             {

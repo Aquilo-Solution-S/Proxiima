@@ -716,7 +716,7 @@ fn expected_declaration_triggers(
 /// Every declaration trigger the linked spiices expect, as `pg_trigger` sees
 /// it — and nothing else.
 ///
-/// All four families at once (see the module docs): row ⊆ stamp on `INSERT`
+/// `Proxiima.Payloads.enforceStamp`: row ⊆ stamp on `INSERT`
 /// and on an `UPDATE` of the key column, both on the sidecar table, and
 /// stamp ⊆ rows at both ends — the presence trigger on
 /// `proxiima_core.memory` and the orphan guard on the sidecar's own `DELETE`.

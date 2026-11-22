@@ -76,6 +76,7 @@ pub trait PgMemoryPayload: Send + Sync + 'static {
         kind: PayloadKind,
         memory_ids: &'t [MemoryId],
     ) -> PgMemoryPayloadBatchFuture<'t> {
+        // `Proxiima.Payloads.dispatchLoader`.
         Box::pin(async move {
             let _ = kind;
             let mut payloads = Vec::new();

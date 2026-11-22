@@ -566,6 +566,7 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.assert_fact_schema_drained(text, text[]) FROM PUBLIC;
 
+-- `Proxiima.Payloads.enforceStamp`.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_declared_sidecar_present() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1809,6 +1810,7 @@ COMMENT ON FUNCTION proxiima_core.install_owner_rls_table(target_schema text, ta
 -- migration names no core table. registrant is the spiice id. Re-running it
 -- with the same arguments changes nothing; the owner mode is read from the
 -- table, never passed.
+-- `Proxiima.Payloads.installMemorySidecar`.
 CREATE OR REPLACE FUNCTION proxiima_core.install_sidecar(target_schema text, target_table text, registrant text, class proxiima_core.owner_rls_class DEFAULT NULL::proxiima_core.owner_rls_class, memory_key text DEFAULT 't'::text)
  RETURNS void
  LANGUAGE plpgsql
@@ -1955,6 +1957,7 @@ COMMENT ON FUNCTION proxiima_core.install_sidecar(target_schema text, target_tab
 -- core table. referenced and on_delete are closed
 -- vocabularies. The constraint is the record: erase reads the foreign keys to
 -- a memory from the catalog, and the table's DROP takes the constraint along.
+-- `Proxiima.Payloads.installReference`.
 CREATE OR REPLACE FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text)
  RETURNS void
  LANGUAGE plpgsql

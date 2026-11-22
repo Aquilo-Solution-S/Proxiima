@@ -216,6 +216,7 @@ def validate(registrations: list[Registration], root: Path) -> list[str]:
     by_normalized: dict[str, list[Registration]] = {}
     for registration in registrations:
         by_normalized.setdefault(registration.normalized_id, []).append(registration)
+        # `Proxiima.Payloads.schemaIdSpelling`.
         if registration.schema_id != registration.schema_id.strip():
             diagnostics.append(
                 f"{registration.location(root)}: schema id has leading/trailing whitespace: {registration.schema_id!r}"

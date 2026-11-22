@@ -252,20 +252,13 @@ fn validate_host_export_rows(
 /// The statement one surface's declaration earns it, or `None` when the
 /// surface declares itself out of the bundle.
 ///
-/// Two shapes, decided by `owner_column` — which is a claim, not an
-/// omission. A surface carrying its own owner is filtered on it directly:
-/// that is the transfer doctrine for owner-pinned rows, whose audit history
-/// stays in the bundle of the owner that wrote it after the Memory it
-/// describes has been transferred away, and out of the receiving owner's. A
-/// surface with a `None` `owner_column` asserts it is reached through its
-/// key's owner, so the statement joins that key's home table and filters
-/// there. `try_freeze` refuses a spiice that declares an exportable surface
-/// which is neither, so the `Internal` arm below is unreachable through a
-/// frozen registry and is kept for the synthetic surfaces tests build.
+/// Synthetic test surfaces may reach the missing-owner error that freeze
+/// rules out under `Proxiima.Payloads.exportOwner`.
 fn export_statement(
     surface: &Surface,
     primary_key: &[String],
 ) -> Result<Option<SqlText>, StorageError> {
+    // `Proxiima.Payloads.exportProjection`.
     let projection = match surface.export {
         ExportRule::Excluded { .. } | ExportRule::DerivedFrom { .. } => return Ok(None),
         // The surface is aliased `s`, never `t`. With a single range table
@@ -307,6 +300,7 @@ fn export_statement(
     // checks the catalog for every exported surface). `IS NOT DISTINCT FROM` made the
     // planner read every owner's rows and filter them, so one small
     // owner's export cost grew with the whole store.
+    // `Proxiima.Payloads.exportOwner` `Proxiima.Payloads.pinnedInverse`.
     let sql = if let Some(owner_column) = surface.owner_column {
         // `s.{owner}` is the surface's OWN owner column as it declares it.
         // The branch below joins to the key's home table instead, and
