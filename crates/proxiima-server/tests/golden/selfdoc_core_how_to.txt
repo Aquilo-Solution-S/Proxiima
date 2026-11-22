@@ -71,7 +71,7 @@ An `idempotency_key` names one request: the same key with the same content repla
 1. **Observe.** `core_remember(title=..., body=...)` for each distinct thing that happened → Facts `fact-a`, `fact-b`, `fact-c`.
 2. **Abstract.** Once a pattern recurs across those Facts: `core_derive(kind="Abstraction", source_handles=["fact-a","fact-b","fact-c"], …)` → `abstraction-d`, with an `origin` entry to each Fact.
 3. **Take a stance.** When your view genuinely shifts: `core_derive(kind="Perspective", source_handles=["abstraction-d"], …)` → `perspective-e`.
-4. **Wire intent.** `core_goal` action=set to record what to pursue; action=decompose to break it down.
+4. **Wire intent.** `core_goal` action=set to record what to pursue; action=decompose to break it down. Close children before their parent, then mark the parent achieved when its work is done.
 
 ## Reading: which surface first
 

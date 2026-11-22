@@ -8,7 +8,9 @@ concepts and integration; avoid a second invariant or configuration ledger.
 - The ledger in `lean/Proxiima/` owns the rules it declares. The proof library
   in `lean/Causa/` holds the graph proofs and remaining principles. Link the
   full declaration name where code holds a rule. Run `lake build` and
-  `lake exe ledger check` in `lean/`. CI checks the generated artifacts.
+  `lake exe ledger check` in `lean/` to check the ledger's consistency and
+  resolve its links. Rust code and its tests define runtime behavior. The
+  ledger check does not prove Rust refinement. CI checks the generated artifacts.
 - Types/defaults/limits outside the ledger: rustdoc. Tables: migrations; core functions, triggers,
   policies and views: `crates/storage-pg/definitions/`. Settings: each
   crate's `settings!` block, read only through `Setting::read`;

@@ -1,4 +1,15 @@
-//! `Proxiima.Goals.publishChangeFact` and `Proxiima.Goals.reserveChangeFact`
+//! The goal-change Fact: what a goal write did, as an ordinary core Fact.
+//!
+//! A goal write is an action, and an action is a Fact (docs/host-integration.md). While the
+//! runtime has an outbox consumer, every write that inserts a goal row also
+//! writes one `core/goal-change-v1` Fact in the same transaction, and the
+//! schema is listenable, so the consumers see goal writes on the same feed as
+//! every other Fact (docs/host-integration.md). `GoalChangeV1::LISTENABLE` is
+//! `false` because listenability is a runtime fact here, not a type one:
+//! `SpiiceRegistry::publish_goal_changes` turns it on before freeze.
+//!
+//! Storage composes the payload inside the goal transaction, because the new
+//! version's `t` and the series handle are minted there.
 
 use crate::verbs::goal_write::GoalState;
 use crate::{
@@ -7,7 +18,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-/// `Proxiima.Goals.PendingWork`.
+/// What a pause does with the work a scheduler already queued for the goal.
+///
+/// Proxiima records the decision and does not interpret it. Running work
+/// finishes either way.
 #[derive(
     Debug,
     Clone,
@@ -26,9 +40,9 @@ use serde::{Deserialize, Serialize};
     rename_all = "snake_case"
 )]
 pub enum PendingWork {
-    /// Hold queued work until resume.
+    /// The scheduler holds the queued work and runs it after a resume.
     Keep,
-    /// Drop queued or retryable work.
+    /// The scheduler drops the queued work, ready or waiting to retry.
     Discard,
 }
 
@@ -43,14 +57,28 @@ impl PendingWork {
     }
 }
 
-/// `Proxiima.Goals.changeFields`.
+/// What a goal write did. Closed: `pending` exists only on [`Self::Pause`]
+/// and `parent` only on [`Self::DecomposeChild`], so the other variants
+/// cannot carry them.
+///
+/// Serialized as `{"kind": "...", ...}`. A non-pause change says nothing
+/// about pending work: on abandon or achieve the goal is terminal, and a
+/// scheduler drops what it queued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// `Proxiima.Goals.changeFields`.
 pub enum GoalChange {
+    /// A new goal series.
     Set,
+    /// A replacement of an Active goal's content.
     Modify,
-    DecomposeChild { parent: GoalId },
-    Pause { pending: PendingWork },
+    /// A child created by a decompose. The child starts its own series.
+    DecomposeChild {
+        parent: GoalId,
+    },
+    Pause {
+        pending: PendingWork,
+    },
     Resume,
     Abandon,
     Achieve,
@@ -128,7 +156,9 @@ impl GoalChange {
         }
     }
 
-    /// `Proxiima.Goals.changeFields`.
+    /// Rebuild a change from the sidecar's three columns: the one place a
+    /// stored row becomes a [`GoalChange`]. The table's CHECKs refuse the
+    /// rows this refuses; the second look is for a row that skipped them.
     ///
     /// # Errors
     ///
