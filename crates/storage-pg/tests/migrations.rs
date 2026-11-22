@@ -12,6 +12,41 @@ use proxiima_storage_pg::test_fixtures::{
 };
 use uuid::Uuid;
 
+#[test]
+fn vector_lane_selection_matches_ledger_vectors() {
+    use std::borrow::Cow;
+
+    use proxiima_storage_pg::VectorStorage;
+    use sqlx::SqlSafeStr;
+    use sqlx::migrate::{Migration, MigrationType};
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    for row in vectors["Proxiima.Migrations.installsPgvector"]
+        .as_array()
+        .unwrap()
+    {
+        let lane = match row["in"][0].as_str().unwrap() {
+            "local" => VectorStorage::Local,
+            "hostIndex" => VectorStorage::HostIndex,
+            value => panic!("unknown vector lane {value}"),
+        };
+        let description = if row["in"][1].as_bool().unwrap() {
+            "pgvector local vectors"
+        } else {
+            "baseline"
+        };
+        let migration = Migration::new(
+            1,
+            Cow::Borrowed(description),
+            MigrationType::Simple,
+            "SELECT 1".into_sql_str(),
+            false,
+        );
+        assert_eq!(row["out"], lane.applies(&migration), "{row}");
+    }
+}
+
 trait DatabaseFixture {
     fn pool_for_tests(&self) -> &sqlx::PgPool;
 }

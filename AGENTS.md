@@ -39,10 +39,8 @@ concepts and integration; avoid a second invariant or configuration ledger.
 2. Before pushing, review `origin/main..HEAD` and every still-unrecorded commit since `origin/verified`. Use a different authoring vendor, or a different person for an unaided author. Record its co-author address in `Reviewed-By` on the tip to cover outstanding commits. The trailer states the reviewer's claim, and Verify checks only that it is present and that its address differs from the authors' addresses.
 3. Leave the workspace version alone for routine changes. A deliberate bump requests a numbered release through Verify. Do not tag by hand.
 4. See [`Proxiima.Repository`](docs/ledger.md#repository).
-5. Released migrations are immutable; `scripts/check-migrations.py` pins every
-   released file from `RELEASE_EPOCH`. New migration versions must be above all
-   released versions in their directory. Definitions are edited in place; see
-   [contributing](docs/contributing.md#migrations).
+5. Run `scripts/check-migrations.py` when changing migration history. See
+   [`Proxiima.Migrations`](docs/ledger.md#migrations) and [contributing](docs/contributing.md#migrations).
 
 ## Boundaries checked by code and review
 

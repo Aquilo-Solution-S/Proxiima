@@ -74,6 +74,7 @@ impl PgSidecarRegistryFrozen {
     ///
     /// Returns `ConstraintViolation` when the frozen composition declares the schema retired.
     pub fn ensure_schema_restorable(&self, schema_id: &str) -> Result<(), StorageError> {
+        // `Proxiima.Migrations.retirementChecks`
         if self
             .retired_facts
             .iter()

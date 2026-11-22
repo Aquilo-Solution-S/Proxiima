@@ -127,7 +127,8 @@ pub use verbs::owner_reads::{
 };
 
 /// Ledger namespace boundary between sequential core and dated spiice versions.
-pub const CORE_MIGRATION_VERSION_CEILING: i64 = 9999;
+pub const CORE_MIGRATION_VERSION_CEILING: i64 =
+    proxiima_core::ledger!(Proxiima.Migrations.coreVersionCeiling);
 
 /// Whether a host permits ledger versions absent from its migration sources.
 ///
@@ -160,6 +161,7 @@ impl VectorStorage {
     /// file name starts `pgvector` belongs to [`Self::Local`] alone.
     #[must_use]
     pub fn applies(self, migration: &sqlx::migrate::Migration) -> bool {
+        // `Proxiima.Migrations.installsPgvector`
         match self {
             Self::Local => true,
             Self::HostIndex => !migration.description.starts_with("pgvector"),
@@ -377,8 +379,9 @@ pub async fn run_core_schema(
     policy: MissingMigrationPolicy,
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
+    const MIGRATION_LOCK_KEY: i64 = proxiima_core::ledger!(Proxiima.Migrations.lockKey);
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(i64::from_be_bytes(*b"proxmigr"))
+        .bind(MIGRATION_LOCK_KEY)
         .execute(transaction.as_mut())
         .await
         .map_err(internal)?;

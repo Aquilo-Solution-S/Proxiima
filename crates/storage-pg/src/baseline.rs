@@ -1,11 +1,4 @@
 //! The core baseline gate: what a store's core ledger says about it.
-//!
-//! The core ledger is outside data. [`classify`] reads it once into a
-//! [`CoreLedger`]: a blank database installs the baseline, a store that
-//! records the baseline continues from it, and a store whose ledger is exactly
-//! the previous head is adopted into the baseline by [`adopt`] inside the
-//! migration transaction. Every other ledger is refused with a typed reset
-//! requirement that names the release to pass through.
 
 use std::collections::BTreeSet;
 
@@ -197,7 +190,7 @@ fn previous_head(rows: &[LedgerRow]) -> Option<PreviousHead> {
     })
 }
 
-/// Classify the core ledger `rows`, ordered by version.
+/// Classify the core ledger `rows`, ordered by version. See `Proxiima.Migrations.coreAdmission`.
 ///
 /// `has_schema` says whether a core schema exists; `baseline_version` is the
 /// first embedded core migration. Rows at or above the baseline have been
@@ -320,6 +313,33 @@ mod tests {
             Err(StorageError::SchemaResetRequired { details })
                 if details.contains(PASS_THROUGH_RELEASE)
         )
+    }
+
+    #[test]
+    fn core_admission_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.Migrations.coreAdmission"]
+            .as_array()
+            .unwrap()
+        {
+            let (rows, schema) = match row["in"][0].as_str().unwrap() {
+                "blankWithoutSchema" => (vec![], false),
+                "baselineWithoutEarlierRows" => (ledger([BASELINE]), true),
+                "exactPreviousHead" => (previous_head(true), true),
+                "unreconciled" => (vec![], true),
+                value => panic!("unknown core ledger state {value}"),
+            };
+            let result = classify(&rows, schema, BASELINE);
+            let outcome = match result {
+                Ok(CoreLedger::Blank) => "install",
+                Ok(CoreLedger::Current { .. }) => "continueFromBaseline",
+                Ok(CoreLedger::PreviousHead(_)) => "adoptInMigrationTransaction",
+                Err(StorageError::SchemaResetRequired { .. }) => "requireReset",
+                Err(error) => panic!("unexpected refusal {error}"),
+            };
+            assert_eq!(row["out"], outcome, "{row}");
+        }
     }
 
     #[test]

@@ -293,6 +293,34 @@ macro_rules! ledger {
     (Proxiima.Memory.confidenceDefault) => {
         80
     };
+    // The largest sequential version attributable to the core lane.
+    (Proxiima.Migrations.coreVersionCeiling) => {
+        9999
+    };
+    // The declared environment default for missing recorded versions.
+    (Proxiima.Migrations.missingVersionDefault) => {
+        "reject"
+    };
+    // Maximum byte length of a spiice id in a derived ledger name.
+    (Proxiima.Migrations.maxLedgerIdBytes) => {
+        40
+    };
+    // The advisory lock key shared by migration sessions and source transactions.
+    (Proxiima.Migrations.lockKey) => {
+        8102661242615326578
+    };
+    // The default wait for migration locks in milliseconds.
+    (Proxiima.Migrations.lockWaitMillis) => {
+        5000
+    };
+    // The maximum attempts for a source transaction encountering shared-catalog contention.
+    (Proxiima.Migrations.catalogRetryAttempts) => {
+        5
+    };
+    // The per-attempt multiplier of the shared-catalog retry delay, in milliseconds.
+    (Proxiima.Migrations.catalogRetryDelayMillis) => {
+        100
+    };
     // Memory ceiling ranks in declaration order for Rust.
     (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
         [0, 1, 2, 3]

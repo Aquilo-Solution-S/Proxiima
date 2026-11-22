@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Check migration immutability and monotonic versions.
 
-Released migration files are pinned by release tags from ``RELEASE_EPOCH``.
-Files added after the latest release must have a version greater than every
-version previously released in the same migration directory, and no two files
-in a directory may share a version: agents push to `main` in parallel, and two
-new files with one number rebase without a conflict. Definitions are edited in
-place and are deliberately outside this check.
+`Proxiima.Migrations.historyChecks`. Two migrations with the same number can
+rebase without a Git conflict, so discovery and numbering are checked together.
 """
 from __future__ import annotations
 
@@ -210,6 +206,7 @@ def check_unique_versions(files: dict[str, tuple[str, int]]) -> list[str]:
 
 def run(root: Path) -> int:
     released, summary = check_released_migrations(root)
+    # `Proxiima.Migrations.historyChecks`
     try:
         files = migration_files(root)
     except ValueError as error:

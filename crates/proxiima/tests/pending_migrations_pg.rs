@@ -49,8 +49,7 @@ const BLOCKED: i64 = 20_990_501_000_010;
 const NO_TX: i64 = 20_990_601_000_010;
 
 const BLOCK_KEY: i64 = 7001;
-/// `MIGRATION_LOCK_KEY`: ASCII `proxmigr`.
-const MIGRATION_KEY: i64 = i64::from_be_bytes(*b"proxmigr");
+const MIGRATION_KEY: i64 = proxiima_core::ledger!(Proxiima.Migrations.lockKey);
 
 /// One version's SQL, the same in every lane that ships it.
 fn sql(version: i64) -> &'static str {

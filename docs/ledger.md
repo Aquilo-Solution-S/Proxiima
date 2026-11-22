@@ -2055,6 +2055,336 @@ stateDiagram-v2
 
 - operator output: The layer or spine of each operator phase's output.
 
+## Migrations
+
+**Schema entry**: Which entry points can apply migration DDL.
+
+- explicitMigrate
+- serving
+- maintenance
+- pendingPlan
+
+**Schema work**: The schema operation performed by each entry point.
+
+- apply
+- validate
+- plan
+
+**Preflight check**: The checks required before a validating preflight succeeds.
+
+- ledgerIntegrity
+- coreBaselineAndDefinitions
+- allNonCoreMigrationsApplied
+- sidecarOwnerRls
+- candidateDefinitions
+- schemaEvolutions
+
+**Core history**: The possible identities of the core ledger at admission.
+
+- blankWithoutSchema
+- baselineWithoutEarlierRows
+- exactPreviousHead
+- unreconciled
+
+**Core admission**: How core proceeds after classifying its ledger.
+
+- install
+- continueFromBaseline
+- adoptInMigrationTransaction
+- requireReset
+
+**Missing version policy**: How the host handles a recorded version missing from its composed sources.
+
+- reject
+- allow
+
+**Ledger integrity check**: Checks retained under either missing-version policy.
+
+- successfulRows
+- shippedChecksums
+- ledgerAssignment
+
+**Private lane history**: The private lane's relationship to unknown history when work is pending.
+
+- pendingRootBesideUnknown
+- laterPendingBeforeUnknown
+- compatible
+
+**Lineage conflict**: A private lane conflict that admitting unknown versions cannot waive.
+
+- replaced
+- diverged
+
+**Definition record**: The relation of the recorded definitions to the running binary.
+
+- missingOrChangedChecksum
+- matchingChecksum
+- newerRelease
+- malformedRelease
+
+**Definition work**: How the definitions pass treats its recorded state.
+
+- reinstall
+- keep
+- refuse
+
+**Vector lane**: The two core schema lanes selected by where a store keeps its vectors.
+
+- local
+- hostIndex
+
+**Source order**: The order and direction of a composed migration run.
+
+- coreFirst
+- linkedSourcesInCompositionOrder
+- upMigrationsInMigratorOrder
+
+**Source conflict**: Conflicts checked before connecting to a composed database.
+
+- duplicateUpVersionAcrossComposition
+- duplicateResolvedPrivateLedger
+
+**Ledger selection**: Placement of migration ledgers.
+
+- coreDefault
+- spiiceDefault
+- explicitlyConfigured
+
+**Ledger placement**: The table selected by a migration source's configuration.
+
+- publicCoreLedger
+- publicIdDerivedLedger
+- configuredLedger
+
+**Identifier rule**: Normalization used to compare migration ledger names.
+
+- quotedPartsPreserveCaseAndUnescapeQuotes
+- unquotedPartsFoldAscii
+- truncateOnCharacterBoundary
+- unqualifiedLedgerResolvesToPublic
+
+**Lock holder**: Migration work that shares the same advisory lock.
+
+- fullRunSession
+- planSnapshotSession
+- preflightSnapshotSession
+- sourceTransaction
+
+**Session disposal**: How migrations dispose of session state on completion or cancellation.
+
+- markCloseOnDropBeforeChangingState
+- closeAndReleaseSessionState
+
+**Migration transaction**: The transaction boundaries of source migration and final schema installation.
+
+- requireTransactionalSource
+- sourceSqlAndLedger
+- finalCandidateDefinitionsAndPolicies
+
+**Ledger protection**: The steps that prepare a private ledger in the migration transaction.
+
+- createFromCoreTrackingShape
+- revokeNonOwnerWrites
+- refuseResidualWriteGrants
+
+**History check**: What the repository migration check requires of a lane.
+
+- preserveReleasedBlobsInActiveLanes
+- retireOnlyEmptySpiiceLanes
+- requireVersionedSqlFilenames
+- newVersionsAboveReleasedLaneHead
+- distinctVersionsWithinLane
+- excludeMutableDefinitions
+- pendingEpochOnlyForNextRelease
+
+**Inspection step**: What the schema inspection tool does with its temporary database and output.
+
+- createDisposableDatabase
+- replayEmbeddedSources
+- dumpSeparatedSchemasWithoutLedgers
+- normalizeDumpPreamble
+- dropDisposableDatabaseOnExit
+
+**Inspection destination**: Destinations considered before writing a schema inspection dump.
+
+- ignoredFileInCheckout
+- other
+
+**Dev database source**: Sources in order for the development CLI's database URL.
+
+- databaseUrlFlag
+- databaseUrlSetting
+
+**Reset check**: Required checks for the development database reset.
+
+- exactConfirmation
+- localConnection
+- unprotectedDatabase
+- censusForeignDependents
+- deletePermissionForDependentLedgersOnOptIn
+
+**Reset work**: Work committed together by the development database reset.
+
+- dropProxiimaSchemas
+- dropCompiledSpiiceLedgers
+- deleteAttributableSharedVersions
+- deleteUnattributedAndDependentRowsOnOptIn
+
+**Retirement check**: Database and registry requirements of a retired Fact schema.
+
+- inactiveSchemaWithByKeyInverse
+- unrestorable
+- drainBeforeDestructiveDdl
+
+**Readiness failure**: Decisions on preflight failures requiring operator action.
+
+- unreconciledCoreHistory
+- pendingCoreOrLinkedMigration
+- missingRequiredSidecarState
+
+**Readiness refusal**: Admission errors that distinguish reset from migration.
+
+- requireReset
+- requireMigration
+
+**Catalog failure**: Shared-catalog retry classifications.
+
+- concurrentTupleChange
+- uniqueViolationOnRoleCatalog
+- other
+
+**preflight checks** = \[ledgerIntegrity, coreBaselineAndDefinitions, allNonCoreMigrationsApplied, sidecarOwnerRls, candidateDefinitions, schemaEvolutions]: Schema readiness checks under one locked snapshot.
+
+**core version ceiling** = 9999: The largest sequential version attributable to the core lane.
+
+**missing version default** = "reject": The declared environment default for missing recorded versions.
+
+**ledger integrity** = \[successfulRows, shippedChecksums, ledgerAssignment]: Allowing extra recorded versions does not waive ledger integrity.
+
+**source order** = \[coreFirst, linkedSourcesInCompositionOrder, upMigrationsInMigratorOrder]: Core precedes linked sources and each source applies only up migrations in migrator order.
+
+**source conflicts** = \[duplicateUpVersionAcrossComposition, duplicateResolvedPrivateLedger]: Versions are unique across the composition, and sharing a resolved ledger is allowed only for core's ledger.
+
+**max ledger id bytes** = 40: Maximum byte length of a spiice id in a derived ledger name.
+
+**ledger identifier** = \[quotedPartsPreserveCaseAndUnescapeQuotes, unquotedPartsFoldAscii, truncateOnCharacterBoundary, unqualifiedLedgerResolvesToPublic]: Compare ledger names by their resolved PostgreSQL parts.
+
+**lock holders** = \[fullRunSession, planSnapshotSession, preflightSnapshotSession, sourceTransaction]: The full run, both read snapshots and source transactions serialize on the same key.
+
+**lock key** = 8102661242615326578: The advisory lock key shared by migration sessions and source transactions.
+
+**lock wait millis** = 5000: The default wait for migration locks in milliseconds.
+
+**session disposal** = \[markCloseOnDropBeforeChangingState, closeAndReleaseSessionState]: Mark the connection for close before it can retain session state, including a lock wait.
+
+**migration transactions** = \[requireTransactionalSource, sourceSqlAndLedger, finalCandidateDefinitionsAndPolicies]: Refuse nontransactional source work, and commit the final catalog installation with its policies.
+
+**catalog retry attempts** = 5: The maximum attempts for a source transaction encountering shared-catalog contention.
+
+**catalog retry delay millis** = 100: The per-attempt multiplier of the shared-catalog retry delay, in milliseconds.
+
+**ledger protection** = \[createFromCoreTrackingShape, revokeNonOwnerWrites, refuseResidualWriteGrants]: Private ledgers are prepared under the migration lock with writes confined to their owner.
+
+**history checks** = \[preserveReleasedBlobsInActiveLanes, retireOnlyEmptySpiiceLanes, requireVersionedSqlFilenames, newVersionsAboveReleasedLaneHead, distinctVersionsWithinLane, excludeMutableDefinitions, pendingEpochOnlyForNextRelease]: Released migration history, filenames and numbering are checked per lane.
+
+**inspection steps** = \[createDisposableDatabase, replayEmbeddedSources, dumpSeparatedSchemasWithoutLedgers, normalizeDumpPreamble, dropDisposableDatabaseOnExit]: Inspection replays into an isolated database and drops that database when finished.
+
+**dev database sources** = \[databaseUrlFlag, databaseUrlSetting]: The development migration CLI prefers its URL flag over the environment.
+
+**reset checks** = \[exactConfirmation, localConnection, unprotectedDatabase, censusForeignDependents, deletePermissionForDependentLedgersOnOptIn]: The development reset inspects dependencies and requires opt-in before clearing other lanes.
+
+**reset commit** = \[dropProxiimaSchemas, dropCompiledSpiiceLedgers, deleteAttributableSharedVersions, deleteUnattributedAndDependentRowsOnOptIn]: The development reset commits schema drops and their ledger changes together.
+
+**retirement checks** = \[inactiveSchemaWithByKeyInverse, unrestorable, drainBeforeDestructiveDdl]: Retired Facts keep their erase inverse, and destructive DDL requires the retired storage to be drained.
+
+| schema entry | schema work |
+| --- | --- |
+| explicitMigrate | apply |
+| serving | validate |
+| maintenance | validate |
+| pendingPlan | plan |
+
+- schema work: Only the explicit migration entry point applies schema changes.
+
+| core history | core admission |
+| --- | --- |
+| blankWithoutSchema | install |
+| baselineWithoutEarlierRows | continueFromBaseline |
+| exactPreviousHead | adoptInMigrationTransaction |
+| unreconciled | requireReset |
+
+- core admission: Only a blank store, the baseline or the exact previous head can enter core migration.
+
+| missing version policy | bool | recorded version admitted |
+| --- | --- | --- |
+| reject | yes | yes |
+| reject | no | no |
+| allow | yes | yes |
+| allow | no | yes |
+
+- recorded version admitted: Whether a recorded version is admitted by the source union's missing-version check.
+
+| private lane history | private lineage |
+| --- | --- |
+| pendingRootBesideUnknown | replaced |
+| laterPendingBeforeUnknown | diverged |
+| compatible | — |
+
+- private lineage: A pending root beside unknown history means replacement and later pending work before unknown history means divergence.
+
+| definition record | missing version policy | definition work |
+| --- | --- | --- |
+| missingOrChangedChecksum | reject | reinstall |
+| missingOrChangedChecksum | allow | reinstall |
+| matchingChecksum | reject | keep |
+| matchingChecksum | allow | keep |
+| newerRelease | reject | refuse |
+| newerRelease | allow | keep |
+| malformedRelease | reject | refuse |
+| malformedRelease | allow | refuse |
+
+- definition work: Newer definitions stay in place only under Allow, and an absent or changed checksum calls for transactional reinstallation.
+
+| vector lane | bool | installs pgvector |
+| --- | --- | --- |
+| local | yes | yes |
+| local | no | yes |
+| hostIndex | yes | no |
+| hostIndex | no | yes |
+
+- installs pgvector: Only the local vector lane installs the pgvector migration and vector candidate functions.
+
+| ledger selection | ledger placement |
+| --- | --- |
+| coreDefault | publicCoreLedger |
+| spiiceDefault | publicIdDerivedLedger |
+| explicitlyConfigured | configuredLedger |
+
+- ledger placement: Spiices derive a durable public ledger unless they configure their own.
+
+| inspection destination | inspection destination admitted |
+| --- | --- |
+| ignoredFileInCheckout | yes |
+| other | no |
+
+- inspection destination admitted: Only ignored output files in the checkout may receive schema dumps.
+
+| readiness failure | readiness refusal |
+| --- | --- |
+| unreconciledCoreHistory | requireReset |
+| pendingCoreOrLinkedMigration | requireMigration |
+| missingRequiredSidecarState | requireMigration |
+
+- readiness refusal: Boot preserves typed migration and reset refusals.
+
+| catalog failure | retry catalog |
+| --- | --- |
+| concurrentTupleChange | yes |
+| uniqueViolationOnRoleCatalog | yes |
+| other | no |
+
+- retry catalog: Only shared-catalog contention is eligible for the migration retry budget.
+
 ## Owner authority
 
 **Access ceiling**: The highest memory kind a role can read or write.

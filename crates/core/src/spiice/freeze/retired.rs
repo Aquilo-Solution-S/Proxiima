@@ -2,6 +2,7 @@ use super::{SpiiceRegistry, SpiiceRegistryError};
 use crate::spiice::{EraseRule, KeyShape};
 
 impl SpiiceRegistry {
+    // `Proxiima.Migrations.retirementChecks`
     pub(super) fn validate_retired_facts(&self) -> Result<(), SpiiceRegistryError> {
         let mut schemas = std::collections::HashSet::new();
         let mut tables = std::collections::HashSet::new();

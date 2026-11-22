@@ -656,6 +656,7 @@ fn migration_error(err: MigrationError) -> ProxiimaError {
 /// [`StorageError::MigrationRequired`]: that surfaces as
 /// [`ProxiimaError::MigrationRequired`] with the preflight's own message.
 fn validation_error(err: MigrationError) -> ProxiimaError {
+    // `Proxiima.Migrations.readinessRefusal`
     match err {
         MigrationError::SidecarOwnerRls(StorageError::MigrationRequired { .. })
         | MigrationError::SearchDefinitions(StorageError::MigrationRequired { .. })
@@ -665,5 +666,42 @@ fn validation_error(err: MigrationError) -> ProxiimaError {
             }
         }
         other => migration_error(other),
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn readiness_refusal_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.Migrations.readinessRefusal"]
+            .as_array()
+            .unwrap()
+        {
+            let details = String::from("migration test");
+            let error = match row["in"][0].as_str().unwrap() {
+                "unreconciledCoreHistory" => {
+                    MigrationError::CorePreflight(StorageError::SchemaResetRequired { details })
+                }
+                "pendingCoreOrLinkedMigration" => MigrationError::Ledger {
+                    source: "test",
+                    ledger: "public._sqlx_migrations".into(),
+                    conflict: LedgerConflict::Unapplied { pending: vec![1] },
+                },
+                "missingRequiredSidecarState" => {
+                    MigrationError::SearchDefinitions(StorageError::MigrationRequired { details })
+                }
+                value => panic!("unknown preflight failure {value}"),
+            };
+            let outcome = match validation_error(error) {
+                ProxiimaError::SchemaResetRequired { .. } => "requireReset",
+                ProxiimaError::MigrationRequired { .. } => "requireMigration",
+                other => panic!("unexpected preflight refusal {other}"),
+            };
+            assert_eq!(row["out"], outcome, "{row}");
+        }
     }
 }

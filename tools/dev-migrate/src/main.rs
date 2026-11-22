@@ -1,12 +1,7 @@
 //! Bootstrap a blank Postgres with the substrate schema and every in-repo
 //! spiice sidecar, in the same order a composite host boots them.
 //!
-//! `sqlx migrate run` cannot do this: it records every source into one
-//! `_sqlx_migrations` table, while core and each spiice keep their own ledger
-//! (`public._sqlx_migrations_<spiice>` for a spiice). This bin runs the migrate
-//! step of the facade (`StorageProxiima::migrate`) for the compiled spiices: core
-//! first, then spiices in composition order, with duplicate migration versions
-//! rejected up front, then the store number.
+//! Delegates to [`proxiima::StorageProxiima::migrate`]; see `Proxiima.Migrations.sourceOrder`.
 //!
 //! Usage:
 //!
@@ -215,6 +210,7 @@ fn parse_args(command_line: impl IntoIterator<Item = String>) -> Result<Args, St
 
 /// Resolve the target database URL: `--database-url <URL>` (or
 /// `--database-url=<URL>`) first, then the `DATABASE_URL` env var.
+// `Proxiima.Migrations.devDatabaseSources`
 fn resolve_database_url(
     args: &Args,
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
@@ -355,6 +351,7 @@ async fn reset_local_dev_database(
     dependent_lanes: DependentLanes,
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // `Proxiima.Migrations.resetChecks`
     require_reset_confirmation(lookup)?;
     reset_local_dev_database_confirmed(pg, url, dependent_lanes).await
 }
@@ -464,14 +461,7 @@ async fn reset_local_dev_database_confirmed(
         );
     }
 
-    // Everything attributable to Proxiima goes: the whole core version
-    // namespace (which covers retired and draft rows without enumerating
-    // them — see docs/contributing.md), plus every spiice version the
-    // compiled spiices embed (covering rows a database from earlier in the v0.0.7 cycle still
-    // tracks in the shared table), plus each compiled spiice's own tracking
-    // table. A date-shaped row in the shared table that no compiled migrator
-    // recognizes cannot be attributed, so it is left behind and reported —
-    // strict migration refuses it until the operator resets that lane explicitly.
+    // Include old shared-ledger rows for spiices that now use a private ledger.
     let mut spiice_versions = Vec::new();
     let mut spiice_ledger_tables = Vec::new();
     for migrator in compiled_spiice_migrators() {
@@ -552,6 +542,7 @@ async fn reset_local_dev_database_confirmed(
             ));
         }
     }
+    // `Proxiima.Migrations.resetCommit`
     tx.commit().await?;
     for line in report {
         eprintln!("{line}");

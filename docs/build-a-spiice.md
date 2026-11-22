@@ -290,19 +290,11 @@ Keep the projection table and its owner/text and owner/tag GIN indexes in
 versioned migrations. The block names no core table: its `CREATE TABLE` is
 followed by the `install_reference` calls for the memory (`cascade`, so a
 projection row goes with its memory), the owner and the lexical language
-(both `no_action`). The explicit host migration run installs current search
-candidate functions from the same frozen composition after those migrations.
-Their schema sets, score bands, and authorization SQL come from the contract;
-a consumer does not copy their bodies into a new migration when Proxiima changes.
-Keep any already released function migrations unchanged: the final definitions
-pass replaces their bodies with the current generated definitions.
-
-Serving startup validates these definitions and refuses a mismatch; it never
-replaces them. Run the host's migration command with the new binary and frozen
-sidecars before starting a searchable composed host, including its first boot.
-`proxiima_spiice::search_candidate_artifacts(contract)` remains available for
-inspection. Test the effective catalog after migration replay instead of
-asserting that generated text occurs somewhere in migration history.
+(both `no_action`). See [`Proxiima.Migrations`](ledger.md#migrations) for candidate
+installation and preflight. The registry supplies schema sets, score bands,
+and authorization SQL. Use `proxiima_spiice::search_candidate_artifacts(contract)`
+to inspect generated functions. Test the effective catalog after migration
+replay, where the functions and their dependencies are available.
 
 Automatic Fact writes bind natural keys by the registered sidecar's SQL column
 types. UUID-shaped text remains text; UUID columns bind UUIDs. Selection runs

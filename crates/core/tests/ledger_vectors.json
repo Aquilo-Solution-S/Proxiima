@@ -342,6 +342,54 @@
   {"out": 1, "in": ["fact"]},
   {"out": 2, "in": ["abstraction"]},
   {"out": 3, "in": ["perspective"]}],
+ "Proxiima.Migrations.schemaWork":
+ [{"out": "apply", "in": ["explicitMigrate"]},
+  {"out": "validate", "in": ["serving"]},
+  {"out": "validate", "in": ["maintenance"]},
+  {"out": "plan", "in": ["pendingPlan"]}],
+ "Proxiima.Migrations.retryCatalog":
+ [{"out": true, "in": ["concurrentTupleChange"]},
+  {"out": true, "in": ["uniqueViolationOnRoleCatalog"]},
+  {"out": false, "in": ["other"]}],
+ "Proxiima.Migrations.recordedVersionAdmitted":
+ [{"out": true, "in": ["reject", true]},
+  {"out": false, "in": ["reject", false]},
+  {"out": true, "in": ["allow", true]},
+  {"out": true, "in": ["allow", false]}],
+ "Proxiima.Migrations.readinessRefusal":
+ [{"out": "requireReset", "in": ["unreconciledCoreHistory"]},
+  {"out": "requireMigration", "in": ["pendingCoreOrLinkedMigration"]},
+  {"out": "requireMigration", "in": ["missingRequiredSidecarState"]}],
+ "Proxiima.Migrations.privateLineage":
+ [{"out": "replaced", "in": ["pendingRootBesideUnknown"]},
+  {"out": "diverged", "in": ["laterPendingBeforeUnknown"]},
+  {"out": null, "in": ["compatible"]}],
+ "Proxiima.Migrations.ledgerPlacement":
+ [{"out": "publicCoreLedger", "in": ["coreDefault"]},
+  {"out": "publicIdDerivedLedger", "in": ["spiiceDefault"]},
+  {"out": "configuredLedger", "in": ["explicitlyConfigured"]}],
+ "Proxiima.Migrations.installsPgvector":
+ [{"out": true, "in": ["local", true]},
+  {"out": true, "in": ["local", false]},
+  {"out": false, "in": ["hostIndex", true]},
+  {"out": true, "in": ["hostIndex", false]}],
+ "Proxiima.Migrations.inspectionDestinationAdmitted":
+ [{"out": true, "in": ["ignoredFileInCheckout"]},
+  {"out": false, "in": ["other"]}],
+ "Proxiima.Migrations.definitionWork":
+ [{"out": "reinstall", "in": ["missingOrChangedChecksum", "reject"]},
+  {"out": "reinstall", "in": ["missingOrChangedChecksum", "allow"]},
+  {"out": "keep", "in": ["matchingChecksum", "reject"]},
+  {"out": "keep", "in": ["matchingChecksum", "allow"]},
+  {"out": "refuse", "in": ["newerRelease", "reject"]},
+  {"out": "keep", "in": ["newerRelease", "allow"]},
+  {"out": "refuse", "in": ["malformedRelease", "reject"]},
+  {"out": "refuse", "in": ["malformedRelease", "allow"]}],
+ "Proxiima.Migrations.coreAdmission":
+ [{"out": "install", "in": ["blankWithoutSchema"]},
+  {"out": "continueFromBaseline", "in": ["baselineWithoutEarlierRows"]},
+  {"out": "adoptInMigrationTransaction", "in": ["exactPreviousHead"]},
+  {"out": "requireReset", "in": ["unreconciled"]}],
  "Proxiima.Memory.versionAction":
  [{"out": "appendVersion", "in": ["observationOrRevision"]},
   {"out": "updateLifecycle", "in": ["forgetOrRestore"]},

@@ -42,26 +42,11 @@ that statement; do not add an edge sidecar.
 
 ## Migrations
 
-Released migration files are immutable from the release `RELEASE_EPOCH` names
-in `scripts/check-migrations.py`; a schema fix is a
-new migration whose version is above every released version in its directory.
-Definitions in `crates/storage-pg/definitions/` are edited in place.
-Run `scripts/check-migrations.py` before changing SQL.
-A baseline replaces the core migrations up to the previous release's head and
-is numbered above them; mutable objects stay in definitions. It installs a
-blank database and adopts a store whose core ledger is exactly the previous
-head: every version, every checksum, each row successful. The adoption applies
-the difference between the previous head and the baseline inside the migration
-transaction, before any migration runs, and records the baseline's ledger rows
-in place of the previous head's. A ledger that records the baseline continues
-from it. Every other ledger is refused with
-`SchemaResetRequired`, whose details name the release to migrate the store with
-first. The replaced files are deleted, and dumps of a fresh install show that
-the baseline's schema and seed rows equal the previous head's when the
-baseline lands. A migration that only a
-pgvector-backed store needs has a description starting with `pgvector`; a store
-with a host vector index skips it, and its definitions live in
-`definitions/vector.sql`.
+For migration numbering, baseline adoption, and definitions, see
+[`Proxiima.Migrations`](ledger.md#migrations). Run `scripts/check-migrations.py`
+before changing SQL. Edit the replaceable SQL in `crates/storage-pg/definitions/`
+in place. Compare the schema and seed rows of a new baseline with
+the previous release before landing it.
 
 A migration that drops, renames or retypes a column of `proxiima_core.memory`
 first drops `proxiima_core.live_memory` and

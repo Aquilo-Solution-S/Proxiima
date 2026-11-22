@@ -444,6 +444,7 @@ async fn acquire_session_connection(
     pool: &PgPool,
 ) -> Result<PoolConnection<Postgres>, MigrationError> {
     let mut conn = pool.acquire().await.map_err(MigrationError::Connection)?;
+    // `Proxiima.Migrations.sessionDisposal`
     conn.close_on_drop();
     Ok(conn)
 }
@@ -497,14 +498,14 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
     let report = MigrationRunReport::from_sources(&sources);
     let pool = pg.clone_migration_pool();
     let mut conn = acquire_session_connection(&pool).await?;
-    sqlx::query(MIGRATION_LOCK_TIMEOUT_SQL)
-        .execute(&mut *conn)
+    set_lock_timeout(&mut conn, DEFAULT_LOCK_TIMEOUT)
         .await
         .map_err(execute_error)?;
     let mut lock = SessionLock::acquire(&mut conn)
         .await
         .map_err(execute_error)?;
     let mut snapshot = lock.begin_snapshot().await.map_err(execute_error)?;
+    // `Proxiima.Migrations.preflightChecks`
     let result = async {
         validate_ledgers(
             &mut snapshot,
@@ -711,7 +712,7 @@ pub async fn pending_migrations_with_policy(
         sidecars,
         policy,
         vectors,
-        Duration::from_secs(5),
+        DEFAULT_LOCK_TIMEOUT,
     )
     .await
 }
@@ -745,9 +746,7 @@ async fn plan_under_lock(
     vectors: VectorStorage,
     lock_timeout: Duration,
 ) -> Result<Vec<PendingMigration>, MigrationError> {
-    sqlx::query("SELECT set_config('lock_timeout', $1, false)")
-        .bind(format!("{}ms", lock_timeout.as_millis()))
-        .execute(&mut *conn)
+    set_lock_timeout(conn, lock_timeout)
         .await
         .map_err(execute_error)?;
     let mut lock = SessionLock::acquire(conn).await.map_err(execute_error)?;
@@ -762,9 +761,7 @@ async fn plan_under_lock(
     Ok(plan)
 }
 
-/// [`MIGRATION_LOCK_KEY`] held on one session, from ledger validation through
-/// the run's commits or the plan's snapshot. It also excludes each source's
-/// transaction lock (`pg_advisory_xact_lock`) on the same key.
+/// A held migration session lock.
 ///
 /// Held until [`Self::release`] or until the connection closes. The
 /// snapshot can only begin on a held lock: a lock taken inside a `REPEATABLE
@@ -775,6 +772,7 @@ struct SessionLock<'c> {
 
 impl<'c> SessionLock<'c> {
     async fn acquire(conn: &'c mut PgConnection) -> Result<Self, sqlx::Error> {
+        // `Proxiima.Migrations.lockHolders`
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(MIGRATION_LOCK_KEY)
             .execute(&mut *conn)
@@ -1038,9 +1036,7 @@ async fn pin_migration_search_path(conn: &mut PgConnection) -> Result<(), sqlx::
     // whole table instead of the migration failing and retrying on the next
     // pod. Fail fast; the work itself still runs untimed once the lock is in
     // hand.
-    sqlx::query(MIGRATION_LOCK_TIMEOUT_SQL)
-        .execute(&mut *conn)
-        .await?;
+    set_lock_timeout(conn, DEFAULT_LOCK_TIMEOUT).await?;
     Ok(())
 }
 
@@ -1048,7 +1044,16 @@ async fn pin_migration_search_path(conn: &mut PgConnection) -> Result<(), sqlx::
 ///
 /// Short on purpose: the cost of failing is one pod restart, the cost of
 /// waiting is every reader queued behind the request.
-const MIGRATION_LOCK_TIMEOUT_SQL: &str = "SET lock_timeout = '5s'";
+const DEFAULT_LOCK_TIMEOUT: Duration =
+    Duration::from_millis(proxiima_core::ledger!(Proxiima.Migrations.lockWaitMillis));
+
+async fn set_lock_timeout(conn: &mut PgConnection, timeout: Duration) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT set_config('lock_timeout', $1, false)")
+        .bind(format!("{}ms", timeout.as_millis()))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
 
 async fn reset_migration_search_path(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("RESET search_path").execute(&mut *conn).await?;
@@ -1242,11 +1247,14 @@ async fn sync_owner_follows<'c>(
 /// every round settles one winner whose role DDL is then committed — N racing
 /// boots need at most N rounds, and a genuine catalog problem still surfaces
 /// instead of looping.
-const CATALOG_CONTENTION_ATTEMPTS: u32 = 5;
+const CATALOG_CONTENTION_ATTEMPTS: u32 =
+    proxiima_core::ledger!(Proxiima.Migrations.catalogRetryAttempts);
 
 /// Base delay between contention retries; multiplied by the attempt number so
 /// concurrent losers decorrelate without a randomness source.
-const CATALOG_CONTENTION_BACKOFF: Duration = Duration::from_millis(100);
+const CATALOG_CONTENTION_BACKOFF: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.Migrations.catalogRetryDelayMillis
+));
 
 /// Run one source, retrying when it loses a shared-catalog race.
 ///
@@ -1368,6 +1376,7 @@ async fn run_source_with_contention_retry(
 /// one of the role-DDL shared catalogs, where re-running converges (the
 /// retry's write finds the winner's row and updates it, or reports the true
 /// conflict, e.g. a duplicate `CREATE ROLE`).
+// `Proxiima.Migrations.retryCatalog`
 fn is_shared_catalog_contention(err: &MigrateError) -> bool {
     let (MigrateError::Execute(sqlx::Error::Database(db))
     | MigrateError::ExecuteMigration(sqlx::Error::Database(db), _)) = err
@@ -1413,6 +1422,7 @@ fn create_schema_sql(schema: &str) -> Option<SqlText> {
 ///   on the ledger is revoked (`CASCADE`, so grants passed on go too); SELECT
 ///   stays. A role that owns the ledger then refuses the boot if any such
 ///   grant is left; one that does not can revoke only what it granted.
+// `Proxiima.Migrations.ledgerProtection`
 async fn prepare_ledger(
     conn: &mut PgConnection,
     source: &NamedMigrator,
@@ -1466,8 +1476,8 @@ async fn prepare_ledger(
 /// transaction commits; alone, it let a replica booting alongside read the
 /// ledger before the first one's rows were visible and re-apply them
 /// (`schema "proxiima_core" already exists`). The wait is bounded by
-/// [`MIGRATION_LOCK_TIMEOUT_SQL`], as `SQLx`'s is.
-const MIGRATION_LOCK_KEY: i64 = i64::from_be_bytes(*b"proxmigr");
+/// [`DEFAULT_LOCK_TIMEOUT`], as `SQLx`'s is.
+const MIGRATION_LOCK_KEY: i64 = proxiima_core::ledger!(Proxiima.Migrations.lockKey);
 
 /// [`prepare_ledger`]'s statement. The ledger name arrives through a
 /// transaction-local setting, so the statement text is fixed; it is the
@@ -1750,6 +1760,7 @@ async fn validate_ledgers(
     ensure_core_ledger_compatible_on_connection_with_policy(conn, MissingMigrationPolicy::Allow)
         .await
         .map_err(MigrationError::CorePreflight)?;
+    // `Proxiima.Migrations.ledgerIntegrity`
     let assignments: BTreeMap<i64, &NamedMigrator> = sources
         .iter()
         .flat_map(|&source| {
@@ -1784,6 +1795,7 @@ async fn validate_ledgers(
         check_recorded_versions(&ledger.versions, &rows, policy)
             .map_err(|err| ledger.source.run_error(err))?;
     }
+    // `Proxiima.Migrations.migrationTransactions`
     for &source in sources {
         source.require_transactional()?;
         let rows = read_ledger(conn, source, &source.ledger(), true).await?;
@@ -1795,6 +1807,7 @@ async fn validate_ledgers(
     Ok(())
 }
 
+// `Proxiima.Migrations.recordedVersionAdmitted`
 fn check_recorded_versions(
     shipped: &BTreeSet<i64>,
     rows: &[LedgerRow],
@@ -1819,12 +1832,7 @@ fn check_recorded_versions(
 /// Whether a lane (`lane`, the versions a binary ships) continues the one
 /// its ledger records (`recorded`). Both ascending.
 ///
-/// With missing versions explicitly allowed, unknown versions can represent
-/// a newer release on the same database or a file the lane shed. They still
-/// conflict beside pending work that would repeat or reorder theirs:
-/// the lane's first migration still pending ([`LedgerConflict::Replaced`]),
-/// or a pending migration older than one of them
-/// ([`LedgerConflict::Diverged`]).
+/// `Proxiima.Migrations.privateLineage`
 fn ledger_conflict(lane: &[i64], recorded: &[i64]) -> Option<LedgerConflict> {
     let shipped: BTreeSet<i64> = lane.iter().copied().collect();
     let applied: BTreeSet<i64> = recorded.iter().copied().collect();
@@ -1882,6 +1890,7 @@ pub(crate) fn lineup(
     spiices: impl IntoIterator<Item = NamedMigrator>,
     vectors: VectorStorage,
 ) -> Vec<NamedMigrator> {
+    // `Proxiima.Migrations.sourceOrder`
     let mut sources = vec![core_source(vectors)];
 
     for source in spiices {
@@ -1911,6 +1920,7 @@ pub(crate) fn check_lineup(sources: &[NamedMigrator]) -> Result<(), MigrationErr
 /// The refusals that need no database, for core followed by the host's
 /// sources: a run raises them before it connects, a plan likewise.
 fn validate_sources(sources: &[&NamedMigrator]) -> Result<(), MigrationError> {
+    // `Proxiima.Migrations.sourceConflicts`
     reject_duplicate_versions(sources)?;
     reject_shared_spiice_ledgers(sources)
 }

@@ -89,6 +89,7 @@ impl Engine {
         storage: StoragePorts,
         register: impl FnOnce(&mut crate::SpiiceRegistry) -> Result<(), SpiiceRegistryError>,
     ) -> Result<Self, SpiiceRegistryError> {
+        // `Proxiima.Migrations.schemaWork`
         let mut registry = crate::SpiiceRegistry::new();
         register(&mut registry)?;
         Ok(Self::new(registry.try_freeze()?, storage))

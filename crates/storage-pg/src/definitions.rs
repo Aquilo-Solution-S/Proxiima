@@ -69,6 +69,7 @@ fn files(vectors: VectorStorage) -> Vec<SqlText> {
         SqlText::new(POLICIES),
         SqlText::new(VIEWS),
     ];
+    // `Proxiima.Migrations.installsPgvector`
     if vectors == VectorStorage::Local {
         files.push(SqlText::new(VECTOR));
     }
@@ -194,12 +195,14 @@ $$";
 ///
 /// # Errors
 ///
-/// Refuses a newer or malformed recorded release and propagates SQL failures.
+/// Refuses a malformed recorded release, or a newer release under
+/// [`crate::MissingMigrationPolicy::Reject`], and propagates SQL failures.
 pub(crate) async fn apply(
     connection: &mut PgConnection,
     policy: crate::MissingMigrationPolicy,
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
+    // `Proxiima.Migrations.definitionWork`
     if current_matches_with_policy(connection, policy, vectors).await? {
         return Ok(());
     }
@@ -260,6 +263,7 @@ pub async fn current_matches_with_policy(
     policy: crate::MissingMigrationPolicy,
     vectors: VectorStorage,
 ) -> Result<bool, StorageError> {
+    // `Proxiima.Migrations.definitionWork`
     Ok(match AppliedDefinitions::read(connection, policy).await? {
         Some(AppliedDefinitions::Newer) => true,
         Some(AppliedDefinitions::Current { checksum }) => checksum == checksum_hex(vectors),

@@ -37,6 +37,7 @@ impl NamedMigrator {
     /// compile-time constants, so this is a programming error.
     #[must_use]
     pub fn spiice(id: &'static str, mut migrator: Migrator) -> Self {
+        // `Proxiima.Migrations.ledgerPlacement`
         let derived = spiice_ledger_table(id);
         if is_core_ledger(&migrator.table_name) {
             migrator.dangerous_set_table_name(derived);
@@ -91,8 +92,9 @@ pub fn spiice_ledger_table(id: &str) -> String {
 /// `spiice_bundle!` checks its `name` at compile time.
 #[must_use]
 pub const fn is_spiice_ledger_id(id: &str) -> bool {
+    const MAX_ID_BYTES: usize = proxiima_core::ledger!(Proxiima.Migrations.maxLedgerIdBytes);
     let bytes = id.as_bytes();
-    if bytes.is_empty() || bytes.len() > 40 || !bytes[0].is_ascii_lowercase() {
+    if bytes.is_empty() || bytes.len() > MAX_ID_BYTES || !bytes[0].is_ascii_lowercase() {
         return false;
     }
     let mut index = 0;

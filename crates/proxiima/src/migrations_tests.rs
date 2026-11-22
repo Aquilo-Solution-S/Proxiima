@@ -505,6 +505,116 @@ fn a_lane_that_does_not_continue_its_ledger_is_refused() {
     );
 }
 
+fn migration_vectors(decision: &str) -> Vec<serde_json::Value> {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    vectors[decision]
+        .as_array()
+        .expect("ledger decision")
+        .clone()
+}
+
+#[test]
+fn private_lineage_matches_ledger_vectors() {
+    for row in migration_vectors("Proxiima.Migrations.privateLineage") {
+        let result = match row["in"][0].as_str().unwrap() {
+            "pendingRootBesideUnknown" => ledger_conflict(&[2], &[1]),
+            "laterPendingBeforeUnknown" => ledger_conflict(&[1, 2], &[1, 3]),
+            "compatible" => ledger_conflict(&[1, 3], &[1, 2]),
+            value => panic!("unknown private lineage {value}"),
+        };
+        let outcome = match result {
+            Some(LedgerConflict::Replaced { .. }) => Some("replaced"),
+            Some(LedgerConflict::Diverged { .. }) => Some("diverged"),
+            None => None,
+            other => panic!("unexpected lineage refusal {other:?}"),
+        };
+        assert_eq!(row["out"].as_str(), outcome, "{row}");
+    }
+}
+
+#[test]
+fn missing_version_admission_matches_ledger_vectors() {
+    let migrator = migrator(&[1]);
+    let applied = [recorded(migrator.iter().next().unwrap())];
+    for row in migration_vectors("Proxiima.Migrations.recordedVersionAdmitted") {
+        let policy = match row["in"][0].as_str().unwrap() {
+            "reject" => MissingMigrationPolicy::Reject,
+            "allow" => MissingMigrationPolicy::Allow,
+            value => panic!("unknown missing version policy {value}"),
+        };
+        let shipped = if row["in"][1].as_bool().unwrap() {
+            BTreeSet::from([1])
+        } else {
+            BTreeSet::new()
+        };
+        assert_eq!(
+            row["out"],
+            check_recorded_versions(&shipped, &applied, policy).is_ok(),
+            "{row}"
+        );
+    }
+}
+
+#[test]
+fn ledger_placement_matches_ledger_vectors() {
+    for row in migration_vectors("Proxiima.Migrations.ledgerPlacement") {
+        let (source, default_table, configured_table) = match row["in"][0].as_str().unwrap() {
+            "coreDefault" => (core_source(VectorStorage::Local), None, None),
+            "spiiceDefault" => (
+                NamedMigrator::spiice("example", migrator(&[1])),
+                Some(spiice_ledger_table("example")),
+                None,
+            ),
+            "explicitlyConfigured" => {
+                let mut input = migrator(&[1]);
+                let table = "other._sqlx_migrations";
+                input.dangerous_set_table_name(table);
+                (NamedMigrator::spiice("example", input), None, Some(table))
+            }
+            value => panic!("unknown ledger selection {value}"),
+        };
+        let actual = source.ledger();
+        let outcome = if proxiima_storage_pg::is_core_ledger(&actual) {
+            "publicCoreLedger"
+        } else if default_table.as_deref() == Some(actual.as_str()) {
+            "publicIdDerivedLedger"
+        } else if configured_table == Some(actual.as_str()) {
+            "configuredLedger"
+        } else {
+            panic!("unexpected ledger table {actual}");
+        };
+        assert_eq!(row["out"], outcome, "{row}");
+    }
+}
+
+#[tokio::test]
+async fn catalog_retry_matches_ledger_vectors() {
+    let db = proxiima_pg_testkit::SplitRoleDb::create("migration_retry_vectors", &[])
+        .await
+        .expect("owned PG required");
+    let pool = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
+    for row in migration_vectors("Proxiima.Migrations.retryCatalog") {
+        let statement = match row["in"][0].as_str().unwrap() {
+            "concurrentTupleChange" => {
+                "DO $$ BEGIN RAISE EXCEPTION 'tuple concurrently updated'; END $$"
+            }
+            "uniqueViolationOnRoleCatalog" => {
+                "DO $$ BEGIN RAISE unique_violation USING TABLE = 'pg_authid'; END $$"
+            }
+            "other" => "DO $$ BEGIN RAISE unique_violation USING TABLE = 'ordinary'; END $$",
+            value => panic!("unknown catalog failure {value}"),
+        };
+        let failure = sqlx::query(statement).execute(&pool).await.unwrap_err();
+        assert_eq!(
+            row["out"],
+            super::is_shared_catalog_contention(&MigrateError::Execute(failure)),
+            "{row}"
+        );
+    }
+    pool.close().await;
+}
+
 #[test]
 fn a_boot_that_skips_migrations_names_what_is_not_applied() {
     assert_eq!(unapplied(&[1, 2], &[1, 2, 3]), None);

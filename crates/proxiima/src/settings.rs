@@ -345,3 +345,22 @@ mod tests {
         assert_eq!(names.len(), count, "a setting is declared in two crates");
     }
 }
+
+#[cfg(test)]
+mod migration_tests {
+    use super::PROXIIMA_MISSING_MIGRATION_POLICY;
+    use crate::{MissingMigrationPolicy, missing_migration_policy_from_lookup};
+
+    #[test]
+    fn missing_version_default_agrees_with_the_ledger() {
+        let declared = PROXIIMA_MISSING_MIGRATION_POLICY.default();
+        let expected: &str = proxiima_core::ledger!(Proxiima.Migrations.missingVersionDefault);
+        assert_eq!(declared, Some(expected));
+        let pairs = [(PROXIIMA_MISSING_MIGRATION_POLICY.name(), expected)];
+        let lookup = proxiima_core::env_from_pairs(&pairs);
+        assert_eq!(
+            missing_migration_policy_from_lookup(&lookup).expect("declared policy parses"),
+            Some(MissingMigrationPolicy::default())
+        );
+    }
+}

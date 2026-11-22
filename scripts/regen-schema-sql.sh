@@ -11,11 +11,8 @@
 # The ledger bookkeeping tables (public._sqlx_migrations*) are excluded from
 # both: they record the replay, they are not what it produces.
 #
-# On-demand inspection only. Do not commit the output.
-# The disposable schema store uses the script-owned store number 0.
-#
 # Usage:
-#   scripts/regen-schema-sql.sh <output-dir>
+#   scripts/regen-schema-sql.sh <ignored-output-dir>
 #
 # Environment:
 #   PROXIIMA_SCHEMA_PG_URL  admin URL used to create/drop the scratch database
@@ -30,13 +27,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "${1:-}" = "" ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  echo "usage: scripts/regen-schema-sql.sh <output-dir>" >&2
+  echo "usage: scripts/regen-schema-sql.sh <ignored-output-dir>" >&2
   exit 2
 fi
 
 ADMIN_URL="${PROXIIMA_SCHEMA_PG_URL:-${PROXIIMA_TEST_PG_URL:-postgres://proxiima:proxiima@localhost:5432/proxiima}}"
 PG_DUMP="${PROXIIMA_PG_DUMP:-pg_dump}"
 OUT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$1")"
+# `Proxiima.Migrations.inspectionDestinationAdmitted`
 for file in schema.core.sql schema.example.sql; do
   if [ -L "$OUT_DIR/$file" ] || ! git check-ignore -q -- "$OUT_DIR/$file" 2>/dev/null; then
     echo "schema dump destination must be an ignored file in this checkout: $OUT_DIR/$file" >&2
@@ -44,6 +42,7 @@ for file in schema.core.sql schema.example.sql; do
   fi
 done
 
+# `Proxiima.Migrations.inspectionSteps`
 SCRATCH="proxiima_schema_replay_$$"
 SCRATCH_URL="${ADMIN_URL%/*}/${SCRATCH}"
 
