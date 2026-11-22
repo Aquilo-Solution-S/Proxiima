@@ -1,13 +1,14 @@
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
+import Proxiima.Memory
 
 /-! Causa — Memory -/
 
 namespace Causa
 
 /-- The ledger vocabulary used by Memory proofs. -/
-abbrev MemoryKind := Proxiima.Identity.MemoryKind
+abbrev MemoryKind := Proxiima.Memory.Kind
 
 /-- The target kinds recorded by erase witnesses. -/
 inductive PinTargetKind where

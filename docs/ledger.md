@@ -550,12 +550,6 @@ stateDiagram-v2
 - handle
 - t
 
-**Memory kind**: A Memory admission's layer.
-
-- Fact
-- Abstraction
-- Perspective
-
 **Embeddable entity**: An embedding uses a Memory ID with its layer, or a Goal ID.
 
 - memory

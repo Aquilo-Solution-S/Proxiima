@@ -1,3 +1,5 @@
+import Proxiima.Memory
+
 /-! # Identity -/
 
 namespace Proxiima.Identity
@@ -7,16 +9,9 @@ structure SeriesAndVersion where
   handle : String
   t : String
 
-/-- A Memory admission's layer. -/
-inductive MemoryKind where
-  | Fact
-  | Abstraction
-  | Perspective
-  deriving DecidableEq
-
 /-- An embedding uses a Memory ID with its layer, or a Goal ID. -/
 inductive EmbeddableEntity where
-  | memory (kind : MemoryKind)
+  | memory (kind : Proxiima.Memory.Kind)
   | goal
   deriving DecidableEq
 

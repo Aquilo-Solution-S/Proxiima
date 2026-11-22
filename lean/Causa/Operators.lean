@@ -4,31 +4,24 @@ import Causa.Identity
 import Causa.Memory
 import Causa.Goals
 import Causa.Edges
+import Proxiima.Memory
 
 /-! Causa — Operators -/
 
 namespace Causa
 
-inductive OperatorPhase where
-  | toa
-  | atop
-  | atogoal
-  deriving DecidableEq, Repr
+open Proxiima.Memory (OperatorPhase operatorAdmitsInput operatorOutput memoryKind)
 
-def OperatorPhase.inputKind : OperatorPhase → MemoryKind → Prop
-  | .toa, k => k = .Fact ∨ k = .Abstraction
-  | .atop, k => k = .Abstraction
-  | .atogoal, k => k = .Abstraction
+def OperatorPhase.inputKind (phase : OperatorPhase) : MemoryKind → Prop
+  | .Fact => operatorAdmitsInput phase .Fact = true
+  | .Abstraction => operatorAdmitsInput phase .Abstraction = true
+  | .Perspective => operatorAdmitsInput phase .Perspective = true
 
-def OperatorPhase.outputMemoryKind : OperatorPhase → MemoryKind → Prop
-  | .toa, k => k = .Abstraction
-  | .atop, k => k = .Perspective
-  | .atogoal, _ => False
+def OperatorPhase.outputMemoryKind (phase : OperatorPhase) (kind : MemoryKind) : Prop :=
+  memoryKind (operatorOutput phase) = some kind
 
-def OperatorPhase.outputGoalAllowed : OperatorPhase → Prop
-  | .toa => False
-  | .atop => False
-  | .atogoal => True
+def OperatorPhase.outputGoalAllowed (phase : OperatorPhase) : Prop :=
+  operatorOutput phase = .Goal
 
 structure OperatorInvocation where
   phase : OperatorPhase
@@ -40,11 +33,11 @@ structure OperatorInvocation where
 
 structure InvocationShapeValid (inv : OperatorInvocation) : Prop where
   inputsShape : ∀ m : Memory, m ∈ inv.inputs →
-    inv.phase.inputKind (memory_kind m)
+    OperatorPhase.inputKind inv.phase (memory_kind m)
   outputMemoriesShape : ∀ m : Memory, m ∈ inv.outputMemories →
-    inv.phase.outputMemoryKind (memory_kind m)
+    OperatorPhase.outputMemoryKind inv.phase (memory_kind m)
   outputGoalsShape : ∀ g : Goal, g ∈ inv.outputGoals →
-    inv.phase.outputGoalAllowed
+    OperatorPhase.outputGoalAllowed inv.phase
 
 /-- Input coverage by the provenance pins of an operator's outputs. -/
 structure InvocationProvenanceComplete (inv : OperatorInvocation) : Prop where
@@ -59,10 +52,10 @@ theorem operator_memory_output_not_fact :
     ∀ (inv : OperatorInvocation) (m : Memory),
       InvocationShapeValid inv → m ∈ inv.outputMemories → memory_kind m ≠ .Fact := by
   intro inv m hshape hm
+  intro hf
   have h := hshape.outputMemoriesShape m hm
-  cases hphase : inv.phase with
-  | toa => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
-  | atop => rw [hphase] at h; rw [h]; intro hf; exact (nomatch hf)
-  | atogoal => rw [hphase] at h; exact absurd h (by simp [OperatorPhase.outputMemoryKind])
+  rw [hf] at h
+  cases hphase : inv.phase <;>
+    simp [OperatorPhase.outputMemoryKind, hphase, operatorOutput, memoryKind] at h
 
 end Causa
