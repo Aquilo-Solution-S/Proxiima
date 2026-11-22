@@ -223,9 +223,6 @@ def storeNumberLifecycle : StoreNumberState → StoreNumberEvent → StoreNumber
   | .matching, .migrate | .matching, .validate => .useExisting
   | .different, .migrate | .different, .validate => .refuseMismatch
 
-/-- Direct mutation or deletion of a persisted store number is refused. -/
-def storeNumberMutable : Bool := false
-
 /-- Publication counters retain their series handle and never regress. -/
 def publicationCounterUpdate : (sameHandle : Bool) → (nondecreasing : Bool) → Bool
   | true, true => true

@@ -261,10 +261,6 @@ macro_rules! ledger {
     (Proxiima.Identity.storeNumberMax) => {
         65535
     };
-    // Direct mutation or deletion of a persisted store number is refused.
-    (Proxiima.Identity.storeNumberMutable) => {
-        false
-    };
     // The greatest allowed future occurrence offset, in minutes relative to the admission clock.
     (Proxiima.Memory.futureOccurrenceMinutes) => {
         5

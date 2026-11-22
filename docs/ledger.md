@@ -1645,8 +1645,6 @@ stateDiagram-v2
 
 **store number max** = 65535: Largest 16-bit host-assigned store number in an admission UUID.
 
-**store number mutable** = no: Direct mutation or deletion of a persisted store number is refused.
-
 | read target | read revision |
 | --- | --- |
 | series | readableHead |

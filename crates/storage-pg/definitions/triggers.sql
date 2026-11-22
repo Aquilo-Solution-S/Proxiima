@@ -338,7 +338,7 @@ CREATE OR REPLACE TRIGGER write_act_v1_declared_by_memory_on_update
     EXECUTE FUNCTION proxiima_core.assert_memory_declares_sidecar('t');
 
 -- store_identity
--- `Proxiima.Identity.storeNumberMutable`.
+-- A persisted store number is never updated or deleted.
 CREATE OR REPLACE TRIGGER store_identity_immutable
     BEFORE UPDATE OR DELETE ON proxiima_core.store_identity
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.enforce_store_identity_immutable();
