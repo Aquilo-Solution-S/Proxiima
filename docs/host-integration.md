@@ -660,8 +660,9 @@ the service the runtime publishes to every tool call.
 
 Every memory handle is a bare UUID. The host assigns each store a unique
 16-bit number among the stores it routes between; configure it with
-`RuntimeBuilder::store_number` or `PROXIIMA_STORE_NUMBER`. First boot persists
-the number; a later mismatch refuses startup. UUIDv8 handles carry that number
+`RuntimeBuilder::store_number` or `PROXIIMA_STORE_NUMBER`. The first migration
+persists the number, and startup refuses a mismatch under
+[`Proxiima.Identity.storeNumberLifecycle`](ledger.md#identity). UUIDv8 handles carry that number
 and sort by timestamp and counter. Start fresh stores for this release.
 
 For a store accessed by spiice workers, register an `OtherStores` port with

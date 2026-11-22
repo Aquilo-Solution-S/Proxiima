@@ -289,8 +289,7 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Assign this store its host-selected number. Required; the first boot
-    /// persists it and every later boot must supply the same value.
+    /// Set the host-selected number. Required. The first migration persists it and each boot checks it.
     /// Environment equivalent: `PROXIIMA_STORE_NUMBER`.
     #[must_use]
     pub const fn store_number(mut self, number: u16) -> Self {

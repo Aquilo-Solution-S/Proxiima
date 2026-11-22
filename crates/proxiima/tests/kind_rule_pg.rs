@@ -301,7 +301,7 @@ async fn embed(admin: &PgPool, seeded: &Seeded, owner: OwnerId) -> TestResult {
             admin,
             owner,
             proxiima_core::EmbeddableEntityRef::Memory {
-                kind,
+                kind: proxiima_core::MemoryKind::of(kind).expect("seeded memory layer"),
                 memory_id: MemoryId::new(t),
             },
             "test-embed",
@@ -1545,7 +1545,7 @@ async fn an_embedding_row_of_a_goal_needs_the_goal_limit() -> TestResult {
         let fact = handle_id(&seeded.fact)?;
         for (entity, target) in [
             (fact, proxiima_core::EmbeddableEntityRef::Memory {
-                kind: EntityKind::Fact,
+                kind: proxiima_core::MemoryKind::Fact,
                 memory_id: MemoryId::new(fact),
             }),
             (goal, proxiima_core::EmbeddableEntityRef::Goal(proxiima_core::GoalId::new(goal))),

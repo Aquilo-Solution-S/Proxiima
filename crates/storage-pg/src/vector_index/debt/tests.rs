@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use proxiima_core::storage_ports::{InMemoryVectorIndex, VectorIndex};
-use proxiima_core::{EmbeddableEntityRef, EntityKind, MemoryId, SpaceVector, UserId};
+use proxiima_core::{EmbeddableEntityRef, MemoryId, MemoryKind, SpaceVector, UserId};
 use uuid::Uuid;
 
 use super::*;
@@ -62,7 +62,7 @@ async fn an_erase_settles_its_owners_debt_before_commit() {
         )
         .unwrap();
         let entity = EmbeddableEntityRef::Memory {
-            kind: EntityKind::Fact,
+            kind: MemoryKind::Fact,
             memory_id: MemoryId::new(entity),
         };
         index.put(entity, owner, 1, &[vector]).await.unwrap();

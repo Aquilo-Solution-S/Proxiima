@@ -14,7 +14,7 @@ use crate::{
     AbstractionPayload, CitedObjectPayload, FactPayload, GoalPayload, PayloadReference,
     PerspectivePayload,
 };
-use crate::{EntityKind, MemoryId, OwnerId, SchemaId, SchemaVersion};
+use crate::{EntityKind, MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion};
 
 /// Deliberately NOT `#[non_exhaustive]`, like [`crate::ErrorCode`]: the
 /// three maps onto a caller's vocabulary (the engine's protocol error, the
@@ -597,7 +597,7 @@ pub struct AuthorDerivedOutcome {
 pub struct EmbeddingJobClaim {
     pub job_id: Uuid,
     pub owner: OwnerId,
-    pub entity_kind: EntityKind,
+    pub entity_kind: MemoryKind,
     pub entity_id: MemoryId,
     pub space: crate::EmbeddingSpace,
     pub claim_token: Uuid,

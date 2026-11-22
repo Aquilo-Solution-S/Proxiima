@@ -14,7 +14,7 @@ use proxiima_core::storage_ports::{
     VectorKey,
 };
 use proxiima_core::{
-    EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, EntityKind, GoalId, MemoryId, OwnerId,
+    EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, GoalId, MemoryId, MemoryKind, OwnerId,
     PlaintextHosts, SpaceVector, StorageError, UserId,
 };
 use uuid::Uuid;
@@ -67,7 +67,7 @@ fn vector(head: [f32; 2]) -> SpaceVector {
 
 fn memory(id: u128) -> EmbeddableEntityRef {
     EmbeddableEntityRef::Memory {
-        kind: EntityKind::Perspective,
+        kind: MemoryKind::Perspective,
         memory_id: MemoryId::new(Uuid::from_u128(id)),
     }
 }

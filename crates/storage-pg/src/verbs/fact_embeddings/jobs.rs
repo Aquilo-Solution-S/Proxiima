@@ -877,7 +877,7 @@ mod tests {
         let claim = EmbeddingJobClaim {
             job_id: uuid::Uuid::from_u128(2),
             owner: OwnerId::from(proxiima_core::UserId::new(uuid::Uuid::from_u128(1))),
-            entity_kind: proxiima_core::EntityKind::Fact,
+            entity_kind: proxiima_core::MemoryKind::Fact,
             entity_id: MemoryId::new(uuid::Uuid::from_u128(3)),
             space: EmbeddingSpace::new("model", proxiima_core::EmbeddingDim::D768),
             claim_token: uuid::Uuid::from_u128(4),

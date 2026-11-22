@@ -6,6 +6,10 @@ use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
 use uuid::Uuid;
 
+const STORE_NUMBER_MIN: i32 = proxiima_core::ledger!(Proxiima.Identity.storeNumberMin);
+const STORE_NUMBER_MAX: i32 = proxiima_core::ledger!(Proxiima.Identity.storeNumberMax);
+const UUID_TIMESTAMP_BITS: usize = proxiima_core::ledger!(Proxiima.Identity.uuidTimestampBits);
+
 fn draft() -> FactWriteCommand {
     FactWriteCommand {
         schema_id: SchemaId::new("core/collision-test-v1".into()),
@@ -27,6 +31,37 @@ fn draft() -> FactWriteCommand {
     }
 }
 
+async fn assert_store_number_bounds(
+    scope: &PgPlatformScope,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (number, allowed) in [
+        (STORE_NUMBER_MIN - 1, false),
+        (STORE_NUMBER_MIN, true),
+        (STORE_NUMBER_MAX, true),
+        (STORE_NUMBER_MAX + 1, false),
+    ] {
+        let mut tx = scope.begin().await?;
+        let result =
+            sqlx::query("INSERT INTO proxiima_core.store_identity (store_number) VALUES ($1)")
+                .bind(number)
+                .execute(tx.as_mut())
+                .await;
+        if allowed {
+            result?;
+        } else {
+            let error = result.expect_err("number outside the ledger range must be refused");
+            assert_eq!(
+                error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::constraint),
+                Some("store_identity_store_number_check"),
+            );
+        }
+        tx.rollback().await?;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn store_identity_is_required_persisted_and_immutable()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -43,6 +78,8 @@ async fn store_identity_is_required_persisted_and_immutable()
     migration.run_migrations().await?;
     let platform_pool = sqlx::PgPool::connect(&platform_url).await?;
     let scope = PgPlatformScope::new(platform_pool, &["proxiima_core"]).await?;
+    // Check each bound in a rolled-back transaction before populating the singleton.
+    assert_store_number_bounds(&scope).await?;
     assert!(matches!(
         PgStorage::connect_with_config(
             &runtime_url,
@@ -108,7 +145,7 @@ async fn store_identity_is_required_persisted_and_immutable()
     sqlx::query("SET LOCAL TIME ZONE 'Europe/Berlin'")
         .execute(tx.as_mut())
         .await?;
-    for millis in [0, 1, 999, 1000, (1_u64 << 48) - 1] {
+    for millis in [0, 1, 999, 1000, (1_u64 << UUID_TIMESTAMP_BITS) - 1] {
         let mut bytes = current.into_bytes();
         bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
         let id = Uuid::from_bytes(bytes);

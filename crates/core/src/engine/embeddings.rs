@@ -11,7 +11,7 @@ use crate::embedding::{
 use crate::error::ProtocolError;
 use crate::storage::{EmbeddingJobClaim, StorageError};
 use crate::storage_ports::{EmbeddingJobHandle, EmbeddingWrite};
-use crate::{EmbeddableEntityRef, EntityKind, MemoryId, OwnerId};
+use crate::{EmbeddableEntityRef, EntityKind, MemoryId, MemoryKind, OwnerId};
 
 mod control;
 pub(crate) use control::EmbeddingControl;
@@ -162,7 +162,7 @@ impl Engine {
         owner: &OwnerId,
         memory_id: MemoryId,
     ) -> Result<(), StorageError> {
-        self.ensure_memory_embedding(owner, EntityKind::Fact, memory_id)
+        self.ensure_memory_embedding(owner, MemoryKind::Fact, memory_id)
             .await?;
         Ok(())
     }
@@ -170,7 +170,7 @@ impl Engine {
     async fn ensure_memory_embedding(
         &self,
         owner: &OwnerId,
-        entity_kind: EntityKind,
+        entity_kind: MemoryKind,
         memory_id: MemoryId,
     ) -> Result<bool, StorageError> {
         let route = self.embedding_route(owner).await?;
@@ -187,7 +187,7 @@ impl Engine {
         &self,
         client: &BoundEmbeddingClient,
         owner: &OwnerId,
-        entity_kind: EntityKind,
+        entity_kind: MemoryKind,
         memory_id: MemoryId,
     ) -> Result<EmbedStep, StorageError> {
         // This path holds a `MemoryId` and never passes through the job
@@ -198,7 +198,7 @@ impl Engine {
             .ingest
             .embedding_text
             .load_embedding_texts_for_host(
-                &[(*owner, entity_kind, memory_id)],
+                &[(*owner, entity_kind.entity_kind(), memory_id)],
                 self.registry().non_embeddable_schema_ids(),
                 crate::storage_ports::OperatorMaintenanceProof::new(),
             )
@@ -430,7 +430,13 @@ impl Engine {
     ) -> Result<Vec<(EmbeddingJobClaim, String)>, StorageError> {
         let items: Vec<(OwnerId, EntityKind, MemoryId)> = claims
             .iter()
-            .map(|claim| (claim.owner, claim.entity_kind, claim.entity_id))
+            .map(|claim| {
+                (
+                    claim.owner,
+                    claim.entity_kind.entity_kind(),
+                    claim.entity_id,
+                )
+            })
             .collect();
         let texts = self
             .storage

@@ -39,7 +39,8 @@ use proxiima_core::storage_ports::{
 };
 use proxiima_core::{
     EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, EndpointUrlPolicy, EntityKind, GoalId,
-    MemoryId, OwnerId, PlaintextHosts, SpaceVector, StorageError, validate_endpoint_url_for_hosts,
+    MemoryId, MemoryKind, OwnerId, PlaintextHosts, SpaceVector, StorageError,
+    validate_endpoint_url_for_hosts,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -217,14 +218,12 @@ fn keys_from_wire(keys: Vec<WireKey>) -> Result<Vec<VectorKey>, StorageError> {
 }
 
 fn entity_from_wire(entity: &WireEntity) -> EmbeddableEntityRef {
-    match entity.kind {
-        EntityKind::Goal => EmbeddableEntityRef::Goal(GoalId::new(entity.id)),
-        kind @ (EntityKind::Fact | EntityKind::Abstraction | EntityKind::Perspective) => {
-            EmbeddableEntityRef::Memory {
-                kind,
-                memory_id: MemoryId::new(entity.id),
-            }
-        }
+    match MemoryKind::of(entity.kind) {
+        Some(kind) => EmbeddableEntityRef::Memory {
+            kind,
+            memory_id: MemoryId::new(entity.id),
+        },
+        None => EmbeddableEntityRef::Goal(GoalId::new(entity.id)),
     }
 }
 

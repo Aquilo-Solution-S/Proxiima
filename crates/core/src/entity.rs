@@ -35,6 +35,7 @@ pub enum EntityKind {
     serde::Deserialize,
     schemars::JsonSchema,
 )]
+// `Proxiima.Identity.MemoryKind`.
 pub enum MemoryKind {
     #[default]
     Fact,
@@ -84,14 +85,11 @@ impl EntityKind {
     }
 }
 
-/// Entity kinds admitted to the vector infrastructure.
-///
-/// Fact entities and edges are not embeddable. Memory embeddings keep the
-/// memory layer explicit; Goal embeddings use the Goal id directly.
+/// `Proxiima.Identity.EmbeddableEntity`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EmbeddableEntityRef {
     Memory {
-        kind: EntityKind,
+        kind: MemoryKind,
         memory_id: MemoryId,
     },
     Goal(GoalId),
@@ -101,7 +99,7 @@ impl EmbeddableEntityRef {
     #[must_use]
     pub const fn entity_kind(self) -> EntityKind {
         match self {
-            Self::Memory { kind, .. } => kind,
+            Self::Memory { kind, .. } => kind.entity_kind(),
             Self::Goal(_) => EntityKind::Goal,
         }
     }
@@ -136,6 +134,26 @@ mod memory_kind_tests {
         }
         assert_eq!(MemoryKind::default(), MemoryKind::Fact);
         assert_eq!(MemoryKind::of(EntityKind::Goal), None);
+    }
+
+    #[test]
+    fn an_embedding_memory_id_carries_a_memory_layer() {
+        let memory_id = MemoryId::new(Uuid::nil());
+        for kind in MemoryKind::ALL {
+            let reference = EmbeddableEntityRef::Memory { kind, memory_id };
+            let wire = serde_json::json!({
+                "Memory": { "kind": kind.entity_kind().as_str(), "memory_id": memory_id },
+            });
+            assert_eq!(serde_json::to_value(reference).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_value::<EmbeddableEntityRef>(wire).unwrap(),
+                reference
+            );
+        }
+        let invalid = serde_json::json!({
+            "Memory": { "kind": "Goal", "memory_id": memory_id },
+        });
+        assert!(serde_json::from_value::<EmbeddableEntityRef>(invalid).is_err());
     }
 
     #[test]

@@ -717,7 +717,7 @@ pub trait EmbeddingTarget {
 impl EmbeddingTarget for MemoryId {
     fn entity(self) -> proxiima_core::EmbeddableEntityRef {
         proxiima_core::EmbeddableEntityRef::Memory {
-            kind: proxiima_core::EntityKind::Fact,
+            kind: proxiima_core::MemoryKind::Fact,
             memory_id: self,
         }
     }

@@ -48,7 +48,7 @@ mod pg_tests {
     async fn insert_memory_embedding(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         owner: &OwnerId,
-        entity_kind: EntityKind,
+        entity_kind: MemoryKind,
         memory_id: MemoryId,
         vectors: &[SpaceVector],
     ) -> Result<proxiima_core::EmbeddingWriteOutcome, StorageError> {
@@ -305,7 +305,7 @@ mod pg_tests {
             let outcome = insert_memory_embedding(
                 &mut tx,
                 &owner,
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 memory.memory_id,
                 &vectors,
             )
@@ -405,7 +405,7 @@ mod pg_tests {
             insert_memory_embedding(
                 &mut tx,
                 &owner,
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 memory.memory_id,
                 std::slice::from_ref(&valid),
             )
@@ -425,7 +425,7 @@ mod pg_tests {
                 let error = insert_memory_embedding(
                     &mut tx,
                     &owner,
-                    EntityKind::Fact,
+                    MemoryKind::Fact,
                     memory.memory_id,
                     &vectors,
                 )
@@ -475,7 +475,7 @@ mod pg_tests {
             insert_memory_embedding(
                 &mut first,
                 &owner,
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 memory.memory_id,
                 &[stub_vector(padded_embedding([0.1, 0.2, 0.3]))],
             )
@@ -489,7 +489,7 @@ mod pg_tests {
             .execute(pool)
             .await?;
             let entity = EmbeddableEntityRef::Memory {
-                kind: EntityKind::Fact,
+                kind: MemoryKind::Fact,
                 memory_id: memory.memory_id,
             };
             let vectors = vec![stub_vector(padded_embedding([0.4, 0.5, 0.6])); 2];
@@ -563,7 +563,7 @@ mod pg_tests {
             insert_memory_embedding(
                 &mut tx,
                 &owner,
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 memory.memory_id,
                 &vectors,
             )
@@ -884,7 +884,7 @@ mod pg_tests {
             insert_memory_embedding(
                 &mut tx,
                 &owner,
-                EntityKind::Fact,
+                MemoryKind::Fact,
                 outcome.memory_id,
                 &[stub_vector(embedding.clone())],
             )
@@ -946,7 +946,7 @@ mod pg_tests {
             assert_eq!(claims[0].entity_id, memory.memory_id);
             forget_by_hand(pg.pool_for_tests(), memory.memory_id).await?;
             let entity = EmbeddableEntityRef::Memory {
-                kind: EntityKind::Fact,
+                kind: MemoryKind::Fact,
                 memory_id: memory.memory_id,
             };
             let written = pg

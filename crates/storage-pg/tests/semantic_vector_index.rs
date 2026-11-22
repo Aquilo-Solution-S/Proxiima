@@ -233,7 +233,7 @@ async fn semantic_port_expands_past_stale_foreign_and_filtered_candidates() -> T
     let wrong_schema = seed_unregistered_schema_fact(pg.pool_for_tests(), owner, "wanted").await?;
     let foreign = seed_note(&pg, other, "wanted").await?;
     let entity = |id| EmbeddableEntityRef::Memory {
-        kind: EntityKind::Fact,
+        kind: proxiima_core::MemoryKind::Fact,
         memory_id: MemoryId::new(id),
     };
     // The derived index is stale: it attributes a foreign memory to us and
@@ -403,7 +403,7 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
         index
             .put(
                 EmbeddableEntityRef::Memory {
-                    kind: EntityKind::Perspective,
+                    kind: proxiima_core::MemoryKind::Perspective,
                     memory_id: MemoryId::new(*memory),
                 },
                 source_owner,
@@ -415,7 +415,7 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
     index
         .put(
             EmbeddableEntityRef::Memory {
-                kind: EntityKind::Perspective,
+                kind: proxiima_core::MemoryKind::Perspective,
                 memory_id: MemoryId::new(published),
             },
             source_owner,
@@ -461,7 +461,7 @@ fn key(entity: Uuid) -> VectorKey {
 
 fn fact(id: Uuid) -> EmbeddableEntityRef {
     EmbeddableEntityRef::Memory {
-        kind: EntityKind::Fact,
+        kind: proxiima_core::MemoryKind::Fact,
         memory_id: MemoryId::new(id),
     }
 }
@@ -637,7 +637,7 @@ async fn short_remote_bound_survives_local_tag_admission() -> TestResult {
         index
             .put(
                 EmbeddableEntityRef::Memory {
-                    kind: EntityKind::Fact,
+                    kind: proxiima_core::MemoryKind::Fact,
                     memory_id: MemoryId::new(wrong_tag),
                 },
                 owner,

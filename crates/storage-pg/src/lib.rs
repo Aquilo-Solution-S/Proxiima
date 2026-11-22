@@ -657,6 +657,55 @@ fn validate_store_number(persisted: Option<i32>, configured: u16) -> Result<(), 
     }
 }
 
+#[cfg(test)]
+mod store_number_tests {
+    use super::validate_store_number;
+    use proxiima_core::StorageError;
+
+    #[test]
+    fn store_number_validation_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            inputs: [String; 2],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Identity.storeNumberLifecycle"].clone())
+                .expect("the ledger emits store number decisions");
+        let configured = 3;
+        let mut replayed = 0;
+        for Vector { inputs, out } in rows {
+            let [state, event] = inputs.each_ref().map(String::as_str);
+            match event {
+                "migrate" => continue, // The Postgres store identity test exercises persistence.
+                "validate" => {}
+                _ => panic!("unknown store number event {event}"),
+            }
+            let persisted = match state {
+                "absent" => None,
+                "matching" => Some(i32::from(configured)),
+                "different" => Some(i32::from(configured) + 1),
+                _ => panic!("unknown store number state {state}"),
+            };
+            let observed = match validate_store_number(persisted, configured) {
+                Ok(()) => "useExisting",
+                Err(StorageError::MigrationRequired { .. }) => "requireMigration",
+                Err(StorageError::Unavailable(_)) => "refuseMismatch",
+                Err(other) => panic!("unexpected validation error: {other}"),
+            };
+            // `Proxiima.Identity.storeNumberLifecycle`.
+            assert_eq!(observed, out, "{inputs:?}");
+            replayed += 1;
+        }
+        assert_eq!(replayed, 3);
+    }
+}
+
 impl PgMigrationStorage {
     /// Connect the separately configured schema-management lane.
     ///

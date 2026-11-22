@@ -356,7 +356,7 @@ impl VectorIndex for InMemoryVectorIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EmbeddingDim, EntityKind, GoalId, UserId};
+    use crate::{EmbeddingDim, GoalId, MemoryKind, UserId};
 
     fn vector(space: &EmbeddingSpace, head: [f32; 2]) -> SpaceVector {
         let mut values = vec![0.0; space.dim().width()];
@@ -366,7 +366,7 @@ mod tests {
 
     fn memory(id: u128) -> EmbeddableEntityRef {
         EmbeddableEntityRef::Memory {
-            kind: EntityKind::Fact,
+            kind: MemoryKind::Fact,
             memory_id: MemoryId::new(Uuid::from_u128(id)),
         }
     }

@@ -132,6 +132,70 @@ mod tests {
     }
 
     #[test]
+    fn monotonic_mint_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            inputs: [String; 3],
+            out: serde_json::Value,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Identity.monotonicMint"].clone())
+                .expect("the ledger emits mint decisions");
+        let mut replayed = 0;
+        for Vector { inputs, out } in rows {
+            let [clock, counter, range] = inputs.each_ref().map(String::as_str);
+            let previous_counter = match counter {
+                "available" => 9,
+                "exhausted" => MAX_COUNTER,
+                _ => panic!("unknown counter space {counter}"),
+            };
+            let (clock_millis, previous_millis) = match (clock, counter, range) {
+                ("aheadOrUnbound", _, "fits") => (101, 100),
+                ("aheadOrUnbound", _, "overflow") => (MAX_MILLIS + 1, MAX_MILLIS),
+                ("atOrBehind", _, "fits") => (100, 100),
+                ("atOrBehind", "exhausted", "overflow") => (MAX_MILLIS, MAX_MILLIS),
+                // An increment within the same millisecond cannot overflow a valid timestamp.
+                ("atOrBehind", "available", "overflow") => continue,
+                _ => panic!("unknown mint inputs {inputs:?}"),
+            };
+            let mut generator = Generator::default();
+            let floor = generator
+                .mint(previous_millis, randomness(previous_counter), 3, None)
+                .expect("mint a valid floor");
+            let before = generator.previous;
+            let seed = 7;
+            let minted = generator.mint(clock_millis, randomness(seed), 3, Some(floor));
+            // `Proxiima.Identity.monotonicMint`.
+            let expected = match (
+                out.get("ok").and_then(serde_json::Value::as_str),
+                out.get("error").and_then(serde_json::Value::as_str),
+            ) {
+                (Some("reseedAtClock"), None) => Some((clock_millis, seed)),
+                (Some("incrementCounter"), None) => Some((previous_millis, previous_counter + 1)),
+                (Some("reseedNextMillisecond"), None) => Some((previous_millis + 1, seed)),
+                (None, Some("timestampOverflow")) => None,
+                _ => panic!("unknown mint outcome {out}"),
+            };
+            let observed = minted.map(|id| {
+                let bytes = id.as_bytes();
+                (
+                    timestamp_millis(id),
+                    u16::from_be_bytes([bytes[6], bytes[7]]) & MAX_COUNTER,
+                )
+            });
+            assert_eq!(observed, expected, "{inputs:?}");
+            assert_eq!(generator.previous, expected.or(before), "{inputs:?}");
+            replayed += 1;
+        }
+        assert_eq!(replayed, 7);
+    }
+
+    #[test]
     fn layout_carries_timestamp_version_variant_store_and_randomness() {
         let mut generator = Generator::default();
         let millis = 0x0192_f3a4_7b1c;
