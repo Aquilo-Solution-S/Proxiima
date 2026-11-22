@@ -553,8 +553,7 @@ impl OwnerRoles {
         !self.is_own(owner) && self.role_for(owner).is_some_and(Role::manages)
     }
 
-    /// Owners readable at `kind`, the subject's own id first, then by id: the
-    /// order of memory spaces.
+    /// Whether each required owner role is covered by this subject's role for that owner.
     pub(crate) fn all_roles_dominate(&self, required: &Self) -> bool {
         required.roles.iter().all(|(owner, required_role)| {
             self.role_for(owner)
@@ -562,6 +561,8 @@ impl OwnerRoles {
         })
     }
 
+    /// Owners readable at `kind`, the subject's own id first, then by id: the
+    /// order of memory spaces.
     #[must_use]
     pub fn readable_owners(&self, kind: MemoryKind) -> Vec<OwnerId> {
         self.ordered(|role| role.may_read(kind))

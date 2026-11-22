@@ -15,8 +15,8 @@ pub enum OidcConfigError {
     BlankField { field: &'static str },
     #[error("{field} must use https: {value}")]
     InsecureUrl { field: &'static str, value: String },
-    #[error("cannot initialize the OIDC HTTP client")]
-    HttpClientBuild,
+    #[error("cannot initialize the OIDC HTTP client: {0}")]
+    HttpClientBuild(String),
     #[error("{field} must be greater than zero and at most {max_seconds} seconds")]
     InvalidTimeout {
         field: &'static str,
@@ -69,11 +69,15 @@ impl OidcAuthConfig {
 }
 
 pub(crate) fn validate_issuer_url(raw: &str) -> Result<(), OidcConfigError> {
+    const EXCLUDED_DELIMITERS: [&str; 2] =
+        proxiima_core::ledger!(Proxiima.Authentication.issuerUrlExcludedDelimiters);
     // `Proxiima.Authentication.issuerTransport`.
     validate_https_url("issuer", raw)?;
-    // OIDC Discovery 1.0 §3 excludes query/fragment components from issuers.
-    // Inspect raw delimiters because the transport parser drops fragments.
-    if raw.contains(['?', '#']) {
+    // OIDC Discovery 1.0 §3 excludes these components; the transport parser drops fragments.
+    if EXCLUDED_DELIMITERS
+        .into_iter()
+        .any(|delimiter| raw.contains(delimiter))
+    {
         return Err(OidcConfigError::InvalidUrl {
             field: "issuer",
             parse_error: "issuer must not contain query or fragment components".into(),

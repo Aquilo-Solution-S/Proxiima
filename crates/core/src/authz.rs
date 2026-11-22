@@ -720,7 +720,6 @@ impl AuthzContext {
     /// Panics only if the exact owner role constructed here cannot be narrowed.
     #[must_use]
     pub fn for_insecure_single_owner(authority: &SystemAuthority, owner: OwnerId) -> Self {
-        // `Proxiima.Authentication.scopeSources`.
         let _ = authority;
         let subject = owner.as_user();
         let roles = OwnerRoles::scoped_to(subject, owner, Role::personal());
@@ -729,6 +728,7 @@ impl AuthzContext {
             via: None,
         };
         let mut context = Self::server_resolved_with_writer(roles, AuthPath::HostBearer, writer);
+        // `Proxiima.Authentication.scopeSources`.
         context.owner_scope = context.owner_scope.sealed_by(writer);
         context
             .narrowed_to_owner(owner)
@@ -736,8 +736,8 @@ impl AuthzContext {
     }
 
     pub(crate) fn seal_verified_scope(mut self) -> Self {
-        // `Proxiima.Authentication.scopeSources`.
         let writer = self.writer();
+        // `Proxiima.Authentication.scopeSources`.
         self.owner_scope = self.owner_scope.sealed_by(writer);
         if self.auth_path == AuthPath::HostBearer
             && self.forwarded_owner.is_none()
@@ -815,7 +815,6 @@ impl AuthzContext {
         mut self,
         claims: serde_json::Map<String, serde_json::Value>,
     ) -> Self {
-        // `Proxiima.Authentication.verifiedContext`.
         self.verified_claims = Some(VerifiedClaims(Arc::new(claims)));
         self
     }
@@ -1028,6 +1027,7 @@ impl AuthzContext {
         writer: WriterAttribution,
     ) -> Self {
         let subject = owner_roles.subject();
+        // Ordinary contexts carry no sealed authority.
         Self {
             identity: Identity {
                 subject,
@@ -1106,6 +1106,7 @@ impl AuthzContext {
                 tracing::warn!(%error, "forwarded owner: registry resolution failed");
             })
             .ok()??;
+        // Forwarded authority uses only the selected owner's capped role.
         let roles = OwnerRoles::scoped_to(subject, owner, role.role());
         let mut next = self.clone();
         next.owner_scope = OwnerScopeState::Sealed(OwnerScope::from_verified_roles(
@@ -1398,10 +1399,11 @@ pub async fn authenticate(
     AuthzContext::authenticate(authenticator, credentials).await
 }
 
-/// Maximum lifetime of a long-lived authenticated stream.
+/// Time limit before an authenticated stream starts its final drain.
 ///
-/// The wrapper terminates silently at the earlier of the context's expiry
-/// and maximum stream lifetime. See `Proxiima.Authentication.streamLifetime`.
+/// The earlier of this lifetime and the credential expiry starts the final
+/// drain of ready frames. The drain ends on the first pending poll, source
+/// EOF, or the frame limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevalidationConfig {
     pub max_stream_lifetime: Duration,
@@ -1417,36 +1419,66 @@ impl Default for RevalidationConfig {
     }
 }
 
+const FINAL_READY_FRAMES: usize = crate::ledger!(Proxiima.Authentication.finalReadyFrames);
+
+enum RevalidationState {
+    Open(Pin<Box<Sleep>>),
+    Closing(usize),
+    Ended,
+}
+
 struct RevalidatedStream<I> {
     inner: Pin<Box<dyn Stream<Item = I> + Send>>,
-    deadline: Pin<Box<Sleep>>,
-    closed: bool,
+    state: RevalidationState,
 }
 
 impl<I> Stream for RevalidatedStream<I> {
     type Item = I;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
         // `Proxiima.Authentication.streamLifetime`.
-        if self.closed
-            || self.deadline.as_mut().poll(cx).is_ready()
-            || Instant::now() >= self.deadline.deadline()
-        {
-            self.closed = true;
-            return Poll::Ready(None);
+        let (result, remaining) = match &mut this.state {
+            RevalidationState::Open(deadline) => {
+                let elapsed = deadline.as_mut().poll(cx).is_ready();
+                let result = this.inner.as_mut().poll_next(cx);
+                if !elapsed && Instant::now() < deadline.deadline() {
+                    if matches!(result, Poll::Ready(None)) {
+                        this.state = RevalidationState::Ended;
+                    }
+                    return result;
+                }
+                (result, FINAL_READY_FRAMES)
+            }
+            RevalidationState::Closing(remaining) => {
+                (this.inner.as_mut().poll_next(cx), *remaining)
+            }
+            RevalidationState::Ended => return Poll::Ready(None),
+        };
+        match result {
+            Poll::Ready(Some(item)) => {
+                this.state = if remaining > 1 {
+                    RevalidationState::Closing(remaining - 1)
+                } else {
+                    RevalidationState::Ended
+                };
+                Poll::Ready(Some(item))
+            }
+            Poll::Pending | Poll::Ready(None) => {
+                this.state = RevalidationState::Ended;
+                Poll::Ready(None)
+            }
         }
-        let result = self.inner.as_mut().poll_next(cx);
-        if result.is_ready() && Instant::now() >= self.deadline.deadline() {
-            self.closed = true;
-            return Poll::Ready(None);
-        }
-        self.closed = matches!(result, Poll::Ready(None));
-        result
     }
 }
 
-/// Wrap a long-lived stream with expiry and max-lifetime termination.
-/// Termination is a silent stream end.
+/// Wrap a stream with the earlier of credential expiry and maximum lifetime.
+///
+/// The wrapper delivers every frame it pulls. At the first deadline it
+/// delivers up to 16 immediately ready frames, counting any frame returned by
+/// the poll that crosses the deadline. It ends silently once the limit is
+/// reached, the source poll returns pending, or the source ends. This wrapper
+/// does not query live revocation state.
 pub fn revalidate_stream<S>(
     stream: S,
     expires_at: Option<SystemTime>,
@@ -1464,8 +1496,7 @@ where
     });
     Box::pin(RevalidatedStream {
         inner: Box::pin(stream),
-        deadline: Box::pin(tokio::time::sleep(remaining)),
-        closed: false,
+        state: RevalidationState::Open(Box::pin(tokio::time::sleep(remaining))),
     })
 }
 

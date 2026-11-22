@@ -5,7 +5,7 @@ use crate::protocol::tool as protocol_tool;
 use crate::protocol::{action as protocol_action, resource as protocol_resource};
 use crate::{GroupId, UserId};
 use futures_util::StreamExt;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -742,6 +742,7 @@ fn contexts_carry_no_verified_claims_by_default() {
     assert_eq!(context.verified_claims(), None);
 }
 
+// `Proxiima.Authentication.verifiedContext`.
 #[test]
 fn verified_claims_survive_cloning_and_owner_narrowing() {
     let subject = UserId::new(uuid::Uuid::now_v7());
@@ -1374,7 +1375,7 @@ async fn none_expiry_runs_until_max_lifetime() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn stream_stops_at_the_earliest_deadline_with_a_ready_source() {
+async fn stream_closes_at_the_earliest_deadline() {
     let config = RevalidationConfig {
         max_stream_lifetime: Duration::from_secs(10),
     };
@@ -1387,9 +1388,74 @@ async fn stream_stops_at_the_earliest_deadline_with_a_ready_source() {
         sender.send(2).expect("receiver is alive");
         assert_eq!(stream.next().await, Some(1));
         time::advance(Duration::from_secs(cutoff)).await;
-        assert_eq!(stream.next().await, None);
-        assert_eq!(stream.next().await, None);
+        assert_eq!(stream.next().await, Some(2));
+        let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(None));
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(None));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_stream_delivers_exactly_the_ready_frame_budget() {
+    let mut stream = revalidate_stream(
+        futures_util::stream::repeat(1),
+        None,
+        RevalidationConfig {
+            max_stream_lifetime: Duration::from_secs(1),
+        },
+    );
+    time::advance(Duration::from_secs(1)).await;
+
+    for _ in 0..FINAL_READY_FRAMES {
+        assert_eq!(stream.next().await, Some(1));
+    }
+    assert_eq!(stream.next().await, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_stream_ends_on_a_pending_source_poll() {
+    let polled = Arc::new(AtomicBool::new(false));
+    let source = futures_util::stream::poll_fn({
+        let polled = Arc::clone(&polled);
+        move |_| {
+            polled.store(true, Ordering::Relaxed);
+            Poll::<Option<u8>>::Pending
+        }
+    });
+    let mut stream = revalidate_stream(
+        source,
+        None,
+        RevalidationConfig {
+            max_stream_lifetime: Duration::from_secs(1),
+        },
+    );
+    time::advance(Duration::from_secs(1)).await;
+
+    let mut cx = Context::from_waker(futures_util::task::noop_waker_ref());
+    assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(None));
+    assert!(polled.load(Ordering::Relaxed));
+}
+
+#[tokio::test(start_paused = true)]
+async fn stream_delivers_the_item_from_a_poll_that_reaches_the_deadline() {
+    let lifetime = Duration::from_secs(1);
+    let deadline = Instant::now() + lifetime;
+    let source = futures_util::stream::poll_fn(move |cx| {
+        // The first poll of advance moves the paused clock, then yields.
+        let mut advance = std::pin::pin!(time::advance(lifetime));
+        assert_eq!(advance.as_mut().poll(cx), Poll::Pending);
+        assert_eq!(Instant::now(), deadline);
+        Poll::Ready(Some(1))
+    });
+    let mut stream = revalidate_stream(
+        source,
+        None,
+        RevalidationConfig {
+            max_stream_lifetime: lifetime,
+        },
+    );
+
+    assert_eq!(stream.next().await, Some(1));
 }
 
 #[test]

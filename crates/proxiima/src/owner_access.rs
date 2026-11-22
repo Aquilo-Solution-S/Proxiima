@@ -102,7 +102,6 @@ impl OwnerRegistry for proxiima_storage_pg::PgOwnerAccessResolver {
 pub(crate) fn forwarder_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<ForwarderPolicy>, ProxiimaError> {
-    // `Proxiima.Authentication.ForwardingRole`.
     match (
         FORWARDER_SUBJECTS.read_source(lookup),
         FORWARDER_ROLE.read_source(lookup),
@@ -132,6 +131,7 @@ pub(crate) fn forwarder_from_lookup(
                 "ingest" => ForwarderRole::Ingest,
                 "editor" => ForwarderRole::Editor,
                 other => {
+                    // `Proxiima.Authentication.ForwardingRole`.
                     return Err(ProxiimaError::Config(format!(
                         "{FORWARDER_ROLE} must be viewer, ingest, or editor, got {other:?}"
                     )));

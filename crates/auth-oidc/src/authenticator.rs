@@ -129,7 +129,7 @@ pub enum OidcRejection {
 
 impl From<OidcRejection> for AuthError {
     fn from(_: OidcRejection) -> Self {
-        // `Proxiima.Authentication.publicTokenRefusal`.
+        // Detailed token refusals stay internal to the host.
         Self::InvalidCredentials
     }
 }
@@ -273,11 +273,11 @@ impl OidcTokenValidator {
                 kid,
             })?;
 
+        // The resolved key family sets the allowed algorithms for checking the token header.
         let algorithms = verified_algorithms(key.family());
         if !algorithms.contains(&header.alg) {
             return Err(OidcRejection::DisallowedAlgorithm);
         }
-        // `Proxiima.Authentication.tokenChecks`.
         let mut validation = Validation {
             algorithms: algorithms.to_vec(),
             ..Validation::default()
@@ -288,11 +288,13 @@ impl OidcTokenValidator {
         validation.validate_nbf = true;
         validation.leeway = self.leeway_secs;
 
+        // `Proxiima.Authentication.tokenChecks`.
         let data = decode::<serde_json::Value>(token, &key, &validation)
             .map_err(|err| OidcRejection::from_jwt(&err, &self.issuer, &self.audience))?;
         if let Some(policy) = &self.authorized_party {
             policy.check(&data.claims)?;
         }
+        // Decode registered and host-typed claims from the same verified payload.
         let registered = Claims::deserialize(&data.claims)
             .map_err(|err| OidcRejection::Malformed(err.to_string()))?;
         let expires_at = UNIX_EPOCH

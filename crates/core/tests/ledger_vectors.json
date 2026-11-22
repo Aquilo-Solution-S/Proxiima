@@ -606,23 +606,26 @@
   {"out": "allow", "in": [false, true]},
   {"out": "allow", "in": [false, false]}],
  "Proxiima.Authentication.streamLifetime":
- [{"out": "open", "in": ["open", "beforeDeadlines"]},
-  {"out": "ended", "in": ["open", "credentialExpired"]},
-  {"out": "ended", "in": ["open", "lifetimeElapsed"]},
+ [{"out": "closing", "in": ["open", "firstDeadline"]},
+  {"out": "open", "in": ["open", "ready"]},
+  {"out": "open", "in": ["open", "finalReady"]},
+  {"out": "open", "in": ["open", "sourcePending"]},
   {"out": "ended", "in": ["open", "sourceEnded"]},
-  {"out": "ended", "in": ["ended", "beforeDeadlines"]},
-  {"out": "ended", "in": ["ended", "credentialExpired"]},
-  {"out": "ended", "in": ["ended", "lifetimeElapsed"]},
+  {"out": "closing", "in": ["closing", "firstDeadline"]},
+  {"out": "closing", "in": ["closing", "ready"]},
+  {"out": "ended", "in": ["closing", "finalReady"]},
+  {"out": "ended", "in": ["closing", "sourcePending"]},
+  {"out": "ended", "in": ["closing", "sourceEnded"]},
+  {"out": "ended", "in": ["ended", "firstDeadline"]},
+  {"out": "ended", "in": ["ended", "ready"]},
+  {"out": "ended", "in": ["ended", "finalReady"]},
+  {"out": "ended", "in": ["ended", "sourcePending"]},
   {"out": "ended", "in": ["ended", "sourceEnded"]}],
  "Proxiima.Authentication.signatureAlgorithms":
  [{"out": ["RS256", "RS384", "RS512"], "in": ["rsa"]},
   {"out": ["ES256"], "in": ["p256"]},
   {"out": ["EdDSA"], "in": ["ed25519"]},
   {"out": [], "in": ["sharedSecret"]}],
- "Proxiima.Authentication.requestRoleSource":
- [{"out": "forwarded", "in": [true]}, {"out": "membership", "in": [false]}],
- "Proxiima.Authentication.publishDelegationService":
- [{"out": "delegation", "in": [true]}, {"out": null, "in": [false]}],
  "Proxiima.Authentication.modelLabelSource":
  [{"out": "credential", "in": [true, "absent"]},
   {"out": "credential", "in": [true, "matching"]},
@@ -661,8 +664,6 @@
   {"out": "narrow", "in": ["roles"]},
   {"out": "narrow", "in": ["tools"]},
   {"out": "narrow", "in": ["expiry"]}],
- "Proxiima.Authentication.discoveredIssuerAgrees":
- [{"out": "endpoint", "in": [true]}, {"out": null, "in": [false]}],
  "Proxiima.Authentication.delegateBlobOperation":
  [{"out": true, "in": ["delivery"]},
   {"out": true, "in": ["verifiedCollection"]},
@@ -671,8 +672,6 @@
  [{"out": "returnCached", "in": ["fresh"]},
   {"out": "tryRefresh", "in": ["aging"]},
   {"out": "waitForRefresh", "in": ["absent"]}],
- "Proxiima.Authentication.bindingCandidates":
- [{"out": "issuerMatches", "in": [true]}, {"out": "allRoutes", "in": [false]}],
  "Proxiima.Authentication.authenticatorSlot":
  [{"out": "inherit", "in": ["neither"]},
   {"out": "useDirect", "in": ["direct"]},
@@ -685,6 +684,10 @@
   {"out": true, "in": [false, "absentOrGeneric"]},
   {"out": true, "in": [false, "access"]},
   {"out": false, "in": [false, "other"]}],
+ "Proxiima.Authentication.admitSubjectAllowlist":
+ [{"out": true, "in": ["omitted"]},
+  {"out": false, "in": ["empty"]},
+  {"out": true, "in": ["populated"]}],
  "Proxiima.Authentication.admitAuthorizedParty":
  [{"out": true, "in": ["missingSingleAudience"]},
   {"out": false, "in": ["missingMultipleAudiences"]},

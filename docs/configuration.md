@@ -48,7 +48,7 @@ variable is ignored.
 | PROXIIMA_MCP_SESSIONS | server-side session switch | stateful MCP clients | boolean | `true` |
 | PROXIIMA_MCP_JSON_RESPONSE | JSON response switch | stateless MCP clients | boolean | `false` |
 | PROXIIMA_PUBLIC_URL | public OAuth URL: `http` or `https`, with a host and no credentials, query or fragment | OIDC/public serving | URL |  |
-| PROXIIMA_OIDC_ISSUER | fallback OIDC issuer; requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON` | OIDC serving | URL |  |
+| PROXIIMA_OIDC_ISSUER | turns on OIDC authentication when code supplies no authenticator. Requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON` | OIDC serving | URL |  |
 | PROXIIMA_OIDC_AUDIENCE | token audience: this resource server, never an OAuth client id | OIDC serving | text |  |
 | PROXIIMA_OIDC_REQUIRE_ACCESS_TOKEN_TYP | require JWT `typ` `at+jwt` or `application/at+jwt`; off, an absent `typ` or `JWT` also passes and any other is refused | whenever the issuer sends RFC 9068 access tokens | boolean | `false` |
 | PROXIIMA_OIDC_JWKS_URI | explicit JWKS endpoint; discovered from the issuer when unset | pinned discovery override | URL |  |

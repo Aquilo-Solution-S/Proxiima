@@ -41,6 +41,8 @@ pub const REGISTRATION_PATH: &str = "/oauth/register";
 
 /// What a registration grants: the authorization-code flow with refresh.
 const GRANT_TYPES: [&str; 2] = proxiima_core::ledger!(Proxiima.Authentication.publicGrantTypes);
+const PUBLIC_AUTH_METHOD: &str =
+    proxiima_core::ledger!(Proxiima.Authentication.publicRegistrationAuthMethod);
 
 /// Scopes a client requests: `openid` for the OIDC sign-in, `offline_access`
 /// for a refresh token. A client that finds no `scopes_supported` requests
@@ -382,7 +384,7 @@ pub fn public_discovery_router(metadata: &ResourceServerMetadata) -> Router {
         "response_types_supported": ["code"],
         "grant_types_supported": GRANT_TYPES,
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
+        "token_endpoint_auth_methods_supported": [PUBLIC_AUTH_METHOD],
         "scopes_supported": metadata.scopes_supported(),
     })
     .to_string();
@@ -436,11 +438,11 @@ where
 ///
 /// Redirect hosts are deliberately not filtered here: the upstream public
 /// client's redirect allowlist is the single enforcer and this facade is stateless.
-// `Proxiima.Authentication.registrationChecks`.
 fn register(body: &[u8], facade: &PublicClientFacade) -> Response {
     let Ok(request) = serde_json::from_slice::<RegistrationRequest>(body) else {
         return registration_error("invalid_client_metadata", "Request body must be JSON");
     };
+    // `Proxiima.Authentication.registrationChecks`.
     let Some(redirect_uris) = request.redirect_uris else {
         return registration_error(
             "invalid_redirect_uri",
@@ -466,19 +468,23 @@ fn register(body: &[u8], facade: &PublicClientFacade) -> Response {
             "redirect_uris must contain absolute URLs",
         );
     }
+    // `Proxiima.Authentication.registrationChecks`.
     if request
         .token_endpoint_auth_method
-        .is_some_and(|method| method != "none")
+        .is_some_and(|method| method != PUBLIC_AUTH_METHOD)
     {
         return registration_error(
             "invalid_client_metadata",
-            "token_endpoint_auth_method must be none",
+            concat!(
+                "token_endpoint_auth_method must be ",
+                proxiima_core::ledger!(Proxiima.Authentication.publicRegistrationAuthMethod)
+            ),
         );
     }
     let mut response = serde_json::json!({
         "client_id": facade.client_id(),
         "redirect_uris": redirect_uris,
-        "token_endpoint_auth_method": "none",
+        "token_endpoint_auth_method": PUBLIC_AUTH_METHOD,
         "grant_types": GRANT_TYPES,
         "response_types": ["code"],
     });

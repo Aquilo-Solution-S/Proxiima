@@ -337,9 +337,10 @@ impl DelegationGrant {
         expires_at: SystemTime,
         issued_at: SystemTime,
     ) -> Self {
+        // `Proxiima.Authentication.GrantHandle`.
+        let delegation_id = DelegationId::from_uuid(Uuid::now_v7());
         Self {
-            // `Proxiima.Authentication.GrantHandle`.
-            delegation_id: DelegationId::from_uuid(Uuid::now_v7()),
+            delegation_id,
             subject: source.subject(),
             writer: source.writer(),
             owner,
@@ -603,6 +604,7 @@ impl DelegatedAuthorityService {
         if grant.command() != expected_command {
             return Err(DelegatedAuthorityError::CommandMismatch);
         }
+        // Revocation blocks future redemption. Already admitted phases keep their finite expiry.
         if grant.revoked_at().is_some() {
             return Err(DelegatedAuthorityError::Revoked);
         }

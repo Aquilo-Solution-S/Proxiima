@@ -381,8 +381,10 @@ confined them. It is routing state with an idle lifetime, not a new role
 grant. `WriterAttribution.via` is separate write provenance: `null` means a
 direct principal call; a UUID names the caller/session attested by the
 credential. Subsequent MCP requests reauthenticate and recheck the binding.
-Long-lived streams end at token expiry or the maximum stream lifetime;
-nothing revokes a token before it expires.
+Long-lived streams begin their final drain at token expiry or the maximum
+stream lifetime, whichever comes first. Revalidation uses those deadlines
+and has no live revocation probe. See [MCP response handling](protocol.md#owner-scope)
+for the frame limit and end conditions.
 
 ### Credential verification and identity mapping
 

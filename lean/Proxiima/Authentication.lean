@@ -8,7 +8,7 @@ namespace Proxiima.Authentication
 inductive TokenCheck where
   | keyFamilySignature | exactIssuer | audienceMembership | expiry | subjectString | presentNotBefore
 
-/-- A single verified payload supplies both the registered claims and the host's typed claims. -/
+/-- The OIDC checks required before verified claims are returned. -/
 def tokenChecks : List TokenCheck :=
   [.keyFamilySignature, .exactIssuer, .audienceMembership, .expiry, .subjectString, .presentNotBefore]
 
@@ -47,21 +47,17 @@ def admitTokenType : (strict : Bool) → TokenType → Bool
 /-- Whether strict access-token type checking is enabled by default. -/
 def requireAccessTokenType : Bool := false
 
-/-- The credential refusal exposed by a bearer authenticator. -/
-inductive PublicRefusal where
-  | invalidCredentials
-
-/-- A token check's detailed refusal is internal to the host. -/
-def publicTokenRefusal : PublicRefusal := .invalidCredentials
-
 /-- URL classes used to validate issuer and key endpoints. -/
 inductive Transport where
   | https | loopbackHttp | other
 
-/-- Issuer URLs permit paths and exclude query and fragment delimiters. -/
+/-- Issuer transport admits HTTPS and loopback HTTP. -/
 def issuerTransport : Transport → Bool
   | .https | .loopbackHttp => true
   | .other => false
+
+/-- Raw query and fragment delimiters excluded from issuer URLs. -/
+def issuerUrlExcludedDelimiters : List String := ["?", "#"]
 
 /-- Configured, discovered and redirected key endpoints use HTTPS, or loopback HTTP when their issuer is also loopback. -/
 def keyTransport : (loopbackIssuer : Bool) → Transport → Bool
@@ -72,7 +68,7 @@ def keyTransport : (loopbackIssuer : Bool) → Transport → Bool
 inductive BootstrapUrl where
   | publicUrl | issuer | explicitKeyEndpoint
 
-/-- The public HTTP(S) URL requires a host and excludes credentials, query and fragment; URL diagnostics omit its input. -/
+/-- The URL checks performed before subject-map and storage intake. -/
 def bootstrapUrlChecks : List BootstrapUrl := [.publicUrl, .issuer, .explicitKeyEndpoint]
 
 /-- The setting categories an operator may supply with an issuer. -/
@@ -96,11 +92,6 @@ def keySource : (uri document : Bool) → KeySource
   | false, true => .inlineDocument
   | true, true => .conflict
 
-/-- Discovery accepts the key endpoint only if the response names the configured issuer exactly. -/
-def discoveredIssuerAgrees : (same : Bool) → Option KeySource
-  | true => some .endpoint
-  | false => none
-
 /-- How a JWKS document reached the resolver. -/
 inductive KeyDocument where
   | pinned | fetched
@@ -109,7 +100,7 @@ inductive KeyDocument where
 inductive InvalidKeyEntry where
   | refuseDocument | skipEntry
 
-/-- Pinned keys must be named, distinct, supported public signature keys; remote parsing keeps usable siblings and tolerates recoverable key-type spelling. -/
+/-- Whether an invalid key entry refuses its document or is skipped, according to the document source. -/
 def invalidKeyEntry : KeyDocument → InvalidKeyEntry
   | .pinned => .refuseDocument
   | .fetched => .skipEntry
@@ -152,21 +143,30 @@ def keyCoordinateBytes : Nat := 32
 /-- The stock validator's JWT clock tolerance in seconds. -/
 def clockSkewSeconds : Nat := 60
 
-/-- The key by which verified issuer and subject resolve a principal; empty keys, duplicate bindings and malformed records are refused. -/
+/-- A configured issuer and subject map to a principal and optional runner, with empty keys, duplicate bindings and malformed records refused. -/
 structure SubjectBinding where
   issuer : String
   subject : String
   principal : String
   runner : Option String
 
-/-- The allowlist operates on the verified subject before principal mapping, with an omitted list leaving mapping alone. -/
+/-- The possible admission results for a verified subject. -/
 inductive SubjectAdmission where
   | allow | refuse
 
-/-- A configured allowlist that names no subjects is refused at setting intake. -/
+/-- Which verified subjects are admitted with or without a configured subject allowlist. -/
 def subjectAdmission : (allowlistPresent subjectListed : Bool) → SubjectAdmission
   | false, false | false, true | true, true => .allow
   | true, false => .refuse
+
+/-- The configured subject allowlist at settings intake. -/
+inductive SubjectAllowlistSetting where
+  | omitted | empty | populated
+
+/-- An omitted or populated subject allowlist is accepted, while an explicitly empty list is refused. -/
+def admitSubjectAllowlist : SubjectAllowlistSetting → Bool
+  | .omitted | .populated => true
+  | .empty => false
 
 /-- The presented authorized party after reading the validated token's audience and exact nonempty route allowset. -/
 inductive PartyCheck where
@@ -176,15 +176,6 @@ inductive PartyCheck where
 def admitAuthorizedParty : PartyCheck → Bool
   | .listed | .missingSingleAudience => true
   | .unlisted | .missingMultipleAudiences | .malformed => false
-
-/-- A readable unsigned issuer prunes verification candidates; the route set is nonempty with unique issuer and audience pairs. -/
-inductive BindingCandidates where
-  | issuerMatches | allRoutes
-
-/-- Which routes to verify before requiring exactly one match. -/
-def bindingCandidates : (issuerReadable : Bool) → BindingCandidates
-  | true => .issuerMatches
-  | false => .allRoutes
 
 /-- What a policy may do to a credential-bound authorization field. -/
 inductive ShaperAction where
@@ -203,21 +194,14 @@ def hostShape : ShapedField → ShaperAction
 inductive ClaimsCarry where
   | clone | narrowToOwner
 
-/-- Verified payload context is immutable and carries neither bearer bytes nor authorization. -/
+/-- The context operations that preserve the optional verified payload. -/
 def verifiedContext : List ClaimsCarry := [.clone, .narrowToOwner]
-
-/-- Header context is constructed at request intake from the host's selected names. -/
-inductive HeaderExposure where
-  | allowlistedRequestHeaders
-
-/-- A service may read only the header names selected by its host. -/
-def requestHeaderExposure : HeaderExposure := .allowlistedRequestHeaders
 
 /-- Each transport request verifies its own credential and any session must agree with the current principal and owner. -/
 inductive SessionAuthorityCheck where
   | authenticateRequest | agreeWithPrincipal | agreeWithOwner
 
-/-- A transport session binds selection, while authority comes from each request. -/
+/-- The credential and session agreement checks on each request. -/
 def sessionChecks : List SessionAuthorityCheck :=
   [.authenticateRequest, .agreeWithPrincipal, .agreeWithOwner]
 
@@ -225,7 +209,7 @@ def sessionChecks : List SessionAuthorityCheck :=
 inductive OwnerResolverConsumer where
   | mcpEdge | environmentOidc | delegation | platformFactory
 
-/-- Serving binds one owner access port before any consumer uses it. -/
+/-- The consumers of the owner access port bound during serving. -/
 def ownerResolverConsumers : List OwnerResolverConsumer :=
   [.mcpEdge, .environmentOidc, .delegation, .platformFactory]
 
@@ -244,16 +228,7 @@ def authenticatorSlot : AuthenticatorForms → AuthenticatorSlot
   | .factory => .buildWithPlatform
   | .both => .conflict
 
-/-- Credential routes available to a verified request. -/
-inductive CredentialRoute where
-  | membership | forwarded
-
-/-- Ordinary requests take only membership; a configured forwarder uses a verified exact owner and writer claim before any owner role is resolved. -/
-def requestRoleSource : (forwarder : Bool) → CredentialRoute
-  | false => .membership
-  | true => .forwarded
-
-/-- The non-managing role names admitted with a nonempty set of forwarder subjects. -/
+/-- The non-managing role names admitted by forwarding policy. -/
 inductive ForwardingRole where
   | viewer | ingest | editor
   deriving DecidableEq
@@ -266,15 +241,15 @@ def forwardingCap : Proxiima.OwnerAuthority.RolePreset :=
 inductive ForwardingCheck where
   | verifiedIdentityAndWriter | exactOwner | liveCredential | configuredCeiling | registeredOwner
 
-/-- Membership roles are never unioned with a forwarded role. -/
+/-- The identity, owner, time, role and registry checks for a forwarded request. -/
 def forwardingChecks : List ForwardingCheck :=
   [.verifiedIdentityAndWriter, .exactOwner, .liveCredential, .configuredCeiling, .registeredOwner]
 
-/-- The credential-free boot witness confines a synthetic host bearer to its personal owner. -/
+/-- The sources that may seal owner authority. -/
 inductive ScopeSource where
   | verifiedCredential | singleOwnerBoot
 
-/-- Verified credential admission seals owner roles, deadline and writer for engine operations; ordinary contexts carry no witness. -/
+/-- The verified-credential and personal-owner boot paths that seal owner authority. -/
 def scopeSources : List ScopeSource := [.verifiedCredential, .singleOwnerBoot]
 
 /-- Only engine gates construct read and write permits from their checked authority. -/
@@ -284,7 +259,7 @@ inductive EnginePermit where
 /-- The engine permit families subject to `Proxiima.OwnerAuthority.ScopeRestriction.expiry`. -/
 def enginePermits : List EnginePermit := [.entryRead, .write]
 
-/-- Largest credential-attested model label in Unicode characters after trimming; blank labels are refused. -/
+/-- The Unicode character limit for credential-attested and caller-supplied model labels and for the retained portion of an echoed label. -/
 def maxTrustedModelChars : Nat := 120
 
 /-- The caller's normalized model label relative to any attestation. -/
@@ -302,25 +277,29 @@ def modelLabelSource : (attested : Bool) → ModelClaim → ModelLabelSource
   | false, .absent => .unknown
   | false, .matching | false, .supplied => .caller
 
-/-- Maximum validated host run attributes carried with Fact capture; binds merge without clearing and refuse duplicate names. -/
+/-- Maximum validated host run attributes carried with Fact capture. -/
 def maxHostRunExtensions : Nat := 8
 
-/-- Default maximum lifetime in seconds of authenticated streams. -/
+/-- Default seconds before the lifetime limit starts the final drain of an authenticated stream. -/
 def defaultStreamLifetimeSeconds : Nat := 3600
 
-/-- Conditions observed by the generic wrapper, which has no live revocation probe. -/
+/-- Maximum frames delivered without waiting after the first authorization deadline. -/
+def finalReadyFrames : Nat := 16
+
+/-- Observations of the first deadline and source polls, with a ready item counting toward the closing budget if its poll reaches the deadline. -/
 inductive StreamObservation where
-  | beforeDeadlines | credentialExpired | lifetimeElapsed | sourceEnded
+  | firstDeadline | ready | finalReady | sourcePending | sourceEnded
 
-/-- A wrapped stream's observable state. -/
+/-- Stream states before the first deadline, while draining up to finalReadyFrames, and after termination. -/
 inductive StreamState where
-  | open | ended
+  | open | closing | ended
 
-/-- The first observed expiry or positive configured lifetime deadline ends the stream silently, including while its source is ready. -/
+/-- The first deadline starts closing, every pulled item is delivered, and closing ends at the budget, a pending poll or source EOF. -/
 def streamLifetime : StreamState → StreamObservation → StreamState
-  | .open, .beforeDeadlines => .open
-  | .open, .credentialExpired | .open, .lifetimeElapsed | .open, .sourceEnded
-  | .ended, .beforeDeadlines | .ended, .credentialExpired | .ended, .lifetimeElapsed | .ended, .sourceEnded => .ended
+  | .open, .ready | .open, .finalReady | .open, .sourcePending => .open
+  | .open, .firstDeadline | .closing, .firstDeadline | .closing, .ready => .closing
+  | .open, .sourceEnded | .closing, .finalReady | .closing, .sourcePending | .closing, .sourceEnded
+  | .ended, .firstDeadline | .ended, .ready | .ended, .finalReady | .ended, .sourcePending | .ended, .sourceEnded => .ended
 
 /-- The OAuth metadata selected by a request path, with the resource URL independent of token audience. -/
 inductive ProtectedResource where
@@ -337,7 +316,7 @@ def scopeTokenByteBounds : List Nat := [33, 126]
 /-- The quote and backslash bytes excluded from an OAuth scope token. -/
 def scopeTokenExcludedBytes : List Nat := [34, 92]
 
-/-- Advertise the built-in sign-in and refresh scopes first, then unique validated extra scopes in order. -/
+/-- The built-in sign-in and refresh scopes, in advertisement order. -/
 def defaultScopes : List String := ["openid", "offline_access"]
 
 /-- Flows advertised for the stateless public client, which uses the upstream sign-in and token endpoints. -/
@@ -354,8 +333,11 @@ def publicClientRoutes : List FacadeRoute := [.authorizationMetadata, .registrat
 inductive RegistrationCheck where
   | nonemptyAbsoluteRedirects | publicAuthentication
 
-/-- An omitted registration auth method defaults to public authentication. -/
+/-- The redirect and token endpoint authentication checks on public-client registration. -/
 def registrationChecks : List RegistrationCheck := [.nonemptyAbsoluteRedirects, .publicAuthentication]
+
+/-- The public token endpoint authentication method used when registration omits the method and required when it supplies one. -/
+def publicRegistrationAuthMethod : String := "none"
 
 /-- A registered delegated command is a flat tool or a dispatcher leaf, with serialized scope derived from the typed command. -/
 inductive DelegatedCommand where
@@ -367,15 +349,6 @@ def delegatedCommands : List DelegatedCommand := [.flat, .dispatcherLeaf]
 /-- Maximum delegated tool identifier length in characters. -/
 def maxDelegatedCommandChars : Nat := 200
 
-/-- The service a runtime can publish for queued delegated commands. -/
-inductive AuthService where
-  | delegation
-
-/-- Authentication is required to publish the service for issuing and redeeming delegation grants. -/
-def publishDelegationService : (authenticatorPresent : Bool) → Option AuthService
-  | true => some .delegation
-  | false => none
-
 /-- A queued job stores an opaque redacted UUIDv7 grant handle and no bearer. -/
 structure GrantHandle where
   id : String
@@ -385,7 +358,7 @@ inductive GrantIssueCheck where
   | finiteVerifiedBearer | currentMembership | sourceRole | nonManagingCeiling | registeredCommand
   | callerScope | deployment | sourceExpiry | attestedWriter
 
-/-- Issuance bounds the exact command and selected owner by the bearer, current membership and deployment policy. -/
+/-- The credential, membership, command and policy checks before issuing a delegation grant. -/
 def grantIssueChecks : List GrantIssueCheck :=
   [.finiteVerifiedBearer, .sourceRole, .sourceExpiry, .nonManagingCeiling, .currentMembership,
    .registeredCommand, .callerScope, .deployment, .attestedWriter]
@@ -394,7 +367,7 @@ def grantIssueChecks : List GrantIssueCheck :=
 inductive GrantRedemptionCheck where
   | exactOwnerAndCommand | expiry | revocation | callerProfile | currentMembership
 
-/-- Each new phase retains the recorded role ceiling and exact tool scope after fresh redemption. -/
+/-- The owner, command, validity and membership checks before admitting each delegated phase. -/
 def grantRedemptionChecks : List GrantRedemptionCheck :=
   [.exactOwnerAndCommand, .revocation, .expiry, .callerProfile, .currentMembership]
 
@@ -402,7 +375,7 @@ def grantRedemptionChecks : List GrantRedemptionCheck :=
 inductive GrantRevoker where
   | issuer | ownerManager
 
-/-- Revocation is idempotent and blocks future redemption; an admitted phase retains its finite expiry. -/
+/-- The issuer and current owner managers who may revoke a grant. -/
 def grantRevokers : List GrantRevoker := [.issuer, .ownerManager]
 
 /-- A noncloneable phase is checked at the engine against its originating runtime, finite expiry, exact purpose and target. -/

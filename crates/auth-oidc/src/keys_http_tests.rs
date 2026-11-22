@@ -57,6 +57,27 @@ fn explicit_request_timeout_rejects_zero_and_out_of_range_values() {
 }
 
 #[test]
+fn resolver_reports_the_http_client_builder_cause() {
+    let invalid_builder = || reqwest::Client::builder().user_agent("\n");
+    let reqwest_error = invalid_builder().build().unwrap_err();
+    let Err(OidcConfigError::HttpClientBuild(cause)) = HttpJwksResolver::with_http_client_builder(
+        "https://issuer.example".into(),
+        None,
+        invalid_builder(),
+        DEFAULT_HTTP_REQUEST_TIMEOUT,
+    ) else {
+        panic!("expected a client builder refusal");
+    };
+
+    assert_eq!(
+        cause,
+        std::error::Error::source(&reqwest_error)
+            .unwrap()
+            .to_string()
+    );
+}
+
+#[test]
 fn constructors_reject_issuer_query_or_fragment_components() {
     for base in [
         "https://issuer.example/tenant",

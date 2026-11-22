@@ -59,6 +59,12 @@ of evicting another principal's sessions. A valid bearer presenting another
 principal's session id receives the same opaque 404 as an unknown or expired
 session, and does not refresh or reach that session's protocol state.
 
+The earlier of the bearer expiry and the server's stream lifetime limit starts
+the final drain of an authenticated MCP response. The server delivers up to
+16 frames that are immediately ready, including any frame returned by a poll
+that reaches the deadline. It ends the response at the limit, when a poll
+would need to wait for a frame, or when the source ends.
+
 A configured forwarder carries its selected owner in the verified token's
 `owner` UUID claim and writer claims `by` (principal UUID) and `via`
 (session UUID or explicit `null`). Missing or invalid claims refuse

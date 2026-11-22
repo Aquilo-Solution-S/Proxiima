@@ -1087,7 +1087,7 @@ fn assemble_services<A: SpiiceApp>(
                 .into(),
         ));
     }
-    // `Proxiima.Authentication.publishDelegationService`.
+    // Issuing and redeeming delegation grants requires an authenticator.
     if authenticator.is_some() {
         let store = Arc::new(PgDelegationStore::new(host.platform_scope.clone()));
         services.try_insert(DelegatedAuthorityService::new(

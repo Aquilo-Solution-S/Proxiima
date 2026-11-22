@@ -96,9 +96,9 @@ impl OidcRoleShape {
 
 /// Accept a host shaper's context only when it narrows the one it was given:
 /// the same `HostBearer` subject, attested writer, trusted model id and
-/// mandatory forwarded owner, no owner, kind or manage right the resolved
-/// roles lack. The tool scope is intersected with the given one and the expiry
-/// clamped to the token's, so neither can widen either.
+/// mandatory forwarded owner, with roles narrowed across memory kinds, Goal
+/// access, owner administration and group management. The tool scope is
+/// intersected with the given one and the expiry clamped to the token's.
 fn narrowed_by_host(
     resolved: &AuthzContext,
     shaped: AuthzContext,
@@ -163,7 +163,7 @@ async fn context_for_verified_token(
         tracing::warn!(error = %err, "oidc auth: forwarding policy resolution failed");
         AuthError::InvalidCredentials
     })?;
-    // `Proxiima.Authentication.requestRoleSource`.
+    // Ordinary requests use membership. Forwarders carry verified owner and writer claims to the edge.
     let context = if is_forwarder {
         let owner = OwnerId::new(signed_uuid_claim(
             token
@@ -292,8 +292,8 @@ impl OidcBinding {
         token: ValidatedOidcToken<OidcClaimMap>,
     ) -> Result<AuthzContext, AuthError> {
         let claims = &token.claims;
+        // Subject policy applies to the verified subject before principal mapping.
         self.validator.check_subject(claims)?;
-        // `Proxiima.Authentication.SubjectBinding`.
         let Some(binding) = self
             .subject_map
             .resolve_binding(&claims.issuer, &claims.subject)
@@ -400,11 +400,8 @@ impl Authenticator for OidcBindingSet {
     async fn authenticate(&self, creds: &Credentials) -> Result<AuthzContext, AuthError> {
         let Credentials::Bearer(token) = creds;
         let mut matches = Vec::new();
-        // The unverified `iss` skips bindings for other issuers, so their key
-        // resolvers never look up (or fetch) keys for a token they cannot
-        // accept. It is never an identity: the bindings left validate in full.
-        // `Proxiima.Authentication.bindingCandidates`.
         let claimed = ClaimedIssuer::read(token);
+        // A readable, unsigned issuer avoids key lookups on other routes; every candidate still verifies in full.
         let candidates = self.bindings.iter().filter(|binding| {
             claimed
                 .as_ref()

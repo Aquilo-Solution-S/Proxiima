@@ -21,6 +21,10 @@ macro_rules! ledger {
     (Proxiima.Authentication.requireAccessTokenType) => {
         false
     };
+    // Raw query and fragment delimiters excluded from issuer URLs.
+    (Proxiima.Authentication.issuerUrlExcludedDelimiters) => {
+        ["?", "#"]
+    };
     // Minimum seconds between JWKS fetch attempts, including failed attempts.
     (Proxiima.Authentication.refreshCooldownSeconds) => {
         60
@@ -53,17 +57,21 @@ macro_rules! ledger {
     (Proxiima.Authentication.clockSkewSeconds) => {
         60
     };
-    // Largest credential-attested model label in Unicode characters after trimming; blank labels are refused.
+    // The Unicode character limit for credential-attested and caller-supplied model labels and for the retained portion of an echoed label.
     (Proxiima.Authentication.maxTrustedModelChars) => {
         120
     };
-    // Maximum validated host run attributes carried with Fact capture; binds merge without clearing and refuse duplicate names.
+    // Maximum validated host run attributes carried with Fact capture.
     (Proxiima.Authentication.maxHostRunExtensions) => {
         8
     };
-    // Default maximum lifetime in seconds of authenticated streams.
+    // Default seconds before the lifetime limit starts the final drain of an authenticated stream.
     (Proxiima.Authentication.defaultStreamLifetimeSeconds) => {
         3600
+    };
+    // Maximum frames delivered without waiting after the first authorization deadline.
+    (Proxiima.Authentication.finalReadyFrames) => {
+        16
     };
     // Inclusive ASCII byte bounds for each byte of a nonempty OAuth scope token.
     (Proxiima.Authentication.scopeTokenByteBounds) => {
@@ -73,13 +81,17 @@ macro_rules! ledger {
     (Proxiima.Authentication.scopeTokenExcludedBytes) => {
         [34, 92]
     };
-    // Advertise the built-in sign-in and refresh scopes first, then unique validated extra scopes in order.
+    // The built-in sign-in and refresh scopes, in advertisement order.
     (Proxiima.Authentication.defaultScopes) => {
         ["openid", "offline_access"]
     };
     // Flows advertised for the stateless public client, which uses the upstream sign-in and token endpoints.
     (Proxiima.Authentication.publicGrantTypes) => {
         ["authorization_code", "refresh_token"]
+    };
+    // The public token endpoint authentication method used when registration omits the method and required when it supplies one.
+    (Proxiima.Authentication.publicRegistrationAuthMethod) => {
+        "none"
     };
     // Maximum delegated tool identifier length in characters.
     (Proxiima.Authentication.maxDelegatedCommandChars) => {

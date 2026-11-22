@@ -207,8 +207,7 @@ fn public_url(raw: &str) -> Result<String, ProxiimaError> {
     Ok(raw.to_owned())
 }
 
-/// `PROXIIMA_OIDC_ALLOWED_SUBJECTS`: comma-separated subjects, absent when unset. A value that
-/// names none (`,`) is refused, since an empty allowlist would refuse every token without a word.
+/// `PROXIIMA_OIDC_ALLOWED_SUBJECTS` parses comma-separated subjects and distinguishes unset from empty.
 fn allowed_subjects(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<HashSet<String>>, ProxiimaError> {
@@ -221,6 +220,8 @@ fn allowed_subjects(
         .filter(|subject| !subject.is_empty())
         .map(ToOwned::to_owned)
         .collect::<HashSet<String>>();
+    // Reject an empty list at boot so it cannot silently refuse every token.
+    // `Proxiima.Authentication.admitSubjectAllowlist`.
     if subjects.is_empty() {
         return Err(ProxiimaError::Config(format!(
             "{ALLOWED_SUBJECTS} is set but names no subject"

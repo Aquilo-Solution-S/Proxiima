@@ -1,6 +1,7 @@
 //! JWKS key resolution.
 
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -409,6 +410,7 @@ impl HttpJwksResolver {
     /// Construct a resolver with a customized HTTP client and a complete-request timeout.
     ///
     /// The resolver installs its issuer-aware redirect policy on the builder.
+    /// Its timeout applies to every discovery and JWKS request, even when the builder supplies none.
     ///
     /// # Errors
     ///
@@ -452,7 +454,7 @@ impl HttpJwksResolver {
             self.issuer.trim_end_matches('/')
         );
         let cfg: OpenIdConfig = self.fetch_json(url).await?;
-        // `Proxiima.Authentication.discoveredIssuerAgrees`.
+        // Discovery accepts a key endpoint only for an exact issuer match.
         if cfg.issuer != self.issuer {
             return Err(KeyError::Config(
                 "discovered issuer does not match configured issuer".into(),
@@ -617,10 +619,12 @@ fn build_http_client(
         }
         reqwest::redirect::Policy::default().redirect(attempt)
     });
-    builder
-        .redirect(policy)
-        .build()
-        .map_err(|_| OidcConfigError::HttpClientBuild)
+    builder.redirect(policy).build().map_err(|error| {
+        let cause = error
+            .source()
+            .map_or_else(|| error.to_string(), ToString::to_string);
+        OidcConfigError::HttpClientBuild(cause)
+    })
 }
 
 fn validate_request_timeout(request_timeout: Duration) -> Result<(), OidcConfigError> {

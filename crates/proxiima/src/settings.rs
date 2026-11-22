@@ -108,7 +108,7 @@ crate::settings! {
         when_needed: "OIDC/public serving",
     }
     PROXIIMA_OIDC_ISSUER: Url {
-        purpose: "fallback OIDC issuer; requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON`",
+        purpose: "turns on OIDC authentication when code supplies no authenticator. Requires `PROXIIMA_OIDC_AUDIENCE`, `PROXIIMA_PUBLIC_URL` and `PROXIIMA_OIDC_SUBJECT_MAP_JSON`",
         when_needed: "OIDC serving",
     }
     PROXIIMA_OIDC_AUDIENCE: Text {

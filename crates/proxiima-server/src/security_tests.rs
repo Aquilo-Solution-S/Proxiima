@@ -21,7 +21,7 @@ use tower::ServiceExt;
 
 use super::{
     HostAllowlist, HostRequestError, OriginAllowlist, RevalidatedBody, auth_layer_with_sessions,
-    cors_layer, default_allowlist, host_guard_layer,
+    cors_layer, default_allowlist, host_guard_layer, revalidate_response,
 };
 use crate::ServerError;
 use crate::auth::{AuthContext, EdgeAuth};
@@ -1737,6 +1737,18 @@ async fn revalidated_body_max_lifetime_ends_active_body() {
     time::advance(Duration::from_secs(3)).await;
 
     assert!(task.await.unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn ready_response_body_is_delivered_with_an_elapsed_deadline() {
+    let response = revalidate_response(
+        Response::new(Body::from("ready")),
+        Some(SystemTime::UNIX_EPOCH),
+        RevalidationConfig::default(),
+    );
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes, Bytes::from_static(b"ready"));
 }
 
 #[tokio::test(start_paused = true)]
