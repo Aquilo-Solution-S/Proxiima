@@ -2099,7 +2099,7 @@ async fn a_drain_pass_sends_its_concurrent_batches_at_once() {
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn a_store_keeps_its_vectors_in_a_host_index_over_the_wire() {
-    use proxiima::vector_index_http::{VectorIndexClient, vector_index_router};
+    use proxiima::vector_index_http::{VectorIndexClient, VectorIndexToken, vector_index_router};
     use proxiima_core::embedding::EmbeddingDim;
     let split_db = clone_split_core_db_host_index("proxiima_core_remote_index")
         .await
@@ -2109,12 +2109,14 @@ async fn a_store_keeps_its_vectors_in_a_host_index_over_the_wire() {
         let index = Arc::new(InMemoryVectorIndex::default());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let base = format!("http://{}", listener.local_addr()?);
-        let router = vector_index_router(std::collections::BTreeMap::from([(
-            0,
-            index.clone() as Arc<dyn VectorIndex>,
-        )]));
+        let token = VectorIndexToken::new("0123456789abcdef0123456789abcdef".into())?;
+        let router = vector_index_router(
+            std::collections::BTreeMap::from([(0, index.clone() as Arc<dyn VectorIndex>)]),
+            &token,
+        );
         let server = tokio::spawn(async move { axum::serve(listener, router).await });
-        let client = VectorIndexClient::new(&base, 0, &proxiima_core::PlaintextHosts::none())?;
+        let client =
+            VectorIndexClient::new(&base, 0, &proxiima_core::PlaintextHosts::none(), token)?;
         let fixture = TwoOwnerFixture::boot_with(
             &db_name,
             proxiima_core::EmbeddingRuntimePolicy::default(),

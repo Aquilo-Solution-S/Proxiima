@@ -799,15 +799,17 @@ host sets the index (`dev-migrate --host-vector-index` does the same for a
 migration job).
 
 ```rust
-let index = VectorIndexClient::new("https://index.internal", store_number, &plaintext_hosts)?
-    .with_bearer_token(token);
+let token = VectorIndexToken::new(token)?;
+let index = VectorIndexClient::new("https://index.internal", store_number, &plaintext_hosts, token)?;
 let builder = RuntimeBuilder::default().vector_index(std::sync::Arc::new(index));
 ```
 
 `proxiima::vector_index_http` is the network form: `VectorIndexClient` is a
 `VectorIndex` over HTTP, and `vector_index_router` serves any `VectorIndex` to
-the stores it names, under the host's own authentication. Its rustdoc lists the
-wire. The client speaks plaintext only to loopback or a named plaintext host.
+the stores it names. Both take the same `VectorIndexToken`: the client sends it
+as a bearer token, and the router refuses any call without it. Its rustdoc
+lists the wire. The client speaks plaintext only to loopback or a named
+plaintext host.
 
 `nearest` returns a `VectorCandidatePage` with an explicit `CandidateBound`.
 Keep the source's claim through local admission; fewer authorized results do

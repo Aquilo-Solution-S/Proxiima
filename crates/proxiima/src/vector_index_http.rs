@@ -18,16 +18,20 @@
 //! numbers of the space's width. A refusal answers `400` with
 //! `{"error": text}`, any other failure `503` without the index's own error,
 //! and an unknown store `404`. A body over [`VECTOR_INDEX_BODY_LIMIT`] is
-//! refused. The router authenticates no one: the host mounts it behind its
-//! own middleware, and the client sends a bearer token when it has one.
+//! refused.
+//!
+//! Every call carries `Authorization: Bearer <token>`, the
+//! [`VectorIndexToken`] the client and the router are both built with. The
+//! router answers any other call `401` before it reads the body.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use proxiima_core::storage_ports::{
     CandidateBound, VectorCandidate, VectorCandidateFilter, VectorCandidatePage, VectorEntry,
@@ -38,6 +42,7 @@ use proxiima_core::{
     MemoryId, OwnerId, PlaintextHosts, SpaceVector, StorageError, validate_endpoint_url_for_hosts,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::ProxiimaError;
@@ -50,6 +55,46 @@ pub const VECTOR_INDEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// chunks at the widest space fits many times over, and the store sends at
 /// most 500 keys per call.
 pub const VECTOR_INDEX_BODY_LIMIT: usize = 32 * 1024 * 1024;
+
+/// The fewest characters a [`VectorIndexToken`] has. 32 random bytes in hex
+/// are 64, so `openssl rand -hex 32` makes one.
+pub const VECTOR_INDEX_TOKEN_MIN_LEN: usize = 32;
+
+/// The secret a [`VectorIndexClient`] and the [`vector_index_router`] serving
+/// it share: the client sends it as a bearer token on every call, and the
+/// router refuses any call without it.
+#[derive(Clone)]
+pub struct VectorIndexToken(String);
+
+impl VectorIndexToken {
+    /// `token`, when it has at least [`VECTOR_INDEX_TOKEN_MIN_LEN`]
+    /// characters and each is printable ASCII other than a space, so it
+    /// travels in a header as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`ProxiimaError::Config`] naming the rule `token` breaks, never the
+    /// token itself.
+    pub fn new(token: String) -> Result<Self, ProxiimaError> {
+        if !token.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(ProxiimaError::Config(
+                "a vector index token is printable ASCII without spaces".into(),
+            ));
+        }
+        if token.len() < VECTOR_INDEX_TOKEN_MIN_LEN {
+            return Err(ProxiimaError::Config(format!(
+                "a vector index token has at least {VECTOR_INDEX_TOKEN_MIN_LEN} characters"
+            )));
+        }
+        Ok(Self(token))
+    }
+}
+
+impl std::fmt::Debug for VectorIndexToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VectorIndexToken(***)")
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct WireEntity {
@@ -187,14 +232,13 @@ fn entity_from_wire(entity: &WireEntity) -> EmbeddableEntityRef {
 pub struct VectorIndexClient {
     client: reqwest::Client,
     base: reqwest::Url,
-    bearer: Option<String>,
+    token: VectorIndexToken,
 }
 
 impl std::fmt::Debug for VectorIndexClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VectorIndexClient")
             .field("origin", &self.base.origin().ascii_serialization())
-            .field("has_bearer", &self.bearer.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -202,8 +246,9 @@ impl std::fmt::Debug for VectorIndexClient {
 impl VectorIndexClient {
     /// The index of store `store` served at `base`: `https://`, or `http://`
     /// to loopback or a host named in `plaintext_hosts`, since every call
-    /// carries memory vectors. Each call is bounded by
-    /// [`VECTOR_INDEX_REQUEST_TIMEOUT`] and follows no redirect.
+    /// carries memory vectors. Each call sends `token` as its bearer token,
+    /// is bounded by [`VECTOR_INDEX_REQUEST_TIMEOUT`] and follows no
+    /// redirect.
     ///
     /// # Errors
     ///
@@ -212,6 +257,7 @@ impl VectorIndexClient {
         base: &str,
         store: u16,
         plaintext_hosts: &PlaintextHosts,
+        token: VectorIndexToken,
     ) -> Result<Self, ProxiimaError> {
         let mut base = reqwest::Url::parse(base)
             .map_err(|err| ProxiimaError::Config(format!("vector index URL: {err}")))?;
@@ -250,15 +296,8 @@ impl VectorIndexClient {
         Ok(Self {
             client,
             base,
-            bearer: None,
+            token,
         })
-    }
-
-    /// Send `token` as `Authorization: Bearer <token>` on every call.
-    #[must_use]
-    pub fn with_bearer_token(mut self, token: String) -> Self {
-        self.bearer = Some(token);
-        self
     }
 
     async fn call<B: Serialize, A: for<'de> Deserialize<'de>>(
@@ -270,10 +309,7 @@ impl VectorIndexClient {
             .base
             .join(verb)
             .map_err(|err| StorageError::Internal(format!("vector index URL: {err}")))?;
-        let mut request = self.client.post(url).json(body);
-        if let Some(token) = &self.bearer {
-            request = request.bearer_auth(token);
-        }
+        let request = self.client.post(url).bearer_auth(&self.token.0).json(body);
         let unavailable = |err: reqwest::Error| {
             StorageError::Unavailable(format!("vector index {verb}: {}", err.without_url()))
         };
@@ -431,9 +467,11 @@ impl VectorIndex for VectorIndexClient {
 type Indexes = Arc<BTreeMap<u16, Arc<dyn VectorIndex>>>;
 
 /// The server half: serve each store's index in `indexes` on the wire the
-/// [module documentation](self) describes. Mount it behind the host's own
-/// authentication.
-pub fn vector_index_router(indexes: BTreeMap<u16, Arc<dyn VectorIndex>>) -> axum::Router {
+/// [module documentation](self) describes, to callers that present `token`.
+pub fn vector_index_router(
+    indexes: BTreeMap<u16, Arc<dyn VectorIndex>>,
+    token: &VectorIndexToken,
+) -> axum::Router {
     axum::Router::new()
         .route("/v1/stores/{store}/put", axum::routing::post(put))
         .route("/v1/stores/{store}/delete", axum::routing::post(delete))
@@ -443,7 +481,42 @@ pub fn vector_index_router(indexes: BTreeMap<u16, Arc<dyn VectorIndex>>) -> axum
         .layer(axum::extract::DefaultBodyLimit::max(
             VECTOR_INDEX_BODY_LIMIT,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            Sha256::digest(&token.0),
+            authenticate,
+        ))
         .with_state(Arc::new(indexes))
+}
+
+/// The router's door: the call goes on only with the router's token.
+/// Digests are compared, not tokens, so how long the comparison takes says
+/// nothing about the token.
+async fn authenticate(
+    State(expected): State<sha2::digest::Output<Sha256>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if bearer(request.headers()).is_some_and(|presented| Sha256::digest(presented) == expected) {
+        return next.run(request).await;
+    }
+    let mut response = refusal(
+        StatusCode::UNAUTHORIZED,
+        "a vector index call needs the index's bearer token".into(),
+    );
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
+}
+
+/// The token of an `Authorization: Bearer <token>` header; the scheme is
+/// case-insensitive.
+fn bearer(headers: &HeaderMap) -> Option<&[u8]> {
+    let (scheme, token) = headers
+        .get(header::AUTHORIZATION)?
+        .as_bytes()
+        .split_at_checked(b"Bearer ".len())?;
+    scheme.eq_ignore_ascii_case(b"Bearer ").then_some(token)
 }
 
 fn json_response<A: Serialize>(status: StatusCode, body: &A) -> Response {

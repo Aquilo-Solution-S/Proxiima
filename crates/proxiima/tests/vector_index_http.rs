@@ -1,11 +1,14 @@
 //! The network form of a store's vector index: a client and the router
-//! between them behave as the index behind the router, and each side refuses
-//! what the other must not send.
+//! between them behave as the index behind the router, each side refuses
+//! what the other must not send, and the router serves only its token's
+//! holder.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use proxiima::vector_index_http::{VectorIndexClient, vector_index_router};
+use proxiima::vector_index_http::{
+    VECTOR_INDEX_TOKEN_MIN_LEN, VectorIndexClient, VectorIndexToken, vector_index_router,
+};
 use proxiima_core::storage_ports::{
     InMemoryVectorIndex, VectorCandidate, VectorCandidateFilter, VectorEntry, VectorIndex,
     VectorKey,
@@ -15,6 +18,16 @@ use proxiima_core::{
     PlaintextHosts, SpaceVector, StorageError, UserId,
 };
 use uuid::Uuid;
+
+/// The token the routers here are built with.
+const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+/// A token of the right shape that is not [`TOKEN`].
+const OTHER: &str = "fedcba9876543210fedcba9876543210";
+
+fn token() -> VectorIndexToken {
+    VectorIndexToken::new(TOKEN.into()).unwrap()
+}
 
 /// A router on a loopback port, stopped when dropped.
 struct Served {
@@ -31,7 +44,7 @@ impl Drop for Served {
 async fn serve(indexes: BTreeMap<u16, Arc<dyn VectorIndex>>) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let router = vector_index_router(indexes);
+    let router = vector_index_router(indexes, &token());
     let task = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
@@ -39,7 +52,7 @@ async fn serve(indexes: BTreeMap<u16, Arc<dyn VectorIndex>>) -> Served {
 }
 
 fn client(served: &Served, store: u16) -> VectorIndexClient {
-    VectorIndexClient::new(&served.base, store, &PlaintextHosts::none()).unwrap()
+    VectorIndexClient::new(&served.base, store, &PlaintextHosts::none(), token()).unwrap()
 }
 
 fn space() -> EmbeddingSpace {
@@ -236,6 +249,7 @@ async fn the_router_refuses_unknown_stores_and_malformed_calls() {
     let post = |path: &str, body: &'static str| {
         http.post(format!("{}/v1/stores/0/{path}", served.base))
             .header("content-type", "application/json")
+            .bearer_auth(TOKEN)
             .body(body)
             .send()
     };
@@ -425,11 +439,101 @@ async fn the_client_refuses_answers_that_break_the_port() {
 #[test]
 fn the_client_takes_plaintext_only_to_loopback_or_a_named_host() {
     let none = PlaintextHosts::none();
-    assert!(VectorIndexClient::new("https://index.example", 0, &none).is_ok());
-    assert!(VectorIndexClient::new("http://127.0.0.1:9", 0, &none).is_ok());
-    assert!(VectorIndexClient::new("http://index.example", 0, &none).is_err());
-    assert!(VectorIndexClient::new("ftp://index.example", 0, &none).is_err());
-    assert!(VectorIndexClient::new("not a url", 0, &none).is_err());
+    let new = |base: &str, hosts: &PlaintextHosts| VectorIndexClient::new(base, 0, hosts, token());
+    assert!(new("https://index.example", &none).is_ok());
+    assert!(new("http://127.0.0.1:9", &none).is_ok());
+    assert!(new("http://index.example", &none).is_err());
+    assert!(new("ftp://index.example", &none).is_err());
+    assert!(new("not a url", &none).is_err());
     let named = PlaintextHosts::parse("index.internal").unwrap();
-    assert!(VectorIndexClient::new("http://index.internal:8080/base", 0, &named).is_ok());
+    assert!(new("http://index.internal:8080/base", &named).is_ok());
+}
+
+/// The router serves only a caller with its token, and turns any other away
+/// before it reads the body: a malformed body without the token is a `401`,
+/// not a `400`.
+#[tokio::test]
+async fn the_router_serves_only_the_holder_of_its_token() {
+    let served = serve(BTreeMap::from([(
+        0,
+        Arc::new(InMemoryVectorIndex::default()) as Arc<dyn VectorIndex>,
+    )]))
+    .await;
+    let url = format!("{}/v1/stores/0/delete", served.base);
+    let http = reqwest::Client::new();
+    let refused = |response: reqwest::Response| {
+        response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && response
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .is_some_and(|challenge| challenge == "Bearer")
+    };
+    let no_token = http.post(&url).body("not json").send().await.unwrap();
+    assert!(refused(no_token), "no token");
+    let other = http.post(&url).bearer_auth(OTHER).body("not json");
+    assert!(refused(other.send().await.unwrap()), "another token");
+
+    let lowercase = http
+        .post(&url)
+        .header(reqwest::header::AUTHORIZATION, format!("bearer {TOKEN}"))
+        .json(&serde_json::json!({ "keys": [] }));
+    assert_eq!(
+        lowercase.send().await.unwrap().status(),
+        reqwest::StatusCode::OK,
+        "the scheme is case-insensitive"
+    );
+
+    let stranger = VectorIndexToken::new(OTHER.into()).unwrap();
+    let stranger =
+        VectorIndexClient::new(&served.base, 0, &PlaintextHosts::none(), stranger).unwrap();
+    assert!(matches!(
+        stranger.delete(&[key(1)]).await,
+        Err(StorageError::Unavailable(_))
+    ));
+}
+
+/// A call without the token is turned away before its body is read: the
+/// body here fails the test the moment anything polls it.
+#[tokio::test]
+async fn the_router_reads_no_body_before_the_token() {
+    use tower::ServiceExt;
+
+    let unread = futures::stream::poll_fn(
+        |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
+            panic!("the router read an unauthenticated body")
+        },
+    );
+    let request = axum::http::Request::post("/v1/stores/0/delete")
+        .body(axum::body::Body::from_stream(unread))
+        .unwrap();
+    let response = vector_index_router(BTreeMap::new(), &token())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+/// A token is long, printable ASCII without spaces, and never shown.
+#[test]
+fn a_token_is_long_printable_ascii() {
+    let at_least = "a".repeat(VECTOR_INDEX_TOKEN_MIN_LEN);
+    assert!(VectorIndexToken::new(at_least).is_ok());
+    let short = "a".repeat(VECTOR_INDEX_TOKEN_MIN_LEN - 1);
+    assert!(VectorIndexToken::new(short).is_err(), "too short");
+    assert!(
+        VectorIndexToken::new(format!("{TOKEN} ")).is_err(),
+        "a space"
+    );
+    assert!(
+        VectorIndexToken::new(format!("{TOKEN}\n")).is_err(),
+        "a control character"
+    );
+    assert!(
+        VectorIndexToken::new(format!("{TOKEN}é")).is_err(),
+        "not ASCII"
+    );
+    assert!(
+        !format!("{:?}", token()).contains(TOKEN),
+        "Debug never shows it"
+    );
 }
