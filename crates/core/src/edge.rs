@@ -268,27 +268,6 @@ impl EdgeEndpoint {
             Self::Goal(_) => None,
         }
     }
-
-    /// F/A/P layer index, or `None` for Goal endpoints, which are a
-    /// separate entity axis (docs/concepts.md) and never enter the comparison.
-    #[must_use]
-    pub const fn layer(self) -> Option<u8> {
-        match self {
-            Self::Memory {
-                kind: MemoryKind::Fact,
-                ..
-            } => Some(0),
-            Self::Memory {
-                kind: MemoryKind::Abstraction,
-                ..
-            } => Some(1),
-            Self::Memory {
-                kind: MemoryKind::Perspective,
-                ..
-            } => Some(2),
-            Self::Goal(_) => None,
-        }
-    }
 }
 
 /// The read projection of a pin target. A readable edge is returned even
@@ -676,26 +655,6 @@ pub fn project_listed_edge<S: std::hash::BuildHasher>(
         kind,
         created_at: pin_created_at(source),
     }
-}
-
-/// Check the declared reference under `Proxiima.Edges.admitsReferenceLayer`.
-///
-/// # Errors
-///
-/// Returns a message when both endpoints are memories and the source
-/// sits below the target in the F/A/P order.
-pub fn validate_edge_layering(source: EdgeEndpoint, target: EdgeEndpoint) -> Result<(), String> {
-    let (Some(source_layer), Some(target_layer)) = (source.layer(), target.layer()) else {
-        return Ok(());
-    };
-    if source_layer < target_layer {
-        return Err(format!(
-            "layering violation: a {} cannot point at a {} (source layer must be at least the target layer)",
-            source.kind().as_str(),
-            target.kind().as_str(),
-        ));
-    }
-    Ok(())
 }
 
 /// A self-loop is never a connection between two things — it is a row

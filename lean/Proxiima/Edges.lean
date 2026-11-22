@@ -44,7 +44,7 @@ structure PinFieldSpec where
   abstraction : List EntityKind
   perspective : List EntityKind
 
-/-- The storage bound for each pin field gives its role, shape and admitted target kinds. -/
+/-- Each pin field's role, storage shape and admitted target kinds. -/
 def pinField : PinField → PinFieldSpec
   | .origins => ⟨"origins", .origin, .array, [], [.Fact, .Abstraction], [.Abstraction]⟩
   | .refs => ⟨"refs", .reference, .array, [.Fact, .Abstraction, .Perspective],
@@ -106,16 +106,6 @@ def localAncestorKinds : Provenance → List PinKind
   | .undeclared | .originEdges => [.origin, .read]
   | .payloadOnly => [.reference, .read]
   | .none => [.read]
-
-/-- The engine's layering rule for a declared reference, with Goals on a separate spine. -/
-def admitsReferenceLayer : EntityKind → EntityKind → Bool
-  | .Fact, .Fact | .Fact, .Goal => true
-  | .Fact, .Abstraction | .Fact, .Perspective => false
-  | .Abstraction, .Fact | .Abstraction, .Abstraction | .Abstraction, .Goal => true
-  | .Abstraction, .Perspective => false
-  | .Perspective, .Fact | .Perspective, .Abstraction
-  | .Perspective, .Perspective | .Perspective, .Goal => true
-  | .Goal, .Fact | .Goal, .Abstraction | .Goal, .Perspective | .Goal, .Goal => true
 
 /-- Local descendant traversal follows origins and read context. -/
 def localDescendantKinds : List PinKind := [.origin, .read]

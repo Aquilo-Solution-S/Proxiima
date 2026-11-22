@@ -1,7 +1,6 @@
 use super::{
     EdgeEndpoint, EdgeKind, EdgeTargetProjection, MemoryPinField, PinNode, PinTargetKind,
-    project_listed_edge, project_memory_target, project_window_edges, validate_edge_layering,
-    validate_not_self_loop,
+    project_listed_edge, project_memory_target, project_window_edges, validate_not_self_loop,
 };
 use crate::{EntityKind, GoalId, MemoryId, MemoryKind};
 
@@ -366,24 +365,6 @@ fn pin_field_table_matches_ledger_vectors() {
                 row.out.perspective.as_slice()
             ],
             "{field:?}",
-        );
-    }
-}
-
-#[test]
-fn reference_layering_matches_ledger_vectors() {
-    let endpoint = |kind| {
-        crate::MemoryKind::of(kind).map_or_else(
-            || EdgeEndpoint::goal(GoalId::new(uuid::Uuid::now_v7())),
-            |kind| EdgeEndpoint::memory(kind, MemoryId::new(uuid::Uuid::now_v7())),
-        )
-    };
-    for row in ledger_rows::<[EntityKind; 2], bool>("Proxiima.Edges.admitsReferenceLayer", 16) {
-        let [source, target] = row.input;
-        assert_eq!(
-            validate_edge_layering(endpoint(source), endpoint(target)).is_ok(),
-            row.out,
-            "{source:?} → {target:?}",
         );
     }
 }

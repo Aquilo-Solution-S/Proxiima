@@ -426,24 +426,6 @@ impl Engine {
             if out.contains(target) {
                 continue;
             }
-            if field == "derived_from" && matches!(target.entity(), crate::EntityRef::Goal(_)) {
-                return Err(ProtocolError::invalid_argument(
-                    field,
-                    "Fact origins must target a Memory",
-                ));
-            }
-            match target.kind() {
-                EntityKind::Fact | EntityKind::Goal => {}
-                EntityKind::Abstraction | EntityKind::Perspective => {
-                    return Err(ProtocolError::invalid_argument(
-                        field,
-                        format!(
-                            "layering violation: a Fact cannot point at a {}",
-                            target.kind().as_str()
-                        ),
-                    ));
-                }
-            }
             match target.entity() {
                 crate::EntityRef::Memory(memory_id) if session_visible.contains(&memory_id) => {
                     let actual = session_visible_kinds

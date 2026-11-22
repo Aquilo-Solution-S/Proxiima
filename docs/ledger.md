@@ -1086,7 +1086,7 @@ stateDiagram-v2
 | reads | column: "reads", kind: read, shape: array, fact: \[Fact, Abstraction, Perspective], abstraction: \[Fact, Abstraction, Perspective], perspective: \[Fact, Abstraction, Perspective] |
 | forkedFrom | column: "forked\_from", kind: reference, shape: scalar, fact: \[Fact, Abstraction, Perspective], abstraction: \[Fact, Abstraction, Perspective], perspective: \[Fact, Abstraction, Perspective] |
 
-- pin field: The storage bound for each pin field gives its role, shape and admitted target kinds.
+- pin field: Each pin field's role, storage shape and admitted target kinds.
 
 | derived kind | requires origins |
 | --- | --- |
@@ -1117,27 +1117,6 @@ stateDiagram-v2
 | none | \[read] |
 
 - local ancestor kinds: Local ancestor edge kinds by schema provenance; payload references are limited to declared subject fields.
-
-| entity kind | entity kind | admits reference layer |
-| --- | --- | --- |
-| Fact | Fact | yes |
-| Fact | Abstraction | no |
-| Fact | Perspective | no |
-| Fact | Goal | yes |
-| Abstraction | Fact | yes |
-| Abstraction | Abstraction | yes |
-| Abstraction | Perspective | no |
-| Abstraction | Goal | yes |
-| Perspective | Fact | yes |
-| Perspective | Abstraction | yes |
-| Perspective | Perspective | yes |
-| Perspective | Goal | yes |
-| Goal | Fact | yes |
-| Goal | Abstraction | yes |
-| Goal | Perspective | yes |
-| Goal | Goal | yes |
-
-- admits reference layer: The engine's layering rule for a declared reference, with Goals on a separate spine.
 
 | admission | pin admission witness |
 | --- | --- |

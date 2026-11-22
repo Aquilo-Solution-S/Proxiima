@@ -1,6 +1,6 @@
 use super::Engine;
 use crate::authz::EngineAuthority;
-use crate::edge::{EdgeEndpoint, MemoryPinField, validate_edge_layering};
+use crate::edge::{EdgeEndpoint, MemoryPinField};
 use crate::error::ProtocolError;
 use crate::storage::{AuthorDerivedOutcome, AuthorDerivedRequest, StorageError};
 #[cfg(test)]
@@ -911,10 +911,6 @@ impl Engine {
         .await
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "revision preparation keeps retained-pin and ordinary source validation together"
-    )]
     async fn prepare_derived_with_permit<A, P>(
         &self,
         authority: &A,
@@ -984,17 +980,8 @@ impl Engine {
             admitted_external_origins(phase, &origins, &memory.external_origins)?;
         let external_references =
             external_references(&external_origins, &memory.external_references)?;
-        // A new version's t is allocated by storage. The layer check needs only
-        // the output kind; neither a handle nor the prior t is its source row.
-        let source = EdgeEndpoint::memory(memory_kind, memory_id);
         let references = self
-            .prepare_derived_references(
-                authority,
-                source,
-                &memory,
-                session_kinds,
-                retained_pins.as_ref(),
-            )
+            .prepare_derived_references(authority, &memory, session_kinds, retained_pins.as_ref())
             .await?;
         let guided_by = if !MemoryPinField::GuidedBy.admitted(kind).is_empty() {
             self.authorize_guidance(authority, &owner, &memory.guided_by, session_goals)
@@ -1037,7 +1024,6 @@ impl Engine {
     async fn prepare_derived_references<A: EngineAuthority + ?Sized>(
         &self,
         authority: &A,
-        source: EdgeEndpoint,
         memory: &DerivedMemory,
         session_kinds: &[(MemoryId, EntityKind)],
         retained: Option<&crate::RetainedPins>,
@@ -1103,10 +1089,6 @@ impl Engine {
             if !references.contains(&target) {
                 references.push(target);
             }
-        }
-        for target in &references {
-            validate_edge_layering(source, *target)
-                .map_err(|err| ProtocolError::invalid_argument("refs", err))?;
         }
         Ok(references)
     }

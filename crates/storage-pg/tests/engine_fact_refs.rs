@@ -234,6 +234,35 @@ async fn authorized_sidecars_cannot_change_reference_declaration() -> TestResult
     Ok(())
 }
 
+/// A Fact may reference an older Abstraction or Perspective: an observation
+/// about a conclusion or a stance is still an observation.
+#[tokio::test]
+async fn fact_references_an_abstraction_and_a_perspective() -> TestResult {
+    let w = World::new("engine_refs_upward").await;
+    let origin = w.fact(w.owner).await?;
+    let abstraction = TestDerived::abstraction(origin)
+        .create(&w.pg, w.owner)
+        .await?
+        .memory_id;
+    let perspective = TestDerived::perspective(abstraction)
+        .create(&w.pg, w.owner)
+        .await?
+        .memory_id;
+    let targets = vec![
+        EdgeEndpoint::memory(proxiima_core::MemoryKind::Abstraction, abstraction),
+        EdgeEndpoint::memory(proxiima_core::MemoryKind::Perspective, perspective),
+    ];
+    let payload = payload("upward", targets.clone());
+    let sidecars = [SidecarPayload::fact(payload.clone())];
+
+    let authorized = w
+        .engine
+        .authorize_fact_ingest(&w.authz, draft(&payload), &sidecars)
+        .await?;
+    assert_eq!(authorized.links().references(), targets.as_slice());
+    Ok(())
+}
+
 #[tokio::test]
 async fn fact_reference_wrong_stored_kind_writes_nothing() -> TestResult {
     let w = World::new("engine_refs_wrong_kind").await;

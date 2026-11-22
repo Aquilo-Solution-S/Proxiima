@@ -4,7 +4,7 @@ mod split_core_db;
 use std::collections::BTreeSet;
 
 use proxiima::spiice::{
-    AbstractionPayload, EdgeEndpoint, EdgeKind, FactPayload, InputContractId, MemoryId, OperatorId,
+    AbstractionPayload, EdgeKind, FactPayload, InputContractId, MemoryId, OperatorId,
     PayloadKeyBuilder, PayloadReference, PgMemoryPayload, PgMemoryPayloadFuture, PgMemorySidecar,
     PgSidecarFuture, PgSidecarReadCtx, PgSidecarRegistry, ReferenceBinding, SidecarInsertPermit,
     SidecarPayload, SpiiceBundle, SpiiceRegistry,
@@ -1210,14 +1210,6 @@ fn facade_spiice_authoring_symbols_are_reachable() {
     );
     assert_eq!(reference.binding, ReferenceBinding::Pin);
     assert_eq!(EdgeKind::Origin.as_str(), "origin");
-    assert_eq!(
-        EdgeEndpoint::memory(
-            proxiima_core::MemoryKind::Abstraction,
-            MemoryId::new(Uuid::nil())
-        )
-        .layer(),
-        Some(1)
-    );
 
     let advertised_tools = BTreeSet::new();
     let advertised_resources = BTreeSet::new();
