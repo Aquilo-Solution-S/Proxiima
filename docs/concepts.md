@@ -2,16 +2,11 @@
 
 ## The four kinds
 
-| Kind | Meaning | Lifecycle |
-|---|---|---|
-| Fact | An admitted observation | Immutable row; later observations are new admissions |
-| Abstraction | A typed, re-derivable pattern | Later `t` may advance its series |
-| Perspective | A typed interpretation or stance | Later `t` may advance its series |
-| Goal | A desired end-state | [`Proxiima.Goals`](ledger.md#goals) |
+The Memory layers and the separate Goal spine are defined in [`Proxiima.Memory`](ledger.md#memory).
+Goals are desired end states. See [`Proxiima.Goals`](ledger.md#goals).
 
-Citation is provenance attached to a Fact or Abstraction. Self is a query over
-cue-relevant Perspectives, never a stored entity. Actions and wake behavior
-belong to the host integration; they are not a fifth memory kind.
+Citation is provenance attached to a Fact or Abstraction. Actions and wake
+behavior belong to the host integration.
 
 ## Identity and ownership
 
@@ -123,29 +118,18 @@ membership policy, external effects, and lifecycle obligations.
 
 ## Memory identity and content
 
-Facts remain immutable. See [`Proxiima.Identity`](ledger.md#identity).
+Admission and supersession follow [`Proxiima.Memory`](ledger.md#memory), with identifiers defined in [`Proxiima.Identity`](ledger.md#identity).
 
 Use the [core rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/tree/main/crates/core/src)
 for public types and constructors. Use migrations for table shape.
 
 ## Layering
 
-The epistemic layers are Fact, Abstraction, and Perspective. This diagram
-shows **input to derived result**, not the direction of stored pins:
+Derivation phases and interpretation subjects follow [`Proxiima.Memory`](ledger.md#memory).
 
-```mermaid
-flowchart LR
-    F[Fact] -->|F to A| A[Abstraction]
-    A -->|A to A| A2[Abstraction]
-    A -->|A to P| P[Perspective]
-```
+Similarity is a query result; it does not author a connection.
 
-Derivation moves upward. A Fact cannot be produced from an Abstraction or
-Perspective, and a Perspective cannot be used as the source of a lower-layer
-write. An interpretation is a Perspective whose payload references what it
-interprets. Similarity is a query result; it does not author a connection.
-
-Stored origin pins point back from the result to its inputs: the Abstraction
+Stored origin pins point back from the result to its inputs. An Abstraction
 derived from a Fact stores that Fact's version in its own `origins[]`.
 
 [`Proxiima.Goals`](ledger.md#goals) and `Causa.principle_8_a_goal_never_grounds`.
@@ -233,9 +217,8 @@ memories. Recreating the person's identity does not restore their removed grants
 
 ### Facts and versioned knowledge
 
-A Fact is one immutable admitted observation. A new or corrected observation
-is another Fact. Abstractions and Perspectives append later versions to their
-series; Goals are versioned separately as intent and progress change.
+Memory admission and revision follow [`Proxiima.Memory`](ledger.md#memory).
+Goals are versioned separately as intent and progress change.
 
 Publication means **publish a Fact, or a specific Abstraction or Perspective
 version, to a Goal audience**. Publishing `P1@3` does not publish `P1@4`.
@@ -332,12 +315,7 @@ Revoking the publication removes this route as well.
 
 ## Self
 
-Self is cue-indexed:
-
-```text
-situatedSelf(owner, cue) = the owner's head Perspectives that touch cue
-```
-
+Self is a cue-dependent retrieval concept, modeled by `Causa.situatedSelf`.
 The query result changes with the owner and cue. It is not a row, an
 authorization carrier, a parameterless global projection, or a cached causal
 chain.

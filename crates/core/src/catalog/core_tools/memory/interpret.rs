@@ -211,7 +211,7 @@ async fn prepare_interpretation(
             }
         }
     }
-    // `Proxiima.Memory.admitsSubjectResolution`.
+    // Remote subjects can supplement a local subject.
     if local_subjects.is_empty() {
         return Err(ToolError::InvalidInput("subjects must include at least one memory of this store; memories of other stores only join local ones".into()));
     }
@@ -256,7 +256,7 @@ fn resolve_guided_goals(
         .collect()
 }
 
-/// `Proxiima.Memory.admitsSubject`. Keep the guard independent of how the handle is derived.
+/// Refuse self-reference independently of how the handle is derived.
 pub(crate) fn reject_self_subject(
     memory_id: MemoryId,
     subjects: &[(MemoryId, MemoryKind)],
@@ -276,12 +276,13 @@ pub(crate) async fn resolve_subject(
     ctx.resolve_memory_with_kind(handle).await
 }
 
-/// `Proxiima.Memory.interpretationKey`. With no remote subjects the local handle is unchanged.
+/// With no remote subjects the local handle is unchanged.
 pub(crate) fn fold_external_subjects(id: uuid::Uuid, external: &[uuid::Uuid]) -> uuid::Uuid {
     if external.is_empty() {
         return id;
     }
     let mut handles: Vec<String> = external.iter().map(ToString::to_string).collect();
+    // `Proxiima.Memory.interpretationKey`.
     handles.sort_unstable();
     let mut buf = id.as_bytes().to_vec();
     for handle in handles {
@@ -291,7 +292,6 @@ pub(crate) fn fold_external_subjects(id: uuid::Uuid, external: &[uuid::Uuid]) ->
     uuid::Uuid::new_v5(&INTERPRET_NAMESPACE, &buf)
 }
 
-// `Proxiima.Memory.interpretationKey`.
 pub(crate) fn interpretation_memory_id(
     planning_namespace: uuid::Uuid,
     model_id: &str,
@@ -299,6 +299,7 @@ pub(crate) fn interpretation_memory_id(
     confidence: InterpretationConfidence,
     subjects: &[(MemoryId, MemoryKind)],
 ) -> uuid::Uuid {
+    // `Proxiima.Memory.interpretationKey`.
     let mut buf = Vec::with_capacity(96 + claim.len() + subjects.len() * 16);
     buf.extend_from_slice(planning_namespace.as_bytes());
     buf.push(0);
@@ -374,42 +375,17 @@ mod tests {
     }
 
     #[test]
-    fn subject_admission_matches_ledger_vectors() {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        enum SubjectIdentity {
-            Distinct,
-            #[serde(rename = "self")]
-            Same,
-        }
-        #[derive(serde::Deserialize)]
-        struct Vector {
-            #[serde(rename = "in")]
-            identity: [SubjectIdentity; 1],
-            out: bool,
-        }
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
-        let rows: Vec<Vector> =
-            serde_json::from_value(vectors["Proxiima.Memory.admitsSubject"].clone()).unwrap();
-        assert_eq!(rows.len(), 2);
-        let source = MemoryId::new(uuid::Uuid::now_v7());
+    fn an_interpretation_cannot_take_itself_as_a_subject() {
+        let memory_id = MemoryId::new(uuid::Uuid::now_v7());
         let other = (MemoryId::new(uuid::Uuid::now_v7()), MemoryKind::Fact);
-        for row in rows {
-            let subject = match row.identity[0] {
-                SubjectIdentity::Distinct => other,
-                SubjectIdentity::Same => (source, MemoryKind::Perspective),
-            };
-            let result = reject_self_subject(source, &[other, subject]);
-            assert_eq!(result.is_ok(), row.out);
-            if let Err(err) = result {
-                assert!(
-                    matches!(&err, ToolError::InvalidInput(message)
-                    if message.contains("cannot take itself")),
-                    "unexpected error: {err:?}"
-                );
-            }
-        }
+        reject_self_subject(memory_id, &[other]).expect("a distinct subject is fine");
+        let err = reject_self_subject(memory_id, &[other, (memory_id, MemoryKind::Perspective)])
+            .expect_err("a self-subject must be refused");
+        assert!(
+            matches!(&err, ToolError::InvalidInput(message)
+                if message.contains("cannot take itself")),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[tokio::test]

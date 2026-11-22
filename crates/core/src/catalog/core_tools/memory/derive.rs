@@ -1,3 +1,4 @@
+use super::{AUTHORING_BODY_MAX, AUTHORING_TITLE_MAX};
 use crate::MemoryKind;
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
@@ -82,12 +83,12 @@ pub struct DeriveArgs {
     #[schemars(description = "Derived memory kind to author: Abstraction or Perspective.")]
     pub kind: DerivedKind,
     #[schemars(
-        length(min = 1, max = 240),
+        length(min = 1, max = AUTHORING_TITLE_MAX),
         description = "Short title, trimmed before the length check."
     )]
     pub title: String,
     #[schemars(
-        length(min = 1, max = 20000),
+        length(min = 1, max = AUTHORING_BODY_MAX),
         description = "Body text, trimmed before the length check."
     )]
     pub body: String,
@@ -455,10 +456,8 @@ pub(crate) fn authored_derivation(
     ctx: &ToolCtx,
     fields: DerivationFields<'_>,
 ) -> Result<AuthoredDerivation, ToolError> {
-    // 240 matches the goal-title cap: same-named field, same bound
-    // on every authoring surface.
-    let title = validate_trimmed_len("title", fields.title, 240)?.to_string();
-    let body = validate_trimmed_len("body", fields.body, 20_000)?.to_string();
+    let title = validate_trimmed_len("title", fields.title, AUTHORING_TITLE_MAX)?.to_string();
+    let body = validate_trimmed_len("body", fields.body, AUTHORING_BODY_MAX)?.to_string();
     let idempotency_key =
         normalize_idempotency_key(fields.idempotency_key.map(ToString::to_string))?;
     let model_id = ctx.operator_label(fields.model_id)?;

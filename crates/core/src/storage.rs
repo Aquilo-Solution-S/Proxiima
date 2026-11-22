@@ -552,8 +552,8 @@ pub struct AuthorDerivedRequest<'a> {
     /// Prior `t` of the series this write revises. Supersession is a
     /// later `t` on the same `handle`, not a column: storage resolves the
     /// prior row's `handle` and appends this write to that series, so
-    /// there is no lineage pointer and no edge. `None` mints a new
-    /// series.
+    /// there is no lineage pointer and no edge. With `None`, storage
+    /// selects the provided series handle.
     pub supersedes: Option<MemoryId>,
     /// Resolved text-search configuration name to stamp on the row;
     /// `None` applies the database default. Storage verifies the name

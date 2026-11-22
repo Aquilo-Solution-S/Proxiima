@@ -118,10 +118,7 @@ pub(crate) struct PreparedMemoryAdmissionNew {
     handle: Uuid,
     fresh_handle: bool,
     t: Uuid,
-    /// The `memory.occurred_at` this admission stores, resolved once here
-    /// and handed unchanged to the row insert and the outbox seal: a Fact's
-    /// writer-given time, else its write time read out of `t`. `None` for
-    /// an Abstraction or Perspective.
+    /// The Fact timestamp passed unchanged to the row and outbox, supplied or read from `t`.
     occurred_at: Option<time::OffsetDateTime>,
     expected_head_t: Option<Uuid>,
     targets: Vec<Uuid>,
@@ -407,14 +404,7 @@ pub(crate) async fn prepare_memory_admission_at(
     // revalidation before deleting anything.
 
     let (handle, fresh_handle) = admission_handle(tx, admission, options.identity).await?;
-    // Read the head BEFORE minting `t`. Minted first, a write could take its
-    // `t`, lose the series to a later writer that commits, and then read
-    // that writer's head as its own expected head: the head check under the
-    // lock would pass, `GREATEST` would keep the other writer's later `t`,
-    // and this write would still take the higher publication position.
-    // Read first, any writer that commits after this read moves the head
-    // away from `expected_head_t`, and `validate_prepared_memory_head`
-    // sends this write back to retry with a fresh `t`.
+    // Read before minting so a version that cannot become head cannot take the higher publication position.
     let expected_head_t: Option<Uuid> =
         sqlx::query_scalar("SELECT t FROM proxiima_core.memory_head WHERE handle = $1")
             .bind(handle)
@@ -437,6 +427,7 @@ pub(crate) async fn prepare_memory_admission_at(
     };
     #[cfg(test)]
     crate::pause_point::reach(crate::pause_point::AFTER_SERIES_MINT, handle).await;
+    // `Proxiima.Memory.occurrenceSource`.
     let occurred_at = (kind == PgMemoryKind::Fact).then(|| {
         draft
             .occurred_at
@@ -492,10 +483,7 @@ pub(crate) async fn prepare_memory_admission_at(
     )))
 }
 
-/// The kind a draft is stored as. Only a Fact carries a source, an ingest key
-/// and an occurrence time; an Abstraction or Perspective that names one is
-/// refused here rather than by the table's CHECKs
-/// (`memory_fact_occurred_at_chk` for the time).
+/// Only Facts can carry a source and ingest key together or an explicit occurrence time.
 fn validated_admission_kind(draft: &FactWriteCommand) -> Result<PgMemoryKind, StorageError> {
     if draft.source_id.is_some() != draft.ingest_key.is_some() {
         return Err(StorageError::ConstraintViolation(
@@ -912,9 +900,7 @@ pub(crate) async fn lock_prepared_memory_targets(
     crate::verbs::forget::lock_lifecycle_targets_tx(tx, &prepared.targets).await
 }
 
-/// The head this admission prepared against must still be the head under the
-/// lock. Run by every materialization path, including callers that acquired
-/// the locks themselves.
+/// Also used by materialization callers that acquire the locks themselves.
 async fn validate_prepared_memory_head(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedMemoryAdmissionNew,
@@ -925,6 +911,7 @@ async fn validate_prepared_memory_head(
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_err)?;
+    // `Proxiima.Memory.headReservation`.
     if current_head != prepared.expected_head_t {
         return Err(StorageError::Retryable(
             "memory series head changed while preparing admission".into(),
@@ -1152,6 +1139,7 @@ async fn insert_memory_revision(
     prepared: &PreparedMemoryAdmissionNew,
     content_id: Option<Uuid>,
 ) -> Result<(), StorageError> {
+    // `Proxiima.Memory.versionAction`.
     let draft = &prepared.draft;
     let kind = prepared.kind;
     sqlx::query(

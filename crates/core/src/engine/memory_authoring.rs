@@ -218,6 +218,7 @@ fn validate_typed_invocation(
     phase: OperatorPhase,
     origins: &[EdgeEndpoint],
 ) -> Result<(), StorageError> {
+    // With no declared origins there is no operator invocation to validate.
     if origins.is_empty() {
         return Ok(());
     }
@@ -1290,13 +1291,7 @@ pub(in crate::engine) fn space_vector(
 fn validate_operator_memory_invocation_request(
     req: &RawDerivedTestRequest<'_>,
 ) -> Result<(), StorageError> {
-    // The operator manifest proves a *derivation*: output kind, input
-    // kinds, and one origin row per declared input. A write that declares
-    // no origins has no derivation to prove — an interpretation
-    // Perspective, for instance, grounds through the references its
-    // payload carries, not through inputs it consumed — so there is no
-    // manifest, rather than an empty one that would fail its own
-    // nonempty-inputs obligation.
+    // A write without derivation inputs may ground through payload references.
     if req.derived_from.is_empty() {
         return Ok(());
     }

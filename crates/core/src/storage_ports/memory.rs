@@ -166,9 +166,10 @@ pub trait MemoryReadPort: Send + Sync {
         schemas: &[MemorySchemaSpec],
     ) -> Result<crate::verbs::query::QueryResponse, StorageError>;
 
-    /// Current stateful Fact heads, filtered by the resolved natural-key
-    /// prefix and readable owners before pagination. Spiice tombstones are
-    /// included; forgotten admissions and old revisions are absent.
+    /// Latest readable stateful Fact versions, filtered by the resolved
+    /// natural-key prefix and readable owners before pagination. Visible
+    /// Goal publications and spiice tombstones can be heads. Forgotten
+    /// admissions are absent.
     ///
     /// The descriptor is constructible only through the frozen contract
     /// resolver in core. Backends must retain their ordinary owner RLS.

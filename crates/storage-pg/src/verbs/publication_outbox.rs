@@ -111,10 +111,7 @@ pub(crate) async fn next_series_position(
 /// own [`PublicationConfig`]. This backend holds no limits of its own: a
 /// second copy could only ever disagree with the configured one.
 ///
-/// `occurred_at` is the value the admission bound into `memory.occurred_at`
-/// (`PreparedMemoryAdmission::occurred_at`), so the envelope's `time` and a
-/// read of the Fact agree. Only a new Fact admission captures, and every new
-/// Fact resolves one; `None` is a caller fault.
+/// Use the timestamp shared by the new Fact row and its envelope. Missing it is a caller fault.
 ///
 /// [`PublicationConfig`]: proxiima_core::publication::PublicationConfig
 pub(crate) async fn capture_publication_in_tx(

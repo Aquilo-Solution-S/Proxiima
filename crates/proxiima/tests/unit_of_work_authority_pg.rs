@@ -514,14 +514,7 @@ async fn goal_and_host_authority_decision_commit_and_roll_back_together() -> Tes
                 MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
                 owner,
                 "authority assignment",
-                InterpretationV1 {
-                    claim: "assignment".into(),
-                    confidence: 90.try_into().unwrap(),
-                    subjects: vec![(fact.memory_id, MemoryKind::Fact)],
-                    model_id: "test".into(),
-                    client_name: "test".into(),
-                    client_version: "1".into(),
-                },
+                InterpretationV1::fixture("assignment", 90, [(fact.memory_id, MemoryKind::Fact)]),
             ),
         )
         .await?;

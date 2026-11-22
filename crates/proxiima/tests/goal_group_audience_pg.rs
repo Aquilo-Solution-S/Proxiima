@@ -26,14 +26,7 @@ fn direct(subject: UserId) -> AuthzContext {
 }
 
 fn interpretation(claim: &str, evidence: MemoryId) -> InterpretationV1 {
-    InterpretationV1 {
-        claim: claim.to_owned(),
-        confidence: 90.try_into().unwrap(),
-        subjects: vec![(evidence, MemoryKind::Fact)],
-        model_id: "test".into(),
-        client_name: "test".into(),
-        client_version: "1".into(),
-    }
+    InterpretationV1::fixture(claim, 90, [(evidence, MemoryKind::Fact)])
 }
 
 async fn platform(h: &ExampleEngine) -> PgPlatformScope {

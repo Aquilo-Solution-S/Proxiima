@@ -30,9 +30,8 @@ Build the API reference locally with `cargo doc -p proxiima-spiice --no-deps --o
 
 ## 1. Define the vocabulary
 
-Choose a spiice prefix and typed payload kind. Facts are observed admissions;
-Abstractions are declared derivations; Perspectives are interpretations;
-Goals are intent. Define validation, rendering, replay identity, and references
+Choose a spiice prefix and a typed payload kind from [`Proxiima.Memory`](ledger.md#memory).
+Define validation, rendering, replay identity, and references
 on the corresponding payload trait. Every payload trait has the
 `PayloadProjection` supertrait, so implement its typed `KEY_FIELDS`, `display`,
 and `durable` projection as well. A Fact's receipt key uses schema-owned

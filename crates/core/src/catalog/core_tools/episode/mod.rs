@@ -494,7 +494,7 @@ impl EpisodeWrite<'_> {
             let claim = validate_trimmed_len("claim", &item.claim, MAX_CLAIM_CHARS)?.to_string();
             let confidence = InterpretationConfidence::try_from(i16::from(item.confidence))
                 .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
-            // `Proxiima.Memory.admitsSubjectResolution`.
+            // Each episode interpretation needs a local subject.
             if item.subjects.is_empty() {
                 return Err(ToolError::InvalidInput(
                     "an interpretation must be about at least one memory".into(),

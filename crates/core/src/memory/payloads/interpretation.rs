@@ -48,13 +48,17 @@ pub struct MisalignedInterpretationSubjects {
 }
 
 /// An agent's claim about existing nodes.
+///
+/// A claim with a reason and a confidence is a Perspective. Its subject
+/// references can be rebuilt from the payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterpretationV1 {
     /// The claim being made about the subjects.
     pub claim: String,
     /// How strongly the author holds the claim, 0..=100.
     pub confidence: InterpretationConfidence,
-    /// Each subject's exact Memory version and the layer of that version.
+    /// Each subject's exact Memory version and layer, used to rebuild its
+    /// `Reference` index entry from this Perspective.
     pub subjects: Vec<(MemoryId, MemoryKind)>,
     pub model_id: String,
     pub client_name: String,
@@ -88,6 +92,30 @@ struct InterpretationWire<Text> {
 }
 
 impl InterpretationV1 {
+    /// Builds a stable interpretation payload for core and integration fixtures.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the supplied confidence exceeds the interpretation scale.
+    #[cfg(any(test, feature = "testkit"))]
+    #[must_use]
+    pub fn fixture(
+        claim: impl Into<String>,
+        confidence: u8,
+        subjects: impl IntoIterator<Item = (MemoryId, MemoryKind)>,
+    ) -> Self {
+        Self {
+            claim: claim.into(),
+            confidence: i16::from(confidence)
+                .try_into()
+                .expect("fixture confidence is within the interpretation scale"),
+            subjects: subjects.into_iter().collect(),
+            model_id: "fixture".into(),
+            client_name: "fixture".into(),
+            client_version: "1".into(),
+        }
+    }
+
     /// Decode the persisted subject columns into exact version and kind pairs.
     ///
     /// # Errors
@@ -97,7 +125,7 @@ impl InterpretationV1 {
         ids: Vec<uuid::Uuid>,
         kinds: Vec<MemoryKind>,
     ) -> Result<Vec<(MemoryId, MemoryKind)>, MisalignedInterpretationSubjects> {
-        // `Proxiima.Memory.InterpretationSubject`.
+        // Check both lengths before zipping so no subject is silently dropped.
         if ids.len() != kinds.len() {
             return Err(MisalignedInterpretationSubjects {
                 ids: ids.len(),
@@ -164,8 +192,8 @@ impl PerspectivePayload for InterpretationV1 {
         "proxiima_core.interpretation_v1"
     }
 
+    /// Project each subject as a schema-declared reference.
     fn references(&self) -> Vec<PayloadReference> {
-        // `Proxiima.Memory.InterpretationSubject`.
         self.subjects
             .iter()
             .map(|&(id, kind)| PayloadReference::memory("subject_memory_ids", kind.into(), id))
@@ -210,17 +238,13 @@ mod tests {
     use crate::{EntityKind, ReferenceBinding};
 
     fn fixture() -> InterpretationV1 {
-        InterpretationV1 {
-            claim: "the outage followed the deploy".into(),
-            confidence: 80.try_into().unwrap(),
-            subjects: MemoryKind::ALL
+        InterpretationV1::fixture(
+            "the outage followed the deploy",
+            80,
+            MemoryKind::ALL
                 .into_iter()
-                .map(|kind| (MemoryId::new(uuid::Uuid::now_v7()), kind))
-                .collect(),
-            model_id: "model".into(),
-            client_name: "client".into(),
-            client_version: "1".into(),
-        }
+                .map(|kind| (MemoryId::new(uuid::Uuid::now_v7()), kind)),
+        )
     }
 
     #[test]

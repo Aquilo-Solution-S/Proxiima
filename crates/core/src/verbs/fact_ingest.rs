@@ -90,7 +90,8 @@ pub struct FactReceiptDraft {
 /// How far past the write's clock a Fact's `FactWriteCommand.occurred_at`
 /// may lie: an observation cannot postdate its own recording, and two
 /// hosts' clocks disagreeing by seconds is not a writer error.
-pub const OCCURRED_AT_FUTURE_BOUND: time::Duration = time::Duration::minutes(5);
+pub const OCCURRED_AT_FUTURE_BOUND: time::Duration =
+    time::Duration::minutes(crate::ledger!(Proxiima.Memory.futureOccurrenceMinutes));
 
 /// Admit a writer's occurrence time against the clock reading `now`.
 ///
@@ -106,6 +107,7 @@ pub(crate) fn check_occurred_at(
     occurred_at: time::OffsetDateTime,
     now: time::OffsetDateTime,
 ) -> Result<time::OffsetDateTime, ProtocolError> {
+    const QUANTUM_NS: u32 = crate::ledger!(Proxiima.Memory.occurrenceQuantumNanoseconds);
     if occurred_at > now + OCCURRED_AT_FUTURE_BOUND {
         return Err(ProtocolError::invalid_argument(
             "occurred_at",
@@ -117,7 +119,10 @@ pub(crate) fn check_occurred_at(
     }
     occurred_at
         .checked_to_offset(time::UtcOffset::UTC)
-        .and_then(|utc| utc.replace_microsecond(utc.microsecond()).ok())
+        .and_then(|utc| {
+            let truncated = utc.nanosecond() / QUANTUM_NS * QUANTUM_NS;
+            utc.replace_nanosecond(truncated).ok()
+        })
         .ok_or_else(|| {
             ProtocolError::invalid_argument("occurred_at", "is not representable in UTC")
         })

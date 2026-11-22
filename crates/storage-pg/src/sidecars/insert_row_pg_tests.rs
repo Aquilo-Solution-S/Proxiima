@@ -156,27 +156,13 @@ async fn legacy_interpretations_refuse_batch_decode_with_the_row_and_reason() {
         let score = create_interpretation(
             pg,
             owner,
-            InterpretationV1 {
-                claim: "legacy score".into(),
-                confidence: 80.try_into()?,
-                subjects: vec![(subject, MemoryKind::Fact)],
-                model_id: "fixture".into(),
-                client_name: "fixture".into(),
-                client_version: "1".into(),
-            },
+            InterpretationV1::fixture("legacy score", 80, [(subject, MemoryKind::Fact)]),
         )
         .await?;
         let subjects = create_interpretation(
             pg,
             owner,
-            InterpretationV1 {
-                claim: "legacy subjects".into(),
-                confidence: 80.try_into()?,
-                subjects: vec![(subject, MemoryKind::Fact)],
-                model_id: "fixture".into(),
-                client_name: "fixture".into(),
-                client_version: "1".into(),
-            },
+            InterpretationV1::fixture("legacy subjects", 80, [(subject, MemoryKind::Fact)]),
         )
         .await?;
 

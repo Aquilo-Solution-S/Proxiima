@@ -1199,11 +1199,7 @@ async fn facade_reads_core_resources_with_resource_scope() {
     result.expect("core MCP resource facade integration test failed");
 }
 
-/// #466: a Fact keeps when it occurred. The `observed_at` given to
-/// `core_remember` reads back as `occurred_at` from `proxiima://memory/{id}`,
-/// from a search hit and on the query verb's `MemoryRow`; a Fact written
-/// without one reads back its own write time; an Abstraction carries none;
-/// and a time beyond the future bound is refused as invalid input.
+// `Proxiima.Memory.occurrenceSource` through admission, by-ID, search and query.
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one remembered corpus read back through every read surface
 async fn a_remembered_observation_reads_back_when_it_occurred() {
@@ -1413,9 +1409,9 @@ async fn a_remembered_observation_reads_back_when_it_occurred() {
             ])
         );
 
-        // One bound: beyond five minutes ahead is invalid input.
-        let future =
-            (time::OffsetDateTime::now_utc() + time::Duration::minutes(10)).format(rfc3339)?;
+        let future = (time::OffsetDateTime::now_utc()
+            + proxiima_core::OCCURRED_AT_FUTURE_BOUND * 2_i32)
+            .format(rfc3339)?;
         let refused = call_test_model_tool(
             &tools,
             authz,

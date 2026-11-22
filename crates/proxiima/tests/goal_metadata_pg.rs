@@ -52,14 +52,11 @@ async fn guest_metadata_edit_refuses_forgotten_carried_targets() {
             proxiima_core::MemoryTarget::Series(proxiima_core::SeriesHandle::new(Uuid::now_v7())),
             owner,
             "motivation",
-            proxiima_core::InterpretationV1 {
-                claim: "motivation".into(),
-                confidence: 90.try_into().unwrap(),
-                subjects: vec![(fact, proxiima_core::MemoryKind::Fact)],
-                model_id: "test".into(),
-                client_name: "test".into(),
-                client_version: "1".into(),
-            },
+            proxiima_core::InterpretationV1::fixture(
+                "motivation",
+                90,
+                [(fact, proxiima_core::MemoryKind::Fact)],
+            ),
         ))
         .await
         .unwrap()

@@ -366,10 +366,7 @@ const INTERPRETATION_V1: SchemaContract = SchemaContract {
     },
     embedding: EmbeddingRecipe::Units(&[EmbedUnit::stored("embed_text", SLOT_DEFAULT)]),
     transfer: TransferRule::StaysOnKey,
-    // The columns that carry SUBJECT IDS, which is one column and not two.
-    // `subject_kinds` is the positionally-aligned kind vector and holds no
-    // id, so a walk that took it for a subject column would look for memory
-    // references in an enum array.
+    // Only the ID column is traversed; the other column holds kinds.
     provenance: Provenance::PayloadOnly {
         subject_columns: &["subject_memory_ids"],
     },

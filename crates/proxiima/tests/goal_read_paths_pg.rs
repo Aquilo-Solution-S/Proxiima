@@ -30,14 +30,11 @@ fn auth(user: UserId) -> AuthzContext {
 }
 
 fn perspective(text: &str, fact: MemoryId, note: MemoryId) -> InterpretationV1 {
-    InterpretationV1 {
-        claim: text.to_owned(),
-        confidence: 90.try_into().unwrap(),
-        subjects: vec![(fact, MemoryKind::Fact), (note, MemoryKind::Fact)],
-        model_id: "test".into(),
-        client_name: "test".into(),
-        client_version: "1".into(),
-    }
+    InterpretationV1::fixture(
+        text,
+        90,
+        [(fact, MemoryKind::Fact), (note, MemoryKind::Fact)],
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -117,14 +117,7 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                     MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
                     owner,
                     "pending perspective",
-                    InterpretationV1 {
-                        claim: "claim".to_owned(),
-                        confidence: 80.try_into().unwrap(),
-                        subjects: vec![(fact.memory_id, MemoryKind::Fact)],
-                        model_id: "test".to_owned(),
-                        client_name: "test".to_owned(),
-                        client_version: "1".to_owned(),
-                    },
+                    InterpretationV1::fixture("claim", 80, [(fact.memory_id, MemoryKind::Fact)]),
                 ),
             )
             .await?;
@@ -169,14 +162,11 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                 MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
                 owner,
                 "pending perspective",
-                InterpretationV1 {
-                    claim: "pending claim".to_owned(),
-                    confidence: 90.try_into().unwrap(),
-                    subjects: vec![(pending_fact.memory_id, MemoryKind::Fact)],
-                    model_id: "test".to_owned(),
-                    client_name: "test".to_owned(),
-                    client_version: "1".to_owned(),
-                },
+                InterpretationV1::fixture(
+                    "pending claim",
+                    90,
+                    [(pending_fact.memory_id, MemoryKind::Fact)],
+                ),
             ))
             .await?;
         let pending_goal = pending
@@ -257,14 +247,11 @@ async fn typed_goal_standalone_and_uow_validate_pending_kinds() {
                 MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
                 owner,
                 "committed perspective",
-                InterpretationV1 {
-                    claim: "committed claim".to_owned(),
-                    confidence: 90.try_into().unwrap(),
-                    subjects: vec![(committed_fact.memory_id, MemoryKind::Fact)],
-                    model_id: "test".to_owned(),
-                    client_name: "test".to_owned(),
-                    client_version: "1".to_owned(),
-                },
+                InterpretationV1::fixture(
+                    "committed claim",
+                    90,
+                    [(committed_fact.memory_id, MemoryKind::Fact)],
+                ),
             ))
             .await?;
         let committed_goal = committed
@@ -342,14 +329,11 @@ async fn typed_goal_pending_foreign_perspective_rejects_cross_owner_assignment()
                 MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
                 owner_b,
                 "foreign pending perspective",
-                InterpretationV1 {
-                    claim: "foreign claim".to_owned(),
-                    confidence: 90.try_into().unwrap(),
-                    subjects: vec![(foreign_fact.memory_id, MemoryKind::Fact)],
-                    model_id: "test".to_owned(),
-                    client_name: "test".to_owned(),
-                    client_version: "1".to_owned(),
-                },
+                InterpretationV1::fixture(
+                    "foreign claim",
+                    90,
+                    [(foreign_fact.memory_id, MemoryKind::Fact)],
+                ),
             ))
             .await?;
         let foreign_fact_id = foreign_fact.memory_id.into_inner();

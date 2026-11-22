@@ -22,6 +22,7 @@ impl OperatorPhase {
     /// Whether an input of `kind` belongs to this phase.
     #[must_use]
     pub fn admits_input(self, kind: EntityKind) -> bool {
+        // `Proxiima.Memory.operatorAdmitsInput`.
         match self {
             Self::ToA => MemoryPinField::Origins.admitted(EntityKind::Abstraction),
             Self::AtoP => MemoryPinField::Origins.admitted(EntityKind::Perspective),
@@ -213,6 +214,7 @@ impl OperatorInvocationManifest {
             }
         }
 
+        // `Causa.InvocationProvenanceComplete`: each output needs a pin to every input.
         for output in &self.outputs {
             match output {
                 OperatorOutputManifest::Memory {
@@ -303,4 +305,61 @@ pub enum OperatorProofError {
         output_goal_id: GoalId,
         input_memory_id: MemoryId,
     },
+}
+
+#[cfg(test)]
+mod ledger_vectors {
+    use super::*;
+
+    #[test]
+    fn operator_admission_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct InputVector {
+            #[serde(rename = "in")]
+            input: (OperatorPhase, EntityKind),
+            out: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct OutputVector {
+            #[serde(rename = "in")]
+            phase: [OperatorPhase; 1],
+            out: EntityKind,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let inputs: Vec<InputVector> =
+            serde_json::from_value(vectors["Proxiima.Memory.operatorAdmitsInput"].clone()).unwrap();
+        let outputs: Vec<OutputVector> =
+            serde_json::from_value(vectors["Proxiima.Memory.operatorOutput"].clone()).unwrap();
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(
+            inputs.len(),
+            outputs.len() * (crate::MemoryKind::ALL.len() + 1)
+        );
+        for row in inputs {
+            let (phase, kind) = row.input;
+            assert_eq!(phase.admits_input(kind), row.out, "{phase:?} {kind:?}");
+        }
+        for row in outputs {
+            let [phase] = row.phase;
+            let memory_kind = crate::MemoryKind::of(row.out).map(crate::MemoryKind::entity_kind);
+            assert_eq!(phase.output_memory_kind(), memory_kind);
+            assert_eq!(
+                OperatorPhase::of_memory_output(row.out),
+                memory_kind.map(|_| phase)
+            );
+            let input = MemoryId::new(uuid::Uuid::from_u128(1));
+            let goal = GoalId::new(uuid::Uuid::from_u128(2));
+            let invocation = OperatorInvocationManifest::goal_output(
+                phase,
+                OperatorId::new(uuid::Uuid::from_u128(3)),
+                InputContractId::new(uuid::Uuid::from_u128(4)),
+                vec![(input, EntityKind::Abstraction)],
+                goal,
+                vec![OutputEdgeManifest::goal_to_memory(goal, input)],
+            );
+            assert_eq!(invocation.validate().is_ok(), row.out == EntityKind::Goal);
+        }
+        assert_eq!(OperatorPhase::of_memory_output(EntityKind::Fact), None);
+    }
 }

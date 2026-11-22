@@ -19,7 +19,7 @@ change with the host build, so this page does not copy their schemas.
 3. **Separate observation from interpretation.** Admit external observations
    as Facts. Derive an Abstraction or Perspective only when the typed payload
    and declared inputs support it. The core write contract enforces layering
-   and ownership.
+   and ownership. See [`Proxiima.Memory`](ledger.md#memory).
 4. **Write only through the host contract.** Use the discovered tool or host
    API, never direct storage access. Authorization is resolved by the host;
    caller-supplied owner roles are not accepted by the core boundary.

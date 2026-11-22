@@ -280,14 +280,11 @@ fn guided_interpretation_keeps_exact_goal_versions_and_deduplicates() {
         MemoryTarget::Series(SeriesHandle::new(uuid::Uuid::now_v7())),
         owner(),
         "claim",
-        InterpretationV1 {
-            claim: "claim".into(),
-            confidence: 80.try_into().unwrap(),
-            subjects: vec![(crate::MemoryId::new(uuid::Uuid::now_v7()), MemoryKind::Fact)],
-            model_id: "fixture".into(),
-            client_name: "fixture".into(),
-            client_version: "1".into(),
-        },
+        InterpretationV1::fixture(
+            "claim",
+            80,
+            [(crate::MemoryId::new(uuid::Uuid::now_v7()), MemoryKind::Fact)],
+        ),
         [first, first, second],
     );
     assert_eq!(memory.guided_by, vec![first, second]);

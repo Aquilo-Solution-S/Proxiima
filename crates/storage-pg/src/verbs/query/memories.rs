@@ -162,9 +162,7 @@ impl MemoryFilter {
     /// This filter's predicate at `placeholder`, which is its position in
     /// the list the caller will bind in the same order.
     ///
-    /// Head kind/schema are immutable and checked against every inserted
-    /// memory version. Filtering the ordered head stream avoids visiting
-    /// versions that cannot be in this page.
+    /// The insert checks head kind and schema, so filtering heads avoids scanning their versions.
     fn predicate(&self, placeholder: usize, heads_only: bool) -> SqlText {
         let alias = if heads_only { "h" } else { "m" };
         let at = placeholder as u64;

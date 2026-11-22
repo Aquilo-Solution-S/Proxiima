@@ -549,17 +549,14 @@ async fn typed_derivation_authorizes_foreign_origins_and_rejects_invalid_inputs(
                     sdk_new_series(),
                     owner,
                     "Synthetic interpretation",
-                    proxiima_core::InterpretationV1 {
-                        claim: "Synthetic interpretation".into(),
-                        confidence: 60.try_into().unwrap(),
-                        subjects: vec![(
+                    proxiima_core::InterpretationV1::fixture(
+                        "Synthetic interpretation",
+                        60,
+                        [(
                             perspective.memory_id,
                             proxiima_core::MemoryKind::Perspective,
                         )],
-                        model_id: "fixture".into(),
-                        client_name: "fixture".into(),
-                        client_version: "1".into(),
-                    },
+                    ),
                 ),
             )
             .await?;

@@ -35,7 +35,6 @@ pub enum EntityKind {
     serde::Deserialize,
     schemars::JsonSchema,
 )]
-// `Proxiima.Identity.MemoryKind`.
 pub enum MemoryKind {
     #[default]
     Fact,
@@ -55,9 +54,10 @@ impl MemoryKind {
         }
     }
 
-    /// The memory kind of an entity kind; a Goal is not a memory.
+    /// The memory kind of an entity. A Goal is not a memory.
     #[must_use]
     pub const fn of(kind: EntityKind) -> Option<Self> {
+        // `Proxiima.Memory.memoryKind`.
         match kind {
             EntityKind::Fact => Some(Self::Fact),
             EntityKind::Abstraction => Some(Self::Abstraction),
@@ -170,6 +170,29 @@ mod memory_kind_tests {
                 serde_json::from_str::<MemoryKind>(bad).is_err(),
                 "{bad} must be refused"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod memory_kind_vectors {
+    use super::{EntityKind, MemoryKind};
+
+    #[test]
+    fn memory_spine_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            kinds: [EntityKind; 1],
+            out: Option<MemoryKind>,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Memory.memoryKind"].clone()).unwrap();
+        assert_eq!(rows.len(), MemoryKind::ALL.len() + 1);
+        for row in rows {
+            assert_eq!(MemoryKind::of(row.kinds[0]), row.out, "{:?}", row.kinds[0]);
         }
     }
 }

@@ -505,14 +505,11 @@ async fn set_and_pause(world: &World, pending: PendingWork) -> (GoalId, GoalId) 
         MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
         world.owner,
         "assignment",
-        InterpretationV1 {
-            claim: "claim".into(),
-            confidence: 80.try_into().unwrap(),
-            subjects: vec![(proxiima_core::MemoryId::new(fact), MemoryKind::Fact)],
-            model_id: "test".into(),
-            client_name: "test".into(),
-            client_version: "1".into(),
-        },
+        InterpretationV1::fixture(
+            "claim",
+            80,
+            [(proxiima_core::MemoryId::new(fact), MemoryKind::Fact)],
+        ),
     );
     let assignment = engine
         .derive_memory(&authz, assignment)

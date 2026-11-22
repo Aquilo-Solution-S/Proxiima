@@ -1,3 +1,4 @@
+use super::AUTHORING_BODY_MAX;
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
@@ -23,7 +24,7 @@ pub struct RecordUtteranceArgs {
     )]
     pub conversation_id: String,
     #[schemars(
-        length(min = 1, max = 20000),
+        length(min = 1, max = AUTHORING_BODY_MAX),
         description = "The utterance text. Leading and trailing whitespace is removed before the length check."
     )]
     pub text: String,
@@ -79,7 +80,7 @@ impl Tool for RecordUtteranceTool {
                     "conversation_id must be non-empty".into(),
                 ));
             }
-            let text = validate_trimmed_len("text", &args.text, 20_000)?;
+            let text = validate_trimmed_len("text", &args.text, AUTHORING_BODY_MAX)?;
             let idempotency_key = super::util::normalize_idempotency_key(args.idempotency_key)?;
 
             let (_, authz) =

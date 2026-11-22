@@ -15,3 +15,6 @@ pub use interpret::InterpretTool;
 pub use record_utterance::RecordUtteranceTool;
 pub use remember::RememberTool;
 pub use restore::RestoreTool;
+
+pub(super) const AUTHORING_TITLE_MAX: usize = crate::ledger!(Proxiima.Memory.titleMax);
+pub(super) const AUTHORING_BODY_MAX: usize = crate::ledger!(Proxiima.Memory.bodyMax);

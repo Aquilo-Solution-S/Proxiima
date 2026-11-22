@@ -1,3 +1,4 @@
+use super::{AUTHORING_BODY_MAX, AUTHORING_TITLE_MAX};
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
 use crate::protocol::tool as protocol_tool;
@@ -19,12 +20,12 @@ pub(crate) const NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RememberArgs {
     #[schemars(
-        length(min = 1, max = 240),
+        length(min = 1, max = AUTHORING_TITLE_MAX),
         description = "Short title for the agent-observed Fact. Leading and trailing whitespace is removed before the length check."
     )]
     pub title: String,
     #[schemars(
-        length(min = 1, max = 20000),
+        length(min = 1, max = AUTHORING_BODY_MAX),
         description = "Body text for the agent-observed Fact. Leading and trailing whitespace is removed before the length check."
     )]
     pub body: String,
@@ -164,8 +165,8 @@ pub(crate) async fn prepare_note_write(
     ctx: &ToolCtx,
     input: NoteWriteInput<'_>,
 ) -> Result<PreparedNoteWrite, ToolError> {
-    let title = validate_trimmed_len("title", input.title, 240)?;
-    let body = validate_trimmed_len("body", input.body, 20_000)?;
+    let title = validate_trimmed_len("title", input.title, AUTHORING_TITLE_MAX)?;
+    let body = validate_trimmed_len("body", input.body, AUTHORING_BODY_MAX)?;
     let idempotency_key = normalize_idempotency_key(input.idempotency_key)?;
     let (space, authz) = super::super::memory_spaces::resolve_space_for_write(ctx, input.space)?;
     let tags = normalize_tags(input.tags)?;

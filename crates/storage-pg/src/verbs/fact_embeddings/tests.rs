@@ -2261,14 +2261,11 @@ mod pg_tests {
             MemoryTarget::Series(SeriesHandle::new(Uuid::now_v7())),
             owner,
             "a grounded claim",
-            proxiima_core::InterpretationV1 {
-                claim: "a grounded claim".into(),
-                confidence: 80.try_into().unwrap(),
-                subjects: vec![(subject, proxiima_core::MemoryKind::Abstraction)],
-                model_id: "test".into(),
-                client_name: "test".into(),
-                client_version: "1".into(),
-            },
+            proxiima_core::InterpretationV1::fixture(
+                "a grounded claim",
+                80,
+                [(subject, proxiima_core::MemoryKind::Abstraction)],
+            ),
         )
     }
 

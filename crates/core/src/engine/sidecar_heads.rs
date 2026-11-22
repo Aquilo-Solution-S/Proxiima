@@ -10,8 +10,9 @@ impl Engine {
     /// List readable current heads of one declared stateful Fact sidecar.
     ///
     /// A key prefix matches complete natural-key columns in declaration
-    /// order. Spiice tombstones remain heads; forgotten and superseded
-    /// admissions are absent. Pages use descending admission IDs.
+    /// order. Each series contributes its latest readable version, including
+    /// a visible Goal publication or a spiice tombstone. Forgotten admissions
+    /// are absent. Pages use descending admission IDs.
     ///
     /// # Errors
     ///

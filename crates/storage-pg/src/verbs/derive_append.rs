@@ -266,6 +266,7 @@ async fn admit_derived(
     input: DerivedAdmissionInput<'_>,
 ) -> Result<DerivedOutcome, StorageError> {
     let kind = derived_kind(draft)?;
+    // `Proxiima.Memory.seriesSource`.
     let handle = if let Some(prior) = draft.supersedes {
         let prior_handle: Option<uuid::Uuid> = sqlx::query_scalar(
             "SELECT handle FROM proxiima_core.live_memory
@@ -384,6 +385,7 @@ async fn derived_replay_in_lifecycle(
     origins: &[EdgeEndpoint],
     references: &[EdgeEndpoint],
 ) -> Result<Option<DerivedOutcome>, StorageError> {
+    // `Proxiima.Memory.derivedHeadAction`.
     {
         let existing = load_derived_replay_head(tx, handle, draft, kind).await?;
         if let Some((t, forgotten)) = existing {

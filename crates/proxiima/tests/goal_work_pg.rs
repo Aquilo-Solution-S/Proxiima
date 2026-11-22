@@ -24,14 +24,7 @@ fn auth(user: UserId) -> AuthzContext {
 }
 
 fn interpretation(fact: MemoryId, text: &str) -> InterpretationV1 {
-    InterpretationV1 {
-        claim: text.into(),
-        confidence: 90.try_into().unwrap(),
-        subjects: vec![(fact, proxiima_core::MemoryKind::Fact)],
-        model_id: "goal-work-test".into(),
-        client_name: "goal-work-test".into(),
-        client_version: "1".into(),
-    }
+    InterpretationV1::fixture(text, 90, [(fact, proxiima_core::MemoryKind::Fact)])
 }
 
 #[tokio::test(flavor = "multi_thread")]
