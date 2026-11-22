@@ -470,6 +470,7 @@ pub(crate) fn compose_registry<A: SpiiceBundle>(
     publish_goal_changes: bool,
 ) -> Result<proxiima_core::SpiiceRegistryFrozen, ProxiimaError> {
     let mut registry = SpiiceRegistry::new();
+    // `Proxiima.Composition.registrySource`.
     A::register(&mut registry)?;
     if publish_goal_changes {
         registry.publish_goal_changes();

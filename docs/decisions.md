@@ -14,10 +14,10 @@ See the [repository's source authority](https://github.com/Aquilo-Solution-S/pro
 
 ## Build-time spiice composition
 
-A spiice is a vocabulary crate linked into a host at build time. A host reads
-remote stores through `OtherStores`. This makes composition visible to the
-compiler and keeps storage ownership at the host boundary. See [Build a
-spiice](build-a-spiice.md) for the current integration surface.
+The host composes its registry under [`Proxiima.Composition`](ledger.md#composition).
+Build-time linking makes the composition visible to the compiler. A host
+reads remote stores through `OtherStores`, which keeps storage ownership at
+the host boundary.
 
 ## Trust has three separate statements
 

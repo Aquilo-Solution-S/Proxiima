@@ -152,6 +152,7 @@ pub(crate) fn request_services(
             "request extensions carry RequestHeaders; only the header allowlist may".into(),
         )
     };
+    // `Proxiima.Composition.maySupplyRequestHeaders`.
     if services.get::<RequestHeaders>().is_some() {
         return Err(forged());
     }

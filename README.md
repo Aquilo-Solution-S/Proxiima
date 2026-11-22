@@ -26,9 +26,9 @@ identity, event sources, model clients, scheduling, and effects. See the
 
 The [guide](docs/index.md), [ledger](docs/ledger.md), and [repository guidance](AGENTS.md) are the starting points for contributors.
 
-One deployment links core, storage, transports, and spiice crates at build
-time. The canonical host is [proxiima-mcp](apps/proxiima-mcp); it serves the
-core only and links no spiice. A host that wants a spiice links it. Crates
-are unpublished; Rust consumers pin the same git selector across the graph.
+The canonical host is [proxiima-mcp](apps/proxiima-mcp). See
+[`Proxiima.Composition`](docs/ledger.md#composition) for how hosts compose the
+registry. Crates are unpublished. Rust consumers pin the same git selector
+across the graph.
 
 License: [Apache-2.0](LICENSE), [contribution terms](LICENSING.md).

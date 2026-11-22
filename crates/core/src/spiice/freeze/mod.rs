@@ -1,5 +1,4 @@
-//! Freezing the registry: every check a composed binary must pass before
-//! its spiice registry is sealed for runtime use.
+//! Freeze the linked registry for serving.
 //!
 //! [`SpiiceRegistry::try_freeze`] is the whole entry point, and it is kept
 //! here alone so the order of the checks stays readable in one screen. The
@@ -13,10 +12,6 @@
 //! | [`projection`] | is the search projection uniform, and can a query reach it? |
 //! | [`dispatcher`] | do a dispatcher tool's action specs match its argument schema? |
 //!
-//! Nothing here is reachable after the freeze: a `SpiiceRegistryFrozen` is
-//! the proof that all of it passed, which is why the checks may be as
-//! expensive as they need to be and why a failure is a refusal to boot
-//! rather than a runtime error some request discovers.
 
 use super::{
     BTreeSet, CapabilityTag, PayloadKind, SchemaCapabilityTags, SchemaId, SchemaVersion,
@@ -48,6 +43,7 @@ impl SpiiceRegistry {
         self.validate_retired_facts()?;
         self.validate_schema_capability_tags_resolve()?;
         self.validate_spiice_descriptors()?;
+        // `Proxiima.Composition.schemaIdentity`.
         let mut seen_schemas = std::collections::HashSet::new();
         for schema in &self.schemas {
             if !seen_schemas.insert((schema.schema_id.clone(), schema.schema_version, schema.kind))
@@ -88,6 +84,7 @@ impl SpiiceRegistry {
                     kind: schema.kind,
                 });
             }
+            // `Proxiima.Composition.ingressParserCount`.
             let ingress_count = self
                 .protocol_ingress
                 .iter()
@@ -137,6 +134,7 @@ impl SpiiceRegistry {
         self.validate_schema_evolutions()?;
         self.validate_scope_declarations()?;
         self.validate_embedding_recipes_match_behavior()?;
+        // `Proxiima.Composition.registrySource`.
         SpiiceRegistryFrozen::from_registry(self)
     }
 

@@ -1,8 +1,6 @@
-/// `const fn` byte-wise `str::starts_with` — used by `proxiima_spiice!`
-/// to compile-check schema / tool / trigger prefixes. `str::starts_with`
-/// is not `const`, so the comparison is spelled out. See docs/host-integration.md
-/// §Schema namespacing: prefix violations reachable from associated
-/// `const`s or literals are now caught at build time, not at `register`.
+/// Bytewise prefix comparison for `proxiima_spiice!` const assertions.
+/// The macro checks typed schema and tool prefixes at compile time under
+/// `Proxiima.Composition.prefixCheck`.
 #[must_use]
 pub const fn schema_id_has_prefix(id: &str, prefix: &str) -> bool {
     let (id, prefix) = (id.as_bytes(), prefix.as_bytes());

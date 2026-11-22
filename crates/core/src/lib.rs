@@ -160,9 +160,9 @@ macro_rules! proxiima_schema_id {
 /// payload. A spiice connects nodes by declaring reference fields on its
 /// payloads, or by authoring an interpretation node.
 ///
-/// Schema and `mcp_tools` prefixes resolve to associated `const`s or
-/// literals, so they are checked by a `const` assertion — a misprefix
-/// fails the build.
+/// Typed schema and tool prefixes are checked by `const` assertions.
+/// Opaque cited-object IDs are checked at registration. A tool's declared
+/// prefix also has to pass provider-safe name validation at registration.
 ///
 /// Embedding capability types live in `crate::models` (`EmbedCaps`).
 /// Hosts inject [`crate::embedding::EmbeddingClient`] at boot; this macro does
@@ -186,6 +186,7 @@ macro_rules! proxiima_spiice {
     // `SCHEMA_ID` carries the spiice prefix. The check is a `const`
     // assertion — a misprefixed `SCHEMA_ID` fails the build, not the
     // first boot.
+    // `Proxiima.Composition.prefixSyntax` and `Proxiima.Composition.prefixCheck`.
     (@schemas $registry:ident $name:literal $trait:ident $add:ident [ $($ty:ty),* $(,)? ]) => {
         $(
             const _: () = ::std::assert!(
@@ -356,10 +357,7 @@ macro_rules! proxiima_spiice {
             ]);)?
             $($(
                 {
-                    // Tool wire names may use the "<spiice>/" namespace separator
-                    // OR "<spiice>_": the latter keeps the MCP tool name valid
-                    // under Anthropic's ^[a-zA-Z0-9_-]{1,64}$ rule. Schema ids
-                    // (asserted elsewhere) still require "<spiice>/".
+                    // `Proxiima.Composition.prefixSyntax`. Registry admission then requires provider-safe spelling.
                     const _: () = ::std::assert!(
                         $crate::schema_id_has_prefix(
                             <$tool as $crate::Tool>::NAME,

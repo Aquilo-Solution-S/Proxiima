@@ -477,8 +477,7 @@ impl ScopeGateBehavior {
         }
     }
 
-    /// The host's declaration of `tool`: only for a name the registry does
-    /// not serve, and only the marker that names it.
+    // `Proxiima.Composition.hostToolEligible`.
     fn host_call(
         tool: &str,
         descriptor: Option<&ToolDescriptor>,

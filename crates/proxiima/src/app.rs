@@ -112,6 +112,7 @@ macro_rules! spiice_app {
         impl $crate::SpiiceApp for $bundle {
             fn app_info() -> $crate::AppInfo {
                 #[allow(unused_assignments, unused_mut)]
+                // `Proxiima.Composition.appVersionSource`.
                 let mut version: &'static str = ::std::env!("CARGO_PKG_VERSION");
                 $(version = $version;)?
                 $crate::AppInfo {

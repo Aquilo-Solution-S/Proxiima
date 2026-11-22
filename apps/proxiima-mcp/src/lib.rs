@@ -279,6 +279,7 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     served
 }
 
+// `Proxiima.Composition.coreStartup`.
 async fn serve(config: McpConfig) -> Result<(), CliError> {
     let running = run_with_handle(config).await?;
     let addr = running
@@ -296,6 +297,7 @@ async fn serve(config: McpConfig) -> Result<(), CliError> {
 /// Bring the database to this binary: the migrate step a deployment runs
 /// before it starts or replaces the servers. Serving and maintenance only
 /// validate the schema it leaves.
+// `Proxiima.Composition.coreStartup`.
 async fn run_migrate(
     config: MigrateConfig,
     lookup: impl EnvLookup + Send + Sync,
@@ -488,6 +490,7 @@ async fn run_maintain(
 /// The runtime of `migrate` and the maintenance commands on `database_url`:
 /// configured from the storage settings of `lookup` only, so the server's
 /// own environment neither starts nor refuses anything here.
+// `Proxiima.Composition.coreStartup`.
 fn maintenance_app<'env>(
     database_url: String,
     lookup: impl EnvLookup + Send + Sync + 'env,

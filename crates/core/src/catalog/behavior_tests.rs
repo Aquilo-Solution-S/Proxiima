@@ -573,6 +573,32 @@ fn a_host_goal_work_declaration_classifies_writes_only() {
     );
 }
 
+#[test]
+fn host_tool_eligibility_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.Composition.hostToolEligible"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.len(), 4);
+    let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+    for row in rows {
+        let registered = row["in"][0].as_bool().unwrap();
+        let matching = row["in"][1].as_bool().unwrap();
+        let descriptor = registered.then(|| &registry.list_mcp_tools()[0]);
+        let tool = descriptor.map_or("host_fixture", |tool| tool.name);
+        let marker = if matching { tool } else { "other_fixture" };
+        let mut ctx = test_ctx(ToolScope::All);
+        ctx.try_insert_service(HostToolCall::new(marker, ToolEffect::ReadOnly))
+            .unwrap();
+        assert_eq!(
+            ScopeGateBehavior::host_call(tool, descriptor, &ctx).is_some(),
+            row["out"].as_bool().unwrap(),
+            "{row}"
+        );
+    }
+}
+
 fn test_ctx(tool_scope: ToolScope) -> ToolCtx {
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let authz =

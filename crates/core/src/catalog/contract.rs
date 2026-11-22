@@ -79,6 +79,7 @@ impl SpiiceServices {
         T: Send + Sync + 'static,
     {
         let type_id = TypeId::of::<T>();
+        // `Proxiima.Composition.serviceAdmission`.
         if self.values.contains_key(&type_id) {
             return Err(SpiiceServiceError::DuplicateService {
                 type_name: std::any::type_name::<T>(),
@@ -153,6 +154,7 @@ pub struct RequestHeaders {
 
 impl std::fmt::Debug for RequestHeaders {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `Proxiima.Composition.requestHeaderNames`.
         f.debug_set().entries(self.values.keys()).finish()
     }
 }
@@ -171,6 +173,7 @@ impl RequestHeaders {
         Self {
             values: pairs
                 .into_iter()
+                // `Proxiima.Composition.requestHeaderNames`.
                 .map(|(name, value)| (name.as_ref().to_ascii_lowercase(), value.into()))
                 .collect(),
         }

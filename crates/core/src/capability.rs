@@ -34,6 +34,7 @@ pub enum CapabilityTagError {
     Invalid { value: String },
 }
 
+// `Proxiima.Composition.capabilityTagCharacter`. A tag must have a first character.
 fn is_valid_capability_tag(value: &str) -> bool {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
@@ -48,6 +49,35 @@ fn is_valid_capability_tag(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::CapabilityTag;
+
+    #[test]
+    fn tag_character_classes_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Composition.capabilityTagCharacter"]
+            .as_array()
+            .unwrap();
+        assert_eq!(rows.len(), 8);
+        for row in rows {
+            let ch = match row["in"][1].as_str().unwrap() {
+                "asciiLowercase" => 'a',
+                "asciiDigit" => '0',
+                "hyphen" => '-',
+                "other" => 'A',
+                class => panic!("unexpected character class {class}"),
+            };
+            let tag = match row["in"][0].as_str().unwrap() {
+                "first" => ch.to_string(),
+                "subsequent" => format!("a{ch}"),
+                position => panic!("unexpected tag position {position}"),
+            };
+            assert_eq!(
+                CapabilityTag::parse(&tag).is_ok(),
+                row["out"].as_bool().unwrap(),
+                "{tag}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_prefixed_uppercase_slash_and_leading_digit() {
