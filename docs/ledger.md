@@ -894,7 +894,7 @@ stateDiagram-v2
 - migration
 - admin
 
-**Pooler verification**: The pooler lane checks its package signing key and version floor and exercises SCRAM and startup settings.
+**Pooler verification**: The pooler lane checks its package signing key and version floor, exercises SCRAM and startup settings, and requires every selected test binary to log in through the pooler.
 
 - packageKey
 - versionFloor

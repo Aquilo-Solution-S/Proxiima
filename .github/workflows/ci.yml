@@ -310,7 +310,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
-      # `Proxiima.Repository.PoolerVerification`.
       - name: start pgbouncer in transaction mode
         # Not a service container: PgBouncer is configured by its ini file,
         # and a service takes no file or command line. It runs as the runner
@@ -377,23 +376,21 @@ jobs:
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
           tool: nextest
-      - name: test through pgbouncer
-        run: >-
-          cargo nextest run -p proxiima-storage-pg --all-features --locked
-          -E 'binary(pgbouncer_pg) | binary(maintenance_lease_pg) | binary(host_state_lifecycle)
-          | binary(purge_backoff) | binary(owner_export) | binary(owner_erase)'
-      - name: boot through pgbouncer, migrations direct
-        run: cargo nextest run -p proxiima --all-features --locked -E 'binary(pooler_boot_pg)'
-      - name: check aggregate pooler activity
-        # A lane that silently connected directly would pass without exercising PgBouncer.
+      - name: test through pgbouncer, each binary through the pooler
+        # `Proxiima.Repository.PoolerVerification`. A binary that silently connected
+        # directly would pass without exercising PgBouncer, so each one must log in through it.
         run: |
           log="$RUNNER_TEMP/pgbouncer/pgbouncer.log"
-          logins="$(grep -c 'login attempt: db=proxiima_test' "$log" || true)"
-          echo "pooled logins: $logins"
-          test "$logins" -gt 100
-          boot="$(grep -c 'login attempt: db=proxiima_pooler_boot' "$log" || true)"
-          echo "pooled boot logins: $boot"
-          test "$boot" -gt 0
+          logins() { grep -c 'login attempt:' "$log" || true; }
+          for target in proxiima-storage-pg:pgbouncer_pg proxiima-storage-pg:maintenance_lease_pg \
+            proxiima-storage-pg:host_state_lifecycle proxiima-storage-pg:purge_backoff \
+            proxiima-storage-pg:owner_export proxiima-storage-pg:owner_erase proxiima:pooler_boot_pg; do
+            before="$(logins)"
+            cargo nextest run -p "${target%%:*}" --all-features --locked -E "binary(${target#*:})"
+            after="$(logins)"
+            echo "${target#*:}: $((after - before)) pooled logins"
+            test "$after" -gt "$before"
+          done
       - name: pgbouncer log
         if: ${{ failure() }}
         run: tail -n 200 "$RUNNER_TEMP/pgbouncer/pgbouncer.log"
