@@ -5,7 +5,7 @@ use proxiima_core::{EntityKind, StorageError};
 
 use super::{MigrationInput, MigrationPlan, PgSchemaEvolution, refused};
 
-/// Validate a pure migration plan before it can reach the executor.
+/// `Proxiima.SchemaEvolution.mappingChecks`.
 pub(super) fn plan(
     program: &PgSchemaEvolution,
     input: &MigrationInput,

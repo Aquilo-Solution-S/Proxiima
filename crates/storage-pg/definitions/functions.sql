@@ -78,6 +78,7 @@ BEGIN
 END
 $function$;
 
+-- `Proxiima.SchemaEvolution.sourceWritable`.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_schema_evolution_source_writable()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -505,7 +506,7 @@ BEGIN
 END
 $function$;
 
--- `Proxiima.Migrations.RetirementCheck`
+-- `Proxiima.Migrations.RetirementCheck` and `Proxiima.SchemaEvolution.fencedDropChecks`.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_fact_schema_drained(
     retired_schema_id text, retiring_tables text[]
 ) RETURNS void
@@ -2692,6 +2693,7 @@ BEGIN
 END;
 $function$;
 
+-- `Proxiima.SchemaEvolution.identityRoutes`. The capture inverse follows the mapped admission across owners.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_erase_witness()
  RETURNS trigger
  LANGUAGE plpgsql

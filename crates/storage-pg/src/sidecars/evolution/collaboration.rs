@@ -31,8 +31,7 @@ impl Mapping {
     }
 }
 
-/// A merge can carry an authority only if every contributor had that exact
-/// authority. A split carries the same authority to its explicit successors.
+/// `Proxiima.SchemaEvolution.collaborationChecks`.
 /// Differing audiences need an ordinary authorization decision before migration.
 fn conserve<K: Copy + Eq + Hash, V: Clone + Eq>(
     rows: &HashMap<K, V>,
@@ -173,6 +172,7 @@ pub(super) async fn preserve(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
     Ok(())
 }
 
+/// `Proxiima.SchemaEvolution.collaborationChecks`.
 async fn validate_generations(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
     let changed: bool = sqlx::query_scalar("SELECT EXISTS (
         SELECT 1 FROM proxiima_core.schema_evolution_authority a

@@ -2,9 +2,7 @@
 -- Constraint triggers are dropped immediately before recreation; no drop-all pass is required.
 -- Every trigger is grouped under its owning proxiima_core table.
 
--- schema evolution source fence.  The trigger takes the shared lock before
--- checking completion, so an exclusive migration lock serializes the check
--- with its transform and completion insert.
+-- `Proxiima.SchemaEvolution.sourceWritable`. The shared fence precedes the completion read.
 CREATE OR REPLACE TRIGGER memory_schema_evolution_source_fence
     BEFORE INSERT ON proxiima_core.memory
     FOR EACH ROW

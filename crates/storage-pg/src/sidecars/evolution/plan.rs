@@ -335,6 +335,7 @@ impl MigrationPlan {
         source: &MigrationMemory,
         payload: P,
     ) -> Result<MemoryId, StorageError> {
+        // `Proxiima.SchemaEvolution.identityRoutes`.
         let target = self.fact(source, payload, MigrationPlacement::RETAIN, source.pins())?;
         self.map_memory(source, target, &[])?;
         Ok(target)

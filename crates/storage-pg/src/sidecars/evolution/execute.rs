@@ -213,9 +213,8 @@ pub(super) async fn ensure(
     Ok(())
 }
 
-/// Fence source writes in the same order as Goal persistence: a head first,
-/// then its revision. Table locks precede the schema advisory locks because
-/// an INSERT acquires its table lock before entering the schema trigger.
+/// `Proxiima.SchemaEvolution.sourceFenceOrder`. An INSERT acquires the table lock before the schema trigger.
+/// Lock the Goal head before its revision, as in Goal persistence.
 pub(super) async fn lock_sources(
     tx: &mut Transaction<'_, Postgres>,
     source_ids: &[String],

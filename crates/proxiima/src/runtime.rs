@@ -1105,8 +1105,7 @@ fn assemble_services<A: SpiiceApp>(
     Ok(services)
 }
 
-/// Each page commits through the existing lifecycle inverse. Failures stop boot;
-/// a later boot inventories the remaining admissions rather than replaying work.
+/// `Proxiima.SchemaEvolution.retiredDrain`. Reuse the lifecycle inverse.
 async fn drain_retired_facts(booted: &Booted) -> Result<(), ProxiimaError> {
     for retired in booted.registry.retired_facts() {
         let retirement = booted

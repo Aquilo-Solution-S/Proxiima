@@ -7,8 +7,7 @@ use uuid::Uuid;
 use super::{MigrationInput, MigrationPlan, PgSchemaEvolution};
 use crate::error::map_err;
 
-/// Existing embedding spaces follow the explicit mapping, but vectors never
-/// survive a payload rewrite. Resetting jobs also invalidates in-flight claims.
+/// `Proxiima.SchemaEvolution.rebuildParts`.
 pub(super) async fn rebuild(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

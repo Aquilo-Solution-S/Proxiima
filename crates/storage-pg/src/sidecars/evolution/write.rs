@@ -57,6 +57,7 @@ async fn memory_targets(
                 entry,
             )
             .await?;
+        // `Proxiima.SchemaEvolution.rebuildParts`.
         remove_stale_projection(
             tx,
             target.id,

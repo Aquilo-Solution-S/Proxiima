@@ -10,9 +10,7 @@ use super::{
     PgSidecarReadCtx,
 };
 
-/// Read the complete owner-scoped historical source set. The source schemas
-/// come only from the frozen declaration; forgotten rows are intentionally
-/// included because they remain migration inputs.
+/// `Proxiima.SchemaEvolution.conversionInputs`.
 pub(crate) async fn read_sources(
     tx: &mut Transaction<'_, Postgres>,
     program: &PgSchemaEvolution,

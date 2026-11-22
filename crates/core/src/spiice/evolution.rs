@@ -58,6 +58,7 @@ struct Step<'a> {
 pub(super) fn validate_evolutions(
     contracts: &[&'static SpiiceContract],
 ) -> Result<(), SpiiceRegistryError> {
+    // `Proxiima.SchemaEvolution.declaration`.
     let mut steps = HashMap::new();
     let mut consumed = HashSet::new();
     let mut produced = HashMap::new();

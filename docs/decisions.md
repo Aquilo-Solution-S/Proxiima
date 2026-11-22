@@ -138,31 +138,10 @@ see [Concepts](concepts.md#pins).
 
 ## Schema migrations are spiice-defined representation changes
 
-A spiice declares the relation between old and new typed records, including
-split and merge cases, and supplies the executable conversion. Core executes
-that path before serving the target representation. The Lean theorem states
-explicit source coverage, owner preservation, mapped pins, provenance, Goal
-constraints, and retained erase-witness obligations, then derives retained
-store validity; it does not choose conversion semantics or turn a
-representation change into a business event.
-
-A migration may replace admission identities when the spiice supplies the
-complete mapping. Captured publication bytes stay unchanged. The internal
-publication mapping relates each old capture to all replacement memories;
-authorized erase of a replacement removes the associated capture, including
-captures retained at a previous owner. This relation grants no read or write
-authority and is not an ordinary-read alias.
-
-The contract is [SchemaEvolution](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/SchemaEvolution.lean). Replay
-keys, catalog registration, migration execution, and recovery remain runtime
-contracts and executable tests because they are not kernel fields.
+Spiices supply conversion semantics under [`Proxiima.SchemaEvolution`](ledger.md#schema-evolution).
 
 Prior art: Confluent's [data contracts](https://docs.confluent.io/platform/current/schema-registry/fundamentals/data-contracts.html)
-attach transformation rules and change metadata to schema versions. Here the
-spiice supplies that meaning through typed migrations over persisted records.
-The execution fence uses PostgreSQL's [transaction and advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html):
-source writes and retirement serialize at the database boundary, and completion
-commits with the transformed records.
+attach transformation rules and change metadata to schema versions.
 
 ## Goal collaboration keeps one durable owner
 

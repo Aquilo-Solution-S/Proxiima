@@ -42,6 +42,7 @@ impl Engine {
     ) -> Result<RetiredFactErase<'a>, ProtocolError> {
         // Use the same boot-authority boundary as every system erase.
         self.system_unit_of_work(authority)?;
+        // `Proxiima.Migrations.RetirementCheck`.
         let contract = self
             .registry()
             .spiice_contract(spiice_id)

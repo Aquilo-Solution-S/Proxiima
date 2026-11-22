@@ -64,11 +64,7 @@ impl MigrationStorage for PgMigrationStorage {
     }
 }
 
-/// Validate and topologically order the evolution steps for one composed host.
-/// Steps in one spiice lane are implicitly ordered by their migration anchor;
-/// explicit dependencies and cross-schema producers add edges on top. SQL
-/// execution uses `after_migration` as the owning lane's anchor; this helper
-/// proves every anchor and dependency before the first write.
+/// `Proxiima.SchemaEvolution.scheduleInputs`.
 pub(crate) fn schema_evolution_schedule<'a>(
     sources: &[&NamedMigrator],
     evolutions: &'a [SchemaEvolution],
@@ -551,6 +547,7 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
             .ensure_owner_rls(&mut snapshot)
             .await
             .map_err(MigrationError::SidecarOwnerRls)?;
+        // `Proxiima.SchemaEvolution.generatedStateWork`.
         sidecars
             .ensure_search_definitions(&mut snapshot)
             .await
@@ -1085,6 +1082,7 @@ async fn run_sources_on_connection(
                 .map_err(execute_error)?;
         }
     }
+    // `Proxiima.SchemaEvolution.generatedStateWork`.
     let mut transaction = sync_owner_follows(conn, sidecars).await?;
     sidecars
         .apply_search_definitions(&mut transaction)
@@ -1170,8 +1168,7 @@ async fn run_evolution_sources(
         .finish_schema_evolutions(&mut transaction)
         .await
         .map_err(MigrationError::SchemaEvolution)?;
-    // Source rows and deferred sidecar obligations are drained before a
-    // trailing spiice migration may remove their obsolete tables.
+    // `Proxiima.SchemaEvolution.cutoverOrder`.
     for source in sources
         .iter()
         .filter(|source| source.source() != CORE_SOURCE)

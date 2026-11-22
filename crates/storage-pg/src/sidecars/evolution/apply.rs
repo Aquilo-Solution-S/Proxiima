@@ -20,6 +20,7 @@ pub(super) async fn previous_mappings(
     owner: OwnerId,
     referenced: &[Uuid],
 ) -> Result<PreviousMappings, StorageError> {
+    // `Proxiima.SchemaEvolution.conversionInputs`. Resolve prior chains to their terminal targets.
     let rows: Vec<(Uuid, Option<Uuid>, Uuid, Option<Uuid>)> = sqlx::query_as(
         "SELECT source_id, source_handle, target_id, target_handle
            FROM proxiima_core.schema_evolution_terminal_mappings($1, $2::uuid[])",
@@ -139,6 +140,7 @@ pub(super) async fn plan(
     Ok(())
 }
 
+/// `Proxiima.SchemaEvolution.identityRoutes`.
 async fn memory_replay(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,
@@ -231,6 +233,7 @@ async fn goal_replay(
     Ok(())
 }
 
+/// `Proxiima.SchemaEvolution.identityRoutes`. Link captures without rewriting or publishing them.
 async fn publications(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

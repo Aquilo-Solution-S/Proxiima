@@ -6,9 +6,7 @@ use super::refused;
 use crate::error::map_err;
 use crate::sidecars::PgSidecarRegistryFrozen;
 
-/// Finish only after all participating spiices have produced their target
-/// records. An incoming pin owned by an omitted spiice is a refusal, never an
-/// implicit rewrite of that spiice's payload.
+/// `Proxiima.SchemaEvolution.closureChecks`.
 pub(super) async fn finish(
     registry: &PgSidecarRegistryFrozen,
     tx: &mut Transaction<'_, Postgres>,
@@ -68,7 +66,6 @@ pub(super) async fn finish(
         .execute(&mut **tx).await.map_err(map_err)?;
     validate_targets(tx).await?;
     super::graph::validate(tx).await?;
-    // All deferred sidecar constraints must see the still-live narrow permits.
     // The authority-drain constraint itself is checked after removing permits.
     let constraints = data_constraints(tx, registry).await?;
     enforce_data_constraints(tx, &constraints).await?;
@@ -215,6 +212,7 @@ async fn restore_data_constraints(
     Ok(())
 }
 
+/// `Proxiima.SchemaEvolution.resolveIncomingPins`.
 async fn incoming_pins(
     tx: &mut Transaction<'_, Postgres>,
     memories: &[Uuid],

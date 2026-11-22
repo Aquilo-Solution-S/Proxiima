@@ -4,10 +4,9 @@ use sqlx::{Postgres, Transaction};
 use super::refused;
 use crate::error::map_err;
 
-/// Validate the committed representation after every participating spiice has
-/// rewritten its own references. A retained witness supplies kind, never new
-/// grounding: its pin must have existed in the captured source declaration.
+/// `Proxiima.Edges.pinAdmissionWitness` and `Causa.schema_migration_validates_retained_store`.
 pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
+    // `Proxiima.Edges.pinField`.
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS (
         SELECT 1 FROM proxiima_core.memory_including_forgotten m
         WHERE EXISTS (SELECT 1 FROM proxiima_core.schema_evolution_authority a WHERE a.xact=pg_current_xact_id() AND a.record_kind='memory' AND a.target_id=m.t)
@@ -51,6 +50,7 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
     validate_goal_parents(tx).await
 }
 
+/// `Proxiima.SchemaEvolution.goalPinRoles`.
 async fn validate_goal_pins(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS (
         SELECT 1 FROM proxiima_core.goal g
