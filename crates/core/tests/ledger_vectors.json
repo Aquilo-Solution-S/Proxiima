@@ -540,6 +540,23 @@
   {"out": true, "in": ["Paused"]},
   {"out": false, "in": ["Achieved"]},
   {"out": false, "in": ["Abandoned"]}],
+ "Proxiima.DatabaseAuthority.storageErrorCategory":
+ [{"out": "internal", "in": ["read", "conflictOrConstraint"]},
+  {"out": "internal", "in": ["read", "exhaustedTransient"]},
+  {"out": "invalidArgument", "in": ["write", "conflictOrConstraint"]},
+  {"out": "internal", "in": ["write", "exhaustedTransient"]}],
+ "Proxiima.DatabaseAuthority.overlaySupplied":
+ [{"out": false, "in": ["pool", "unset"]},
+  {"out": true, "in": ["pool", "explicitDefault"]},
+  {"out": true, "in": ["pool", "nonDefault"]},
+  {"out": false, "in": ["tuning", "unset"]},
+  {"out": false, "in": ["tuning", "explicitDefault"]},
+  {"out": true, "in": ["tuning", "nonDefault"]}],
+ "Proxiima.DatabaseAuthority.connectionPurpose":
+ [{"out": "runtime", "in": ["serve"]},
+  {"out": "platform", "in": ["operateAsPlatform"]},
+  {"out": "migration", "in": ["migrate"]},
+  {"out": "migration", "in": ["validateSchema"]}],
  "Proxiima.Configuration.winsRepeatedPair":
  [{"out": false, "in": ["earlier"]}, {"out": true, "in": ["later"]}],
  "Proxiima.Configuration.warnForName":

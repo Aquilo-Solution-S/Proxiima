@@ -156,6 +156,315 @@
 
 - matches omission: The stated default must behave like omission, and the different value must reach the reader.
 
+## Database authority
+
+**Database role**: The platform role owns relations, while the serving role uses owner-scoped access under RLS.
+
+- platform
+- runtime
+
+**Serving admission**: Serving admission checks the role split and the live relation and definer inventory after schema validation.
+
+- validateSchema
+- validatePlatform
+- validateRuntime
+
+**Platform binding check**: Platform transactions must match the validated database and effective role and retain their restricted role attributes.
+
+- database
+- effectiveRole
+- roleAttributes
+
+**System write authority**: System writes require a witness minted by consuming the engine and bound to that engine's boot.
+
+- consumeEngine
+- matchBootWitness
+
+**Owner data access**: Data access axes in ordinary owner RLS, independent of administration.
+
+- memoryRead
+- memoryWrite
+- goalRead
+- goalWork
+
+**Owner transaction scope**: An owner transaction sets its sealed subject's memory ceilings and Goal access for that transaction only.
+
+- data
+- goalSubject
+- ownerManagement
+
+**Authority session rule**: Authority sessions use READ COMMITTED and fence and recheck a declared footprint; newly discovered targets require a new transaction.
+
+- readCommitted
+- declareFootprintBeforeHostLocks
+- fenceAndRecheck
+- retryWithNewTargets
+
+**Scoped read**: Scoped SPIICE reads reuse the caller's transaction; version and receipt locks last through it, and a shared memory lock requires write authority.
+
+- readInOwnerTransaction
+- lockReceiptAdmission
+- lockVersionWithWriteAuthority
+
+**Core view rule**: Core views invoke caller RLS and receive SELECT-only serving grants.
+
+- invokerSecurity
+- runtimeSelectOnly
+
+**Memory sql route**: Core Memory SQL declares whether it includes forgotten rows; direct reads are reserved for row locks and policy or view definitions.
+
+- liveView: The live route uses proxiima_core.live_memory.
+- includingForgottenView: The inclusive route uses proxiima_core.memory_including_forgotten.
+- spineWrite
+- spineRowLock
+- spineDefinition
+
+**Memory scan region**: The production Rust SQL guardrail scans outside file-level and inline-module test code.
+
+- productionItems
+- excludeTestFiles
+- excludeTestModules
+
+**Sql composition**: The SQL composition boundary uses checked identifiers and program literals, binds request data, and confines raw SQLx composition to one module.
+
+- checkedIdentifier
+- programLiteral
+- boundRequestData
+- trustedFragment
+- confinedSqlxEscape
+
+**Sql identifier form**: Tables take one or two unquoted parts, other unquoted identifiers take one, and quoted catalog names escape quotes and refuse empty, NUL or oversized values.
+
+- unquotedTable
+- unquotedName
+- quotedCatalogName
+
+**Sql literal form**: Program literals double quotes, use escape strings for backslashes, refuse NUL and nonfinite floats, and preserve backslashes in composed statement literals.
+
+- text
+- escapeText
+- finiteFloat
+- composedStatement
+
+**Sql template fill**: Template replacement scans the original left to right, prefers the longest matching key at a position, and refuses empty keys.
+
+- leftmost
+- longestAtEqualPosition
+- skipReplacementText
+- refuseEmptyKeys
+
+**Owner policy check**: Migration installs and refreshes classified, forced owner RLS; the serving census rejects missing, unclassified or drifted policy state.
+
+- relationClassification
+- enabledAndForced
+- recordedPolicyShape
+
+**Follows policy**: Follows sidecars stamp the owning Memory's owner and require a recorded policy, live-memory check and leading owner index.
+
+- stampOwner
+- checkLiveMemoryAndOwner
+- requirePolicyAndIndex
+
+**Scoped reader**: Scoped database reader functions have dedicated read-only owners with execution granted explicitly and withheld from PUBLIC; candidate results are admitted under ordinary visibility.
+
+- searchCandidates
+- goalVisibility
+
+**Pooler compatibility**: Serving transactions keep settings and locks transaction-local; connection startup omits the float-format parameter.
+
+- localSettings
+- transactionLocks
+- noSessionCommands
+- omitFloatFormat
+
+**Database operation**: The connection chosen by the database operation.
+
+- serve
+- operateAsPlatform
+- migrate
+- validateSchema
+
+**Connection purpose**: The runtime, platform and migration pools each use the resolved per-pool configuration.
+
+- runtime
+- platform
+- migration
+
+**Required storage setting**: Migration, boot and maintenance require the runtime URL, platform URL and store number.
+
+- runtimeUrl
+- platformUrl
+- storeNumber
+
+**Migration connection**: The migration URL defaults to the platform URL; an override must keep its database and role.
+
+- platformDefault
+- sameDatabaseAndRoleOverride
+
+**Connection diagnostic**: Connection diagnostics omit the URL.
+
+- invalidUrl
+- migrationIdentityMismatch
+- redactedConfig
+
+**Preconnection check**: Boot freezes the registry and validates configuration and the embedding route before connecting storage.
+
+- configurationAndListenerAllowlists
+- freezeRegistry
+- embeddingRoute
+
+**Storage overlay**: The storage block being overlaid.
+
+- pool
+- tuning
+
+**Overlay input**: The source's contribution after parsing, relative to the shipped defaults.
+
+- unset
+- explicitDefault
+- nonDefault
+
+**Grant phase step**: The opt-in grant phase starts after schema migration and store-number initialization and applies grants in one locked platform transaction.
+
+- migrateSchema
+- initializeStore
+- grantInLockedTransaction
+
+**Grant role check**: Runtime grants target the runtime URL role only after confirming it differs from the platform URL role.
+
+- runtimeUrlRole
+- distinctPlatformUrlRole
+
+**Schema grant**: Existing composed schemas grant usage, table DML and sequence access with schema-scoped defaults; the phase grants neither ownership nor role membership and revokes runtime and public CREATE.
+
+- schemaUsage
+- tableDml: SELECT, INSERT, UPDATE and DELETE.
+- sequenceAccess: USAGE, SELECT and UPDATE.
+- scopedDefaults
+- revokeCreate
+
+**Read only grant**: Core views end SELECT-only after broad table grants, and migration ledgers grant runtime SELECT with schema usage only as needed.
+
+- coreViews
+- migrationLedgers
+
+**Scoped reader grant step**: Reader grants cover the composed schemas and switch to the function owner only for the grant before restoring the platform role.
+
+- selectComposedReader
+- assumeOwnerLocally
+- grantExecution
+- restorePlatformRole
+
+**Bootstrap ownership step**: Bootstrap transfers table ownership before dependent sequence ownership.
+
+- relations
+- sequences
+
+**Engine storage**: Engine storage is required at construction; the shipped backend is PostgreSQL, and refuse-all storage is test-only.
+
+- requiredPorts
+- postgresBackend
+- testOnlyRefusal
+
+**Storage port requirement**: Storage assembly reports all missing required ports together; erase authority and personal-drop proof are optional.
+
+- collectMissingRequired
+- optionalEraseAuthority
+- optionalPersonalDropProof
+
+**Postgres enum binding**: PostgreSQL bindings distinguish catalog enums even where their underlying domain types share cases.
+
+- memoryKind
+- interpretationSubjectKind
+- sketchKind
+- pinTargetKind
+- publicationDeliveryState
+- publicationRecordState
+
+**Storage outcome**: The external storage outcomes whose protocol category differs by operation.
+
+- conflictOrConstraint
+- exhaustedTransient
+
+**Storage verb**: A read or write returning a storage failure.
+
+- read
+- write
+
+**Protocol failure**: Public categories for the classified storage failures.
+
+- invalidArgument
+- internal
+
+**Sql failure route**: Database fault classes have different storage routes.
+
+- typedRule
+- retryWholeTransaction
+- internalBackstop
+
+**serving admission order** = \[validateSchema, validatePlatform, validateRuntime]: Validation precedes handing out the serving storage.
+
+**max identifier bytes** = 63: The PostgreSQL byte limit for each identifier part.
+
+**min pool connections** = 1: The lowest usable pool size.
+
+**default pool connections** = 5: The default number of connections per pool.
+
+**default statement timeout ms** = 300000: The default statement timeout in milliseconds.
+
+**omit statement timeout ms** = 0: The statement timeout value that omits the pool's startup option.
+
+**default acquire timeout secs** = 5: The default acquisition timeout in seconds.
+
+**default idle timeout secs** = 600: The default idle timeout in seconds.
+
+**default max lifetime secs** = 1800: The default connection lifetime in seconds.
+
+**runtime grant lock key** = 8102661242515254900: The advisory lock key serializing the platform grant phase.
+
+**default runtime grants** = no: Runtime grants are opt-in on the migration path.
+
+**grant phase order** = \[migrateSchema, initializeStore, grantInLockedTransaction]: The platform applies opt-in grants after both database preparation steps succeed.
+
+**scoped reader grant order** = \[selectComposedReader, assumeOwnerLocally, grantExecution, restorePlatformRole]: The order of one isolated reader grant.
+
+**bootstrap ownership order** = \[relations, sequences]: The PostgreSQL object-ownership replay order.
+
+**rule sqlstate** = "PX001": A SQLSTATE reporting a caller-facing storage refusal with a rule in the constraint field.
+
+**backstop sqlstate** = "PX002": A SQLSTATE reporting an internal storage backstop without a caller-facing rule.
+
+**transient sqlstates** = \["40P01", "40001", "55P03"]: PostgreSQL SQLSTATEs that allow the transaction to be replayed after rollback.
+
+| database operation | connection purpose |
+| --- | --- |
+| serve | runtime |
+| operateAsPlatform | platform |
+| migrate | migration |
+| validateSchema | migration |
+
+- connection purpose: Migration and schema validation share the direct or session-mode migration connection policy.
+
+| storage overlay | overlay input | overlay supplied |
+| --- | --- | --- |
+| pool | unset | no |
+| pool | explicitDefault | yes |
+| pool | nonDefault | yes |
+| tuning | unset | no |
+| tuning | explicitDefault | no |
+| tuning | nonDefault | yes |
+
+- overlay supplied: Pool overrides use setting presence; tuning overrides use a resolved value different from the default.
+
+| storage verb | storage outcome | storage error category |
+| --- | --- | --- |
+| read | conflictOrConstraint | internal |
+| read | exhaustedTransient | internal |
+| write | conflictOrConstraint | invalidArgument |
+| write | exhaustedTransient | internal |
+
+- storage error category: Reads collapse storage failures to internal; writes distinguish caller-fixable conflicts and constraints from exhausted retries.
+
 ## Goals
 
 **Goal state**: The lifecycle state of a Goal version.
@@ -1877,6 +2186,8 @@ Causa — Audience
 Causa — Authorization
 
 ✓ **may write implies read**: Owner-scoped writes imply reads at the same memory kind.
+
+✓ **administration independent of data access**: Changing an owner's administration bit leaves its ordinary memory and Goal access unchanged.
 
 ✓ **forwarding role capped**: A forwarded role is bounded by `Causa.Role.forwardingCap`.
 

@@ -9,6 +9,58 @@ macro_rules! ledger {
     (Proxiima.Configuration.falseWords) => {
         ["0", "false", "no", "off"]
     };
+    // The PostgreSQL byte limit for each identifier part.
+    (Proxiima.DatabaseAuthority.maxIdentifierBytes) => {
+        63
+    };
+    // The lowest usable pool size.
+    (Proxiima.DatabaseAuthority.minPoolConnections) => {
+        1
+    };
+    // The default number of connections per pool.
+    (Proxiima.DatabaseAuthority.defaultPoolConnections) => {
+        5
+    };
+    // The default statement timeout in milliseconds.
+    (Proxiima.DatabaseAuthority.defaultStatementTimeoutMs) => {
+        300000
+    };
+    // The statement timeout value that omits the pool's startup option.
+    (Proxiima.DatabaseAuthority.omitStatementTimeoutMs) => {
+        0
+    };
+    // The default acquisition timeout in seconds.
+    (Proxiima.DatabaseAuthority.defaultAcquireTimeoutSecs) => {
+        5
+    };
+    // The default idle timeout in seconds.
+    (Proxiima.DatabaseAuthority.defaultIdleTimeoutSecs) => {
+        600
+    };
+    // The default connection lifetime in seconds.
+    (Proxiima.DatabaseAuthority.defaultMaxLifetimeSecs) => {
+        1800
+    };
+    // The advisory lock key serializing the platform grant phase.
+    (Proxiima.DatabaseAuthority.runtimeGrantLockKey) => {
+        8102661242515254900
+    };
+    // Runtime grants are opt-in on the migration path.
+    (Proxiima.DatabaseAuthority.defaultRuntimeGrants) => {
+        false
+    };
+    // A SQLSTATE reporting a caller-facing storage refusal with a rule in the constraint field.
+    (Proxiima.DatabaseAuthority.ruleSqlstate) => {
+        "PX001"
+    };
+    // A SQLSTATE reporting an internal storage backstop without a caller-facing rule.
+    (Proxiima.DatabaseAuthority.backstopSqlstate) => {
+        "PX002"
+    };
+    // PostgreSQL SQLSTATEs that allow the transaction to be replayed after rollback.
+    (Proxiima.DatabaseAuthority.transientSqlstates) => {
+        ["40P01", "40001", "55P03"]
+    };
     // The largest trimmed Goal title in characters.
     (Proxiima.Goals.titleMax) => {
         240
