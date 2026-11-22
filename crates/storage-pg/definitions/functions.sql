@@ -3320,14 +3320,9 @@ $goal_reader_policies$;
 DO $save_goal_role$ BEGIN PERFORM set_config('app.goal_installer_role', current_user, true); END $save_goal_role$;
 SET LOCAL ROLE proxiima_goal_reader;
 
--- The one reading of "what Goal grants does the bound person hold". A grant
--- names a person or a group by owner id; the person holds it directly or as
--- a member of the group, and then holds the grant's role met with the
--- member's own role. A group grant reads the Goal only where the member's own
--- role reads Goals. Expiry is filtered here; callers join goal_head for the
--- controller generation they need. The grant row is never rewritten by
--- membership: removing the member ends the route at the next statement.
 -- `Causa.Grant.gives_iff` and `Causa.drop_ends_grant`.
+-- `Proxiima.GoalCollaboration.grantInForce`: filter expiry at statement time here and join the current epoch at use.
+-- On an invited group route `Proxiima.OwnerAuthority.GoalAccess.canRead` uses the member's own Goal access.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_grants_held()
 RETURNS TABLE(goal_handle uuid, subject_id uuid, controller_generation bigint,
               read_ceiling proxiima_core.memory_ceiling, write_ceiling proxiima_core.memory_ceiling,
@@ -3357,8 +3352,9 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_grants_held() FROM PUBLIC;
 
--- One exact visibility projection, selected through the subject index. The
--- result contains no unpublished current-head identity or ancestor payload.
+-- `Proxiima.GoalCollaboration.audienceReadTarget` and `Proxiima.GoalCollaboration.boundWorkStateAdmitted`.
+-- `Causa.goal_publication_read_admitted` and `Causa.goal_work_read_admitted`.
+-- The projection starts with the subject index.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_memory_read_routes()
 RETURNS TABLE(memory_t uuid, memory_handle uuid, owner_id uuid, goal_handle uuid, controller_owner uuid)
 LANGUAGE sql STABLE SECURITY DEFINER
@@ -3419,8 +3415,7 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_visible_memory_ids() FROM PUBLIC;
 
--- Latest visible Goal publication/work version; an independently readable
--- newer owner head wins. Private heads never replace an audience's version.
+-- Select the latest visible version per series using `Proxiima.GoalCollaboration.preferOwnerHead`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_visible_memory_heads()
 RETURNS TABLE(memory_t uuid, memory_handle uuid, owner_id uuid)
 LANGUAGE sql STABLE SECURITY DEFINER
@@ -3455,6 +3450,7 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_memory_read_admitted(uuid) FROM PUBLIC;
 
+-- `Causa.goal_read_admitted` supplies the audience route alongside ordinary owner reads.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_read_admitted(candidate_t uuid)
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER

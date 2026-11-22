@@ -172,6 +172,7 @@ async fn authorize_fork(
     check_destination(tx, permit, &roles, access_kind).await?;
     let same_owner_destination = matches!(permit.destination(), ForkDestinationPermit::Owner(_))
         && target_owner == source.source_owner;
+    // `Proxiima.GoalCollaboration.forkNeedsPublication`.
     let cited_uploads =
         if !same_owner_destination && !source_admin(permit.scope(), &roles, source.source_owner) {
             CitedBlobUploads::Publication(
@@ -226,6 +227,7 @@ async fn admit_fork(
             reads: permit.reads(),
         },
         super::memory_timeseries::PreparationOptions {
+            // `Causa.fork_admitted`.
             identity: Some((identity, identity)),
             extra_targets: &[request.source.into_inner()],
             guided_by: &[],
@@ -238,6 +240,7 @@ async fn admit_fork(
     let outcome = match prepared {
         super::memory_timeseries::PreparedMemoryAdmission::Replay(outcome) => outcome,
         super::memory_timeseries::PreparedMemoryAdmission::New(prepared) => {
+            // Copy citation metadata only on first admission, sharing the source object's bytes.
             let blob_id = match cited_blob {
                 Some(blob_id) => Some(
                     crate::access::cited_blobs::copy_cited_blob_for_owner(
@@ -471,6 +474,7 @@ async fn check_fork_consent(
     kind: MemoryKind,
 ) -> Result<Option<Uuid>, StorageError> {
     let (goal, controller) = consent.ok_or(StorageError::NotFound)?;
+    // `Causa.goal_publication_fork_admitted` and `Proxiima.GoalCollaboration.publicationForkAllowed`.
     let publication = sqlx::query("SELECT gh.authority_generation,p.cited_upload_id FROM proxiima_core.goal_memory_publication p
         JOIN proxiima_core.goal_head gh ON gh.handle=p.goal_handle AND gh.owner_id=$3 AND gh.authority_generation=p.controller_generation
         JOIN proxiima_core.live_memory m ON m.t=p.memory_t AND m.owner_id=p.source_owner

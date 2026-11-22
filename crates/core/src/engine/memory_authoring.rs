@@ -852,6 +852,7 @@ impl Engine {
         Ok(retained)
     }
 
+    // `Causa.perspective_guidance_valid`.
     async fn authorize_guidance<A>(
         &self,
         authority: &A,

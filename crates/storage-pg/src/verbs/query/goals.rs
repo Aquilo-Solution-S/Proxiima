@@ -64,10 +64,8 @@ pub(super) async fn query_goals_on_connection(
     Ok((goals, next_cursor))
 }
 
-/// Goal causal metadata is stored as exact Memory ids, but a readable Goal
-/// does not make an erased or foreign Perspective readable.  Apply the same
-/// owner-scoped visibility boundary used by Memory reads before projecting
-/// either the new motivation field or the historical assignment pin.
+/// Project exact motivation and assignment pins through the same visibility
+/// boundary as Memory reads.
 async fn filter_goal_memory_references(
     connection: &mut PgConnection,
     owner_ids: &[uuid::Uuid],

@@ -84,9 +84,7 @@ pub(crate) fn source_admin(
     })
 }
 
-/// The columns of a guest's Goal grant. Administration is the owner's, so no
-/// grant carries it. Every guest reads the Goal it was granted on, so a role
-/// that names no Goal access is stored as the role that reads.
+/// `Proxiima.GoalCollaboration.storedGuestGoalAccess`.
 fn guest_columns(role: proxiima_core::Role) -> Result<RoleColumns, StorageError> {
     if role.administers() {
         return Err(StorageError::ConstraintViolation(
@@ -154,7 +152,8 @@ pub(crate) async fn role_for_goal(
         return Err(StorageError::NotFound);
     }
     let owner_role = current_role(scope, roles, controller).map(on_goal_route);
-    // `Causa.flattened_gives` joins grants after adapting the owner role to this route.
+    // Join the current epoch from `Proxiima.GoalCollaboration.grantInForce`
+    // with the adapted owner role through `Causa.goal_route_is_flattened`.
     let grants = sqlx::query("SELECT read_ceiling, write_ceiling, goal_access, administers, manage FROM proxiima_core.goal_grants_of($1) WHERE goal_handle=$2 AND controller_generation=$3")
         .bind(scope.subject().into_inner()).bind(goal.into_inner())
         .bind(controller_generation).fetch_all(&mut **tx).await.map_err(map_err)?;
@@ -169,11 +168,8 @@ pub(crate) async fn role_for_goal(
     })
 }
 
-/// An owner role as it counts on one Goal's own route. Working a Goal there
-/// includes achieving it, which over the owner is administration, so the
-/// owner role brings Goal work to the route only where it administers. A
-/// member who works the owner's Goals does so on the owner route, and here
-/// reads the Goal.
+/// `Proxiima.GoalCollaboration.ownerGoalAccessOnAudienceRoute`. The owner
+/// route still admits members who can work Goals but cannot achieve them.
 fn on_goal_route(owner: proxiima_core::Role) -> proxiima_core::Role {
     if owner.works_goals() && !owner.administers() {
         owner.with_goals(proxiima_core::GoalAccess::Reads)
@@ -449,6 +445,7 @@ impl GoalCollaborationPort for PgStorage {
         // The subject's owner-kind key is held from the gateway's acquisition,
         // so the kind cannot change between this read and the commit.
         match crate::access::registered_owner_held(&mut tx, input.subject).await? {
+            // `Proxiima.GoalCollaboration.grantSubjectAdmitted`.
             Some(RegisteredOwner::Group(_)) if columns.manage => {
                 return Err(StorageError::ConstraintViolation(
                     "a Goal grant to a group carries no manage".into(),
@@ -512,6 +509,7 @@ impl GoalCollaborationPort for PgStorage {
             &[],
         )
         .await?;
+        // `Proxiima.GoalCollaboration.sharingConsentAdmitted`.
         if source
             .owner_scope()
             .is_none_or(|scope| scope.subject() != permit.subject() || scope.is_expired())
@@ -562,6 +560,7 @@ impl GoalCollaborationPort for PgStorage {
                 "Goal consent source changed while acquiring authority fences".into(),
             ));
         }
+        // `Proxiima.GoalCollaboration.sharingConsentAdmitted`.
         if manager.is_none()
             && !actual_source
                 .is_some_and(|owner| source_admin(permit.scope(), &roles, OwnerId::new(owner)))
@@ -593,6 +592,7 @@ impl GoalCollaborationPort for PgStorage {
             &[],
         )
         .await?;
+        // `Proxiima.GoalCollaboration.sharingConsentAdmitted`.
         if source
             .owner_scope()
             .is_none_or(|scope| scope.subject() != permit.subject() || scope.is_expired())
@@ -631,6 +631,7 @@ impl GoalCollaborationPort for PgStorage {
                 "Goal consent source changed while acquiring authority fences".into(),
             ));
         }
+        // `Proxiima.GoalCollaboration.sharingConsentAdmitted`.
         if manager.is_none()
             && !actual_source
                 .is_some_and(|owner| source_admin(permit.scope(), &roles, OwnerId::new(owner)))
@@ -654,7 +655,77 @@ impl GoalCollaborationPort for PgStorage {
 mod tests {
     use proxiima_core::{AccessCeiling, GoalAccess, Role, StorageError};
 
-    use super::guest_columns;
+    use super::{guest_columns, on_goal_route};
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "lowercase", remote = "GoalAccess")]
+    enum Access {
+        None,
+        Reads,
+        Works,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RoleInput(bool, #[serde(with = "Access")] GoalAccess);
+
+    impl RoleInput {
+        fn role(&self) -> Role {
+            let role = Role::viewer().with_goals(self.1);
+            if self.0 { role.administering() } else { role }
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Vector<T> {
+        #[serde(rename = "in")]
+        input: RoleInput,
+        out: T,
+    }
+
+    fn vectors<T: serde::de::DeserializeOwned>(name: &str) -> Vec<Vector<T>> {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector<T>> = serde_json::from_value(vectors[name].clone()).unwrap();
+        assert_eq!(rows.len(), 6);
+        rows
+    }
+
+    #[test]
+    fn stored_guest_goal_access_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Refusal {
+            OwnerAdministration,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Outcome {
+            Ok(#[serde(with = "Access")] GoalAccess),
+            Error(Refusal),
+        }
+
+        for Vector { input, out } in vectors("Proxiima.GoalCollaboration.storedGuestGoalAccess") {
+            let result = guest_columns(input.role());
+            match out {
+                Outcome::Ok(goals) => assert_eq!(result.unwrap().goal_access, goals),
+                Outcome::Error(Refusal::OwnerAdministration) => {
+                    assert!(matches!(result, Err(StorageError::ConstraintViolation(_))));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owner_goal_access_on_audience_route_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Outcome(#[serde(with = "Access")] GoalAccess);
+
+        for Vector { input, out } in
+            vectors::<Outcome>("Proxiima.GoalCollaboration.ownerGoalAccessOnAudienceRoute")
+        {
+            assert_eq!(on_goal_route(input.role()).goals(), out.0);
+        }
+    }
 
     /// Owner administration is refused where a grant is written; any other
     /// role is stored as it is, and a guest always reads its Goal.

@@ -36,6 +36,7 @@ pub enum PublicationUse {
 }
 
 impl PublicationUse {
+    /// `Proxiima.GoalCollaboration.publicationForkAllowed`.
     #[must_use]
     pub const fn fork_allowed(self) -> bool {
         matches!(self, Self::Fork)
@@ -596,5 +597,35 @@ pub trait GoalCollaborationPort: Send + Sync {
         Err(StorageError::Internal(
             "Goal collaboration command unavailable".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PublicationUse;
+
+    #[test]
+    fn publication_use_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [PublicationUse; 1],
+            out: bool,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let cases: Vec<Vector> = serde_json::from_value(
+            vectors["Proxiima.GoalCollaboration.publicationForkAllowed"].clone(),
+        )
+        .unwrap();
+        assert_eq!(cases.len(), 2);
+        for Vector {
+            input: [usage],
+            out,
+        } in cases
+        {
+            assert_eq!(usage.fork_allowed(), out, "{usage:?}");
+        }
     }
 }

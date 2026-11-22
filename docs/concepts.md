@@ -45,17 +45,7 @@ See [host authority](data-and-erasure.md#host-authority) for erasing a whole own
 
 **On the owner.** Direct relations and inherited roles follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
 
-**On a smaller object.** A grant on one Goal names a subject and a role. The
-subject is a person or a group. A member of an invited group holds the grant's
-role capped by their own role in that group. Removing a person from the group
-ends what the grant gave them at once, and the grant itself is untouched. A
-grant to a group carries no audience management. Kernel:
-[Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Audience.lean).
-A grant adds access; it never takes away access the owner already gives. Goal
-routes read live grants and live group roles, so removing a person from the
-group, revoking the grant, or the grant's expiry ends the route at the next
-statement. See
-[Goal collaboration](#goal-collaboration).
+**On a Goal.** Audience grants follow [`Proxiima.GoalCollaboration`](ledger.md#goal-collaboration).
 
 ### Nested groups: access travels upward
 
@@ -128,134 +118,22 @@ Exact pins and their read projections follow [`Proxiima.Edges`](ledger.md#edges)
 
 ## Goal collaboration
 
-A Goal organizes work and can carry explicitly delegated authority over that
-work. Each Goal and memory series retains one durable owner, either personal
-or a Group. Participation never makes the Goal an owner, changes a memory's owner, or adds its owner to a
-participant's general owner scope.
-
-| Relationship | Target | Effect |
-|---|---|---|
-| Context | A memory related to a Goal | Organizes work without granting access |
-| Publication | An exact admission and a Goal audience | Grants access under the source owner's consent |
-| Work binding | A series and a working Goal | Authorized collaborators share one revision history |
-
-These relationships are N:M. One memory can be relevant to several Goals,
-published to several audiences, and intentionally edited through several
-working Goals. Motivation, evidence, guidance, and provenance retain their
-existing meanings; they do not publish targets or mint permissions. Parent,
-child, sibling, and dependency relationships grant no implicit access.
-
-```mermaid
-flowchart TB
-    O["Group owner"] -->|owns| G["Goal: Customer A"]
-    O -->|owns| M["Memory series"]
-    R["Goal reader"] -->|read grant| G
-    G -->|explicit publication| V["Selected admission"]
-    M -->|contains| V
-    W["Goal collaborator"] -->|scoped work grant| G
-    G -.->|explicit work binding| M
-```
-
-A publication delegates access to the Goal’s managed audience: members of
-its owning Group participate through their existing Roles, alongside the
-subjects of Goal grants. A grant names a person or a group and a role (see
-[granting a role](#granting-a-role)), a group's members hold the grant as far as their own roles allow, and a
-group subject includes people who join it later. The two routes combine; removing a Goal grant does not remove an
-existing Group Role. A change of source owner (a
-[transfer](#sharing-a-set-of-memories)) or of Goal controller invalidates
-that delegation; changing back does not revive it. Forking a published
-version into another owner requires explicit source-owner fork permission
-and write permission at the destination.
-
-Erasing a person removes the Goal grants that name them. Sharing decisions and issuer
-attribution owned by a Group remain with that Group, alongside its Goals and
-memories. Recreating the person's identity does not restore their removed grants.
+Audience grants, exact publications, and work bindings follow [`Proxiima.GoalCollaboration`](ledger.md#goal-collaboration).
 
 ### Facts and versioned knowledge
 
 Memory admission and revision follow [`Proxiima.Memory`](ledger.md#memory).
-Goals are versioned separately as intent and progress change.
-
-Publication means **publish a Fact, or a specific Abstraction or Perspective
-version, to a Goal audience**. Publishing `P1@3` does not publish `P1@4`.
-A private later version neither leaks to that audience nor hides its earlier
-publication. Reads choose the latest authorized version after applying
-visibility, rather than filtering only the series' global head.
 
 ### Revision, shared editing, and fork
 
-A revision improves the same Perspective or Abstraction. A fork starts a new
-series from a chosen exact version so an adaptation develops independently.
-Fork once to establish that line; later refinements append within the new series.
-
-```mermaid
-flowchart LR
-    P13["P1 @ 3"] -->|canonical improvement| P14["P1 @ 4"]
-    P13 -->|fork for Customer A| P21["P2 @ 1"]
-    P21 -->|refinement in that context| P22["P2 @ 2"]
-```
-
-Both series may retain the same Group owner. A different destination requires
-authorized source use and destination writing; a Goal relationship alone
-grants neither. The exact source stays identifiable in provenance, and attribution records the
-writer of each new admission. A revision may retain its existing grounding
-without granting access to hidden source payloads; newly declared sources
-still require read permission. Withdrawing a publication removes that access
-route. An independently authorized fork remains the destination owner's
-knowledge, subject to its own erase and retention rules.
-
-An Abstraction fork preserves its citation. Within one owner it reuses the
-citation; across owners it creates or reuses destination-owned citation
-metadata pointing to the same immutable attachment bytes. Forking does not
-upload a second file or clone the referenced memory graph. Erasing the source
-keeps the shared object while the destination still retains it; removing the
-last reference allows the existing purge process to delete it. Perspectives
-never carry citations.
-
-For one company playbook, two teams may intentionally edit the same series
-through their Goals. They share its drafts and history. For customer-specific
-pricing, use independent series or forks. Two Goals linked to one editable
-series do not create two isolated histories. A universal one-working-Goal
-limit is therefore unnecessary.
+A fork gives an adaptation its own revision history. Use a work binding when teams
+intend to edit one shared history. The [host integration guide](host-integration.md)
+covers the fork and its citation.
 
 ### Work and sharing boundaries
 
-| Operation | Authority boundary |
-|---|---|
-| Read a publication | Exact admission, source-owner consent, and an applicable owning-Group Role or Goal grant |
-| Read a working draft | Explicit series work binding and applicable read ceiling |
-| Create or revise Abstractions or Perspectives | Explicit work destination and applicable write ceiling |
-| Edit a Goal's title or progress | Owning-Group Role or Goal grant whose role works Goals; ordinary lifecycle rules still apply |
-| Publish or change an audience | Explicit authority for that sharing operation |
-| Transfer or erase | Existing owner/lifecycle authority; Goal work grants do not provide it |
-
-A narrow work grant never becomes an owner-wide write permit. Goal permissions
-add access routes, so a private Goal cannot hide HR material from someone who
-already reads the owning Group. Restricted owners remain necessary for durable
-confidentiality boundaries.
-
-Goal metadata is information too. Title, progress, participants, children, and
-history need a deliberate audience; memory publication does not implicitly
-disclose the surrounding Goal or provenance graph. Hiding source pins does not
-remove sensitive claims or source identifiers from a published payload. Reading
-a named target still requires its own permission.
-
-Revoking one Goal route leaves other valid routes intact. Owner or controller
-changes invalidate stale authorizations permanently: changing A to B and back
-to A cannot revive them. Permission changes and writes have a defined atomic
-ordering. Completing a Goal preserves explicitly granted publications.
-Revocation and disabling/deleting an access route are separate actions; none
-implicitly deletes the owner's memories.
-
-For example, Sales owns the internal proposal and the Customer A Goal. Sales
-publishes a selected version to Customer A while keeping pricing drafts
-private. A collaborator edits only bound working series. Independent customer
-adaptations fork; customer access does not reach Customer B, the parent sales
-Goal, or undisclosed source material.
-
-Types, mandatory row security, atomic command ports, and host round-trip tests
-must enforce these boundaries. The Lean kernel states their principles;
-diagrams and benchmarks are not runtime enforcement.
+Choose restricted owners for lasting confidentiality boundaries. A published
+payload can itself disclose source information.
 
 ## Citations
 

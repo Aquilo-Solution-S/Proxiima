@@ -101,6 +101,7 @@ impl Engine {
         prior: crate::GoalId,
         edit: GoalEdit,
     ) -> Result<GoalEditAuthority, ProtocolError> {
+        // `Causa.goal_edit_admitted` and `Causa.goal_achieve_admitted`.
         let owner_route = match edit {
             GoalEdit::Work => authz.may_work_goals(&owner),
             GoalEdit::Achieve => authz.may_administer(&owner),
@@ -594,6 +595,7 @@ impl Engine {
         })
     }
 
+    // `Causa.goal_motivations_valid`.
     async fn motivated_by_authorized(
         &self,
         authz: &AuthzContext,

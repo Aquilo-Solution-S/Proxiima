@@ -86,6 +86,7 @@ async fn prepare_goal_work_authority(
     .map_err(crate::error::map_err)?
     .ok_or_else(|| StorageError::ConstraintViolation("Goal work Goal head not found".into()))?;
     let goal_owner = proxiima_core::OwnerId::new(goal_row.get("owner_id"));
+    // `Proxiima.GoalCollaboration.boundWorkStateAdmitted`.
     if goal_owner != permit.owner() || goal_row.get::<String, _>("state") != "Active" {
         return Err(StorageError::ConstraintViolation(
             "Goal work Goal is not active or owner mismatched".into(),
@@ -151,6 +152,7 @@ async fn validate_goal_work_target(
         };
         draft.request = Some(request);
     }
+    // `Causa.goal_work_write_admitted` binds an existing series under both authority generations.
     match permit.target() {
         MemoryTarget::Series(series) => {
             if req.supersedes.is_some() || req.memory_id.into_inner() != series.into_inner() {
@@ -319,8 +321,7 @@ async fn admit_goal_work(
     Ok((outcome, edge_count))
 }
 
-/// Admit one A/P version through an already-authorized Goal work permit.
-/// The permit is a distinct capability: no owner-write permit is created.
+/// Admit one A/P version with the scoped permit of `Causa.goal_work_write_admitted`.
 pub(crate) async fn author_work_memory(
     storage: &PgStorage,
     req: &AuthorDerivedRequest<'_>,

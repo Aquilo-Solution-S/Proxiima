@@ -1762,6 +1762,7 @@ impl GoalWorkUnitOfWork<'_> {
                 "a Goal work command declares Facts on its Goal's owner only",
             ));
         }
+        // `Proxiima.GoalCollaboration.companionFactsAdmitted`.
         if facts
             .iter()
             .any(|fact| !fact.refs.is_empty() || fact.citation.is_some())
