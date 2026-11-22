@@ -95,21 +95,38 @@
 //! The maintenance unit intentionally has no cognitive write or read methods:
 //!
 //! ```compile_fail
-//! fn fact(unit: &mut proxiima::HostStateUnitOfWork<'_>) {
-//!     let _ = unit.ingest_fact;
+//! # use proxiima_core::FactPayload;
+//! # use proxiima_core::engine::FactWrite;
+//! async fn fact<P: FactPayload + Clone>(
+//!     unit: &mut proxiima::HostStateUnitOfWork<'_>, write: FactWrite<'_, P>,
+//! ) {
+//!     let _ = unit.ingest_fact(write).await;
 //! }
 //! ```
 //!
 //! ```compile_fail
-//! fn goal(unit: &mut proxiima::HostStateUnitOfWork<'_>) {
-//!     let _ = unit.create_goal;
+//! # use proxiima_core::GoalPayload;
+//! # use proxiima_core::verbs::goal_write::GoalCreateRequest;
+//! async fn goal<P: GoalPayload>(
+//!     unit: &mut proxiima::HostStateUnitOfWork<'_>, request: GoalCreateRequest<P>,
+//! ) {
+//!     let _ = unit.create_goal(request).await;
 //! }
 //! ```
 //!
 //! ```compile_fail
-//! fn read_or_forget(unit: &mut proxiima::HostStateUnitOfWork<'_>) {
-//!     let _ = unit.owned_series_head_memory_id;
-//!     let _ = unit.forget;
+//! # use proxiima_core::{OwnerId, SchemaId};
+//! async fn read_head(
+//!     unit: &mut proxiima::HostStateUnitOfWork<'_>, owner: OwnerId, schema: &SchemaId,
+//! ) {
+//!     let _ = unit.owned_series_head_memory_id(owner, schema, "example.note", &[]).await;
+//! }
+//! ```
+//!
+//! ```compile_fail
+//! # use proxiima_core::{MemoryId, OwnerId};
+//! async fn forget(unit: &mut proxiima::HostStateUnitOfWork<'_>, owner: OwnerId, id: MemoryId) {
+//!     let _ = unit.forget(owner, id).await;
 //! }
 //! ```
 
