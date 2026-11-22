@@ -734,9 +734,9 @@ impl PgHostStateParticipant for TableParticipant {
     }
 }
 
-fn frozen_registry_with(
+fn try_frozen_registry_with(
     extra: Option<&'static SpiiceContract>,
-) -> proxiima_core::SpiiceRegistryFrozen {
+) -> Result<proxiima_core::SpiiceRegistryFrozen, proxiima_core::SpiiceRegistryError> {
     let mut registry = proxiima_core::SpiiceRegistry::new();
     registry
         .try_add_spiice(SpiiceDescriptor {
@@ -764,11 +764,11 @@ fn frozen_registry_with(
             .try_add_contract(contract)
             .expect("extra test contract accepted");
     }
-    registry.try_freeze().expect("test registry freezes")
+    registry.try_freeze()
 }
 
 fn frozen_registry() -> proxiima_core::SpiiceRegistryFrozen {
-    frozen_registry_with(None)
+    try_frozen_registry_with(None).expect("test registry freezes")
 }
 
 fn pg_error(error: &sqlx::Error) -> StorageError {
@@ -1562,7 +1562,7 @@ async fn retired_page_holds_the_fact_fence_and_rolls_back_every_inverse_on_callb
         seed_host_fact(&pool, owner, fact, "retired-source", &[42]).await;
         create_embedding_of(&pg, owner, fact, "retired-test", vec![vec![1.0; 1024]]).await?;
 
-        let registry = frozen_registry_with(Some(&RETIRED_CONTRACT));
+        let registry = try_frozen_registry_with(Some(&RETIRED_CONTRACT))?;
         let mut sidecars = proxiima_storage_pg::PgSidecarRegistry::new();
         proxiima_storage_pg::register_core_pg_sidecars(&mut sidecars);
         let retired_pg = Arc::new(
@@ -1925,6 +1925,19 @@ async fn erase_receipt_separates_actual_payload_scrubbing_from_row_deletion() {
     result.expect("deleted and scrubbed outcome maps remain distinct");
 }
 
+// `Proxiima.Payloads.physicalSurfaceDeclaration`.
+#[test]
+fn registry_freeze_refuses_duplicate_and_overlapping_lifecycle_surfaces() {
+    for extra in [&DUPLICATE_CONTRACT, &OVERLAP_CONTRACT] {
+        assert!(matches!(
+            try_frozen_registry_with(Some(extra)),
+            Err(
+                proxiima_core::SpiiceRegistryError::DuplicatePhysicalSurface { table: FACTS_TABLE }
+            )
+        ));
+    }
+}
+
 #[tokio::test]
 async fn lifecycle_boot_rejects_missing_callback_and_invalid_descriptor() {
     let (db_name, _pg, lifecycle) = fresh_pg(2).await;
@@ -2001,21 +2014,6 @@ async fn lifecycle_boot_rejects_missing_callback_and_invalid_descriptor() {
             undeclared.is_err(),
             "participant tables must be linked state surfaces"
         );
-
-        for extra in [&DUPLICATE_CONTRACT, &OVERLAP_CONTRACT] {
-            let invalid_registry = frozen_registry_with(Some(extra));
-            let invalid = PgStorage::connect_for_tests(db_url(&db_name))
-                .await?
-                .with_host_state_participant(Arc::new(HostParticipant {
-                    lifecycle: lifecycle.clone(),
-                    lifecycle_enabled: true,
-                }))
-                .try_with_spiices(&invalid_registry);
-            assert!(
-                invalid.is_err(),
-                "duplicate/overlapping policy must fail boot"
-            );
-        }
 
         let direct = PgStorage::connect_for_tests(db_url(&db_name)).await?;
         let direct_surfaces =

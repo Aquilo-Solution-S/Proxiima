@@ -7,8 +7,12 @@ use uuid::Uuid;
 
 use crate::error::map_err;
 
-/// Blake3-32 of each schema's durable encoding, in `schema_id` order.
-pub fn hash_sidecar_payloads(payloads: &[SidecarPayload]) -> Result<[u8; 32], StorageError> {
+const CONTENT_HASH_BYTES: usize = proxiima_core::ledger!(Proxiima.Payloads.contentHashBytes);
+
+/// BLAKE3 digest of the durable payload projections.
+pub fn hash_sidecar_payloads(
+    payloads: &[SidecarPayload],
+) -> Result<[u8; CONTENT_HASH_BYTES], StorageError> {
     if payloads.is_empty() {
         return Err(StorageError::ConstraintViolation(
             "content hash requires at least one sidecar payload".into(),
@@ -27,6 +31,7 @@ pub fn hash_sidecar_payloads(payloads: &[SidecarPayload]) -> Result<[u8; 32], St
     parts.sort_by(|a, b| a.0.cmp(&b.0));
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"proxiima-content-v1\0");
+    // `Proxiima.Payloads.durableHashOrder`.
     for (schema, bytes) in &parts {
         hasher.update(schema.as_bytes());
         hasher.update(b"\0");
@@ -42,7 +47,7 @@ pub fn hash_sidecar_payloads(payloads: &[SidecarPayload]) -> Result<[u8; 32], St
 ///
 /// Separate hashes let each admission kind reuse Content visible to that kind.
 #[must_use]
-pub fn kind_scoped_hash(kind: &str, hash: &[u8; 32]) -> [u8; 32] {
+pub fn kind_scoped_hash(kind: &str, hash: &[u8; CONTENT_HASH_BYTES]) -> [u8; CONTENT_HASH_BYTES] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"proxiima-content-kind-v1\0");
     hasher.update(kind.as_bytes());
@@ -56,7 +61,7 @@ pub async fn ensure_content(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: Uuid,
     schema_id: &str,
-    content_hash: &[u8; 32],
+    content_hash: &[u8; CONTENT_HASH_BYTES],
 ) -> Result<Uuid, StorageError> {
     let content_id = Uuid::now_v7();
     // `Proxiima.Identity.OwnerScopedContent`. Omit `RETURNING` and a conflict target to avoid reading the new row.
@@ -105,7 +110,7 @@ pub async fn ensure_text_content(
 }
 
 /// The Content hash of a derived admission without a hashed sidecar.
-pub fn text_hash(schema_id: &str, text: &[u8]) -> [u8; 32] {
+pub fn text_hash(schema_id: &str, text: &[u8]) -> [u8; CONTENT_HASH_BYTES] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"proxiima-content-text-v1\0");
     hasher.update(schema_id.as_bytes());
@@ -127,6 +132,7 @@ pub async fn ensure_content_from_payloads(
         return Ok(None);
     }
     let mut hash = hash_sidecar_payloads(payloads)?;
+    // `Proxiima.Payloads.kindScopedHash`.
     if kind != crate::pg_enums::PgMemoryKind::Fact {
         hash = kind_scoped_hash(kind.label(), &hash);
     }

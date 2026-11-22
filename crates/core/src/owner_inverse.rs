@@ -215,7 +215,6 @@ impl OwnerSurfaces {
         }
         let host_lifecycle = ledger.finish()?;
         surfaces.sort_by_key(|surface| surface.table);
-        surfaces.dedup_by_key(|surface| surface.table);
         for details in cascaded_details.values_mut() {
             details.sort_by_key(|detail| detail.table);
             details.dedup_by_key(|detail| detail.table);

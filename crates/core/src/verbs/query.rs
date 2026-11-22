@@ -615,7 +615,7 @@ pub enum SidecarHeadsScope {
 }
 
 /// Maximum heads returned by one sidecar listing page.
-pub const MAX_SIDECAR_HEAD_PAGE_LIMIT: u32 = 1_000;
+pub const MAX_SIDECAR_HEAD_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Payloads.sidecarHeadPageMax);
 
 /// Current heads of a declared stateful Fact schema, newest admission first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -712,6 +712,7 @@ impl<'a> ResolvedSidecarHeads<'a> {
     ) -> Result<Self, crate::error::ProtocolError> {
         use crate::error::ProtocolError;
 
+        // `Proxiima.Payloads.resolveHeadRequest`.
         if request.limit == 0 {
             return Err(ProtocolError::invalid_argument("limit", "must be > 0"));
         }
@@ -963,6 +964,35 @@ mod tests {
     fn like_pattern_escapes_wildcards() {
         assert_eq!(like_pattern("a_b%c\\d"), "%a\\_b\\%c\\\\d%");
     }
+    // `Proxiima.Payloads.trimKeyPadding`.
+    #[test]
+    fn key_padding_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("valid ledger vectors");
+        let rows = vectors["Proxiima.Payloads.trimKeyPadding"]
+            .as_array()
+            .expect("key padding vectors");
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            let kind = match row["in"][0].as_str() {
+                Some("text") => crate::KeyScalarKind::Text,
+                Some("paddedText") => crate::KeyScalarKind::PaddedText,
+                _ => panic!("unrecognized key text kind: {row}"),
+            };
+            let input = super::SidecarAtom::Text("x ".into());
+            let expected = if row["out"].as_bool().expect("Boolean decision") {
+                "x"
+            } else {
+                "x "
+            };
+            assert_eq!(
+                super::bind_key_prefix_atom(kind, &input),
+                Some(super::SidecarAtom::Text(expected.into())),
+            );
+        }
+    }
+
     #[test]
     fn key_prefix_is_parsed_by_declared_type_and_equality() {
         use super::{SidecarAtom, bind_key_prefix_atom};

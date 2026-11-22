@@ -36,6 +36,31 @@ use crate::verbs::schema::PayloadKind;
 use crate::{SpiiceRegistry, SpiiceRegistryError};
 
 #[test]
+fn freeze_refuses_repeated_physical_surface_declarations() {
+    use super::fixtures::{contract, state_surface};
+    use crate::spiice::{EraseRule, ExportRule, KeyShape};
+
+    const SURFACE: crate::spiice::Surface = state_surface(
+        "test_spiice.duplicate",
+        KeyShape::Custom(&["id"]),
+        EraseRule::Never { why: "fixture" },
+        ExportRule::Rows,
+    );
+    static DUPLICATE: crate::SpiiceContract = crate::SpiiceContract {
+        state_surfaces: &[SURFACE, SURFACE],
+        ..contract(7, &[], &[], &[])
+    };
+    let mut registry = SpiiceRegistry::new();
+    registry.contracts.push(&DUPLICATE);
+    assert!(matches!(
+        registry.try_freeze(),
+        Err(SpiiceRegistryError::DuplicatePhysicalSurface {
+            table: "test_spiice.duplicate"
+        })
+    ));
+}
+
+#[test]
 fn opaque_citation_contract_freezes_without_a_typed_ingress() {
     let mut registry = SpiiceRegistry::new();
     let schema = &UNREGISTERED_SCHEMA.schemas[0];
@@ -912,4 +937,30 @@ fn no_erased_core_surface_is_excluded_from_the_export() {
         offenders.is_empty(),
         "erased but excluded from the export: {offenders:?}"
     );
+}
+
+// `Proxiima.Payloads.descriptorMatches`.
+#[test]
+fn descriptor_lookup_matches_ledger_vectors() {
+    let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let descriptor = &registry.list_mcp_tools()[0];
+    let alias = format!("alias.{}", descriptor.name);
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json"))
+            .expect("valid ledger vectors");
+    let rows = vectors["Proxiima.Payloads.descriptorMatches"]
+        .as_array()
+        .expect("descriptor lookup vectors");
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        let name = match row["in"][0].as_str() {
+            Some("exact") => descriptor.name,
+            Some("alias") => &alias,
+            _ => panic!("unrecognized descriptor name case: {row}"),
+        };
+        assert_eq!(
+            registry.mcp_tool(name).is_some(),
+            row["out"].as_bool().expect("Boolean decision"),
+        );
+    }
 }

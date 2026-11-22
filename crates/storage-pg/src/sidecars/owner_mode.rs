@@ -2,18 +2,8 @@
 
 /// How a memory sidecar relates to its memory's owner.
 ///
-/// - [`None`](Self::None): no `owner_id` column; the row reaches its owner
-///   through the memory (`StaysOnKey` / `Follow` without an own column).
-/// - [`Pinned`](Self::Pinned): stamps `owner_id` from the memory at insert and
-///   keeps it (`TransferRule::RetainAtSource`); forget/erase/export skip it and hydrate with
-///   the owner-join select.
-/// - [`Follows`](Self::Follows): stamps `owner_id` from the memory at insert
-///   (same SQL as Pinned) and keeps it equal to the memory's owner: transfer
-///   rehomes it (`TransferRule::Follow` + `Surface.owner_column`);
-///   forget/erase/export walk it with the memory, and hydrate uses the
-///   ordinary batch select. The host derives its owner RLS from the frozen
-///   registry: both the sidecar's owner and `proxiima_core.memory` govern
-///   visibility, so a forgotten memory hides its row from owner reads.
+/// The owner relationship controls write stamping and inverse traversal
+/// under `Proxiima.Payloads.stampsOwner` and `Proxiima.Payloads.pinnedInverse`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarOwnerMode {
     None,
@@ -25,11 +15,11 @@ impl SidecarOwnerMode {
     /// Whether the sidecar table has an `owner_id` column.
     #[must_use]
     pub const fn has_owner_column(self) -> bool {
+        // `Proxiima.Payloads.stampsOwner`.
         matches!(self, Self::Pinned | Self::Follows)
     }
 
-    /// Whether forget/erase/export skip this table and hydrate uses the
-    /// pinned owner-join select.
+    /// Whether the row retains its stamped owner when its Memory transfers.
     #[must_use]
     pub const fn is_pinned(self) -> bool {
         matches!(self, Self::Pinned)
@@ -39,5 +29,38 @@ impl SidecarOwnerMode {
     #[must_use]
     pub const fn stamps_owner_at_insert(self) -> bool {
         self.has_owner_column()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SidecarOwnerMode;
+
+    // `Proxiima.Payloads.stampsOwner`.
+    #[test]
+    fn owner_stamping_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            inputs: [String; 1],
+            out: bool,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+                .expect("valid ledger vectors");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Payloads.stampsOwner"].clone())
+                .expect("owner stamping vectors");
+        assert_eq!(rows.len(), 3);
+        for row in rows {
+            let [mode] = row.inputs;
+            let mode = match mode.as_str() {
+                "none" => SidecarOwnerMode::None,
+                "pinned" => SidecarOwnerMode::Pinned,
+                "follows" => SidecarOwnerMode::Follows,
+                _ => panic!("unknown sidecar owner mode {mode}"),
+            };
+            assert_eq!(mode.stamps_owner_at_insert(), row.out);
+        }
     }
 }

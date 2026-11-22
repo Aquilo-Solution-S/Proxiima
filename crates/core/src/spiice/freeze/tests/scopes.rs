@@ -57,35 +57,35 @@ static DECLARES_AN_UNQUALIFIED_TABLE: SpiiceContract =
 /// A payload that names a scope. Nothing else about it matters — the
 /// registration is the subject.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct ScopedFixtureFact {
-    thing_id: uuid::Uuid,
+struct ScopedFixtureFact<const DECLARED: bool> {
+    thing_id: Option<uuid::Uuid>,
 }
 
-impl crate::FactPayload for ScopedFixtureFact {
+impl<const DECLARED: bool> crate::FactPayload for ScopedFixtureFact<DECLARED> {
     const SCHEMA_ID: &'static str = "test-spiice/scoped-thing";
     const SCHEMA_VERSION: u32 = 1;
-    const SCOPE_KIND: Option<crate::ScopeKind> = Some(FIXTURE_SCOPE);
+    const SCOPE_KIND: Option<crate::ScopeKind> = if DECLARED { Some(FIXTURE_SCOPE) } else { None };
 
     fn scope_id(&self) -> Option<uuid::Uuid> {
-        Some(self.thing_id)
+        self.thing_id
     }
 
     fn receipt_key(&self) -> Vec<u8> {
         let mut key = crate::PayloadKeyBuilder::new(Self::SCHEMA_ID, Self::SCHEMA_VERSION);
-        key.field_str("thing_id", &self.thing_id.to_string());
+        key.field_option_uuid("thing_id", self.thing_id);
         key.finish()
     }
 
     fn render(&self) -> String {
-        self.thing_id.to_string()
+        self.thing_id.map_or_else(String::new, |id| id.to_string())
     }
 }
 
-impl crate::PayloadProjection for ScopedFixtureFact {
+impl<const DECLARED: bool> crate::PayloadProjection for ScopedFixtureFact<DECLARED> {
     const KEY_FIELDS: &'static [crate::KeyField<Self>] = &[];
     fn display(&self) -> crate::PayloadDisplay {
         crate::PayloadDisplay {
-            body: Some(self.thing_id.to_string()),
+            body: self.thing_id.map(|id| id.to_string()),
             ..Default::default()
         }
     }
@@ -106,11 +106,11 @@ impl crate::PayloadProjection for ScopedFixtureFact {
 fn registering_a_scoped_payload_records_the_kind_it_names() {
     let mut registry = SpiiceRegistry::new();
     registry
-        .try_add_fact_schema::<ScopedFixtureFact>()
+        .try_add_fact_schema::<ScopedFixtureFact<true>>()
         .expect("a fixture schema registers");
     assert!(
         registry.scoped_schemas.iter().any(|(schema_id, kind)| {
-            schema_id.as_str() == <ScopedFixtureFact as crate::FactPayload>::SCHEMA_ID
+            schema_id.as_str() == <ScopedFixtureFact<true> as crate::FactPayload>::SCHEMA_ID
                 && *kind == FIXTURE_SCOPE
         }),
         "a payload's SCOPE_KIND must reach the registry, or freeze has nothing to check"
@@ -127,7 +127,7 @@ fn registering_a_scoped_payload_records_the_kind_it_names() {
 fn a_scope_kind_no_contract_declares_refuses_the_freeze() {
     let mut registry = SpiiceRegistry::new();
     registry
-        .try_add_fact_schema::<ScopedFixtureFact>()
+        .try_add_fact_schema::<ScopedFixtureFact<true>>()
         .expect("a fixture schema registers");
     let err = registry
         .try_freeze()
@@ -165,11 +165,6 @@ fn two_contracts_declaring_one_scope_kind_refuse_the_freeze() {
     );
 }
 
-/// A declaration the backend could not splice.
-///
-/// Core cannot reach `PgIdent`, but it can insist on the shape every
-/// backend needs, and refusing here names the SPIICE rather than
-/// failing later inside a generated statement naming a string.
 #[test]
 fn an_unsplicable_scope_declaration_refuses_the_freeze() {
     let mut registry = SpiiceRegistry::new();
@@ -211,4 +206,36 @@ fn a_declared_scope_freezes_and_is_reachable_on_the_frozen_registry() {
         .expect("the frozen registry carries the declaration");
     assert_eq!(decl.registry_table, "test_spiice.things");
     assert_eq!(decl.id_column, "thing_id");
+}
+
+// `Proxiima.Payloads.scopeSelection`.
+#[test]
+fn captured_scope_matches_ledger_vectors() {
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        inputs: [bool; 2],
+        out: bool,
+    }
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json"))
+            .expect("valid ledger vectors");
+    let rows: Vec<Vector> =
+        serde_json::from_value(vectors["Proxiima.Payloads.scopeSelection"].clone())
+            .expect("scope selection vectors");
+    assert_eq!(rows.len(), 4);
+    let id = uuid::Uuid::from_u128(42);
+    for row in rows {
+        let [declared, has_id] = row.inputs;
+        let thing_id = has_id.then_some(id);
+        let payload = if declared {
+            crate::SidecarPayload::fact(ScopedFixtureFact::<true> { thing_id })
+        } else {
+            crate::SidecarPayload::fact(ScopedFixtureFact::<false> { thing_id })
+        };
+        assert_eq!(
+            payload.scope(),
+            row.out.then_some(crate::ScopeRef::new(FIXTURE_SCOPE, id))
+        );
+    }
 }

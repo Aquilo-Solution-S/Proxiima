@@ -375,6 +375,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_note_sidecar_captures_its_declared_notebook_scope() {
+        let note = note("key", "body");
+        let expected = proxiima_spiice::ScopeRef::new(NOTEBOOK_SCOPE, note.notebook_id);
+        assert_eq!(
+            proxiima_spiice::SidecarPayload::fact(note).scope(),
+            Some(expected)
+        );
+    }
+
     /// Notes whose key and body only differ in where a NUL byte sits are different notes.
     #[test]
     fn notes_that_move_a_nul_between_key_and_body_have_different_receipt_keys() {

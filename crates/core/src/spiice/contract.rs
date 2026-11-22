@@ -52,6 +52,7 @@ impl SchemaRef {
     /// `"<spiice>/<name>-v<version>"`.
     #[must_use]
     pub fn render(&self) -> String {
+        // `Proxiima.Payloads.schemaNameOrder`.
         format!("{}/{}-v{}", self.spiice, self.name, self.version)
     }
 
@@ -950,6 +951,7 @@ impl EraseLeg {
     /// pick a winner.
     #[must_use]
     pub fn derive(surface: &Surface, bespoke: &[&'static str]) -> Self {
+        // `Proxiima.Payloads.needsGeneratedDelete`.
         match surface.erase {
             EraseRule::Cascade { .. } => Self::Cascade,
             EraseRule::HostState { .. } => Self::HostState,
@@ -1446,6 +1448,7 @@ impl ProjectionSpec {
     /// that knows the word "projection". That is the inverse-at-scope
     /// property: the owner erase never learns about this table.
     #[must_use]
+    // `Proxiima.Payloads.surfaceFields`.
     pub const fn surface(&self) -> Surface {
         Surface {
             table: self.table,
@@ -1489,10 +1492,10 @@ impl ProjectionSpec {
 /// `projection` and the column is always `memory_id`, and constraint names
 /// are per-schema. Two spiices' emitted DDL therefore differ only in the
 /// schema name and the index name.
-pub const PROJECTION_MEMORY_FK: &str = "projection_memory_id_fkey";
+pub const PROJECTION_MEMORY_FK: &str = crate::ledger!(Proxiima.Payloads.projectionMemoryForeignKey);
 
 /// The bare relation name every spiice's projection table carries.
-pub const PROJECTION_TABLE_NAME: &str = "projection";
+pub const PROJECTION_TABLE_NAME: &str = crate::ledger!(Proxiima.Payloads.projectionTable);
 
 /// The column every spiice's projection table keys its memory on.
 ///
@@ -1513,7 +1516,7 @@ pub const PROJECTION_TABLE_NAME: &str = "projection";
 /// projection module asserts this constant against the FK name and against
 /// the generator's own emitted DDL. A constant plus a check is honest; a
 /// constant plus a claim is not.
-pub const PROJECTION_MEMORY_COLUMN: &str = "memory_id";
+pub const PROJECTION_MEMORY_COLUMN: &str = crate::ledger!(Proxiima.Payloads.projectionMemoryColumn);
 
 /// Whether a spiice has a projection table — and, when it does not, why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1828,7 +1831,7 @@ pub struct SpiiceContract {
 
 /// The ordinal that marks the non-removable core contract. Search eligibility
 /// follows each spiice's declared projection; tags narrow eligible rows.
-pub const CORE_ORDINAL: u16 = 0;
+pub const CORE_ORDINAL: u16 = crate::ledger!(Proxiima.Payloads.coreOrdinal);
 
 impl SpiiceContract {
     #[must_use]
@@ -1867,13 +1870,8 @@ impl SpiiceContract {
     /// The [`Surface`] declaring one physical table, wherever in this
     /// contract it is declared.
     ///
-    /// Contract-wide rather than per-schema, and that is load-bearing: one
-    /// table may be registered under two `SchemaContract`s — one payload
-    /// type serving the Abstraction and the Perspective layers — and the
-    /// surface is declared on exactly ONE of them so erase and forget
-    /// cannot reach the same rows twice. A lookup rooted in a schema
-    /// therefore finds nothing for the sibling registration, which is a
-    /// silence, not an absence.
+    /// A sibling schema can use the same declaration under
+    /// `Proxiima.Payloads.physicalSurfaceDeclaration`.
     #[must_use]
     pub fn surface_for(&self, table: &str) -> Option<Surface> {
         self.all_surfaces().find(|surface| surface.table == table)
@@ -1894,6 +1892,7 @@ impl SpiiceContract {
     /// refuse on `None`; none of them substitutes a default, because the
     /// default is the defect.
     #[must_use]
+    // `Proxiima.Payloads.PayloadColumnConsumer`.
     pub fn sidecar_memory_key_column(&self, table: &str) -> Option<&'static str> {
         match self.surface_for(table)?.key {
             KeyShape::MemoryT { column } => Some(column),

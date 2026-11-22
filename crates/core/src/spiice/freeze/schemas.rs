@@ -43,21 +43,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// One declaration per lifecycle scope, and one for every scope a
-    /// payload names.
-    ///
-    /// Both halves of the scope contract are declarations, and each is
-    /// useless without the other: a payload that names a kind no contract
-    /// declares cannot be fenced (nothing says where its registry lives),
-    /// and a kind two contracts declare cannot be fenced either (nothing
-    /// says which). Both are build-time facts about the composed binary, so
-    /// both are refused here rather than at the first write into the scope.
-    ///
-    /// The declaration's shape is checked in the same pass: core cannot
-    /// reach the backend's identifier validator, but it can insist on a
-    /// schema-qualified table and three named columns, which is what turns
-    /// a typo into a refusal naming the spiice instead of a splice failure
-    /// naming a string.
+    /// `Proxiima.Payloads.scopeDeclaration`.
     pub(super) fn validate_scope_declarations(&self) -> Result<(), SpiiceRegistryError> {
         let mut declared: std::collections::HashMap<crate::ScopeKind, &'static str> =
             std::collections::HashMap::new();

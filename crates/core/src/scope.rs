@@ -1,34 +1,7 @@
-//! Spiice-owned lifecycle scopes — a scope the substrate can see because
-//! the spiice DECLARED it.
+//! Spiice lifecycle scope declarations for `Proxiima.Payloads.scopeAdmissionOrder`.
 //!
-//! A repository, a book, a project, a revision: a spiice owns a registry
-//! table of them, files rows under a bare `<scope>_id uuid` on its sidecars,
-//! and erases one scope at a time. The substrate cannot infer any of that.
-//! Every repo-scoped sidecar carries no foreign key into its registry, so
-//! the row lock an erase takes on the registry row constrains nothing, and
-//! the owner and source fences are one lane for every scope of that owner —
-//! neither separates an erase of scope A from a concurrent write into A.
-//! That gap is what lets a write commit a fresh admission after an erase has
-//! computed and swept its footprint: a successful erase, and rows left
-//! behind for a scope that no longer exists.
-//!
-//! The closure has two halves, and both are declarations:
-//!
-//! 1. A payload type says which scope its rows belong to
-//!    ([`FactPayload::SCOPE_KIND`](crate::FactPayload::SCOPE_KIND) plus
-//!    `scope_id`, read back as [`ScopeRef`]).
-//! 2. A spiice contract says, once per [`ScopeKind`], where that scope's
-//!    registry lives ([`ScopeDecl`]).
-//!
-//! From the pair, storage GENERATES both the fence key and the liveness
-//! probe — it spells no table and no column of its own. Freeze refuses a
-//! kind a payload uses and no contract declares, and a kind two contracts
-//! declare, so neither half can go missing without failing the build.
-//!
-//! There is no runtime registration path, and never a generic scope erase:
-//! what "one scope's rows" means is the spiice's knowledge, and the
-//! substrate's job is only to make sure no admission of a scoped payload
-//! slips past the fence that erase holds.
+//! Sidecars need no foreign key to the scope registry. The shared fence
+//! serializes scoped admissions with erasure of the same scope.
 
 use uuid::Uuid;
 
@@ -91,20 +64,7 @@ impl std::fmt::Display for ScopeRef {
     }
 }
 
-/// Where one [`ScopeKind`]'s registry lives, declared once by the spiice
-/// that owns it.
-///
-/// Every name storage needs is here, and storage spells none of its own:
-/// the liveness probe is generated as
-/// `SELECT EXISTS(SELECT 1 FROM <registry_table>
-///                 WHERE <owner_id_column> = $1
-///                   AND <id_column> = $2)`,
-/// which is why a renamed column is a declaration edit and not a second
-/// place to keep in sync.
-///
-/// The owner is one column, the [`crate::OwnerId`]'s UUID. A scope id that
-/// somehow appeared under two owners must not serialize them — the same
-/// reason the owner portion is repeated in the source fence key.
+/// The registry of one [`ScopeKind`], supplied by its owning spiice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeDecl {
     pub kind: ScopeKind,
@@ -117,24 +77,21 @@ pub struct ScopeDecl {
 }
 
 impl ScopeDecl {
-    /// Names a declaration must satisfy before storage will splice it.
-    ///
-    /// Core cannot reach `PgIdent` (that is a backend concern), so it checks
-    /// the shape every backend needs: a qualified table and two non-empty
-    /// column names. The backend validates the identifiers again at the
-    /// splice; this is the freeze-time refusal that names the DECLARATION
-    /// rather than failing at the first write.
+    /// Report a name the scope registry cannot use.
     #[must_use]
     pub fn shape_error(&self) -> Option<&'static str> {
         if self.kind.as_str().is_empty() {
             return Some("scope kind must not be empty");
         }
-        if !self.registry_table.contains('.') {
+        // `Proxiima.Payloads.scopeRegistryIdentifiers`.
+        if !self.registry_table.contains('.')
+            || crate::sql_text::PgIdent::table(self.registry_table).is_err()
+        {
             return Some("registry table must be schema-qualified");
         }
         for column in [self.id_column, self.owner_id_column] {
-            if column.is_empty() {
-                return Some("scope registry column names must not be empty");
+            if crate::sql_text::PgIdent::column(column).is_err() {
+                return Some("scope registry columns must be valid identifiers");
             }
         }
         None
@@ -196,16 +153,40 @@ mod tests {
     }
 
     #[test]
-    fn a_declaration_must_name_every_column() {
+    fn a_declaration_rejects_malformed_registry_identifiers() {
         let decl = ScopeDecl {
             kind: KIND,
             registry_table: "proxiima_notes.notebooks",
-            id_column: "",
+            id_column: "repo_id",
             owner_id_column: "owner_id",
         };
-        assert_eq!(
-            decl.shape_error(),
-            Some("scope registry column names must not be empty")
-        );
+        for registry_table in ["proxiima_notes.", ".notebooks", "a.b.c"] {
+            assert!(
+                ScopeDecl {
+                    registry_table,
+                    ..decl
+                }
+                .shape_error()
+                .is_some()
+            );
+        }
+        for column in ["", "with space", "a.b"] {
+            assert!(
+                ScopeDecl {
+                    id_column: column,
+                    ..decl
+                }
+                .shape_error()
+                .is_some()
+            );
+            assert!(
+                ScopeDecl {
+                    owner_id_column: column,
+                    ..decl
+                }
+                .shape_error()
+                .is_some()
+            );
+        }
     }
 }

@@ -1742,3 +1742,36 @@ mod tests {
         assert!(!why.is_empty(), "a declared non-surface states why");
     }
 }
+
+#[cfg(test)]
+mod payload_contract_tests {
+    use super::INTERPRETATION_V1;
+    use crate::memory::payloads::interpretation::InterpretationV1;
+    use crate::{MemoryId, MemoryKind, SidecarPayload};
+
+    // `Proxiima.Payloads.payloadSubjects`.
+    #[test]
+    fn every_declared_subject_column_is_a_reference_field_the_payload_emits() {
+        let crate::spiice::Provenance::PayloadOnly { subject_columns } =
+            INTERPRETATION_V1.provenance
+        else {
+            panic!("interpretation must declare its payload subjects");
+        };
+        let subject = MemoryId::new(uuid::Uuid::from_u128(1));
+        let payload = SidecarPayload::perspective(InterpretationV1::fixture(
+            "claim",
+            50,
+            [(subject, MemoryKind::Fact)],
+        ));
+        let references = payload.references();
+        assert_eq!(references.len(), subject_columns.len());
+        for column in subject_columns {
+            assert!(
+                references.iter().any(|reference| {
+                    reference.field == *column && reference.target.memory_id() == Some(subject)
+                }),
+                "no subject reference emitted for {column}"
+            );
+        }
+    }
+}

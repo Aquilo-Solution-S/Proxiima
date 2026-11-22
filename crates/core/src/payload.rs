@@ -10,7 +10,7 @@
 
 use crate::count_u64;
 use crate::edge::EdgeEndpoint;
-use crate::scope::{ScopeKind, ScopeRef};
+use crate::scope::ScopeKind;
 use crate::{GoalId, MemoryId, MemoryKind, SchemaId};
 
 /// How a schema-declared reference field addresses the node it points
@@ -44,15 +44,7 @@ pub struct PayloadReference {
     /// Payload field the reference was read from. Not persisted: a field
     /// name is schema detail and the index carries no content.
     ///
-    /// LOAD-BEARING BEYOND DIAGNOSTICS. `Provenance::PayloadOnly`
-    /// declares `subject_columns`, and the ancestor walk's `payload_subjects`
-    /// (`core_think` and lineage share it) picks the grounding references
-    /// out of the rest by matching those
-    /// declared names against THIS string. A rename here is a silent
-    /// lineage dead end — the declaration still resolves to a real SQL
-    /// column, so the catalog gate stays green.
-    /// `every_declared_subject_column_is_a_reference_field_the_payload_emits`
-    /// is what relates the two namespaces.
+    /// Used by payload-only provenance to select declared ancestor references.
     pub field: &'static str,
     pub binding: ReferenceBinding,
     pub target: EdgeEndpoint,
@@ -62,6 +54,7 @@ impl PayloadReference {
     /// Reference a pinned memory row.
     #[must_use]
     pub const fn memory(field: &'static str, kind: MemoryKind, memory_id: MemoryId) -> Self {
+        // `Proxiima.Payloads.ReferenceTarget`.
         Self {
             field,
             binding: ReferenceBinding::Pin,
@@ -72,6 +65,7 @@ impl PayloadReference {
     /// Reference a Goal row.
     #[must_use]
     pub const fn goal(field: &'static str, goal_id: GoalId) -> Self {
+        // `Proxiima.Payloads.ReferenceTarget`.
         Self {
             field,
             binding: ReferenceBinding::Pin,
@@ -84,114 +78,36 @@ impl PayloadReference {
 /// `goal_key`) returns: the canonical spelling of *these are the values
 /// this payload declares*.
 ///
-/// # Why the encoding is frozen
-///
-/// A receipt key is identity. `receipt_id` folds these bytes, so two
-/// writes that build the same bytes replay onto one Fact and two that
-/// differ mint two. That makes every method here a compatibility
-/// surface: change what an existing one emits and every Fact whose
-/// schema uses it re-mints on next registration, silently and
-/// retroactively. **No existing method's emission may change, byte for
-/// byte.** A new spelling arrives as a new method with a new tag byte,
-/// and a schema adopts it by bumping its `SCHEMA_VERSION` — which is
-/// itself part of the key, so the change is deliberate and dated.
-///
-/// # Encoding
-///
-/// The header, written by [`PayloadKeyBuilder::new`]:
-///
-/// ```text
-/// b"PKEY1\0" ‖ u64_be(schema_id.len()) ‖ schema_id ‖ u32_be(schema_version)
-/// ```
-///
-/// Then one frame per declared field, in call order:
-///
-/// ```text
-/// u64_be(name.len()) ‖ name ‖ tag ‖ value
-/// ```
-///
-/// There are no separators. Every value is either fixed-width or
-/// length-prefixed, so the concatenation reads back unambiguously and no
-/// field's bytes can be mistaken for the start of the next field's.
-///
-/// # Tags
-///
-/// | Tag | Method | Value bytes |
-/// |---|---|---|
-/// | `s` | [`field_str`](Self::field_str) | `u64_be(len) ‖ utf8` |
-/// | `b` | [`field_bool`](Self::field_bool) | 1 byte, `0` or `1` |
-/// | `1` | [`field_u8`](Self::field_u8) | 1 byte |
-/// | `4` | [`field_u32`](Self::field_u32) | 4 bytes, big-endian |
-/// | `I` | [`field_i32`](Self::field_i32) | 4 bytes, big-endian |
-/// | `L` | [`field_i64`](Self::field_i64) | 8 bytes, big-endian |
-/// | `8` | [`field_u64`](Self::field_u64), [`field_usize`](Self::field_usize) | 8 bytes, big-endian |
-/// | `u` | [`field_uuid`](Self::field_uuid) | 16 raw bytes |
-/// | `B` | [`field_bytes`](Self::field_bytes) | `u64_be(len) ‖ bytes` |
-/// | `t` | [`field_time`](Self::field_time) | 16 bytes, big-endian `unix_timestamp_nanos` |
-/// | `S` | [`field_option_str`](Self::field_option_str) | presence ‖ `s`'s value |
-/// | `O` | [`field_option_bool`](Self::field_option_bool) | presence ‖ `b`'s value |
-/// | `2` | [`field_option_u8`](Self::field_option_u8) | presence ‖ `1`'s value |
-/// | `5` | [`field_option_u32`](Self::field_option_u32) | presence ‖ `4`'s value |
-/// | `i` | [`field_option_i32`](Self::field_option_i32) | presence ‖ `I`'s value |
-/// | `l` | [`field_option_i64`](Self::field_option_i64) | presence ‖ `L`'s value |
-/// | `9` | [`field_option_u64`](Self::field_option_u64), [`field_option_usize`](Self::field_option_usize) | presence ‖ `8`'s value |
-/// | `U` | [`field_option_uuid`](Self::field_option_uuid) | presence ‖ `u`'s value |
-/// | `C` | [`field_option_bytes`](Self::field_option_bytes) | presence ‖ `B`'s value |
-/// | `T` | [`field_option_time`](Self::field_option_time) | presence ‖ `t`'s value |
-/// | `[` | [`field_str_list`](Self::field_str_list), [`field_uuid_list`](Self::field_uuid_list), [`list`](Self::list) | `u64_be(count)` ‖ elements |
-///
-/// A presence byte is `1` followed by the value's own bytes, or the
-/// single byte `0` and nothing after it.
-///
-/// # The invariant
-///
-/// Two payloads produce the same key **iff** they declare the same
-/// values. The builder exists so every schema inherits that property
-/// from one place instead of re-deriving it, and so the property can be
-/// tested once.
-///
-/// Optional fields are where it is easiest to lose, so every option kind
-/// has a blessed spelling and three distinct byte sequences:
-///
-/// - the field is **never declared** — no frame at all;
-/// - the field is declared **`None`** — the frame, then presence `0`;
-/// - the field is declared **`Some(default)`** — the frame, then
-///   presence `1`, then the default value's own bytes.
-///
-/// Those are three different statements about the world and they are
-/// three different identities. A hand-rolled absence encoding collapses
-/// at least two of them: spelling a missing string as `""` makes `None`
-/// and `Some("")` one Fact; skipping the field when it is `None` makes
-/// *not asked* and *known to be absent* one Fact, and leaves the key of
-/// a payload with two optional fields depending on which of them was
-/// absent. Use the `field_option_*` methods; replacing those inventions
-/// is what they are for.
+/// The byte format is part of Fact replay identity. Use a new tag and
+/// schema version to adopt a new spelling. See
+/// `Proxiima.Payloads.receiptMarker`, `Proxiima.Payloads.receiptFieldOrder`
+/// and `Proxiima.Payloads.receiptPresence`.
 #[derive(Debug, Clone)]
 pub struct PayloadKeyBuilder {
     bytes: Vec<u8>,
 }
 
-const TAG_STR: u8 = b's';
-const TAG_BOOL: u8 = b'b';
-const TAG_U8: u8 = b'1';
-const TAG_U32: u8 = b'4';
-const TAG_I32: u8 = b'I';
-const TAG_I64: u8 = b'L';
-const TAG_U64: u8 = b'8';
-const TAG_UUID: u8 = b'u';
-const TAG_BYTES: u8 = b'B';
-const TAG_TIME: u8 = b't';
-const TAG_OPTION_STR: u8 = b'S';
-const TAG_OPTION_BOOL: u8 = b'O';
-const TAG_OPTION_U8: u8 = b'2';
-const TAG_OPTION_U32: u8 = b'5';
-const TAG_OPTION_I32: u8 = b'i';
-const TAG_OPTION_I64: u8 = b'l';
-const TAG_OPTION_U64: u8 = b'9';
-const TAG_OPTION_UUID: u8 = b'U';
-const TAG_OPTION_BYTES: u8 = b'C';
-const TAG_OPTION_TIME: u8 = b'T';
-const TAG_LIST: u8 = b'[';
+const TAG_STR: u8 = crate::ledger!(Proxiima.Payloads.receiptStringTag);
+const TAG_BOOL: u8 = crate::ledger!(Proxiima.Payloads.receiptBoolTag);
+const TAG_U8: u8 = crate::ledger!(Proxiima.Payloads.receiptU8Tag);
+const TAG_U32: u8 = crate::ledger!(Proxiima.Payloads.receiptU32Tag);
+const TAG_I32: u8 = crate::ledger!(Proxiima.Payloads.receiptI32Tag);
+const TAG_I64: u8 = crate::ledger!(Proxiima.Payloads.receiptI64Tag);
+const TAG_U64: u8 = crate::ledger!(Proxiima.Payloads.receiptU64Tag);
+const TAG_UUID: u8 = crate::ledger!(Proxiima.Payloads.receiptUuidTag);
+const TAG_BYTES: u8 = crate::ledger!(Proxiima.Payloads.receiptBytesTag);
+const TAG_TIME: u8 = crate::ledger!(Proxiima.Payloads.receiptTimeTag);
+const TAG_OPTION_STR: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalStringTag);
+const TAG_OPTION_BOOL: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalBoolTag);
+const TAG_OPTION_U8: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalU8Tag);
+const TAG_OPTION_U32: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalU32Tag);
+const TAG_OPTION_I32: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalI32Tag);
+const TAG_OPTION_I64: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalI64Tag);
+const TAG_OPTION_U64: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalU64Tag);
+const TAG_OPTION_UUID: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalUuidTag);
+const TAG_OPTION_BYTES: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalBytesTag);
+const TAG_OPTION_TIME: u8 = crate::ledger!(Proxiima.Payloads.receiptOptionalTimeTag);
+const TAG_LIST: u8 = crate::ledger!(Proxiima.Payloads.receiptListTag);
 
 /// Every tag byte above, paired with the field kind that claims it.
 ///
@@ -231,8 +147,9 @@ const TAG_TABLE: &[(&str, u8)] = &[
 impl PayloadKeyBuilder {
     #[must_use]
     pub fn new(schema_id: &str, schema_version: u32) -> Self {
+        const HEADER: [u8; 6] = crate::ledger!(Proxiima.Payloads.receiptMarker);
         let mut this = Self {
-            bytes: b"PKEY1\0".to_vec(),
+            bytes: HEADER.to_vec(),
         };
         this.raw_str(schema_id);
         this.bytes.extend_from_slice(&schema_version.to_be_bytes());
@@ -454,6 +371,7 @@ impl PayloadKeyBuilder {
     }
 
     fn field(&mut self, name: &str, tag: u8) {
+        // `Proxiima.Payloads.receiptFieldOrder`.
         self.raw_str(name);
         self.bytes.push(tag);
     }
@@ -545,7 +463,7 @@ pub trait FactPayload:
     /// A property of the TYPE, so freeze can read it off the registration
     /// and refuse a kind no linked `SpiiceContract` declares. The
     /// per-`ScopeKind` half — the registry table, its id column and its
-    /// owner columns — is [`crate::ScopeDecl`], declared once by the spiice
+    /// owner column — is [`crate::ScopeDecl`], declared once by the spiice
     /// that owns the scope.
     const SCOPE_KIND: Option<ScopeKind> = None;
     /// The scope id THIS row carries, read out of the payload's own field.
@@ -556,22 +474,6 @@ pub trait FactPayload:
     #[must_use]
     fn scope_id(&self) -> Option<uuid::Uuid> {
         None
-    }
-    /// The scope this payload belongs to: [`Self::SCOPE_KIND`] and
-    /// [`Self::scope_id`] together, or `None` when either is absent.
-    ///
-    /// THE ADMISSION READS THIS. Every write transaction that persists this
-    /// payload takes the shared scope fence for what this returns before its
-    /// handle/`t` locks and re-asks, under the fence, whether the scope row
-    /// is still registered. Do not override it: the two halves above are the
-    /// declaration, and a third answer would be a scope nothing else knows
-    /// about — storage refuses an undeclared kind rather than fencing it.
-    #[must_use]
-    fn scope(&self) -> Option<ScopeRef> {
-        match (Self::SCOPE_KIND, self.scope_id()) {
-            (Some(kind), Some(id)) => Some(ScopeRef::new(kind, id)),
-            _ => None,
-        }
     }
     /// Per-schema typed Fact sidecar table, or `None` when the Fact
     /// carries no sidecar of its own (its typed payload lives elsewhere,
@@ -619,7 +521,7 @@ pub trait AbstractionPayload:
     /// A property of the TYPE, so freeze can read it off the registration
     /// and refuse a kind no linked `SpiiceContract` declares. The
     /// per-`ScopeKind` half — the registry table, its id column and its
-    /// owner columns — is [`crate::ScopeDecl`], declared once by the spiice
+    /// owner column — is [`crate::ScopeDecl`], declared once by the spiice
     /// that owns the scope.
     const SCOPE_KIND: Option<ScopeKind> = None;
     /// The scope id THIS row carries, read out of the payload's own field.
@@ -630,22 +532,6 @@ pub trait AbstractionPayload:
     #[must_use]
     fn scope_id(&self) -> Option<uuid::Uuid> {
         None
-    }
-    /// The scope this payload belongs to: [`Self::SCOPE_KIND`] and
-    /// [`Self::scope_id`] together, or `None` when either is absent.
-    ///
-    /// THE ADMISSION READS THIS. Every write transaction that persists this
-    /// payload takes the shared scope fence for what this returns before its
-    /// handle/`t` locks and re-asks, under the fence, whether the scope row
-    /// is still registered. Do not override it: the two halves above are the
-    /// declaration, and a third answer would be a scope nothing else knows
-    /// about — storage refuses an undeclared kind rather than fencing it.
-    #[must_use]
-    fn scope(&self) -> Option<ScopeRef> {
-        match (Self::SCOPE_KIND, self.scope_id()) {
-            (Some(kind), Some(id)) => Some(ScopeRef::new(kind, id)),
-            _ => None,
-        }
     }
     #[must_use]
     fn json_schema() -> Option<serde_json::Value> {
@@ -679,7 +565,7 @@ pub trait PerspectivePayload:
     /// A property of the TYPE, so freeze can read it off the registration
     /// and refuse a kind no linked `SpiiceContract` declares. The
     /// per-`ScopeKind` half — the registry table, its id column and its
-    /// owner columns — is [`crate::ScopeDecl`], declared once by the spiice
+    /// owner column — is [`crate::ScopeDecl`], declared once by the spiice
     /// that owns the scope.
     const SCOPE_KIND: Option<ScopeKind> = None;
     /// The scope id THIS row carries, read out of the payload's own field.
@@ -690,22 +576,6 @@ pub trait PerspectivePayload:
     #[must_use]
     fn scope_id(&self) -> Option<uuid::Uuid> {
         None
-    }
-    /// The scope this payload belongs to: [`Self::SCOPE_KIND`] and
-    /// [`Self::scope_id`] together, or `None` when either is absent.
-    ///
-    /// THE ADMISSION READS THIS. Every write transaction that persists this
-    /// payload takes the shared scope fence for what this returns before its
-    /// handle/`t` locks and re-asks, under the fence, whether the scope row
-    /// is still registered. Do not override it: the two halves above are the
-    /// declaration, and a third answer would be a scope nothing else knows
-    /// about — storage refuses an undeclared kind rather than fencing it.
-    #[must_use]
-    fn scope(&self) -> Option<ScopeRef> {
-        match (Self::SCOPE_KIND, self.scope_id()) {
-            (Some(kind), Some(id)) => Some(ScopeRef::new(kind, id)),
-            _ => None,
-        }
     }
     #[must_use]
     fn json_schema() -> Option<serde_json::Value> {
@@ -783,7 +653,7 @@ pub trait CitedObjectPayload:
 
 #[cfg(test)]
 mod tests {
-    use super::TAG_TABLE;
+    use super::{PayloadKeyBuilder, TAG_TABLE};
 
     /// Two kinds sharing a tag byte is the one way this encoding can lose
     /// identity without anyone editing a method body.
@@ -797,5 +667,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    // `Proxiima.Payloads.receiptFieldOrder` `Proxiima.Payloads.receiptPresence`.
+    #[test]
+    fn receipt_codec_keeps_the_v1_bytes_for_every_field_writer() {
+        let uuid = uuid::uuid!("00112233-4455-6677-8899-aabbccddeeff");
+        let time = time::OffsetDateTime::from_unix_timestamp_nanos(-2).expect("valid time");
+        let mut key = PayloadKeyBuilder::new("x", 0x0102_0304);
+        assert_eq!(
+            hex::encode(key.clone().finish()),
+            "504b4559310000000000000000017801020304"
+        );
+        key.field_str("f", "é");
+        key.field_bool("f", true);
+        key.field_u8("f", 0xa5);
+        key.field_u32("f", 0x0102_0304);
+        key.field_i32("f", -2);
+        key.field_i64("f", -3);
+        key.field_u64("f", 0x0102_0304_0506_0708);
+        key.field_usize("f", 7);
+        key.field_uuid("f", uuid);
+        key.field_bytes("f", b"\0\xff");
+        key.field_time("f", time);
+        key.field_option_str("f", None);
+        key.field_option_str("f", Some(""));
+        key.field_option_bool("f", None);
+        key.field_option_bool("f", Some(true));
+        key.field_option_u8("f", None);
+        key.field_option_u8("f", Some(0xa5));
+        key.field_option_u32("f", None);
+        key.field_option_u32("f", Some(0x0102_0304));
+        key.field_option_i32("f", None);
+        key.field_option_i32("f", Some(-2));
+        key.field_option_i64("f", None);
+        key.field_option_i64("f", Some(-3));
+        key.field_option_u64("f", None);
+        key.field_option_u64("f", Some(0x0102_0304_0506_0708));
+        key.field_option_usize("f", None);
+        key.field_option_usize("f", Some(7));
+        key.field_option_uuid("f", None);
+        key.field_option_uuid("f", Some(uuid));
+        key.field_option_bytes("f", None);
+        key.field_option_bytes("f", Some(b"\0\xff"));
+        key.field_option_time("f", None);
+        key.field_option_time("f", Some(time));
+        key.field_str_list("f", &["é".into(), String::new()]);
+        key.field_uuid_list("f", &[uuid]);
+        key.list("f", 0);
+        let expected = concat!(
+            "504b4559310000000000000000017801020304",
+            "000000000000000166730000000000000002c3a9",
+            "0000000000000001666201",
+            "00000000000000016631a5",
+            "0000000000000001663401020304",
+            "00000000000000016649fffffffe",
+            "0000000000000001664cfffffffffffffffd",
+            "000000000000000166380102030405060708",
+            "000000000000000166380000000000000007",
+            "0000000000000001667500112233445566778899aabbccddeeff",
+            "00000000000000016642000000000000000200ff",
+            "00000000000000016674fffffffffffffffffffffffffffffffe",
+            "0000000000000001665300",
+            "00000000000000016653010000000000000000",
+            "0000000000000001664f00",
+            "0000000000000001664f0101",
+            "0000000000000001663200",
+            "0000000000000001663201a5",
+            "0000000000000001663500",
+            "000000000000000166350101020304",
+            "0000000000000001666900",
+            "0000000000000001666901fffffffe",
+            "0000000000000001666c00",
+            "0000000000000001666c01fffffffffffffffd",
+            "0000000000000001663900",
+            "00000000000000016639010102030405060708",
+            "0000000000000001663900",
+            "00000000000000016639010000000000000007",
+            "0000000000000001665500",
+            "000000000000000166550100112233445566778899aabbccddeeff",
+            "0000000000000001664300",
+            "0000000000000001664301000000000000000200ff",
+            "0000000000000001665400",
+            "0000000000000001665401fffffffffffffffffffffffffffffffe",
+            "0000000000000001665b00000000000000020000000000000002c3a90000000000000000",
+            "0000000000000001665b000000000000000100112233445566778899aabbccddeeff",
+            "0000000000000001665b0000000000000000",
+        );
+        assert_eq!(hex::encode(key.finish()), expected);
     }
 }

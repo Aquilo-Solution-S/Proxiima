@@ -142,7 +142,7 @@ const SEALED_STAMP_V1: SchemaContract = SchemaContract {
         ],
     },
     provenance: Provenance::None,
-    surfaces: &[STAMP_SURFACE],
+    surfaces: &[],
     natural_key_columns: NaturalKeyDeclaration::EMPTY,
 };
 

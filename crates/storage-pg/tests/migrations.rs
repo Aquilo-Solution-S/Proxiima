@@ -1342,6 +1342,48 @@ async fn memory_reference_pins_remain_append_only() {
     result.expect("memory reference append-only test failed");
 }
 
+// `Proxiima.Payloads.contentHashBytes`.
+#[tokio::test]
+async fn content_hash_width_matches_the_released_constraint() {
+    const WIDTH: usize = proxiima_core::ledger!(Proxiima.Payloads.contentHashBytes);
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_db(&db_name)
+        .await
+        .expect("PG is required for migrations tests");
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(db_url(&db_name)).await?;
+        apply_current_migrations(&pg).await?;
+        let pool = pg.pool_for_tests();
+        let owner = Uuid::now_v7();
+        create_user(pool, UserId::new(owner)).await?;
+        for length in [WIDTH - 1, WIDTH, WIDTH + 1] {
+            let write = sqlx::query(
+                "INSERT INTO proxiima_core.content (owner_id, schema_id, content_hash)
+                 VALUES ($1, 'core/test-fact-v1', $2)",
+            )
+            .bind(owner)
+            .bind(vec![0_u8; length])
+            .execute(pool)
+            .await;
+            if length == WIDTH {
+                write?;
+            } else {
+                let error = write.expect_err("a noncanonical digest must be refused");
+                assert_eq!(
+                    error
+                        .as_database_error()
+                        .and_then(|error| error.constraint()),
+                    Some("content_hash_len_chk"),
+                );
+            }
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("Content hash width matches the deployed constraint");
+}
+
 /// A memory row's content is repointed only at a content row with the same
 /// schema and hash, whatever the owner.
 #[tokio::test]

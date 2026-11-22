@@ -331,12 +331,7 @@ pub struct SidecarPayload {
     /// value in a reader and the declaration survives the erasure without
     /// a downcast.
     references: Reader<Vec<PayloadReference>>,
-    /// The spiice-owned lifecycle scope this payload declares. Same
-    /// mechanism as `references`, and for the same reason: the admission
-    /// fences the scope without knowing which concrete payload type it is
-    /// writing. `None` for the payload kinds that are not memories (cited
-    /// objects) and for every schema that declares no `SCOPE_KIND`.
-    scope: Reader<Option<ScopeRef>>,
+    scope: Option<ScopeRef>,
 }
 
 /// A read of one typed payload, closed over the value it reads.
@@ -380,11 +375,15 @@ impl SidecarPayload {
         schema_version: SchemaVersion,
         value: T,
         references: fn(&T) -> Vec<PayloadReference>,
-        scope: fn(&T) -> Option<ScopeRef>,
+        scope_kind: Option<crate::ScopeKind>,
+        scope_id: fn(&T) -> Option<uuid::Uuid>,
     ) -> Self
     where
         T: crate::PayloadProjection + serde::Serialize + Send + Sync + 'static,
     {
+        // `Proxiima.Payloads.scopeSelection`.
+        let scope = scope_kind.and_then(|kind| scope_id(&value).map(|id| ScopeRef::new(kind, id)));
+        // `Proxiima.Payloads.capturedViews`.
         let value = Arc::new(value);
         Self {
             kind,
@@ -398,7 +397,7 @@ impl SidecarPayload {
             display: reader(&value, T::display),
             durable: reader(&value, T::durable),
             references: reader(&value, references),
-            scope: reader(&value, scope),
+            scope,
             value,
         }
     }
@@ -434,7 +433,8 @@ impl SidecarPayload {
             SchemaVersion::new(T::SCHEMA_VERSION),
             value,
             T::references,
-            T::scope,
+            T::SCOPE_KIND,
+            T::scope_id,
         )
     }
 
@@ -449,7 +449,8 @@ impl SidecarPayload {
             SchemaVersion::new(T::SCHEMA_VERSION),
             value,
             T::references,
-            T::scope,
+            T::SCOPE_KIND,
+            T::scope_id,
         )
     }
 
@@ -464,7 +465,8 @@ impl SidecarPayload {
             SchemaVersion::new(T::SCHEMA_VERSION),
             value,
             T::references,
-            T::scope,
+            T::SCOPE_KIND,
+            T::scope_id,
         )
     }
 
@@ -479,6 +481,7 @@ impl SidecarPayload {
             SchemaVersion::new(T::SCHEMA_VERSION),
             value,
             T::references,
+            None,
             |_| None,
         )
     }
@@ -494,6 +497,7 @@ impl SidecarPayload {
             SchemaVersion::new(T::SCHEMA_VERSION),
             value,
             |_| Vec::new(),
+            None,
             |_| None,
         )
     }
@@ -523,7 +527,7 @@ impl SidecarPayload {
     /// declaration travels with the value rather than with the caller.
     #[must_use]
     pub fn scope(&self) -> Option<ScopeRef> {
-        (self.scope)()
+        self.scope
     }
 
     /// Render this typed payload as JSON for protocol output.

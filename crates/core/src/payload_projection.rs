@@ -157,6 +157,7 @@ impl<P> KeyField<P> {
     /// The closed scalar kind selected by the constructor.
     #[must_use]
     pub const fn kind(&self) -> KeyScalarKind {
+        // `Proxiima.Payloads.naturalKeyScalars`.
         match self.getter {
             KeyGetter::Uuid(_) => KeyScalarKind::Uuid,
             KeyGetter::Text(_) => KeyScalarKind::Text,
@@ -169,6 +170,7 @@ impl<P> KeyField<P> {
     }
 
     fn atom(&self, payload: &P) -> SidecarAtom {
+        // `Proxiima.Payloads.trimKeyPadding`.
         match self.getter {
             KeyGetter::Uuid(getter) => SidecarAtom::Uuid(getter(payload)),
             KeyGetter::Text(getter) => SidecarAtom::Text(getter(payload).to_owned()),
@@ -389,6 +391,7 @@ impl DurablePayloadBuilder {
         value: &T,
     ) -> Result<&mut Self, String> {
         let value = serde_json::to_value(value).map_err(|error| error.to_string())?;
+        // `Proxiima.Payloads.durableFieldInsertion`.
         if self.fields.insert(name.to_owned(), value).is_some() {
             return Err(format!("duplicate durable field {name}"));
         }

@@ -133,6 +133,19 @@ impl SpiiceRegistry {
             return Err(SpiiceRegistryError::MissingCoreContract);
         }
         self.validate_registrations_are_claimed()?;
+        // `Proxiima.Payloads.physicalSurfaceDeclaration`.
+        let mut tables = std::collections::HashSet::new();
+        for surface in self
+            .contracts
+            .iter()
+            .flat_map(|contract| contract.all_surfaces())
+        {
+            if !tables.insert(surface.table.to_ascii_lowercase()) {
+                return Err(SpiiceRegistryError::DuplicatePhysicalSurface {
+                    table: surface.table,
+                });
+            }
+        }
         self.validate_export_inverse()?;
         Ok(())
     }
@@ -149,6 +162,7 @@ impl SpiiceRegistry {
     pub(super) fn validate_export_inverse(&self) -> Result<(), SpiiceRegistryError> {
         use crate::spiice::contract::{EraseLeg, ExportRule};
 
+        // `Proxiima.Payloads.eraseExportable`.
         let rules: std::collections::HashMap<&'static str, ExportRule> = self
             .contracts
             .iter()
@@ -321,6 +335,7 @@ impl SpiiceRegistry {
             if !surface.export.carries_rows() {
                 continue;
             }
+            // `Proxiima.Payloads.exportOwner`.
             if surface.owner_column.is_none() && surface.key.home().is_none() {
                 return Err(SpiiceRegistryError::UnreachableExportSurface {
                     spiice_id: contract.spiice_id,
@@ -402,6 +417,7 @@ impl SpiiceRegistry {
             // forgets to ask. Freeze checks that a site is named, not that
             // the site acts: the engine and the storage transfer refuse
             // every NotTransferable schema, so naming either is true.
+            // `Proxiima.Payloads.transferRefusalParts`.
             if let crate::spiice::contract::TransferRule::NotTransferable { enforced_by, .. } =
                 schema.transfer
                 && enforced_by.is_empty()
@@ -452,22 +468,7 @@ impl SpiiceRegistry {
                     schema_id,
                 });
             }
-            // The shared-blob dedupe arm's blind spot, refused.
-            //
-            // A cross-owner transfer of a shared blob gives the destination
-            // a NEW `blob` row and repoints the columns that reference it.
-            // Those columns are enumerable exactly because they are foreign
-            // keys. A cited-object sidecar references a
-            // blob by convention — `cited_object_id` holds a `blob_id` with
-            // nothing in the catalog saying so — and the remap would walk
-            // straight past it, leaving the rows pointing at the source
-            // owner's row after the citation moved.
-            //
-            // Every such schema is opaque (`sidecar_table: None`), so the
-            // remap has nothing to miss. Declaring one is the moment the
-            // remap needs designing, so that is the moment this refuses,
-            // rather than the moment a transfer silently splits a citation
-            // from its bytes.
+            // `Proxiima.Payloads.dedupeSidecarAdmitted`.
             if schema.kind == crate::verbs::schema::PayloadKind::CitedObject
                 && let Some(table) = schema.sidecar_table
             {

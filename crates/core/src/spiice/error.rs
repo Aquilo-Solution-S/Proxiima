@@ -196,6 +196,9 @@ pub enum SpiiceRegistryError {
         name: &'static str,
         reason: ScopeKeyError,
     },
+    /// Multiple surface declarations name the same physical table.
+    #[error("physical surface {table} is declared more than once")]
+    DuplicatePhysicalSurface { table: &'static str },
     /// Two spiices claim the same ordinal. The core ordinal identifies the
     /// non-removable substrate, so spiice identities cannot collide.
     #[error(
