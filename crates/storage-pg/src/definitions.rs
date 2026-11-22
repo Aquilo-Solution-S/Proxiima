@@ -16,10 +16,7 @@ pub const VIEWS: &str = include_str!("../definitions/views.sql");
 /// vectors in pgvector.
 pub const VECTOR: &str = include_str!("../definitions/vector.sql");
 
-/// `proxiima_core.relation_roles()`: the role each membership relation holds,
-/// rendered from [`Relation::ALL`] and [`Relation::role`] so the projection
-/// fold in SQL and the Rust role cannot disagree. It is part of the
-/// definitions, so a change to a relation's role re-applies them.
+/// Render `proxiima_core.relation_roles()` from `Relation::role`. The definitions pass reapplies it on change.
 #[doc(hidden)]
 #[must_use]
 pub fn relation_roles_sql() -> SqlText {

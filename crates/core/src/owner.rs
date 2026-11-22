@@ -1,11 +1,4 @@
-//! Owner scoping primitive.
-//!
-//! Runtime mirror of the Lean `OwnerId` boundary (`lean/Causa/Identity.lean`):
-//! a row carries one stable owner id; the host resolves that id into roles
-//! before authorization. A resolved owner is always a group, and a user is the
-//! personal group whose only member is that user, so a user's id is its own
-//! owner id. Whether an id names a group or a user is Proxiima's internal
-//! registry (`proxiima_core.owners.kind`), never part of this type.
+//! A user's ID is its own owner ID, and the registry decides whether an owner ID names a user or a group.
 
 use std::fmt;
 use std::str::FromStr;
@@ -89,7 +82,8 @@ impl FromStr for OwnerId {
     /// A prefixed (`kind:<uuid>`), braced, URN or simple form is refused like
     /// any malformed id.
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        if raw.len() != 36 {
+        const OWNER_ID_BYTES: usize = crate::ledger!(Proxiima.OwnerAuthority.ownerIdBytes);
+        if raw.len() != OWNER_ID_BYTES {
             return Err(OwnerIdParseError);
         }
         Uuid::try_parse(raw)

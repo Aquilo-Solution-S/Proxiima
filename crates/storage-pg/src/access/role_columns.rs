@@ -26,7 +26,7 @@ impl RoleColumns {
         }
     }
 
-    /// The role these columns store.
+    /// Decode the stored role under `Proxiima.OwnerAuthority.ceilingAdmitted`.
     ///
     /// # Errors
     ///

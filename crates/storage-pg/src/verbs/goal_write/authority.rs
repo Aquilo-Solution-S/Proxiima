@@ -100,6 +100,7 @@ pub(crate) async fn begin_goal_work(
     endpoints.extend(named.goals.iter().map(|goal| EdgeEndpoint::goal(*goal)));
     let sources = SourceReads::discover(storage, &mut tx, scope, &endpoints).await?;
     let owners: Vec<_> = sources.owners().chain([owner]).collect();
+    // Re-read membership under the owner fence in the transaction that commits the write.
     let roles = membership_roles(storage, &mut tx, scope, &owners, &[]).await?;
     if !current_role(scope, &roles, owner).is_some_and(Role::works_goals) {
         return Err(StorageError::Forbidden(

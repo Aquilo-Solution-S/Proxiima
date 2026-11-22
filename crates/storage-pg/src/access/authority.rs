@@ -97,6 +97,7 @@ pub struct PgAuthoritySession<'session, 'connection> {
 }
 
 impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
+    // `Proxiima.OwnerAuthority.authorityFacts`.
     pub(crate) async fn new(
         platform: &crate::PgPlatformScope,
         tx: &'session mut Transaction<'connection, Postgres>,
@@ -130,6 +131,7 @@ impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
         footprint.extend(direct_groups_for_ids(tx, &selected).await?);
         let roots = tree_roots(tx, &footprint.into_iter().collect::<Vec<_>>()).await?;
         let protected: BTreeSet<_> = roots.values().copied().collect();
+        // `Proxiima.OwnerAuthority.authorityFenceOrder`.
         for root in &protected {
             // The existing write gateway also takes a personal member's UUID
             // as a tree key before determining its kind. Keep those private
@@ -466,6 +468,7 @@ impl PgAuthorityPerson<'_> {
     /// # Errors
     ///
     /// Returns database failures and invalid membership-role refusals.
+    // `Proxiima.OwnerAuthority.MembershipRead.fencedEffective`.
     pub async fn effective_roles(&mut self) -> Result<OwnerRoles, StorageError> {
         let rows = resolve_membership(self.conn, &OwnerId::from(self.person)).await?;
         OwnerRoles::for_subject(
@@ -480,6 +483,7 @@ impl PgAuthorityPerson<'_> {
 /// The rows `person` holds in `group_memberships`, one entry per row, in
 /// group and relation order. Shared by [`PgAuthorityPerson::direct_groups`]
 /// and the fence-free [`super::direct_group_relations`].
+// `Proxiima.OwnerAuthority.MembershipRead.direct`.
 pub(super) async fn direct_groups_of(
     conn: &mut PgConnection,
     person: UserId,

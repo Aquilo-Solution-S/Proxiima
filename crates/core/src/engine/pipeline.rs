@@ -166,6 +166,7 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
+        // `Proxiima.OwnerAuthority.OwnerAccessRule.exactWriteCeiling`.
         let kind = self
             .operation_authority(authority)?
             .authz()
@@ -262,8 +263,6 @@ impl Engine {
         )
     }
 
-    /// The one owner gate: resolve `owner`, apply the rule for `operation`,
-    /// run the vetoes, and report the outcome to the observers.
     fn gate(
         &self,
         authz: &AuthzContext,
@@ -300,6 +299,7 @@ impl Engine {
                 ),
             );
         }
+        // `Proxiima.OwnerAuthority.ownerGateOrder`.
         let resolved = match self.registry.resolve_owner(authz, owner) {
             Ok(resolved) => resolved,
             Err(err) => return refuse(owner, AuthzOutcome::DeniedResolution, err),
@@ -323,16 +323,7 @@ impl Engine {
         Ok(resolved)
     }
 
-    /// Every owner this context may read anything of, minus the owners a
-    /// host veto denies. Storage returns only the rows whose kind each
-    /// owner's read limit covers.
-    ///
-    /// Each owner in the raw read set is gated once, as `Read { kind: Fact }`
-    /// ("any read on this owner"; storage still applies the per-kind limits),
-    /// and the observers get one decision per owner, denials included. A
-    /// vetoed owner silently drops out: the returned set can be empty, and an
-    /// empty set is not an error, because an error would reveal the veto.
-    /// Callers turn an empty set into empty results or not-found.
+    /// `Proxiima.OwnerAuthority.OwnerRead.set`.
     ///
     /// # Errors
     ///
@@ -432,12 +423,8 @@ impl Engine {
         self.veto_read(authz, owner, AuthzOperation::Read { kind })
     }
 
-    /// Run the host vetoes for a read `operation` on one stored owner and
-    /// report the decision to the observers.
-    ///
-    /// `owner` is already a concrete, stored owner (from the read set or from
-    /// storage), so it is not re-resolved: a resolver could remap the gate
-    /// onto a different owner than the one storage filters on.
+    /// Keep this veto aligned with the stored owner used by the storage filter.
+    /// `Proxiima.OwnerAuthority.OwnerRead.exact`.
     fn veto_read(
         &self,
         authz: &AuthzContext,
@@ -534,7 +521,7 @@ impl Engine {
     }
 }
 
-/// The rule that admits an operation on a resolved owner.
+/// Selects the effect gate for a resolved owner.
 type Admits = fn(&AuthzContext, &OwnerId, &AuthzOperation) -> bool;
 
 fn allows(authz: &AuthzContext, owner: &OwnerId, operation: &AuthzOperation) -> bool {

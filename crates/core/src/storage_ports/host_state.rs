@@ -112,6 +112,8 @@ pub trait HostStateCommand: Send + 'static {
 /// Goal's owner commits it, and writes no other Fact, Perspective or host
 /// state of that owner (`request_may_write_goal_work` in
 /// `lean/Causa/Authorization.lean`).
+///
+/// The Goal-work gate admits declared Facts independently of the Fact write ceiling.
 pub trait GoalWorkCommand: HostStateCommand {
     /// The one Fact payload this command declares for its Goal.
     type Fact: crate::FactPayload + Clone;

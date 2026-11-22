@@ -76,14 +76,7 @@ pub struct ResolvedMemorySpace {
     pub owner: OwnerId,
 }
 
-/// Resolve the memory space a write lands in, and narrow the caller's
-/// authorization to that space's Owner.
-///
-/// The space key is a selector; the narrowing is the gate. A caller who can
-/// *see* a space but holds no role on its Owner cannot narrow to it, and that
-/// refusal is `NotAuthorized`, not "unknown space" — the space exists, the
-/// caller just may not write there. Every write-side surface resolves through
-/// here so the two steps cannot drift apart or be taken in the wrong order.
+/// Resolve and narrow under `Proxiima.OwnerAuthority.spaceWriteOrder`.
 ///
 /// # Errors
 ///
@@ -122,6 +115,7 @@ pub fn resolve_space_owner(
     raw: Option<&str>,
     default: SpaceDefault,
 ) -> Result<ResolvedMemorySpace, ToolError> {
+    // `Proxiima.OwnerAuthority.SpaceDefault`.
     let default_owner = match default {
         SpaceDefault::Current => ctx.owner(),
         SpaceDefault::Identity => ctx.authz().principal(),
@@ -151,6 +145,7 @@ pub fn resolve_space_owner(
 /// the owner's bare id. `core_memory_spaces`, space resolution and the
 /// memory reads all report keys through here, so they cannot disagree.
 fn space_for(ctx: &ToolCtx, owner: OwnerId) -> ResolvedMemorySpace {
+    // `Proxiima.OwnerAuthority.SpaceKey`.
     let current = owner == ctx.owner();
     ResolvedMemorySpace {
         key: if current {
@@ -215,7 +210,7 @@ pub(crate) enum MemorySpaceKey {
 }
 
 impl MemorySpaceKey {
-    const CURRENT: &'static str = "current";
+    const CURRENT: &'static str = crate::ledger!(Proxiima.OwnerAuthority.currentSpaceKey);
 
     #[must_use]
     pub const fn owner(owner: OwnerId) -> Self {

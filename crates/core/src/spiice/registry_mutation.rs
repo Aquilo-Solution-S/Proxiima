@@ -52,6 +52,7 @@ impl SpiiceRegistry {
         &mut self,
         resolver: Arc<dyn OwnerResolver>,
     ) -> Result<(), SpiiceRegistryError> {
+        // The registry accepts at most one owner resolver.
         if self.owner_resolver.is_some() {
             return Err(SpiiceRegistryError::DuplicateOwnerResolver);
         }

@@ -44,6 +44,7 @@ impl ScopeGrant {
 
     /// The deadline moves earlier or stays: an expiry never extends, and
     /// `None` keeps the one already set.
+    /// See `Proxiima.OwnerAuthority.ScopeRestriction.expiry`.
     pub(crate) fn clamped_to(mut self, expires_at: Option<SystemTime>) -> Self {
         self.expires_at = self.expires_at.into_iter().chain(expires_at).min();
         self
@@ -63,6 +64,7 @@ impl ScopeGrant {
     }
 
     pub(crate) fn narrow(&self, owner: OwnerId) -> Option<Self> {
+        // `Proxiima.OwnerAuthority.ScopeRestriction.confinement`.
         let role = self.role_for(&owner)?;
         Some(Self {
             roles: OwnerRoles::scoped_to(self.roles.subject(), owner, role),
@@ -73,6 +75,7 @@ impl ScopeGrant {
 
     /// The roles while the grant lives, `None` once it expired: the only way
     /// a question about access reaches them.
+    /// See `Proxiima.OwnerAuthority.ScopeRestriction.expiry`.
     fn live(&self) -> Option<&OwnerRoles> {
         (!self.is_expired()).then_some(&self.roles)
     }

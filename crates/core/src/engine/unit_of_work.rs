@@ -287,6 +287,8 @@ pub struct HostStateUnitOfWork<'a> {
 /// declares, on the Goal's owner, and exposes no other write or read. Opened
 /// by [`Engine::goal_work_unit_of_work`]; shares the ordinary unit's lazy
 /// session, poisoning, commit and rollback.
+///
+/// Only this unit names an owner in `app.work_goal` for platform-scoped writes.
 pub struct GoalWorkUnitOfWork<'a> {
     inner: UnitOfWork<'a>,
     /// A command applied without all of its Facts (an error or a cancelled
@@ -1798,6 +1800,7 @@ impl GoalWorkUnitOfWork<'_> {
             // The command and its Facts land together or not at all.
             self.incomplete = true;
             for fact in facts {
+                // `Causa.request_may_write_goal_work`.
                 let permit = engine.authorize_goal_work(authz, &owner).await?;
                 written.push(
                     self.inner

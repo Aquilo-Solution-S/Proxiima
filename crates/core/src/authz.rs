@@ -951,6 +951,7 @@ impl AuthzContext {
     #[must_use]
     pub fn may_work_goals(&self, owner: &OwnerId) -> bool {
         self.role_for_owner(owner).is_some_and(|role| {
+            // `Proxiima.OwnerAuthority.goalWorkAdmitted`.
             role.works_goals() && (self.auth_path == AuthPath::HostBearer || role.administers())
         })
     }
@@ -1243,6 +1244,7 @@ impl AuthzContext {
     /// `None` when the context carries no role for `owner`.
     #[must_use]
     pub fn with_default_owner(mut self, owner: OwnerId) -> Option<Self> {
+        // `Proxiima.OwnerAuthority.DefaultOwnerRule.selectAccessibleOwner`.
         self.role_for_owner(&owner)?;
         self.default_owner = Some(owner);
         Some(self)
@@ -1268,6 +1270,7 @@ impl AuthzContext {
     #[must_use]
     pub fn narrowed_to_owner(mut self, owner: OwnerId) -> Option<Self> {
         self.owner_scope = self.owner_scope.narrowed(owner)?;
+        // `Proxiima.OwnerAuthority.DefaultOwnerRule.clearOnNarrow`.
         self.default_owner = None;
         Some(self)
     }
@@ -1290,6 +1293,7 @@ impl AuthzContext {
     /// caller-controlled payload would make the caller its own authorizer.
     #[must_use]
     pub fn with_host_resolved_role(mut self, group: GroupId, role: Role) -> Option<Self> {
+        // `Proxiima.OwnerAuthority.ScopeRestriction.sealed`.
         let OwnerScopeState::Unsealed(grant) = self.owner_scope else {
             return None;
         };

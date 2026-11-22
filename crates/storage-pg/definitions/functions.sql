@@ -1205,6 +1205,7 @@ REVOKE ALL ON FUNCTION proxiima_core.lock_authority_targets(uuid[], uuid[]) FROM
 
 -- The authenticated subject's authority projection is distinct from memory
 -- owner reach. VOLATILE gives the query after a lock wait a fresh snapshot.
+-- `Proxiima.OwnerAuthority.MembershipRead.unitSubject`.
 CREATE OR REPLACE FUNCTION proxiima_core.read_subject_authority(p_subject uuid)
  RETURNS TABLE(group_id uuid, read_ceiling proxiima_core.memory_ceiling,
                write_ceiling proxiima_core.memory_ceiling,
@@ -1251,6 +1252,7 @@ EXCEPTION WHEN OTHERS THEN
 END
 $function$;
 
+-- `Proxiima.OwnerAuthority.groupForest`.
 CREATE OR REPLACE FUNCTION proxiima_core.group_edge_before_write()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1467,6 +1469,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.group_truncate_guard() FROM PUBLIC;
 
+-- `Causa.Group.mount` and `Causa.Group.union`.
 CREATE OR REPLACE FUNCTION proxiima_core.rebuild_group_role_projection(p_users uuid[])
  RETURNS void
  LANGUAGE plpgsql
@@ -2464,6 +2467,7 @@ AS $function$ INSERT INTO proxiima_core.lexical_languages (config)
 
 -- Lock functions
 
+-- Host membership locks require the caller's READ COMMITTED transaction and hold through its completion.
 CREATE OR REPLACE FUNCTION proxiima_core.lock_group_tree(p_group uuid)
  RETURNS void
  LANGUAGE plpgsql
@@ -2495,6 +2499,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.lock_group_tree(p_group uuid) FROM PUBLIC;
 
+-- Host membership locks require the caller's READ COMMITTED transaction and hold through its completion.
 CREATE OR REPLACE FUNCTION proxiima_core.lock_group_trees(p_left uuid, p_right uuid)
  RETURNS void
  LANGUAGE plpgsql
@@ -3327,6 +3332,7 @@ SET LOCAL ROLE proxiima_goal_reader;
 -- role reads Goals. Expiry is filtered here; callers join goal_head for the
 -- controller generation they need. The grant row is never rewritten by
 -- membership: removing the member ends the route at the next statement.
+-- `Causa.Grant.gives_iff` and `Causa.drop_ends_grant`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_grants_held()
 RETURNS TABLE(goal_handle uuid, subject_id uuid, controller_generation bigint,
               read_ceiling proxiima_core.memory_ceiling, write_ceiling proxiima_core.memory_ceiling,

@@ -16,6 +16,7 @@ See [`Proxiima.Configuration`](../../docs/ledger.md#configuration).
 
 See `src/lib.rs` rustdoc and [`../../docs/host-integration.md`](../../docs/host-integration.md).
 
+Membership and role resolution follow [`Proxiima.OwnerAuthority`](../../docs/ledger.md#owner-authority).
 Membership writes use `proxiima::host` inside a host's platform-scoped
 `READ COMMITTED` transaction. Members are bare `OwnerId`; the write resolves
 kind under the tree locks. A group has one parent at most. Database triggers
@@ -24,4 +25,4 @@ materialize upward `Role::meet` caps and `Role::join` across paths into
 projection in one query; `direct_group_relations` reads the rows written
 for a person, neither inherited nor folded. Fixed-snapshot `REPEATABLE READ` and `SERIALIZABLE`
 writes return `StorageError::Refused` with `StorageRule::ReadCommittedRequired`. The host forms run no
-authorization/hooks ([host integration](../../docs/host-integration.md)).
+authorization or hooks ([host integration](../../docs/host-integration.md)).

@@ -70,16 +70,12 @@ impl AccessCeiling {
 
     #[must_use]
     pub const fn rank(self) -> u8 {
-        match self {
-            Self::None => 0,
-            Self::Fact => 1,
-            Self::Abstraction => 2,
-            Self::Perspective => 3,
-        }
+        const RANKS: [u8; 4] = crate::ledger!(Proxiima.OwnerAuthority.memoryCeilingRanks);
+        RANKS[self as usize]
     }
 
     /// The lowest ceiling that covers `kind`: a memory kind's place on the
-    /// access ladder (`AccessKind.rank` in `lean/Causa/Owner.lean`). A
+    /// access ladder (`Proxiima.OwnerAuthority.coveringCeiling`). A
     /// Goal is intent, not memory, and is not on this ladder: what a role
     /// may do with Goals is [`Role::goals`].
     #[must_use]
@@ -93,6 +89,7 @@ impl AccessCeiling {
 
     #[must_use]
     pub const fn allows(self, kind: MemoryKind) -> bool {
+        // `Proxiima.OwnerAuthority.covers`.
         Self::covering(kind).rank() <= self.rank()
     }
 
@@ -145,11 +142,8 @@ impl GoalAccess {
 
     #[must_use]
     pub const fn rank(self) -> u8 {
-        match self {
-            Self::None => 0,
-            Self::Reads => 1,
-            Self::Works => 2,
-        }
+        const RANKS: [u8; 3] = crate::ledger!(Proxiima.OwnerAuthority.goalAccessRanks);
+        RANKS[self as usize]
     }
 }
 
@@ -187,6 +181,7 @@ impl Role {
     ///
     /// Returns [`AccessError::WriteExceedsRead`] when `write` is above `read`.
     pub const fn new(read: AccessCeiling, write: AccessCeiling) -> Result<Self, AccessError> {
+        // `Proxiima.OwnerAuthority.ceilingAdmitted`.
         if write.rank() > read.rank() {
             return Err(AccessError::WriteExceedsRead);
         }
@@ -296,11 +291,13 @@ impl Role {
 
     #[must_use]
     pub const fn may_read(self, kind: MemoryKind) -> bool {
+        // `Proxiima.OwnerAuthority.OwnerAccessRule.memoryCeilings`.
         self.read.allows(kind)
     }
 
     #[must_use]
     pub const fn may_write(self, kind: MemoryKind) -> bool {
+        // `Proxiima.OwnerAuthority.OwnerAccessRule.memoryCeilings`.
         self.write.allows(kind)
     }
 
@@ -362,6 +359,8 @@ impl Role {
     /// Delegated authority uses this as a ceiling: later membership promotion
     /// cannot widen a grant. Redemption separately requires current membership
     /// still to dominate the recorded ceiling, so demotion fails closed.
+    ///
+    /// See `Causa.Role.meet`.
     #[must_use]
     pub const fn meet(self, other: Self) -> Self {
         Self {
@@ -389,7 +388,7 @@ impl Role {
     /// and Goal access, and each capability when either has it.
     ///
     /// A member who holds two relations in one group holds both, so their role
-    /// for that group is the join (`Role.join` in `lean/Causa/Owner.lean`).
+    /// for that group is the join (`Causa.Role.join`).
     /// `write <= read` holds because each input satisfies it and max is
     /// monotone.
     #[must_use]
@@ -446,6 +445,8 @@ impl OwnerRoles {
     /// several relations in one group) resolves to the [`Role::join`] of its
     /// roles, whatever order the resolver yields them in.
     ///
+    /// See `Proxiima.OwnerAuthority.OwnerResolution` and `Causa.Owner.ofUser`.
+    ///
     /// # Errors
     ///
     /// Returns [`AccessError::DerivedOwnerOverride`] if the resolver names the
@@ -476,6 +477,8 @@ impl OwnerRoles {
     /// earlier entry rather than joining it: a later answer after a demotion is
     /// never widened by the stale one. The subject's own id is a kernel rule,
     /// never a resolver's answer, so an answer naming it is dropped.
+    ///
+    /// See `Proxiima.OwnerAuthority.OwnerResolution`.
     #[must_use]
     pub fn with_group_role(mut self, group: GroupId, role: Role) -> Self {
         let owner = OwnerId::from(group);
@@ -512,6 +515,8 @@ impl OwnerRoles {
 
     #[must_use]
     pub fn role_for(&self, owner: &OwnerId) -> Option<Role> {
+        // `Proxiima.OwnerAuthority.OwnerAccessRule.roleOfOwner`.
+        // Access comes from a role on the owner: queries, tags, lists and pins create no audience, pins grant no target access, and nesting gathers no memories.
         self.roles.get(owner).copied()
     }
 
@@ -543,6 +548,8 @@ impl OwnerRoles {
 
     /// A personal owner never manages: the subject's own id is refused before
     /// any role is read.
+    ///
+    /// See `Causa.may_manage`.
     #[must_use]
     pub fn may_manage(&self, owner: &OwnerId) -> bool {
         !self.is_own(owner) && self.role_for(owner).is_some_and(Role::manages)
@@ -581,6 +588,7 @@ impl OwnerRoles {
             .iter()
             .filter_map(|(owner, role)| keep(*role).then_some(*owner))
             .collect();
+        // `Proxiima.OwnerAuthority.ownerListOrder`.
         owners.sort_by_key(|owner| (!self.is_own(owner), *owner));
         owners
     }
@@ -672,6 +680,7 @@ pub trait OwnerAccessPort: Send + Sync {
         subject: UserId,
         group: GroupId,
     ) -> Result<Option<Role>, AccessError> {
+        // `Proxiima.OwnerAuthority.OwnerResolution.eagerGroupLookup`.
         Ok(self
             .resolve_roles_for_subject(subject)
             .await?

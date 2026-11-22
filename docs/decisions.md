@@ -49,43 +49,19 @@ host may name in its own SQL.
 
 ## Identity and ownership have separate jobs
 
-Authentication establishes the principal; ownership selects the data scope.
-Sharing uses group membership or explicit transfer rather than entity-side
-ACLs. This keeps a private note private even when its writer also administers
-a project group.
-Personal ownership is derived from identity and its membership cannot be
-edited. Organization structure and billing belong to the host.
-
-The [identity and ownership map](concepts.md#identity-and-ownership) explains
-the model. The principles are in
-[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean),
-with supporting definitions in
-[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean)
-and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Authorization.lean);
-runtime owner resolution and command ports enforce the implementation.
+[`Proxiima.OwnerAuthority`](ledger.md#owner-authority) defines ownership and membership. A private
+note stays private when its writer also administers a project group.
 
 ### Nesting composes access toward the parent
 
-A subgroup contributes its members to its parent under a capability cap.
-Caps weaken each path; independent memberships combine their capabilities.
-This lets a team read department-wide knowledge without giving every department
-member access to the team's work. The runtime rejects multiple parents and cycles;
-the database maintains the effective-role projection. See
-[nested groups](concepts.md#nested-groups-access-travels-upward) for the
-direction, examples, and executable evidence.
+[`Proxiima.OwnerAuthority`](ledger.md#owner-authority) defines group nesting. A team can read
+department-wide knowledge while keeping its own work within the team.
 
 ### Durable ownership and Goal collaboration have separate scopes
 
-Nesting composes membership into an organizational tree. A body of knowledge
-that needs a different durable owner policy belongs to a separate group, with
-direct person memberships when people already sit in other group trees.
-Reuse an owner for sets with the same policy. A transfer moves the entire
-series and its responsibility. The [Goal collaboration design](#goal-collaboration-keeps-one-durable-owner)
-adds selected version publications and delegated work without changing the
-owner or the one-parent hierarchy. Goal routes are additive: confidential
-data that must be hidden from existing owner readers needs its own owner. See
-[sharing a set of memories](concepts.md#sharing-a-set-of-memories) for the
-consequences and the enforcing transfer contract.
+See [`Proxiima.OwnerAuthority`](ledger.md#owner-authority) for durable ownership and the
+[Goal collaboration design](#goal-collaboration-keeps-one-durable-owner) for exact
+publications and work. Use a separate group for data that existing owner readers must not see.
 
 ### Capabilities and delegation only narrow authority
 

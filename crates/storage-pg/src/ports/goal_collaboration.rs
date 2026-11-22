@@ -154,8 +154,7 @@ pub(crate) async fn role_for_goal(
         return Err(StorageError::NotFound);
     }
     let owner_role = current_role(scope, roles, controller).map(on_goal_route);
-    // The caller holds a grant directly and through each group it names; the
-    // roles join.
+    // `Causa.flattened_gives` joins grants after adapting the owner role to this route.
     let grants = sqlx::query("SELECT read_ceiling, write_ceiling, goal_access, administers, manage FROM proxiima_core.goal_grants_of($1) WHERE goal_handle=$2 AND controller_generation=$3")
         .bind(scope.subject().into_inner()).bind(goal.into_inner())
         .bind(controller_generation).fetch_all(&mut **tx).await.map_err(map_err)?;

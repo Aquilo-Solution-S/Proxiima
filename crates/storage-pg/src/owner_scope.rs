@@ -170,6 +170,7 @@ pub(crate) async fn bind_goal_work_owner(
         .into_iter()
         .filter(|worked| *worked == owner)
         .collect();
+    // Only the Goal work unit names an owner here for its platform-scoped writes.
     sqlx::query("SELECT set_config('app.work_goal', $1::uuid[]::text, true)")
         .bind(owner_ids(worked))
         .execute(connection)

@@ -29,6 +29,7 @@ pub async fn ensure_owner_row(
     conn: &mut sqlx::PgConnection,
     owner: &OwnerId,
 ) -> Result<uuid::Uuid, StorageError> {
+    // `Proxiima.OwnerAuthority.registerOwner`.
     let owner_id = owner.into_inner();
     // `owners` is append-only (no UPDATE): a concurrent first insert waits
     // on whichever owner uniqueness constraint it reaches, then does nothing.
@@ -62,6 +63,7 @@ pub async fn ensure_owner_row(
 pub async fn register_group(conn: &mut PgConnection, group: GroupId) -> Result<(), StorageError> {
     lock_group_membership_tx(conn, group).await?;
     insert_group_row(conn, group).await?;
+    // `Proxiima.OwnerAuthority.registerOwner`.
     if registered_group_on_connection(conn, group).await? {
         Ok(())
     } else {

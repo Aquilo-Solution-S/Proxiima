@@ -15,13 +15,8 @@ belong to the host integration; they are not a fifth memory kind.
 
 ## Identity and ownership
 
-Every memory series and every Goal has exactly one owner, a person or a group.
-The owner decides who reaches it. Access is a role resolved for the caller,
-and that role is granted in one of two ways: by membership of the owner, or by
-a grant on one Goal. Both produce the same role shape. Owner roles come from
-memberships and Goal grants are read separately and joined with the owner role,
-but a grant to a group is resolved through the same stored group roles that
-membership uses.
+The [`Proxiima.OwnerAuthority`](ledger.md#owner-authority) ledger defines durable ownership and owner roles.
+For exact-version publications and grants, see [Goal collaboration](#goal-collaboration).
 
 Follow the [request flow](host-integration.md#authentication-and-owner-scope)
 for integration and [Protocol](protocol.md#owner-scope) for transport behavior.
@@ -40,94 +35,20 @@ credential and maps its issuer and subject before owner access is resolved.
 
 ### Owners
 
-A principal's **personal owner** has the same UUID as the principal. It is the
-principal's own space: its role is derived (`Role::personal`), nobody can edit
-its membership, and that role does not manage. A group is the owner for shared
-memory; an organization, department, project, or household maps onto one when it
-needs shared memory. Business labels, account provisioning, and billing remain
-host concerns. There is no universal-read owner.
+Personal owners and shared groups follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+Business labels, account provisioning and billing belong to the host.
 
-Choose the owner to match the audience. A role applies to everything the owner
-owns, never to one chosen note, so memory with a narrower audience needs its
-own group.
+Choose the owner to match the intended audience. Use a separate group for a body of
+knowledge that needs its own readers and maintainers.
 
 ### Roles
 
-A role has five fields. The role representation and its constructors are in
-[`Role`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs);
-the kernel states it in
-[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean).
-
-| Field | Values | Governs |
-|---|---|---|
-| Read ceiling | none, Fact, Abstraction, Perspective | Which memory kinds may be read (`Fact < Abstraction < Perspective`) |
-| Write ceiling | none, Fact, Abstraction, Perspective | Which memory kinds may be written; never above the read ceiling |
-| Goals | none, reads, works | What the role may do with the owner's Goals |
-| Administers | yes or no | Administering the owner |
-| Manages | yes or no | Managing the group |
-
-No capability follows from a ceiling. A memory ceiling grants no Goal access,
-and Goal access grants no memory. Writing a kind implies reading it. The access
-ladder is separate from the [derivation rules](#layering).
-
-The four membership relations are presets of this role. Authorization reads
-the role, never the relation name; the table is generated from `Relation::role()`.
-
-| Relation | Reads | Writes | Goals | Administers | Manages |
-|---|---|---|---|---|---|
-| Personal (derived) | all kinds | all kinds | works | yes | no |
-| Admin | all kinds | all kinds | works | yes | yes |
-| Editor | all kinds | all kinds | works | no | no |
-| Viewer | all kinds | none | works | no | no |
-| Ingest | Facts | Facts | none | no | no |
-
-An ingestion service therefore cannot read Perspectives. A role belongs to the
-owner it is held in: an admin of one group holds a role in another group only
-through a path that gives one, such as nesting, never because the relation is
-called admin.
-
-| Operation | Needs |
-|---|---|
-| Read or write a memory of kind *k* | Read or write ceiling covering *k* |
-| Read an owner's Goals | Goals: reads or works |
-| Set, modify, or transition a Goal | Goals: works |
-| Achieve a Goal | Administers on the owner, or the Goal-specific route below |
-| Decompose a Goal; transfer; erase one series; graph overview | Administers |
-| Share a Goal (manage its audience) | Administers on a personal owner, or a Goal role that manages |
-| Change membership; transfer from or to a group | Administers and manages |
-
-Goal work follows the Goals field, not the write ceiling. A call declares Goal
-work in the catalog (`OwnerNeed::GoalWork` on an action spec,
-`HostTool::with_goal_work` on a host tool); the owner-role gate and every
-listing read that declaration. This widens no memory write, with one bounded
-exception: a host-state command declared Goal work (`GoalWorkCommand`) commits
-on a `GoalWorkUnitOfWork` together with the Facts it declares, and those Facts
-are admitted by the Goal-work gate, not the Fact write ceiling. A viewer
-therefore sets a group Goal, and writes Facts only through such a command; every
-other memory and host-state write keeps the write ceiling.
-
-Owner roles are read once, at admission, and row security holds an owner's
-transaction to them. Goal work by membership alone is written outside row
-security, as a Goal route is, so storage reads the membership again under the
-owner fence where the write commits: a member removed since admission works no
-Goal. Either way, a `GoalWorkUnitOfWork`'s transaction names its one owner in
-`app.work_goal` for its host-state handler and declared Facts; no other
-platform-scope transaction names an owner there. A Goal an episode commits is
-written in the owner's transaction, on the roles of admission.
-
-A Goal grant adds a second route to Goal edits. A caller whose owner role does
-not work or administer the owner can still work a Goal, or achieve it, when the
-current Goal role from its grants works Goals.
-
-Erasing a whole owner is not a role question: explicit
-[host authority](data-and-erasure.md#host-authority) decides it, and no role
-authorizes it.
+The role fields, memory and Goal capability axes, and all five presets are in [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+See [host authority](data-and-erasure.md#host-authority) for erasing a whole owner.
 
 ### Granting a role
 
-**On the owner.** A principal holds a relation in a group, which grants the
-relation's role in that group. A principal who holds several relations in one
-group holds the join of their roles. Groups nest, as described next.
+**On the owner.** Direct relations and inherited roles follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
 
 **On a smaller object.** A grant on one Goal names a subject and a role. The
 subject is a person or a group. A member of an invited group holds the grant's
@@ -143,119 +64,26 @@ statement. See
 
 ### Nested groups: access travels upward
 
-A group may be attached to a parent group with a relation, which caps the
-authority its members inherit there. The groups form a forest with no fixed
-depth limit. The shape is restricted:
-
-| Structure | Behavior |
-|---|---|
-| Several levels, such as Team in Department in Company | Allowed; each step caps authority |
-| Several children under one parent | Allowed |
-| One subgroup under two parents | Refused: a group has at most one parent |
-| A cycle, or a group attached to itself | Refused |
-| One person in several unrelated groups | Allowed |
-
-```mermaid
-flowchart BT
-    A["Alex"] -->|editor membership| T["Team group"]
-    T -->|attached with viewer cap| P["Department group"]
-    B["Blair"] -->|direct admin membership| P
-    A -.->|effective viewer through Team| P
-```
-
-Alex is an editor of Team and, through it, a viewer of Department. Blair's
-Department membership grants nothing in Team. Authority climbs from member to
-parent and never descends to a parent's administrators.
-
-Along one path, each edge takes the minimum of the two roles: the weaker
-ceilings and Goals field, and administration or management only if both sides
-have it. Across several paths into the same owner, the result takes the maximum
-of each field. A viewer path therefore does not cancel an editor membership,
-and removing a relation removes only its path. PostgreSQL stores the folded
-result per person and group, so a read is one lookup.
-
-Attaching a subgroup or changing its relation requires management of both
-groups. Detaching requires management of either endpoint, and removing a person
-requires management of the containing group. Membership edits serialize on the
-group tree, recheck the caller's authority, and preserve a group's last manager
-once one exists. Attaching a group elsewhere changes inherited access for its
-whole subtree; it is not a way to share a few memories. The refusals and the
-projection are exercised by the
-[nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs)
-and defined in the
-[projection function](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/functions.sql).
+Group containment and inherited authority follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+This lets a team read department-wide knowledge while keeping the team's own work within its membership.
 
 ### Sharing a set of memories
 
-A group is the audience for the memories it owns. Nesting composes people and
-roles; it does not gather memories from several owners. A query, tag, list, or
-pin creates no audience, and a pin to another owner's memory grants no access
-to its target (an unreadable target is redacted).
-
-To give a body of knowledge its own readers and maintainers, create a group for
-that audience, add its members with roles, and write new series with the group
-as owner. Reuse an existing group when membership and roles match. A panel that
-brings people from two teams together is such a group, with direct person
-memberships and no parent link to either team.
-
-**Transfer** moves an existing series to another owner. It is the one way to
-change a series' owner, and the rules are these:
-
-- The unit is one memory series per call. All its versions move in place, the
-  series keeps its identity and writer attribution, and the previous owner no
-  longer owns it. Transfer is a move, not an additional share.
-- The caller must administer the source owner (for a personal owner, its own
-  principal; for a group, administers and manages) and must administer and
-  manage the destination. The destination must therefore be a group.
-- Goals do not transfer. A series that has a Goal or Perspective causal
-  relation (a version guided by a Goal, or motivating one) does not transfer.
-  A schema that declares `NotTransferable` is refused.
-- Readers of the old owner lose access unless they hold a role in the
-  destination. After the move, removing a member's last path to the group ends
-  their future access; reads already made are not retracted. Destroying data is
-  the separate [host-authorized erasure](data-and-erasure.md#host-authority).
-
-The [transfer command](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/engine/access_admin.rs)
-owns these rules and
-[owner_transfer.rs](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/owner_transfer.rs)
-exercises them. See also [ownership and lifecycle](data-and-erasure.md#ownership-and-lifecycle).
-
-Two other routes avoid moving a series. A [fork](#revision-shared-editing-and-fork)
-starts an independent series from one exact version. [Goal collaboration](#goal-collaboration)
-publishes exact versions to a Goal audience while the owner keeps the series.
-Neither can hide information from people who already have owner access.
+Whole-series transfers follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+See [ownership and lifecycle](data-and-erasure.md#ownership-and-lifecycle),
+[revision and fork](#revision-shared-editing-and-fork), and [Goal collaboration](#goal-collaboration).
 
 ### Requests, sessions, and workers
 
-A request carries its roles and its expiry once, in its owner scope. An expired
-context reads, writes, and runs nothing; a token has no revocation before expiry
-([decision](decisions.md#access-ends-at-token-expiry)). A membership change
-applies to roles resolved after it. Open streams end at token expiry or the
-maximum stream lifetime. Goal routes are the exception: they are read live (see
-[granting a role](#granting-a-role)).
-
-The owner scope bounds what a request can reach. `X-Proxiima-Owner` selects a
-raw UUID, and a server-issued memory-space key selects an owner through the same
-context. Selection chooses a default destination and does not confine the
-request: reads stay within the context's readable owners and kind limits, and
-each write targets one owner. Only a host that confines the context with
-`narrowed_to_owner` limits it to one owner, and that cannot be undone. See
-[owner scope](protocol.md#owner-scope).
+Request confinement and owner selection follow [`Proxiima.OwnerAuthority`](ledger.md#owner-authority).
+See [owner scope](protocol.md#owner-scope), [token expiry](decisions.md#access-ends-at-token-expiry),
+and [granting a role](#granting-a-role) for live Goal routes.
 
 A tool call passes three independent gates: the deployment serves the tool
 (`ServedSurface`), the caller's scope permits the exact key (`ToolScope`), and
 the role permits the effect on this owner and kind. Allowing a tool does not
 make a viewer an editor, and an admin cannot call a command its scope excludes.
-Listing and invocation read the same catalog declaration. Owner administration
-is no read or write bypass in the row policies either: they derive access from
-the memory ceilings and the Goal read and work settings, and none reads
-administration.
-See [capability admission](host-integration.md#capability-admission).
-
-The store holds every role: the group role projection, Goal grants, and
-delegated grants store the five fields in one shape
-([the core baseline](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/migrations/0069_baseline.sql),
-[`role_columns.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/role_columns.rs)).
+Listing and invocation read the same catalog declaration. See [capability admission](host-integration.md#capability-admission).
 
 | Mechanism | Purpose | Boundary |
 |---|---|---|
@@ -283,7 +111,7 @@ See [forwarding](host-integration.md#forwarded-owner-access).
 
 | Boundary | Evidence |
 |---|---|
-| One owner, role fields, personal membership, capped nesting | [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean), [Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Audience.lean), and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Authorization.lean) |
+| Owner roles, personal membership, and capped nesting | [`Proxiima.OwnerAuthority`](ledger.md#owner-authority) and the [Causa proofs](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean) |
 | Verified identity and narrowing scope | [AuthzContext](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/authz.rs) and [OwnerScope](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/owner_scope.rs) |
 | Effective memberships and transaction isolation | [Nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs) and [manager race tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/group_manager_race_pg_tests.rs) |
 | Per-owner database isolation | [Owner RLS](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/policies.sql) and [multi-owner host tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/tests/multi_owner_e2e.rs) |

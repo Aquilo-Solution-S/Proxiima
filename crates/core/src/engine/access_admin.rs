@@ -328,6 +328,7 @@ impl Engine {
         Ok(GroupMemberPage { members, has_more })
     }
 
+    /// `Proxiima.OwnerAuthority.membershipConsent`.
     async fn authorize_membership_detach(
         &self,
         authz: &AuthzContext,
@@ -373,16 +374,13 @@ impl Engine {
     ///   request is scoped to: the write permit that carries the transfer
     ///   into storage is the SOURCE owner's, so a caller gives a memory
     ///   away while acting AS its owner.
-    /// * Write-Goal plus group-manage on `to_owner`, resolved by
-    ///   `authorize_transfer_destination`. The destination must
-    ///   therefore be a **Group**: `may_manage` is false for every personal
-    ///   owner by construction, so there is no personal-owner spelling of
-    ///   receiving-side consent. A personal destination is refused with
-    ///   `InvalidArgument`.
+    /// * The caller's own personal ID is refused as `to_owner`. Every other
+    ///   destination requires administration and management on that owner,
+    ///   which only a group role carries on the served path.
     ///
-    /// The destination's `owners` row is minted inside the storage
-    /// transaction (`ensure_owner_row`), so the destination-owned rows'
-    /// `owner_id` FKs hold without any migration-seeded owner.
+    /// Storage registers an unseen destination as personal inside the transfer
+    /// transaction (`ensure_owner_row`), so destination-owned rows' `owner_id`
+    /// foreign keys hold without a migration-seeded owner.
     ///
     /// The ownership oracle is closed by resolving the home only through the
     /// caller's readable-owner set. Missing and foreign-owned entities are
@@ -390,12 +388,15 @@ impl Engine {
     /// the `to_owner == current_owner` refusal fires only AFTER both sides
     /// authorize, so an authorized caller still gets the useful distinction.
     ///
+    /// See `Proxiima.OwnerAuthority.transferOrder` and
+    /// `Proxiima.OwnerAuthority.transferConsent`.
+    ///
     /// # Errors
     ///
     /// Returns `InvalidArgument` for a Goal entity, for a memory whose schema
-    /// declares `NotTransferable`, and for a non-Group
-    /// destination. Returns `NotFound` when the entity has no home owner
-    /// (absent or tombstoned). Returns `Forbidden` when the caller lacks
+    /// declares `NotTransferable`, or for the caller's own personal ID as
+    /// destination. Returns `NotFound` when the entity has no visible home
+    /// owner. Returns `Forbidden` when the caller lacks
     /// admin/manage authority on either side. Returns `InvalidArgument`
     /// when an authorized caller names the current owner as the
     /// destination. Returns `Internal` for storage failures and when the
@@ -409,14 +410,13 @@ impl Engine {
         to_owner: OwnerId,
     ) -> Result<(), ProtocolError> {
         self.operation_authority(authz)?;
+        // `Proxiima.Goals.transferGoal`.
         if matches!(entity, EntityId::Goal(_)) {
             return Err(ProtocolError::invalid_argument(
                 "entity",
                 "goals do not transfer",
             ));
         }
-        // The one role rule: the caller's own id holds the personal role,
-        // which never manages, so it can never consent as a destination.
         if OwnerId::from(authz.subject()) == to_owner {
             return Err(ProtocolError::invalid_argument(
                 "to_owner",
@@ -424,12 +424,7 @@ impl Engine {
                  group-manage authority, which no personal owner can grant",
             ));
         }
-        // A transfer needs source manage authority, but looking up the bare
-        // owner first would reveal whether a random entity exists to a caller
-        // who cannot read it. Resolve through the same read-owner set as the
-        // ordinary visibility path: absent and foreign rows collapse to the
-        // same public NotFound outcome, while an authorized source remains
-        // visible because admin roles include read access.
+        // Find the source among readable owners before authorization so a refusal cannot disclose its home.
         let read = authz.readable_owners(MemoryKind::Fact);
         let (current_owner, _, schema) = self
             .storage()
@@ -443,15 +438,10 @@ impl Engine {
         if OwnerId::from(authz.subject()) != current_owner {
             require_group_manage(authz, &current_owner)?;
         }
-        // Receiving side: the destination consents by the caller holding
-        // manage on it. A transfer needs consent from both owners.
         self.authorize_transfer_destination(authz, &to_owner)
             .await?;
 
-        // A schema that declares `NotTransferable` is refused once both
-        // sides authorize, so a caller who may not manage learns nothing of
-        // the schema. The refusal comes before the destination is named to
-        // the permit and before any storage call.
+        // `Proxiima.OwnerAuthority.transferAdmitted`.
         let surfaces = self.owner_surfaces();
         if let Some(schema) = &schema
             && let Some(why) = surfaces.untransferable_schema(schema.as_str())
@@ -467,9 +457,7 @@ impl Engine {
 
         permit.authorize_transfer_to(to_owner);
 
-        // Only now, with both sides authorized, is it safe to say that the
-        // destination is where the entity already lives. Answering that
-        // earlier told an unauthorized caller where any entity is homed.
+        // Report a same-owner destination only after both sides authorize, since it reveals the entity's home.
         if current_owner == to_owner {
             return Err(ProtocolError::invalid_argument(
                 "to_owner",
@@ -484,9 +472,8 @@ impl Engine {
             AuthzOperation::EntityTransfer { entity, to_owner },
         )?;
 
-        // The moved memory is embedded under the destination's route; a
-        // route error refuses the transfer like any other write.
         let embedding_spaces = self.write_route(&to_owner).await?.write_spaces();
+        // Old-owner readers lose future access unless they hold a destination role, and past reads are never retracted.
         let transferred = self
             .storage()
             .access_admin
@@ -509,40 +496,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Receiving-side consent for [`Self::transfer_to_owner`].
-    ///
-    /// A transfer is the one verb that needs authority on TWO owners at
-    /// once, and the served surface cannot hand it both. `mcp_auth`
-    /// narrows every authenticated request through
-    /// `AuthzContext::narrowed_to_owner(selected_owner)`, whose role map
-    /// holds exactly the one owner the caller selected — so whichever side
-    /// the caller selects, the request context is silent about the other.
-    /// The narrowing is a security boundary and stays; the destination's
-    /// consent is resolved out of band instead, the way
-    /// [`Self::bootstrap_group_admin`] steps outside the request context
-    /// rather than widening it.
-    ///
-    /// Two paths, in priority order:
-    /// * The request context already carries a resolved role for
-    ///   `to_owner` (an embedded host that never narrowed, or a caller who
-    ///   selected the destination). That role is authoritative and is
-    ///   gated exactly as before — `authorize_owner_admin` plus
-    ///   [`require_group_manage`], hooks and owner resolution included. A
-    ///   role that is present but insufficient is a refusal, never a
-    ///   fall-through to storage: a host that deliberately hands out a
-    ///   narrowed role must not be overruled by a membership row.
-    /// * The context is silent about `to_owner` — the narrowed served
-    ///   surface. Then, and only then, the authenticated subject's
-    ///   membership is re-read from storage. Those rows are
-    ///   engine-authoritative: [`Self::add_member`] and
-    ///   [`Self::bootstrap_group_admin`] are what write them, and every
-    ///   write is itself manage-gated.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Forbidden` when neither path establishes write-Goal plus
-    /// manage on `to_owner`, and `Internal` when the membership re-read
-    /// fails.
+    /// Receiving-side role precedence follows `Proxiima.OwnerAuthority.destinationRoute`.
     async fn authorize_transfer_destination(
         &self,
         authz: &AuthzContext,
@@ -556,29 +510,14 @@ impl Engine {
             .await
     }
 
-    /// Re-read the authenticated subject's membership on `to_owner` and
-    /// require the same authority the in-context gate requires: a role
-    /// that administers the owner AND carries `manage` — read off the stored
-    /// preset through [`Relation::role`], so the rule tracks the role table
-    /// rather than restating it.
-    ///
-    /// Refused before the lookup for every context that does not name a
-    /// subject whose membership may stand in for its own authority:
-    ///
-    /// * `Delegated` — a delegated grant decodes `manage = false` by
-    ///   construction (`storage-pg/src/delegated_authority.rs`). Its
-    ///   subject is a real user who may well hold Admin on the
-    ///   destination, so re-reading membership would hand the grant an
-    ///   authority the grant does not carry. `operation_authority` already
-    ///   refuses raw delegated contexts and `transfer_to_owner` takes no
-    ///   `DelegatedPhase`, so this is the second lock on a shut door —
-    ///   worth keeping, because the first one lives in another module.
+    /// Resolve receiving-side consent for a subject eligible to use storage membership.
     async fn authorize_transfer_destination_out_of_band(
         &self,
         authz: &AuthzContext,
         to_owner: &OwnerId,
     ) -> Result<(), ProtocolError> {
         let refused = || ProtocolError::forbidden("requires manage on this owner");
+        // Delegated grants decode with `manage = false`; stored membership cannot supply that bit.
         if authz.auth_path() == AuthPath::Delegated || authz.verified_forwarded_owner().is_some() {
             return Err(refused());
         }
@@ -671,14 +610,12 @@ fn replace_storage_error(err: StorageError) -> ProtocolError {
     super::errors::map_write_storage_error(err, "from", "group not found")
 }
 
-/// Name the caller on a removal or demotion that runs on parent authority, so
-/// storage re-reads the caller's manage role under the group-tree lock. A
-/// detach on member authority is checked against the member group instead,
-/// which the engine already did; it carries no caller.
+/// Route the parent-authorized mutation's commit-time management recheck.
 fn with_parent_caller<'a>(
     permit: MembershipWritePermit<'a>,
     authz: &AuthzContext,
 ) -> MembershipWritePermit<'a> {
+    // `Proxiima.OwnerAuthority.MembershipEndpoint`.
     match permit.endpoint_authority() {
         MembershipEndpointAuthority::Parent => permit.with_caller(authz.subject()),
         MembershipEndpointAuthority::Member => permit,

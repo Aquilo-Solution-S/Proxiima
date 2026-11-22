@@ -219,6 +219,7 @@ pub async fn bootstrap_group_admin_on_connection(
     .await
     .map_err(map_err)?;
 
+    // `Proxiima.OwnerAuthority.MembershipChange.bootstrapFirstAdmin`.
     if inserted.rows_affected() == 0 {
         return Err(StorageError::Conflict(
             "group already has an Admin membership".into(),
@@ -308,6 +309,7 @@ pub async fn add_group_member_on_connection(
     .await
 }
 
+// `Proxiima.OwnerAuthority.membershipConsent`.
 async fn add_group_member_on_connection_authorized(
     conn: &mut PgConnection,
     group_id: GroupId,
@@ -466,6 +468,7 @@ where
                 recheck_caller_manages(&mut tx, group_id, caller).await?;
             }
             change(&mut tx).await?;
+            // `Proxiima.OwnerAuthority.preservesManager`.
             if had_manager && !group_has_manager(&mut tx, group_id).await? {
                 return Err(StorageError::Conflict(
                     "the change would leave the group without a manager".into(),
@@ -577,8 +580,7 @@ async fn remove_group_member_on_connection_authorized(
     Ok(())
 }
 
-/// Delete the one `relation` row of `member_user_id` in `group_id`, under the
-/// group's membership lock. An absent row is `Ok`.
+/// `Proxiima.OwnerAuthority.MembershipChange.removeOne`.
 ///
 /// # Errors
 ///
@@ -687,11 +689,9 @@ async fn remove_group_member_relation_on_connection_authorized(
     Ok(())
 }
 
-/// Replace the `from` row of `member_user_id` in `group_id` with a `to` row in
-/// one transaction under the group's membership lock: delete `from`, insert
-/// `to` (an existing `to` row stays), commit. The lock serializes every
-/// membership change of the group, so a second replacement of the same row
-/// waits, then finds `from` gone.
+/// `Proxiima.OwnerAuthority.MembershipChange.replace`.
+///
+/// The group lock serializes competing replacements before matching `from`.
 ///
 /// # Errors
 ///
@@ -828,6 +828,7 @@ pub(crate) async fn list_group_members(
 /// # Errors
 ///
 /// Returns `Internal` on sqlx failure.
+// `Proxiima.OwnerAuthority.memberPageOrder`.
 pub(crate) async fn list_group_members_page(
     conn: &mut PgConnection,
     group_id: GroupId,
@@ -978,6 +979,7 @@ pub(crate) async fn home_owner<'e>(
     // `visible_home_owner`. A union over both spines on the bare uuid lets a
     // caller relabel a Memory as a Goal (or vice versa) and resolve the owner
     // space off the wrong spine, so each arm asks its own spine only.
+    // `Proxiima.OwnerAuthority.ownerSpine`.
     let row: Option<uuid::Uuid> = match entity {
         EntityId::Memory(memory_id) => {
             sqlx::query_scalar(

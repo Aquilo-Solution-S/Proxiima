@@ -29,28 +29,17 @@ pub(super) fn entity_kind(stored: &str) -> Result<EntityKind, StorageError> {
     }
 }
 
-/// Transfer one memory **series** to `to_owner`.
+/// Transfer under `Proxiima.OwnerAuthority.transferOrder` and
+/// `Proxiima.OwnerAuthority.SidecarTransfer`.
 ///
-/// Same `(handle, t)`: a transfer is an owner UPDATE, not a copy. Head and
-/// every version on the handle move together (`MemoryHeadAligned`), including
-/// forgotten versions, which keep their row and flag. A request may name a
-/// forgotten `t`. The series' existing source-owned head participates in the
-/// compare-and-set.
 /// Returns `true` iff a row under `from_owner` matched and was updated.
-///
-/// Sidecars follow the memory unless their surface declares `RetainAtSource`.
-/// Such rows retain their own owner and are excluded from generated transfer
-/// statements and the forget/restore cycle.
 ///
 /// Cited `blob` rows move when no other live series under a different owner
 /// still cites them. Embeddings / jobs follow the transferred `t`s so ANN
 /// (`emb.owner_id`) stays Tesla-valve. `ingest_keys` for those `t`s are
 /// deleted so the prior owner can mint a new series.
 ///
-/// Goals do not transfer — the engine refuses them before storage; this
-/// backstop keeps a direct storage call from transferring one. The same
-/// holds for a memory whose schema declares `NotTransferable`, kernel or
-/// Spiice, decided from the memory row.
+/// `Proxiima.Goals.transferGoal` and `Proxiima.OwnerAuthority.transferAdmitted`.
 ///
 /// # Errors
 ///
@@ -92,6 +81,7 @@ pub(crate) async fn transfer_to_owner(
         let mut tx =
             crate::platform_scope::begin_owner_lifecycle_transaction(pool, platform, permit)
                 .await?;
+        // `Proxiima.OwnerAuthority.capturedTransfer`.
         // Transfers participate in the owner fence before probing, locking,
         // or re-homing any series row.  Both endpoints are acquired in the
         // same sorted order, so an owner erase cannot pass the transfer's
@@ -288,6 +278,7 @@ async fn transfer_memory_handle(
     .fetch_one(&mut **tx)
     .await
     .map_err(map_err)?;
+    // `Proxiima.OwnerAuthority.transferAdmitted`.
     if has_guidance {
         return Err(StorageError::ConstraintViolation(
             "a memory series with Goal/Perspective causal relations cannot transfer owners".into(),
