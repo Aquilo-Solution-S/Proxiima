@@ -458,7 +458,7 @@ pub struct QueryRequest {
     /// Whether any or all requested tags must occur on the same memory.
     #[serde(default)]
     pub tag_match: TagMatch,
-    /// Goal-stream state union. Empty selects all states; other streams ignore it.
+    /// `Proxiima.Goals.stateFilter`.
     #[serde(default)]
     pub goal_states: BTreeSet<GoalState>,
     /// Goal series filter. Heads-only returns each selected series' latest
@@ -584,16 +584,12 @@ pub struct GoalRow {
     #[serde(flatten)]
     pub writer: WriterAttribution,
     pub title: String,
-    /// The Goal's prompt text as of this version (`goal.text`); `None` when
-    /// unknown: a version written before the text was stored whose replay
-    /// declaration was never recorded (before v0.0.13), or a row written
-    /// outside the Goal write verbs. Never blank.
+    /// `Proxiima.Goals.promptRevision`. `None` for historical rows whose prompt was never stored.
     #[serde(default)]
     pub text: Option<String>,
     pub state: GoalState,
     pub dependency_goal_ids: Vec<GoalId>,
-    /// Historical intended Perspective assignment (`goal.assignment_t`) on
-    /// original versions only; new writes use `motivated_by`.
+    /// `Proxiima.Goals.reusesAssignment`.
     #[serde(default)]
     pub historical_assignment: Option<MemoryId>,
     /// Exact Perspective versions that motivated this Goal version.
@@ -602,6 +598,7 @@ pub struct GoalRow {
     /// Evidence pins (`goal.evidence_t`).
     #[serde(default)]
     pub evidence: Vec<MemoryId>,
+    /// `Proxiima.Goals.clockSource`.
     /// When the series was set: the time of its first version (the least `t`
     /// of its `handle`), the same on every version of the series.
     #[serde(with = "time::serde::rfc3339")]

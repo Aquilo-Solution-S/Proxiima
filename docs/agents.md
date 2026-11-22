@@ -44,7 +44,7 @@ change with the host build, so this page does not copy their schemas.
 | External event or observed result | Fact admission | Records what entered through a source |
 | Pattern over admitted material | Abstraction derivation | Makes inputs and re-derivation explicit |
 | Causal or situated interpretation | Perspective derivation | Keeps claims in the interpretation layer |
-| Desired future state | Goal write | Separates intent from memory and scheduling |
+| Desired future state | Goal write | [`Proxiima.Goals`](ledger.md#goals) |
 | Host-side effect | Host action/tool | Effects belong to the host boundary |
 
 ## Do not

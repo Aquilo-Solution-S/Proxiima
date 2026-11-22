@@ -1,4 +1,4 @@
-//! Replay must not mint a second goal state or close-fact write-act.
+//! `Proxiima.Goals`
 #![allow(
     clippy::doc_markdown,
     clippy::too_many_arguments,
@@ -259,6 +259,7 @@ async fn replay_state(pg: &PgStorage, owner: OwnerId) -> Result<ReplayState, sql
     .await
 }
 
+// `Proxiima.Goals.replayIdentity`.
 #[tokio::test]
 async fn goal_replay_identity_uses_durable_body_across_wire_field_rename() {
     let (db_name, pg) = fresh_pg().await;
@@ -365,6 +366,7 @@ async fn goal_replay_identity_uses_durable_body_across_wire_field_rename() {
 /// With `core/goal-change-v1` listenable, every verb that inserts a goal row
 /// writes one change Fact and captures one record in its transaction, and a
 /// replay writes neither.
+// `Proxiima.Goals.publishChangeFact`.
 #[tokio::test]
 async fn every_goal_verb_writes_one_goal_change_fact_and_a_replay_writes_none() {
     let (db_name, pg) = fresh_pg().await;
@@ -547,6 +549,7 @@ async fn every_goal_verb_writes_one_goal_change_fact_and_a_replay_writes_none() 
     result.expect("goal change feed scenario failed");
 }
 
+// `Proxiima.Goals.requestReplay`.
 #[tokio::test]
 async fn exact_goal_command_replays_precede_live_admission_for_every_verb() {
     let (db_name, pg) = fresh_pg().await;
@@ -1079,6 +1082,7 @@ async fn exact_goal_command_replays_precede_live_admission_for_every_verb() {
     result.expect("exact Goal command replay declaration test failed");
 }
 
+// `Proxiima.Goals.replayIdentity`.
 #[tokio::test]
 async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
     let (db_name, pg) = fresh_pg().await;
@@ -1173,6 +1177,7 @@ async fn goal_replay_ignores_host_metadata_but_preserves_authorship_category() {
     result.expect("Goal replay declaration metadata stability test failed");
 }
 
+// `Proxiima.Goals.requestReplay`.
 #[tokio::test]
 async fn a_goal_without_a_replay_declaration_fails_closed() {
     let (db_name, pg) = fresh_pg().await;
@@ -1264,6 +1269,7 @@ async fn await_blocked_backends(pool: &sqlx::PgPool, n: i64) -> Result<(), sqlx:
 /// The race is pinned by holding the owner's admission fence exclusively,
 /// which every goal write takes right after its replay check. Both writers
 /// are then parked behind it before either can insert.
+// `Proxiima.Goals.requestReplay`.
 #[tokio::test]
 async fn concurrent_identical_goal_writes_replay() {
     let (db_name, pg) = fresh_pg().await;

@@ -670,6 +670,7 @@ async fn resolve_stance_subject(
     interpret::resolve_subject(ctx, handle).await
 }
 
+/// `Proxiima.Goals.evidenceAdmission`. Earlier episode slots already carry their kind.
 async fn resolve_goal_evidence(
     ctx: &ToolCtx,
     slots: &EpisodeSlots,

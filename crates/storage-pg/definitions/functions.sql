@@ -1055,6 +1055,7 @@ BEGIN
 END;
 $function$;
 
+-- `Proxiima.Goals.GoalState.terminal`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_no_later_after_terminal()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1086,7 +1087,7 @@ CREATE OR REPLACE FUNCTION proxiima_core.goal_parent_fixed()
  LANGUAGE plpgsql
 AS $function$
 BEGIN
-    -- #514: a series keeps the parent it was decomposed under.
+    -- `Proxiima.Goals.parentRevision`.
     IF EXISTS (
         SELECT 1
           FROM proxiima_core.goal prior
@@ -1108,6 +1109,7 @@ BEGIN
 END;
 $function$;
 
+-- `Causa.GoalPins`, `Causa.RetainedGoalTerminalCloseFactValid`, and `Proxiima.Goals.evidenceAdmission`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_pin_target_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -3273,8 +3275,7 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.owner_rls_apply_policies(target_schema text, target_table text, read_expr text, write_expr text) FROM PUBLIC;
 
--- Canonical Goal motivation arrays own the declaration. This scalar projection
--- is platform-maintained solely for selective reverse reads.
+-- `Proxiima.Goals.motivationDeclaration`.
 CREATE OR REPLACE FUNCTION proxiima_core.sync_goal_motivation_index()
  RETURNS trigger
  LANGUAGE plpgsql

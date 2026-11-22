@@ -1,6 +1,4 @@
-//! Goal introspection reads backing `proxiima://goals` and
-//! `proxiima://goal/{id}`: list-by-state with keyset pagination and a
-//! single-goal read. Goals stay write-only through `core_goal`.
+//! `Proxiima.Goals.readRevision`
 
 use std::collections::BTreeSet;
 
@@ -13,9 +11,7 @@ use crate::verbs::goal_write::{GoalState, GoalStateParseError};
 use crate::verbs::query::{EntityKind, QueryCursor, QueryPage, QueryRequest, SupersessionStatus};
 use crate::{ToolCtx, ToolError};
 
-/// Opaque cursor codec: the shared `{v, fp, c}` envelope with the goal
-/// keyset under `c`. The fingerprint binds the state filter; `limit`
-/// stays out so it may vary between pages.
+/// `Proxiima.Goals.stateFilter`. Page length can change between requests.
 const GOAL_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
     version: 2,
     source: "proxiima://goals page",
@@ -24,8 +20,7 @@ const GOAL_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::Fingerprinted
 
 #[derive(Debug, Deserialize)]
 pub struct ListGoalsArgs {
-    /// Goal state union: comma-separated Active, Paused, Achieved, or
-    /// Abandoned members (case-insensitive); omit for all states.
+    /// `Proxiima.Goals.stateFilter`.
     pub state: Option<String>,
     /// Max goals per page; values above 200 are clamped, 0 is rejected,
     /// default 50.
@@ -132,10 +127,7 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
     })
 }
 
-/// Read a Goal series' current head. `raw` names the series or any of its
-/// versions: `core_goal`, listed `goal` and `dependencies` values and Fact
-/// Goal references all carry version ids, and only the listing carries series
-/// handles.
+/// `Proxiima.Goals.readRevision`.
 ///
 /// # Errors
 ///
@@ -209,6 +201,7 @@ fn project_goals(rows: Vec<crate::verbs::query::GoalRow>) -> Vec<GoalItem> {
         .collect()
 }
 
+// `Proxiima.Goals.stateFilter`.
 fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, ToolError> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());
@@ -348,6 +341,7 @@ mod tests {
         ));
     }
 
+    // `Proxiima.Goals.stateFilter`.
     #[test]
     fn goal_state_parse_is_case_insensitive_and_closed() {
         assert_eq!(

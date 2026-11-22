@@ -1,8 +1,4 @@
-//! `GoalWrite` verb — typed surface only.
-//!
-//! See docs/protocol.md §"`GoalWrite`" and
-//! docs/concepts.md §"Goal entity". The
-//! storage-side body lives in proxiima-storage-pg.
+//! `Proxiima.Goals`
 
 use crate::ProtocolError;
 use crate::publication::PublicationStamp;
@@ -19,6 +15,7 @@ use crate::{
 /// answer an unknown id gets at the gate.
 pub const EVIDENCE_DOES_NOT_EXIST: &str = "evidence does not exist";
 
+/// `Proxiima.Goals.GoalState`.
 #[derive(
     Debug,
     Clone,
@@ -40,7 +37,7 @@ pub enum GoalState {
 }
 
 impl GoalState {
-    /// Title Case label a goal list returns (`Active`, `Paused`, …).
+    /// `Proxiima.Goals.stateLabel`.
     #[must_use]
     pub const fn list_label(self) -> &'static str {
         match self {
@@ -51,7 +48,7 @@ impl GoalState {
         }
     }
 
-    /// Lowercase label a `state` filter member matches after folding case.
+    /// `Proxiima.Goals.stateFilter`.
     #[must_use]
     pub const fn filter_label(self) -> &'static str {
         match self {
@@ -62,7 +59,7 @@ impl GoalState {
         }
     }
 
-    /// Parse one filter member. Casing is not signal; unknown labels fail closed.
+    /// `Proxiima.Goals.stateFilter`.
     #[must_use]
     pub fn from_filter_label(raw: &str) -> Option<Self> {
         match raw.to_ascii_lowercase().as_str() {
@@ -74,17 +71,7 @@ impl GoalState {
         }
     }
 
-    /// Legality of a plain lifecycle transition (the `GoalWrite` transition
-    /// verb) from `self` to `next`.
-    ///
-    /// Matrix: `Active → {Active, Paused, Abandoned}`, `Paused → {Active, Abandoned}`.
-    /// `Achieved` is **never** a legal target here — achievement flows
-    /// through the dedicated achieve path, not a plain transition.
-    /// `Achieved`/`Abandoned` are terminal (no outgoing
-    /// transition).
-    ///
-    /// This predicate and [`Self::may_achieve`] are the authoritative matrix
-    /// consulted by the engine routing gate and the storage transition guards.
+    /// `Proxiima.Goals.mayTransitionTo`.
     #[must_use]
     pub const fn may_transition_to(self, next: Self) -> bool {
         matches!(
@@ -94,14 +81,7 @@ impl GoalState {
         )
     }
 
-    /// Whether `self` may enter `Achieved` through the dedicated achieve verb.
-    ///
-    /// This is the goal's own state only. Storage also requires its decompose
-    /// children to be closed with at least one Achieved (#514), checked after
-    /// the write's lifecycle lock.
-    ///
-    /// See [`Self::may_transition_to`] for the authoritative plain-transition
-    /// matrix and its engine/storage callers.
+    /// `Proxiima.Goals.lifecycle`. Storage applies `Proxiima.Goals.closeGuard` under its lifecycle lock.
     #[must_use]
     pub const fn may_achieve(self) -> bool {
         matches!(self, Self::Active)
@@ -138,12 +118,7 @@ impl std::str::FromStr for GoalState {
     }
 }
 
-/// A plain lifecycle transition, as a request names it: the goal's next
-/// state AND what the change means for work a scheduler already queued.
-///
-/// Closed, and `pending` exists only on [`Self::Pause`]: a resume or an
-/// abandon cannot carry it, and no transition leads to `Achieved` (that goes
-/// through the achieve verb, which may carry evidence).
+/// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.PendingWork`.
 ///
 /// ```compile_fail
 /// use proxiima_core::PendingWork;
@@ -156,12 +131,8 @@ impl std::str::FromStr for GoalState {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalTransitionKind {
-    /// Active to Paused. `pending` says what happens to the queued work.
     Pause { pending: PendingWork },
-    /// Paused to Active.
     Resume,
-    /// Active or Paused to Abandoned; refused while a decompose child is
-    /// Active or Paused.
     Abandon,
 }
 
@@ -235,7 +206,8 @@ pub struct GoalDraft {
 }
 
 impl GoalDraft {
-    /// Build an Active Goal draft from an already-encoded typed payload.
+    /// `Proxiima.Goals.birthState`.
+    ///
     #[must_use]
     pub fn active_from_payload_write(
         owner: OwnerId,
@@ -271,10 +243,7 @@ impl GoalDraft {
 pub struct GoalWriteOutcome {
     pub goal_id: GoalId,
     pub goal_handle: crate::goal_collaboration::GoalHandle,
-    /// Index rows the goal write asserted — one `reference` per
-    /// declared topology entry (motivating Perspective, dependency
-    /// Goals, evidence memories). A count, not ids: an edge has no
-    /// identity beyond its content.
+    /// Count of derived `Causa.GoalPins` reference rows.
     pub edge_count: usize,
     /// True when the same `(owner, request_id)` existed and the
     /// body matched — see docs/protocol.md
@@ -283,13 +252,8 @@ pub struct GoalWriteOutcome {
 
 pub use crate::verbs::idempotency::IdempotencyKey;
 
-/// A memory a Goal rests on: held by this store, or by another registered
-/// store the caller was shown (`remote`).
-///
-/// A remote reference exists only with the [`ReadOrigin`] the other-stores
-/// service issued for it, so a Goal cannot name a foreign memory its writer
-/// could not read. The witness is not serialized: a deserialized reference is
-/// local, and a foreign id on it is refused where the Goal is written.
+/// `Proxiima.Goals.evidenceAdmission`.
+/// The other-store variant requires the read witness issued by that service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GoalEvidenceRef {
     memory_id: MemoryId,
@@ -364,14 +328,8 @@ impl GoalDependencyRef {
     }
 }
 
-/// What a Goal row points at, declared by its creating write.
-///
-/// Every entry here is a reference the Goal itself owns the statement
-/// for — the Goal records the Perspectives that motivated it, the Goals it waits
-/// on, and the evidence it rests on — so storage derives one
-/// [`crate::EdgeKind::Reference`] index row per entry inside the goal
-/// write's own transaction (docs/concepts.md). No relation is
-/// named and no kind is chosen: the declaration is the whole statement.
+/// `Causa.GoalPins`.
+/// `Proxiima.Goals.evidenceDeclaration`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct GoalTopologyWrite {
     motivated_by: Vec<GoalMotivationRef>,
@@ -398,9 +356,7 @@ impl<'de> serde::Deserialize<'de> for GoalTopologyWrite {
 }
 
 impl GoalTopologyWrite {
-    /// Declare optional Perspective motivations and any dependencies or evidence.
-    /// An unmotivated Goal belongs to its Owner alone; both reference lists
-    /// may be empty.
+    /// `Causa.GoalPins`.
     ///
     /// # Errors
     ///
@@ -468,15 +424,11 @@ pub struct GoalPayloadWrite {
 }
 
 impl GoalPayloadWrite {
-    /// Encode a typed [`GoalPayload`] for `GoalWrite` without exposing
-    /// storage table shape to host applications.
+    /// `Proxiima.Goals.displayAdmitted`.
     ///
     /// # Errors
     ///
-    /// Returns [`GoalWriteBuildError::InvalidTitle`] when `title` is
-    /// blank after trimming or exceeds [`MAX_GOAL_TITLE_CHARS`]. Returns
-    /// [`GoalWriteBuildError::InvalidText`] when `text` is blank after
-    /// trimming or exceeds [`MAX_GOAL_TEXT_CHARS`].
+    /// Returns the typed title or prompt refusal when display admission fails.
     pub fn from_payload<P>(
         title: impl AsRef<str>,
         text: impl AsRef<str>,
@@ -543,8 +495,7 @@ impl<P> GoalCreateRequest<P> {
     /// for the signed-in owner. Use [`Self::with_authorship`] for
     /// system-originated goals.
     ///
-    /// Optional motivations name exact Perspective versions that informed the Goal.
-    /// Without one, the Goal belongs to its Owner alone.
+    /// `Causa.goal_motivations_valid`.
     ///
     /// # Panics
     ///
@@ -598,10 +549,7 @@ impl<P> GoalCreateRequest<P> {
 pub struct GoalAtomicContext<'a> {
     pub registry: &'a crate::SpiiceRegistryFrozen,
     pub author_self_perspective_id: Option<MemoryId>,
-    /// What storage needs to capture the write's `core/goal-change-v1` Fact.
-    /// Storage writes that Fact exactly when the schema is listenable in
-    /// `registry`; the engine supplies this then, and storage refuses a
-    /// listenable schema without it. `None` is an unlistenable deployment.
+    /// `Proxiima.Goals.publishChangeFact`.
     pub publication: Option<PublicationStamp<'a>>,
 }
 
@@ -609,8 +557,7 @@ pub struct GoalAtomicContext<'a> {
 pub struct CreateGoalAtomicRequest<'a> {
     pub draft: GoalDraft,
     pub context: GoalAtomicContext<'a>,
-    /// When set, the new Goal row pins this write-act Fact (`Goal.write_act_t`).
-    /// Replay does not rewrite the column; a bound episode must fail instead.
+    /// `Proxiima.Goals.replayIdentity`. A bound episode fails if a replay would replace its write-act pin.
     pub write_act_t: Option<MemoryId>,
 }
 
@@ -663,9 +610,7 @@ pub struct DecomposeGoalAtomicRequest<'a> {
     pub children: Vec<ChildGoalDraft>,
 }
 
-/// One already-normalized Goal command whose request-id replay may be
-/// resolved without renewing admission of the mutable rows it originally
-/// referenced.
+/// `Proxiima.Goals.requestReplay`.
 #[derive(Debug, Clone, Copy)]
 pub enum GoalReplayRequest<'request, 'context> {
     Create(&'request CreateGoalAtomicRequest<'context>),
@@ -772,6 +717,7 @@ mod goal_state_matrix_tests {
         }
     }
 
+    // `Proxiima.Goals.lifecycle`.
     #[test]
     fn only_active_may_achieve() {
         assert!(GoalState::Active.may_achieve());
@@ -780,6 +726,7 @@ mod goal_state_matrix_tests {
         assert!(!GoalState::Abandoned.may_achieve());
     }
 
+    // `Proxiima.Goals.stateLabel`.
     #[test]
     fn filter_and_list_labels_stay_paired() {
         for state in ALL {

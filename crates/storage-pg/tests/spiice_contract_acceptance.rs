@@ -22,6 +22,7 @@ use uuid::Uuid;
 /// claimed one would be a lie. What exists is an engine refusal, a storage
 /// backstop and a DDL trigger, and `try_freeze` rejects a `NotTransferable`
 /// that names none of them.
+// `Proxiima.Goals.transferGoal`.
 #[test]
 fn goals_are_not_transferable_and_the_declaration_names_its_enforcement() {
     let goals = SPIICE_0

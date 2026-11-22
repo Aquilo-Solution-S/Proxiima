@@ -91,9 +91,7 @@ const CORE_PROJECTION: ProjectionSpec = ProjectionSpec {
     rank_source: RankSource::Projection,
 };
 
-/// Goals do not transfer, and the refusal is real in three places. There is
-/// no CHECK constraint to name, so the DDL leg is a trigger that freezes
-/// `goal_head.owner_id`.
+/// `Proxiima.Goals.transferGoal`.
 const GOAL_NOT_TRANSFERABLE: TransferRule = TransferRule::NotTransferable {
     why: "a goal series cannot change owner: goal intent remains with its owner, \
           hard-context memory set and tool grants are the receiving owner's \
@@ -160,10 +158,7 @@ const WRITE_ACT_V1: SchemaContract = SchemaContract {
     natural_key_columns: crate::NaturalKeyDeclaration::EMPTY,
 };
 
-/// Written by every goal write, in the goal's own transaction, when the
-/// schema is listenable (docs/host-integration.md). It
-/// follows `core/write-act-v1` row for row: a protocol lifecycle Fact keyed
-/// on `memory.t`, with nothing to search, embed or re-home.
+/// `Proxiima.Goals.publishChangeFact`.
 const GOAL_CHANGE_V1: SchemaContract = SchemaContract {
     id: SchemaRef::new(SPIICE_ID, "goal-change", 1),
     kind: PayloadKind::Fact,

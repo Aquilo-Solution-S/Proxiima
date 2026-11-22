@@ -7,23 +7,14 @@ raw core tables or resolve owners itself. See [concepts](concepts.md) for the
 boundary and [configuration](configuration.md) for the settings inventory.
 
 Read and write projector cursors through `Engine::load_source_cursor` and
-`Engine::store_source_cursor`, using the request's `AuthzContext`. Goal display
-fields are validated by `GoalPayloadWrite::from_payload`; its
-`GoalWriteBuildError` carries the typed refusal. `GoalTopologyWrite::new`
-takes a list of exact motivating Perspective versions, each declared with
-`GoalMotivationRef::perspective(id)`, plus dependency and evidence lists.
-An empty motivation list leaves the Goal independent of any Perspective. Evidence may be
-empty, including when marking a goal achieved. HTTP routes are listed in
-[protocol](protocol.md).
+`Engine::store_source_cursor`, using the request's `AuthzContext`.
 
-A new Perspective records actual guidance through
-`DerivedMemory::guided_interpretation` or `DerivedMemory::guided_perspective`,
-passing exact `GoalId` versions. The corresponding MCP inputs are `guided_by`
-on `core_interpret` and on `core_derive` with `kind: Perspective`. Guidance is
-separate from the payload's ordinary Goal references and its grounding.
-`core_goal modify` preserves motivation when `motivated_by` is omitted;
-an empty list clears it and a supplied list replaces it. New targets must be
-readable and belong to the declaring version's owner.
+[`Proxiima.Goals`](ledger.md#goals).
+
+A new Perspective records guidance through `DerivedMemory::guided_interpretation`
+or `DerivedMemory::guided_perspective`. The MCP input is `guided_by` on
+`core_interpret` or `core_derive(kind: Perspective)`. See
+`Causa.perspective_guidance_valid`.
 
 ## Goal collaboration
 
@@ -42,15 +33,13 @@ that access at the next statement and leaves the grant row as it was. A grant
 to a Group carries no `manage`, and storage refuses one that does. A person
 who is invited directly and through a Group holds the join of both.
 
-An existing Goal's title and progress use the existing `modify_goal`,
-`transition_goal`, and `mark_goal_achieved` methods. A Goal guest needs a
-grant that works Goals (`GoalAccess::Works`); every guest reads the Goal it
-was granted on. A grant carries no owner administration, so one built from
-`Role::admin()` is refused: `Role::editor().managing()` edits the Goal and
-manages its audience. A member achieves a Goal by administering its owner,
-not by a grant that only reads it. Goal creation, decomposition, and
-motivation replacement still require owner authority. Omitted `space` on those MCP edit actions uses
-the named Goal's owner; an explicit space remains a narrowing selector.
+An existing Goal's title and progress use `modify_goal`, `transition_goal`, and
+`mark_goal_achieved`. A Goal guest needs a grant that works Goals
+(`GoalAccess::Works`); every guest reads the Goal it was granted on. A grant
+carries no owner administration, so one built from `Role::admin()` is refused.
+`Role::editor().managing()` edits the Goal and manages its audience. A member
+achieves a Goal by administering its owner. Goal creation, decomposition, and
+motivation replacement require owner authority.
 
 A/P authoring chooses `MemoryDestination::Owner` or
 `MemoryDestination::WorkingGoal`. New work is bound in its transaction;
@@ -449,9 +438,7 @@ owner set. A host requiring a tenant boundary must return a confined
 it from broader authority. Apply `narrowed_to_owner(tenant)` before
 `with_default_owner(tenant)` for a tenant-confined URL-only connector:
 narrowing clears any prior default. `with_default_owner` chooses a default
-without confining that authority. A caller's self-Perspective does not populate
-Goal motivations. Hosts supply exact `motivated_by` versions explicitly,
-including in episodes; `guided_by` records actual guidance on a Perspective.
+without confining that authority.
 
 Tool admission combines two distinct policies. `ServedSurface` configures a
 deployment through `RuntimeBuilder::served_surface`; every declared read-only
@@ -668,10 +655,9 @@ For a store accessed by spiice workers, register an `OtherStores` port with
 `RuntimeBuilder::other_stores`; the facade wraps it as a typed service with the
 configured timeout. `OtherStores::read` takes a `ReadAt`: `Version` answers
 the exact memory asked for, `SeriesHead` the newest version of its series the
-caller may read, and `RemoteMemory::series` names that series. Goal evidence
-names a remote memory through the same owner-authorized read. The adapter also
-supplies the stored owner, payload and occurrence time; display text and writer
-attribution do not establish ownership. A Fact carries its occurrence time,
+caller may read, and `RemoteMemory::series` names that series. The adapter
+also supplies the stored owner, payload and occurrence time. Display text
+and writer attribution do not establish ownership. A Fact carries its occurrence time,
 including a backdated observation. Single and batch reads preserve these fields.
 A search hit of a citing Fact names its cited object (`RemoteHit::citation`),
 as a local `core_search_memories` hit does. The extra-store transaction is separate from a Proxiima
@@ -883,8 +869,7 @@ let builder = RuntimeBuilder::default()
 Bind publication source, model provenance, and host-bound extensions once on
 the authenticated context. The host owns consumer ledgers, retention, and
 actor attribution. The typed `PublicationRecord`, `DurableIntake`, and delivery outcomes own the
-CloudEvents envelope and retry contract in rustdoc. Scheduling, execution, and
-call logging belong to the host; the outbox is its change channel.
+CloudEvents envelope and retry contract in rustdoc.
 
 The built-in HTTP sink reads `PROXIIMA_OUTBOX_HTTP_URL` and delivers each event
 to that receiver without following redirects. Plaintext HTTP requires loopback

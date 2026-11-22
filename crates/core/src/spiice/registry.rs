@@ -71,12 +71,7 @@ impl SpiiceRegistry {
         Self::default()
     }
 
-    /// Make `core/goal-change-v1` listenable, so every goal write also writes
-    /// its change Fact into the outbox.
-    ///
-    /// Public only because the runtime composes the registry from another
-    /// crate: `LISTENABLE` is a type constant, and whether anything consumes
-    /// the outbox is a runtime fact (`RuntimeConfig.outbox_consumers`).
+    /// `Proxiima.Goals.publishChangeFact`. The composition root calls this before freezing the registry.
     #[doc(hidden)]
     pub fn publish_goal_changes(&mut self) {
         let goal_change = crate::GoalChangeV1::schema_id();

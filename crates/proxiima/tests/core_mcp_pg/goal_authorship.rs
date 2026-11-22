@@ -1,6 +1,4 @@
-//! Direct `core_goal` actions are operator-authored: the author category the
-//! store keeps in each write's replay identity is `system_operator` for set,
-//! modify and every decompose child.
+//! `Proxiima.Goals`
 
 use proxiima_core::GoalId;
 use proxiima_storage_pg::test_fixtures::goal_authorship_category;
@@ -8,6 +6,7 @@ use uuid::Uuid;
 
 use super::goal_evidence_kinds::{Env, handle_of};
 
+// `Proxiima.Goals.operatorAuthorship`.
 #[tokio::test]
 async fn direct_goal_actions_store_operator_authorship() {
     let env = Env::new("proxiima_goal_authorship")

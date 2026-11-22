@@ -38,10 +38,7 @@ flowchart TD
     P --> G
 ```
 
-The loop is a model of information flow. It does not make Reality, Self, or
-an Action a storage-layer memory kind. Goal intent and host scheduling remain
-separate concerns; [host integration](host-integration.md)
-defines the execution boundary.
+[`Proxiima.Goals`](ledger.md#goals).
 
 ## Runtime architecture
 

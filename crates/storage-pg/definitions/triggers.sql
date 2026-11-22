@@ -93,7 +93,7 @@ CREATE OR REPLACE TRIGGER erased_pin_target_append_only BEFORE DELETE OR UPDATE 
 CREATE OR REPLACE TRIGGER erased_pin_target_insert_guard BEFORE INSERT ON proxiima_core.erased_pin_target FOR EACH ROW EXECUTE FUNCTION proxiima_core.assert_erased_pin_target_insert();
 
 
--- goal
+-- goal: `Proxiima.Goals.GoalState.isOpen`, `Proxiima.Goals.parentRevision`, `Causa.GoalPins`.
 CREATE OR REPLACE TRIGGER goal_motivation_index_sync
     AFTER INSERT ON proxiima_core.goal
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.sync_goal_motivation_index();

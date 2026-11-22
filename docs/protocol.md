@@ -42,15 +42,9 @@ when their target is redacted.
 to hide or restore it in that space; omit the key to use the session's selected
 owner. The key grants no write authority.
 
-Goal creation and decomposition use the optional `space` selector, defaulting
-to the session owner. Existing Goal edits resolve the named Goal's owner when
-`space` is omitted; an explicit space narrows that selection.
-Evidence and the caller's self-Perspective may belong to other spaces the
-writer can read; reading the goal grants no access to those memories.
-Motivation is explicit: `motivated_by` names exact Perspective versions;
-omission leaves a new Goal unmotivated, including in `core_episode_commit`.
-`guided_by` records exact Goals that guided a Perspective version. Episodes
-remain owner-authorized; Goal guests contribute through derive/interpret.
+[`Proxiima.Goals`](ledger.md#goals). Episodes remain owner-authorized. Goal guests
+contribute through derive/interpret. A Goal grant confers no authority over its
+ordinary evidence.
 
 Session retention is scoped to the authenticated principal, independently of
 the selected owner. Opening more sessions can evict only that principal's own
@@ -79,8 +73,7 @@ nested groups, and use cases, and the
 
 Reads return committed rows admitted by owner or Goal authority. A `t` identifies one version;
 `handle` identifies its series. Head queries and exact-version reads are
-different operations. A Goal handle read returns its current head; explicit
-version selectors can retrieve historical rows.
+different operations.
 
 Search hits and single and batch memory reads report the stored `owner` UUID
 independently of the writer. Local `space` labels that home owner: `current` for the session's
@@ -103,16 +96,12 @@ uses `(created_at, t)`; Goal pages use `(handle, t)`, so changing an Active Goal
 to Paused does not move its series across the page boundary. A page is not a
 long-lived database snapshot: concurrent writes can change later results.
 
-Goal state selection is a union. Fact reads can select references to any
-readable version of specified Goal series, intersected with other filters.
-Unreadable and absent series both match nothing. Pin traversal follows stored
-declarations; similarity influences retrieval scores only.
+Pin traversal follows stored declarations. Similarity influences retrieval scores only.
 
 The publication outbox is the host change channel. It captures listenable
 Facts in their write transaction and delivers them at least once to host
-intakes. Delivery is separate from the client response; consumers deduplicate
-by event identity. Host routing and execution stay in the host. See
-[host integration](host-integration.md#fact-publication-outbox).
+intakes. Delivery is separate from the client response. Consumers deduplicate by
+event identity. See [host integration](host-integration.md#fact-publication-outbox).
 
 ## Search across stores
 
@@ -150,11 +139,8 @@ Authoring derived content carries declared-input provenance. An interpretation
 Perspective declares references without claiming a derivation. No operation
 writes an independent edge.
 
-Goal resources expose `motivated_by`; Perspective reads expose `guided_by`.
-Both name exact versions, with unreadable targets omitted from these role
-fields. Generic memory-source edge traversal includes Perspective guidance;
-Goal-owned motivation is read through the Goal resource. Owner export keeps
-the stored declarations, including historical assignments.
+Perspective resources expose `guided_by`. Generic memory-source edge traversal
+includes it. See `Causa.perspective_guidance_valid`.
 
 `proxiima://goal/{id}/surroundings` reads the declarations around a Goal in both
 directions, including dependencies, evidence, motivation, guidance and memory
@@ -165,20 +151,9 @@ reported separately. Its continuation identifies the read and position,
 never an unreadable endpoint. Like other pages, later calls see current data
 rather than a retained snapshot.
 
-Goal transitions append a later version. `transition` `abandon` takes an
-Active or Paused goal in one write, so a paused goal never becomes Active on
-its way out; `mark_achieved` takes only an Active goal. `core_goal`
-`mark_achieved` on a goal with decompose children is refused as
-`InvalidArgument` on `goal` while a
-child is open, with the message prefix `goal has open children: ` followed by
-each open child's current handle, or when every child is Abandoned, with
-`goal children are all abandoned; achieve at least one child first`.
-`transition` `abandon` on a goal with an open decompose child is refused the
-same way, as `InvalidArgument` on `goal` with the prefix
-`goal has open children: `; a goal whose children are all closed abandons.
-Pause's `pending: keep|discard` is an instruction for the host's queue. The
-host decides how to execute that instruction; Proxiima persists intent and
-state. Hard deletion uses the explicit host or spiice-scoped inverse paths in
+Goal closure refusals are `InvalidArgument` on `goal`. The
+`goal has open children: ` prefix precedes the open children's current
+version IDs. Hard deletion uses the explicit inverse paths in
 [data and erasure](data-and-erasure.md).
 
 Caller scope names exact command/action and resource keys. A deployment's
@@ -283,16 +258,12 @@ ones included; in `core_think` such a memory is a leaf visit with `store`, its
 `edge` kind, and the same `status`/`unavailable_reason` when it could not be
 read.
 
-Goal evidence (`core_goal` set, modify, decompose children, `mark_achieved`)
-may name a memory on another store. The write reads it there as the caller
-first, so an unreadable memory is `not_found` and an unanswering store is
-`store_unavailable`, both before any write; nothing of the memory is copied.
-A modify that omits evidence keeps a remote id as written. `proxiima://goals`
-lists each version's `evidence`. `proxiima://memory/{id}` reads the version
-named (`version=exact`, the default); `?version=head` returns the newest
-version of its series the caller may read, from this store or from the store
-that issued the UUID, and the output's `handle` and `series` say which version
-and series that is.
+Other-store evidence reads answer `not_found` for unreadable targets and
+`store_unavailable` for stores that do not answer. `proxiima://memory/{id}`
+reads the version named (`version=exact`, the default). `?version=head` returns
+the newest version of its series the caller may read, from this store or
+the store that issued the UUID. The output's `handle` and `series` identify
+the version and series.
 
 Operation-specific schema and error variants remain in code. Retry only when
 the operation and its idempotency contract allow it; a transport disconnect

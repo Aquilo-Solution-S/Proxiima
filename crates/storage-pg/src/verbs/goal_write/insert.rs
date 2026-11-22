@@ -17,8 +17,7 @@ pub(super) struct PreparedGoalInsert<'a> {
     pub(super) context: GoalAtomicContext<'a>,
     pub(super) expected_prior: Option<GoalId>,
     pub(super) preparation: GoalWritePreparation,
-    /// The `core/goal-change-v1` Fact this write will also write: `Some`
-    /// exactly when the write is new and the schema is listenable.
+    /// `Proxiima.Goals.publishChangeFact`.
     pub(super) change_fact: Option<GoalChangeFact<'a>>,
 }
 
@@ -59,7 +58,7 @@ pub(super) async fn insert_or_replay_goal(
             .await?;
             if let GoalWritePreparation::New(prepared_write) = &prepared.preparation {
                 lock_prepared_goal_write(&mut attempt, prepared_write).await?;
-                // A replay preparation skips this: a replayed achieve replays.
+                // `Proxiima.Goals.requestReplay`.
                 let rule = match guard {
                     PostLockGuard::None => None,
                     PostLockGuard::ChildrenClosed => Some(ChildRule::ClosedWithAchieved),
@@ -114,9 +113,7 @@ async fn lock_goal_request(
     Ok(())
 }
 
-/// The tree edge (#514): a successor copies its series' parent forward,
-/// and a decompose child names its parent's series handle. This is the
-/// one place that sets it.
+/// `Proxiima.Goals.parentRevision`.
 async fn resolve_series_edge(
     tx: &mut Transaction<'_, Postgres>,
     owner: &proxiima_core::OwnerId,
@@ -160,12 +157,8 @@ pub(super) async fn prepare_goal_insert<'a>(
     let store_number = columns.store_number;
     let owner = draft.owner();
 
-    // Two identical commands serialize on their request before replay
-    // detection, so the second one sees the first one's goal and replays
-    // instead of racing it into the `(owner_id, request_id)` unique index.
+    // `Proxiima.Goals.requestReplay`.
     lock_goal_request(tx, &owner, &draft.request_id).await?;
-    // Replay detection precedes prior-head lookups: a replay must
-    // not become dependent on a target that a later erase removed.
     if let Some(existing) = load_goal_by_request_id(tx, &owner, &draft.request_id).await? {
         return Ok(PreparedGoalInsert {
             draft: draft.clone(),
@@ -179,7 +172,6 @@ pub(super) async fn prepare_goal_insert<'a>(
                     replay: true,
                 },
             ),
-            // A replay writes no second change Fact.
             change_fact: None,
         });
     }
@@ -260,13 +252,7 @@ pub(super) async fn prepare_goal_insert<'a>(
     })
 }
 
-/// The stamp a goal-change Fact is captured with, or `None` while
-/// `core/goal-change-v1` is not listenable.
-///
-/// The frozen registry is the one authority on listenability, so a goal write
-/// writes the Fact exactly when the registry says so. A listenable schema
-/// without a stamp is a context the engine did not build: refused, not
-/// skipped, because skipping would drop a record the deployment asked for.
+/// `Proxiima.Goals.publishChangeFact`.
 fn goal_change_stamp(
     context: GoalAtomicContext<'_>,
 ) -> Result<Option<PublicationStamp<'_>>, StorageError> {
@@ -307,8 +293,7 @@ pub(super) async fn persist_prepared_goal_insert(
             prepared.expected_prior,
         )
         .await?;
-        // The choke point of the change Fact: every goal row a verb inserts
-        // is persisted here, and a replay (above) never reaches it.
+        // `Proxiima.Goals.publishChangeFact`.
         if let (GoalWritePreparation::New(write), Some(fact)) =
             (&prepared.preparation, &prepared.change_fact)
         {

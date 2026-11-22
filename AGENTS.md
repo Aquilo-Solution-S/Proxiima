@@ -1,16 +1,15 @@
 # AGENTS.md
 
-Read [README](README.md) first. The [twelve-page guide](docs/index.md) owns
+Read [README](README.md) first. The [guide](docs/index.md) owns
 concepts and integration; avoid a second invariant or configuration ledger.
 
 ## Scope and authority
 
-- The Lean kernel in `lean/Causa/` states the principles in
-  `Principles.lean`; its other files are supporting definitions and lemmas.
-  Rust code and tests define runtime behavior. Change a principle in Lean
-  first; `lake build` and `lake exe ledger check`, in `lean/`, check the kernel,
-  not a Rust refinement proof.
-- Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers,
+- The ledger in `lean/Proxiima/` owns the rules it declares. The proof library
+  in `lean/Causa/` holds the graph proofs and remaining principles. Link the
+  full declaration name where code holds a rule. Run `lake build` and
+  `lake exe ledger check` in `lean/`. CI checks the generated artifacts.
+- Types/defaults/limits outside the ledger: rustdoc. Tables: migrations; core functions, triggers,
   policies and views: `crates/storage-pg/definitions/`. Settings: each
   crate's `settings!` block, read only through `Setting::read`;
   [configuration](docs/configuration.md) is rendered from the blocks and kept

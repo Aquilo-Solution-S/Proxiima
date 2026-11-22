@@ -519,7 +519,7 @@ fn push_worked_example(out: &mut String, s: Surface) {
         let _ = writeln!(
             out,
             "4. **Wire intent.** `core_goal` action=set to record what to pursue; \
-             action=decompose to break it down; mark the parent achieved after its children; close children before their parent."
+             action=decompose to break it down."
         );
     }
     out.push('\n');
@@ -741,6 +741,7 @@ mod tests {
     /// The instructions and how-to for a core-only host, byte for byte. A
     /// change to the generated guidance must update these snapshots on
     /// purpose; dropping a spiice's gated text must leave them alone.
+    // `Proxiima.Goals.closeGuard` is documented in the catalog.
     #[test]
     fn core_only_surface_instructions_are_unchanged() {
         let tools: BTreeSet<&str> = NAMEABLE_TOOLS

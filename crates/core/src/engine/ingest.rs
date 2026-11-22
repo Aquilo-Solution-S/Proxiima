@@ -724,10 +724,7 @@ impl Engine {
         )))
     }
 
-    /// Every engine-authorized Fact write names its schema here, so this is
-    /// where `core/goal-change-v1` is refused: a scheduler acts on a goal
-    /// change, so only a goal write may record one, in storage and under the
-    /// goal's own authority (docs/host-integration.md).
+    /// `Proxiima.Goals.reserveChangeFact`.
     fn fact_schema_info(
         &self,
         schema_id: &crate::SchemaId,

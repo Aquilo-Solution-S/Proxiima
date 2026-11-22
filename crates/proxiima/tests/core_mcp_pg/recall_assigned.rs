@@ -1,10 +1,11 @@
-//! #490: recall reads the Goals assigned to its head Perspectives together.
+//! `Proxiima.Goals`
 
 use super::goal_evidence_kinds::{Env, handle_of};
 use serde_json::json;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
 
+// `Proxiima.Goals.recallActiveGoal`.
 #[tokio::test]
 async fn recall_returns_the_goals_assigned_to_every_recalled_perspective() {
     let env = Env::new("proxiima_recall_assigned")

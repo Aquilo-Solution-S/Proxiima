@@ -98,6 +98,7 @@ fn dispatcher_tool_arg_schemas_expose_action_enum() {
     }
 }
 
+// `Proxiima.Goals.mayDeclareEvidence`.
 #[test]
 fn core_goal_action_metadata_preserves_required_fields() {
     let frozen = SpiiceRegistry::default().freeze_or_panic_for_tests();
@@ -176,6 +177,7 @@ fn core_goal_action_metadata_preserves_required_fields() {
     );
 }
 
+// `Proxiima.Goals.mayDeclareEvidence`.
 #[test]
 fn goal_child_and_episode_evidence_are_optional_but_children_are_required() {
     let frozen = SpiiceRegistry::default().freeze_or_panic_for_tests();

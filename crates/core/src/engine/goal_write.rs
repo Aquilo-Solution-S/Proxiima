@@ -159,11 +159,7 @@ impl Engine {
         })
     }
 
-    /// Create an Active typed Goal for an embedded host or protocol
-    /// caller without exposing `proxiima_core.goal` storage shape.
-    ///
-    /// The request may name a target Perspective. An unassigned Goal belongs
-    /// to its Owner alone.
+    /// `Proxiima.Goals.birthState`.
     ///
     /// # Errors
     ///
@@ -186,7 +182,7 @@ impl Engine {
             .await
     }
 
-    /// Create an Active Goal from a dynamic protocol payload.
+    /// `Proxiima.Goals.birthState`.
     ///
     /// # Errors
     ///
@@ -249,12 +245,7 @@ impl Engine {
             .map_err(map_goal_storage_error)
     }
 
-    /// Transition a Goal head to Paused, Active, or Abandoned.
-    ///
-    /// Abandon takes an Active or Paused goal in one write; it is refused
-    /// while any decompose child's current head is Active or Paused: an
-    /// open goal never sits under a closed one. Pause and resume are not
-    /// affected.
+    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.closeGuard`.
     ///
     /// # Errors
     ///
@@ -273,10 +264,6 @@ impl Engine {
             .authorize_goal_edit(authz, req.owner, req.prior_goal_id, GoalEdit::Work)
             .await?;
         let context = self.goal_atomic_context(authz, req.author_self_perspective_id)?;
-        // `Achieved` is not a `GoalTransitionKind`: achievement has
-        // its dedicated path through `mark_goal_achieved`. The
-        // authoritative legality matrix is `GoalState::may_transition_to`,
-        // enforced storage-side.
         let atomic = TransitionGoalAtomicRequest {
             owner: req.owner,
             prior_goal_id: req.prior_goal_id,
@@ -299,10 +286,7 @@ impl Engine {
         transition_goal_authorized(&self.storage().goal_command, &atomic, permit.permit()).await
     }
 
-    /// Mark a Goal head Achieved with optional evidence.
-    ///
-    /// A goal with decompose children is Achieved only when no child's
-    /// current head is Active or Paused and at least one is Achieved (#514).
+    /// `Proxiima.Goals.closeGuard` and `Proxiima.Goals.mayDeclareEvidence`.
     ///
     /// # Errors
     ///
@@ -351,7 +335,7 @@ impl Engine {
             .map_err(|err| map_goal_edit_storage_error(permit.permit(), err))
     }
 
-    /// Replace an Active Goal head's content.
+    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.editPins`.
     ///
     /// # Errors
     ///
@@ -433,7 +417,7 @@ impl Engine {
             .map_err(|err| map_goal_edit_storage_error(permit.permit(), err))
     }
 
-    /// Create Active child Goals under a parent Goal.
+    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.parentRevision`.
     ///
     /// # Errors
     ///
@@ -487,9 +471,7 @@ impl Engine {
             .map_err(map_goal_storage_error)
     }
 
-    /// The context every goal write runs under: the frozen registry, the
-    /// author's self-perspective and, while `core/goal-change-v1` is
-    /// listenable, the stamp storage captures its change Fact with.
+    /// `Proxiima.Goals.publishChangeFact`.
     ///
     /// The stamp binds what [`Self::resolve_publication`] binds for any other
     /// listenable Fact: the configured source, the token-certified model id
@@ -661,11 +643,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Read-admit each evidence target held by this store; one held by
-    /// another store carries the other-stores read that proved the caller
-    /// may see it. Kind ∈ {F, A} is the in-tx TOCTOU
-    /// (`validate_evidence_in_owner`); a second pre-tx kind load here is the
-    /// overlapping walk.
+    /// `Proxiima.Goals.evidenceAdmission`.
     async fn validate_goal_evidence_authorized<'a>(
         &self,
         authz: &AuthzContext,
@@ -806,8 +784,7 @@ mod tests {
         )
     }
 
-    /// #514 F10: the goal-tree refusals reach the protocol as
-    /// `InvalidArgument` on `goal` with stable message prefixes.
+    // `Proxiima.Goals.closeGuard`.
     #[test]
     fn goal_tree_refusals_map_to_invalid_argument() {
         let a = GoalId::new(uuid::Uuid::from_u128(0x0001));

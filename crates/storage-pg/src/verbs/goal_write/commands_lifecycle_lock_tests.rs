@@ -286,6 +286,7 @@ async fn run_concurrent_successor_race(
     Ok((second_err, first_outcome.t))
 }
 
+// `Proxiima.Goals.admissionOrder`.
 #[tokio::test]
 async fn decomposition_locks_the_union_before_first_goal_persist() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -392,6 +393,7 @@ async fn decomposition_locks_the_union_before_first_goal_persist() {
     result.expect("decomposition union lock test failed");
 }
 
+// `Proxiima.Goals.predecessorArbitration`.
 #[tokio::test]
 async fn concurrent_successors_classify_stale_head_before_persisting() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -460,6 +462,7 @@ async fn concurrent_successors_classify_stale_head_before_persisting() {
     result.expect("concurrent Goal successors must serialize on the prior head");
 }
 
+// `Proxiima.Goals.reserveChangeFact`.
 #[tokio::test]
 async fn low_level_write_act_is_reserved_until_union_lock_release() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -540,6 +543,7 @@ async fn low_level_write_act_is_reserved_until_union_lock_release() {
     result.expect("low-level write-act reservation test failed");
 }
 
+// `Proxiima.Goals.closeFactPresence`.
 #[tokio::test]
 async fn terminal_close_fact_is_reserved_until_union_lock_release() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

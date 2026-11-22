@@ -25,16 +25,8 @@ pub(super) struct EvidenceTarget {
     pub(super) memory_id: MemoryId,
 }
 
-/// The columns of a Goal row that its [`GoalDraft`] does not decide.
-///
-/// `text` is what `goal.text` holds, and it is given, never derived from the
-/// draft: a write that declares a text (create, modify, a decomposed child)
-/// passes `Some(draft.text)`, and a write that only moves the lifecycle
-/// (transition, achieve) passes its prior version's `StoredGoal::text` exactly
-/// as loaded, `None` (unknown) included. Nothing on the way judges it, so a
-/// stored value comes out byte for byte; the one judge is the database CHECK.
-///
-/// [`GoalDraft`]: proxiima_core::verbs::goal_write::GoalDraft
+/// `Proxiima.Goals.promptRevision`.
+/// Historical rows can lack a stored prompt.
 #[derive(Clone, Copy)]
 pub(super) struct RowColumns<'a> {
     /// The configured number encoded into this row's minted identity.

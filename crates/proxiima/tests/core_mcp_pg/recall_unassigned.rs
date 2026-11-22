@@ -1,4 +1,4 @@
-//! Unassigned Active Goals remain recallable in their selected memory space.
+//! `Proxiima.Goals`
 
 use super::goal_evidence_kinds::handle_of;
 use super::*;
@@ -14,6 +14,7 @@ fn goal_args(title: &str, target: Option<&str>) -> serde_json::Value {
     args
 }
 
+// `Proxiima.Goals.recallActiveGoal`.
 #[tokio::test]
 async fn recall_unassigned_goals_keeps_space_scope_pages_and_dedupes_subjects() {
     let split_db = clone_split_core_db("proxiima_recall_unassigned")

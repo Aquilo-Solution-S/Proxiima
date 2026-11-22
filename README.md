@@ -9,7 +9,8 @@
 
 Typed, owner-scoped durable memory for agents: Facts, Abstractions,
 Perspectives, Goals, citations, retrieval, and provenance. A host supplies
-identity, event sources, model clients, scheduling, and effects.
+identity, event sources, model clients, and effects. See the
+[`Proxiima.Goals` ledger](docs/ledger.md#goals).
 
 | Task | Start here |
 |---|---|
@@ -23,11 +24,10 @@ identity, event sources, model clients, scheduling, and effects.
 | Find settings | [Configuration](docs/configuration.md) |
 | Contribute or build this site | [Contributing](docs/contributing.md) |
 
-The [twelve-page documentation](docs/index.md) owns concepts and integration
-instructions. Rustdoc owns types, defaults, and limits; migrations own table
-shape; the running catalog owns operation schemas. The Lean kernel states
-principles; Rust code and tests define runtime behavior. A principle change
-starts in the kernel.
+The [documentation](docs/index.md) owns concepts and integration
+instructions. The [ledger](docs/ledger.md) states Goal rules and the Causa proofs.
+Rustdoc owns other types, defaults, and limits. Migrations own table shape.
+The running catalog owns operation schemas.
 
 One deployment links core, storage, transports, and spiice crates at build
 time. The canonical host is [proxiima-mcp](apps/proxiima-mcp); it serves the

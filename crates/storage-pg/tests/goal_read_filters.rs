@@ -1,4 +1,4 @@
-//! Goal series selectors, mutation-safe paging, and Fact reference filters.
+//! `Proxiima.Goals`
 #![allow(clippy::missing_errors_doc, clippy::too_many_lines)]
 
 use proxiima_core::read_models::MemorySchemaSpec;
@@ -114,6 +114,7 @@ async fn goal(
     result
 }
 
+// `Proxiima.Goals.readRevision`.
 #[tokio::test]
 async fn goal_handles_find_latest_and_open_pages_survive_lifecycle_writes() -> Result<(), TestError>
 {
@@ -229,6 +230,7 @@ async fn goal_handles_find_latest_and_open_pages_survive_lifecycle_writes() -> R
     Ok(())
 }
 
+// `Proxiima.Goals.factGoalFilter`.
 #[tokio::test]
 async fn fact_goal_series_filters_match_all_versions_before_paging_and_respect_scope()
 -> Result<(), TestError> {
@@ -330,6 +332,7 @@ impl proxiima_core::Authenticator for Verifier {
     }
 }
 
+// `Proxiima.Goals.factGoalFilter`.
 #[tokio::test]
 async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls()
 -> Result<(), TestError> {
@@ -424,6 +427,7 @@ async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls(
 
 /// A goal page is the newest series across every readable owner, in pages that
 /// neither repeat nor skip a series, and never shows an owner the reader lacks.
+// `Proxiima.Goals.stateFilter`.
 #[tokio::test]
 async fn goal_pages_merge_the_heads_of_every_readable_owner() -> Result<(), TestError> {
     let (pg, _db) = fresh_pg("proxiima_goal_owner_merge").await;

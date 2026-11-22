@@ -1,5 +1,4 @@
-//! Goal motivation records exact declared Perspective versions on the Goal.
-//! Wake execution is external to Proxiima.
+//! `Proxiima.Goals`
 
 #[path = "fixtures/example_engine.rs"]
 #[allow(dead_code, reason = "each suite uses part of the shared fixture")]
@@ -23,6 +22,7 @@ use uuid::Uuid;
     clippy::too_many_lines,
     reason = "one atomic feedback scenario keeps version history and transfer assertions together"
 )]
+// `Causa.goal_motivations_valid`.
 async fn goal_perspective_feedback_keeps_declared_exact_version_context() {
     let h = ExampleEngine::new("proxiima_goal_targeting", |_| {}).await;
     let user = UserId::new(Uuid::now_v7());

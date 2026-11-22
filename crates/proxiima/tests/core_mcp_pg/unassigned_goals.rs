@@ -1,4 +1,4 @@
-//! #524: a goal's words suffice for its complete lifecycle, without an invented Perspective.
+//! `Proxiima.Goals`
 
 use super::goal_evidence_kinds::{Env, handle_of};
 use serde_json::{Value, json};
@@ -32,6 +32,7 @@ async fn transition(env: &Env, goal: &str, state: &str) -> TestResult<String> {
     handle_of(&env.call("core_goal", args).await?)
 }
 
+// `Proxiima.Goals.recallActiveGoal`.
 #[tokio::test]
 async fn a_goal_with_only_words_survives_every_write_and_recall() {
     let env = Env::new("proxiima_goal_words_only")
@@ -84,6 +85,7 @@ async fn a_goal_with_only_words_survives_every_write_and_recall() {
     result.expect("words-only goal lifecycle and recall");
 }
 
+// `Proxiima.Goals.recallActiveGoal`.
 #[tokio::test]
 async fn an_episode_can_commit_a_goal_with_only_words() {
     let env = Env::new("proxiima_episode_goal_words")
@@ -113,6 +115,7 @@ async fn an_episode_can_commit_a_goal_with_only_words() {
     result.expect("words-only episode goal");
 }
 
+// `Proxiima.Goals.recallActiveGoal`.
 #[tokio::test]
 async fn caller_self_does_not_assign_goals_without_an_explicit_target() {
     let env = Env::new("proxiima_goal_explicit_assignment")

@@ -204,6 +204,7 @@ async fn author_self_perspective_allows_writable_perspective() -> TestResult {
     Ok(())
 }
 
+// `Causa.goal_motivations_valid`.
 #[tokio::test]
 async fn create_goal_from_payload_write_rejects_foreign_perspective_target() -> TestResult {
     let w = World::new("engine_goal_create_foreign").await;
@@ -227,6 +228,7 @@ async fn create_goal_from_payload_write_rejects_foreign_perspective_target() -> 
     Ok(())
 }
 
+// `Causa.goal_motivations_valid`.
 #[tokio::test]
 async fn decompose_goal_rejects_foreign_perspective_target() -> TestResult {
     let w = World::new("engine_goal_decompose_foreign").await;
@@ -371,6 +373,7 @@ impl AuthorizationHook for RefuseKind {
 /// Evidence carried by omission is read-authorized per target: a host hook
 /// that refuses either carried target (the Fact or the Abstraction) refuses
 /// the modify and leaves the Goal as it was; with neither refused it succeeds.
+// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn modify_authorizes_each_carried_evidence_target() -> TestResult {
     let hook = Arc::new(RefuseKind::default());

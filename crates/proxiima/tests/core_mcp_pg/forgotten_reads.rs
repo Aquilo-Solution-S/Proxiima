@@ -677,6 +677,7 @@ async fn replaying_a_derived_write_after_forget_answers_forgotten_and_does_not_r
 
 /// Goal evidence and a goal's target Perspective that name a forgotten
 /// memory are refused exactly as an unknown id is: `entry not found`.
+// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn goal_evidence_naming_a_forgotten_memory_is_refused_as_absent() {
     let split_db = clone_split_core_db("proxiima_goal_forgotten_evidence")
@@ -787,6 +788,7 @@ async fn goal_evidence_naming_a_forgotten_memory_is_refused_as_absent() {
 /// #513: Goal evidence may be a Fact, so a forgotten Fact is refused on set,
 /// modify and decompose exactly as an unknown id is (`entry not found`),
 /// each after a live-Fact control that is accepted.
+// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one fixture, three goal writes
 async fn goal_evidence_naming_a_forgotten_fact_is_refused_as_absent() {
@@ -1445,6 +1447,7 @@ async fn a_new_stance_on_a_forgotten_replay_slot_is_refused() {
 /// target (`stance:N`) names a slot that replayed a forgotten memory is
 /// refused like a new stance or derive on that slot: `entry not found`, not
 /// "evidence does not exist". No live row comes to pin the forgotten memory.
+// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one fixture, three slot kinds and controls
 async fn a_new_goal_on_a_forgotten_replay_slot_says_entry_not_found() {

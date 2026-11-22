@@ -323,8 +323,7 @@ async fn mark_perspective_heads(
     Ok(())
 }
 
-/// The Active Goals assigned to the packet's head Perspectives of `owner`, in
-/// one query and one sketch load whatever their number.
+/// `Proxiima.Goals.recallActiveGoal`. The page uses one query and one sketch load.
 async fn collect_assigned_goals(
     ctx: &ToolCtx,
     engine: &crate::Engine,
@@ -355,6 +354,7 @@ async fn collect_assigned_goals(
     Ok(())
 }
 
+/// `Proxiima.Goals.recallActiveGoal`.
 async fn collect_unassigned_goals(
     ctx: &ToolCtx,
     engine: &crate::Engine,

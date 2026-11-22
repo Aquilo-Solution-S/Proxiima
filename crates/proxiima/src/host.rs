@@ -169,6 +169,7 @@ pub use proxiima_core::verbs::fact_ingest::{
     CitationSpec, FactIngestOutcome, FactReceiptDraft, FactWriteCommand, IngestReceipt,
     OCCURRED_AT_FUTURE_BOUND,
 };
+/// `Proxiima.Goals`.
 pub use proxiima_core::verbs::goal_write::{
     ChildGoalDraft, DecomposeGoalOutcome, GoalAuthorship, GoalCreateRequest, GoalDependencyRef,
     GoalEvidenceRef, GoalMotivationRef, GoalPayloadWrite, GoalState, GoalTopologyWrite,

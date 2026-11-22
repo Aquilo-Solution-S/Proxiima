@@ -193,26 +193,7 @@ The live catalog is described by [Protocol](protocol.md).
 
 ## Goals express intent
 
-A Goal owns its desired end-state, owner, state, and dependencies. Scheduling,
-wake policy, and execution belong to the host. See [Concepts](concepts.md) and
-[Host integration](host-integration.md) for the current boundaries.
-
-### Motivation and guidance are versioned references
-
-A Goal version names the Perspective versions that motivated it. A new
-Perspective version names the Goal versions that guided it. The declaring
-version owns each statement, and both roles are ordinary Reference pins.
-This supports feedback across versions without retargeting history or making
-motivation evidence. New causal targets share the source's owner; existing
-F/A/P grounding and Fact/Abstraction evidence rules remain separate.
-
-The version fields and valid-store predicates are stated in
-[Goals](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Goals.lean)
-and [Provenance](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Provenance.lean).
-Runtime constructors, source-owned pin projections, and database admission
-enforce the implementation. Former singular assignments stay on their
-original versions as historical data; they are not converted into assertions
-of actual influence. See [Goal relationships](concepts.md#goals).
+[`Proxiima.Goals`](ledger.md#goals).
 
 ## Pins are node-owned
 

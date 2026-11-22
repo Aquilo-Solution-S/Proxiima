@@ -438,6 +438,7 @@ async fn insert_projection_fact(admin: &PgPool, owner: Uuid) -> Uuid {
     fact_t
 }
 
+// `Proxiima.Goals.motivationDeclaration`.
 #[tokio::test]
 async fn motivation_projection_matches_canonical_arrays_after_append() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _) =

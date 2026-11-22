@@ -561,6 +561,7 @@ impl WriteSession for PgWriteSession {
         })
     }
 
+    /// `Proxiima.Goals.requestReplay`.
     async fn resolve_goal_replay(
         &mut self,
         req: GoalReplayRequest<'_, '_>,

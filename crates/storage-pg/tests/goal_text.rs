@@ -1,8 +1,4 @@
-//! A Goal version stores its prompt text, and a read returns it with when the
-//! series was set and when that version was written.
-//!
-//! Every write goes through the real Goal write verbs on a real Postgres; the
-//! reads are `Engine::query`'s storage leg.
+//! `Proxiima.Goals.clockSource` and `Proxiima.Goals.promptRevision`
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -425,6 +421,7 @@ macro_rules! goal_test {
     };
 }
 
+// `Proxiima.Goals.reusesAssignment`.
 goal_test!(
     historical_assignment_stays_on_original_versions_only,
     |h| async {
@@ -454,6 +451,7 @@ goal_test!(
     }
 );
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     create_then_read_returns_text_by_listing_and_by_id,
     |h| async {
@@ -483,6 +481,7 @@ goal_test!(
     }
 );
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     pause_then_resume_keep_the_text_and_the_set_time,
     |h| async {
@@ -536,6 +535,7 @@ goal_test!(
     }
 );
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     modify_with_a_new_text_stores_it_and_keeps_the_set_time,
     |h| async {
@@ -572,6 +572,7 @@ goal_test!(
     }
 );
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     modify_and_resume_after_future_heads_keep_the_original_set_time,
     |h| async {
@@ -633,6 +634,7 @@ goal_test!(
     }
 );
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(each_decomposed_child_carries_its_own_text, |h| async {
     let parent = h
         .create("decompose-parent", "parent", "the parent text")
@@ -673,6 +675,7 @@ goal_test!(each_decomposed_child_carries_its_own_text, |h| async {
     Ok(())
 });
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(achieve_and_abandon_keep_the_text, |h| async {
     let to_achieve = h.create("close-1", "achievable", "reach this").await?;
     let to_abandon = h.create("close-2", "abandonable", "drop this").await?;
@@ -696,6 +699,7 @@ goal_test!(achieve_and_abandon_keep_the_text, |h| async {
     Ok(())
 });
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     a_version_with_unknown_text_stays_unknown_when_it_moves_on,
     |h| async {
@@ -748,6 +752,7 @@ async fn stored_text(pg: &PgStorage, id: GoalId) -> TestResult<Option<String>> {
     )
 }
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     a_transition_recorded_before_the_change_still_replays,
     |h| async {
@@ -968,6 +973,7 @@ async fn goal_count(pg: &PgStorage) -> TestResult<i64> {
     )
 }
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(the_database_refuses_a_blank_text, |h| async {
     // The verb stores the text it is given, so the CHECK is what refuses a
     // text of ASCII whitespace only, and the write leaves no row behind.
@@ -987,6 +993,7 @@ goal_test!(the_database_refuses_a_blank_text, |h| async {
     Ok(())
 });
 
+// `Proxiima.Goals.promptRevision`.
 goal_test!(
     export_carries_the_text_and_erase_takes_it_with_the_row,
     |h| async {

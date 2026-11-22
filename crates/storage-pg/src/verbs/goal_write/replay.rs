@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 fn authorship_declaration(authorship: &GoalAuthorship) -> &'static str {
-    // Replay identity records only the logical author category. The caller
-    // Self is session metadata, so including it would turn a retry in another
-    // session into an idempotency conflict.
+    // `Proxiima.Goals.replayIdentity`.
     match authorship {
         GoalAuthorship::User => "user",
         GoalAuthorship::System(SystemOrigin::Operator) => {
@@ -535,9 +533,7 @@ fn draft_declaration(draft: &GoalDraft) -> Result<ReplayDraft, StorageError> {
 pub(super) fn create_replay_declaration(
     req: &CreateGoalAtomicRequest<'_>,
 ) -> Result<ReplayDeclaration, StorageError> {
-    // `write_act_t` is an episode binding attempt, not Goal content. A replay
-    // returns the stored row without rewriting it so the episode layer can
-    // reject a bound replay with its protocol-specific error.
+    // `Proxiima.Goals.replayIdentity`.
     Ok(replay_declaration(ReplayCommand::Create(CreateBody {
         draft: draft_declaration(&req.draft)?,
     })))
@@ -551,10 +547,7 @@ pub(super) fn transition_replay_declaration(
         GoalTransitionKind::Pause { pending } => Some(pending),
         GoalTransitionKind::Resume | GoalTransitionKind::Abandon => None,
     };
-    // A pause also declares what happens to pending work, so the same request
-    // id with the other choice is a conflict, not a replay. Resume and
-    // abandon declare nothing new, and a declaration stored before `pending`
-    // existed still matches them.
+    // `Proxiima.Goals.replayIdentity`.
     replay_declaration(ReplayCommand::Transition(TransitionBody {
         prior_goal_id: prior,
         next_state: ReplayGoalState(req.transition.next_state()),
@@ -687,8 +680,7 @@ pub(super) async fn resolve_decompose_replay_set(
     let Some(reused) = reused else {
         return Ok(None);
     };
-    // A decomposition is one idempotency unit. A request-id set that is only
-    // partly present resolves as neither a fresh write nor an exact replay.
+    // `Proxiima.Goals.decomposeReplay`.
     let mut children = Vec::with_capacity(replayed.len());
     for outcome in replayed {
         let Some(outcome) = outcome else {
@@ -745,8 +737,7 @@ pub(crate) async fn resolve_goal_command_replay_on(
     }
 }
 
-/// Resolve one exact command replay from its persisted declaration before any
-/// live assignment, evidence, or prior-head probe.
+/// `Proxiima.Goals.requestReplay`.
 pub(super) async fn resolve_goal_replay(
     conn: &mut PgConnection,
     owner: &OwnerId,

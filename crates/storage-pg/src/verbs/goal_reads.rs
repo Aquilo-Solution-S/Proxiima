@@ -5,10 +5,7 @@ use sqlx::PgConnection;
 
 use crate::error::map_err;
 
-/// Read the Goal's declared evidence without joining through Memory.
-///
-/// The array is the Goal's statement, so visibility of an evidence target
-/// must not change its length before the transactional write validates it.
+/// `Proxiima.Goals.readEvidence` and `Proxiima.Goals.evidenceDeclaration`.
 pub(crate) async fn load_goal_evidence_on_connection(
     connection: &mut PgConnection,
     owner: &OwnerId,

@@ -17,10 +17,7 @@ use crate::PgStorage;
 use crate::error::with_bounded_retry;
 use proxiima_core::goal_collaboration::GoalEditPermit;
 
-// The goal `*_atomic` verbs are pool-scoped write transactions. Each wraps
-// its `_in_pool` body in `with_bounded_retry` so a transient deadlock /
-// serialization failure (SQLSTATE 40P01/40001) re-runs the whole idempotent
-// transaction instead of surfacing to the host as a bare `Internal`.
+// `Proxiima.Goals.retryTransaction`.
 
 pub(crate) async fn create_goal_atomic(
     storage: &PgStorage,
@@ -215,8 +212,7 @@ pub(crate) async fn transition_goal_atomic_in_pool(
         Some(req.prior_goal_id),
         req.authorship.clone(),
         req.request_id.as_str(),
-        // A plain transition rests on nothing it names: no evidence column,
-        // and so no evidence reference rows.
+        // `Proxiima.Goals.mayDeclareEvidence`.
         &[],
     );
     let inserted = insert_or_replay_goal(
@@ -226,18 +222,14 @@ pub(crate) async fn transition_goal_atomic_in_pool(
         Some(req.prior_goal_id),
         GoalChange::from(req.transition),
         req.context,
-        // A lifecycle write declares no text: the version keeps the prior
-        // one's, as stored, unknown included.
+        // `Proxiima.Goals.promptRevision`.
         RowColumns {
             store_number,
             writer,
             text: prior.text.as_deref(),
             write_act_t: None,
         },
-        // Abandon refuses while a decompose child is open, checked after the
-        // lifecycle lock on the parent head t, which a decompose child also
-        // takes through its dependency_t, whatever the prior (Active or Paused).
-        // Pause and resume keep the goal open.
+        // `Proxiima.Goals.closeGuard`.
         if req.transition == proxiima_core::verbs::goal_write::GoalTransitionKind::Abandon {
             PostLockGuard::NoOpenChildren
         } else {
@@ -326,8 +318,7 @@ pub(crate) async fn achieve_goal_atomic_in_pool(
         Some(req.prior_goal_id),
         GoalChange::Achieve,
         req.context,
-        // A lifecycle write declares no text: the version keeps the prior
-        // one's, as stored, unknown included.
+        // `Proxiima.Goals.promptRevision`.
         RowColumns {
             store_number,
             writer,
@@ -582,18 +573,13 @@ pub(crate) async fn decompose_goal_atomic_in_pool(
         return Ok(replay);
     }
 
-    // Every child is prepared before any child gets a Goal head or
-    // Goal row. One union lock makes crossed child target sets wait in the
-    // same sorted order rather than acquiring a child footprint incrementally.
+    // `Proxiima.Goals.admissionOrder`.
     let lock_items: Vec<&super::GoalWritePreparation> = prepared_children
         .iter()
         .map(|(child, _, _)| &child.preparation)
         .collect();
     lock_prepared_goal_writes(&mut tx, &lock_items).await?;
-    // The parent is part of every child's dependency footprint. Re-check its
-    // active-head status after that union lock, so a parent transition that
-    // committed while children were being prepared aborts before the first
-    // child Goal, sidecar, sketch or lifecycle Fact is written.
+    // `Proxiima.Goals.parentRevision`.
     validate_active_head(&mut tx, &req.owner, req.parent_goal_id).await?;
 
     let mut children = Vec::with_capacity(prepared_children.len());

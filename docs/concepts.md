@@ -7,7 +7,7 @@
 | Fact | An admitted observation | Immutable row; later observations are new admissions |
 | Abstraction | A typed, re-derivable pattern | Later `t` may advance its series |
 | Perspective | A typed interpretation or stance | Later `t` may advance its series |
-| Goal | A desired end-state and its dependencies | Lifecycle transitions append `t`; terminal states have no later transition |
+| Goal | A desired end-state | [`Proxiima.Goals`](ledger.md#goals) |
 
 Citation is provenance attached to a Fact or Abstraction. Self is a query over
 cue-relevant Perspectives, never a stored entity. Actions and wake behavior
@@ -334,18 +334,7 @@ interprets. Similarity is a query result; it does not author a connection.
 Stored origin pins point back from the result to its inputs: the Abstraction
 derived from a Fact stores that Fact's version in its own `origins[]`.
 
-**Goals express intent and sit outside these three layers.** A Perspective
-can inform the decision to set a Goal, as the
-[Spinning Wheel](index.md#the-spinning-wheel) illustrates. That conceptual
-flow is not a persisted Perspective-to-Goal derivation rule.
-
-The [operator vocabulary](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Operators.lean)
-also names `AtoGoal`: its Abstraction inputs are recorded as Goal evidence,
-using references rather than memory-origin pins. There is no corresponding
-`PtoGoal` operator. Ordinary Goal creation can have no evidence at all; when
-supplied, evidence is a Fact or Abstraction. Perspectives and Goals can also
-record explicit motivation and guidance. These are the distinct
-[Goal relationships](#goals), not another step of the F/A/P ladder.
+[`Proxiima.Goals`](ledger.md#goals) and `Causa.principle_8_a_goal_never_grounds`.
 
 ## Pins
 
@@ -381,65 +370,7 @@ dangling pin.
 
 ## Goals
 
-A Goal states what is desired, whose direction it is, its lifecycle state, and
-what it depends on. Goal decomposition, evidence, and motivation are fields of
-the Goal version, so the Goal owns those references. Motivation and evidence
-are optional: a Goal may contain only its title and words. Supplied evidence
-must be a Fact or Abstraction. A Perspective can explain why a Goal was chosen
-without being evidence for it.
-A lifecycle transition is
-an appended `t`; there is no supersession pointer and no in-place mutation.
-
-Here the arrows show **stored references from each declaring version to its targets**:
-
-```mermaid
-flowchart LR
-    G[Goal] -->|optional evidence| F[Fact]
-    G -->|optional evidence| A[Abstraction]
-    G -->|motivated_by: zero or many| P1["Earlier Perspective versions"]
-    P2["Later Perspective version"] -->|guided_by: zero or many| G
-```
-
-`motivated_by` records the exact Perspective versions that motivated a Goal
-version. `guided_by` records the exact Goal versions that actually guided a
-new Perspective version. Both lists can name several targets, and every
-target belongs to the same owner as the declaring version. Creating a Goal
-does not change its motivating Perspectives or assign work to an actor.
-
-Conceptually, the feedback is `Perspective@1` motivates `Goal@1`, which guides
-`Perspective@2`. Stored references point backward from each declaration to
-its inputs: `Goal@1.motivated_by = [Perspective@1]`, then
-`Perspective@2.guided_by = [Goal@1]`. Later versions never retarget those pins.
-Goal guidance is context for a Perspective; it does not replace its required
-F/A/P grounding.
-
-| Relationship | Targets per source version |
-|---|---|
-| Goal to owner | Exactly one |
-| Goal to motivating Perspectives | Zero or many |
-| Perspective to guiding Goals | Zero or many |
-| Goal to evidence Facts or Abstractions | Zero or many |
-| Goal to dependency Goals | Zero or many |
-| Goal to parent Goal | Zero or one |
-
-The former singular Perspective assignment remains historical metadata on
-the Goal versions that stored it. New Goal writes do not accept an assignment
-or copy it into a successor. An intended recipient is not relabelled as
-motivation or actual guidance.
-
-Goals form a plain tree. `decompose` creates child Goals under a parent; each
-child records its parent's series once, at creation, and every later version
-of the child keeps it (a Goal is never its own parent, and the parent exists
-first, so there are no cycles). The parent still appears among the child's
-dependencies. An open Goal (Active or Paused) never sits under a closed one
-(Achieved or Abandoned): a parent is achieved or abandoned only once none of
-its children's current versions is open, and achieving also needs one
-Achieved child. Every Goal below a closed Goal is therefore closed, at any
-depth. Pausing a parent is always allowed. Abandon does not cascade, and plain
-dependencies between Goals do not make a tree.
-
-Scheduling and execution are host decisions. See
-[host integration](host-integration.md) for the boundary.
+[`Proxiima.Goals`](ledger.md#goals).
 
 ## Goal collaboration
 

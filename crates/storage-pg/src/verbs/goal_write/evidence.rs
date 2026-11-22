@@ -4,10 +4,7 @@ use super::{
 };
 use crate::pg_enums::PgMemoryKind;
 
-/// The one evidence-kind rule for every goal write (set, modify, decompose
-/// child, episode goal, `mark_achieved`): a live Fact or Abstraction; a
-/// Perspective is refused. A memory of another store is judged by the kind
-/// that store reported when the caller read it.
+/// `Proxiima.Goals.evidenceAdmission`.
 pub(super) async fn validate_evidence_in_owner(
     tx: &mut Transaction<'_, Postgres>,
     _owner: &OwnerId,
@@ -58,13 +55,7 @@ async fn evidence_target(
     }
 }
 
-/// The evidence an omitted-evidence modify carries from its prior Goal, in the
-/// prior order. Evidence held by this store is judged again; evidence of
-/// another store was read there when the Goal named it, and stays.
-///
-/// The evidence column is read from the Goal row itself: joining through
-/// Memory would turn a forgotten or missing target into a shorter successor
-/// statement.
+/// `Proxiima.Goals.editPins` and `Proxiima.Goals.evidenceDeclaration`.
 pub(super) async fn carried_evidence(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

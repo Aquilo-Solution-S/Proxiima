@@ -199,17 +199,8 @@ pub(crate) async fn prepare_memory_admission_with_extra_targets(
     .await
 }
 
-/// Insert an unpinned lifecycle Fact at an identity reserved before a Goal's
-/// union lock. The caller already owns the reserved handle and lifecycle
-/// union; this helper still uses the same prepare/claim/materialize phases as
-/// ordinary admission.
-///
-/// `sidecar_tables` is the stamp the caller then backs with its sidecar rows
-/// in the same transaction: empty for the payload-less write-act Fact, the
-/// goal-change table for a goal's change Fact.
-///
-/// Returns the outcome with the occurrence time the admission stored, which
-/// a goal's change Fact publishes; `None` only for a replay.
+/// `Proxiima.Goals.reserveChangeFact` and `Proxiima.Goals.admissionOrder`.
+/// The return time is absent for a replay.
 pub(crate) async fn ingest_unpinned_fact_at(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -248,10 +239,7 @@ pub(crate) async fn ingest_unpinned_fact_at(
         PreparedMemoryAdmission::Replay(outcome) => return Ok((outcome, None)),
     };
     let occurred_at = prepared.occurred_at;
-    // Goal writes acquire this reserved handle together with their complete
-    // lifecycle union before persistence. Re-entering the Memory lifecycle
-    // lock here would acquire a new handle after the Goal `t` locks and invert
-    // the cross-entity order.
+    // `Proxiima.Goals.admissionOrder`.
     let outcome =
         materialize_prepared_memory_admission_after_locks(tx, prepared, draft.blob_id, None)
             .await?;
@@ -962,11 +950,7 @@ pub(crate) async fn materialize_prepared_memory_admission(
     materialize_prepared_memory_admission_after_locks(tx, prepared, blob_id, content_id).await
 }
 
-/// Materialize an admission after the caller has acquired its complete
-/// handle/lifecycle union. The reserved Goal lifecycle Fact uses this path so
-/// it cannot acquire a Memory handle after the Goal transaction already holds
-/// lifecycle `t` locks. The head validation still runs here — only the lock
-/// acquisition is the caller's.
+/// `Proxiima.Goals.admissionOrder`. The caller owns locking; materialization still validates the head.
 pub(crate) async fn materialize_prepared_memory_admission_after_locks(
     tx: &mut Transaction<'_, Postgres>,
     mut prepared: Box<PreparedMemoryAdmissionNew>,

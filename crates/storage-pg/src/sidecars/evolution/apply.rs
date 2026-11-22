@@ -197,6 +197,7 @@ async fn claim_key(
     Ok(())
 }
 
+/// `Proxiima.Goals.replayIdentity` across representation changes.
 async fn goal_replay(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

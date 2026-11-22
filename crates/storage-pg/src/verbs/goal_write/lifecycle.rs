@@ -15,8 +15,7 @@ pub(super) struct LifecycleWrite<'a> {
     pub(super) evidence: &'a [EvidenceTarget],
 }
 
-/// The tail every Goal write shares: assert the reference rows the Goal's
-/// topology columns imply and report what was written.
+/// `Proxiima.Goals.evidenceDeclaration`.
 pub(super) async fn lifecycle_outcome(
     tx: &mut Transaction<'_, Postgres>,
     write: LifecycleWrite<'_>,

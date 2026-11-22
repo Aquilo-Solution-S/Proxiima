@@ -1,5 +1,4 @@
-//! A series belongs to its head's owner: `goal_owner_matches_head_fk` refuses a
-//! version of another owner even from a scope that may write that owner's Goals.
+//! `Proxiima.Goals`
 
 use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId};
 use proxiima_storage_pg::begin_owner_transaction;
@@ -26,6 +25,7 @@ async fn insert_version(
     .map(|_| ())
 }
 
+// `Proxiima.Goals.transferGoal`.
 #[tokio::test]
 async fn a_scope_of_another_owner_cannot_join_the_series() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _password) =

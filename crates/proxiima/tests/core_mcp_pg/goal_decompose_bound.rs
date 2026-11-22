@@ -1,14 +1,11 @@
-//! The documented bound on `core_goal decompose` is exact: a root
-//! idempotency key of the longest allowed length with the largest allowed
-//! number of children builds every child key and writes every child.
+//! `Proxiima.Goals`
 
 use super::goal_evidence_kinds::{Env, handle_of};
 
-/// The longest root key `core_goal decompose` documents, and the most
-/// children it takes.
 const ROOT_KEY_MAX: usize = proxiima_core::ledger!(Proxiima.Goals.decomposeRootKeyMax);
 const MAX_CHILDREN: usize = proxiima_core::ledger!(Proxiima.Goals.decomposeChildMax);
 
+// `Proxiima.Goals.decomposeRootKeyMax`.
 #[tokio::test]
 async fn decompose_root_key_at_bound_with_max_children_is_accepted() {
     let env = Env::new("proxiima_goal_decompose_bound")

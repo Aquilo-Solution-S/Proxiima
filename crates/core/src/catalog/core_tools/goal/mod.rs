@@ -660,9 +660,7 @@ pub struct GoalTransitionArgs {
 }
 
 impl GoalTransitionArgs {
-    /// The one place `transition` and `pending` meet: what the caller wrote
-    /// becomes a [`GoalTransitionKind`], in which `pending` exists only on a
-    /// pause.
+    /// `Proxiima.Goals.changeFields`.
     fn transition_kind(&self) -> Result<GoalTransitionKind, ToolError> {
         match (&self.transition, self.pending) {
             (GoalTransition::Pause, Some(pending)) => Ok(GoalTransitionKind::Pause { pending }),
@@ -680,8 +678,7 @@ impl GoalTransitionArgs {
     }
 }
 
-/// The named Goal selects its existing owner. An explicit space remains a
-/// narrowing selector; it cannot route an edit to another owner.
+/// `Proxiima.Goals.editSpaceMatches`.
 async fn existing_goal_owner(
     ctx: &ToolCtx,
     prior: crate::GoalId,
@@ -811,6 +808,7 @@ pub struct GoalModifyArgs {
     pub idempotency_key: Option<String>,
 }
 
+/// `Proxiima.Goals.editPins`.
 async fn goal_modify(ctx: ToolCtx, args: GoalModifyArgs) -> Result<GoalWriteOutput, ToolError> {
     let prior = ctx.resolve_goal(&args.goal)?;
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
@@ -886,9 +884,7 @@ async fn goal_decompose(
     ctx: ToolCtx,
     args: GoalDecomposeArgs,
 ) -> Result<GoalDecomposeOutput, ToolError> {
-    // The root key is checked first, against the bound its child keys need,
-    // so an over-long key is a root-key error before anything is resolved
-    // or any child is built.
+    // `Proxiima.Goals.decomposeRootKeyMax`.
     let root_key = IdempotencyKey::new_bounded(
         args.idempotency_key,
         DECOMPOSE_ROOT_KEY_MAX,
@@ -1003,10 +999,7 @@ pub(crate) fn encode_goal_payload(
     })
 }
 
-/// Parse supplied Goal evidence handles (bare UUIDs). Storage checks each of
-/// this store is a live owned Fact or Abstraction in the write transaction; one
-/// issued by another store is read there as the caller, refused when the store
-/// is unavailable or the caller may not read it, and named by the read.
+/// `Proxiima.Goals.evidenceAdmission`. Input IDs are bare UUIDs.
 pub(crate) async fn resolve_goal_evidence_handles(
     ctx: &ToolCtx,
     evidence: &[String],
@@ -1038,6 +1031,7 @@ pub(crate) async fn resolve_goal_evidence_handles(
         .collect())
 }
 
+/// `Causa.goal_motivations_valid`.
 fn resolve_goal_motivations(
     ctx: &ToolCtx,
     handles: &[String],
@@ -1048,9 +1042,7 @@ fn resolve_goal_motivations(
         .collect::<Result<Vec<_>, _>>()
 }
 
-/// The authorship every Goal action of the model-facing tools hands
-/// storage. It names the category only: no Goal column keeps who the
-/// operator was.
+/// `Proxiima.Goals.operatorAuthorship`.
 pub(crate) const OPERATOR_AUTHORSHIP: GoalAuthorship =
     GoalAuthorship::System(SystemOrigin::Operator);
 
@@ -1120,6 +1112,7 @@ mod tests {
     /// up front with a root-key error, before any child is built: not on a
     /// child's evidence, not on a child key at index 10, and not silently
     /// accepted when few children keep every child key short enough.
+    // `Proxiima.Goals.decomposeRootKeyMax`.
     #[tokio::test]
     async fn decompose_root_key_one_over_bound_is_refused_before_children() {
         let ctx = test_ctx();
@@ -1149,6 +1142,7 @@ mod tests {
         }
     }
 
+    // `Proxiima.Goals.decomposeRootKeyMax`.
     #[test]
     fn decompose_root_bound_is_advertised() {
         let schema = serde_json::to_value(schemars::schema_for!(GoalDecomposeArgs))
@@ -1162,6 +1156,7 @@ mod tests {
         );
     }
 
+    // `Proxiima.Goals.evidenceAdmission`.
     #[tokio::test]
     async fn goal_evidence_rejects_prefixed_ids_before_storage() {
         let ctx = test_ctx();

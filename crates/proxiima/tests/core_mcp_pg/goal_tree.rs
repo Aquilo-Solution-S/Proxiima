@@ -1,10 +1,8 @@
-//! #514 F9: `core_goal mark_achieved` on a parent with open decompose
-//! children is refused as `InvalidArgument` naming each open child; once the
-//! children are achieved, the parent is. Abandon follows the same children
-//! rule, and since #515 takes a Paused goal in one write.
+//! `Proxiima.Goals`
 
 use super::goal_evidence_kinds::{Env, handle_of};
 
+// `Proxiima.Goals.closeGuard`.
 #[tokio::test]
 async fn mark_achieved_on_a_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_tree_mcp")
@@ -54,6 +52,7 @@ async fn mark_achieved_on_a_parent_waits_for_its_children() {
 /// T7: `core_goal transition abandon` on a parent with open children is
 /// refused as `InvalidArgument` naming them; once they are abandoned, the
 /// parent is.
+// `Proxiima.Goals.closeGuard`.
 #[tokio::test]
 async fn transition_abandon_on_a_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_tree_abandon_mcp")
@@ -105,6 +104,7 @@ async fn transition_abandon_on_a_parent_waits_for_its_children() {
 
 /// #515 M1: `transition abandon` on a Paused goal is one write: no Active
 /// version between, it replays, and abandoning the result again is refused.
+// `Proxiima.Goals.lifecycle`.
 #[tokio::test]
 async fn transition_abandon_on_a_paused_goal_is_one_write() {
     let env = Env::new("proxiima_goal_paused_abandon_mcp")
@@ -159,6 +159,7 @@ async fn transition_abandon_on_a_paused_goal_is_one_write() {
 
 /// #515 M2: a Paused parent with open children is refused like an Active
 /// one; once the children are abandoned, the Paused parent is.
+// `Proxiima.Goals.closeGuard`.
 #[tokio::test]
 async fn transition_abandon_on_a_paused_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_paused_parent_mcp")

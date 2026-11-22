@@ -134,11 +134,7 @@ pub(super) fn validate_goal_achievement(prior: GoalState) -> Result<(), StorageE
     }
 }
 
-/// The evidence a successor Goal rests on, in the shape the topology takes.
-///
-/// The evidence column is the statement and the reference rows are its
-/// consequence, so a successor that omits it from the column would leave rows
-/// nothing could rebuild.
+/// `Proxiima.Goals.evidenceDeclaration` and `Proxiima.Goals.editPins`.
 fn evidence_refs(evidence: &[EvidenceTarget]) -> Vec<proxiima_core::GoalEvidenceRef> {
     evidence
         .iter()

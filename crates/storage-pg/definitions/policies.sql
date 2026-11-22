@@ -294,8 +294,7 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.goal USING (
 
 ALTER POLICY proxiima_owner_write ON proxiima_core.goal USING ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) WITH CHECK ((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.work_goal'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])));
 
--- goal_motivation_index is a derived projection. Goal owners may read rows
--- through their Goal scope; only the trigger/platform path may write them.
+-- `Proxiima.Goals.motivationDeclaration`. The projection uses the Goal owner scope.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'goal_motivation_index', 'ownerless', NULL);
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_motivation_index USING (
     owner_id = ANY (COALESCE(NULLIF(current_setting('app.read_goal', true), '')::uuid[], '{}'::uuid[])
