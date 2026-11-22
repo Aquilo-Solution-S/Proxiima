@@ -1,4 +1,113 @@
-{"Proxiima.Identity.versionWriter":
+{"Proxiima.Repository.versionAccepted":
+ [{"out": true, "in": ["initial"]},
+  {"out": true, "in": ["unchanged"]},
+  {"out": true, "in": ["nextPatch"]},
+  {"out": true, "in": ["nextMinor"]},
+  {"out": true, "in": ["nextMajor"]},
+  {"out": false, "in": ["invalid"]}],
+ "Proxiima.Repository.verifyRange":
+ [{"out": false, "in": [true, true, true]},
+  {"out": true, "in": [true, true, false]},
+  {"out": false, "in": [true, false, true]},
+  {"out": false, "in": [true, false, false]},
+  {"out": false, "in": [false, true, true]},
+  {"out": false, "in": [false, true, false]},
+  {"out": false, "in": [false, false, true]},
+  {"out": false, "in": [false, false, false]}],
+ "Proxiima.Repository.validationGrants":
+ [{"out": ["contentsRead", "pullRequestsRead"], "in": [true]},
+  {"out": ["contentsRead"], "in": [false]}],
+ "Proxiima.Repository.validateLane":
+ [{"out": true, "in": ["relevant"]},
+  {"out": false, "in": ["unrelated"]},
+  {"out": true, "in": ["unknown"]}],
+ "Proxiima.Repository.validateDocs":
+ [{"out": true, "in": ["markdownLinks", "relevant"]},
+  {"out": true, "in": ["markdownLinks", "unrelated"]},
+  {"out": true, "in": ["markdownLinks", "unknown"]},
+  {"out": true, "in": ["mkdocs", "relevant"]},
+  {"out": false, "in": ["mkdocs", "unrelated"]},
+  {"out": true, "in": ["mkdocs", "unknown"]},
+  {"out": true, "in": ["leanLedger", "relevant"]},
+  {"out": true, "in": ["leanLedger", "unrelated"]},
+  {"out": true, "in": ["leanLedger", "unknown"]}],
+ "Proxiima.Repository.usesTestPooler":
+ [{"out": true, "in": ["serving"]},
+  {"out": false, "in": ["migration"]},
+  {"out": false, "in": ["admin"]}],
+ "Proxiima.Repository.staleCloneCollectible":
+ [{"out": false, "in": [true, true]},
+  {"out": true, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Repository.saveRustCache":
+ [{"out": false, "in": ["pullRequest"]}, {"out": true, "in": ["verify"]}],
+ "Proxiima.Repository.reviewCovers":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Repository.renderUpgrade":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Repository.recoverRelease":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Repository.publishPrerelease":
+ [{"out": true, "in": [true]}, {"out": false, "in": [false]}],
+ "Proxiima.Repository.pathSource":
+ [{"out": "pullRequestApi", "in": ["pullRequest"]},
+  {"out": "verifiedToCandidate", "in": ["verify"]}],
+ "Proxiima.Repository.numberedRelease":
+ [{"out": "skip", "in": [true, true]},
+  {"out": "tagAndPublish", "in": [true, false]},
+  {"out": "refuseUnverified", "in": [false, true]},
+  {"out": "refuseUnverified", "in": [false, false]}],
+ "Proxiima.Repository.dependencyPolicy":
+ [{"out": "deny", "in": ["vulnerability"]},
+  {"out": "deny", "in": ["yank"]},
+  {"out": "deny", "in": ["unmaintainedWorkspaceDependency"]},
+  {"out": "deny", "in": ["disallowedLicense"]},
+  {"out": "deny", "in": ["unknownLicense"]},
+  {"out": "deny", "in": ["registryWildcard"]},
+  {"out": "warn", "in": ["repeatedVersion"]},
+  {"out": "allow", "in": ["workspacePath"]},
+  {"out": "allow", "in": ["cratesIo"]},
+  {"out": "deny", "in": ["undeclaredRegistry"]},
+  {"out": "deny", "in": ["undeclaredGit"]}],
+ "Proxiima.Repository.collectTemplate":
+ [{"out": false, "in": [true, true]},
+  {"out": true, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Repository.cloneGuard":
+ [{"out": "keep", "in": [true, true]},
+  {"out": "keep", "in": [true, false]},
+  {"out": "keepWithRedactedDiagnostic", "in": [false, true]},
+  {"out": "drop", "in": [false, false]}],
+ "Proxiima.Repository.cancelSupersededValidation":
+ [{"out": true, "in": ["pullRequest"]}, {"out": false, "in": ["verify"]}],
+ "Proxiima.Repository.bootstrapPreflight":
+ [{"out": false, "in": [true]}, {"out": true, "in": [false]}],
+ "Proxiima.Repository.advanceVerified":
+ [{"out": ["verifiedFastForward", "nightlyLightweightTag"], "in": [true, true]},
+  {"out": [], "in": [true, false]},
+  {"out": [], "in": [false, true]},
+  {"out": [], "in": [false, false]}],
+ "Proxiima.Repository.adminConfiguration":
+ [{"out": "connect", "in": [true, true, true]},
+  {"out": "connect", "in": [true, true, false]},
+  {"out": "connect", "in": [true, false, true]},
+  {"out": "connect", "in": [true, false, false]},
+  {"out": "refuse", "in": [false, true, true]},
+  {"out": "skip", "in": [false, true, false]},
+  {"out": "refuse", "in": [false, false, true]},
+  {"out": "refuse", "in": [false, false, false]}],
+ "Proxiima.Identity.versionWriter":
  [{"out": "attested", "in": ["admission"]},
   {"out": "attested", "in": ["revision"]},
   {"out": "stored", "in": ["replay"]},

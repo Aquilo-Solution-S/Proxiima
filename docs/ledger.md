@@ -607,6 +607,442 @@ stateDiagram-v2
 
 - object store source: An explicit validated identity takes precedence over derivation from endpoint and bucket.
 
+## Repository
+
+**Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
+
+- opened
+- reopened
+- synchronize
+
+**Changed paths**: Evidence used to decide which validation lanes run.
+
+- relevant
+- unrelated
+- unknown
+
+**Validation run**: Source of the revision to validate.
+
+- pullRequest
+- verify
+
+**Path source**: How CI obtains the paths under review.
+
+- pullRequestApi
+- verifiedToCandidate
+
+**Validation grant**: The validation job's token permissions.
+
+- contentsRead
+- pullRequestsRead
+
+**Rust lane**: Rust validation checks format, both feature lanes for Clippy, warning-free Rustdoc and workspace doctests.
+
+- format
+- allFeaturesClippy
+- defaultClippy
+- rustdoc
+- doctest
+
+**Test feature lane**: Rust tests exercise the all-feature workspace and the default substrate host, running both lanes with `--run-ignored all`.
+
+- allFeaturesWorkspace
+- defaultSubstrateHost
+
+**Public documentation**: The public guide publishes the configured navigation and Mermaid diagrams and excludes local planning pages.
+
+- configuredNavigation
+- mermaidFences
+- excludePlanningPages
+
+**Issue entry point**: The repository offers a blank issue and routes contribution and security reports to the documented entry points.
+
+- blankIssue
+- securityPolicy
+- contributionGuide
+
+**Documentation lane**: The docs jobs and when they run.
+
+- markdownLinks
+- mkdocs
+- leanLedger
+
+**Markdown link refusal**: A local Markdown target must exist, a heading reference must resolve and a site link must stay within the docs directory.
+
+- missingTarget
+- missingHeading
+- escapesDocs
+- siteDirectoryTarget
+
+**Image evidence**: Validation builds the production-shaped image without publishing it and compares both OCI labels with the version and commit it tested.
+
+- build
+- workspaceVersion
+- testedRevision
+
+**Workflow pin**: The immutable references for third-party code selected by CI.
+
+- actionCommit
+- serviceImageDigest
+
+**Postgres fixture**: PostgreSQL tests use a disposable pgvector server with reduced durability and an explicit admin endpoint.
+
+- pgvector
+- explicitAdmin
+- disposableDurability
+
+**Object fixture**: Object integration tests use a versioned fixture bucket and separately probe the HTTP listener.
+
+- httpListenerResponds
+- versionedBucket
+- selectedObjectTests
+
+**Postgres fixture client**: What uses the test pooler when it is configured.
+
+- serving
+- migration
+- admin
+
+**Pooler verification**: The pooler lane checks its package signing key and version floor and exercises SCRAM and startup settings.
+
+- packageKey
+- versionFloor
+- scram
+- startupSettings
+- dedicatedSuites
+- hostBoot
+
+**Verification target**: Verify uses the selected main event's commit and serializes runs without cancelling work already in flight.
+
+- mainPush
+- mainDispatch
+
+**Review address**: Review and co-author records use a final angle-bracket address compared case-insensitively.
+
+- trailingAddress
+- malformed
+
+**Verified ref**: The references that move together to the tested commit after CI and review pass.
+
+- verifiedFastForward
+- nightlyLightweightTag
+
+**Release action**: The numbered-release action after a candidate reaches verified.
+
+- refuseUnverified
+- skip
+- tagAndPublish
+
+**Version source**: Cargo workspace members inherit the workspace version, which the server reports from its build metadata.
+
+- workspaceManifest
+- cargoPackageVersion
+
+**Version step**: The candidate's stable SemVer relationship to the canonical released tags fetched by CI.
+
+- initial
+- unchanged
+- nextPatch
+- nextMinor
+- nextMajor
+- invalid
+
+**Release notes**: Release notes are rendered by git-cliff from Conventional Commits and are previewable offline.
+
+- groupConventionalCommits
+- omitConfiguredCategories
+- renderOfflineLinks
+- publishGitHubRelease
+
+**Workspace lint**: Build-time workspace lint policy inherited by its Rust member crates.
+
+- denyWarnings
+- denyUnsafe
+- denyMissingDebug
+- denyPedantic
+- allowNamedExceptions
+
+**Test dependency**: Test-only schema and manifest helpers are dev dependencies, and the example dependency graph checks the SDK boundary.
+
+- boon
+- toml
+- exampleSdkBoundary
+
+**Crypto provider**: The selected TLS and JWT provider is AWS-LC and the object backend uses regional SigV4.
+
+- awsLcTls
+- awsLcJwt
+- regionalSigV4
+
+**Release profile**: The release Cargo profile uses thin LTO, one codegen unit, stripping and optimized build scripts.
+
+- thinLto
+- singleCodegenUnit
+- strip
+- optimizeBuildScripts
+
+**Image build**: The image builds the default substrate binary under the workspace compiler and lockfile, using matching Debian libraries and a non-root runtime.
+
+- substrateBinary
+- workspaceCompiler
+- lockedDependencies
+- httpsPackageSources
+- matchingDebianLibraries
+- nonrootUser
+
+**Dependency check**: Dependency policies run on dependency changes, with a separate scheduled and manual advisory check.
+
+- advisories
+- licenses
+- bans
+- sources
+
+**Dependency input**: Dependency input selected for the repository's allow or refuse decision.
+
+- vulnerability
+- yank
+- unmaintainedWorkspaceDependency
+- disallowedLicense
+- unknownLicense
+- registryWildcard
+- repeatedVersion
+- workspacePath
+- cratesIo
+- undeclaredRegistry
+- undeclaredGit
+
+**Dependency disposition**: Cargo-deny rejects forbidden inputs subject to its reviewed exceptions and warns about repeated versions.
+
+- allow
+- warn
+- deny
+
+**Loopback fixture**: The disposable development services expose configurable ports on loopback.
+
+- postgres
+- objectStore
+
+**Core fixture**: Shared core test fixtures are exported only in tests or with the testkit feature and use the public authentication and tool-context entry points.
+
+- sealedAuthentication
+- ordinaryToolContext
+
+**Admin configuration**: What the test database harness does when its only admin URL setting is present or absent.
+
+- connect
+- skip
+- refuse
+
+**Clone name part**: Each clone name carries a UUIDv7, with the prefix truncated to fit PostgreSQL's identifier limit.
+
+- boundedPrefix
+- uuidV7
+
+**Clone disposition**: The guard's decision on an isolated tracked test clone.
+
+- drop
+- keep
+- keepWithRedactedDiagnostic
+
+**Clone registration**: Failed registration attempts cleanup and reports a cleanup failure. Fixture-named survivors can be swept without a record.
+
+- track
+- cleanUpAfterFailure
+- reportCleanupFailure
+
+**Template family rule**: A custom template uses a valid bounded prefix disjoint from built-in and staging families and owns only names with its exact hexadecimal suffix.
+
+- boundedPrefix
+- noReservedOverlap
+- exactHashSuffix
+
+**Template lifecycle**: A validated test template is staged under a build lock, published only on success and leased until its clone exists.
+
+- lockBuild
+- buildStaging
+- publishSuccess
+- cleanUpFailure
+- leaseThroughClone
+- collectIdlePrevious
+
+**Template fingerprint input**: The validated host lineup and its length-framed inputs define its template fingerprint.
+
+- hostFingerprint
+- vectorStorageKind
+- definitions
+- release
+- storeNumber
+- searchDefinitions
+- migrationSources
+- spiiceSchemas
+- followsTables
+
+**Clone role**: A split-role clone runs migrations as platform and serves through a non-owning runtime role subject to owner row security.
+
+- platformMigration
+- scopedRuntime
+
+**Fixture owner context**: Single-owner fixture contexts seal a fresh subject with the admin role scoped to the supplied owner.
+
+- freshSubject
+- scopedAdmin
+- sealedAuthentication
+
+**Trigger fixture refusal**: The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations.
+
+- invalidRegistration
+- emptyArtifacts
+- missingArtifact
+
+**Connection diagnostic**: Connection exhaustion diagnostics use the admin connection to describe the server's connection budget.
+
+- exhaustionClassification
+- adminConnectionBudget
+
+**Dev issuer input**: The development issuer admits a loopback bind and nonblank normalized subject and audience.
+
+- loopbackBind
+- fixedPort
+- nonblankSubject
+- nonblankAudience
+- subjectDerivedUser
+
+**Dev signer**: The development issuer loads a persisted signer, creates a missing file exclusively, reads the winning file after a creation conflict, or uses an in-memory signer in ephemeral mode.
+
+- loadExisting
+- createExclusively
+- loadConcurrentWinner
+- ephemeral
+
+**Dev claims**: The development issuer publishes one RSA JWK and signs timed RS256 claims, refusing clocks before the Unix epoch.
+
+- rsaJwk
+- rs256
+- issuer
+- audience
+- subject
+- expiry
+- validEpoch
+
+**clone grace seconds** = 300: Minimum age in seconds for stale test clones considered by the sweeper.
+
+**database attempts** = 25: Attempt budget for test database operations retried because of connected clients.
+
+**database retry millis** = 200: Delay in milliseconds between retryable test database attempts.
+
+**template hash digits** = 16: Hex digits in a test template's fingerprint suffix.
+
+**template store** = 0: The store number initialized in a migrated host template.
+
+**example fixture pool size** = 4: Serving connections in the example engine fixture.
+
+**mcp default database url** = "postgres://postgres@localhost/proxiima_dev": The local development database URL used by the canonical CLI without explicit configuration.
+
+| changed paths | validate lane |
+| --- | --- |
+| relevant | yes |
+| unrelated | no |
+| unknown | yes |
+
+- validate lane: Stable required job names are present on main pull requests, and an unknown diff runs the affected lanes.
+
+| validation run | path source | cancel superseded validation | save rust cache |
+| --- | --- | --- | --- |
+| pullRequest | pullRequestApi | yes | no |
+| verify | verifiedToCandidate | no | yes |
+
+- path source: Pull requests use the GitHub API and Verify diffs its tested commit against the last verified commit.
+- cancel superseded validation: A newer PR revision supersedes the previous validation run.
+- save rust cache: Only main verification saves Rust caches.
+
+| bool | validation grants | publish prerelease | bootstrap preflight |
+| --- | --- | --- | --- |
+| yes | \[contentsRead, pullRequestsRead] | yes | no |
+| no | \[contentsRead] | no | yes |
+
+- validation grants: Only change detection needs pull-request reads and every validation token has read-only permissions.
+- publish prerelease: GitHub publishes v0 tags as pre-releases.
+- bootstrap preflight: Existing-volume bootstrap refuses while a development serving or platform client is connected to the target database.
+
+| documentation lane | changed paths | validate docs |
+| --- | --- | --- |
+| markdownLinks | relevant | yes |
+| markdownLinks | unrelated | yes |
+| markdownLinks | unknown | yes |
+| mkdocs | relevant | yes |
+| mkdocs | unrelated | no |
+| mkdocs | unknown | yes |
+| leanLedger | relevant | yes |
+| leanLedger | unrelated | yes |
+| leanLedger | unknown | yes |
+
+- validate docs: Every uncancelled validation checks Markdown links and audits the Lean ledger, while MkDocs builds on relevant changes or an unknown diff.
+
+| postgres fixture client | uses test pooler |
+| --- | --- |
+| serving | yes |
+| migration | no |
+| admin | no |
+
+- uses test pooler: Only serving clients are retargeted to the transaction pooler, preserving database and role.
+
+| bool | bool | bool | verify range | admin configuration |
+| --- | --- | --- | --- | --- |
+| yes | yes | yes | no | connect |
+| yes | yes | no | yes | connect |
+| yes | no | yes | no | connect |
+| yes | no | no | no | connect |
+| no | yes | yes | no | refuse |
+| no | yes | no | no | skip |
+| no | no | yes | no | refuse |
+| no | no | no | no | refuse |
+
+- verify range: Verify accepts a candidate from main only after checking that it extends the previously verified history without merge commits.
+- admin configuration: A blank or absent admin URL is a visible skip only in a local test that opts into skipping.
+
+| bool | bool | review covers | advance verified | numbered release | recover release | render upgrade | clone guard | stale clone collectible | collect template |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| yes | yes | yes | \[verifiedFastForward, nightlyLightweightTag] | skip | yes | yes | keep | no | no |
+| yes | no | no | \[] | tagAndPublish | no | no | keep | yes | yes |
+| no | yes | no | \[] | refuseUnverified | no | no | keepWithRedactedDiagnostic | no | no |
+| no | no | no | \[] | refuseUnverified | no | no | drop | no | no |
+
+- review covers: Each commit since verified needs a reviewer address outside its Git author and co-author addresses, on that commit or a later one in the candidate range.
+- advance verified: Failed CI or missing review leaves both references in place.
+- numbered release: A new workspace version cuts one immutable matching tag and GitHub Release when Verify reaches that candidate.
+- recover release: A matching verified tag can publish its notes through the same workflow for backfill or recovery.
+- render upgrade: Breaking commits in the candidate range require one nonempty Upgrade footer whose continuation is retained in the rendered notes.
+- clone guard: Explicit retention preserves a clone, as does panic, which otherwise reports its redacted URL.
+- stale clone collectible: The sweeper considers stale tracked and fixture-named untracked clones and lets PostgreSQL recheck for live clients at deletion.
+- collect template: Template collection takes an exclusive lease and retains a database that has gained a client.
+
+| version step | version accepted |
+| --- | --- |
+| initial | yes |
+| unchanged | yes |
+| nextPatch | yes |
+| nextMinor | yes |
+| nextMajor | yes |
+| invalid | no |
+
+- version accepted: Stable versions use canonical ASCII components and stay at the latest release or take one valid SemVer step.
+
+| dependency input | dependency policy |
+| --- | --- |
+| vulnerability | deny |
+| yank | deny |
+| unmaintainedWorkspaceDependency | deny |
+| disallowedLicense | deny |
+| unknownLicense | deny |
+| registryWildcard | deny |
+| repeatedVersion | warn |
+| workspacePath | allow |
+| cratesIo | allow |
+| undeclaredRegistry | deny |
+| undeclaredGit | deny |
+
+- dependency policy: Cargo-deny's configured enforcement for dependency inputs.
+
 ## Causa
 
 Causa — Audience

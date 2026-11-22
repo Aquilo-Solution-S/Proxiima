@@ -57,4 +57,32 @@ macro_rules! ledger {
     (Proxiima.Identity.storeNumberMutable) => {
         false
     };
+    // Minimum age in seconds for stale test clones considered by the sweeper.
+    (Proxiima.Repository.cloneGraceSeconds) => {
+        300
+    };
+    // Attempt budget for test database operations retried because of connected clients.
+    (Proxiima.Repository.databaseAttempts) => {
+        25
+    };
+    // Delay in milliseconds between retryable test database attempts.
+    (Proxiima.Repository.databaseRetryMillis) => {
+        200
+    };
+    // Hex digits in a test template's fingerprint suffix.
+    (Proxiima.Repository.templateHashDigits) => {
+        16
+    };
+    // The store number initialized in a migrated host template.
+    (Proxiima.Repository.templateStore) => {
+        0
+    };
+    // Serving connections in the example engine fixture.
+    (Proxiima.Repository.exampleFixturePoolSize) => {
+        4
+    };
+    // The local development database URL used by the canonical CLI without explicit configuration.
+    (Proxiima.Repository.mcpDefaultDatabaseUrl) => {
+        "postgres://postgres@localhost/proxiima_dev"
+    };
 }
