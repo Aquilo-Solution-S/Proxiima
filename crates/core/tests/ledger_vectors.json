@@ -1136,6 +1136,76 @@
   {"out": "later", "in": ["omitted", "supplied"]},
   {"out": "earlier", "in": ["supplied", "omitted"]},
   {"out": "later", "in": ["supplied", "supplied"]}],
+ "Proxiima.Composition.serviceVisibility":
+ [{"out": "hostSupplied", "in": ["construction"]},
+  {"out": "composed", "in": ["running"]}],
+ "Proxiima.Composition.serviceAdmission":
+ [{"out": "duplicate", "in": [true]}, {"out": "insert", "in": [false]}],
+ "Proxiima.Composition.schemaIdentity":
+ [{"out": ["id", "version", "kind"], "in": ["registration"]},
+  {"out": ["kind", "id"], "in": ["persistedMemory"]}],
+ "Proxiima.Composition.requestHeaderNames":
+ [{"out": "lowercase", "in": ["storeName"]},
+  {"out": "lowercase", "in": ["lookupName"]},
+  {"out": "namesOnly", "in": ["debug"]}],
+ "Proxiima.Composition.registrySource":
+ [{"out": "linkedBundles", "in": ["registration"]},
+  {"out": "validatedFreeze", "in": ["serving"]}],
+ "Proxiima.Composition.registersBundleSidecar":
+ [{"out": true, "in": [{"entity": ["Fact"]}]},
+  {"out": true, "in": [{"entity": ["Abstraction"]}]},
+  {"out": true, "in": [{"entity": ["Perspective"]}]},
+  {"out": true, "in": [{"entity": ["Goal"]}]},
+  {"out": false, "in": ["typedCitation"]},
+  {"out": false, "in": ["opaqueCitation"]}],
+ "Proxiima.Composition.profileDenial":
+ [{"out": false, "in": [true, true]},
+  {"out": true, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Composition.prefixSyntax":
+ [{"out": "slash", "in": ["typedSchema"]},
+  {"out": "slash", "in": ["opaqueCitation"]},
+  {"out": "slashOrUnderscore", "in": ["tool"]}],
+ "Proxiima.Composition.prefixCheck":
+ [{"out": "compileTime", "in": ["typedSchema"]},
+  {"out": "registration", "in": ["opaqueCitation"]},
+  {"out": "compileTime", "in": ["tool"]}],
+ "Proxiima.Composition.maySupplyRequestHeaders":
+ [{"out": false, "in": ["boot"]},
+  {"out": false, "in": ["requestExtension"]},
+  {"out": true, "in": ["allowlistProjection"]}],
+ "Proxiima.Composition.ingressParserCount":
+ [{"out": 1, "in": ["typed"]}, {"out": 0, "in": ["opaqueCitedObject"]}],
+ "Proxiima.Composition.hostToolEligible":
+ [{"out": false, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": true, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Composition.coreStartup":
+ [{"out": "listenerWithValidation", "in": ["serve"]},
+  {"out": "headlessWithValidation", "in": ["maintenance"]},
+  {"out": "headlessMigration", "in": ["migrate"]}],
+ "Proxiima.Composition.coreDeclarations":
+ [{"out": {"ok": true}, "in": [true, true, true]},
+  {"out": {"ok": true}, "in": [true, true, false]},
+  {"out": {"ok": true}, "in": [true, false, true]},
+  {"out": {"ok": true}, "in": [true, false, false]},
+  {"out": {"error": "resources"}, "in": [false, true, true]},
+  {"out": {"error": "resources"}, "in": [false, true, false]},
+  {"out": {"error": "kernelSurfaces"}, "in": [false, false, true]},
+  {"out": {"ok": true}, "in": [false, false, false]}],
+ "Proxiima.Composition.capabilityTagCharacter":
+ [{"out": true, "in": ["first", "asciiLowercase"]},
+  {"out": false, "in": ["first", "asciiDigit"]},
+  {"out": false, "in": ["first", "hyphen"]},
+  {"out": false, "in": ["first", "other"]},
+  {"out": true, "in": ["subsequent", "asciiLowercase"]},
+  {"out": true, "in": ["subsequent", "asciiDigit"]},
+  {"out": true, "in": ["subsequent", "hyphen"]},
+  {"out": false, "in": ["subsequent", "other"]}],
+ "Proxiima.Composition.appVersionSource":
+ [{"out": "explicit", "in": [true]}, {"out": "invokingPackage", "in": [false]}],
  "Proxiima.Authentication.subjectAdmission":
  [{"out": "allow", "in": [true, true]},
   {"out": "refuse", "in": [true, false]},

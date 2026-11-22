@@ -507,6 +507,260 @@ stateDiagram-v2
 
 - delegate blob operation: Verified collection needs a positive bound and owner reconciliation requires owner authority.
 
+## Composition
+
+**Registry stage**: Which stage of composition owns the registry.
+
+- registration
+- serving
+
+**Registry source**: What supplies each stage's registry.
+
+- linkedBundles
+- validatedFreeze
+
+**Service admission**: The result of admitting a concrete service type.
+
+- insert
+- duplicate
+
+**Service phase**: Which service set application composition exposes.
+
+- construction
+- running
+
+**Service visibility**: The visibility of services in application code.
+
+- hostSupplied
+- composed
+
+**Header supplier**: The supplier of a request header service.
+
+- boot
+- requestExtension
+- allowlistProjection
+
+**Header use**: Operations on the request header service.
+
+- storeName
+- lookupName
+- debug
+
+**Header name**: Which form of a header name a request header operation uses.
+
+- lowercase
+- namesOnly
+
+**Registered name**: The macro registration inputs that name a schema or tool.
+
+- typedSchema
+- opaqueCitation
+- tool
+
+**Prefix syntax**: What a registration accepts after the spiice prefix.
+
+- slash
+- slashOrUnderscore
+
+**Prefix check**: Where registration checks a declared name's prefix.
+
+- compileTime
+- registration
+
+**Schema identity part**: Which identity components distinguish registered schemas and persisted Memory selectors.
+
+- id
+- version
+- kind
+
+**Schema identity use**: Which use of a schema identity freeze checks for uniqueness.
+
+- registration
+- persistedMemory
+
+**Contract check**: Contract checks whose relative order determines the first refusal.
+
+- registrationAgreement
+- projectionUniformity
+- projectionReachability
+- bespokeLegAuthority
+- surfaceReachability
+- lifecycleLegs
+
+**Core declaration refusal**: Refusals for substrate-only declarations, identified by `Proxiima.Payloads.coreOrdinal`.
+
+- resources
+- kernelSurfaces
+
+**Tag position**: The two character positions of a capability tag.
+
+- first
+- subsequent
+
+**Tag character**: Character classes distinguished by the capability tag grammar.
+
+- asciiLowercase
+- asciiDigit
+- hyphen
+- other
+
+**App version source**: The source of an application version when using the app macro.
+
+- invokingPackage
+- explicit
+
+**Core command**: Ways the canonical app composes the core.
+
+- serve
+- maintenance
+- migrate
+
+**Core startup**: How a core command reaches storage.
+
+- listenerWithValidation
+- headlessWithValidation
+- headlessMigration
+
+**Agreement check**: The agreement checks between a linked registry and a declared contract.
+
+- declaredSchemaHasRegistration
+- registeredSchemaHasDeclaration
+- declaredToolHasRegistration
+
+**Natural key check**: Conditions that match a natural key declaration to its registration.
+
+- matchingSchemaIdWhenPresent
+- uniqueColumns
+- matchesTypedRegistration
+
+**Bundle schema**: Schema declarations the bundle macro may carry.
+
+- entity
+- typedCitation
+- opaqueCitation
+
+**contract check order** = \[registrationAgreement, projectionUniformity, projectionReachability, bespokeLegAuthority, surfaceReachability, lifecycleLegs]: Check registration before projection and bespoke-leg authority before lifecycle coverage.
+
+**contract agreement** = \[declaredSchemaHasRegistration, registeredSchemaHasDeclaration, declaredToolHasRegistration]: Each contract covers its schema registrations in both directions and every declared tool is registered.
+
+**natural key agreement** = \[matchingSchemaIdWhenPresent, uniqueColumns, matchesTypedRegistration]: Natural key agreement requires unique columns and the registered typed declaration.
+
+| registry stage | registry source |
+| --- | --- |
+| registration | linkedBundles |
+| serving | validatedFreeze |
+
+- registry source: Linked code registers at boot and only a validated registry serves calls.
+
+| bool | service admission | app version source |
+| --- | --- | --- |
+| yes | duplicate | explicit |
+| no | insert | invokingPackage |
+
+- service admission: An already present concrete service type is refused before insertion.
+- app version source: The app macro uses the invoking Cargo package version when the caller omits an override.
+
+| service phase | service visibility |
+| --- | --- |
+| construction | hostSupplied |
+| running | composed |
+
+- service visibility: Service factories see the supplied set and routes, tools and workers see the composed set.
+
+| header supplier | may supply request headers |
+| --- | --- |
+| boot | no |
+| requestExtension | no |
+| allowlistProjection | yes |
+
+- may supply request headers: Only the transport's per-request allowlist projection may supply request headers.
+
+| header use | request header names |
+| --- | --- |
+| storeName | lowercase |
+| lookupName | lowercase |
+| debug | namesOnly |
+
+- request header names: Header storage and lookup normalize names and debug shows only names.
+
+| bool | bool | host tool eligible | profile denial |
+| --- | --- | --- | --- |
+| yes | yes | no | no |
+| yes | no | no | yes |
+| no | yes | yes | no |
+| no | no | no | no |
+
+- host tool eligible: Whether the host declaration can supply the requested tool's behavior.
+- profile denial: The caller may deny a registered command while mandatory reads and unknown keys are refused.
+
+| registered name | prefix syntax | prefix check |
+| --- | --- | --- |
+| typedSchema | slash | compileTime |
+| opaqueCitation | slash | registration |
+| tool | slashOrUnderscore | compileTime |
+
+- prefix syntax: Declared schema names are slash-prefixed and declared tools also accept underscore.
+- prefix check: A typed schema or tool name is checked at compile time and opaque expressions at registration.
+
+| schema identity use | schema identity |
+| --- | --- |
+| registration | \[id, version, kind] |
+| persistedMemory | \[kind, id] |
+
+- schema identity: Registrations are unique by full identity and persisted Memory selectors omit version.
+
+| bool | bool | bool | core declarations |
+| --- | --- | --- | --- |
+| yes | yes | yes | yes |
+| yes | yes | no | yes |
+| yes | no | yes | yes |
+| yes | no | no | yes |
+| no | yes | yes | refused: resources |
+| no | yes | no | refused: resources |
+| no | no | yes | refused: kernelSurfaces |
+| no | no | no | yes |
+
+- core declarations: Only core admits resource and kernel-surface declarations, with resource refusal taking precedence.
+
+| tag position | tag character | capability tag character |
+| --- | --- | --- |
+| first | asciiLowercase | yes |
+| first | asciiDigit | no |
+| first | hyphen | no |
+| first | other | no |
+| subsequent | asciiLowercase | yes |
+| subsequent | asciiDigit | yes |
+| subsequent | hyphen | yes |
+| subsequent | other | no |
+
+- capability tag character: A tag starts with a lowercase ASCII letter and may continue with those letters, digits or hyphens.
+
+| core command | core startup |
+| --- | --- |
+| serve | listenerWithValidation |
+| maintenance | headlessWithValidation |
+| migrate | headlessMigration |
+
+- core startup: The canonical core app starts a listener only for serving and migrates only on explicit request.
+
+| ingress shape | ingress parser count |
+| --- | --- |
+| typed | 1 |
+| opaqueCitedObject | 0 |
+
+- ingress parser count: A typed schema has one matching protocol parser and an opaque citation has none.
+
+| bundle schema | registers bundle sidecar |
+| --- | --- |
+| entity (Fact) | yes |
+| entity (Abstraction) | yes |
+| entity (Perspective) | yes |
+| entity (Goal) | yes |
+| typedCitation | no |
+| opaqueCitation | no |
+
+- registers bundle sidecar: The bundle macro generates sidecar registrations from the entity schema lists.
+
 ## Configuration
 
 **Presence**: Whether a configuration layer supplies the slot being resolved.
