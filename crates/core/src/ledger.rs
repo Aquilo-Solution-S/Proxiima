@@ -309,6 +309,118 @@ macro_rules! ledger {
     (Proxiima.OwnerAuthority.currentSpaceKey) => {
         "current"
     };
+    // A receipt key begins with this marker, then the length-framed schema ID and big-endian version.
+    (Proxiima.Payloads.receiptMarker) => {
+        [80, 75, 69, 89, 49, 0]
+    };
+    // Tag for a UTF-8 string.
+    (Proxiima.Payloads.receiptStringTag) => {
+        115
+    };
+    // Tag for a one-byte Boolean.
+    (Proxiima.Payloads.receiptBoolTag) => {
+        98
+    };
+    // Tag for an unsigned byte.
+    (Proxiima.Payloads.receiptU8Tag) => {
+        49
+    };
+    // Tag for a big-endian unsigned 32-bit integer.
+    (Proxiima.Payloads.receiptU32Tag) => {
+        52
+    };
+    // Tag for a big-endian signed 32-bit integer.
+    (Proxiima.Payloads.receiptI32Tag) => {
+        73
+    };
+    // Tag for a big-endian signed 64-bit integer.
+    (Proxiima.Payloads.receiptI64Tag) => {
+        76
+    };
+    // Tag for a big-endian unsigned 64-bit integer, also used by platform-sized counts.
+    (Proxiima.Payloads.receiptU64Tag) => {
+        56
+    };
+    // Tag for 16 raw UUID bytes.
+    (Proxiima.Payloads.receiptUuidTag) => {
+        117
+    };
+    // Tag for a length-framed byte sequence.
+    (Proxiima.Payloads.receiptBytesTag) => {
+        66
+    };
+    // Tag for signed, big-endian, 128-bit epoch nanoseconds.
+    (Proxiima.Payloads.receiptTimeTag) => {
+        116
+    };
+    // Tag for an optional UTF-8 string.
+    (Proxiima.Payloads.receiptOptionalStringTag) => {
+        83
+    };
+    // Tag for an optional Boolean.
+    (Proxiima.Payloads.receiptOptionalBoolTag) => {
+        79
+    };
+    // Tag for an optional unsigned byte.
+    (Proxiima.Payloads.receiptOptionalU8Tag) => {
+        50
+    };
+    // Tag for an optional unsigned 32-bit integer.
+    (Proxiima.Payloads.receiptOptionalU32Tag) => {
+        53
+    };
+    // Tag for an optional signed 32-bit integer.
+    (Proxiima.Payloads.receiptOptionalI32Tag) => {
+        105
+    };
+    // Tag for an optional signed 64-bit integer.
+    (Proxiima.Payloads.receiptOptionalI64Tag) => {
+        108
+    };
+    // Tag for an optional unsigned 64-bit integer or platform-sized count.
+    (Proxiima.Payloads.receiptOptionalU64Tag) => {
+        57
+    };
+    // Tag for an optional UUID.
+    (Proxiima.Payloads.receiptOptionalUuidTag) => {
+        85
+    };
+    // Tag for an optional byte sequence.
+    (Proxiima.Payloads.receiptOptionalBytesTag) => {
+        67
+    };
+    // Tag for optional epoch nanoseconds.
+    (Proxiima.Payloads.receiptOptionalTimeTag) => {
+        84
+    };
+    // Tag for a list preceded by its element count.
+    (Proxiima.Payloads.receiptListTag) => {
+        91
+    };
+    // The byte width of durable and kind-scoped Content digests.
+    (Proxiima.Payloads.contentHashBytes) => {
+        32
+    };
+    // The ordinal reserved for the core contract.
+    (Proxiima.Payloads.coreOrdinal) => {
+        0
+    };
+    // Projection relation name.
+    (Proxiima.Payloads.projectionTable) => {
+        "projection"
+    };
+    // Projection's Memory key column.
+    (Proxiima.Payloads.projectionMemoryColumn) => {
+        "memory_id"
+    };
+    // Projection's Memory foreign key name.
+    (Proxiima.Payloads.projectionMemoryForeignKey) => {
+        "projection_memory_id_fkey"
+    };
+    // The largest authorized page of typed sidecar heads.
+    (Proxiima.Payloads.sidecarHeadPageMax) => {
+        1000
+    };
     // Minimum age in seconds for stale test clones considered by the sweeper.
     (Proxiima.Repository.cloneGraceSeconds) => {
         300

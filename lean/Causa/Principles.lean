@@ -1,6 +1,7 @@
 import Causa.Provenance
 import Causa.Audience
 import Causa.Compliance
+import Proxiima.Payloads
 
 /-! Causa — Principles -/
 
@@ -34,7 +35,7 @@ theorem principle_access_is_one_resolved_role
     (flattened s o gs).gives u c ↔ o.gives u c ∨ ∃ g, g ∈ gs ∧ g.gives s u c :=
   flattened_gives s o gs u c
 
-/-- Principle 4 — Relationship typing by the declaring field. -/
+/-- Relationship typing for the Memory and Goal targets in `Proxiima.Payloads.ReferenceTarget`. -/
 theorem principle_4_the_field_fixes_the_kind
     (memories : Set Memory) (goals : Set Goal) (heads : Set MemoryHead)
     (hgraph : MemoryGraphValid memories goals heads)

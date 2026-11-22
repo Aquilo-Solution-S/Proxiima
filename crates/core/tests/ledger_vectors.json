@@ -110,6 +110,99 @@
   {"out": "skip", "in": [false, true, false]},
   {"out": "refuse", "in": [false, false, true]},
   {"out": "refuse", "in": [false, false, false]}],
+ "Proxiima.Payloads.versionedSchemaAvailable":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Payloads.trimKeyPadding":
+ [{"out": false, "in": ["text"]}, {"out": true, "in": ["paddedText"]}],
+ "Proxiima.Payloads.stampsOwner":
+ [{"out": false, "in": ["none"]},
+  {"out": true, "in": ["pinned"]},
+  {"out": true, "in": ["follows"]}],
+ "Proxiima.Payloads.scopeSelection":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Payloads.scopeDeclaration":
+ [{"out": true, "in": ["declaredOnce"]},
+  {"out": false, "in": ["missing"]},
+  {"out": false, "in": ["duplicated"]}],
+ "Proxiima.Payloads.schemaIdSpelling":
+ [{"out": true, "in": ["lowercaseWithoutWhitespace"]},
+  {"out": false, "in": ["notLowercase"]},
+  {"out": false, "in": ["containsWhitespace"]}],
+ "Proxiima.Payloads.receiptPresence":
+ [{"out": null, "in": ["omitted"]},
+  {"out": 0, "in": ["absent"]},
+  {"out": 1, "in": ["present"]}],
+ "Proxiima.Payloads.pinnedInverse":
+ [{"out": "skip", "in": ["memoryFollowing"]},
+  {"out": "stampedOwner", "in": ["wholeOwner"]},
+  {"out": "stampedOwnerAndSource", "in": ["sourceErase"]}],
+ "Proxiima.Payloads.physicalSurfaceDeclaration":
+ [{"out": true, "in": ["declaredOnce"]},
+  {"out": false, "in": ["repeatedDeclaration"]}],
+ "Proxiima.Payloads.payloadSubjects":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.Payloads.needsGeneratedDelete":
+ [{"out": false, "in": ["declaredConstraint"]},
+  {"out": true, "in": ["explicitLeg"]}],
+ "Proxiima.Payloads.listSchemaInventory":
+ [{"out": ["allPayloadKinds", "resourceAnswers"], "in": ["allKinds"]},
+  {"out": ["selectedPayloadKind", "resourceAnswers"], "in": ["selectedKind"]}],
+ "Proxiima.Payloads.kindScopedHash":
+ [{"out": false, "in": ["fact"]}, {"out": true, "in": ["derived"]}],
+ "Proxiima.Payloads.installReference":
+ [{"out": "add", "in": ["none"]},
+  {"out": "reuse", "in": ["compatible"]},
+  {"out": "refuse", "in": ["incompatible"]},
+  {"out": "refuse", "in": ["secondCascadingMemoryParent"]}],
+ "Proxiima.Payloads.followsBootRefusal":
+ [{"out": "invalidShape", "in": ["missingTable"]},
+  {"out": "migrationRequired", "in": ["stalePolicy"]}],
+ "Proxiima.Payloads.exportProjection":
+ [{"out": "allFields", "in": ["rows"]},
+  {"out": "declaredFields", "in": ["allowlist"]},
+  {"out": "noRows", "in": ["derivedFromCarried"]},
+  {"out": "noRows", "in": ["unresolvedDerivation"]},
+  {"out": "noRows", "in": ["excluded"]}],
+ "Proxiima.Payloads.exportOwner":
+ [{"out": true, "in": ["ownColumn"]},
+  {"out": true, "in": ["keyHome"]},
+  {"out": false, "in": ["unreachable"]}],
+ "Proxiima.Payloads.eraseExportable":
+ [{"out": true, "in": ["rows"]},
+  {"out": true, "in": ["allowlist"]},
+  {"out": true, "in": ["derivedFromCarried"]},
+  {"out": false, "in": ["unresolvedDerivation"]},
+  {"out": false, "in": ["excluded"]}],
+ "Proxiima.Payloads.enforceStamp":
+ [{"out": ["sidecarInsert", "sidecarRepoint", "sidecarDelete", "memoryCommit"],
+   "in": ["none"]},
+  {"out": ["sidecarInsert", "sidecarRepoint"], "in": ["pinned"]},
+  {"out": ["sidecarInsert", "sidecarRepoint", "sidecarDelete", "memoryCommit"],
+   "in": ["follows"]}],
+ "Proxiima.Payloads.durableFieldInsertion":
+ [{"out": "duplicate", "in": [true]}, {"out": "accept", "in": [false]}],
+ "Proxiima.Payloads.dispatchLoader":
+ [{"out": "callBatch", "in": ["batch"]},
+  {"out": "fanOutSingle", "in": ["single"]},
+  {"out": "internalError", "in": ["neither"]}],
+ "Proxiima.Payloads.descriptorMatches":
+ [{"out": true, "in": ["exact"]}, {"out": false, "in": ["alias"]}],
+ "Proxiima.Payloads.dedupeSidecarAdmitted":
+ [{"out": false, "in": ["citedObjectSidecar"]}, {"out": true, "in": ["other"]}],
+ "Proxiima.Payloads.decodeStoredKey":
+ [{"out": "preserveType", "in": ["supportedScalar"]},
+  {"out": "trimPadding", "in": ["paddedText"]},
+  {"out": "refuse", "in": ["null"]},
+  {"out": "refuse", "in": ["unsupported"]}],
  "Proxiima.OwnerAuthority.transferConsent":
  [{"out": "administer", "in": ["source", "personalRole"]},
   {"out": "administerAndManage", "in": ["source", "groupRole"]},

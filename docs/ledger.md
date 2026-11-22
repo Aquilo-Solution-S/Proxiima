@@ -2496,6 +2496,553 @@ stateDiagram-v2
 
 - transfer admitted: A Memory series with Goal causality or a refusal in its schema cannot transfer.
 
+## Payloads
+
+**Payload view**: The independent views captured from one typed payload.
+
+- protocolJson
+- naturalKey
+- display
+- durable
+- references
+- scope
+
+**Display source**: The sources for a projected Memory body.
+
+- typedProjection
+- readFallback
+
+**Reference target**: Schema-declared reference fields bind an exact Memory or Goal version.
+
+- memoryVersion
+- goalVersion
+
+**Scope registry column**: The two columns of a lifecycle scope registry.
+
+- scopeId
+- ownerId
+
+**Scope registration**: The registration states for a scope kind.
+
+- declaredOnce
+- missing
+- duplicated
+
+**Receipt field part**: The parts of a declared receipt field in byte order.
+
+- nameLength
+- nameBytes
+- tag
+- value
+
+**Receipt presence**: An optional receipt field distinguishes omission, explicit absence and each present value.
+
+- omitted
+- absent
+- present
+
+**Content hash part**: The components of the durable payload hash input for each payload ordered by schema ID.
+
+- schemaId
+- durableLength
+- canonicalDurableBytes
+
+**Content hash kind**: The kind classes that share or separate Content hashes.
+
+- fact
+- derived
+
+**Key text**: The text kinds available to a typed natural key.
+
+- text
+- paddedText
+
+**Key scalar**: The registered scalar shapes projected into a natural key in field declaration order.
+
+- uuid
+- text
+- i16
+- i32
+- i64
+- bool
+
+**Ingress shape**: The registered payload ingress shapes.
+
+- typed
+- opaqueCitedObject
+
+**Schema index**: The lookup keys built at freeze for schema readers and kind-specific consumers.
+
+- schemaVersion
+- schemaVersionKind
+
+**Schema name part**: The components of a schema contract's rendered ID.
+
+- spiice
+- name
+- version
+
+**Inventory filter**: How the schema catalog filters the registered payload inventory.
+
+- allKinds
+- selectedKind
+
+**Inventory source**: Payload and resource sources of the schema inventory.
+
+- allPayloadKinds
+- selectedPayloadKind
+- resourceAnswers
+
+**Physical surface registration**: Whether a repeated physical declaration can be accepted before flattening.
+
+- declaredOnce
+- repeatedDeclaration
+
+**Surface field**: The pieces of an exportable lifecycle surface declaration.
+
+- key
+- ownerColumn
+- erase
+- forget
+- export
+- transfer
+- receipt
+- completeness
+
+**Surface export**: Whether a surface export carries rows, obtains them from a declared source, or excludes them.
+
+- rows
+- allowlist
+- derivedFromCarried
+- unresolvedDerivation
+- excluded
+
+**Surface owner**: How a carried surface reaches its owner.
+
+- ownColumn
+- keyHome
+- unreachable
+
+**Sidecar owner mode**: The owner relation of a Memory sidecar.
+
+- none
+- pinned
+- follows
+
+**Pinned traversal**: The inverse scope affecting a pinned Memory sidecar.
+
+- memoryFollowing
+- wholeOwner
+- sourceErase
+
+**Pinned inverse target**: How an inverse targets a pinned row.
+
+- skip
+- stampedOwner
+- stampedOwnerAndSource
+
+**Stamp check**: The timing and direction of the inverse check for a stamped sidecar.
+
+- sidecarInsert
+- sidecarRepoint
+- sidecarDelete
+- memoryCommit
+
+**Durable field result**: How a duplicate durable field insertion is reported.
+
+- accept
+- duplicate
+
+**Installation part**: What the installer records for a Memory sidecar.
+
+- memoryForeignKey
+- declaredSurface
+- integrityTriggers
+- ownerPolicy
+
+**Existing reference**: How a reference installation resolves an existing key.
+
+- none
+- compatible
+- incompatible
+- secondCascadingMemoryParent
+
+**Reference installation**: The result of installing a declared reference.
+
+- add
+- reuse
+- refuse
+
+**Loader primitive**: The ways a sidecar loader can provide a primitive.
+
+- batch
+- single
+- neither
+
+**Loader dispatch**: The three dispatch outcomes for sidecar loads.
+
+- callBatch
+- fanOutSingle
+- internalError
+
+**Stored key**: The source of decoded sidecar key values.
+
+- supportedScalar
+- paddedText
+- null
+- unsupported
+
+**Stored key decode**: How a stored sidecar key is decoded.
+
+- preserveType
+- trimPadding
+- refuse
+
+**Schema spelling**: Text shape checked by the repository schema ID gate.
+
+- lowercaseWithoutWhitespace
+- notLowercase
+- containsWhitespace
+
+**Head request step**: The checks that resolve a typed sidecar head request before storage.
+
+- positiveLimit
+- registeredFact
+- declaredNaturalKey
+- declaredMemoryKey
+- typedPrefixInContractOrder
+
+**Storage schema source**: The sources of schema names in the composed database census.
+
+- core
+- activeSurface
+- registeredSidecar
+- retiredSurface
+
+**Payload column consumer**: Search and embedding resolve the Memory key declared by the schema's sidecar surface.
+
+- search
+- embedding
+
+**Transfer refusal part**: The contract checks required before a pending transfer refusal can be used.
+
+- reason
+- enforcementSite
+
+**Follows table state**: Whether an installer may create a missing Follows table or only update existing generated policy.
+
+- missingTable
+- stalePolicy
+
+**Follows boot refusal**: How boot classifies a Follows table that needs attention.
+
+- invalidShape
+- migrationRequired
+
+**Registration check**: The identifiers and behavior reconciled against core when binding a storage registration.
+
+- schemaKind
+- typedPayload
+- naturalKey
+- sidecarTable
+- memoryKey
+- ownerMode
+- writeCapabilities
+
+**Sidecar session filter**: A scoped sidecar session derives the owner from its permit and admits only narrower declared-table predicates.
+
+- ownerFromPermit
+- additionalPredicate
+
+**Erase completeness**: Where an inverse obtains its proof of deleting a cascaded surface.
+
+- declaredConstraint
+- explicitLeg
+
+**Scope admission step**: The held prerequisites of a scoped payload admission.
+
+- canonicalDistinctScopes
+- fenceAndProbeEachScope
+- lockSeries
+
+**Sidecar write leg**: The writes coordinated by a permitted typed sidecar insertion.
+
+- typedRow
+- derivedProjection
+
+**Descriptor name**: A descriptor in the exact name registry does not authorize aliases.
+
+- exact
+- alias
+
+**Export projection**: The data a surface contributes to an owner export.
+
+- allFields
+- declaredFields
+- noRows
+
+**Owned head column**: The columns available from the owned current sidecar head.
+
+- handle
+- exactVersion
+
+**Dedupe sidecar**: The registration in relation to cited-object deduplication.
+
+- citedObjectSidecar
+- other
+
+**captured views** = \[protocolJson, naturalKey, display, durable, references, scope]: The views captured before storage erases the Rust type.
+
+**display sources** = \[typedProjection, readFallback]: The sources for a Memory display body in priority order.
+
+**scope registry identifiers** = \[scopeId, ownerId]: A scope registry requires a qualified table and valid identifiers for these columns.
+
+**receipt marker** = \[80, 75, 69, 89, 49, 0]: A receipt key begins with this marker, then the length-framed schema ID and big-endian version.
+
+**receipt string tag** = 115: Tag for a UTF-8 string.
+
+**receipt bool tag** = 98: Tag for a one-byte Boolean.
+
+**receipt u8 tag** = 49: Tag for an unsigned byte.
+
+**receipt u32 tag** = 52: Tag for a big-endian unsigned 32-bit integer.
+
+**receipt i32 tag** = 73: Tag for a big-endian signed 32-bit integer.
+
+**receipt i64 tag** = 76: Tag for a big-endian signed 64-bit integer.
+
+**receipt u64 tag** = 56: Tag for a big-endian unsigned 64-bit integer, also used by platform-sized counts.
+
+**receipt uuid tag** = 117: Tag for 16 raw UUID bytes.
+
+**receipt bytes tag** = 66: Tag for a length-framed byte sequence.
+
+**receipt time tag** = 116: Tag for signed, big-endian, 128-bit epoch nanoseconds.
+
+**receipt optional string tag** = 83: Tag for an optional UTF-8 string.
+
+**receipt optional bool tag** = 79: Tag for an optional Boolean.
+
+**receipt optional u8 tag** = 50: Tag for an optional unsigned byte.
+
+**receipt optional u32 tag** = 53: Tag for an optional unsigned 32-bit integer.
+
+**receipt optional i32 tag** = 105: Tag for an optional signed 32-bit integer.
+
+**receipt optional i64 tag** = 108: Tag for an optional signed 64-bit integer.
+
+**receipt optional u64 tag** = 57: Tag for an optional unsigned 64-bit integer or platform-sized count.
+
+**receipt optional uuid tag** = 85: Tag for an optional UUID.
+
+**receipt optional bytes tag** = 67: Tag for an optional byte sequence.
+
+**receipt optional time tag** = 84: Tag for optional epoch nanoseconds.
+
+**receipt list tag** = 91: Tag for a list preceded by its element count.
+
+**receipt field order** = \[nameLength, nameBytes, tag, value]: A receipt field frames its UTF-8 name before its type tag and value.
+
+**content hash bytes** = 32: The byte width of durable and kind-scoped Content digests.
+
+**durable hash order** = \[schemaId, durableLength, canonicalDurableBytes]: The schema identity precedes the length and canonical bytes of its durable payload.
+
+**natural key scalars** = \[uuid, text (text), text (paddedText), i16, i32, i64, bool]: The scalar kinds available to a stateful Fact natural key.
+
+**schema indices** = \[schemaVersion, schemaVersionKind]: Freeze constructs both indices and preserves the first declaration for each key.
+
+**schema name order** = \[spiice, name, version]: A rendered schema ID places the spiice before the schema name and its version.
+
+**core ordinal** = 0: The ordinal reserved for the core contract.
+
+**projection table** = "projection": Projection relation name.
+
+**projection memory column** = "memory\_id": Projection's Memory key column.
+
+**projection memory foreign key** = "projection\_memory\_id\_fkey": Projection's Memory foreign key name.
+
+**sidecar head page max** = 1000: The largest authorized page of typed sidecar heads.
+
+**surface fields** = \[key, ownerColumn, erase, forget, export, transfer, receipt, completeness]: Every declared surface specifies these lifecycle fields.
+
+**install memory sidecar** = \[memoryForeignKey, declaredSurface, integrityTriggers, ownerPolicy]: The Memory sidecar installer installs the key, declaration, integrity and owner policy together.
+
+**resolve head request** = \[positiveLimit, registeredFact, declaredNaturalKey, declaredMemoryKey, typedPrefixInContractOrder]: A head page resolves SQL identifiers and prefix types from the frozen Fact contract.
+
+**storage schema census** = \[core, activeSurface, registeredSidecar, retiredSurface]: The sorted storage schema census includes every schema reached from these sources.
+
+**transfer refusal parts** = \[reason, enforcementSite]: A schema-declared transfer refusal carries its reason and at least one enforcement site.
+
+**sidecar agreement** = \[schemaKind, typedPayload, naturalKey, sidecarTable, memoryKey, ownerMode, writeCapabilities]: PostgreSQL-side registration must agree with the frozen core registration and contract.
+
+**session read filters** = \[ownerFromPermit, additionalPredicate]: The mandatory leading filter and optional narrowing inputs of a session read.
+
+**scope admission order** = \[canonicalDistinctScopes, fenceAndProbeEachScope, lockSeries]: A scoped admission checks liveness under the shared scope fence before the series locks.
+
+**sidecar write** = \[typedRow, derivedProjection]: A sidecar write uses one frozen entry and one transaction for both legs.
+
+**owned head columns** = \[handle, exactVersion]: The declared sidecar Memory key joins the current head under the current owner.
+
+| bool | bool | scope selection | versioned schema available | payload subjects |
+| --- | --- | --- | --- | --- |
+| yes | yes | yes | yes | yes |
+| yes | no | no | no | no |
+| no | yes | no | no | no |
+| no | no | no | no | no |
+
+- scope selection: The scope is present only when its kind is declared and its row ID is supplied.
+- versioned schema available: The schema resource replies only for a registered exact version with published JSON Schema.
+- payload subjects: An emitted reference can ground payload-only provenance when its field and target are eligible.
+
+| scope registration | scope declaration |
+| --- | --- |
+| declaredOnce | yes |
+| missing | no |
+| duplicated | no |
+
+- scope declaration: A payload's declared scope kind must have exactly one registry declaration.
+
+| receipt presence | receipt presence |
+| --- | --- |
+| omitted | — |
+| absent | 0 |
+| present | 1 |
+
+- receipt presence: The presence byte written after a declared optional field's tag.
+
+| content hash kind | kind scoped hash |
+| --- | --- |
+| fact | no |
+| derived | yes |
+
+- kind scoped hash: A derived admission domain-separates the Content hash by kind.
+
+| key text | trim key padding |
+| --- | --- |
+| text | no |
+| paddedText | yes |
+
+- trim key padding: Only padded text discards trailing ASCII spaces.
+
+| inventory filter | list schema inventory |
+| --- | --- |
+| allKinds | \[allPayloadKinds, resourceAnswers] |
+| selectedKind | \[selectedPayloadKind, resourceAnswers] |
+
+- list schema inventory: The case-insensitive kind filter controls payload entries while the resource schema inventory is independent.
+
+| physical surface registration | physical surface declaration |
+| --- | --- |
+| declaredOnce | yes |
+| repeatedDeclaration | no |
+
+- physical surface declaration: A physical table has one declaration even when multiple schema registrations name it.
+
+| surface export | erase exportable | export projection |
+| --- | --- | --- |
+| rows | yes | allFields |
+| allowlist | yes | declaredFields |
+| derivedFromCarried | yes | noRows |
+| unresolvedDerivation | no | noRows |
+| excluded | no | noRows |
+
+- erase exportable: The export policy of an erased surface must end at rows or an allowlist.
+- export projection: The direct bundle projection follows the surface's declared export policy.
+
+| surface owner | export owner |
+| --- | --- |
+| ownColumn | yes |
+| keyHome | yes |
+| unreachable | no |
+
+- export owner: A carried surface serves an owner through its own column or its key's single home.
+
+| sidecar owner mode | stamps owner | enforce stamp |
+| --- | --- | --- |
+| none | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
+| pinned | yes | \[sidecarInsert, sidecarRepoint] |
+| follows | yes | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
+
+- stamps owner: Pinned and Follows sidecars stamp the row's own owner at insertion.
+- enforce stamp: Inserts and repoints require a declaration; reverse presence and delete checks exempt historical pinned stamps.
+
+| pinned traversal | pinned inverse |
+| --- | --- |
+| memoryFollowing | skip |
+| wholeOwner | stampedOwner |
+| sourceErase | stampedOwnerAndSource |
+
+- pinned inverse: Memory-following traversal skips pinned rows; owner inverses select by stamped owner.
+
+| bool | durable field insertion |
+| --- | --- |
+| yes | duplicate |
+| no | accept |
+
+- durable field insertion: A previously declared durable field cannot be supplied again.
+
+| existing reference | install reference |
+| --- | --- |
+| none | add |
+| compatible | reuse |
+| incompatible | refuse |
+| secondCascadingMemoryParent | refuse |
+
+- install reference: Identical keys are reusable; conflicting keys and a second cascading Memory parent are refused.
+
+| loader primitive | dispatch loader |
+| --- | --- |
+| batch | callBatch |
+| single | fanOutSingle |
+| neither | internalError |
+
+- dispatch loader: A batch override serves directly; the default calls a single override or reports the missing primitive.
+
+| stored key | decode stored key |
+| --- | --- |
+| supportedScalar | preserveType |
+| paddedText | trimPadding |
+| null | refuse |
+| unsupported | refuse |
+
+- decode stored key: PostgreSQL type identity drives decoding and null or unsupported keys are refused.
+
+| schema spelling | schema id spelling |
+| --- | --- |
+| lowercaseWithoutWhitespace | yes |
+| notLowercase | no |
+| containsWhitespace | no |
+
+- schema id spelling: A declared schema ID must be lowercase without whitespace.
+
+| follows table state | follows boot refusal |
+| --- | --- |
+| missingTable | invalidShape |
+| stalePolicy | migrationRequired |
+
+- follows boot refusal: An absent Follows table is a schema defect; a stale generated policy requires migration.
+
+| erase completeness | needs generated delete |
+| --- | --- |
+| declaredConstraint | no |
+| explicitLeg | yes |
+
+- needs generated delete: A declared cascade constraint removes the need for a generated delete leg.
+
+| descriptor name | descriptor matches |
+| --- | --- |
+| exact | yes |
+| alias | no |
+
+- descriptor matches: The descriptor lookup matches an exact registered name.
+
+| dedupe sidecar | dedupe sidecar admitted |
+| --- | --- |
+| citedObjectSidecar | no |
+| other | yes |
+
+- dedupe sidecar admitted: A cited-object sidecar is refused because the current dedupe remapper cannot reach it.
+
 ## Repository
 
 **Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
@@ -3235,7 +3782,7 @@ Causa — Principles
 
 ✓ **principle access is one resolved role**: Principle 3 — Owner and audience access through one resolved role.
 
-✓ **principle 4 the field fixes the kind**: Principle 4 — Relationship typing by the declaring field.
+✓ **principle 4 the field fixes the kind**: Relationship typing for the Memory and Goal targets in `Proxiima.Payloads.ReferenceTarget`.
 
 ✓ **principle 5 no transition retargets a pin**: Principle 5 — Stability of pin targets through forgetting and erasure.
 
