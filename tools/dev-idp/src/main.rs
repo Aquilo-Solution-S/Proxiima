@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_lc_rs::encoding::AsDer;
-use aws_lc_rs::rand::SystemRandom;
+use aws_lc_rs::rand::{SecureRandom as _, SystemRandom};
 use aws_lc_rs::rsa::{KeySize, PublicKeyComponents};
 use aws_lc_rs::signature::{KeyPair as _, RSA_PKCS1_SHA256, RsaKeyPair};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -226,7 +226,8 @@ fn read_key(path: &std::path::Path) -> Result<Option<RsaKeyPair>, String> {
     }
 }
 
-/// `Proxiima.Repository.DevSigner`. A creation conflict points back to the stored file.
+/// `Proxiima.Repository.DevSigner`. The key is staged in a private file and hard-linked into place,
+/// so another process sees no file or a whole key; a link conflict reads the stored file.
 fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
     let key = generate_key()?;
     let der = AsDer::<aws_lc_rs::encoding::Pkcs8V1Der<'_>>::as_der(&key)
@@ -235,6 +236,27 @@ fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
     }
+    let mut nonce = [0_u8; 8];
+    SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| "failed to name a temporary key file")?;
+    let staged = path.with_extension(format!("{:016x}.tmp", u64::from_le_bytes(nonce)));
+    write_private(&staged, der.as_ref())
+        .map_err(|err| format!("cannot write {}: {err}", staged.display()))?;
+    let linked = std::fs::hard_link(&staged, path);
+    // The key now lives under `path`, or the one another process linked first does.
+    let _ = std::fs::remove_file(&staged);
+    match linked {
+        Ok(()) => Ok(key),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            read_key(path)?.ok_or_else(|| format!("{} vanished", path.display()))
+        }
+        Err(err) => Err(format!("cannot write {}: {err}", path.display())),
+    }
+}
+
+/// Write `bytes` to a new file at `path` that only its owner can read, removing it if the write fails.
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -242,16 +264,12 @@ fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(UNIX_KEY_MODE);
     }
-    let mut file = match options.open(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            return read_key(path)?.ok_or_else(|| format!("{} vanished", path.display()));
-        }
-        Err(err) => return Err(format!("cannot write {}: {err}", path.display())),
-    };
-    file.write_all(der.as_ref())
-        .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
-    Ok(key)
+    let mut file = options.open(path)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    if written.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 /// Whole seconds since the Unix epoch at `time`; a clock before the epoch is refused, not read as 0.
@@ -494,6 +512,11 @@ mod tests {
         let second = create_key(&path).expect("the stored key");
         assert_eq!(first.public_key().as_ref(), second.public_key().as_ref());
         assert_eq!(std::fs::read(&path).expect("stored"), bytes);
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("listed")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names, ["key.pkcs8"], "no staged file stays behind");
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
