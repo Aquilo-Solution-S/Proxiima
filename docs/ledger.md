@@ -1,5 +1,196 @@
 # The ledger
 
+## Configuration
+
+**Presence**: Whether a configuration layer supplies the slot being resolved.
+
+- omitted
+- supplied
+
+**Layer**: Which layer provides a resolved configuration slot.
+
+- builtIn
+- application
+- environment
+- host
+
+**Lookup profile**: The available configuration lookup profiles.
+
+- serving
+- storageOnly
+
+**Setting group**: The groups of settings used by the facade's lookup.
+
+- storage
+- embeddingRuntime
+- serving
+- objectStore
+
+**Publication block**: The independently configurable settings for capturing and maintaining publication.
+
+- capture
+- retention
+- objectPurge
+
+**Lookup text**: The lexical outcomes of trimming a setting's lookup result.
+
+- missing
+- blank
+- nonblank
+
+**Read setting**: The process reader accepts a setting value rather than a bare name.
+
+- declaredSetting
+- bareName
+
+**Environment name**: Configured names distinguished by the unknown-name diagnostic.
+
+- declared
+- unknownProductName
+- unrelated
+
+**Pair position**: The two positions of repeated entries in an injected environment.
+
+- earlier
+- later
+
+**Storage policy source**: The possible sources of storage policy during facade boot.
+
+- resolvedConfiguration
+- processEnvironment
+
+**Setting source**: The registered sources that supply operator documentation and host help.
+
+- facade
+- core
+- postgres
+- objectStore
+- host
+
+**Default input**: The inputs compared against each declared default's effective reader.
+
+- omitted
+- statedDefault
+- differentValue
+
+**storage policy source** = resolvedConfiguration: Facade storage boot consumes its resolved pool and query policy without a second environment lookup.
+
+**true words** = ["1", "true", "yes", "on"]: The case-insensitive boolean words that read as true after trimming.
+
+**false words** = ["0", "false", "no", "off"]: The case-insensitive boolean words that read as false after trimming.
+
+**documentation sources** = [facade, core, postgres, objectStore, host]: The composition order for settings documentation and help, with development tools outside the composition.
+
+| presence | presence | presence | layer precedence |
+| --- | --- | --- | --- |
+| omitted | omitted | omitted | builtIn |
+| omitted | omitted | supplied | application |
+| omitted | supplied | omitted | environment |
+| omitted | supplied | supplied | environment |
+| supplied | omitted | omitted | host |
+| supplied | omitted | supplied | host |
+| supplied | supplied | omitted | host |
+| supplied | supplied | supplied | host |
+
+- layer precedence: In host, environment, application order, the first supplied value wins, then built-in defaults; authenticators supplied in code take precedence over environment OIDC.
+
+| presence | use environment authenticator | read environment |
+| --- | --- | --- |
+| omitted | yes | yes |
+| supplied | no | no |
+
+- use environment authenticator: An authenticator supplied by either the host or application prevents using environment OIDC.
+- read environment: Only a slot or block left unset by the host is looked up and parsed from the environment.
+
+| lookup profile | setting group | reads group |
+| --- | --- | --- |
+| serving | storage | yes |
+| serving | embeddingRuntime | yes |
+| serving | serving | yes |
+| serving | objectStore | yes |
+| storageOnly | storage | yes |
+| storageOnly | embeddingRuntime | yes |
+| storageOnly | serving | no |
+| storageOnly | objectStore | no |
+
+- reads group: Storage commands read storage and its embedding runtime policy, with object configuration acquired separately by commands that need it.
+
+| publication block | presence | presence | presence | read publication block |
+| --- | --- | --- | --- | --- |
+| capture | omitted | omitted | omitted | yes |
+| capture | omitted | omitted | supplied | yes |
+| capture | omitted | supplied | omitted | yes |
+| capture | omitted | supplied | supplied | yes |
+| capture | supplied | omitted | omitted | no |
+| capture | supplied | omitted | supplied | no |
+| capture | supplied | supplied | omitted | no |
+| capture | supplied | supplied | supplied | no |
+| retention | omitted | omitted | omitted | yes |
+| retention | omitted | omitted | supplied | yes |
+| retention | omitted | supplied | omitted | no |
+| retention | omitted | supplied | supplied | no |
+| retention | supplied | omitted | omitted | yes |
+| retention | supplied | omitted | supplied | yes |
+| retention | supplied | supplied | omitted | no |
+| retention | supplied | supplied | supplied | no |
+| objectPurge | omitted | omitted | omitted | yes |
+| objectPurge | omitted | omitted | supplied | no |
+| objectPurge | omitted | supplied | omitted | yes |
+| objectPurge | omitted | supplied | supplied | no |
+| objectPurge | supplied | omitted | omitted | yes |
+| objectPurge | supplied | omitted | supplied | no |
+| objectPurge | supplied | supplied | omitted | yes |
+| objectPurge | supplied | supplied | supplied | no |
+
+- read publication block: Given the block and the presence of capture, retention and object purge overrides in that order, only an override for that block suppresses its lookup.
+
+| lookup text | lookup presence |
+| --- | --- |
+| missing | omitted |
+| blank | omitted |
+| nonblank | supplied |
+
+- lookup presence: A missing or blank setting is omitted, and nonblank text is passed to the reader trimmed.
+
+| read setting | may read process setting |
+| --- | --- |
+| declaredSetting | yes |
+| bareName | no |
+
+- may read process setting: By the `settings!` convention, process settings are read through declared settings.
+
+| environment name | warn for name |
+| --- | --- |
+| declared | no |
+| unknownProductName | yes |
+| unrelated | no |
+
+- warn for name: Warn once per unknown product name without exposing its value or refusing startup.
+
+| pair position | wins repeated pair |
+| --- | --- |
+| earlier | no |
+| later | yes |
+
+- wins repeated pair: The last supplied pair wins when injected configuration repeats a name.
+
+| presence | presence | last configured slot |
+| --- | --- | --- |
+| omitted | omitted | — |
+| omitted | supplied | later |
+| supplied | omitted | earlier |
+| supplied | supplied | later |
+
+- last configured slot: Given the earlier and later values in that order, tuple entries and repeated host configuration calls retain the last supplied slot value.
+
+| default input | matches omission |
+| --- | --- |
+| omitted | yes |
+| statedDefault | yes |
+| differentValue | no |
+
+- matches omission: The stated default must behave like omission, and the different value must reach the reader.
+
 ## Goals
 
 **Goal state**: The lifecycle state of a Goal version.

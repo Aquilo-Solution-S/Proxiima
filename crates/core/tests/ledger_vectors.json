@@ -330,4 +330,72 @@
  [{"out": true, "in": ["Active"]},
   {"out": true, "in": ["Paused"]},
   {"out": false, "in": ["Achieved"]},
-  {"out": false, "in": ["Abandoned"]}]}
+  {"out": false, "in": ["Abandoned"]}],
+ "Proxiima.Configuration.winsRepeatedPair":
+ [{"out": false, "in": ["earlier"]}, {"out": true, "in": ["later"]}],
+ "Proxiima.Configuration.warnForName":
+ [{"out": false, "in": ["declared"]},
+  {"out": true, "in": ["unknownProductName"]},
+  {"out": false, "in": ["unrelated"]}],
+ "Proxiima.Configuration.useEnvironmentAuthenticator":
+ [{"out": true, "in": ["omitted"]}, {"out": false, "in": ["supplied"]}],
+ "Proxiima.Configuration.readsGroup":
+ [{"out": true, "in": ["serving", "storage"]},
+  {"out": true, "in": ["serving", "embeddingRuntime"]},
+  {"out": true, "in": ["serving", "serving"]},
+  {"out": true, "in": ["serving", "objectStore"]},
+  {"out": true, "in": ["storageOnly", "storage"]},
+  {"out": true, "in": ["storageOnly", "embeddingRuntime"]},
+  {"out": false, "in": ["storageOnly", "serving"]},
+  {"out": false, "in": ["storageOnly", "objectStore"]}],
+ "Proxiima.Configuration.readPublicationBlock":
+ [{"out": true, "in": ["capture", "omitted", "omitted", "omitted"]},
+  {"out": true, "in": ["capture", "omitted", "omitted", "supplied"]},
+  {"out": true, "in": ["capture", "omitted", "supplied", "omitted"]},
+  {"out": true, "in": ["capture", "omitted", "supplied", "supplied"]},
+  {"out": false, "in": ["capture", "supplied", "omitted", "omitted"]},
+  {"out": false, "in": ["capture", "supplied", "omitted", "supplied"]},
+  {"out": false, "in": ["capture", "supplied", "supplied", "omitted"]},
+  {"out": false, "in": ["capture", "supplied", "supplied", "supplied"]},
+  {"out": true, "in": ["retention", "omitted", "omitted", "omitted"]},
+  {"out": true, "in": ["retention", "omitted", "omitted", "supplied"]},
+  {"out": false, "in": ["retention", "omitted", "supplied", "omitted"]},
+  {"out": false, "in": ["retention", "omitted", "supplied", "supplied"]},
+  {"out": true, "in": ["retention", "supplied", "omitted", "omitted"]},
+  {"out": true, "in": ["retention", "supplied", "omitted", "supplied"]},
+  {"out": false, "in": ["retention", "supplied", "supplied", "omitted"]},
+  {"out": false, "in": ["retention", "supplied", "supplied", "supplied"]},
+  {"out": true, "in": ["objectPurge", "omitted", "omitted", "omitted"]},
+  {"out": false, "in": ["objectPurge", "omitted", "omitted", "supplied"]},
+  {"out": true, "in": ["objectPurge", "omitted", "supplied", "omitted"]},
+  {"out": false, "in": ["objectPurge", "omitted", "supplied", "supplied"]},
+  {"out": true, "in": ["objectPurge", "supplied", "omitted", "omitted"]},
+  {"out": false, "in": ["objectPurge", "supplied", "omitted", "supplied"]},
+  {"out": true, "in": ["objectPurge", "supplied", "supplied", "omitted"]},
+  {"out": false, "in": ["objectPurge", "supplied", "supplied", "supplied"]}],
+ "Proxiima.Configuration.readEnvironment":
+ [{"out": true, "in": ["omitted"]}, {"out": false, "in": ["supplied"]}],
+ "Proxiima.Configuration.mayReadProcessSetting":
+ [{"out": true, "in": ["declaredSetting"]}, {"out": false, "in": ["bareName"]}],
+ "Proxiima.Configuration.matchesOmission":
+ [{"out": true, "in": ["omitted"]},
+  {"out": true, "in": ["statedDefault"]},
+  {"out": false, "in": ["differentValue"]}],
+ "Proxiima.Configuration.lookupPresence":
+ [{"out": "omitted", "in": ["missing"]},
+  {"out": "omitted", "in": ["blank"]},
+  {"out": "supplied", "in": ["nonblank"]}],
+ "Proxiima.Configuration.layerPrecedence":
+ [{"out": "builtIn", "in": ["omitted", "omitted", "omitted"]},
+  {"out": "application", "in": ["omitted", "omitted", "supplied"]},
+  {"out": "environment", "in": ["omitted", "supplied", "omitted"]},
+  {"out": "environment", "in": ["omitted", "supplied", "supplied"]},
+  {"out": "host", "in": ["supplied", "omitted", "omitted"]},
+  {"out": "host", "in": ["supplied", "omitted", "supplied"]},
+  {"out": "host", "in": ["supplied", "supplied", "omitted"]},
+  {"out": "host", "in": ["supplied", "supplied", "supplied"]}],
+ "Proxiima.Configuration.lastConfiguredSlot":
+ [{"out": null, "in": ["omitted", "omitted"]},
+  {"out": "later", "in": ["omitted", "supplied"]},
+  {"out": "earlier", "in": ["supplied", "omitted"]},
+  {"out": "later", "in": ["supplied", "supplied"]}]}
