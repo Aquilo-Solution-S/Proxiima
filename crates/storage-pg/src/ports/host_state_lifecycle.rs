@@ -13,9 +13,9 @@ use sqlx::{Postgres, Transaction};
 ///
 /// Callbacks run inside Proxiima's existing transaction/snapshot. They may
 /// execute transaction-local SQL only; they must not perform external
-/// effects or wait for external operations. This boundary is not a SQL
-/// sandbox: a trusted implementation can still use temporary tables,
-/// functions, advisory locks, or out-of-band connections.
+/// effects or wait for external operations because rollback covers the transaction only.
+/// This boundary is not a SQL sandbox: a trusted implementation can still use
+/// temporary tables, functions, advisory locks, or out-of-band connections.
 #[async_trait::async_trait]
 pub trait PgHostStateLifecyclePort: Send + Sync {
     /// Must equal the participant ID captured from the actual registered

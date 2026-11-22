@@ -1,10 +1,7 @@
 //! Typed host-state participation inside a [`super::WriteSession`].
 //!
 //! Core stays backend-neutral: a command is an opaque payload plus the
-//! tables it will touch. The Postgres session dispatches that payload to
-//! a startup-registered participant on the **same** transaction it already
-//! holds. The participant never escapes the transaction, and Spiice SDK /
-//! tools never receive SQL, a pool, or a generic administration surface.
+//! tables it will touch.
 
 use std::any::Any;
 use std::fmt;
@@ -125,7 +122,7 @@ pub trait GoalWorkCommand: HostStateCommand {
 /// The owners a [`HostStateCommand`] payload names, stated by the command
 /// author.
 ///
-/// Lean `PayloadAllowed` (`HostStateMaintenance.lean`): command authorization
+/// Under `Proxiima.HostState.payloadAgreement`, command authorization
 /// does not establish payload agreement, so the participant must compare every
 /// owner the payload names with the permit's owner. A separate trait keeps
 /// [`HostStateCommand`] unchanged for existing implementors; the method is
