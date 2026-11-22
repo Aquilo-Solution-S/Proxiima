@@ -1,11 +1,6 @@
 //! Background workers: the one loop every runtime feature worker runs
 //! ([`run`]), the set the runtime owns them in ([`Workers`]), and the
 //! spiice-contributed workers that join the same set.
-//!
-//! A worker that ends before the runtime is cancelled, by a panic or by
-//! returning, is logged as an error when it ends and listed on `/readyz`
-//! ([`EndedWorkers`]). Serving and every other worker continue; nothing
-//! restarts it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,21 +11,15 @@ use proxiima_core::write_wake::WriteWake;
 use proxiima_spiice::SpiiceWorker;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::metrics::Metrics;
 
-/// What one pass of a worker found, which decides how long the worker waits
-/// before the next.
+/// The result of a worker pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pass {
-    /// It found work, so more may be waiting: the next pass starts at once,
-    /// and both waits fall back to the floor.
     Worked,
-    /// It found nothing: wait, twice as long after each idle pass in a row,
-    /// up to [`Backoff::idle_max`].
     Idle,
-    /// It failed: wait, twice as long after each failed pass in a row, up to
-    /// [`Backoff::failed_max`].
     Failed,
 }
 
@@ -48,6 +37,7 @@ impl Wake {
     /// Resolves when a committed write ends the wait that follows `after`;
     /// never, when this wake does not end that wait.
     async fn changed(&mut self, after: Pass) {
+        // `Proxiima.Operations.commitEndsWait`
         match (self, after) {
             (Self::OnIdle(writes), Pass::Idle) => writes.changed().await,
             (Self::Never, Pass::Worked | Pass::Idle | Pass::Failed)
@@ -78,13 +68,15 @@ impl Backoff {
         }
     }
 
-    /// Double `current`, up to `ceiling`.
-    ///
-    /// `min` then `max`, never `clamp`: `Ord::clamp` PANICS when `min > max`,
-    /// and a floor above the ceiling must not end the worker. A floor above
-    /// the ceiling wins.
+    // `Ord::clamp` panics when the configured floor exceeds the ceiling.
     fn next(self, current: Duration, ceiling: Duration) -> Duration {
-        current.saturating_mul(2).min(ceiling).max(self.floor)
+        // `Proxiima.Operations.backoffBound`
+        current
+            .saturating_mul(proxiima_core::ledger!(
+                Proxiima.Operations.backoffMultiplier
+            ))
+            .min(ceiling)
+            .max(self.floor)
     }
 }
 
@@ -126,6 +118,7 @@ pub(crate) async fn run(
             return;
         }
         let outcome = pass.once(&gate, &cancel).await;
+        // `Proxiima.Operations.passWait`
         let wait = match outcome {
             Pass::Worked => {
                 idle_wait = backoff.floor;
@@ -178,6 +171,7 @@ impl EndedWorkers {
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // `Proxiima.Operations.endedWorkerProjection`
         let mut counts: Vec<(&'static str, usize)> = Vec::new();
         for label in ended.iter() {
             match counts.iter_mut().find(|(seen, _)| seen == label) {
@@ -229,22 +223,38 @@ impl Workers {
     /// Adopt a worker a spiice already spawned, labelled by the static name
     /// its declaration carries: it ends, and panics, in this set as its own
     /// task does.
-    pub(crate) fn adopt(&mut self, worker: SpiiceWorker) {
+    pub(crate) fn adopt(
+        &mut self,
+        worker: SpiiceWorker,
+        cancel: CancellationToken,
+        grace: Duration,
+    ) {
         let SpiiceWorker { name, handle } = worker;
+        let mut handle = AbortOnDropHandle::new(handle);
         self.spawn(name, None, async move {
-            if let Err(error) = handle.await
-                && let Ok(panic) = error.try_into_panic()
-            {
-                std::panic::resume_unwind(panic);
+            // `Proxiima.Operations.contributedWorkerShutdown`
+            let joined = tokio::select! {
+                result = &mut handle => result,
+                () = cancel.cancelled() => {
+                    match tokio::time::timeout(grace, &mut handle).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            tracing::warn!(worker = name, "worker exceeded shutdown grace; aborting");
+                            return;
+                        }
+                    }
+                }
+            };
+            if let Err(error) = joined {
+                match error.try_into_panic() {
+                    Ok(panic) => std::panic::resume_unwind(panic),
+                    Err(error) => tracing::warn!(worker = name, %error, "worker join failed"),
+                }
             }
         });
     }
 
-    /// Watch every worker until all have ended. One that ends before
-    /// `cancel` is logged as an error at once, its label recorded in `ended`
-    /// and counted in `metrics`; the others keep running. The returned task
-    /// finishes once every worker has ended, so a caller that cancelled
-    /// `cancel` awaits it to join them.
+    /// Return the task the runtime awaits to join its supervised workers.
     pub(crate) fn supervise(
         self,
         cancel: CancellationToken,
@@ -265,6 +275,7 @@ impl Workers {
                     label: "unnamed-worker",
                     instance: Some(id.to_string()),
                 });
+                // `Proxiima.Operations.reportWorkerExit`
                 match (cancel.is_cancelled(), failure) {
                     (false, failure) => {
                         let reason = failure

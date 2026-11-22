@@ -213,6 +213,11 @@ impl Drain {
     /// intake outage would turn a recoverable delivery pause into a silent
     /// permanent one, and capture keeps running either way.
     pub(crate) async fn run(self, cancel: CancellationToken, gate: GateWorker) {
+        self.run_with_wake(cancel, gate, WriteWake::subscribe())
+            .await;
+    }
+
+    async fn run_with_wake(self, cancel: CancellationToken, gate: GateWorker, writes: WriteWake) {
         // An empty claim waits longer each time nothing turns up, until a
         // write commits here; writes committed by another process are found
         // by the poll, within `idle_poll_max`. A failing intake is not
@@ -227,7 +232,7 @@ impl Drain {
             cancel,
             // Subscribed before the first claim, so a write that commits
             // while a pass runs wakes the drain right after it.
-            Wake::OnIdle(WriteWake::subscribe()),
+            Wake::OnIdle(writes),
             backoff,
             self,
         )
@@ -565,7 +570,6 @@ mod tests {
     use super::*;
     use proxiima_core::publication::intake::{Intake, IntakeError};
     use proxiima_core::storage_ports::publication::ClaimToken;
-    use proxiima_core::write_wake::write_committed;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
@@ -573,6 +577,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct EmptyOutbox {
         claims: AtomicUsize,
+        claimed: tokio::sync::Notify,
     }
 
     #[async_trait::async_trait]
@@ -585,6 +590,7 @@ mod tests {
             _lease: Duration,
         ) -> Result<Vec<ClaimedPublication>, proxiima_core::StorageError> {
             self.claims.fetch_add(1, Ordering::SeqCst);
+            self.claimed.notify_one();
             Ok(Vec::new())
         }
 
@@ -633,7 +639,7 @@ mod tests {
     fn run_drain(
         outbox: &Arc<EmptyOutbox>,
         settings: Settings,
-    ) -> (CancellationToken, tokio::task::JoinHandle<()>) {
+    ) -> (impl Fn(), CancellationToken, tokio::task::JoinHandle<()>) {
         let drain = Drain::new(
             outbox.clone(),
             ConsumerName::default(),
@@ -642,8 +648,10 @@ mod tests {
             Arc::new(Proceed),
         );
         let cancel = CancellationToken::new();
-        let (_gate, task) = spawn_for_tests(drain, cancel.clone());
-        (cancel, task)
+        let (writes, wake) = WriteWake::channel_for_tests();
+        let (_gate, worker) = QuiesceGate::new();
+        let task = tokio::spawn(drain.run_with_wake(cancel.clone(), worker, writes));
+        (wake, cancel, task)
     }
 
     /// An idle drain backs off to the ceiling: over ten minutes it claims
@@ -653,7 +661,7 @@ mod tests {
         let outbox = Arc::new(EmptyOutbox::default());
         let settings = Settings::new();
         let (poll, ceiling) = (settings.poll_interval, settings.idle_poll_max);
-        let (cancel, task) = run_drain(&outbox, settings);
+        let (_wake, cancel, task) = run_drain(&outbox, settings);
         tokio::time::sleep(Duration::from_mins(10)).await;
         cancel.cancel();
         task.await.expect("drain joins");
@@ -693,23 +701,16 @@ mod tests {
             idle_poll_max: Duration::from_hours(1),
             ..Settings::new()
         };
-        let (cancel, task) = run_drain(&outbox, settings);
-        let claims = |wanted: usize| {
-            let outbox = outbox.clone();
-            tokio::time::timeout(Duration::from_secs(1), async move {
-                while outbox.claims.load(Ordering::SeqCst) < wanted {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
-        };
-        claims(1).await.expect("the first claim runs at once");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(outbox.claims.load(Ordering::SeqCst), 1, "then it sleeps");
-
-        write_committed();
-        claims(2).await.expect("a committed write wakes the drain");
-        write_committed();
-        claims(3).await.expect("and wakes it again");
+        let (wake, cancel, task) = run_drain(&outbox, settings);
+        let _cancel_on_drop = cancel.clone().drop_guard();
+        let claim = || tokio::time::timeout(Duration::from_secs(5), outbox.claimed.notified());
+        claim().await.expect("the first claim runs at once");
+        assert_eq!(outbox.claims.load(Ordering::SeqCst), 1);
+        for expected in 2..=3 {
+            wake();
+            claim().await.expect("a committed write wakes the drain");
+            assert_eq!(outbox.claims.load(Ordering::SeqCst), expected);
+        }
         cancel.cancel();
         task.await.expect("drain joins");
     }

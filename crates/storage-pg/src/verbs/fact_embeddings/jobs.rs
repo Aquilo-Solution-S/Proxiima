@@ -552,7 +552,7 @@ pub async fn enqueue_missing_embedding_jobs(
         non_embeddable_schemas,
     )
     .await;
-    crate::owner_scope::finish_transaction(tx, result).await
+    crate::write_wake::finish_enqueuing(tx, result, |count| *count > 0).await
 }
 
 async fn enqueue_missing_embedding_jobs_on_connection(

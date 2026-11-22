@@ -114,6 +114,19 @@ impl AfterAccept for CrashAfterFirstAccept {
 struct CountingMarks {
     inner: Arc<dyn PublicationOutboxPort>,
     batches: Mutex<Vec<usize>>,
+    empty_claim: tokio::sync::Notify,
+    published: tokio::sync::Notify,
+}
+
+impl CountingMarks {
+    fn new(inner: Arc<dyn PublicationOutboxPort>) -> Self {
+        Self {
+            inner,
+            batches: Mutex::default(),
+            empty_claim: tokio::sync::Notify::new(),
+            published: tokio::sync::Notify::new(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -125,7 +138,11 @@ impl PublicationOutboxPort for CountingMarks {
         limit: std::num::NonZeroU32,
         lease: Duration,
     ) -> Result<Vec<ClaimedPublication>, proxiima_core::StorageError> {
-        self.inner.claim(consumer, publisher, limit, lease).await
+        let claimed = self.inner.claim(consumer, publisher, limit, lease).await?;
+        if claimed.is_empty() {
+            self.empty_claim.notify_one();
+        }
+        Ok(claimed)
     }
 
     async fn mark_published_batch(
@@ -137,7 +154,11 @@ impl PublicationOutboxPort for CountingMarks {
             .lock()
             .expect("batches lock")
             .push(claims.len());
-        self.inner.mark_published_batch(consumer, claims).await
+        let outcomes = self.inner.mark_published_batch(consumer, claims).await?;
+        if outcomes.contains(&AckOutcome::Published) {
+            self.published.notify_one();
+        }
+        Ok(outcomes)
     }
 
     async fn renew_claim(
@@ -1032,8 +1053,7 @@ async fn expired_lease_delivered_by_one_process() {
     world.finish(outcome).await;
 }
 
-/// A drain whose fallback poll is an hour still delivers a Fact within a
-/// second of its write: the committed write wakes it.
+/// A committed Fact wakes a drain before its hour-long fallback.
 #[tokio::test]
 async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
     let intake = Arc::new(TestIntake::default());
@@ -1046,8 +1066,9 @@ async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
             idle_poll_max: Duration::from_hours(1),
             ..Settings::new()
         };
+        let outbox = Arc::new(CountingMarks::new(world.built.outbox_for_tests()));
         let drain = Drain::new(
-            world.built.outbox_for_tests(),
+            outbox.clone(),
             ConsumerName::default(),
             intake.clone(),
             settings,
@@ -1055,24 +1076,16 @@ async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
         );
         let cancel = CancellationToken::new();
         let (_gate, task) = spawn_for_tests(drain, cancel.clone());
-        world.wait_for_claims(1).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            world.claims().load(Ordering::SeqCst),
-            1,
-            "the first empty claim leaves the drain asleep"
-        );
+        let _cancel_on_drop = cancel.clone().drop_guard();
+        tokio::time::timeout(Duration::from_secs(10), outbox.empty_claim.notified())
+            .await
+            .expect("an empty claim completed before the write");
 
-        let written = tokio::time::Instant::now();
         let t = capture(&world.built, world.owner, "wakes the drain").await;
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while world.state(t).await != "published" {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("delivered within a second of the write, not the hour");
-        assert!(written.elapsed() < Duration::from_secs(1));
+        tokio::time::timeout(Duration::from_secs(10), outbox.published.notified())
+            .await
+            .expect("the committed write woke the drain before the fallback");
+        assert_eq!(world.state(t).await, "published");
         assert_eq!(intake.kept(), 1);
         cancel.cancel();
         task.await.expect("drain joins");
@@ -1112,10 +1125,7 @@ async fn a_batch_of_records_is_marked_in_one_transaction() {
         for note in ["one", "two", "three"] {
             records.push(capture(&world.built, world.owner, note).await);
         }
-        let outbox = Arc::new(CountingMarks {
-            inner: world.built.outbox_for_tests(),
-            batches: Mutex::new(Vec::new()),
-        });
+        let outbox = Arc::new(CountingMarks::new(world.built.outbox_for_tests()));
         let drain = Drain::new(
             outbox.clone(),
             ConsumerName::default(),

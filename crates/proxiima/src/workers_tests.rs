@@ -134,18 +134,19 @@ async fn a_gate_change_starts_a_pass() {
 
 #[tokio::test(start_paused = true)]
 async fn a_committed_write_starts_a_pass_after_an_idle_one() {
+    let (writes, wake) = WriteWake::channel_for_tests();
     let starts = Starts::default();
     let (_control, gate) = QuiesceGate::new();
     let cancel = CancellationToken::new();
     let worker = tokio::spawn(run(
         gate,
         cancel.clone(),
-        Wake::OnIdle(WriteWake::subscribe()),
+        Wake::OnIdle(writes),
         HOUR,
         scripted(Vec::new(), &starts),
     ));
     let first = passes(&starts, 1).await[0];
-    proxiima_core::write_wake::write_committed();
+    wake();
     let second = passes(&starts, 2).await[1];
     assert!(
         second - first < HOUR.floor,
@@ -157,18 +158,19 @@ async fn a_committed_write_starts_a_pass_after_an_idle_one() {
 
 #[tokio::test(start_paused = true)]
 async fn a_committed_write_does_not_end_the_wait_after_a_failed_pass() {
+    let (writes, wake) = WriteWake::channel_for_tests();
     let starts = Starts::default();
     let (_control, gate) = QuiesceGate::new();
     let cancel = CancellationToken::new();
     let worker = tokio::spawn(run(
         gate,
         cancel.clone(),
-        Wake::OnIdle(WriteWake::subscribe()),
+        Wake::OnIdle(writes),
         HOUR,
         scripted(vec![Pass::Failed], &starts),
     ));
     let first = passes(&starts, 1).await[0];
-    proxiima_core::write_wake::write_committed();
+    wake();
     let second = passes(&starts, 2).await[1];
     assert_eq!(
         second - first,
@@ -408,5 +410,85 @@ async fn an_ended_drain_is_logged_with_its_consumer_and_listed_by_label() {
                     && line.ends_with("level=ERROR")),
             "{logged:?}"
         );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_aborts_a_contributed_worker_after_its_grace() {
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (lifetime, stopped) = tokio::sync::oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let _lifetime = lifetime;
+        started.send(()).expect("test waits for worker start");
+        std::future::pending::<()>().await;
+    });
+    let mut workers = Workers::default();
+    let cancel = CancellationToken::new();
+    let grace = Duration::from_secs(1);
+    workers.adopt(
+        SpiiceWorker {
+            name: "uncooperative",
+            handle,
+        },
+        cancel.clone(),
+        grace,
+    );
+    let ended = EndedWorkers::default();
+    let supervisor = workers.supervise(
+        cancel.clone(),
+        ended.clone(),
+        Metrics::new(
+            &opentelemetry::global::meter("worker-test"),
+            crate::object_maintenance::ObjectPurgeHealth::default(),
+        ),
+    );
+    running.await.expect("contributed worker started");
+    let cancelled_at = Instant::now();
+    cancel.cancel();
+    tokio::time::timeout(grace * 2, supervisor)
+        .await
+        .expect("shutdown is bounded")
+        .expect("supervisor joins");
+    assert!(cancelled_at.elapsed() >= grace);
+    assert!(
+        tokio::time::timeout(grace, stopped)
+            .await
+            .expect("the underlying task stops")
+            .is_err(),
+        "the underlying task was aborted",
+    );
+    assert!(ended.line().is_none(), "shutdown is not a premature exit");
+}
+
+#[test]
+fn backoff_bounds_match_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    for row in vectors["Proxiima.Operations.backoffBound"]
+        .as_array()
+        .unwrap()
+    {
+        let (floor, current) = match row["in"][0].as_str().unwrap() {
+            "reversedBounds" => (11, 6),
+            "belowFloor" => (4, 1),
+            "withinBounds" => (4, 3),
+            "aboveCeiling" => (4, 6),
+            other => panic!("unknown backoff case: {other}"),
+        };
+        let floor = Duration::from_secs(floor);
+        let current = Duration::from_secs(current);
+        let ceiling = Duration::from_secs(10);
+        let backoff = Backoff {
+            floor,
+            idle_max: ceiling,
+            failed_max: ceiling,
+        };
+        let expected = match row["out"].as_str().unwrap() {
+            "floor" => floor,
+            "doubled" => current * 2,
+            "ceiling" => ceiling,
+            other => panic!("unknown backoff bound: {other}"),
+        };
+        assert_eq!(backoff.next(current, ceiling), expected);
     }
 }

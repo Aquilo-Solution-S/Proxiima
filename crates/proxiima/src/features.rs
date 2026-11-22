@@ -1,11 +1,4 @@
-//! Runtime features: one start rule each — IF its config is present THEN it
-//! starts (docs/configuration.md §Runtime features).
-//!
-//! The runtime decides every feature once per boot, in `build()` and `run()`
-//! alike, logs one INFO line per decision, owns every worker it started in
-//! one supervised set ([`crate::workers::Workers`]) and joins them on
-//! shutdown. A half-configured feature never reaches this module: resolve
-//! refuses it before storage.
+//! Runtime feature startup and control. Config resolution precedes storage access.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -200,21 +193,26 @@ impl FeatureControl {
     #[must_use]
     pub fn status(&self) -> FeatureStatus {
         let statuses: Vec<FeatureStatus> = self.gates.iter().map(QuiesceGate::status).collect();
-        if statuses.contains(&FeatureStatus::Stopped) {
-            FeatureStatus::Stopped
-        } else if statuses
-            .iter()
-            .all(|status| *status == FeatureStatus::Running)
-        {
-            FeatureStatus::Running
-        } else if statuses
-            .iter()
-            .all(|status| *status == FeatureStatus::Quiescent)
-        {
-            FeatureStatus::Quiescent
-        } else {
-            FeatureStatus::Quiescing
-        }
+        joint_gate_status(&statuses)
+    }
+}
+
+fn joint_gate_status(statuses: &[FeatureStatus]) -> FeatureStatus {
+    // `Proxiima.Operations.jointGateStatus`
+    if statuses.contains(&FeatureStatus::Stopped) {
+        FeatureStatus::Stopped
+    } else if statuses
+        .iter()
+        .all(|status| *status == FeatureStatus::Running)
+    {
+        FeatureStatus::Running
+    } else if statuses
+        .iter()
+        .all(|status| *status == FeatureStatus::Quiescent)
+    {
+        FeatureStatus::Quiescent
+    } else {
+        FeatureStatus::Quiescing
     }
 }
 
@@ -376,6 +374,7 @@ impl Features {
     /// that claims queue rows through a gate. The match names every feature,
     /// so a new one must decide whether it claims.
     pub(crate) fn feature_control(&self, feature: Feature) -> Option<FeatureControl> {
+        // `Proxiima.Operations.claimControl`
         let gates = match feature {
             Feature::EmbeddingWorker => self.embedding.as_ref().map(|gate| vec![gate.clone()]),
             Feature::OutboxPublisher => self.publisher.clone(),
@@ -406,6 +405,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         inputs.services.clone(),
     );
     let mut workers = Workers::default();
+    // `Proxiima.Operations.featureRequirements`
     let spiice_workers = A::spawn_workers(&worker_ctx);
     let workers_decision = if spiice_workers.is_empty() {
         FeatureDecision::off(
@@ -419,8 +419,11 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
             format!("linked spiices contribute {}", names.join(", ")),
         )
     };
+    const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(proxiima_core::ledger!(
+        Proxiima.Operations.workerShutdownGraceSeconds
+    ));
     for worker in spiice_workers {
-        workers.adopt(worker);
+        workers.adopt(worker, inputs.cancel.clone(), WORKER_SHUTDOWN_GRACE);
     }
 
     let (embedding, embedding_decision) = if inputs.engine.embedding_router().is_some() {
@@ -449,9 +452,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
 
     let (publisher, publisher_decision, prune_decision) = start_publisher(inputs, &mut workers);
     let (object_purge, object_purge_decision) = start_object_purge(inputs, &mut workers);
-    // The meter comes from the provider installed now: the host installs it
-    // before it builds the runtime, and a provider set later does not reach
-    // a meter taken earlier.
+    // `Proxiima.Operations.meterLifecycle`
     let metrics = Metrics::new(
         &opentelemetry::global::meter("proxiima"),
         inputs.metrics.purge_health.clone(),
@@ -471,6 +472,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
             }
         }),
     );
+    // `Proxiima.Operations.bootReportOrder`
     let report = BootReport {
         decisions: [
             mcp,
@@ -936,5 +938,32 @@ mod prune_tests {
         .await
         .unwrap();
         assert_eq!(removed, 0);
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    #[test]
+    fn joint_status_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Operations.jointGateStatus"]
+            .as_array()
+            .expect("joint status ledger vectors");
+        let status = |value: &serde_json::Value| match value.as_str().unwrap() {
+            "running" => FeatureStatus::Running,
+            "quiescing" => FeatureStatus::Quiescing,
+            "quiescent" => FeatureStatus::Quiescent,
+            "stopped" => FeatureStatus::Stopped,
+            other => panic!("unknown gate status: {other}"),
+        };
+        for row in rows {
+            assert_eq!(
+                joint_gate_status(&[status(&row["in"][0]), status(&row["in"][1])]),
+                status(&row["out"]),
+            );
+        }
     }
 }

@@ -4,7 +4,7 @@
 //! writes enqueue. Instead of claiming on a short fixed interval, they sleep
 //! until a write commits in this process, and otherwise poll on a fallback
 //! interval that backs off while their claims come back empty. A storage
-//! adapter calls [`write_committed`] after it commits a write; a drain holds a
+//! adapter passes its commit to [`commit_and_wake`]; a drain holds a
 //! [`WriteWake`] and awaits [`WriteWake::changed`] beside its fallback sleep.
 //!
 //! The signal is process-wide and carries no data: any committed write wakes
@@ -21,11 +21,13 @@ use tokio::sync::watch;
 /// only in tests, so a test never sees another test's writes.
 static WRITES: LazyLock<Writes> = LazyLock::new(Writes::new);
 
-/// Signal that a write committed. Call it after the commit returned, never
-/// before: a drain woken earlier claims before the rows are visible and goes
-/// back to sleep.
-pub fn write_committed() {
-    WRITES.committed();
+/// Run a storage adapter's commit, waking the drains only on success.
+///
+/// # Errors
+///
+/// Returns the error produced by the commit future.
+pub async fn commit_and_wake<T, E>(commit: impl Future<Output = Result<T, E>>) -> Result<T, E> {
+    WRITES.after_commit(commit).await
 }
 
 /// A write-committed signal: an epoch every commit bumps.
@@ -36,7 +38,15 @@ impl Writes {
         Self(watch::channel(0).0)
     }
 
+    async fn after_commit<T, E>(&self, commit: impl Future<Output = Result<T, E>>) -> Result<T, E> {
+        // `Proxiima.Operations.wakeAfterCommit`
+        let value = commit.await?;
+        self.committed();
+        Ok(value)
+    }
+
     fn committed(&self) {
+        // `Proxiima.Operations.bumpsWakeEpoch`
         self.0.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
     }
 
@@ -47,7 +57,7 @@ impl Writes {
     }
 }
 
-/// One drain's view of [`write_committed`] signals.
+/// One drain's view of [`commit_and_wake`] signals.
 #[derive(Debug)]
 pub struct WriteWake {
     writes: watch::Receiver<u64>,
@@ -58,6 +68,14 @@ impl WriteWake {
     #[must_use]
     pub fn subscribe() -> Self {
         WRITES.subscribe()
+    }
+
+    /// A private signal for a test drain, independent of concurrent database writes.
+    #[cfg(feature = "testkit")]
+    #[must_use]
+    pub fn channel_for_tests() -> (Self, impl Fn()) {
+        let writes = Writes::new();
+        (writes.subscribe(), move || writes.committed())
     }
 
     /// Resolve once a write has committed since the last call (or since
@@ -73,6 +91,7 @@ impl WriteWake {
 #[cfg(test)]
 mod tests {
     use super::Writes;
+    use futures_util::FutureExt as _;
     use std::time::Duration;
 
     // Each test owns its signal: the process one is shared by every test
@@ -88,11 +107,42 @@ mod tests {
             .await
             .expect("a committed write wakes the subscriber");
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), wake.changed())
-                .await
-                .is_err(),
+            wake.changed().now_or_never().is_none(),
             "two writes before one wait wake it once"
         );
+    }
+
+    #[tokio::test]
+    async fn commit_wake_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.Operations.wakeAfterCommit"]
+            .as_array()
+            .unwrap()
+        {
+            let writes = Writes::new();
+            let mut wake = writes.subscribe();
+            let result = match row["in"][0].as_str().unwrap() {
+                "committed" => Some(std::future::ready(Ok(()))),
+                "failed" => Some(std::future::ready(Err(()))),
+                "pending" => None,
+                other => panic!("unknown commit outcome: {other}"),
+            };
+            if let Some(result) = result {
+                let _ = writes.after_commit(result).await;
+            } else {
+                assert!(
+                    writes
+                        .after_commit(std::future::pending::<Result<(), ()>>())
+                        .now_or_never()
+                        .is_none()
+                );
+            }
+            assert_eq!(
+                wake.changed().now_or_never().is_some(),
+                row["out"].as_bool().unwrap()
+            );
+        }
     }
 
     #[tokio::test]
@@ -101,9 +151,7 @@ mod tests {
         writes.committed();
         let mut wake = writes.subscribe();
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), wake.changed())
-                .await
-                .is_err(),
+            wake.changed().now_or_never().is_none(),
             "a write committed before subscribing is not a wake"
         );
     }
@@ -111,9 +159,11 @@ mod tests {
     #[tokio::test]
     async fn the_process_signal_wakes_a_subscriber() {
         let mut wake = super::WriteWake::subscribe();
-        super::write_committed();
+        super::commit_and_wake(async { Ok::<_, ()>(()) })
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(1), wake.changed())
             .await
-            .expect("write_committed wakes a WriteWake");
+            .expect("a successful commit wakes a WriteWake");
     }
 }

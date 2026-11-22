@@ -255,18 +255,14 @@ impl EmbeddingJobPort for PgStorage {
         limit: i64,
         non_embeddable_schemas: &[String],
     ) -> Result<u64, StorageError> {
-        let enqueued = verbs::fact_embeddings::enqueue_missing_embedding_jobs(
+        verbs::fact_embeddings::enqueue_missing_embedding_jobs(
             &self.pool,
             permit,
             space,
             limit,
             non_embeddable_schemas,
         )
-        .await?;
-        if enqueued > 0 {
-            proxiima_core::write_wake::write_committed();
-        }
-        Ok(enqueued)
+        .await
     }
 
     async fn count_embedding_job_status(
@@ -329,17 +325,13 @@ impl EmbeddingMaintenancePort for PgStorage {
         policy: proxiima_core::EmbeddingRuntimePolicy,
         _proof: OperatorMaintenanceProof,
     ) -> Result<proxiima_core::EmbeddingReconcileOutcome, StorageError> {
-        let outcome = verbs::fact_embeddings::reconcile_embeddings_with_platform(
+        verbs::fact_embeddings::reconcile_embeddings_with_platform(
             &self.pool,
             &self.platform_scope,
             options,
             policy.stale_claim_timeout_seconds(),
         )
-        .await?;
-        if outcome.enqueued > 0 {
-            proxiima_core::write_wake::write_committed();
-        }
-        Ok(outcome)
+        .await
     }
 
     async fn embedding_owner_page(

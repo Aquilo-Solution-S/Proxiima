@@ -45,7 +45,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 opentelemetry = { workspace = true }
 tokio = { workspace = true, features = ["net", "signal", "time"] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 tower = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }

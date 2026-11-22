@@ -170,7 +170,7 @@ pub(crate) async fn reconcile_embeddings_with_platform(
     loop {
         let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;
         let page = reconcile_page(tx.as_mut(), options, budget, after).await;
-        let page = crate::owner_scope::finish_transaction(tx, page).await?;
+        let page = crate::write_wake::finish_enqueuing(tx, page, |page| page.enqueued > 0).await?;
         total.scanned += page.scanned;
         total.enqueued += page.enqueued;
         total.skipped += page.scanned.saturating_sub(page.enqueued);

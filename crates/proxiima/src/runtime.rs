@@ -200,6 +200,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
             owner_access,
         } = Box::pin(self.boot_common()).await?;
 
+        // `Proxiima.Operations.bindsListener`
         let (mcp_addr, server, mcp) = if let (Some(mcp), Some(allowlist)) = (config.mcp, allowlist)
         {
             if !config.expose_network {
@@ -684,8 +685,9 @@ macro_rules! runtime_handle_methods {
 
         /// The pause and resume handle of a started claim-based feature.
         ///
-        /// `Some` for a started [`Feature::EmbeddingWorker`] or
-        /// [`Feature::OutboxPublisher`]. `None` for a feature that is off and
+        /// `Some` for a started [`Feature::EmbeddingWorker`],
+        /// [`Feature::OutboxPublisher`] or [`Feature::ObjectPurge`].
+        /// `None` for a feature that is off and
         /// for [`Feature::Mcp`] (serving continues by definition),
         /// [`Feature::SpiiceWorkers`] and [`Feature::PublishedRecordPrune`]: the
         /// runtime has no gate for them. The handle outlives `shutdown(self)`,
@@ -847,6 +849,7 @@ impl RunningProxiima {
 
     /// Stop the listener, then stop and join every started feature.
     pub async fn shutdown(self) {
+        // `Proxiima.Operations.shutdownOrder`
         self.runtime.cancel.cancel();
         if let Some(server) = self.server
             && let Err(err) = server.await
