@@ -4,10 +4,10 @@
 
 **Goal state**: The lifecycle state of a Goal version.
 
-- active
-- paused
-- achieved
-- abandoned
+- Active
+- Paused
+- Achieved
+- Abandoned
 
 **Pending work**: The host's pause disposition for queued work, with running work allowed to finish.
 
@@ -26,7 +26,7 @@
 
 **Lifecycle refusal**: Why an operation cannot use the named series head.
 
-- wrong state
+- wrongState
 
 **Pin edit**: Whether an edit omits its pin list or supplies its replacement, including an empty list.
 
@@ -41,22 +41,22 @@
 **Evidence source**: Source classes considered when admitting Goal evidence.
 
 - local
-- other store
+- otherStore
 
 **Evidence check**: Where a Goal evidence target's live kind is checked.
 
-- owner transaction
-- caller read at source
+- ownerTransaction
+- callerReadAtSource
 
 **Read goal**: Which Goal identity a read surface selects.
 
 - read
 - list
-- declared reference
+- declaredReference
 
 **Read revision**: The revision selected by an authorized read.
 
-- readable head
+- readableHead
 - exact
 
 **Request match**: The durable request comparison made under the owner and request key.
@@ -64,34 +64,34 @@
 - fresh
 - exact
 - different
-- missing declaration
+- missingDeclaration
 
 **Replay action**: Whether the replay may be returned, must be refused, or needs fresh admission.
 
-- fresh admission
-- return original
+- freshAdmission
+- returnOriginal
 - conflict
 
 **Decompose replay**: The replay status across a decomposition's complete request set.
 
-- all fresh
-- all exact
+- allFresh
+- allExact
 - mixed
 - conflicting
 
 **Replay field**: The durable parts compared for replay, separate from an episode's write-act binding.
 
 - command
-- expected head
-- author category
-- session self
-- write act
+- expectedHead
+- authorCategory
+- sessionSelf
+- writeAct
 
 **Head comparison**: The outcomes of comparing the predecessor under the locked Goal head.
 
 - unchanged
-- named stale
-- unnamed drift
+- namedStale
+- unnamedDrift
 
 **Commit decision**: The commit decision after comparing the predecessor.
 
@@ -102,7 +102,7 @@
 **Transaction outcome**: Outcomes classified by the pool-scoped storage retry loop. Retryable includes SQLSTATE 40001, 40P01 and 55P03 and application conflicts such as head or authority footprint drift.
 
 - retryable
-- memory id collision
+- memoryIdCollision
 - other
 
 **Retry budget**: Whether the applicable retry budget is still available.
@@ -113,28 +113,28 @@
 **Retry action**: What the retry loop does with the outcome of one transaction attempt.
 
 - retry
-- return outcome
-- refuse collision
+- returnOutcome
+- refuseCollision
 
 **Admission step**: The steps of Goal revision persistence, from owner fencing to target revalidation.
 
-- fence owners
-- reserve fact identity
-- lock memory handles
-- lock lifecycle union
-- lock goal heads
-- revalidate targets
+- fenceOwners
+- reserveFactIdentity
+- lockMemoryHandles
+- lockLifecycleUnion
+- lockGoalHeads
+- revalidateTargets
 
 **Fact admission**: The only Fact admission path allowed to use a reserved Goal-change identity.
 
-- goal transaction
-- ordinary fact
+- goalTransaction
+- ordinaryFact
 
 **Change fact admission**: The publication admission for a fresh Goal revision.
 
 - skip
 - publish
-- missing stamp
+- missingStamp
 
 **Change fields**: The variant-specific payload fields of a Goal change.
 
@@ -145,20 +145,20 @@
 **Trimmed display length**: The title or prompt’s length after trimming surrounding Unicode White_Space.
 
 - blank
-- within bound
+- withinBound
 - oversized
 
 **Goal clock**: The two clocks projected by a Goal version read.
 
-- set at
-- changed at
+- setAt
+- changedAt
 
 **Goal version time**: Which revision identity supplies a projected time.
 
-- first version
-- selected version
+- firstVersion
+- selectedVersion
 
-**birth state** = active: Set and decomposition start each new series here.
+**birth state** = Active: Set and decomposition start each new series here.
 
 **title max** = 240: The largest trimmed Goal title in characters.
 
@@ -176,16 +176,16 @@
 
 **operator authorship** = "system_operator": Operators use their authorship category in the durable command and its replay identity.
 
-**admission order** = [fence owners, reserve fact identity, lock memory handles, lock lifecycle union, lock goal heads, revalidate targets]: Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head.
+**admission order** = [fenceOwners, reserveFactIdentity, lockMemoryHandles, lockLifecycleUnion, lockGoalHeads, revalidateTargets]: Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head.
 
 **transfer goal** = no: A Goal remains owned by its original owner throughout its series.
 
 | goal state | is open | terminal | state label | blocks close |
 | --- | --- | --- | --- | --- |
-| active | yes | no | "Active" | yes |
-| paused | yes | no | "Paused" | yes |
-| achieved | no | yes | "Achieved" | no |
-| abandoned | no | yes | "Abandoned" | no |
+| Active | yes | no | "Active" | yes |
+| Paused | yes | no | "Paused" | yes |
+| Achieved | no | yes | "Achieved" | no |
+| Abandoned | no | yes | "Abandoned" | no |
 
 - is open: Whether the series can take another version.
 - terminal: Whether a Goal version requires a close Fact and ends its series.
@@ -196,53 +196,57 @@
 
 ```mermaid
 stateDiagram-v2
-  active --> active : decompose
-  active --> active : modify
-  active --> paused : pause (keep)
-  active --> paused : pause (discard)
-  active --> achieved : achieve
-  active --> abandoned : abandon
-  paused --> active : resume
-  paused --> abandoned : abandon
+  state "Active" as s0
+  state "Paused" as s1
+  state "Achieved" as s2
+  state "Abandoned" as s3
+  s0 --> s0 : decompose
+  s0 --> s0 : modify
+  s0 --> s1 : pause (keep)
+  s0 --> s1 : pause (discard)
+  s0 --> s2 : achieve
+  s0 --> s3 : abandon
+  s1 --> s0 : resume
+  s1 --> s3 : abandon
 ```
 
 | goal state | event | answer |
 | --- | --- | --- |
-| active | set | refused: wrong state |
-| active | resume | refused: wrong state |
-| paused | set | refused: wrong state |
-| paused | decompose | refused: wrong state |
-| paused | modify | refused: wrong state |
-| paused | pause (keep) | refused: wrong state |
-| paused | pause (discard) | refused: wrong state |
-| paused | achieve | refused: wrong state |
-| achieved | set | refused: wrong state |
-| achieved | decompose | refused: wrong state |
-| achieved | modify | refused: wrong state |
-| achieved | pause (keep) | refused: wrong state |
-| achieved | pause (discard) | refused: wrong state |
-| achieved | resume | refused: wrong state |
-| achieved | achieve | refused: wrong state |
-| achieved | abandon | refused: wrong state |
-| abandoned | set | refused: wrong state |
-| abandoned | decompose | refused: wrong state |
-| abandoned | modify | refused: wrong state |
-| abandoned | pause (keep) | refused: wrong state |
-| abandoned | pause (discard) | refused: wrong state |
-| abandoned | resume | refused: wrong state |
-| abandoned | achieve | refused: wrong state |
-| abandoned | abandon | refused: wrong state |
+| Active | set | refused: wrongState |
+| Active | resume | refused: wrongState |
+| Paused | set | refused: wrongState |
+| Paused | decompose | refused: wrongState |
+| Paused | modify | refused: wrongState |
+| Paused | pause (keep) | refused: wrongState |
+| Paused | pause (discard) | refused: wrongState |
+| Paused | achieve | refused: wrongState |
+| Achieved | set | refused: wrongState |
+| Achieved | decompose | refused: wrongState |
+| Achieved | modify | refused: wrongState |
+| Achieved | pause (keep) | refused: wrongState |
+| Achieved | pause (discard) | refused: wrongState |
+| Achieved | resume | refused: wrongState |
+| Achieved | achieve | refused: wrongState |
+| Achieved | abandon | refused: wrongState |
+| Abandoned | set | refused: wrongState |
+| Abandoned | decompose | refused: wrongState |
+| Abandoned | modify | refused: wrongState |
+| Abandoned | pause (keep) | refused: wrongState |
+| Abandoned | pause (discard) | refused: wrongState |
+| Abandoned | resume | refused: wrongState |
+| Abandoned | achieve | refused: wrongState |
+| Abandoned | abandon | refused: wrongState |
 
 | goal state | bool | close fact presence |
 | --- | --- | --- |
-| active | yes | no |
-| active | no | yes |
-| paused | yes | no |
-| paused | no | yes |
-| achieved | yes | yes |
-| achieved | no | no |
-| abandoned | yes | yes |
-| abandoned | no | no |
+| Active | yes | no |
+| Active | no | yes |
+| Paused | yes | no |
+| Paused | no | yes |
+| Achieved | yes | yes |
+| Achieved | no | no |
+| Abandoned | yes | yes |
+| Abandoned | no | no |
 
 - close fact presence: Whether close-Fact presence agrees exactly with terminal state.
 
@@ -271,32 +275,32 @@ stateDiagram-v2
 
 | evidence source | evidence admission |
 | --- | --- |
-| local | owner transaction |
-| other store | caller read at source |
+| local | ownerTransaction |
+| otherStore | callerReadAtSource |
 
 - evidence admission: Exact live Facts and Abstractions are eligible as Goal evidence under `Causa.RetainedGoalEvidenceValid`.
 
 | read goal | read revision |
 | --- | --- |
-| read | readable head |
-| list | readable head |
-| declared reference | exact |
+| read | readableHead |
+| list | readableHead |
+| declaredReference | exact |
 
 - read revision: Goal reads and lists select readable heads while declared references keep their exact revision.
 
 | request match | request replay |
 | --- | --- |
-| fresh | fresh admission |
-| exact | return original |
+| fresh | freshAdmission |
+| exact | returnOriginal |
 | different | conflict |
-| missing declaration | conflict |
+| missingDeclaration | conflict |
 
 - request replay: After authority, exact replay returns the original before mutable targets and creates no second write.
 
 | decompose replay | decompose replay |
 | --- | --- |
-| all fresh | fresh admission |
-| all exact | return original |
+| allFresh | freshAdmission |
+| allExact | returnOriginal |
 | mixed | conflict |
 | conflicting | conflict |
 
@@ -305,43 +309,43 @@ stateDiagram-v2
 | replay field | replay identity |
 | --- | --- |
 | command | yes |
-| expected head | yes |
-| author category | yes |
-| session self | no |
-| write act | no |
+| expectedHead | yes |
+| authorCategory | yes |
+| sessionSelf | no |
+| writeAct | no |
 
 - replay identity: Replay seals the command, including any pause disposition, and excludes attempt attribution.
 
 | head comparison | predecessor arbitration |
 | --- | --- |
 | unchanged | proceed |
-| named stale | conflict |
-| unnamed drift | retry |
+| namedStale | conflict |
+| unnamedDrift | retry |
 
 - predecessor arbitration: A stale named predecessor conflicts and unnamed prediction drift retries the complete transaction.
 
 | transaction outcome | retry budget | retry transaction |
 | --- | --- | --- |
 | retryable | available | retry |
-| retryable | exhausted | return outcome |
-| memory id collision | available | retry |
-| memory id collision | exhausted | refuse collision |
-| other | available | return outcome |
-| other | exhausted | return outcome |
+| retryable | exhausted | returnOutcome |
+| memoryIdCollision | available | retry |
+| memoryIdCollision | exhausted | refuseCollision |
+| other | available | returnOutcome |
+| other | exhausted | returnOutcome |
 
 - retry transaction: Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation.
 
 | fact admission | reserve change fact |
 | --- | --- |
-| goal transaction | yes |
-| ordinary fact | no |
+| goalTransaction | yes |
+| ordinaryFact | no |
 
 - reserve change fact: A Goal-change Fact uses its reserved identity under the pre-held lock union, with no declared scope or read set.
 
 | bool | bool | publish change fact | edit space matches | state filter | recall active goal |
 | --- | --- | --- | --- | --- | --- |
 | yes | yes | publish | yes | yes | yes |
-| yes | no | missing stamp | no | yes | no |
+| yes | no | missingStamp | no | yes | no |
 | no | yes | skip | yes | yes | yes |
 | no | no | skip | yes | no | yes |
 
@@ -353,19 +357,21 @@ stateDiagram-v2
 | trimmed display length | display admitted |
 | --- | --- |
 | blank | no |
-| within bound | yes |
+| withinBound | yes |
 | oversized | no |
 
 - display admitted: The Rust input boundary uses str::trim, counts the remaining Unicode scalar values and admits a title or prompt with length from one through its field limit.
 
 | goal clock | clock source |
 | --- | --- |
-| set at | first version |
-| changed at | selected version |
+| setAt | firstVersion |
+| changedAt | selectedVersion |
 
 - clock source: A Goal reports its series birth and the selected version's own write time.
 
 ✗ **achieve needs an achieved child**, rejected: An abandoned child leaves the parent free to close.
+
+## Causa
 
 Causa — Audience
 
