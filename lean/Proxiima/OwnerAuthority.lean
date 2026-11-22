@@ -100,7 +100,10 @@ inductive MemberAddRelation where
 /-- Member-add uses the supplied relation and defaults an omitted relation to Viewer. -/
 def memberAddRelation : MemberAddRelation → Relation
   | .omitted => .viewer
-  | .supplied relation => relation
+  | .supplied .admin => .admin
+  | .supplied .editor => .editor
+  | .supplied .viewer => .viewer
+  | .supplied .ingest => .ingest
 
 /-- How a personal role or one of the group presets is acquired. -/
 inductive Preset where
@@ -178,7 +181,7 @@ inductive OwnerSpine where
 
 /-- A typed owner probe searches only the spine for its entity kind. -/
 def ownerSpine : EmbeddableEntity → OwnerSpine
-  | .memory _ => .memory
+  | .memory .Fact | .memory .Abstraction | .memory .Perspective => .memory
   | .goal => .goal
 
 /-- The invariants checked when an edge is written to the group forest. -/

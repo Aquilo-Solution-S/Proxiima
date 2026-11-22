@@ -54,20 +54,22 @@ def lifecycle : GoalState → Event → Except LifecycleRefusal GoalState
   | .Active, .set => .error .wrongState
   | .Active, .decompose => .ok birthState
   | .Active, .modify => .ok .Active
-  | .Active, (.pause _) => .ok .Paused
+  | .Active, .pause .keep | .Active, .pause .discard => .ok .Paused
   | .Active, .resume => .error .wrongState
   | .Active, .achieve => .ok .Achieved
   | .Active, .abandon => .ok .Abandoned
   | .Paused, .set => .error .wrongState
   | .Paused, .decompose => .error .wrongState
   | .Paused, .modify => .error .wrongState
-  | .Paused, (.pause _) => .error .wrongState
+  | .Paused, .pause .keep | .Paused, .pause .discard => .error .wrongState
   | .Paused, .resume => .ok .Active
   | .Paused, .achieve => .error .wrongState
   | .Paused, .abandon => .ok .Abandoned
-  | .Achieved, .set | .Achieved, .decompose | .Achieved, .modify | .Achieved, (.pause _)
+  | .Achieved, .set | .Achieved, .decompose | .Achieved, .modify
+  | .Achieved, .pause .keep | .Achieved, .pause .discard
   | .Achieved, .resume | .Achieved, .achieve | .Achieved, .abandon => .error .wrongState
-  | .Abandoned, .set | .Abandoned, .decompose | .Abandoned, .modify | .Abandoned, (.pause _)
+  | .Abandoned, .set | .Abandoned, .decompose | .Abandoned, .modify
+  | .Abandoned, .pause .keep | .Abandoned, .pause .discard
   | .Abandoned, .resume | .Abandoned, .achieve | .Abandoned, .abandon => .error .wrongState
 
 /-- The label projected on Goal reads. -/
@@ -125,12 +127,12 @@ def editPins : PinEdit → RevisionField
 /-- Declaring writes supply a prompt and lifecycle changes carry the stored prompt byte for byte. -/
 def promptRevision : Event → RevisionField
   | .set | .decompose | .modify => .replace
-  | (.pause _) | .resume | .achieve | .abandon => .carry
+  | .pause .keep | .pause .discard | .resume | .achieve | .abandon => .carry
 
 /-- A child keeps the parent series chosen at birth alongside its exact parent dependency under `Causa.GoalStep`. -/
 def parentRevision : Event → RevisionField
   | .set | .decompose => .replace
-  | .modify | (.pause _) | .resume | .achieve | .abandon => .carry
+  | .modify | .pause .keep | .pause .discard | .resume | .achieve | .abandon => .carry
 
 /-- Source classes considered when admitting Goal evidence. -/
 inductive EvidenceSource where
@@ -152,7 +154,7 @@ def evidenceAdmission : EvidenceSource → EvidenceCheck
 /-- Which Goal operations can supply an evidence statement, always optional. -/
 def mayDeclareEvidence : Event → Bool
   | .set | .decompose | .modify | .achieve => true
-  | (.pause _) | .resume | .abandon => false
+  | .pause .keep | .pause .discard | .resume | .abandon => false
 
 /-- Goal evidence is read from the exact declaration whose pins are projected by `Causa.goalDeclaredTargetIds`. -/
 def evidenceDeclaration : String := "goal.evidence_t"
@@ -310,7 +312,7 @@ inductive ChangeFields where
 def changeFields : Event → ChangeFields
   | .set | .modify | .resume | .achieve | .abandon => .plain
   | .decompose => .parent
-  | (.pause _) => .pending
+  | .pause .keep | .pause .discard => .pending
 
 /-- The title or prompt’s length after trimming surrounding Unicode White_Space. -/
 inductive TrimmedDisplayLength where
