@@ -6,12 +6,13 @@ assembling `proxiima-core` directly. The compiling host template is
 
 Public tiers:
 
-1. Host entry point: `Proxiima`, `RuntimeBuilder`, `RuntimeConfig`, `run`.
+1. Host entry point: `Proxiima`, `StorageProxiima`, `RuntimeBuilder`, `RuntimeConfig`, `run`.
 2. Extension API for spiice authors: selected re-exports from core/storage ports.
 
 `PgPoolConfig` is the programmatic pool-policy block. Set it with
 `RuntimeBuilder::pg_pool_config` (reached through `Proxiima::configure`), or resolve the
 same `PROXIIMA_PG_*` variables through `Proxiima::from_lookup`.
+See [`Proxiima.Configuration`](../../docs/ledger.md#configuration).
 
 See `src/lib.rs` rustdoc and [`../../docs/host-integration.md`](../../docs/host-integration.md).
 

@@ -34,7 +34,7 @@ the runtime role for serving grants. Development provisioning is executable in
 [`scripts/pg-init.sql`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/scripts/pg-init.sql).
 Stop older hosts before changing their role/schema contract.
 
-Only the migrate step changes the schema: `Proxiima::migrate`, which the
+Only the migrate step changes the schema: `StorageProxiima::migrate`, which the
 canonical host runs as `proxiima-mcp migrate` and a composed host exposes as
 its own `<host> migrate`. On the migration connection it applies every pending
 core and spiice migration, initializes `PROXIIMA_STORE_NUMBER`, and, with
@@ -43,12 +43,13 @@ core and spiice migration, initializes `PROXIIMA_STORE_NUMBER`, and, with
 older than the binary, has no store number, or lacks generated state the step
 regenerates (owner-follows marks and indexes, search functions, a declared
 schema evolution) is refused with `ProxiimaError::MigrationRequired`, whose
-message names the migrate step. The step and the maintenance commands read
-only the storage settings (database URLs, store number, `PROXIIMA_PG_*`,
-missing-migration policy, runtime grants, and the embedding runtime policy
-block of `PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS`), so they share the
-server's environment. `maintain-blobs`, and `maintain-storage` when it touches
-objects, also read `PROXIIMA_S3_*`.
+message names the migrate step. `StorageProxiima` resolves the storage settings
+for migrate and maintenance commands: the database URLs, store number,
+`PROXIIMA_PG_*`, missing-migration policy, runtime grants, and the embedding
+runtime policy block that includes `PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS`.
+These commands can share the server's environment. `maintain-blobs` and
+`maintain-storage` object actions also read `PROXIIMA_S3_*`.
+The lookup rules are in [`Proxiima.Configuration`](ledger.md#configuration).
 
 Run the migrate step before the first start and before every release that
 ships migrations, for example as a job that completes before the rollout

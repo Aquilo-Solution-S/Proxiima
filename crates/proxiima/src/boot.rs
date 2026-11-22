@@ -276,6 +276,7 @@ async fn connect_serving_storage(
 ) -> Result<PgStorage, ProxiimaError> {
     let schema_names = composed_schema_names(registry);
     let schema_refs: Vec<&str> = schema_names.iter().map(String::as_str).collect();
+    // `Proxiima.Configuration.storagePolicySource`
     let platform_pool = config
         .pg_pool_config
         .connect_lazy(&config.platform_database_url)
@@ -399,6 +400,7 @@ async fn connect_schema(
     vectors: VectorStorage,
     step: SchemaStep,
 ) -> Result<(), ProxiimaError> {
+    // `Proxiima.Configuration.storagePolicySource`
     let migration_pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         config.migrations_url(),
         config.pg_pool_config,

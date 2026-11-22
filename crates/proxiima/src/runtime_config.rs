@@ -338,13 +338,8 @@ impl RuntimeBuilder {
     /// Env equivalent: `PROXIIMA_PUBLICATION_SOURCE`,
     /// `PROXIIMA_OUTBOX_MAX_PENDING`, `PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES`.
     ///
-    /// Retention of DELIVERED records is deliberately NOT here. It is host
-    /// housekeeping, not engine configuration — the engine never prunes —
-    /// so it lives on [`Self::published_retention`] and is read from
-    /// `PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS` outside this block's guard.
-    ///
-    /// Setting this suppresses the environment read for the whole block —
-    /// one parser, as with the S3 and Postgres blocks.
+    /// Setting capture skips its environment block, while the host reclaims
+    /// delivered records through [`Self::published_retention`].
     #[must_use]
     pub fn publication(mut self, publication: PublicationConfig) -> Self {
         self.publication = Some(publication);
@@ -360,10 +355,7 @@ impl RuntimeBuilder {
     /// undelivered event is a promise this deployment has not kept, and no
     /// retention policy may quietly cancel it (docs/host-integration.md, kernel OB-9).
     ///
-    /// Setting this suppresses the environment read, so a host that composes
-    /// programmatically is not overridden by a stray variable. A non-zero
-    /// value under the one-minute floor is refused at `build`, exactly as
-    /// the environment path refuses it at boot.
+    /// Setting retention skips its environment read, and a non-zero value under one minute is refused at boot.
     #[must_use]
     pub const fn published_retention(mut self, horizon: Duration) -> Self {
         self.published_retention = Some(horizon);
@@ -375,8 +367,9 @@ impl RuntimeBuilder {
     /// `PROXIIMA_OBJECT_PURGE_INTERVAL_SECS`; default 60 s.
     ///
     /// `Duration::ZERO` turns the in-process drain off, for a deployment
-    /// that runs `proxiima-mcp maintain-storage` on its own schedule instead.
-    /// Setting this suppresses the environment read.
+    /// that schedules `proxiima-mcp maintain-storage`.
+    ///
+    /// Setting the interval skips its environment read.
     #[must_use]
     pub const fn object_purge_interval(mut self, interval: Duration) -> Self {
         self.object_purge_interval = Some(interval);
@@ -663,10 +656,8 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Set the Postgres query tuning, bypassing the `PROXIIMA_PG_*` search
-    /// variables a deployment would otherwise read. Its defaults are this
-    /// release's shipped behaviour, so a host that never calls this and an
-    /// environment that sets nothing are the same deployment.
+    /// Set Postgres search tuning in place of reading its `PROXIIMA_PG_*`
+    /// variables, whose defaults match this release's shipped tuning.
     #[must_use]
     pub fn pg_tuning(mut self, pg_tuning: PgTuning) -> Self {
         self.pg_tuning = Some(pg_tuning);
@@ -765,12 +756,7 @@ impl RuntimeBuilder {
         self.apply_lookup_source(&proxiima_core::ProcessEnv)
     }
 
-    /// Apply injected environment values to unset fields: the storage
-    /// block of [`Self::apply_storage_lookup`] and the serving block beside it.
-    ///
-    /// Empty or whitespace-only is unset; values are trimmed.
-    /// `PROXIIMA_ALLOWED_ORIGINS=` therefore does not override a
-    /// programmatically set base — it leaves the field untouched.
+    /// Fill unset storage and serving fields from the environment, treating empty or whitespace-only values as unset.
     ///
     /// # Errors
     ///
@@ -786,19 +772,13 @@ impl RuntimeBuilder {
         self,
         lookup: &dyn proxiima_core::EnvLookup,
     ) -> Result<Self, ProxiimaError> {
+        // `Proxiima.Configuration.readsGroup`
         let mut builder = self.apply_storage_lookup_source(lookup)?;
         builder.apply_serving_lookup(lookup)?;
         Ok(builder)
     }
 
-    /// Apply only the storage settings of the environment to unset fields:
-    /// the database URLs, store number, missing-migration policy, runtime
-    /// grants, the `PROXIIMA_PG_*` pool and tuning, and the embedding runtime
-    /// policy the storage applies. A command that migrates or maintains
-    /// storage reads these and leaves every serving setting — listener,
-    /// authentication, transport, object store, publication and outbox
-    /// delivery — unread, so a server's environment neither configures nor
-    /// refuses it. A command that needs the object store sets it itself.
+    /// Fill unset storage fields from the environment, leaving serving and object-store configuration to their callers.
     ///
     /// # Errors
     ///
@@ -814,40 +794,49 @@ impl RuntimeBuilder {
         mut self,
         lookup: &dyn proxiima_core::EnvLookup,
     ) -> Result<Self, ProxiimaError> {
+        // `Proxiima.Configuration.readEnvironment`
         if self.store_number.is_none() {
             self.store_number = settings::PROXIIMA_STORE_NUMBER
                 .read_source(lookup)
                 .map(|value| parse_store_number(&value))
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.database_url.is_none() {
             self.database_url = settings::DATABASE_URL.read_source(lookup);
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.platform_database_url.is_none() {
             self.platform_database_url =
                 settings::PROXIIMA_PLATFORM_DATABASE_URL.read_source(lookup);
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.migration_database_url.is_none() {
             self.migration_database_url =
                 settings::PROXIIMA_MIGRATION_DATABASE_URL.read_source(lookup);
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.missing_migration_policy.is_none() {
             self.missing_migration_policy = missing_migration_policy_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.runtime_grants.is_none() {
             self.runtime_grants = settings::PROXIIMA_RUNTIME_GRANTS
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_RUNTIME_GRANTS, &raw))
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.pg_pool_config.is_none() {
             self.pg_pool_config = pg_pool_config_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.pg_tuning.is_none() {
             self.pg_tuning = pg_tuning_from_lookup(lookup)?;
         }
         // The storage applies this policy to its reclaim and stale-claim
         // reads, which maintenance reports too.
+        // `Proxiima.Configuration.readEnvironment`
         if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(lookup) {
             self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(lookup)?);
         }
@@ -860,9 +849,11 @@ impl RuntimeBuilder {
         &mut self,
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
+        // `Proxiima.Configuration.readEnvironment`
         if self.s3.is_none() {
             self.s3 = s3_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.mcp_bind.is_none()
             && let Some(raw) = settings::PROXIIMA_MCP_BIND.read_source(lookup)
         {
@@ -872,12 +863,14 @@ impl RuntimeBuilder {
                 ))
             })?);
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.expose_network.is_none() {
             self.expose_network = settings::PROXIIMA_EXPOSE_NETWORK
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_EXPOSE_NETWORK, &raw))
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.rest_enabled.is_none() {
             self.rest_enabled = settings::PROXIIMA_REST_ENABLED
                 .read_source(lookup)
@@ -885,35 +878,38 @@ impl RuntimeBuilder {
                 .transpose()?;
         }
         self.apply_served_path_lookup(lookup)?;
+        // `Proxiima.Configuration.readEnvironment`
         if self.allowed_origins.is_none() {
             self.allowed_origins = settings::PROXIIMA_ALLOWED_ORIGINS
                 .read_source(lookup)
                 .map(|raw| parse_allowed_origins(&raw));
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.allowed_hosts.is_none() {
             self.allowed_hosts = settings::PROXIIMA_ALLOWED_HOSTS
                 .read_source(lookup)
                 .map(|raw| parse_allowed_hosts(&raw));
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.stream_max_lifetime.is_none() {
             self.stream_max_lifetime = settings::PROXIIMA_STREAM_MAX_LIFETIME
                 .read_source(lookup)
                 .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readPublicationBlock`
         if self.publication.is_none() {
             self.publication = publication_config_from_lookup(lookup)?;
         }
-        // Read outside the `publication` guard on purpose: retention is a
-        // host-only housekeeping horizon, not part of the engine's
-        // publication configuration, so a host that bound the engine block
-        // programmatically has said nothing about it.
+        // `Proxiima.Configuration.readPublicationBlock`
         if self.published_retention.is_none() {
             self.published_retention = crate::config::published_retention_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readPublicationBlock`
         if self.object_purge_interval.is_none() {
             self.object_purge_interval = crate::config::object_purge_interval_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.outbox_http.is_none() {
             self.outbox_http = crate::outbox_http::HttpIntake::from_lookup(lookup)?.map(Arc::new);
         }
@@ -926,20 +922,24 @@ impl RuntimeBuilder {
         &mut self,
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
+        // `Proxiima.Configuration.readEnvironment`
         if self.request_headers.is_none() {
             self.request_headers = settings::PROXIIMA_REQUEST_HEADERS
                 .read_source(lookup)
                 .map(|raw| raw.split(',').map(ToOwned::to_owned).collect());
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.forwarder.is_none() {
             self.forwarder = forwarder_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.health_endpoints.is_none() {
             self.health_endpoints = settings::PROXIIMA_HEALTH_ENDPOINTS
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_HEALTH_ENDPOINTS, &raw))
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.max_request_body_bytes.is_none() {
             self.max_request_body_bytes = settings::PROXIIMA_MAX_REQUEST_BODY_BYTES
                 .read_source(lookup)
@@ -952,9 +952,11 @@ impl RuntimeBuilder {
                 })
                 .transpose()?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.mcp_transport.is_none() {
             self.mcp_transport = mcp_transport_from_lookup(lookup)?;
         }
+        // `Proxiima.Configuration.readEnvironment`
         if self.oidc_env.is_none()
             && self.authenticator.is_none()
             && self.platform_authenticator.is_none()
@@ -979,6 +981,7 @@ impl RuntimeBuilder {
     /// the edge and the delegation service get.
     #[cfg(feature = "auth-oidc")]
     fn env_authenticator(&mut self) -> Result<Option<LateOwnerAccess>, ProxiimaError> {
+        // `Proxiima.Configuration.useEnvironmentAuthenticator`
         if self.authenticator.is_some() || self.platform_authenticator.is_some() {
             return Ok(None);
         }
@@ -1002,6 +1005,7 @@ impl RuntimeBuilder {
     /// honour, refused rather than ignored.
     #[cfg(not(feature = "auth-oidc"))]
     fn env_authenticator(&mut self) -> Result<Option<LateOwnerAccess>, ProxiimaError> {
+        // `Proxiima.Configuration.useEnvironmentAuthenticator`
         if self.authenticator.is_none()
             && self.platform_authenticator.is_none()
             && self.oidc_env.take().is_some()
@@ -1162,10 +1166,7 @@ impl RuntimeBuilder {
         Ok((config, parts))
     }
 
-    /// Resolve only the storage settings, for a command that migrates or
-    /// connects storage and serves nothing. Nothing serving refuses it: no
-    /// listener, authenticator, served surface, transport, publication,
-    /// outbox or object-store setting is read.
+    /// Validate the storage configuration for a command that serves nothing.
     ///
     /// # Errors
     ///
@@ -1269,9 +1270,7 @@ struct ServedPath {
     mcp_transport: McpTransportConfig,
 }
 
-/// The storage settings of the environment's storage block
-/// ([`RuntimeBuilder::apply_storage_lookup`]): all that
-/// [`crate::StorageProxiima::migrate`] and [`crate::StorageProxiima::connect_storage`] read.
+/// Resolved configuration for storage boot.
 #[derive(Clone)]
 pub struct StorageConfig {
     pub database_url: String,

@@ -20,31 +20,22 @@ pub struct AppInfo {
 
 /// Framework surface implemented by host application bundles.
 ///
-/// In tuple apps, the first element is the primary spiice: its
-/// [`AppInfo`] identifies the composed binary. Configuration and HTTP
-/// mounting fold left-to-right.
+/// In tuple apps, the first element's [`AppInfo`] identifies the composed binary.
+/// Configuration and HTTP mounting fold left-to-right.
 pub trait SpiiceApp: SpiiceBundle {
     fn app_info() -> AppInfo;
 
-    /// The app's defaults: the lowest configuration layer, under the
-    /// environment and the host's own builder calls. Every feature starts
-    /// when its config is present, so a spiice that wants MCP by default
-    /// sets [`RuntimeBuilder::mcp_bind`] here.
+    /// Supply application defaults. A spiice that wants MCP by default sets
+    /// [`RuntimeBuilder::mcp_bind`] here.
     ///
-    /// Folded left-to-right for tuples; later tuple elements can
-    /// override fields set by earlier elements, except
-    /// [`RuntimeBuilder::host_state_participant`]: a second registration
-    /// refuses boot.
+    /// A second [`RuntimeBuilder::host_state_participant`] registration refuses boot.
     #[must_use]
     fn configure(builder: RuntimeBuilder) -> RuntimeBuilder {
         builder
     }
 
-    /// The settings the host reads itself, declared with
-    /// [`settings!`](crate::settings!). [`crate::Proxiima::from_env`] warns
-    /// about a `PROXIIMA_*` variable that neither the facade
-    /// ([`crate::settings::all`]) nor this list declares. Concatenated for
-    /// tuples.
+    /// Declare the host's [`settings!`](crate::settings!) in tuple order
+    /// so [`crate::Proxiima::from_env`] recognizes their names.
     #[must_use]
     fn settings() -> Vec<&'static Setting> {
         Vec::new()
@@ -208,6 +199,7 @@ macro_rules! impl_spiice_app_tuple {
             }
 
             fn configure(builder: RuntimeBuilder) -> RuntimeBuilder {
+                // `Proxiima.Configuration.lastConfiguredSlot`
                 let builder = $first::configure(builder);
                 $(let builder = $rest::configure(builder);)*
                 builder

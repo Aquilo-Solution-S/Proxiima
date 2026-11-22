@@ -479,6 +479,7 @@ fn layer_precedence_matches_ledger_vectors() {
     }
 }
 
+// `Proxiima.Configuration.readEnvironment`
 #[test]
 fn host_overrides_skip_lookup_for_configured_settings() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -532,6 +533,7 @@ fn application_publication_default_survives_a_silent_environment() {
     assert_eq!(config.publication.limits.max_pending, 19);
 }
 
+// `Proxiima.Configuration.lastConfiguredSlot`
 #[test]
 fn repeated_configuration_overwrites_only_supplied_options() {
     let (config, _) = StorageProxiima::<AlphaApp>::app()
@@ -543,6 +545,7 @@ fn repeated_configuration_overwrites_only_supplied_options() {
     assert_eq!(config.database_url, "postgres://host/runtime");
 }
 
+// `Proxiima.Configuration.readsGroup`
 #[test]
 fn storage_commands_use_the_storage_lookup_even_from_a_serving_facade() {
     let app = Proxiima::<AlphaApp>::app().from_lookup(|key| match key {

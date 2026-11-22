@@ -178,7 +178,7 @@ impl SpiiceApp for MyApp {
 #[tokio::main]
 async fn main() -> Result<(), proxiima::ProxiimaError> {
     if std::env::args().nth(1).as_deref() == Some("migrate") {
-        return proxiima::Proxiima::<MyApp>::app().from_env().migrate().await;
+        return proxiima::StorageProxiima::<MyApp>::app().from_env().migrate().await;
     }
     proxiima::run::<MyApp>().await?;
     Ok(())
@@ -197,10 +197,10 @@ process environment through a lookup calls `proxiima::settings::warn_unknown_env
 itself. `proxiima::settings::markdown_table` renders the host's operator table
 from the facade's rows and its own.
 
-`Proxiima::migrate` is the host's migrate step and the only path that changes
+`StorageProxiima::migrate` is the host's migrate step and the only path that changes
 the schema: it applies every pending core and spiice migration, initializes
 the store number, and applies the runtime grants when they are configured.
-`build()`, `run()` and `Proxiima::connect_storage`, the storage of a one-shot
+`build()`, `run()` and `StorageProxiima::connect_storage`, the storage of a one-shot
 maintenance command, only validate and refuse a database the step has not
 brought current with `ProxiimaError::MigrationRequired`. Expose the step as
 `<host> migrate` and run it before starting or replacing servers
@@ -209,10 +209,13 @@ brought current with `ProxiimaError::MigrationRequired`. Expose the step as
 `migrate` and `connect_storage` resolve the storage settings only
 ([`StorageConfig`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/src/runtime_config.rs)),
 so the app that serves also runs them: no listener, authenticator or served
-surface it configures refuses them. `from_env()` still parses the whole
-environment. A command that shares the server's environment and must not be
-refused by a malformed serving value reads it with `from_storage_lookup`, as
-`proxiima-mcp migrate` does.
+surface it configures refuses them. A command that shares the server's
+environment uses `StorageProxiima::app().from_env()`, as
+`proxiima-mcp migrate` does with its process settings, or
+`StorageProxiima::app().from_lookup(lookup)` for an injected source. Use
+`app.storage()` to reuse a configured facade. The command ignores malformed
+serving values and resolves its storage settings after applying explicit overrides.
+The lookup rules are in [`Proxiima.Configuration`](ledger.md#configuration).
 
 The host normally implements `SpiiceBundle` and links one or more spiices;
 the tuple `SpiiceApp` implementation folds configuration, services, and HTTP
@@ -285,7 +288,7 @@ validate between source commits. They fail after a five-second lock wait.
 Complete the migrate step before starting servers; allowing missing versions
 does not bypass this serialization.
 
-`Proxiima::migrate` and boot freeze the core/spiice PG sidecars of the bundle
+`StorageProxiima::migrate` and boot freeze the core/spiice PG sidecars of the bundle
 themselves. A standalone preflight caller freezes the same: register core
 sidecars and the bundle's sidecars in a `PgSidecarRegistry`, then call
 `freeze_against(&registry)` with the frozen spiice registry, and pass

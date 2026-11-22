@@ -47,7 +47,6 @@ mod tests {
     use crate::S3RuntimeConfig;
     use crate::config::DEFAULT_MAX_BLOB_BYTES;
 
-    /// Every declared default of this crate is what its reader does unset.
     /// The reader reads the optional rows only beside a bucket, so the
     /// environment names one with its required companions. An unset blob
     /// ceiling stays `None` until the store applies the default, so the

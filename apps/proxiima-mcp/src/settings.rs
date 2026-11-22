@@ -58,7 +58,6 @@ proxiima::settings! {
 
 #[cfg(test)]
 mod tests {
-    /// Every declared default of this host is what its readers do unset.
     /// The embedding rows are read only once an endpoint and a model are
     /// named, so the environment names both.
     #[test]
@@ -83,10 +82,7 @@ mod tests {
     const BEGIN: &str = "<!-- settings:begin -->\n";
     const END: &str = "<!-- settings:end -->";
 
-    /// The operator page's table is the facade's rows and this host's,
-    /// rendered. On a difference the test rewrites the region between the
-    /// markers and fails, so the regenerated page is committed with the
-    /// declaration that changed it.
+    /// Rewrite the generated region and fail on drift.
     #[test]
     fn the_operator_page_is_the_rendered_settings_table() {
         let path =
@@ -100,6 +96,7 @@ mod tests {
             + page[start..]
                 .find(END)
                 .expect("docs/configuration.md has the end marker");
+        // `Proxiima.Configuration.documentationSources`
         let table = format!(
             "\n{}\n",
             proxiima::settings::markdown_table(proxiima::settings::all().chain(super::SETTINGS))

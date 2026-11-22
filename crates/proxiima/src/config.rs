@@ -14,8 +14,7 @@ use crate::settings::{
     PROXIIMA_PUBLICATION_SOURCE as ENV_PUBLICATION_SOURCE,
 };
 
-/// Read the `PROXIIMA_S3_*` block through the blob crate's parser.
-/// One parser for the block; the facade must not re-read it.
+/// Read object storage settings through the blob crate's parser.
 pub(crate) fn s3_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<S3RuntimeConfig>, ProxiimaError> {
@@ -23,22 +22,14 @@ pub(crate) fn s3_from_lookup(
         .map_err(|error| ProxiimaError::Config(error.to_string()))
 }
 
-/// Read the `PROXIIMA_PG_*` tuning block through the storage crate's parser.
-///
-/// Same single-parser rule as the S3 block above: the storage crate is where
-/// these knobs are consumed and where their defaults are defined, so a host
-/// injecting its own environment cannot get a different answer than one
-/// reading the process environment.
+/// Read query tuning through the storage crate's parser.
 pub(crate) fn pg_tuning_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<PgTuning>, ProxiimaError> {
     PgTuning::from_lookup(lookup).map_err(|error| ProxiimaError::Config(error.to_string()))
 }
 
-/// Read the `PROXIIMA_PG_*` pool block through the storage crate's parser.
-///
-/// Pool construction consumes this resolved value. The canonical runtime path
-/// therefore never falls back to a second process-environment read.
+/// Read pool policy through the storage crate's parser.
 pub(crate) fn pg_pool_config_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<PgPoolConfig>, ProxiimaError> {
@@ -118,18 +109,7 @@ pub(crate) fn published_retention_from_lookup(
     Ok(Some(horizon))
 }
 
-/// Read the publication block (docs/host-integration.md §Configuration) into the ONE value
-/// the engine is built with.
-///
-/// An absent block leaves the application layer available.
-///
-/// The limits parsed here are the limits ENFORCED at capture: they travel
-/// with the draft on the authorization witness. There is no storage-side
-/// copy to keep in step.
-///
-/// Reads none of these keys when the caller already supplied a
-/// configuration programmatically — same single-parser rule as the S3 and
-/// Postgres blocks.
+/// Read the publication capture block for the engine's authorization witness.
 ///
 /// # Errors
 ///

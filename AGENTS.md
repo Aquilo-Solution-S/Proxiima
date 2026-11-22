@@ -12,10 +12,8 @@ concepts and integration; avoid a second invariant or configuration ledger.
   resolve its links. Rust code and its tests define runtime behavior. The
   ledger check does not prove Rust refinement. CI checks the generated artifacts.
 - Types/defaults/limits outside the ledger: rustdoc. Tables: migrations; core functions, triggers,
-  policies and views: `crates/storage-pg/definitions/`. Settings: each
-  crate's `settings!` block, read only through `Setting::read`;
-  [configuration](docs/configuration.md) is rendered from the blocks and kept
-  current by a regenerating test in `apps/proxiima-mcp`. Action/resource
+  policies and views: `crates/storage-pg/definitions/`.
+  Settings follow [`Proxiima.Configuration`](docs/ledger.md#configuration). Action/resource
   schemas: the live catalog.
 - Require explicit task authorization for new crates, binaries, services, migrations, protocol surfaces and registration paths so review can enforce scope.
 - Keep transient plans and bulky evidence in ignored `.local/` so tracked documents remain durable.

@@ -9,17 +9,13 @@ pub const DEFAULT_DATABASE_URL: &str =
 const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 
 /// `DATABASE_URL`, or the dev default when it is not configured.
-///
-/// Read through [`proxiima::Setting::read`] so `DATABASE_URL=` falls back to
-/// the default instead of handing an empty connection string to the pool.
 fn database_url_from_env() -> String {
     proxiima::settings::DATABASE_URL
         .read_source(&proxiima_core::ProcessEnv)
         .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
 }
 
-/// The top-level help: the usage text, then every setting the canonical host
-/// declares, rendered from its `settings!` blocks.
+/// Usage and the settings under `Proxiima.Configuration.documentationSources`.
 #[must_use]
 pub fn usage() -> String {
     format!(

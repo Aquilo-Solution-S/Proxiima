@@ -1,19 +1,9 @@
-//! Configuration settings and the one rule for reading them.
-//!
-//! Each crate that reads a setting declares it once, in its
-//! [`settings!`](crate::settings!) block, as a [`Setting`]: name, purpose,
-//! when it is needed, kind of value and default. A setting is read only
-//! through [`Setting::read`], which trims the value and treats an empty one
-//! as "not configured". The operator page `docs/configuration.md` is
-//! rendered from these declarations. This crate's own block is
-//! [`SETTINGS`].
+//! Configuration setting declarations and readers.
 
 /// One configuration setting: its name, what it is for, when an operator
 /// needs it, the kind of value it takes, and its default.
 ///
-/// Declared once, in its crate's [`settings!`](crate::settings!) block, and
-/// read only through [`Self::read`]. Reading by bare name is private to
-/// this crate:
+/// Declare settings with [`settings!`](crate::settings!).
 ///
 /// ```compile_fail,E0308
 /// use proxiima_core::{EnvLookup, ProcessEnv};
@@ -72,29 +62,16 @@ impl Setting {
         self.kind
     }
 
-    /// The literal value an unset setting means: setting the variable to
-    /// this text behaves exactly like leaving it unset. `None` when unset
-    /// means "not configured" or a value derived from other settings, which
-    /// the purpose then states. Each crate's test checks its declared
-    /// defaults against its readers (`test_fixtures::assert_declared_defaults`
-    /// under the `testkit` feature).
+    /// The literal that behaves like omission, or `None` for an unconfigured or derived value.
     #[must_use]
     pub const fn default(&self) -> Option<&'static str> {
         self.default
     }
 
-    /// Read this setting through `lookup`, trimmed, treating an empty result
-    /// as unset.
+    /// Read an injected setting with a lookup such as [`env_from_pairs`],
+    /// trimming the value and treating blanks as unset.
     ///
-    /// An operator who writes `FOO=` or leaves whitespace has not configured
-    /// `FOO`, and gets the same behaviour as leaving it out. Returning `None`
-    /// rather than `Some("")` keeps that decision here instead of at each
-    /// parse site, where forgetting it turns "unset" into a parse error that
-    /// names a value the operator never typed.
-    ///
-    /// `lookup` is any environment source: [`ProcessEnv`] for the process
-    /// environment, or [`env_from_pairs`] and other injected maps in tests
-    /// and embedded hosts.
+    /// For the process environment, use [`Self::read_source`] with [`ProcessEnv`].
     ///
     /// ```
     /// proxiima_core::settings! {
@@ -119,6 +96,7 @@ impl Setting {
     /// Read a setting from a typed lookup, trimming the value and treating blanks as unset.
     #[must_use]
     pub fn read_source(&self, lookup: &(impl EnvLookup + ?Sized)) -> Option<String> {
+        // `Proxiima.Configuration.lookupPresence`
         lookup.lookup(self).and_then(|value| {
             let trimmed = value.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_owned())
@@ -290,13 +268,12 @@ pub struct ProcessEnv;
 
 impl EnvLookup for ProcessEnv {
     fn lookup(&self, setting: &Setting) -> Option<String> {
+        // `Proxiima.Configuration.mayReadProcessSetting`
         std::env::var(setting.name()).ok()
     }
 }
 
-/// An environment lookup over fixed `pairs`, for a host that supplies its
-/// configuration by value instead of from the process environment, and for
-/// tests. When a key appears more than once, the later pair wins.
+/// Build a lookup from fixed pairs for embedded hosts and tests, using the last pair for each key.
 ///
 /// ```
 /// let env = proxiima_core::env_from_pairs(&[("MODE", "a"), ("MODE", "b")]);
@@ -305,6 +282,7 @@ impl EnvLookup for ProcessEnv {
 /// ```
 pub fn env_from_pairs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |key| {
+        // `Proxiima.Configuration.winsRepeatedPair`
         pairs
             .iter()
             .rev()
@@ -313,11 +291,9 @@ pub fn env_from_pairs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> O
     }
 }
 
-/// The boolean a setting's value spells: `1`, `true`, `yes` or `on` is true;
-/// `0`, `false`, `no` or `off` is false; case and surrounding whitespace do
-/// not matter. Anything else is `None`, and the caller names the setting in
-/// its own error. Every boolean setting of every crate reads its words here,
-/// so one setting cannot mean different things to different readers.
+/// Parse a trimmed, case-insensitive boolean word, returning true for
+/// `1`, `true`, `yes`, and `on`, false for `0`, `false`, `no`, and `off`,
+/// and `None` for any other input.
 ///
 /// ```
 /// use proxiima_core::parse_bool_word;
@@ -431,7 +407,6 @@ mod tests {
         );
     }
 
-    /// Every declared default of this crate is what its readers do unset.
     #[test]
     fn declared_defaults_are_what_the_readers_do_unset() {
         crate::test_fixtures::assert_declared_defaults(super::SETTINGS, &[], |lookup| {

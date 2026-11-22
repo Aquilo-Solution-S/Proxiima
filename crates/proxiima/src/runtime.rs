@@ -35,11 +35,8 @@ use proxiima_storage_pg::{OwnerTransactions, PgDelegationStore, PgOwnerAccessRes
 
 /// Application runtime facade.
 ///
-/// Configuration layers, lowest first: [`SpiiceApp::configure`] (the app's
-/// defaults), the environment ([`Self::from_env`] / [`Self::from_lookup`]),
-/// then this value's own builder calls — code wins. Every feature starts
-/// when its config is present (docs/configuration.md §Runtime features); [`Self::build`]
-/// and [`Self::run`] start the same ones.
+/// Every feature starts when its config is present (docs/configuration.md § Runtime features).
+/// [`Self::build`] and [`Self::run`] start the same features.
 pub struct Proxiima<'env, A: SpiiceApp> {
     overlay: RuntimeBuilder,
     environment: Option<Environment<'env>>,
@@ -81,11 +78,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
         }
     }
 
-    /// Resolve the environment layer from the process environment.
-    ///
-    /// Logs one warning for each `PROXIIMA_*` variable that neither the
-    /// facade nor [`SpiiceApp::settings`] declares
-    /// ([`crate::settings::warn_unknown_env`]).
+    /// Select the process environment and report unknown names.
     #[must_use]
     pub fn from_env(mut self) -> Self {
         crate::settings::warn_unknown_env(A::settings());
@@ -135,13 +128,11 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
         })
     }
 
-    /// Set runtime options through the [`RuntimeBuilder`]: the closure
-    /// receives the options set so far and returns them with its own added,
-    /// like [`SpiiceApp::configure`]. Options set here win over the
-    /// environment layer and over [`SpiiceApp::configure`]; calling it again
-    /// adds to the earlier calls.
+    /// Set options that override the environment and [`SpiiceApp::configure`],
+    /// with each call receiving the options already set.
     #[must_use]
     pub fn configure(mut self, f: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder) -> Self {
+        // `Proxiima.Configuration.lastConfiguredSlot`
         self.overlay = f(self.overlay);
         self
     }
@@ -348,6 +339,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
             }
             None => overlay,
         };
+        // `Proxiima.Configuration.layerPrecedence`
         Ok(overlay.merge_over(base))
     }
 
@@ -416,11 +408,9 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
         self.0.merged_builder()?.resolve_storage()
     }
 
-    /// Bring the database to this binary: the host's migrate step.
+    /// Bring the database to this binary using only storage settings.
     ///
-    /// Resolves the storage settings only ([`RuntimeBuilder::resolve_storage`]):
-    /// no serving setting configures or refuses this step, so the app that
-    /// serves runs it. On [`crate::StorageConfig::migrations_url`] it applies
+    /// On [`crate::StorageConfig::migrations_url`] it applies
     /// every pending core and spiice migration under the configured
     /// missing-migration policy, initializes the store number, and applies
     /// the runtime grants when [`RuntimeBuilder::runtime_grants`] or
@@ -439,10 +429,8 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
         crate::boot::migrate::<A>(&config, &parts).await
     }
 
-    /// Resolve the storage settings only ([`RuntimeBuilder::resolve_storage`];
-    /// no serving setting configures or refuses this call), validate the
-    /// schema, and connect the serving storage, without composing an engine
-    /// or starting anything: for a one-shot maintenance command.
+    /// Use only storage settings to validate the schema and connect storage
+    /// for a one-shot command.
     ///
     /// # Errors
     ///

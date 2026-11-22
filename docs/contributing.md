@@ -161,16 +161,9 @@ a run without `--run-ignored all` as not running the S3 lane.
 
 ### Settings
 
-A crate declares each setting it reads once, in its `settings!` block
-(`proxiima_core::settings!`), and reads it only through `Setting::read`.
-[Configuration](configuration.md) is rendered from the declarations of the
-facade and the canonical host: when a row changes, the test
-`the_operator_page_is_the_rendered_settings_table` in `apps/proxiima-mcp`
-rewrites the page and fails; commit the rewritten page. A declared default is
-the literal value that behaves exactly like leaving the variable unset; each
-crate's `declared_defaults_are_what_the_reader…_unset` test checks every one
-against the crate's readers through
-`proxiima_core::test_fixtures::assert_declared_defaults`.
+[`Proxiima.Configuration`](ledger.md#configuration). When a setting declaration changes, run `the_operator_page_is_the_rendered_settings_table` in `apps/proxiima-mcp` and commit the regenerated table.
+Every crate with declared settings adds a `declared_defaults…` test that checks
+its readers through `proxiima_core::test_fixtures::assert_declared_defaults`.
 
 ### Development settings
 

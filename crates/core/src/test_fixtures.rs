@@ -507,13 +507,7 @@ pub fn probe_registry() -> proxiima_core::SpiiceRegistryFrozen {
 /// Check every row of `settings` that declares a default against the reader
 /// `resolve` stands for.
 ///
-/// For each such row, `resolve` runs on `base` without the row, on `base`
-/// with the row set to its declared default, and on `base` with the row set
-/// to another value derived from its kind. The first two must be equal: the
-/// declared default is what the reader does when the row is unset. The third
-/// must differ from the first, which proves `resolve` reads the row under
-/// `base`; otherwise the equality would prove nothing. `base` is the smallest
-/// environment under which every row of the crate is read.
+/// Supply the smallest `base` under which every declared default reaches its reader.
 ///
 /// # Panics
 /// Panics, naming the row, when either comparison fails or a numeric or
@@ -536,6 +530,7 @@ pub fn assert_declared_defaults<R: PartialEq + std::fmt::Debug>(
             pairs.extend(value.map(|value| (setting.name(), value)));
             resolve(&proxiima_core::env_from_pairs(&pairs))
         };
+        // `Proxiima.Configuration.matchesOmission`
         let unset = with(None);
         assert_eq!(
             with(Some(default)),
