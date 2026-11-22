@@ -10,3 +10,4 @@ import Causa.EdgeAuthorization
 import Causa.Citations
 import Causa.Compliance
 import Causa.SchemaEvolution
+import Causa.ObjectMaintenance
