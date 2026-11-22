@@ -6,9 +6,7 @@ warningAsError = true
 
 [[require]]
 name = "teslavalve"
-git = "https://github.com/Aquilo-Solution-S/tesla-valve.git"
-rev = "43baa7a75543870c069352b251541e4e37298915"
-subDir = "lean"
+path = "../../../../../tesla-valve-worktrees/ledger/lean"
 
 [[lean_lib]]
 name = "Causa"
