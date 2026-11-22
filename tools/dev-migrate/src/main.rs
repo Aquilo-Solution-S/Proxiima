@@ -159,8 +159,8 @@ macro_rules! is_proxiima_schema {
 }
 
 /// Every `proxiima_*` schema outside `owned`, sorted.
-async fn unowned_proxiima_schemas(
-    pool: &sqlx::PgPool,
+async fn unowned_proxiima_schemas<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     owned: &[String],
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(concat!(
@@ -173,7 +173,7 @@ async fn unowned_proxiima_schemas(
           ORDER BY schema_name"
     ))
     .bind(owned)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
 }
 
@@ -374,11 +374,12 @@ fn is_local_postgres_host(host: &str) -> bool {
 /// operator opted in. An explicit lane reset also needs permission to clear
 /// every lane ledger, including when no foreign objects depend on the schema.
 async fn census_foreign_dependents(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     dependent_lanes: DependentLanes,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let dependents: Vec<(String, String)> =
-        sqlx::query_as(FOREIGN_DEPENDENTS).fetch_all(pool).await?;
+    let dependents: Vec<(String, String)> = sqlx::query_as(FOREIGN_DEPENDENTS)
+        .fetch_all(&mut *conn)
+        .await?;
     if !dependents.is_empty() {
         eprintln!("objects of other lanes that DROP SCHEMA proxiima_* .. CASCADE drops:");
         for (object, on) in &dependents {
@@ -418,7 +419,7 @@ async fn census_foreign_dependents(
                      AND NOT has_table_privilege(c.oid, 'DELETE')
                    ORDER BY 1",
             )
-            .fetch_all(pool)
+            .fetch_all(&mut *conn)
             .await?;
             if !undeletable.is_empty() {
                 return Err(format!(
@@ -447,13 +448,15 @@ async fn reset_local_dev_database_confirmed(
         return Err("dev reset refuses protected database names".into());
     }
     let pool = pg.clone_pool_for_backend();
-    census_foreign_dependents(&pool, dependent_lanes).await?;
+    let mut tx = pool.begin().await?;
+    census_foreign_dependents(&mut tx, dependent_lanes).await?;
+    let mut report = Vec::new();
 
     // A schema this binary's compiled spiices did not create is reported and then dropped with
     // the rest, not refused: the core ledger preflight counts every `proxiima_*` schema as
     // Proxiima's, so a reset that refused one would leave boot demanding a reset it cannot get.
     // The report names it before it goes.
-    let unowned_schemas = unowned_proxiima_schemas(&pool, &compiled_schema_names()?).await?;
+    let unowned_schemas = unowned_proxiima_schemas(&mut *tx, &compiled_schema_names()?).await?;
     if !unowned_schemas.is_empty() {
         eprintln!(
             "dropping schemas no compiled spiice of this binary owns: {}",
@@ -491,7 +494,7 @@ async fn reset_local_dev_database_confirmed(
         is_proxiima_schema!("nspname"),
         " ORDER BY nspname"
     ))
-    .fetch_all(&pool)
+    .fetch_all(&mut *tx)
     .await?;
     eprintln!("resetting schemas: {}", schemas.join(", "));
     // The loop is inside the database rather than in Rust so the schema
@@ -511,20 +514,20 @@ async fn reset_local_dev_database_confirmed(
              END LOOP;
          END $$;"
     ))
-    .execute(&pool)
+    .execute(&mut *tx)
     .await?;
     for table in spiice_ledger_tables {
         eprintln!("dropping spiice ledger table: {table}");
         let mut drop = proxiima_core::SqlText::new("DROP TABLE IF EXISTS ");
         drop.push_ident(&proxiima_core::PgIdent::table(&table)?);
-        sqlx::query(drop).execute(&pool).await?;
+        sqlx::query(drop).execute(&mut *tx).await?;
     }
     if dependent_lanes == DependentLanes::Reset {
-        delete_dependent_lane_rows(&pool, &spiice_versions).await?;
+        report = delete_dependent_lane_rows(&mut tx, &spiice_versions).await?;
     }
     let migration_table_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
-            .fetch_one(&pool)
+            .fetch_one(&mut *tx)
             .await?;
     if migration_table_exists {
         let deleted: Vec<i64> = sqlx::query_scalar(
@@ -535,19 +538,23 @@ async fn reset_local_dev_database_confirmed(
         )
         .bind(CORE_MIGRATION_VERSION_CEILING)
         .bind(&spiice_versions)
-        .fetch_all(&pool)
+        .fetch_all(&mut *tx)
         .await?;
-        eprintln!("deleted migration versions: {deleted:?}");
+        report.push(format!("deleted migration versions: {deleted:?}"));
         let leftover: Vec<i64> =
             sqlx::query_scalar("SELECT version FROM public._sqlx_migrations ORDER BY version")
-                .fetch_all(&pool)
+                .fetch_all(&mut *tx)
                 .await?;
         if !leftover.is_empty() {
-            eprintln!(
+            report.push(format!(
                 "leaving {} ledger row(s) no compiled migrator accounts for; strict migration refuses them: {leftover:?}; use --reset --reset-dependent-lanes to discard their ledger rows after resetting any remaining objects of those lanes",
                 leftover.len()
-            );
+            ));
         }
+    }
+    tx.commit().await?;
+    for line in report {
+        eprintln!("{line}");
     }
     Ok(())
 }
@@ -587,12 +594,13 @@ $$";
 /// migrators re-run their lanes. Objects of those lanes the reset did not drop
 /// are the consumer's to reset (docs/contributing.md §Reset).
 async fn delete_dependent_lane_rows(
-    pool: &sqlx::PgPool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     spiice_versions: &[i64],
-) -> Result<(), sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error> {
+    let mut lines = Vec::new();
     let shared_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
-            .fetch_one(pool)
+            .fetch_one(&mut **tx)
             .await?;
     if shared_exists {
         let deleted: Vec<i64> = sqlx::query_scalar(
@@ -603,29 +611,27 @@ async fn delete_dependent_lane_rows(
         )
         .bind(CORE_MIGRATION_VERSION_CEILING)
         .bind(spiice_versions)
-        .fetch_all(pool)
+        .fetch_all(&mut **tx)
         .await?;
-        eprintln!(
+        lines.push(format!(
             "deleted public._sqlx_migrations rows of the dependent lanes (they re-run from \
              scratch; reset their remaining objects first): {deleted:?}"
-        );
+        ));
     }
     // The server quotes each name (`format('%I')`) and runs the deletes;
     // nothing from Rust is spliced into the statement. The report comes back
     // through a transaction-local setting.
-    let mut tx = pool.begin().await?;
     sqlx::raw_sql(DELETE_LANE_LEDGERS_SQL)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     let report: String =
         sqlx::query_scalar("SELECT current_setting('proxiima.deleted_lane_ledgers')")
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
-    tx.commit().await?;
     if !report.is_empty() {
-        eprintln!("{report}");
+        lines.push(report);
     }
-    Ok(())
+    Ok(lines)
 }
 
 #[cfg(test)]

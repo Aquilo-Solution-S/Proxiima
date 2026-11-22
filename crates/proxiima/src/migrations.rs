@@ -527,16 +527,17 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
                 },
             ));
         }
-        for source in sources
-            .iter()
-            .filter(|source| !is_core_ledger(&source.migrator().table_name))
-        {
+        // Core readiness was checked above. Shared rows are not a private lane's lineage.
+        for source in sources.iter().skip(1) {
             let recorded =
                 ledger_versions(&read_ledger(&mut snapshot, source, &source.ledger(), true).await?);
             let lane = source.lane_versions();
-            if let Some(conflict) =
-                ledger_conflict(&lane, &recorded).or_else(|| unapplied(&lane, &recorded))
+            if !is_core_ledger(&source.migrator().table_name)
+                && let Some(conflict) = ledger_conflict(&lane, &recorded)
             {
+                return Err(source.ledger_error(conflict));
+            }
+            if let Some(conflict) = unapplied(&lane, &recorded) {
                 return Err(source.ledger_error(conflict));
             }
         }

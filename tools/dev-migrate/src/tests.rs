@@ -299,6 +299,32 @@ async fn build_consumer_lanes(
     Ok(())
 }
 
+async fn fail_dependent_ledger_delete(
+    pg: &PgMigrationStorage,
+    url: &str,
+    admin: &sqlx::PgPool,
+) -> Result<(), sqlx::Error> {
+    // Fail on the private ledger delete after the schema drops and shared
+    // consumer ledger deletion have run.
+    sqlx::raw_sql(
+        "CREATE FUNCTION consumer.reject_ledger_delete() RETURNS trigger LANGUAGE plpgsql
+         AS $$ BEGIN RAISE EXCEPTION 'injected ledger failure'; END $$;
+         CREATE TRIGGER reject_ledger_delete BEFORE DELETE ON public._sqlx_migrations_consumer
+         FOR EACH ROW EXECUTE FUNCTION consumer.reject_ledger_delete();",
+    )
+    .execute(admin)
+    .await?;
+    let failure = reset_local_dev_database_confirmed(pg, url, DependentLanes::Reset)
+        .await
+        .expect_err("the private ledger delete fails");
+    assert!(failure.to_string().contains("injected ledger failure"));
+    sqlx::query("DROP TRIGGER reject_ledger_delete ON public._sqlx_migrations_consumer")
+        .execute(admin)
+        .await?;
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn reset_refuses_to_cascade_into_a_consumer_lane_unless_asked() {
     let db_name = unique_db_name("proxiima_dev_migrate_reset_consumer");
@@ -385,6 +411,11 @@ async fn reset_refuses_to_cascade_into_a_consumer_lane_unless_asked() {
         sqlx::query("DROP TABLE public._sqlx_migrations_foreign")
             .execute(&admin)
             .await?;
+
+        fail_dependent_ledger_delete(&pg, &url, &admin).await?;
+        assert!(core_exists().await?, "rollback restores the core schema");
+        assert_eq!(consumer_fks().await?, 1, "rollback restores dependent DDL");
+        assert_eq!(ledger().await?, before, "rollback restores all ledger rows");
 
         // Opt-in: the dependents go with Proxiima's schemas, and so does
         // every ledger row no Proxiima lane owns, shared or per-lane —

@@ -403,6 +403,39 @@ async fn missing_versions_need_an_explicit_policy_for_run_plan_and_preflight() {
 }
 
 #[tokio::test]
+async fn preflight_requires_linked_versions_on_the_shared_core_ledger() {
+    let db = expect_described(
+        "owned PG required",
+        SplitRoleDb::create("proxiima_policy_pending_shared", &[]).await,
+    )
+    .await;
+    let pg = storage(&db).await;
+    let sidecars = proxiima::PgSidecarRegistryFrozen::default();
+    let sources = || vec![source("host", FIRST, true)];
+
+    run_core_and_spiice_migrations(&pg, [], &sidecars)
+        .await
+        .expect("core is current");
+    let refused = preflight_without_migrations(&pg, sources(), &sidecars)
+        .await
+        .expect_err("serving requires the pending shared source");
+    assert!(matches!(
+        refused,
+        MigrationError::Ledger {
+            conflict: proxiima::host::LedgerConflict::Unapplied { pending },
+            ..
+        } if pending == [FIRST]
+    ));
+
+    run_core_and_spiice_migrations(&pg, sources(), &sidecars)
+        .await
+        .expect("apply the shared source");
+    preflight_without_migrations(&pg, sources(), &sidecars)
+        .await
+        .expect("serving accepts the applied shared source");
+}
+
+#[tokio::test]
 async fn shared_sources_in_the_core_number_range_are_recognized_by_the_union() {
     let db = expect_described(
         "owned PG required",

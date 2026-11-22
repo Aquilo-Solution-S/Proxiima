@@ -5,18 +5,8 @@ coding agent and the wiring template for other hosts.
 
 ## Run Locally
 
-Follow [`docs/get-started.md`](../../docs/get-started.md):
-Postgres, `proxiima-dev-idp`, then:
-
-```sh
-export DATABASE_URL="postgres://proxiima:proxiima@localhost:${PROXIIMA_DEV_POSTGRES_PORT:-5434}/proxiima"
-export PROXIIMA_STORE_NUMBER=0
-export PROXIIMA_TOOL_PROFILE=full
-cargo run -p proxiima-mcp
-```
-
-`dev-idp` prints the OIDC exports and a ready-to-paste agent command.
-Listens at `http://127.0.0.1:31415/mcp`.
+Follow the [local quick start](../../docs/get-started.md) to start Postgres and
+the local issuer, migrate with the platform role, and then start the MCP server.
 
 ## Auth
 

@@ -163,12 +163,16 @@ def migration_files(root: Path) -> dict[str, tuple[str, int]]:
         source = str(base.relative_to(root))
         for path in sorted(base.glob("*.sql")):
             match = MIGRATION_FILE.fullmatch(path.name)
-            if match:
-                files[str(path.relative_to(root))] = (source, int(match["version"]))
+            relative = str(path.relative_to(root))
+            if match is None:
+                raise ValueError(f"{relative}: expected a migration filename VERSION_description.sql")
+            files[relative] = (source, int(match["version"]))
     return files
 
 
-def check_new_versions(root: Path, env: dict[str, str] | None = None) -> list[str]:
+def check_new_versions(
+    root: Path, files: dict[str, tuple[str, int]], env: dict[str, str] | None = None
+) -> list[str]:
     tags = release_tags(root, env)
     if not tags:
         return ["no release tags found; cannot establish released migration versions"]
@@ -182,7 +186,7 @@ def check_new_versions(root: Path, env: dict[str, str] | None = None) -> list[st
                 directory = str(Path(path).parent)
                 released_max[directory] = max(released_max.get(directory, 0), int(match["version"]))
     diagnostics: list[str] = []
-    for path, (directory, version) in migration_files(root).items():
+    for path, (directory, version) in files.items():
         if path in released_paths:
             continue
         maximum = released_max.get(directory, 0)
@@ -193,9 +197,9 @@ def check_new_versions(root: Path, env: dict[str, str] | None = None) -> list[st
     return diagnostics
 
 
-def check_unique_versions(root: Path) -> list[str]:
+def check_unique_versions(files: dict[str, tuple[str, int]]) -> list[str]:
     paths: dict[tuple[str, int], list[str]] = {}
-    for path, key in migration_files(root).items():
+    for path, key in files.items():
         paths.setdefault(key, []).append(path)
     return [
         f"{directory}: version {version} is used by {', '.join(sorted(found))}; renumber the newer file"
@@ -206,7 +210,12 @@ def check_unique_versions(root: Path) -> list[str]:
 
 def run(root: Path) -> int:
     released, summary = check_released_migrations(root)
-    diagnostics = released + check_new_versions(root) + check_unique_versions(root)
+    try:
+        files = migration_files(root)
+    except ValueError as error:
+        diagnostics = released + [str(error)]
+    else:
+        diagnostics = released + check_new_versions(root, files) + check_unique_versions(files)
     if diagnostics:
         print("migration check failed:", file=sys.stderr)
         for diagnostic in diagnostics:
@@ -303,7 +312,7 @@ def self_test() -> int:
         diagnostics, _ = check_released_migrations(
             repo.root, epoch="v0.0.36", pending="v0.0.36", env=repo.env
         )
-        if diagnostics or check_new_versions(repo.root, repo.env):
+        if diagnostics or check_new_versions(repo.root, migration_files(repo.root), repo.env):
             failures.append("pending epoch and a higher new migration should pass")
         repo.release("v0.0.36")
         (repo.root / "crates/storage-pg/migrations/0033_baseline.sql").write_text("-- changed\n")
@@ -316,17 +325,17 @@ def self_test() -> int:
             failures.append("a later tag must not mask an edited earlier release")
         (repo.root / "crates/storage-pg/migrations/0033_baseline.sql").write_text("-- baseline\n")
         repo.write("crates/storage-pg/migrations/0032_reused.sql", "-- bad\n")
-        if not check_new_versions(repo.root, repo.env):
+        if not check_new_versions(repo.root, migration_files(repo.root), repo.env):
             failures.append("a new version at or below the released maximum should fail")
         (repo.root / "crates/storage-pg/migrations/0032_reused.sql").unlink()
         repo.write("crates/storage-pg/migrations/0034_first.sql", "-- one agent\n")
-        if check_unique_versions(repo.root):
+        if check_unique_versions(migration_files(repo.root)):
             failures.append("one new migration per version should pass")
         repo.write("crates/storage-pg/migrations/0034_second.sql", "-- another agent\n")
-        if not check_unique_versions(repo.root):
+        if not check_unique_versions(migration_files(repo.root)):
             failures.append("two new migrations with one version should fail")
         repo.write("spiices/example/migrations/0034_spiice.sql", "-- other directory\n")
-        if len(check_unique_versions(repo.root)) != 1:
+        if len(check_unique_versions(migration_files(repo.root))) != 1:
             failures.append("versions are unique per directory, not across directories")
         repo.write("crates/storage-pg/definitions/functions.sql", "-- changed definitions\n")
         if any(
@@ -334,6 +343,15 @@ def self_test() -> int:
             for diagnostic in check_released_migrations(repo.root, epoch="v0.0.36", env=repo.env)[0]
         ):
             failures.append("definitions must not be pinned")
+        invalid = "spiices/example/migrations/no_version.sql"
+        repo.write(invalid, "-- malformed name\n")
+        try:
+            migration_files(repo.root)
+        except ValueError as error:
+            if invalid not in str(error):
+                failures.append(f"invalid filename diagnostic must name the file: {error}")
+        else:
+            failures.append("a SQL filename without a version should fail discovery")
     failures.extend(retired_lane_self_test())
     if failures:
         print("migration self-test failed:", file=sys.stderr)
