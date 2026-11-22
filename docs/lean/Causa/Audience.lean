@@ -178,7 +178,7 @@ theorem flattened_gives (s : OwnerState) (o : Owner) (gs : List Grant)
     constructor
     · rintro ((ho | hg) | ⟨g', hg', hs'⟩)
       · exact Or.inl ho
-      · exact Or.inr ⟨g, List.mem_cons_self _ _, hg⟩
+      · exact Or.inr ⟨g, List.mem_cons_self, hg⟩
       · exact Or.inr ⟨g', List.mem_cons_of_mem _ hg', hs'⟩
     · rintro (ho | ⟨g', hg', hs'⟩)
       · exact Or.inl (Or.inl ho)

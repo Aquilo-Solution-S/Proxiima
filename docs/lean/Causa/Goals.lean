@@ -44,8 +44,10 @@ inductive GoalState where
   deriving DecidableEq, Repr
 
 def GoalState.terminal : GoalState → Bool
-  | .Achieved | .Abandoned => true
-  | _ => false
+  | .Active => false
+  | .Paused => false
+  | .Achieved => true
+  | .Abandoned => true
 
 -- ============================================================
 -- The Goal entity
@@ -59,7 +61,7 @@ def goalTextBlankChar (c : Char) : Bool :=
 /-- `goal_text_nonblank_chk`: a stored text keeps a character the check does
 not trim. -/
 def GoalTextNonblank (s : Text) : Prop :=
-  s.any (fun c => !goalTextBlankChar c) = true
+  s.toByteArray.data.any (fun b => !goalTextBlankChar (Char.ofNat b.toNat)) = true
 
 structure Goal where
   handle        : Handle

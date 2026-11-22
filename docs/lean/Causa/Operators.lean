@@ -32,8 +32,9 @@ def OperatorPhase.outputMemoryKind : OperatorPhase → MemoryKind → Prop
   | .atogoal, _ => False
 
 def OperatorPhase.outputGoalAllowed : OperatorPhase → Prop
+  | .toa => False
+  | .atop => False
   | .atogoal => True
-  | _ => False
 
 structure OperatorInvocation where
   phase : OperatorPhase
