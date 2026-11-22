@@ -1,10 +1,14 @@
 import Causa.Edges
 import Causa.Authorization
 import Causa.Audience
+import Proxiima.GoalCollaboration
 
 /-! Causa — Goal collaboration authority -/
 
 namespace Causa
+
+open Proxiima.GoalCollaboration
+  (PublicationUse publicationForkAllowed boundWorkStateAdmitted grantSubjectAdmitted)
 
 structure GoalControllerEpoch where
   goal_handle : Handle
@@ -17,23 +21,29 @@ structure GoalPublication where
   source_owner : Owner
   source_generation : Nat
   controller_generation : Nat
+  permitted_use : PublicationUse
 
 /-- An audience grant scoped to a Goal controller epoch. -/
 structure GoalAudienceGrant extends Grant where
   goal : GoalControllerEpoch
   controller_generation : Nat
+  expires_at : Option Nat
+  no_owner_administration : role.administer = false
+  subject_admitted : grantSubjectAdmitted
+    (match subject with | .person _ => .person | .group _ => .group) role.manage = true
 
-/-- The controller fence for an audience grant. -/
+/-- The epoch and expiry premises of `Proxiima.GoalCollaboration.grantInForce`. -/
 def GoalAudienceGrant.inForce (g : GoalAudienceGrant) (goal : GoalControllerEpoch)
-    (current_controller_generation : Nat) : Prop :=
-  g.goal = goal ∧ g.controller_generation = current_controller_generation
+    (current_controller_generation now : Nat) : Prop :=
+  g.goal = goal ∧ g.controller_generation = current_controller_generation ∧
+    ∀ expiration ∈ g.expires_at, now < expiration
 
 /-- Capability resolution through the owner or a Goal's audience. -/
 def goal_route (s : OwnerState) (requester : User) (owner : Owner)
-    (goal : GoalControllerEpoch) (generation : Nat)
+    (goal : GoalControllerEpoch) (generation now : Nat)
     (grants : List GoalAudienceGrant) (c : Capability) : Prop :=
   owner.gives requester c ∨
-    ∃ guest, guest ∈ grants ∧ guest.inForce goal generation ∧
+    ∃ guest, guest ∈ grants ∧ guest.inForce goal generation now ∧
       guest.toGrant.gives s requester c
 
 structure GoalWorkBinding where
@@ -46,44 +56,54 @@ structure GoalWorkBinding where
 /-- Audience authorization to read a published Memory version. -/
 def goal_publication_read_admitted
     (s : OwnerState) (requester : User) (publication : GoalPublication)
-    (grants : List GoalAudienceGrant) (current_controller_generation : Nat)
+    (grants : List GoalAudienceGrant) (current_controller_generation now : Nat)
     (memory_owner_generation : Nat) (memory : Memory) : Prop :=
   goal_route s requester publication.goal.owner publication.goal
-    current_controller_generation grants (.read memory.kind) ∧
+    current_controller_generation now grants (.read memory.kind) ∧
+  memory.forgotten = false ∧
   publication.memory_t = memory_t memory ∧
   publication.source_owner = memory_owner memory ∧
   publication.goal.generation = current_controller_generation ∧
   publication.controller_generation = current_controller_generation ∧
   publication.source_generation = memory_owner_generation
 
+/-- Source consent to fork through a live publication for the exact readable admission. -/
+def goal_publication_fork_admitted
+    (s : OwnerState) (requester : User) (publication : GoalPublication)
+    (grants : List GoalAudienceGrant) (current_controller_generation now : Nat)
+    (memory_owner_generation : Nat) (memory : Memory) : Prop :=
+  goal_publication_read_admitted s requester publication grants
+    current_controller_generation now memory_owner_generation memory ∧
+  publicationForkAllowed publication.permitted_use = true
+
 /-- Authorization to read the Goal itself. -/
 def goal_read_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (current_controller_generation : Nat) : Prop :=
+    (current_controller_generation now : Nat) : Prop :=
   controller.goal_handle = goal_handle goal ∧
   controller.owner = goal_owner goal ∧
   controller.generation = current_controller_generation ∧
   (may_read_goals requester (goal_owner goal) ∨
     ∃ guest, guest ∈ grants ∧
-      guest.inForce controller current_controller_generation ∧
+      guest.inForce controller current_controller_generation now ∧
       (s.subject guest.subject).gives requester .readsGoals)
 
 /-- Authorization to edit a Goal under its current controller. -/
 def goal_edit_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (current_controller_generation : Nat) : Prop :=
+    (current_controller_generation now : Nat) : Prop :=
   controller.goal_handle = goal_handle goal ∧
   controller.owner = goal_owner goal ∧
   controller.generation = current_controller_generation ∧
   goal_route s requester (goal_owner goal) controller
-    current_controller_generation grants .worksGoals
+    current_controller_generation now grants .worksGoals
 
 /-- Goal read authorization follows from edit authorization. -/
 theorem goal_edit_implies_read (s : OwnerState) (requester : User)
     (controller : GoalControllerEpoch) (grants : List GoalAudienceGrant)
-    (goal : Goal) (generation : Nat) :
-    goal_edit_admitted s requester controller grants goal generation →
-      goal_read_admitted s requester controller grants goal generation := by
+    (goal : Goal) (generation now : Nat) :
+    goal_edit_admitted s requester controller grants goal generation now →
+      goal_read_admitted s requester controller grants goal generation now := by
   rintro ⟨hhandle, howner, hgen, hroute⟩
   refine ⟨hhandle, howner, hgen, ?_⟩
   unfold goal_route at hroute
@@ -101,42 +121,45 @@ theorem goal_edit_implies_read (s : OwnerState) (requester : User)
 /-- Authorization to achieve a Goal. -/
 def goal_achieve_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (current_controller_generation : Nat) : Prop :=
+    (current_controller_generation now : Nat) : Prop :=
   controller.goal_handle = goal_handle goal ∧
   controller.owner = goal_owner goal ∧
   controller.generation = current_controller_generation ∧
   (may_administer requester (goal_owner goal) ∨
     ∃ guest, guest ∈ grants ∧
-      guest.inForce controller current_controller_generation ∧
+      guest.inForce controller current_controller_generation now ∧
       guest.toGrant.gives s requester .worksGoals)
 
 /-- Authorization to write Memory through a Goal work binding. -/
 def goal_work_write_admitted
     (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (current_controller_generation memory_owner_generation : Nat)
+    (current_controller_generation memory_owner_generation now : Nat)
     (memory : Memory) : Prop :=
   goal_route s requester (goal_owner goal) binding.goal
-    current_controller_generation grants (.write memory.kind) ∧
+    current_controller_generation now grants (.write memory.kind) ∧
   binding.goal.goal_handle = goal_handle goal ∧
   binding.source_owner = goal_owner goal ∧
+  memory.forgotten = false ∧
   binding.memory_handle = memory_handle memory ∧
   binding.source_owner = memory_owner memory ∧
   binding.goal.generation = current_controller_generation ∧
   binding.controller_generation = current_controller_generation ∧
   binding.source_generation = memory_owner_generation ∧
-  goal_state goal = .Active
+  boundWorkStateAdmitted (goal_state goal) .write = true
 
 /-- Authorization to read Memory through a Goal work binding. -/
 def goal_work_read_admitted
     (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (current_controller_generation memory_owner_generation : Nat)
+    (current_controller_generation memory_owner_generation now : Nat)
     (memory : Memory) : Prop :=
+  boundWorkStateAdmitted (goal_state goal) .read = true ∧
   goal_route s requester (goal_owner goal) binding.goal
-    current_controller_generation grants (.read memory.kind) ∧
+    current_controller_generation now grants (.read memory.kind) ∧
   binding.goal.goal_handle = goal_handle goal ∧
   binding.source_owner = goal_owner goal ∧
+  memory.forgotten = false ∧
   binding.memory_handle = memory_handle memory ∧
   binding.source_owner = memory_owner memory ∧
   binding.goal.generation = current_controller_generation ∧
@@ -145,11 +168,11 @@ def goal_work_read_admitted
 
 /-- Goal audience resolution agrees with `Causa.flattened` for grants in force. -/
 theorem goal_route_is_flattened (s : OwnerState) (owner : Owner)
-    (goal : GoalControllerEpoch) (generation : Nat)
+    (goal : GoalControllerEpoch) (generation now : Nat)
     (grants : List GoalAudienceGrant)
-    (hforce : ∀ g ∈ grants, g.inForce goal generation)
+    (hforce : ∀ g ∈ grants, g.inForce goal generation now)
     (requester : User) (c : Capability) :
-    goal_route s requester owner goal generation grants c ↔
+    goal_route s requester owner goal generation now grants c ↔
       (flattened s owner (grants.map (·.toGrant))).gives requester c := by
   rw [flattened_gives]
   unfold goal_route
@@ -165,17 +188,17 @@ theorem goal_route_is_flattened (s : OwnerState) (owner : Owner)
 theorem goal_work_write_implies_read
     (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
     (grants : List GoalAudienceGrant) (goal : Goal)
-    (controller_generation memory_generation : Nat) (memory : Memory) :
+    (controller_generation memory_generation now : Nat) (memory : Memory) :
     goal_work_write_admitted s requester binding grants goal
-      controller_generation memory_generation memory →
+      controller_generation memory_generation now memory →
     goal_work_read_admitted s requester binding grants goal
-      controller_generation memory_generation memory := by
+      controller_generation memory_generation now memory := by
   intro h
-  rcases h with ⟨hroute, hgoal, howner, hhandle, hmemoryowner,
+  rcases h with ⟨hroute, hgoal, howner, hlive, hhandle, hmemoryowner,
     hgoalgen, hbindctrl, hsource, _active⟩
   have hread :
       goal_route s requester (goal_owner goal) binding.goal
-        controller_generation grants (.read memory.kind) := by
+        controller_generation now grants (.read memory.kind) := by
     unfold goal_route at hroute ⊢
     cases hroute with
     | inl owner => exact Or.inl (may_write_implies_read _ _ _ owner)
@@ -186,7 +209,9 @@ theorem goal_work_write_implies_read
             ⟨Role.has_write_read _ _ ((Grant.gives_iff _ _ _ _).1 hgives).1,
               Group.gives_mono (fun r => Role.has_write_read r _)
                 ((Grant.gives_iff _ _ _ _).1 hgives).2⟩⟩
-  exact ⟨hread, hgoal, howner, hhandle, hmemoryowner,
+  have hstate : boundWorkStateAdmitted (goal_state goal) .read = true := by
+    cases goal_state goal <;> rfl
+  exact ⟨hstate, hread, hgoal, howner, hlive, hhandle, hmemoryowner,
     hgoalgen, hbindctrl, hsource⟩
 
 structure ForkSourcePermission where

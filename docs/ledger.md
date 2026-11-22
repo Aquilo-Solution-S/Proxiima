@@ -1147,6 +1147,145 @@ stateDiagram-v2
 
 - pin admission witness: Fresh pins require a live readable target, while a retained pin requires an exact captured source pin.
 
+## Goal collaboration
+
+**Relationship**: A relationship with a Goal, classified by the scope of access it conveys.
+
+- context
+- publication
+- workBinding
+
+**Audience read target**: The identity at which a Goal audience can read Memory.
+
+- admission
+- series
+
+**Grant refusal**: The role a Goal audience grant may store cannot carry owner administration.
+
+- ownerAdministration
+
+**Grant subject kind**: The registered kind of an audience grant's subject.
+
+- person
+- group
+
+**Consent change**: A request to add or withdraw exact publication or series binding consent.
+
+- admit
+- withdraw
+
+**Bound work access**: Whether the request reads through a work binding or writes into the bound series.
+
+- read
+- write
+
+**Publication use**: The source owner's permission recorded on one exact publication.
+
+- Read
+- Fork
+
+**Fork destination**: The destination path of a fork relative to the source owner.
+
+- sameOwner
+- differentOwner
+- workingGoal
+
+| relationship | audience read target |
+| --- | --- |
+| context | — |
+| publication | admission |
+| workBinding | series |
+
+- audience read target: Context conveys no read; publication selects one admission and a work binding selects a series.
+
+| bool | goal access | stored guest goal access | owner goal access on audience route |
+| --- | --- | --- | --- |
+| yes | none | refused: ownerAdministration | none |
+| yes | reads | refused: ownerAdministration | reads |
+| yes | works | refused: ownerAdministration | works |
+| no | none | reads | none |
+| no | reads | reads | reads |
+| no | works | works | reads |
+
+- stored guest goal access: An audience grant raises absent Goal access to read and refuses owner administration.
+- owner goal access on audience route: An owner role contributes at most Goal read to the audience route unless it administers.
+
+| grant subject kind | bool | grant subject admitted |
+| --- | --- | --- |
+| person | yes | yes |
+| person | no | yes |
+| group | yes | no |
+| group | no | yes |
+
+- grant subject admitted: A group audience grant cannot convey Goal management.
+
+| bool | bool | grant in force | prefer owner head |
+| --- | --- | --- | --- |
+| yes | yes | yes | yes |
+| yes | no | no | no |
+| no | yes | no | no |
+| no | no | no | no |
+
+- grant in force: Whether an unexpired grant belongs to the current Goal controller epoch.
+- prefer owner head: A newer independently readable owner head takes precedence over the latest audience-visible version.
+
+| consent change | bool | bool | sharing consent admitted |
+| --- | --- | --- | --- |
+| admit | yes | yes | yes |
+| admit | yes | no | no |
+| admit | no | yes | no |
+| admit | no | no | no |
+| withdraw | yes | yes | yes |
+| withdraw | yes | no | yes |
+| withdraw | no | yes | yes |
+| withdraw | no | no | no |
+
+- sharing consent admitted: Adding consent requires Goal management and source administration; either may withdraw it.
+
+| goal state | bound work access | bound work state admitted |
+| --- | --- | --- |
+| Active | read | yes |
+| Active | write | yes |
+| Paused | read | yes |
+| Paused | write | no |
+| Achieved | read | yes |
+| Achieved | write | no |
+| Abandoned | read | yes |
+| Abandoned | write | no |
+
+- bound work state admitted: A binding can be read in any Goal state, and the series can be worked while the Goal is active.
+
+| publication use | publication fork allowed |
+| --- | --- |
+| Read | no |
+| Fork | yes |
+
+- publication fork allowed: A publication permits reads in either case and grants fork consent only with fork use.
+
+| fork destination | bool | fork needs publication |
+| --- | --- | --- |
+| sameOwner | yes | no |
+| sameOwner | no | no |
+| differentOwner | yes | no |
+| differentOwner | no | yes |
+| workingGoal | yes | no |
+| workingGoal | no | yes |
+
+- fork needs publication: Source administration or a direct same-owner destination suffices without publication consent.
+
+| bool | bool | bool | companion facts admitted |
+| --- | --- | --- | --- |
+| yes | yes | yes | no |
+| yes | yes | no | no |
+| yes | no | yes | no |
+| yes | no | no | yes |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | no |
+
+- companion facts admitted: A permitted Goal work unit command may write its declared Facts without pins or citations.
+
 ## Goals
 
 **Goal state**: The lifecycle state of a Goal version.
@@ -2938,6 +3077,10 @@ Causa — Compliance
 ✓ **hard erase goal result well formed**
 
 Causa — Goal collaboration authority
+
+✓ **no owner administration**
+
+✓ **subject admitted**
 
 ✓ **goal edit implies read**: Goal read authorization follows from edit authorization.
 
