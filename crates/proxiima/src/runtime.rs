@@ -31,7 +31,7 @@ use crate::runtime_config::cause_with;
 use crate::{AppContext, ProxiimaError, ProxiimaHost, RuntimeBuilder, SpiiceApp};
 #[cfg(test)]
 use proxiima_storage_pg::PgPlatformScope;
-use proxiima_storage_pg::{OwnerTransactions, PgDelegationStore, PgOwnerAccessResolver};
+use proxiima_storage_pg::{PgDelegationStore, PgOwnerAccessResolver};
 
 /// Application runtime facade.
 ///
@@ -281,6 +281,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
                 engine: booted.engine.clone(),
                 registry: booted.registry.clone(),
                 pool: booted.pool.clone(),
+                owner_transactions: booted.storage.owner_transactions(),
                 platform_scope: booted.platform_scope.clone(),
                 pg_tuning: config.storage.pg_tuning,
                 pg_sidecars: booted.pg_sidecars.clone(),
@@ -312,7 +313,6 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
         }
         let services = assemble_services::<A>(
             &app_ctx,
-            booted.storage.owner_transactions(),
             &booted.registry,
             &config.served_surface,
             parts.authenticator.as_ref(),
@@ -1055,12 +1055,11 @@ fn runtime_owner_access(
 /// REST, and spiice workers receive the same immutable service set.
 ///
 /// The delegation service is published only with an authenticator, and
-/// redeems through `owner_access`. `owner_transactions` begins the
+/// redeems through `owner_access`. The host transaction service begins the
 /// owner-scoped transactions a tool runs on its spiice's own tables
 /// (`proxiima_spiice::owner_transaction`).
 fn assemble_services<A: SpiiceApp>(
     app_ctx: &AppContext,
-    owner_transactions: OwnerTransactions,
     registry: &Arc<SpiiceRegistryFrozen>,
     deployment_served_surface: &ServedSurface,
     authenticator: Option<&Arc<dyn Authenticator>>,
@@ -1069,6 +1068,7 @@ fn assemble_services<A: SpiiceApp>(
 ) -> Result<SpiiceServices, ProxiimaError> {
     let host = app_ctx.host();
     let mut services = host.services.clone();
+    // `Proxiima.Composition.serviceVisibility`.
     services.try_extend(A::services(app_ctx)?)?;
     debug_assert!(
         services
@@ -1076,7 +1076,7 @@ fn assemble_services<A: SpiiceApp>(
             .is_none(),
         "host-state maintenance authority must remain outside SpiiceServices"
     );
-    services.try_insert(owner_transactions)?;
+    services.try_insert(host.owner_transactions.clone())?;
     if let Some((transfer, verified_read, owner_reconcile)) =
         cited_blob_services(host.blobs.as_ref(), runtime_authority)
     {
@@ -1084,6 +1084,7 @@ fn assemble_services<A: SpiiceApp>(
         services.try_insert(verified_read)?;
         services.try_insert(owner_reconcile)?;
     }
+    // `Proxiima.Composition.maySupplyRequestHeaders`.
     if services.get::<proxiima_core::RequestHeaders>().is_some() {
         return Err(ProxiimaError::Config(
             "a spiice published RequestHeaders as a boot service; it is request-scoped and \

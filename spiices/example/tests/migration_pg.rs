@@ -109,6 +109,44 @@ async fn listed(built: &BuiltProxiima, authz: AuthzContext, owner: OwnerId) -> V
         .collect()
 }
 
+/// Exercise the host adapter's commit and owner confinement on the example table.
+async fn register_host_notebook(
+    built: &BuiltProxiima,
+    authz_a: &AuthzContext,
+    both: &AuthzContext,
+    owner_a: OwnerId,
+    owner_b: OwnerId,
+) -> Uuid {
+    let tables = built.host().owner_transactions_for_host();
+    let notebook_a = Uuid::now_v7();
+    let mut tx = tables.begin(authz_a, owner_a).await.expect("served owner");
+    tx.execute(
+        sqlx::query(INSERT_NOTEBOOK_SQL)
+            .bind(notebook_a)
+            .bind(owner_a.into_inner())
+            .bind("a's"),
+    )
+    .await
+    .expect("a registers");
+    tx.commit().await.expect("commit");
+    for (owner, expected) in [(owner_a, vec![notebook_a]), (owner_b, vec![])] {
+        let mut transaction = tables.begin(both, owner).await.expect("served owner");
+        let rows: Vec<Uuid> = transaction
+            .fetch_all(sqlx::query_scalar(
+                "SELECT notebook_id FROM proxiima_example.notebooks",
+            ))
+            .await
+            .expect("owner policy applies without an explicit owner filter");
+        assert_eq!(rows, expected);
+        transaction.commit().await.expect("commit");
+    }
+    assert!(matches!(
+        tables.begin(authz_a, owner_b).await,
+        Err(proxiima::StorageError::Forbidden(_))
+    ));
+    notebook_a
+}
+
 /// Through the tool: an owner lists its own notebooks and not another
 /// owner's, even on a scope that may read both owners. A row written on an
 /// owner transaction that is dropped without a commit is not there
@@ -124,15 +162,11 @@ async fn the_tool_lists_the_callers_notebooks_on_its_owner_transaction() {
     let built = build_engine(db.runtime_url(), db.platform_url(), owner_a)
         .await
         .expect("boot");
-    let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
     let authz_a = group_authz(owner_a);
-    let scope_a = authz_a.owner_scope().expect("scope a");
-    let notebook_a = register_notebook(&runtime, scope_a, owner_a, "a's")
-        .await
-        .expect("a registers");
+    let both = shared_authz(&[owner_a, owner_b]);
+    let notebook_a = register_host_notebook(&built, &authz_a, &both, owner_a, owner_b).await;
     let a_notebook = vec![(notebook_a, "a's".to_owned())];
     assert_eq!(listed(&built, authz_a.clone(), owner_a).await, a_notebook);
-    let both = shared_authz(&[owner_a, owner_b]);
     assert_eq!(
         listed(&built, both.clone(), owner_a).await,
         a_notebook,
@@ -211,6 +245,5 @@ async fn the_tool_lists_the_callers_notebooks_on_its_owner_transaction() {
         listed(&built, authz_a, owner_a).await,
         vec![(notebook_a, "a's".to_owned()), (kept, "kept".to_owned())]
     );
-    runtime.close().await;
     built.shutdown().await;
 }

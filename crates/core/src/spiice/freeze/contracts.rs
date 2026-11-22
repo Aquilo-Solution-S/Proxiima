@@ -63,19 +63,6 @@ impl SpiiceRegistry {
     }
 
     /// Cross-check the declarations against the registrations.
-    ///
-    /// This is the check that makes "everything is a spiice" structural
-    /// rather than aspirational: a schema registered without a contract
-    /// entry, or a contract entry with no registration, fails the build of
-    /// the composed binary rather than going missing from an erase sweep.
-    ///
-    /// It takes two checks to close the first of those, because a schema
-    /// carries its spiice in a PREFIX and a prefix nothing declares names
-    /// nothing to accuse. `SchemaWithoutContract` sweeps the registrations
-    /// under a declared spiice's prefix; `UnclaimedRegistration` holds the
-    /// spiice itself — the `SpiiceDescriptor` every composed spiice
-    /// registers — to declaring one. A registration made under neither a
-    /// descriptor nor a contract is a registry no binary composes.
     pub(super) fn validate_contracts(&self) -> Result<(), SpiiceRegistryError> {
         let mut seen_ordinals = std::collections::HashSet::new();
         let mut has_core = false;
@@ -86,6 +73,7 @@ impl SpiiceRegistry {
                     spiice_id: contract.spiice_id,
                 });
             }
+            // `Proxiima.Composition.coreDeclarations`.
             if contract.is_core() {
                 has_core = true;
             } else if !contract.resources.is_empty() {
@@ -96,24 +84,15 @@ impl SpiiceRegistry {
                 return Err(SpiiceRegistryError::ResourcesNotPermitted {
                     spiice_id: contract.spiice_id,
                 });
+            } else if !contract.kernel_surfaces.is_empty() {
+                return Err(SpiiceRegistryError::KernelSurfacesNotPermitted {
+                    spiice_id: contract.spiice_id,
+                });
             }
-            // Registrations first, declarations second, and deliberately
-            // so. A contract entry with no registration is the defect that
-            // makes every OTHER reading of that entry meaningless, so it is
-            // the one to report. This order decides which error a broken
-            // contract reports at boot, so a fixture that needs a later
-            // validator registers rather than asking for a reorder (see
-            // `register_fixture_schema`).
+            // `Proxiima.Composition.contractCheckOrder`. Resolve registrations before judging their declarations.
             self.validate_contract_schemas(contract)?;
             Self::validate_contract_projection(contract)?;
-            // After the uniformity rules, deliberately. Both read the same
-            // declaration, and a spiice whose schemas cannot agree on what
-            // one statement spells is broken whether or not a query would
-            // ever have reached that statement.
             Self::validate_projection_is_reachable(contract)?;
-            // Before the reachability and leg checks, so a non-core spiice
-            // leaning on a hand-written leg is told that, not that a surface
-            // is unreachable or a leg mismatched.
             Self::validate_core_only_legs(contract)?;
             Self::validate_contract_surfaces(contract)?;
             Self::validate_erase_legs(contract)?;
@@ -218,26 +197,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// Every LINKED spiice declares a contract.
-    ///
-    /// [`Self::validate_contract_schemas`] sweeps both directions inside a
-    /// spiice that HAS a contract — declarations against registrations, and
-    /// registrations carrying its `{spiice_id}/` prefix against its
-    /// declarations. Neither loop runs for a spiice that registered and
-    /// declared nothing, and this is the check that reaches that one.
-    ///
-    /// The [`SpiiceDescriptor`] is what is swept, because it is the spiice
-    /// SAYING it is in this binary: `proxiima_spiice!` emits it before every
-    /// schema and tool it registers, and that macro's `contract =` is
-    /// optional. A spiice that omits it registers a corpus that goes
-    /// missing from every registry walk (erase, export, forget, transfer)
-    /// and whose Memory writes are refused later by a `spiice_surface`
-    /// constraint naming none of the cause. With the descriptor held to a
-    /// contract, `SchemaWithoutContract` then covers each of that spiice's
-    /// schemas in turn, so the pair is complete for every spiice composed
-    /// the sanctioned way (docs/build-a-spiice.md).
-    ///
-    /// [`SpiiceDescriptor`]: crate::spiice::SpiiceDescriptor
+    // A linked descriptor needs a contract even when it registered no schemas.
     fn validate_registrations_are_claimed(&self) -> Result<(), SpiiceRegistryError> {
         for spiice in &self.spiices {
             if self
@@ -346,11 +306,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// Where a contract declaration and the registration it describes are
-    /// checked for being ONE fact rather than two copies.
-    ///
-    /// The field here is declared twice — once on the contract, once on
-    /// the registration — and nothing but this check keeps the two equal.
+    // `Proxiima.Composition.naturalKeyAgreement`.
     fn validate_registration_agreement(
         contract: &crate::spiice::contract::SpiiceContract,
         schema: &crate::spiice::contract::SchemaContract,
@@ -398,6 +354,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
+    // `Proxiima.Composition.contractAgreement`.
     fn validate_contract_schemas(
         &self,
         contract: &crate::spiice::contract::SpiiceContract,

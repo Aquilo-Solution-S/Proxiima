@@ -5,10 +5,12 @@
 /// One descriptor per `proxiima_spiice!` invocation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpiiceDescriptor {
-    /// Crate prefix used by `proxiima_spiice! { name = ... }` —
-    /// e.g. `"proxiima-notes"`. Schemas, relations, personalities, and
-    /// MCP tools registered through the macro all start with this
-    /// prefix followed by `/`.
+    /// Spiice ID used by `proxiima_spiice!`, for example `"proxiima-notes"`.
+    /// Typed and opaque cited-object schema IDs use the `<spiice>/` prefix.
+    /// The macro checks typed IDs at compile time and opaque IDs at registration.
+    /// Declared MCP tool prefixes accept `<spiice>/` or `<spiice>_` at compile
+    /// time. Tool registration requires canonical provider-safe spelling,
+    /// which uses the underscore prefix.
     pub spiice_id: String,
     /// Human-friendly name shown in the UI. Defaults to `spiice_id`
     /// when the macro caller omits `display_name`.

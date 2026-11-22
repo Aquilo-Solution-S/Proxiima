@@ -24,7 +24,7 @@ pub use crate::migrations::{
     run_core_and_spiice_migrations, run_core_and_spiice_migrations_with_policy,
 };
 pub use crate::owner_access::{ForwarderPolicy, OwnerRegistry};
-pub use crate::proxiima_host::ProxiimaHost;
+pub use crate::proxiima_host::{HostOwnerTransactions, ProxiimaHost};
 /// Retention rows ([`crate::RunningProxiima::retention`]) and the stock
 /// host's route that erases what a row's cutoff ages out.
 pub use crate::retention_http::RETENTION_ERASE_PATH;
@@ -615,14 +615,12 @@ pub use proxiima_storage_pg::PgStorage;
 /// Trusted host owner registration on its platform transaction. This performs
 /// no authorization or transaction control; the host vouches for the write.
 pub use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
-/// Begin a transaction under the caller's [`OwnerScope`], with the pool
-/// [`ProxiimaHost::clone_pool_for_host`] hands out.
+/// Begin a transaction under the caller's [`OwnerScope`] on a host-owned pool.
 ///
-/// Host API only, for authorized extra-table adapters: every statement of
-/// the operation runs on the returned transaction, since pool queries do not
-/// inherit its scope. No `proxiima_core.*` SQL runs through it or through the
-/// pool; Fact and state writes go through [`UnitOfWork`] and
-/// [`UnitOfWork::apply_host_state`]. It is not a Spiice SDK name.
+/// Every statement of the operation runs on the returned transaction, since
+/// pool queries do not inherit its scope. Runtime extra-table adapters use
+/// [`ProxiimaHost::owner_transactions_for_host`]. Fact and state writes go
+/// through [`UnitOfWork`] and [`UnitOfWork::apply_host_state`].
 pub use proxiima_storage_pg::begin_owner_transaction;
 /// Compare the stored core definitions with this binary, optionally under the
 /// host's [`MissingMigrationPolicy`]. These inspect the caller's connection.

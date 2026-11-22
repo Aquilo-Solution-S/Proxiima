@@ -4,9 +4,13 @@ use std::sync::Arc;
 
 use proxiima_blob_s3::CitedBlobStore;
 use proxiima_core::storage_ports::publication::{OriginScope, PublicationOriginEligibilityPort};
-use proxiima_core::{Engine, OwnerId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices};
+use proxiima_core::{
+    AuthzContext, Engine, OwnerId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices,
+    StorageError,
+};
 use proxiima_storage_pg::{
-    PgHostStateEraseContext, PgPlatformScope, PgSidecarRegistryFrozen, PgTuning,
+    OwnerTransaction, OwnerTransactions, PgHostStateEraseContext, PgPlatformScope,
+    PgSidecarRegistryFrozen, PgTuning,
 };
 use sqlx::PgPool;
 
@@ -25,6 +29,7 @@ pub struct ProxiimaHost {
     pub(crate) engine: Arc<Engine>,
     pub(crate) registry: Arc<SpiiceRegistryFrozen>,
     pub(crate) pool: PgPool,
+    pub(crate) owner_transactions: OwnerTransactions,
     pub(crate) platform_scope: PgPlatformScope,
     pub(crate) pg_tuning: PgTuning,
     pub(crate) pg_sidecars: Arc<PgSidecarRegistryFrozen>,
@@ -38,6 +43,34 @@ pub struct ProxiimaHost {
     pub(crate) object_purge_health: crate::object_maintenance::ObjectPurgeHealth,
     /// The background workers that ended before shutdown.
     pub(crate) ended_workers: crate::workers::EndedWorkers,
+}
+
+/// Opens an extra-table transaction for the served owner under the caller's authority.
+#[derive(Clone, Debug)]
+pub struct HostOwnerTransactions(OwnerTransactions);
+
+impl HostOwnerTransactions {
+    /// Bind the caller's authority for the served owner before opening a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Forbidden`] when the context cannot serve the owner.
+    /// Propagates scope expiry and database errors from [`OwnerTransactions::begin`].
+    pub async fn begin(
+        &self,
+        caller: &AuthzContext,
+        owner: OwnerId,
+    ) -> Result<OwnerTransaction, StorageError> {
+        // `Proxiima.OwnerAuthority.ScopeRestriction.confinement`.
+        let caller = caller.clone().narrowed_to_owner(owner);
+        let scope = caller
+            .as_ref()
+            .and_then(AuthzContext::owner_scope)
+            .ok_or_else(|| {
+                StorageError::Forbidden("authenticated scope for the served owner required".into())
+            })?;
+        self.0.begin(scope).await
+    }
 }
 
 impl ProxiimaHost {
@@ -71,26 +104,17 @@ impl ProxiimaHost {
         &self.services
     }
 
-    /// Host-only extra-table bridge. Not Spiice SDK.
+    /// The owner-scoped transaction service for host-migrated extra tables.
     ///
-    /// Use this inside [`crate::SpiiceApp::services`] to construct a
-    /// spiice-owned store over tables the host migrates (as `proxiima-mcp`
-    /// does with `CodeSpiiceStore::from_backend_pool_for_host`). Wrap the pool
-    /// in that store immediately. Do not put `PgPool` on `SpiiceServices`, do
-    /// not pass it into a [`proxiima_core::catalog::Tool`], and do not run
-    /// `proxiima_core.*` SQL through it — spiice `src/` still has zero
-    /// core-table SQL.
-    ///
-    /// Sidecar-only spiices never call this: they write through
-    /// [`proxiima_core::Engine`] / [`proxiima_core::engine::UnitOfWork`].
+    /// Use this inside [`crate::SpiiceApp::services`] to construct a typed store.
+    /// Begin each operation with the authenticated caller and served owner.
+    /// Atomic writes alongside a Fact use [`crate::UnitOfWork::apply_host_state`].
     #[must_use]
-    pub fn clone_pool_for_host(&self) -> PgPool {
-        self.pool.clone()
+    pub fn owner_transactions_for_host(&self) -> HostOwnerTransactions {
+        HostOwnerTransactions(self.owner_transactions.clone())
     }
 
-    /// Host-resolved Postgres query tuning for an extra-table store using
-    /// [`Self::clone_pool_for_host`]. Passing this alongside the pool keeps
-    /// spiice queries on the canonical environment-independent boot policy.
+    /// Host-resolved Postgres query tuning for a host storage adapter.
     #[must_use]
     pub const fn pg_tuning_for_host(&self) -> PgTuning {
         self.pg_tuning
@@ -181,6 +205,7 @@ impl ProxiimaHost {
             registry: Arc::new(engine.registry().clone()),
             engine,
             pool: PgPool::connect_lazy_with(sqlx::postgres::PgConnectOptions::new()),
+            owner_transactions: OwnerTransactions::for_tests(),
             platform_scope: PgPlatformScope::for_tests(),
             pg_tuning: PgTuning::default(),
             pg_sidecars: Arc::default(),

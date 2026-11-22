@@ -258,6 +258,9 @@ pub enum SpiiceRegistryError {
          pagination contract"
     )]
     ResourcesNotPermitted { spiice_id: &'static str },
+    /// A linked spiice declared a kernel-owned surface.
+    #[error("spiice {spiice_id} declares kernel surfaces, which only the core may declare")]
+    KernelSurfacesNotPermitted { spiice_id: &'static str },
     /// A spiice other than #0 named a hand-written erase or transfer leg.
     /// Only `proxiima-storage-pg` code runs bespoke legs, and that crate
     /// sees no spiice but core, so a non-core name is a promise nothing

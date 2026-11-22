@@ -8,11 +8,8 @@ use super::{
 impl SpiiceRegistry {
     /// Attach opaque capability tags to a registered payload schema.
     ///
-    /// # Panics
+    /// Freeze resolves each schema selector after registration.
     ///
-    /// Panics if any tag fails [`CapabilityTag::parse`]. The schema
-    /// existence check runs at [`Self::try_freeze`], after every spiice has
-    /// registered its schemas.
     /// # Errors
     ///
     /// Returns `InvalidCapabilityTag` when any tag fails capability syntax.

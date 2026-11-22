@@ -651,17 +651,22 @@ A route that cannot carry a token, such as an OAuth redirect back from another
 provider or a signed webhook, goes in `SpiiceApp::mount_public_http`: it skips
 bearer authentication, keeps the body cap, Host guard and CORS, and
 authenticates its own requests. A public route on a method and path already
-served refuses boot. For a store over tables the host migrates, the host
-accessor provides a pool and the resolved query policy:
+served refuses boot. For a store over owner-scoped tables that the host migrates,
+construct the typed store with the host transaction service:
 
 ```rust
 fn services(ctx: &AppContext) -> Result<SpiiceServices, SpiiceServiceError> {
-    let store = MyStore::new(ctx.host().clone_pool_for_host());
+    let store = MyStore::new(ctx.host().owner_transactions_for_host());
     Ok(SpiiceServices::with(store))
 }
 ```
 
-A spiice takes no pool for its own tables: its tools run their statements on
+The adapter calls `HostOwnerTransactions::begin` with the authenticated
+caller's `AuthzContext` and the served `OwnerId`. Proxiima narrows the scope
+to that owner. The adapter runs its statements and commits on the returned
+`OwnerTransaction`, with the tables' owner policies in effect.
+
+A spiice's tools run statements on
 `proxiima::spiice::owner_transaction`, under the caller's owner scope, through
 the service the runtime publishes to every tool call.
 

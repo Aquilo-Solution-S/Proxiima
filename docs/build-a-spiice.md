@@ -13,8 +13,9 @@ The test spiice
 small spiice. It uses the same public SDK as an external crate: among workspace
 crates its library depends on `proxiima-spiice` only, and its `host` feature
 links `proxiima` to serve it as an app. Follow its
-`NoteV1` payload and sidecar (`src/payload.rs`), `EXAMPLE_CONTRACT`
-(`src/contract.rs`), migration (`migrations/`), tool (`src/tool.rs`) and
+`NoteV1` payload and sidecar (`src/payload.rs`),
+[`EXAMPLE_CONTRACT`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/spiices/example/src/contract.rs),
+migration (`migrations/`), tool (`src/tool.rs`) and
 `ExampleSpiice` bundle (`src/lib.rs`) in that order. The facade's
 [`spiice_kit_pg.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima/tests/spiice_kit_pg.rs)
 composes it as a host and runs it against your owned development test server:
@@ -265,7 +266,7 @@ Restore refuses a retired schema.
 The declaration performs no erase. The lifecycle and rollout order are
 defined in the [retired-Fact decision](https://git.aquilo-cloud.com/AQS/uniiverse/src/branch/factory/docs/decisions/2026-11-04-5213-a-retired-fact-is-erased-before-its-schema-is-dropped.md).
 
-Follow `KIT_CONTRACT` in the executable example. Each schema declares kind,
+Each schema in the example contract declares kind,
 sidecar, search projection, embedding recipe, provenance, and transfer behavior.
 Each stored surface declares erase/export/transfer behavior. A surface that is
 not searchable or embeddable says so explicitly with its reason. See

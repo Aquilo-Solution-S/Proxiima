@@ -28,11 +28,11 @@
 //!   tables ([`spiice::owner_transaction`]). It does not expose raw `PgPool`,
 //!   raw storage verbs, or proofless append helpers. A spiice served as an
 //!   app implements [`SpiiceApp`] through [`spiice_app!`], which is host tier.
-//!   Host extra-table wiring uses [`ProxiimaHost::clone_pool_for_host`] plus
-//!   [`ProxiimaHost::pg_tuning_for_host`] (via [`AppContext::host`]) inside
-//!   [`SpiiceApp::services`] and wraps them immediately. Atomic host-state with Fact writes uses
-//!   [`crate::UnitOfWork::apply_host_state`] on a startup-registered
-//!   [`crate::PgHostStateParticipant`], not the extra-table pool.
+//!   Host extra-table wiring uses [`ProxiimaHost::owner_transactions_for_host`]
+//!   via [`AppContext::host`] inside [`SpiiceApp::services`]. The store begins
+//!   each operation with the authenticated caller and served owner. Atomic host-state with
+//!   Fact writes uses [`crate::UnitOfWork::apply_host_state`] on a
+//!   startup-registered [`crate::PgHostStateParticipant`].
 //!   Spiice crates should avoid direct `proxiima-core` / `proxiima-storage-pg`
 //!   dependencies except backend-owned adapters explicitly outside the stable
 //!   SDK boundary.

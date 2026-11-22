@@ -1,10 +1,4 @@
-//! One registry per contract cross-check, each shaped to trip exactly that
-//! check and nothing else.
-//!
-//! The refusals are table-driven on purpose: an unpinned check is one a
-//! refactor can delete without a single test going red. Each refusal is
-//! paired with the shape it must NOT refuse, because a refusal with no
-//! accepted twin proves only that freeze can fail.
+//! Isolate each freeze refusal and its accepted twin so the fixture identifies the deciding rule.
 
 use super::fixtures::{
     CITATION_WITH_A_SIDECAR, DECLARES_A_RESOURCE, DUPLICATE_ORDINAL, DuplicateKeyFact, EMPTY,
@@ -34,6 +28,29 @@ use super::projection_fixtures::{
 use crate::catalog::ToolEffect;
 use crate::verbs::schema::PayloadKind;
 use crate::{SpiiceRegistry, SpiiceRegistryError};
+
+#[test]
+fn freeze_refuses_kernel_surfaces_from_linked_spiices() {
+    static LINKED: crate::SpiiceContract = crate::SpiiceContract {
+        kernel_surfaces: crate::spiice::SPIICE_0.kernel_surfaces,
+        ..EMPTY
+    };
+
+    let mut registry = SpiiceRegistry::new();
+    registry.contracts.push(&EMPTY);
+    registry
+        .try_freeze()
+        .expect("the core kernel surfaces and an empty linked contract can freeze");
+
+    let mut registry = SpiiceRegistry::new();
+    registry.contracts.push(&LINKED);
+    assert!(matches!(
+        registry.try_freeze(),
+        Err(SpiiceRegistryError::KernelSurfacesNotPermitted {
+            spiice_id: FIXTURE_SPIICE
+        })
+    ));
+}
 
 #[test]
 fn freeze_refuses_repeated_physical_surface_declarations() {

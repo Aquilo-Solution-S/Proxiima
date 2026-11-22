@@ -997,7 +997,7 @@ impl proxiima::SpiiceApp for TierExtensionApp {
     fn services(
         ctx: &proxiima::AppContext,
     ) -> Result<proxiima::spiice::SpiiceServices, proxiima::spiice::SpiiceServiceError> {
-        // A real host composes its store from `ctx.clone_pool_for_host()`.
+        // A host composes its store from `ctx.host().owner_transactions_for_host()`.
         // This test only pins that the override is writable; the bridge
         // itself is named in `host_extra_table_bridge_is_on_app_context`.
         let _ = ctx;
@@ -1209,10 +1209,16 @@ fn host_api_binds_an_owner_as_its_bare_id() {
 
 #[test]
 fn host_extra_table_bridge_is_on_proxiima_host() {
-    // The one sanctioned PgPool leak is ProxiimaHost::clone_pool_for_host,
-    // reached through `AppContext::host` (docs/host-integration.md).
-    let _: fn(&proxiima::ProxiimaHost) -> sqlx::PgPool =
-        proxiima::ProxiimaHost::clone_pool_for_host;
+    async fn begin(
+        transactions: &proxiima::HostOwnerTransactions,
+        caller: &proxiima::AuthzContext,
+        owner: proxiima::OwnerId,
+    ) -> Result<proxiima::OwnerTransaction, proxiima::StorageError> {
+        transactions.begin(caller, owner).await
+    }
+    let _ = begin;
+    let _: fn(&proxiima::ProxiimaHost) -> proxiima::HostOwnerTransactions =
+        proxiima::ProxiimaHost::owner_transactions_for_host;
     let _: fn(&proxiima::ProxiimaHost) -> proxiima::PgTuning =
         proxiima::ProxiimaHost::pg_tuning_for_host;
     let _: fn(&proxiima::AppContext) -> &proxiima::ProxiimaHost = proxiima::AppContext::host;

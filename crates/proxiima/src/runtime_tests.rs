@@ -145,7 +145,6 @@ async fn extension_assembly_publishes_owner_blob_reconcile_separately() {
 
     let services = assemble_services::<AlphaApp>(
         &app_ctx,
-        proxiima_storage_pg::OwnerTransactions::for_tests(),
         &registry,
         &ServedSurface::All,
         None,
@@ -194,7 +193,6 @@ async fn delegation_service_is_authenticator_gated_and_shared_by_identity() {
     let authenticator: Arc<dyn Authenticator> = Arc::new(StubAuth { owner: owner() });
     let services = assemble_services::<AlphaApp>(
         &app_ctx,
-        proxiima_storage_pg::OwnerTransactions::for_tests(),
         &registry,
         &ServedSurface::All,
         Some(&authenticator),
