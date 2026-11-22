@@ -31,10 +31,8 @@ class Finding:
         return f"{rel}:{self.line}: {self.rule}: {self.text.strip()}"
 
 
-# Core SQL names the bare table only to write it, to lock its rows, or in
-# row-security policy text; every other read goes through a view that states
-# whether forgotten memories are wanted (`definitions/views.sql`). Not scanned:
-# `policies.sql`, `views.sql` and migrations (released files are immutable).
+# `Proxiima.DatabaseAuthority.MemorySqlRoute`
+# Released migrations are immutable.
 MEMORY_READ = re.compile(
     r"\b(DELETE\s+)?(?:FROM|JOIN|USING)\s+(?:[\w.]+(?:\s+\w+)?\s*,\s*)*(proxiima_core\.memory)(?![\w.])",
     re.IGNORECASE,
@@ -43,9 +41,17 @@ ROW_LOCK = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+UPDATE|UPDATE|KEY\s+SHARE|SHARE)\b
 # The rest of a statement: to the next `;` in SQL, to the closing quote of the
 # string literal in Rust.
 STATEMENT_REST = {".sql": re.compile(r"[^;]*"), ".rs": re.compile(r'(?:[^"\\]|\\[\s\S])*')}
-# Test code is not a core read: a file gated `#![cfg(test)]`, and everything
-# from an inline test module on.
-TEST_CODE = re.compile(r"^#!\[cfg\(test\)\]|^#\[cfg\(test\)\]\nmod \w+ \{", re.MULTILINE)
+TEST_CFG = r"\[\s*cfg\s*\(\s*test\s*\)\s*\]"
+TEST_ATTRIBUTE = re.compile(r"#!?" + TEST_CFG)
+RUST_TOKEN = re.compile(
+    rf"(?P<file>^\s*#!{TEST_CFG})"
+    rf"|(?P<module>^[ \t]*#{TEST_CFG}\s+(?:#\[[^\n]*\]\s+)*"
+    r"(?:pub(?:\([^\n]*\))?\s+)?mod\s+\w+\s*\{)"
+    r'|r(?P<hashes>\#*)"(?s:.*?)"(?P=hashes)|"(?:[^"\\]|\\[\s\S])*"'
+    r"|'(?:[^'\\\n]|\\.)'|//[^\n]*|(?P<comment>/\*)|(?P<brace>[{}])",
+    re.MULTILINE,
+)
+BLOCK_COMMENT_TOKEN = re.compile(r"/\*|\*/")
 MEMORY_READ_FILES = (
     "crates/storage-pg/definitions/functions.sql",
     "crates/storage-pg/definitions/triggers.sql",
@@ -54,11 +60,45 @@ MEMORY_READ_FILES = (
 MEMORY_READ_RUST_ROOTS = ("crates/*/src", "apps", "tools", "spiices")
 
 
+def mask_test_modules(text: str) -> str:
+    # `Proxiima.DatabaseAuthority.MemoryScanRegion`
+    if not TEST_ATTRIBUTE.search(text):
+        return text
+    kept: list[str] = []
+    start = offset = depth = 0
+    module_depth = None
+    module_start = 0
+    while token := RUST_TOKEN.search(text, offset):
+        offset = token.end()
+        if token["file"] and depth == 0:
+            return ""
+        elif token["comment"]:
+            nesting = 1
+            while nesting and (part := BLOCK_COMMENT_TOKEN.search(text, offset)):
+                offset = part.end()
+                nesting += 1 if part.group() == "/*" else -1
+            if nesting:
+                break
+        elif token["module"]:
+            if module_depth is None:
+                module_start = token.start()
+                module_depth = depth
+            depth += 1
+        elif token["brace"]:
+            depth += 1 if token["brace"] == "{" else -1
+            if depth == module_depth:
+                kept.append(text[start:module_start])
+                kept.append(re.sub(r"[^\n]", " ", text[module_start:offset]))
+                start = offset
+                module_depth = None
+    return "".join((*kept, text[start:]))
+
+
 def bare_memory_reads(text: str, suffix: str) -> list[int]:
     """Lines of reads of the bare table. A read that locks its rows is allowed:
     the serving role cannot lock rows through a SELECT-only view."""
-    if suffix == ".rs" and (tests := TEST_CODE.search(text)):
-        text = text[: tests.start()]
+    if suffix == ".rs":
+        text = mask_test_modules(text)
     comment = "//" if suffix == ".rs" else "--"
     lines = text.splitlines()
     hits: list[int] = []
@@ -197,6 +237,7 @@ def sql_escape_files(root: Path) -> dict[str, str]:
 
 
 def check_sql_escape(findings: list[Finding]) -> None:
+    # `Proxiima.DatabaseAuthority.SqlComposition`
     files = sql_escape_files(ROOT)
     if not re.search(r"\bAssertSqlSafe\b", files.get(SQL_ESCAPE_MODULE, "")):
         findings.append(Finding(ROOT / SQL_ESCAPE_MODULE, 1, "sql text", "the SqlText module no longer names AssertSqlSafe"))
@@ -219,7 +260,7 @@ def run_self_test() -> int:
     rel = memory_fixture.relative_to(ROOT)
     fixture_text = memory_fixture.read_text(encoding="utf-8")
     flagged = bare_memory_reads(fixture_text, ".rs")
-    expected = [5, 6, 7, 8, 9, 13]  # the BAD lines of the fixture; a multi-line read counts at its FROM
+    expected = [5, 6, 7, 8, 9, 13, 47]  # the BAD lines of the fixture; a multi-line read counts at its FROM
     if flagged != expected:
         failures.append(f"memory reads: flagged lines {flagged}, expected {expected}")
     sql_sample = (

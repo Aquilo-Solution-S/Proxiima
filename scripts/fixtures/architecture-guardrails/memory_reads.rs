@@ -34,7 +34,14 @@ fn reads() {
 
 #[cfg(test)]
 mod tests {
+    const BRACES: &str = r#"
+#![cfg(test)]
+} }
+"#;
+    /* } confusing brace */
     fn read_freely() {
         sqlx::query("SELECT id FROM proxiima_core.memory");
     }
 }
+
+const AFTER_TESTS: &str = "SELECT id FROM proxiima_core.memory"; // BAD

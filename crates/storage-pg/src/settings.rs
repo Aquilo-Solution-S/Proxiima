@@ -48,10 +48,7 @@ mod tests {
     use crate::{PgPoolConfig, PgTuning};
 
     /// Every declared default of this crate is what its readers do unset.
-    /// Both readers answer `None` for an environment that leaves them at
-    /// their defaults (the pool reader also when a value is merely present),
-    /// so the comparison is of the effective values: `None` becomes the
-    /// type's `Default`.
+    /// Compare effective values through `Proxiima.DatabaseAuthority.overlaySupplied`.
     #[test]
     fn declared_defaults_are_what_the_readers_do_unset() {
         proxiima_core::test_fixtures::assert_declared_defaults(super::SETTINGS, &[], |lookup| {
@@ -63,5 +60,48 @@ mod tests {
                 )
             )
         });
+    }
+
+    #[test]
+    fn overlay_presence_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [String; 2],
+            out: bool,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.DatabaseAuthority.overlaySupplied"].clone())
+                .expect("the ledger emits the overlay decision");
+
+        assert_eq!(rows.len(), 6);
+        for Vector {
+            input: [block, source],
+            out,
+        } in rows
+        {
+            let (setting, non_default) = match block.as_str() {
+                "pool" => (super::PROXIIMA_PG_MAX_CONNECTIONS, "25"),
+                "tuning" => (super::PROXIIMA_PG_HNSW_EF_SEARCH, "101"),
+                _ => panic!("unknown overlay block {block}"),
+            };
+            let input = match source.as_str() {
+                "unset" => None,
+                "explicitDefault" => Some(setting.default().expect("declared default")),
+                "nonDefault" => Some(non_default),
+                _ => panic!("unknown overlay source {source}"),
+            };
+            let lookup = |key: &str| input.filter(|_| key == setting.name()).map(str::to_owned);
+            let supplied = match block.as_str() {
+                "pool" => PgPoolConfig::from_lookup(&lookup).unwrap().is_some(),
+                "tuning" => PgTuning::from_lookup(&lookup).unwrap().is_some(),
+                _ => unreachable!(),
+            };
+            assert_eq!(supplied, out, "{block} with {source}");
+        }
     }
 }
