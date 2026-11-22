@@ -17,7 +17,7 @@ use crate::{MemoryId, OwnerId, SchemaId, SchemaVersion};
 use super::Engine;
 use super::pipeline::ENTRY_NOT_FOUND_MESSAGE;
 
-const NEIGHBOR_EDGE_LIMIT: usize = 200;
+const NEIGHBOR_EDGE_LIMIT: usize = crate::ledger!(Proxiima.Edges.maxNeighborPins);
 
 #[derive(Debug, Clone)]
 pub struct SearchReadRequest {
@@ -103,6 +103,7 @@ impl Engine {
     /// bound; `Forbidden` when the context cannot access
     /// `req.search.owner` or reads nothing on it; `Internal` when
     /// storage reads fail.
+    // Similarity retrieval does not author pins.
     pub async fn search(
         &self,
         authz: &AuthzContext,

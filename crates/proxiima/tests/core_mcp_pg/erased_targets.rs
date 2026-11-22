@@ -1,6 +1,4 @@
-//! #671: a pin or lineage edge to a memory erased in this store reads
-//! `erased target`, from the witness the erase left. Only a reader who can
-//! read a memory that pins the erased id learns that it was erased.
+//! Read-side coverage of `Causa.principle_6_erasure_leaves_no_dangling_pin`.
 
 use proxiima::Proxiima;
 use proxiima_core::{AuthPath, AuthzContext, GroupId, OwnerId, Role, UserId};

@@ -287,6 +287,7 @@ $function$;
 -- migrated already carried that pin.  This is deliberately narrower than a
 -- migration-wide waiver: an ordinary insert has no authority row, and a
 -- target cannot invent a reference to an erased identity.
+-- `Proxiima.Edges.pinAdmissionWitness`.
 CREATE OR REPLACE FUNCTION proxiima_core.schema_evolution_existing_pin_permits(
     requested_kind text, target_id uuid, pin uuid
 ) RETURNS boolean
@@ -964,6 +965,7 @@ BEGIN
 END;
 $function$;
 
+-- `Proxiima.Edges.ErasedTarget` and `Causa.principle_6_erasure_leaves_no_dangling_pin`.
 CREATE OR REPLACE FUNCTION proxiima_core.record_erased_pin_target(target uuid, target_kind proxiima_core.pin_target_kind)
  RETURNS void
  LANGUAGE plpgsql
@@ -2830,9 +2832,7 @@ BEGIN
 END;
 $function$;
 
--- The kinds a memory of kind `source` may pin through the pin column `field`:
--- the Rust pin-column table, rendered. `memory_pin_checks` asks it for every
--- kind rule.
+-- Rendered from the Rust table for `Proxiima.Edges.pinField`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_kinds(field text, source proxiima_core.memory_kind)
  RETURNS text[]
  LANGUAGE sql
@@ -2873,7 +2873,7 @@ AS $function$
     END
 $function$;
 
--- `Proxiima.Identity.admissionIdAvailable`.
+-- `Proxiima.Identity.admissionIdAvailable` and `Proxiima.Edges.groundingFields`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks()
  RETURNS trigger
  LANGUAGE plpgsql

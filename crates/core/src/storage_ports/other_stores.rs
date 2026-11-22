@@ -29,7 +29,7 @@ pub const MAX_REMOTE_READS_PER_STORE: usize = 8;
 
 /// Maximum distinct foreign origins read for one lineage page; remaining
 /// origins render unavailable with an explicit reason.
-pub const MAX_LINEAGE_REMOTE_ORIGINS: usize = 64;
+pub const MAX_LINEAGE_REMOTE_ORIGINS: usize = crate::ledger!(Proxiima.Edges.maxRemoteLeaves);
 
 /// Reciprocal-rank-fusion constant used to merge store result lists.
 pub const STORE_RRF_K: f32 = 60.0;

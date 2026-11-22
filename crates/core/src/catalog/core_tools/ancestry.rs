@@ -1,20 +1,4 @@
-//! One ancestor-edge rule for `core_think` and `walk_memory_lineage` (#480).
-//!
-//! A node's ancestors are what it was made from or is about:
-//!
-//! - its local `origins[]` (`Origin`), when its schema declares
-//!   `OriginEdges` or declares nothing (fail-open, see `ancestor_edges`);
-//! - the payload references in its declared subject columns
-//!   (`Reference`), when its schema declares `PayloadOnly`;
-//! - its local `reads[]` (`Read`, #677), whatever its declaration: what
-//!   the host certified the writing session read is context, not
-//!   provenance, so no declaration hides or grants it;
-//! - the edges recorded to other stores' memories, with their recorded kind
-//!   (`Origin` for a derivation's source, `Reference` for an
-//!   interpretation's subject).
-//!
-//! An other-store target is a leaf: it is read through the port as the
-//! caller and never expanded, because this store does not hold its edges.
+//! Shared ancestor traversal for Think and memory lineage.
 
 use std::collections::HashMap;
 
@@ -56,26 +40,6 @@ pub(crate) struct AncestorEdge {
 /// The ancestor edges of every `frontier` node the caller can read, newest
 /// `(source, target)` first.
 ///
-/// The declaration answers "how is this node's provenance REACHABLE":
-///
-/// - `OriginEdges` — expand `origins[]`.
-/// - `PayloadOnly { subject_columns }` — load the node's payload and take
-///   the references whose declared FIELD is one of the named columns
-///   (`SidecarPayload::references()` carries the field each came from). A
-///   `PayloadOnly` node has an EMPTY `origins[]` by construction, so a walk
-///   that did not ask would make an interpretation a lineage dead end.
-/// - `None` — nothing local. A Fact cannot have origins
-///   (`memory_fact_origins_chk`), and otherwise the declaration is the claim
-///   that it derives from nothing.
-///
-/// A schema no contract declares is treated as `OriginEdges`. That is a
-/// deliberate fail-OPEN: a registration without a contract must not make
-/// its memories invisible to the walk, and showing a pin whose declaration
-/// nobody wrote is a smaller wrong than hiding one.
-///
-/// Every node's recorded other-store edges are added whatever its
-/// declaration, with their recorded kind.
-///
 /// # Errors
 ///
 /// Storage failures of the pin, payload, or external-edge reads.
@@ -92,6 +56,7 @@ pub(crate) async fn ancestor_edges(
     let mut grounded: Vec<(MemoryId, &'static [&'static str])> = Vec::new();
     let mut visible = Vec::with_capacity(pins.len());
     let mut reads = Vec::new();
+    // `Proxiima.Edges.localAncestorKinds`.
     for node in pins {
         visible.push(node.id);
         reads.extend(node.reads.iter().map(|read| AncestorEdge {
@@ -125,9 +90,7 @@ pub(crate) async fn ancestor_edges(
                 kind,
             }),
     );
-    // Reads last: the stable sort keeps a declared origin or reference ahead
-    // of a read of the same target, and the dedup keeps the first, as
-    // storage stores such a target once, as the declared pin.
+    // Append reads last so the stable sort gives declared pins precedence.
     edges.extend(reads);
     edges.sort_by_key(|edge| std::cmp::Reverse((edge.source, edge.target.uuid())));
     edges.dedup_by_key(|edge| (edge.source, edge.target));
@@ -260,7 +223,7 @@ pub(crate) fn project_remote_read(
     read: Option<&Result<RemoteOriginRead, OtherStoresError>>,
     capped: bool,
 ) -> RemoteProjection {
-    const SNIPPET_CHARS: usize = 200;
+    const SNIPPET_CHARS: usize = crate::ledger!(Proxiima.Edges.maxRemoteSketchChars);
     let unread = |unread| RemoteProjection {
         space: None,
         kind: String::new(),

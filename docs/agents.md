@@ -23,12 +23,7 @@ change with the host build, so this page does not copy their schemas.
 4. **Write only through the host contract.** Use the discovered tool or host
    API, never direct storage access. Authorization is resolved by the host;
    caller-supplied owner roles are not accepted by the core boundary.
-5. **Keep pins meaningful.** Let the write operation derive origin and
-   reference pins from typed payloads. The schema and write contracts enforce
-   this; no tool writes an arbitrary connection. Origin and reference pins
-   occupy `origins[]`, `refs[]`, and `goal_refs[]`. `read` pins record what
-   your session read before a write; your host supplies them, so there is
-   nothing to pass.
+5. **Declare inputs through the write contract.** Pin roles follow [`Proxiima.Edges`](ledger.md#edges).
 6. **Consolidate at a natural break.** If a durable pattern or decision was
    learned, write the smallest typed memory that can be retrieved later. This
    is a judgment call: do not record transient narration or duplicate an

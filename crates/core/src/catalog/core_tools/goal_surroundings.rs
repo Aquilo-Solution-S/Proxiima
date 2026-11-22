@@ -30,7 +30,7 @@ pub struct GoalSurroundingsArgs {
 }
 
 fn default_depth() -> u8 {
-    3
+    crate::ledger!(Proxiima.Edges.defaultWalkDepth)
 }
 fn default_limit() -> u32 {
     super::DEFAULT_PAGE_LIMIT
@@ -252,10 +252,11 @@ async fn surroundings(
     ctx: &ToolCtx,
     args: GoalSurroundingsArgs,
 ) -> Result<GoalSurroundingsOutput, ToolError> {
-    if !(1..=8).contains(&args.depth) {
-        return Err(ToolError::InvalidInput(
-            "depth must be between 1 and 8".into(),
-        ));
+    const MAX_DEPTH: u8 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
+    if !(1..=MAX_DEPTH).contains(&args.depth) {
+        return Err(ToolError::InvalidInput(format!(
+            "depth must be between 1 and {MAX_DEPTH}"
+        )));
     }
     // One pin can introduce at most one remote leaf: its source is local.
     // Keep the page inside the existing call-wide remote read budget.

@@ -14,7 +14,7 @@ use crate::pin_fields;
 
 /// Hard upper bound on edges returned by snapshot-edge mode.
 /// Decoupled from `QueryRequest::limit`, which sizes the node window.
-const MAX_SNAPSHOT_EDGES: usize = 50_000;
+const MAX_SNAPSHOT_EDGES: usize = proxiima_core::ledger!(Proxiima.Edges.maxSnapshotEdges);
 
 /// A pin carrier as the statements of this module select it
 /// ([`pin_fields::pin_carrier_columns`]): each pin column decodes into the

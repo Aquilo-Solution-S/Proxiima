@@ -16,7 +16,7 @@ use super::super::other_stores::{self, ResolvedMemory};
 
 use super::util::{normalize_idempotency_key, normalize_tags};
 
-pub(crate) const MAX_SOURCE_HANDLES: usize = 256;
+pub(crate) const MAX_SOURCE_HANDLES: usize = crate::ledger!(Proxiima.Edges.maxDeriveSources);
 const DERIVED_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x9d, 0xc1, 0x37, 0x10, 0x4f, 0xa6, 0x4c, 0x4e, 0x95, 0x73, 0xc8, 0x18, 0x9d, 0xfb, 0xa7, 0x40,
 ]);

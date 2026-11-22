@@ -201,6 +201,7 @@ fn all_pins(row: &'static str) -> SqlText {
 }
 
 fn grounding_fields() -> impl Iterator<Item = MemoryPinField> {
+    // `Proxiima.Edges.groundingFields` and `Causa.principle_7_a_read_pin_never_grounds`.
     memory_array_fields().filter(|field| field.spec().kind != EdgeKind::Read)
 }
 
