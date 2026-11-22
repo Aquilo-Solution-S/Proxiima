@@ -89,7 +89,6 @@ impl ScopeSurfaces {
         &self,
         scopes: impl IntoIterator<Item = ScopeRef>,
     ) -> Result<Vec<ScopeFenceTarget>, StorageError> {
-        // `Proxiima.Payloads.scopeAdmissionOrder`.
         let refs = proxiima_core::scope::scope_set(scopes);
         let mut out = Vec::with_capacity(refs.len());
         for scope in refs {

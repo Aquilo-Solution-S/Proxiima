@@ -133,7 +133,7 @@ impl SpiiceRegistry {
             return Err(SpiiceRegistryError::MissingCoreContract);
         }
         self.validate_registrations_are_claimed()?;
-        // `Proxiima.Payloads.physicalSurfaceDeclaration`.
+        // Declare each physical table once, even when sibling schemas use it.
         let mut tables = std::collections::HashSet::new();
         for surface in self
             .contracts
@@ -468,7 +468,7 @@ impl SpiiceRegistry {
                     schema_id,
                 });
             }
-            // `Proxiima.Payloads.dedupeSidecarAdmitted`.
+            // Cited-object deduplication cannot remap a sidecar.
             if schema.kind == crate::verbs::schema::PayloadKind::CitedObject
                 && let Some(table) = schema.sidecar_table
             {

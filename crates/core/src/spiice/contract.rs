@@ -951,7 +951,7 @@ impl EraseLeg {
     /// pick a winner.
     #[must_use]
     pub fn derive(surface: &Surface, bespoke: &[&'static str]) -> Self {
-        // `Proxiima.Payloads.needsGeneratedDelete`.
+        // A declared cascade constraint supplies the delete.
         match surface.erase {
             EraseRule::Cascade { .. } => Self::Cascade,
             EraseRule::HostState { .. } => Self::HostState,
@@ -1448,7 +1448,7 @@ impl ProjectionSpec {
     /// that knows the word "projection". That is the inverse-at-scope
     /// property: the owner erase never learns about this table.
     #[must_use]
-    // `Proxiima.Payloads.surfaceFields`.
+    // Carry the key, owner and lifecycle policies into the physical surface.
     pub const fn surface(&self) -> Surface {
         Surface {
             table: self.table,
@@ -1870,8 +1870,7 @@ impl SpiiceContract {
     /// The [`Surface`] declaring one physical table, wherever in this
     /// contract it is declared.
     ///
-    /// A sibling schema can use the same declaration under
-    /// `Proxiima.Payloads.physicalSurfaceDeclaration`.
+    /// Sibling schemas share the same physical declaration.
     #[must_use]
     pub fn surface_for(&self, table: &str) -> Option<Surface> {
         self.all_surfaces().find(|surface| surface.table == table)
@@ -1892,7 +1891,6 @@ impl SpiiceContract {
     /// refuse on `None`; none of them substitutes a default, because the
     /// default is the defect.
     #[must_use]
-    // `Proxiima.Payloads.PayloadColumnConsumer`.
     pub fn sidecar_memory_key_column(&self, table: &str) -> Option<&'static str> {
         match self.surface_for(table)?.key {
             KeyShape::MemoryT { column } => Some(column),

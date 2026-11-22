@@ -1,7 +1,10 @@
-//! Spiice lifecycle scope declarations for `Proxiima.Payloads.scopeAdmissionOrder`.
+//! Spiice lifecycle scope declarations.
 //!
 //! Sidecars need no foreign key to the scope registry. The shared fence
 //! serializes scoped admissions with erasure of the same scope.
+//!
+//! There is no runtime registration path, and never a generic scope erase.
+//! Each spiice defines which rows its scope erase removes.
 
 use uuid::Uuid;
 
@@ -64,7 +67,20 @@ impl std::fmt::Display for ScopeRef {
     }
 }
 
-/// The registry of one [`ScopeKind`], supplied by its owning spiice.
+/// Where one [`ScopeKind`]'s registry lives, declared once by the spiice
+/// that owns it.
+///
+/// Every name storage needs is here, and storage spells none of its own:
+/// the liveness probe is generated as
+/// `SELECT EXISTS(SELECT 1 FROM <registry_table>
+///                 WHERE <owner_id_column> = $1
+///                   AND <id_column> = $2)`,
+/// which is why a renamed column is a declaration edit and not a second
+/// place to keep in sync.
+///
+/// The owner is one column, the [`crate::OwnerId`]'s UUID. A scope id that
+/// somehow appeared under two owners must not serialize them — the same
+/// reason the owner portion is repeated in the source fence key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeDecl {
     pub kind: ScopeKind,
@@ -83,11 +99,12 @@ impl ScopeDecl {
         if self.kind.as_str().is_empty() {
             return Some("scope kind must not be empty");
         }
-        // `Proxiima.Payloads.scopeRegistryIdentifiers`.
-        if !self.registry_table.contains('.')
-            || crate::sql_text::PgIdent::table(self.registry_table).is_err()
-        {
+        // A scope registry names a schema-qualified table and two plain column identifiers.
+        if !self.registry_table.contains('.') {
             return Some("registry table must be schema-qualified");
+        }
+        if crate::sql_text::PgIdent::table(self.registry_table).is_err() {
+            return Some("registry table must be a valid table identifier");
         }
         for column in [self.id_column, self.owner_id_column] {
             if crate::sql_text::PgIdent::column(column).is_err() {
@@ -160,14 +177,19 @@ mod tests {
             id_column: "repo_id",
             owner_id_column: "owner_id",
         };
-        for registry_table in ["proxiima_notes.", ".notebooks", "a.b.c"] {
-            assert!(
+        for registry_table in [
+            "proxiima_notes.",
+            ".notebooks",
+            "a.b.c",
+            "proxiima-notes.notebooks",
+        ] {
+            assert_eq!(
                 ScopeDecl {
                     registry_table,
                     ..decl
                 }
-                .shape_error()
-                .is_some()
+                .shape_error(),
+                Some("registry table must be a valid table identifier"),
             );
         }
         for column in ["", "with space", "a.b"] {

@@ -94,6 +94,7 @@ impl std::str::FromStr for PayloadKind {
     type Err = PayloadKindParseError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        // Payload kind selectors, including list_schemas, are ASCII case-insensitive.
         match raw.to_ascii_lowercase().as_str() {
             "fact" => Ok(Self::Fact),
             "abstraction" => Ok(Self::Abstraction),
@@ -440,7 +441,7 @@ impl FrozenIndex {
         embed_units: &[MemoryEmbedUnit],
     ) -> Self {
         let mut index = Self::default();
-        // `Proxiima.Payloads.schemaIndices`.
+        // Index schemas by version, with and without kind, keeping the first declaration for each key.
         for (position, schema) in schemas.iter().enumerate() {
             index
                 .schema_by_id_version
@@ -569,6 +570,7 @@ pub fn contract_search_projections(
                 schema_version: schema.schema_version(),
                 kind: schema.kind,
                 sidecar_table: sidecar_table.to_owned(),
+                // `Proxiima.Payloads.PayloadColumnConsumer` uses the declared Memory key.
                 sidecar_key_column: contract
                     .sidecar_memory_key_column(sidecar_table)
                     .ok_or(
@@ -645,6 +647,7 @@ pub(crate) fn contract_embed_units(
                 let Some(table) = unit.table else {
                     continue;
                 };
+                // `Proxiima.Payloads.PayloadColumnConsumer` uses the declared Memory key.
                 let key_column = contract.sidecar_memory_key_column(table).ok_or(
                     crate::spiice::SpiiceRegistryError::EmbeddedSidecarNotMemoryKeyed {
                         spiice_id: contract.spiice_id,
@@ -953,7 +956,7 @@ impl SpiiceRegistryFrozen {
     /// The REST router also resolves provider-safe aliases.
     #[must_use]
     pub fn mcp_tool(&self, name: &str) -> Option<&ToolDescriptor> {
-        // `Proxiima.Payloads.descriptorMatches`.
+        // Match the exact registered tool name.
         self.mcp_tools.iter().find(|tool| tool.name == name)
     }
 

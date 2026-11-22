@@ -17,6 +17,7 @@ impl PgSidecarRegistryFrozen {
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<(), StorageError> {
+        // The installer updates generated policies on existing tables and skips missing tables.
         sqlx::query("SELECT proxiima_core.sync_owner_follows($1, $2)")
             .bind(self.spiice_schema_names())
             .bind(self.owner_follows_memory_sidecar_tables())
@@ -63,9 +64,6 @@ impl PgSidecarRegistryFrozen {
     // `Proxiima.DatabaseAuthority.OwnerPolicyCheck` `Proxiima.DatabaseAuthority.FollowsPolicy`
     pub async fn ensure_owner_rls(&self, conn: &mut PgConnection) -> Result<(), StorageError> {
         let expected = self.owner_follows_memory_sidecar_tables();
-        // A registered table the database does not have is not generated
-        // state: synchronizing skips it, and no migration run re-creates it.
-        // `Proxiima.Payloads.followsBootRefusal`.
         let absent: Vec<String> = sqlx::query_scalar(
             "SELECT expected.table_name FROM unnest($1::text[]) AS expected(table_name)
               WHERE NOT EXISTS (
@@ -80,6 +78,7 @@ impl PgSidecarRegistryFrozen {
         .fetch_all(&mut *conn)
         .await
         .map_err(map_err)?;
+        // `Proxiima.Payloads.followsBootRefusal`.
         if !absent.is_empty() {
             return Err(StorageError::Internal(format!(
                 "registered owner_follows sidecars do not exist: {absent:?}"

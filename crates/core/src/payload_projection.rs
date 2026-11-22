@@ -391,7 +391,7 @@ impl DurablePayloadBuilder {
         value: &T,
     ) -> Result<&mut Self, String> {
         let value = serde_json::to_value(value).map_err(|error| error.to_string())?;
-        // `Proxiima.Payloads.durableFieldInsertion`.
+        // Each durable field can be declared only once.
         if self.fields.insert(name.to_owned(), value).is_some() {
             return Err(format!("duplicate durable field {name}"));
         }

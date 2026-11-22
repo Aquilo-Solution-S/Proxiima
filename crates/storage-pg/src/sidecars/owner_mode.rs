@@ -1,9 +1,6 @@
 //! Three-state owner mode for a memory sidecar.
 
 /// How a memory sidecar relates to its memory's owner.
-///
-/// The owner relationship controls write stamping and inverse traversal
-/// under `Proxiima.Payloads.stampsOwner` and `Proxiima.Payloads.pinnedInverse`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarOwnerMode {
     None,

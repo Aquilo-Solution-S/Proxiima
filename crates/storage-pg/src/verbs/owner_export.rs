@@ -510,6 +510,52 @@ mod tests {
         columns.iter().map(|column| (*column).to_owned()).collect()
     }
 
+    #[test]
+    fn export_projection_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+                .expect("valid ledger vectors");
+        let rows = vectors["Proxiima.Payloads.exportProjection"]
+            .as_array()
+            .expect("export projection vectors");
+        assert_eq!(rows.len(), 5);
+
+        let mut ingest = surface("proxiima_core.ingest_keys");
+        let primary_key = pk(&["owner_id", "source_id", "ingest_key"]);
+        for row in rows {
+            ingest.export = match row["in"][0].as_str() {
+                Some("rows") => ExportRule::Rows,
+                Some("allowlist") => ExportRule::Allowlist(&["ingest_key"]),
+                Some("derivedFromCarried") => ExportRule::DerivedFrom {
+                    source: "proxiima_core.memory",
+                    why: "rebuilt from carried rows",
+                },
+                Some("unresolvedDerivation") => ExportRule::DerivedFrom {
+                    source: "example.missing",
+                    why: "source does not resolve",
+                },
+                Some("excluded") => ExportRule::Excluded {
+                    why: "no direct rows",
+                },
+                _ => panic!("unrecognized export input: {row}"),
+            };
+            let sql = export_statement(&ingest, &primary_key).expect("generates");
+            let expected_projection = match row["out"].as_str() {
+                Some("allFields") => Some("SELECT to_jsonb(s)"),
+                Some("declaredFields") => {
+                    Some("SELECT jsonb_build_object('ingest_key', s.ingest_key)")
+                }
+                Some("noRows") => None,
+                _ => panic!("unrecognized export projection: {row}"),
+            };
+            assert_eq!(
+                sql.as_ref().and_then(|sql| sql.as_str().lines().next()),
+                expected_projection,
+                "{row}",
+            );
+        }
+    }
+
     /// The declared key comes first; the rest of the primary key breaks its
     /// ties, so a non-unique key still gives a total order.
     #[test]

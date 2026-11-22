@@ -43,7 +43,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// `Proxiima.Payloads.scopeDeclaration`.
+    /// Require exactly one registry declaration for each scope kind used by a payload.
     pub(super) fn validate_scope_declarations(&self) -> Result<(), SpiiceRegistryError> {
         let mut declared: std::collections::HashMap<crate::ScopeKind, &'static str> =
             std::collections::HashMap::new();

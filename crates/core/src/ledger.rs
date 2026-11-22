@@ -309,7 +309,7 @@ macro_rules! ledger {
     (Proxiima.OwnerAuthority.currentSpaceKey) => {
         "current"
     };
-    // A receipt key begins with this marker, then the length-framed schema ID and big-endian version.
+    // The opening marker of a receipt key.
     (Proxiima.Payloads.receiptMarker) => {
         [80, 75, 69, 89, 49, 0]
     };
@@ -400,6 +400,10 @@ macro_rules! ledger {
     // The byte width of durable and kind-scoped Content digests.
     (Proxiima.Payloads.contentHashBytes) => {
         32
+    };
+    // The domain label of a durable Content hash input.
+    (Proxiima.Payloads.durableHashDomain) => {
+        "proxiima-content-v1"
     };
     // The ordinal reserved for the core contract.
     (Proxiima.Payloads.coreOrdinal) => {

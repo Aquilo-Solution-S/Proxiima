@@ -1054,6 +1054,7 @@ impl Engine {
         resolved.extend(retained_declared);
         let mut references = Vec::new();
         for reference in declared {
+            // `Proxiima.Payloads.ReferenceTarget` resolves each declared pin to an exact version.
             let target = match reference.target.entity() {
                 crate::EntityRef::Memory(id) => {
                     let actual = resolved

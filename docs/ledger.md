@@ -2498,35 +2498,15 @@ stateDiagram-v2
 
 ## Payloads
 
-**Payload view**: The independent views captured from one typed payload.
-
-- protocolJson
-- naturalKey
-- display
-- durable
-- references
-- scope
-
 **Display source**: The sources for a projected Memory body.
 
 - typedProjection
 - readFallback
 
-**Reference target**: Schema-declared reference fields bind an exact Memory or Goal version.
+**Reference target**: The node kinds a payload reference can target.
 
 - memoryVersion
 - goalVersion
-
-**Scope registry column**: The two columns of a lifecycle scope registry.
-
-- scopeId
-- ownerId
-
-**Scope registration**: The registration states for a scope kind.
-
-- declaredOnce
-- missing
-- duplicated
 
 **Receipt field part**: The parts of a declared receipt field in byte order.
 
@@ -2541,11 +2521,18 @@ stateDiagram-v2
 - absent
 - present
 
-**Content hash part**: The components of the durable payload hash input for each payload ordered by schema ID.
+**Content hash part**: The components of the durable Content hash input.
 
-- schemaId
-- durableLength
+- domainLabel
+- utf8SchemaId
+- zeroByte
+- durableLengthU64Le
 - canonicalDurableBytes
+
+**Content hash frame**: The opening frame and the frame repeated for each durable payload.
+
+- header
+- per payload
 
 **Content hash kind**: The kind classes that share or separate Content hashes.
 
@@ -2571,11 +2558,6 @@ stateDiagram-v2
 - typed
 - opaqueCitedObject
 
-**Schema index**: The lookup keys built at freeze for schema readers and kind-specific consumers.
-
-- schemaVersion
-- schemaVersionKind
-
 **Schema name part**: The components of a schema contract's rendered ID.
 
 - spiice
@@ -2592,22 +2574,6 @@ stateDiagram-v2
 - allPayloadKinds
 - selectedPayloadKind
 - resourceAnswers
-
-**Physical surface registration**: Whether a repeated physical declaration can be accepted before flattening.
-
-- declaredOnce
-- repeatedDeclaration
-
-**Surface field**: The pieces of an exportable lifecycle surface declaration.
-
-- key
-- ownerColumn
-- erase
-- forget
-- export
-- transfer
-- receipt
-- completeness
 
 **Surface export**: Whether a surface export carries rows, obtains them from a declared source, or excludes them.
 
@@ -2647,11 +2613,6 @@ stateDiagram-v2
 - sidecarRepoint
 - sidecarDelete
 - memoryCommit
-
-**Durable field result**: How a duplicate durable field insertion is reported.
-
-- accept
-- duplicate
 
 **Installation part**: What the installer records for a Memory sidecar.
 
@@ -2719,7 +2680,7 @@ stateDiagram-v2
 - registeredSidecar
 - retiredSurface
 
-**Payload column consumer**: Search and embedding resolve the Memory key declared by the schema's sidecar surface.
+**Payload column consumer**: The search and embedding consumers of a payload column.
 
 - search
 - embedding
@@ -2729,14 +2690,14 @@ stateDiagram-v2
 - reason
 - enforcementSite
 
-**Follows table state**: Whether an installer may create a missing Follows table or only update existing generated policy.
+**Follows table state**: The missing-table and stale-policy states of a Follows sidecar.
 
 - missingTable
 - stalePolicy
 
 **Follows boot refusal**: How boot classifies a Follows table that needs attention.
 
-- invalidShape
+- internal
 - migrationRequired
 
 **Registration check**: The identifiers and behavior reconciled against core when binding a storage registration.
@@ -2754,11 +2715,6 @@ stateDiagram-v2
 - ownerFromPermit
 - additionalPredicate
 
-**Erase completeness**: Where an inverse obtains its proof of deleting a cascaded surface.
-
-- declaredConstraint
-- explicitLeg
-
 **Scope admission step**: The held prerequisites of a scoped payload admission.
 
 - canonicalDistinctScopes
@@ -2769,11 +2725,6 @@ stateDiagram-v2
 
 - typedRow
 - derivedProjection
-
-**Descriptor name**: A descriptor in the exact name registry does not authorize aliases.
-
-- exact
-- alias
 
 **Export projection**: The data a surface contributes to an owner export.
 
@@ -2786,18 +2737,9 @@ stateDiagram-v2
 - handle
 - exactVersion
 
-**Dedupe sidecar**: The registration in relation to cited-object deduplication.
-
-- citedObjectSidecar
-- other
-
-**captured views** = \[protocolJson, naturalKey, display, durable, references, scope]: The views captured before storage erases the Rust type.
-
 **display sources** = \[typedProjection, readFallback]: The sources for a Memory display body in priority order.
 
-**scope registry identifiers** = \[scopeId, ownerId]: A scope registry requires a qualified table and valid identifiers for these columns.
-
-**receipt marker** = \[80, 75, 69, 89, 49, 0]: A receipt key begins with this marker, then the length-framed schema ID and big-endian version.
+**receipt marker** = \[80, 75, 69, 89, 49, 0]: The opening marker of a receipt key.
 
 **receipt string tag** = 115: Tag for a UTF-8 string.
 
@@ -2845,11 +2787,11 @@ stateDiagram-v2
 
 **content hash bytes** = 32: The byte width of durable and kind-scoped Content digests.
 
-**durable hash order** = \[schemaId, durableLength, canonicalDurableBytes]: The schema identity precedes the length and canonical bytes of its durable payload.
+**durable hash domain** = "proxiima-content-v1": The domain label of a durable Content hash input.
+
+**durable hash order** = header: \[domainLabel, zeroByte], per payload: \[utf8SchemaId, zeroByte, durableLengthU64Le, canonicalDurableBytes, zeroByte]: The bytes hashed for the header and for each durable payload, in frame order.
 
 **natural key scalars** = \[uuid, text (text), text (paddedText), i16, i32, i64, bool]: The scalar kinds available to a stateful Fact natural key.
-
-**schema indices** = \[schemaVersion, schemaVersionKind]: Freeze constructs both indices and preserves the first declaration for each key.
 
 **schema name order** = \[spiice, name, version]: A rendered schema ID places the spiice before the schema name and its version.
 
@@ -2862,8 +2804,6 @@ stateDiagram-v2
 **projection memory foreign key** = "projection\_memory\_id\_fkey": Projection's Memory foreign key name.
 
 **sidecar head page max** = 1000: The largest authorized page of typed sidecar heads.
-
-**surface fields** = \[key, ownerColumn, erase, forget, export, transfer, receipt, completeness]: Every declared surface specifies these lifecycle fields.
 
 **install memory sidecar** = \[memoryForeignKey, declaredSurface, integrityTriggers, ownerPolicy]: The Memory sidecar installer installs the key, declaration, integrity and owner policy together.
 
@@ -2894,14 +2834,6 @@ stateDiagram-v2
 - versioned schema available: The schema resource replies only for a registered exact version with published JSON Schema.
 - payload subjects: An emitted reference can ground payload-only provenance when its field and target are eligible.
 
-| scope registration | scope declaration |
-| --- | --- |
-| declaredOnce | yes |
-| missing | no |
-| duplicated | no |
-
-- scope declaration: A payload's declared scope kind must have exactly one registry declaration.
-
 | receipt presence | receipt presence |
 | --- | --- |
 | omitted | — |
@@ -2929,14 +2861,7 @@ stateDiagram-v2
 | allKinds | \[allPayloadKinds, resourceAnswers] |
 | selectedKind | \[selectedPayloadKind, resourceAnswers] |
 
-- list schema inventory: The case-insensitive kind filter controls payload entries while the resource schema inventory is independent.
-
-| physical surface registration | physical surface declaration |
-| --- | --- |
-| declaredOnce | yes |
-| repeatedDeclaration | no |
-
-- physical surface declaration: A physical table has one declaration even when multiple schema registrations name it.
+- list schema inventory: The kind filter controls payload entries while the resource schema inventory is independent.
 
 | surface export | erase exportable | export projection |
 | --- | --- | --- |
@@ -2957,14 +2882,13 @@ stateDiagram-v2
 
 - export owner: A carried surface serves an owner through its own column or its key's single home.
 
-| sidecar owner mode | stamps owner | enforce stamp |
-| --- | --- | --- |
-| none | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
-| pinned | yes | \[sidecarInsert, sidecarRepoint] |
-| follows | yes | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
+| sidecar owner mode | stamps owner |
+| --- | --- |
+| none | no |
+| pinned | yes |
+| follows | yes |
 
 - stamps owner: Pinned and Follows sidecars stamp the row's own owner at insertion.
-- enforce stamp: Inserts and repoints require a declaration; reverse presence and delete checks exempt historical pinned stamps.
 
 | pinned traversal | pinned inverse |
 | --- | --- |
@@ -2974,12 +2898,16 @@ stateDiagram-v2
 
 - pinned inverse: Memory-following traversal skips pinned rows; owner inverses select by stamped owner.
 
-| bool | durable field insertion |
-| --- | --- |
-| yes | duplicate |
-| no | accept |
+| sidecar owner mode | bool | enforce stamp |
+| --- | --- | --- |
+| none | yes | \[sidecarInsert, sidecarRepoint] |
+| none | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
+| pinned | yes | \[sidecarInsert, sidecarRepoint] |
+| pinned | no | \[sidecarInsert, sidecarRepoint] |
+| follows | yes | \[sidecarInsert, sidecarRepoint] |
+| follows | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
 
-- durable field insertion: A previously declared durable field cannot be supplied again.
+- enforce stamp: Inserts and repoints require a declaration; reverse checks exempt pinned and retired retain-at-source sidecars.
 
 | existing reference | install reference |
 | --- | --- |
@@ -3017,31 +2945,10 @@ stateDiagram-v2
 
 | follows table state | follows boot refusal |
 | --- | --- |
-| missingTable | invalidShape |
+| missingTable | internal |
 | stalePolicy | migrationRequired |
 
-- follows boot refusal: An absent Follows table is a schema defect; a stale generated policy requires migration.
-
-| erase completeness | needs generated delete |
-| --- | --- |
-| declaredConstraint | no |
-| explicitLeg | yes |
-
-- needs generated delete: A declared cascade constraint removes the need for a generated delete leg.
-
-| descriptor name | descriptor matches |
-| --- | --- |
-| exact | yes |
-| alias | no |
-
-- descriptor matches: The descriptor lookup matches an exact registered name.
-
-| dedupe sidecar | dedupe sidecar admitted |
-| --- | --- |
-| citedObjectSidecar | no |
-| other | yes |
-
-- dedupe sidecar admitted: A cited-object sidecar is refused because the current dedupe remapper cannot reach it.
+- follows boot refusal: A missing Follows table yields Internal; stale generated policy requires migration.
 
 ## Repository
 

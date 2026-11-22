@@ -1925,7 +1925,6 @@ async fn erase_receipt_separates_actual_payload_scrubbing_from_row_deletion() {
     result.expect("deleted and scrubbed outcome maps remain distinct");
 }
 
-// `Proxiima.Payloads.physicalSurfaceDeclaration`.
 #[test]
 fn registry_freeze_refuses_duplicate_and_overlapping_lifecycle_surfaces() {
     for extra in [&DUPLICATE_CONTRACT, &OVERLAP_CONTRACT] {

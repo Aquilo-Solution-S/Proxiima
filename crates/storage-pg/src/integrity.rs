@@ -683,6 +683,7 @@ fn expected_declaration_triggers(
                     proxiima_core::spiice::TransferRule::RetainAtSource { .. }
                 )
             });
+        // `Proxiima.Payloads.enforceStamp`.
         if !owner_pinned {
             let orphan = sidecar_trigger_name(table, DELETE_GUARD_TRIGGER_SUFFIX)?;
             let orphan = orphan.as_str();
@@ -716,18 +717,8 @@ fn expected_declaration_triggers(
 /// Every declaration trigger the linked spiices expect, as `pg_trigger` sees
 /// it — and nothing else.
 ///
-/// `Proxiima.Payloads.enforceStamp`: row ⊆ stamp on `INSERT`
-/// and on an `UPDATE` of the key column, both on the sidecar table, and
-/// stamp ⊆ rows at both ends — the presence trigger on
-/// `proxiima_core.memory` and the orphan guard on the sidecar's own `DELETE`.
-/// The last two are skipped for an owner-pinned sidecar, and that is not an
-/// oversight: an owner-pinned row
-/// carries its own `owner_id` and no foreign key to `proxiima_core.memory`
-/// precisely so a source-scoped erase can take it while the Memory it
-/// records — which may since have transferred to another owner — stays. Its
-/// stamp is a record of what was written, not a claim about what is still
-/// there, and neither a guard that demanded the row still be there nor one
-/// that refused to let the erase take it could hold.
+/// Owner-pinned and retired retain-at-source stamps record historical writes.
+/// Their detail rows can be erased independently of the Memory.
 ///
 /// Bidirectional, like [`crate::projection::ensure_projection_schema`]: a
 /// registered sidecar table with no trigger is a table any statement can

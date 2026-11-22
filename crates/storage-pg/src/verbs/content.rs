@@ -8,8 +8,9 @@ use uuid::Uuid;
 use crate::error::map_err;
 
 const CONTENT_HASH_BYTES: usize = proxiima_core::ledger!(Proxiima.Payloads.contentHashBytes);
+const DURABLE_HASH_DOMAIN: &str = proxiima_core::ledger!(Proxiima.Payloads.durableHashDomain);
 
-/// BLAKE3 digest of the durable payload projections.
+/// BLAKE3 digest of the durable payload projections in `schema_id` order.
 pub fn hash_sidecar_payloads(
     payloads: &[SidecarPayload],
 ) -> Result<[u8; CONTENT_HASH_BYTES], StorageError> {
@@ -30,8 +31,9 @@ pub fn hash_sidecar_payloads(
     }
     parts.sort_by(|a, b| a.0.cmp(&b.0));
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"proxiima-content-v1\0");
     // `Proxiima.Payloads.durableHashOrder`.
+    hasher.update(DURABLE_HASH_DOMAIN.as_bytes());
+    hasher.update(b"\0");
     for (schema, bytes) in &parts {
         hasher.update(schema.as_bytes());
         hasher.update(b"\0");
@@ -237,17 +239,10 @@ mod tests {
         let durable = payload.durable().expect("durable");
         assert_eq!(durable.canonical_bytes(), br#"{"body":"x"}"#);
 
-        // The pre-rename persisted v1 frame: canonical {"body":"x"}.
-        let bytes = br#"{"body":"x"}"#;
-        let mut legacy = blake3::Hasher::new();
-        legacy.update(b"proxiima-content-v1\0");
-        legacy.update(b"test/content-alias\0");
-        legacy.update(&12_u64.to_le_bytes());
-        legacy.update(bytes);
-        legacy.update(b"\0");
+        let digest = blake3::Hash::from(hash_sidecar_payloads(&[payload]).unwrap());
         assert_eq!(
-            hash_sidecar_payloads(&[payload]).unwrap(),
-            *legacy.finalize().as_bytes()
+            digest.to_hex().as_str(),
+            "a3bce0da9013f59fa4d7d2f004de28bda3398475db0b98c3ecc193974c4a5952",
         );
     }
 }

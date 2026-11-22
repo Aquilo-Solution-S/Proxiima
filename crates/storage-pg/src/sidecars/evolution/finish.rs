@@ -348,6 +348,7 @@ async fn remove_goal_sidecars(
                     && s.id.render() == schema_id
             })
             .ok_or_else(|| refused("Goal source has no declared migration schema"))?;
+        // Historical Goal sources can share a sibling surface that this per-schema list omits.
         for surface in schema.surfaces {
             let proxiima_core::spiice::KeyShape::GoalT { column } = surface.key else {
                 continue;

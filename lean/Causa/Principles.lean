@@ -1,7 +1,6 @@
 import Causa.Provenance
 import Causa.Audience
 import Causa.Compliance
-import Proxiima.Payloads
 
 /-! Causa — Principles -/
 

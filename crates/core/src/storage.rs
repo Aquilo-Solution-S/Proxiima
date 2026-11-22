@@ -383,7 +383,7 @@ impl SidecarPayload {
     {
         // `Proxiima.Payloads.scopeSelection`.
         let scope = scope_kind.and_then(|kind| scope_id(&value).map(|id| ScopeRef::new(kind, id)));
-        // `Proxiima.Payloads.capturedViews`.
+        // Capture protocol JSON, natural key, display, durable fields, references and scope from the typed value.
         let value = Arc::new(value);
         Self {
             kind,

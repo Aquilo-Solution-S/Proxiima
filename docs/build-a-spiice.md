@@ -31,8 +31,20 @@ Build the API reference locally with `cargo doc -p proxiima-spiice --no-deps --o
 ## 1. Define the vocabulary
 
 Choose a spiice prefix and a typed payload kind from [`Proxiima.Memory`](ledger.md#memory).
-The [`Proxiima.Payloads` ledger](ledger.md#payloads) defines typed projections,
-receipt encoding and schema registration.
+Define validation, rendering, replay identity, and references
+on the corresponding payload trait. Every payload trait has the
+`PayloadProjection` supertrait, so implement its typed `KEY_FIELDS`, `display`,
+and `durable` projection as well. A Fact's receipt key uses schema-owned
+semantic bytes, not arbitrary JSON serialization.
+
+Semantic projections follow the same rule. A payload with a stateful natural
+key implements `PayloadProjection` and declares typed `KeyField`s; the frozen
+contract derives its `NaturalKeyDeclaration` from that projection. Display and
+durable fields are explicit typed accessors. Protocol Serde names do not select
+database identity: wire naming and durable identity are separate contracts. A
+natural-key value is never recovered by serializing the payload to JSON and
+probing field names.
+The [Payloads ledger](ledger.md#payloads) describes typed projections and receipt encoding.
 
 For example, a new document observation's payload can be:
 
@@ -98,7 +110,10 @@ The contract names the same typed projection; stateless schemas use
 natural_key_columns: NaturalKeyDeclaration::of::<DocumentFiledV1>(),
 ```
 
-For PostgreSQL `CHAR(n)`, use `KeyField::padded_text`.
+Use `KeyField::padded_text` only when the migration column is PostgreSQL
+`CHAR(n)`. It trims database padding before comparison; `KeyField::text`
+remains an ordinary text column and does not apply that canonicalization.
+See [`Proxiima.Payloads.trimKeyPadding`](ledger.md#payloads).
 
 Implement `references()` when the payload carries node references. Ingest
 resolves the declared targets and derives pins atomically. A spiice defines
@@ -250,8 +265,12 @@ Restore refuses a retired schema.
 The declaration performs no erase. The lifecycle and rollout order are
 defined in the [retired-Fact decision](https://git.aquilo-cloud.com/AQS/uniiverse/src/branch/factory/docs/decisions/2026-11-04-5213-a-retired-fact-is-erased-before-its-schema-is-dropped.md).
 
-Use `KIT_CONTRACT` in the executable example for the schema and lifecycle
-declarations in [`Proxiima.Payloads`](ledger.md#payloads).
+Follow `KIT_CONTRACT` in the executable example. Each schema declares kind,
+sidecar, search projection, embedding recipe, provenance, and transfer behavior.
+Each stored surface declares erase/export/transfer behavior. A surface that is
+not searchable or embeddable says so explicitly with its reason. See
+[data and erasure](data-and-erasure.md#declared-inverses).
+See the [Payloads ledger](ledger.md#payloads) for schema registration and lifecycle rules.
 
 Core search includes every declared projection with comparable score bands and
 a supported projection renderer, both unscoped and when selected by schema.

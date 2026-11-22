@@ -79,8 +79,8 @@ impl SpiiceRegistry {
                 });
             }
         }
-        // `Proxiima.Payloads.IngressShape`.
         for schema in &self.schemas {
+            // Only cited-object schemas may be opaque (`Proxiima.Payloads.IngressShape`).
             if !schema.has_typed_ingress && schema.kind != PayloadKind::CitedObject {
                 return Err(SpiiceRegistryError::OpaqueSchemaKind {
                     schema_id: schema.schema_id.clone(),

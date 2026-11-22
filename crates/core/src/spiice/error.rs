@@ -218,7 +218,7 @@ pub enum SpiiceRegistryError {
     #[error(
         "schema {schema_id} declares lifecycle scope {kind}, which no linked spiice \
          contract declares; add a ScopeDecl naming its registry table, id column and \
-         owner columns"
+         owner column"
     )]
     ScopeNotDeclared {
         schema_id: SchemaId,

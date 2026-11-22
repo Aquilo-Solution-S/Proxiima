@@ -566,7 +566,6 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.assert_fact_schema_drained(text, text[]) FROM PUBLIC;
 
--- `Proxiima.Payloads.enforceStamp`.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_declared_sidecar_present() RETURNS trigger
     LANGUAGE plpgsql
     AS $$

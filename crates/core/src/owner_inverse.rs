@@ -12,8 +12,8 @@
 use std::collections::BTreeMap;
 
 use crate::spiice::{
-    CounterRule, EraseLeg, ExportRule, ForgetLeg, HostStateEraseDisposition, KeyShape, SchemaRef,
-    Surface, TransferLeg, TransferRule,
+    CounterRule, EraseLeg, ExportRule, ForgetLeg, HostStateEraseDisposition, SchemaRef, Surface,
+    TransferLeg, TransferRule,
 };
 use crate::storage_ports::StateSurfaceName;
 use crate::{AuthPath, GroupId, OwnerId, SourceId, UserId};
@@ -41,10 +41,6 @@ pub struct OwnerSurfaces {
     /// declaration is refused where its `enforced_by` says.
     untransferable_schemas: BTreeMap<String, &'static str>,
     host_lifecycle: Vec<HostStateLifecycleSurface>,
-    /// Keyed by the rendered schema id, so the forget/restore lane looks a
-    /// declaration up without rendering every `SchemaRef` on every call. The
-    /// value is already in table order.
-    cascaded_details: BTreeMap<String, Vec<CascadedDetail>>,
 }
 
 /// Frozen policy for one table handled by the registered host lifecycle
@@ -169,27 +165,11 @@ impl OwnerSurfaces {
         let mut forget_legs = BTreeMap::new();
         let mut ledger = HostLifecycleLedger::default();
         let mut state_tables = std::collections::BTreeSet::new();
-        let mut cascaded_details: BTreeMap<String, Vec<CascadedDetail>> = BTreeMap::new();
         let mut untransferable_schemas = BTreeMap::new();
         for contract in registry.contracts() {
             for schema in contract.schemas {
                 if let TransferRule::NotTransferable { why, .. } = schema.transfer {
                     untransferable_schemas.insert(schema.id.render(), why);
-                }
-                for surface in schema.surfaces {
-                    if matches!(surface.forget, crate::spiice::ForgetRule::DumpThenCascade)
-                        && matches!(ForgetLeg::derive(surface), ForgetLeg::Marked)
-                        && let KeyShape::MemoryT { column } = surface.key
-                    {
-                        cascaded_details
-                            .entry(schema.id.render())
-                            .or_default()
-                            .push(CascadedDetail {
-                                schema: schema.id,
-                                table: surface.table,
-                                key_column: column,
-                            });
-                    }
                 }
             }
             for surface in contract.state_surfaces {
@@ -215,10 +195,6 @@ impl OwnerSurfaces {
         }
         let host_lifecycle = ledger.finish()?;
         surfaces.sort_by_key(|surface| surface.table);
-        for details in cascaded_details.values_mut() {
-            details.sort_by_key(|detail| detail.table);
-            details.dedup_by_key(|detail| detail.table);
-        }
         Ok(Self {
             surfaces,
             state_tables: state_tables.into_iter().collect(),
@@ -227,7 +203,6 @@ impl OwnerSurfaces {
             forget_legs,
             untransferable_schemas,
             host_lifecycle,
-            cascaded_details,
         })
     }
 
@@ -286,7 +261,6 @@ impl OwnerSurfaces {
             forget_legs,
             untransferable_schemas: BTreeMap::new(),
             host_lifecycle,
-            cascaded_details: BTreeMap::new(),
         })
     }
 
@@ -374,17 +348,6 @@ impl OwnerSurfaces {
             .get(table)
             .copied()
             .unwrap_or(ForgetLeg::Unreachable)
-    }
-
-    /// Cascaded `MemoryT` detail relations explicitly marked as payload by the
-    /// schema identified by `schema_id`, in deterministic table order. A set
-    /// made with [`Self::from_surfaces`] intentionally has no schema
-    /// provenance and therefore returns no detail declarations.
-    #[must_use]
-    pub fn cascaded_details_for_schema(&self, schema_id: &str) -> &[CascadedDetail] {
-        self.cascaded_details
-            .get(schema_id)
-            .map_or(&[], Vec::as_slice)
     }
 
     /// Every surface the forget deletes with a GENERATED statement, in table

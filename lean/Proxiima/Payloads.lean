@@ -2,20 +2,6 @@
 
 namespace Proxiima.Payloads
 
-/-- The independent views captured from one typed payload. -/
-inductive PayloadView where
-  | protocolJson
-  | naturalKey
-  | display
-  | durable
-  | references
-  | scope
-  deriving DecidableEq
-
-/-- The views captured before storage erases the Rust type. -/
-def capturedViews : List PayloadView :=
-  [.protocolJson, .naturalKey, .display, .durable, .references, .scope]
-
 /-- The sources for a projected Memory body. -/
 inductive DisplaySource where
   | typedProjection
@@ -25,7 +11,7 @@ inductive DisplaySource where
 /-- The sources for a Memory display body in priority order. -/
 def displaySources : List DisplaySource := [.typedProjection, .readFallback]
 
-/-- Schema-declared reference fields bind an exact Memory or Goal version. -/
+/-- The node kinds a payload reference can target. -/
 inductive ReferenceTarget where
   | memoryVersion
   | goalVersion
@@ -36,28 +22,7 @@ def scopeSelection : (declared : Bool) → (hasScopeId : Bool) → Bool
   | true, true => true
   | true, false | false, true | false, false => false
 
-/-- The two columns of a lifecycle scope registry. -/
-inductive ScopeRegistryColumn where
-  | scopeId
-  | ownerId
-  deriving DecidableEq
-
-/-- A scope registry requires a qualified table and valid identifiers for these columns. -/
-def scopeRegistryIdentifiers : List ScopeRegistryColumn := [.scopeId, .ownerId]
-
-/-- The registration states for a scope kind. -/
-inductive ScopeRegistration where
-  | declaredOnce
-  | missing
-  | duplicated
-  deriving DecidableEq
-
-/-- A payload's declared scope kind must have exactly one registry declaration. -/
-def scopeDeclaration : ScopeRegistration → Bool
-  | .declaredOnce => true
-  | .missing | .duplicated => false
-
-/-- A receipt key begins with this marker, then the length-framed schema ID and big-endian version. -/
+/-- The opening marker of a receipt key. -/
 def receiptMarker : List Nat := [0x50, 0x4b, 0x45, 0x59, 0x31, 0]
 
 /-- Tag for a UTF-8 string. -/
@@ -130,15 +95,27 @@ def receiptPresence : ReceiptPresence → Option Nat
 /-- The byte width of durable and kind-scoped Content digests. -/
 def contentHashBytes : Nat := 32
 
-/-- The components of the durable payload hash input for each payload ordered by schema ID. -/
+/-- The domain label of a durable Content hash input. -/
+def durableHashDomain : String := "proxiima-content-v1"
+
+/-- The components of the durable Content hash input. -/
 inductive ContentHashPart where
-  | schemaId
-  | durableLength
+  | domainLabel
+  | utf8SchemaId
+  | zeroByte
+  | durableLengthU64Le
   | canonicalDurableBytes
   deriving DecidableEq
 
-/-- The schema identity precedes the length and canonical bytes of its durable payload. -/
-def durableHashOrder : List ContentHashPart := [.schemaId, .durableLength, .canonicalDurableBytes]
+/-- The opening frame and the frame repeated for each durable payload. -/
+structure ContentHashFrame where
+  header : List ContentHashPart
+  perPayload : List ContentHashPart
+
+/-- The bytes hashed for the header and for each durable payload, in frame order. -/
+def durableHashOrder : ContentHashFrame :=
+  { header := [.domainLabel, .zeroByte]
+    perPayload := [.utf8SchemaId, .zeroByte, .durableLengthU64Le, .canonicalDurableBytes, .zeroByte] }
 
 /-- The kind classes that share or separate Content hashes. -/
 inductive ContentHashKind where
@@ -181,15 +158,6 @@ inductive IngressShape where
   | opaqueCitedObject
   deriving DecidableEq
 
-/-- The lookup keys built at freeze for schema readers and kind-specific consumers. -/
-inductive SchemaIndex where
-  | schemaVersion
-  | schemaVersionKind
-  deriving DecidableEq
-
-/-- Freeze constructs both indices and preserves the first declaration for each key. -/
-def schemaIndices : List SchemaIndex := [.schemaVersion, .schemaVersionKind]
-
 /-- The components of a schema contract's rendered ID. -/
 inductive SchemaNamePart where
   | spiice
@@ -216,7 +184,7 @@ inductive InventorySource where
   | resourceAnswers
   deriving DecidableEq
 
-/-- The case-insensitive kind filter controls payload entries while the resource schema inventory is independent. -/
+/-- The kind filter controls payload entries while the resource schema inventory is independent. -/
 def listSchemaInventory : InventoryFilter → List InventorySource
   | .allKinds => [.allPayloadKinds, .resourceAnswers]
   | .selectedKind => [.selectedPayloadKind, .resourceAnswers]
@@ -237,32 +205,6 @@ def projectionMemoryForeignKey : String := "projection_memory_id_fkey"
 
 /-- The largest authorized page of typed sidecar heads. -/
 def sidecarHeadPageMax : Nat := 1000
-
-/-- Whether a repeated physical declaration can be accepted before flattening. -/
-inductive PhysicalSurfaceRegistration where
-  | declaredOnce
-  | repeatedDeclaration
-  deriving DecidableEq
-
-/-- A physical table has one declaration even when multiple schema registrations name it. -/
-def physicalSurfaceDeclaration : PhysicalSurfaceRegistration → Bool
-  | .declaredOnce => true
-  | .repeatedDeclaration => false
-
-/-- The pieces of an exportable lifecycle surface declaration. -/
-inductive SurfaceField where
-  | key
-  | ownerColumn
-  | erase
-  | forget
-  | export
-  | transfer
-  | receipt
-  | completeness
-  deriving DecidableEq
-
-/-- Every declared surface specifies these lifecycle fields. -/
-def surfaceFields : List SurfaceField := [.key, .ownerColumn, .erase, .forget, .export, .transfer, .receipt, .completeness]
 
 /-- Whether a surface export carries rows, obtains them from a declared source, or excludes them. -/
 inductive SurfaceExport where
@@ -330,26 +272,15 @@ inductive StampCheck where
   | memoryCommit
   deriving DecidableEq
 
-/-- Inserts and repoints require a declaration; reverse presence and delete checks exempt historical pinned stamps. -/
-def enforceStamp : SidecarOwnerMode → List StampCheck
-  | .none | .follows => [.sidecarInsert, .sidecarRepoint, .sidecarDelete, .memoryCommit]
-  | .pinned => [.sidecarInsert, .sidecarRepoint]
+/-- Inserts and repoints require a declaration; reverse checks exempt pinned and retired retain-at-source sidecars. -/
+def enforceStamp : SidecarOwnerMode → (retiredRetainAtSource : Bool) → List StampCheck
+  | .none, false | .follows, false => [.sidecarInsert, .sidecarRepoint, .sidecarDelete, .memoryCommit]
+  | .none, true | .follows, true | .pinned, false | .pinned, true => [.sidecarInsert, .sidecarRepoint]
 
 /-- An emitted reference can ground payload-only provenance when its field and target are eligible. -/
 def payloadSubjects : (declaredField : Bool) → (memoryTarget : Bool) → Bool
   | true, true => true
   | true, false | false, true | false, false => false
-
-/-- How a duplicate durable field insertion is reported. -/
-inductive DurableFieldResult where
-  | accept
-  | duplicate
-  deriving DecidableEq
-
-/-- A previously declared durable field cannot be supplied again. -/
-def durableFieldInsertion : (alreadyDeclared : Bool) → DurableFieldResult
-  | true => .duplicate
-  | false => .accept
 
 /-- What the installer records for a Memory sidecar. -/
 inductive InstallationPart where
@@ -462,7 +393,7 @@ inductive StorageSchemaSource where
 def storageSchemaCensus : List StorageSchemaSource :=
   [.core, .activeSurface, .registeredSidecar, .retiredSurface]
 
-/-- Search and embedding resolve the Memory key declared by the schema's sidecar surface. -/
+/-- The search and embedding consumers of a payload column. -/
 inductive PayloadColumnConsumer where
   | search
   | embedding
@@ -477,7 +408,7 @@ inductive TransferRefusalPart where
 /-- A schema-declared transfer refusal carries its reason and at least one enforcement site. -/
 def transferRefusalParts : List TransferRefusalPart := [.reason, .enforcementSite]
 
-/-- Whether an installer may create a missing Follows table or only update existing generated policy. -/
+/-- The missing-table and stale-policy states of a Follows sidecar. -/
 inductive FollowsTableState where
   | missingTable
   | stalePolicy
@@ -485,13 +416,13 @@ inductive FollowsTableState where
 
 /-- How boot classifies a Follows table that needs attention. -/
 inductive FollowsBootRefusal where
-  | invalidShape
+  | internal
   | migrationRequired
   deriving DecidableEq
 
-/-- An absent Follows table is a schema defect; a stale generated policy requires migration. -/
+/-- A missing Follows table yields Internal; stale generated policy requires migration. -/
 def followsBootRefusal : FollowsTableState → FollowsBootRefusal
-  | .missingTable => .invalidShape
+  | .missingTable => .internal
   | .stalePolicy => .migrationRequired
 
 /-- The identifiers and behavior reconciled against core when binding a storage registration. -/
@@ -518,17 +449,6 @@ inductive SidecarSessionFilter where
 /-- The mandatory leading filter and optional narrowing inputs of a session read. -/
 def sessionReadFilters : List SidecarSessionFilter := [.ownerFromPermit, .additionalPredicate]
 
-/-- Where an inverse obtains its proof of deleting a cascaded surface. -/
-inductive EraseCompleteness where
-  | declaredConstraint
-  | explicitLeg
-  deriving DecidableEq
-
-/-- A declared cascade constraint removes the need for a generated delete leg. -/
-def needsGeneratedDelete : EraseCompleteness → Bool
-  | .declaredConstraint => false
-  | .explicitLeg => true
-
 /-- The held prerequisites of a scoped payload admission. -/
 inductive ScopeAdmissionStep where
   | canonicalDistinctScopes
@@ -548,17 +468,6 @@ inductive SidecarWriteLeg where
 
 /-- A sidecar write uses one frozen entry and one transaction for both legs. -/
 def sidecarWrite : List SidecarWriteLeg := [.typedRow, .derivedProjection]
-
-/-- A descriptor in the exact name registry does not authorize aliases. -/
-inductive DescriptorName where
-  | exact
-  | alias
-  deriving DecidableEq
-
-/-- The descriptor lookup matches an exact registered name. -/
-def descriptorMatches : DescriptorName → Bool
-  | .exact => true
-  | .alias => false
 
 /-- The data a surface contributes to an owner export. -/
 inductive ExportProjection where
@@ -581,16 +490,5 @@ inductive OwnedHeadColumn where
 
 /-- The declared sidecar Memory key joins the current head under the current owner. -/
 def ownedHeadColumns : List OwnedHeadColumn := [.handle, .exactVersion]
-
-/-- The registration in relation to cited-object deduplication. -/
-inductive DedupeSidecar where
-  | citedObjectSidecar
-  | other
-  deriving DecidableEq
-
-/-- A cited-object sidecar is refused because the current dedupe remapper cannot reach it. -/
-def dedupeSidecarAdmitted : DedupeSidecar → Bool
-  | .citedObjectSidecar => false
-  | .other => true
 
 end Proxiima.Payloads

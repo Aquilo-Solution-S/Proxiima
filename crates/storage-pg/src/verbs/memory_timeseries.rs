@@ -244,10 +244,8 @@ pub(crate) async fn ingest_unpinned_fact_at(
     Ok((outcome, occurred_at))
 }
 
-/// `Proxiima.Payloads.scopeAdmissionOrder`.
-///
 /// The probe is the spiice's declaration made executable — `SELECT
-/// EXISTS(...)` over the registry table, id column and owner columns the
+/// EXISTS(...)` over the registry table, id column and owner column the
 /// [`proxiima_core::ScopeDecl`] names, and nothing storage spelled itself.
 /// It runs IN THIS TRANSACTION, under the fence, which is what turns a
 /// vanished registry row from a race into a settled refusal.
@@ -395,6 +393,7 @@ pub(crate) async fn prepare_memory_admission_at(
     // Under the fence, "is this scope still registered" has one answer for
     // the life of the transaction: an erase that committed first is visible,
     // and one that has not is waiting.
+    // `Proxiima.Payloads.scopeAdmissionOrder`.
     fence_declared_scopes(tx, owner, admission.scopes).await?;
     let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
     // These fences are held through commit, so a whole-owner/source erase

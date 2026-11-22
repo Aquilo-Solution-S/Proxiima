@@ -54,7 +54,6 @@ impl PayloadReference {
     /// Reference a pinned memory row.
     #[must_use]
     pub const fn memory(field: &'static str, kind: MemoryKind, memory_id: MemoryId) -> Self {
-        // `Proxiima.Payloads.ReferenceTarget`.
         Self {
             field,
             binding: ReferenceBinding::Pin,
@@ -65,7 +64,6 @@ impl PayloadReference {
     /// Reference a Goal row.
     #[must_use]
     pub const fn goal(field: &'static str, goal_id: GoalId) -> Self {
-        // `Proxiima.Payloads.ReferenceTarget`.
         Self {
             field,
             binding: ReferenceBinding::Pin,
@@ -78,10 +76,88 @@ impl PayloadReference {
 /// `goal_key`) returns: the canonical spelling of *these are the values
 /// this payload declares*.
 ///
-/// The byte format is part of Fact replay identity. Use a new tag and
-/// schema version to adopt a new spelling. See
-/// `Proxiima.Payloads.receiptMarker`, `Proxiima.Payloads.receiptFieldOrder`
-/// and `Proxiima.Payloads.receiptPresence`.
+/// # Why the encoding is frozen
+///
+/// A receipt key is identity. `receipt_id` folds these bytes, so two
+/// writes that build the same bytes replay onto one Fact and two that
+/// differ mint two. That makes every method here a compatibility
+/// surface: change what an existing one emits and every Fact whose
+/// schema uses it re-mints on next registration, silently and
+/// retroactively. **No existing method's emission may change, byte for
+/// byte.** A new spelling arrives as a new method with a new tag byte,
+/// and a schema adopts it by bumping its `SCHEMA_VERSION` — which is
+/// itself part of the key, so the change is deliberate and dated.
+///
+/// # Encoding
+///
+/// The header, written by [`PayloadKeyBuilder::new`] (`Proxiima.Payloads.receiptMarker`):
+///
+/// ```text
+/// b"PKEY1\0" ‖ u64_be(schema_id.len()) ‖ schema_id ‖ u32_be(schema_version)
+/// ```
+///
+/// Then one frame per declared field, in call order (`Proxiima.Payloads.receiptFieldOrder`):
+///
+/// ```text
+/// u64_be(name.len()) ‖ name ‖ tag ‖ value
+/// ```
+///
+/// There are no separators. Every value is either fixed-width or
+/// length-prefixed, so the concatenation reads back unambiguously and no
+/// field's bytes can be mistaken for the start of the next field's.
+///
+/// # Tags
+///
+/// | Tag | Method | Value bytes |
+/// |---|---|---|
+/// | `s` | [`field_str`](Self::field_str) | `u64_be(len) ‖ utf8` |
+/// | `b` | [`field_bool`](Self::field_bool) | 1 byte, `0` or `1` |
+/// | `1` | [`field_u8`](Self::field_u8) | 1 byte |
+/// | `4` | [`field_u32`](Self::field_u32) | 4 bytes, big-endian |
+/// | `I` | [`field_i32`](Self::field_i32) | 4 bytes, big-endian |
+/// | `L` | [`field_i64`](Self::field_i64) | 8 bytes, big-endian |
+/// | `8` | [`field_u64`](Self::field_u64), [`field_usize`](Self::field_usize) | 8 bytes, big-endian |
+/// | `u` | [`field_uuid`](Self::field_uuid) | 16 raw bytes |
+/// | `B` | [`field_bytes`](Self::field_bytes) | `u64_be(len) ‖ bytes` |
+/// | `t` | [`field_time`](Self::field_time) | 16 bytes, big-endian `unix_timestamp_nanos` |
+/// | `S` | [`field_option_str`](Self::field_option_str) | presence ‖ `s`'s value |
+/// | `O` | [`field_option_bool`](Self::field_option_bool) | presence ‖ `b`'s value |
+/// | `2` | [`field_option_u8`](Self::field_option_u8) | presence ‖ `1`'s value |
+/// | `5` | [`field_option_u32`](Self::field_option_u32) | presence ‖ `4`'s value |
+/// | `i` | [`field_option_i32`](Self::field_option_i32) | presence ‖ `I`'s value |
+/// | `l` | [`field_option_i64`](Self::field_option_i64) | presence ‖ `L`'s value |
+/// | `9` | [`field_option_u64`](Self::field_option_u64), [`field_option_usize`](Self::field_option_usize) | presence ‖ `8`'s value |
+/// | `U` | [`field_option_uuid`](Self::field_option_uuid) | presence ‖ `u`'s value |
+/// | `C` | [`field_option_bytes`](Self::field_option_bytes) | presence ‖ `B`'s value |
+/// | `T` | [`field_option_time`](Self::field_option_time) | presence ‖ `t`'s value |
+/// | `[` | [`field_str_list`](Self::field_str_list), [`field_uuid_list`](Self::field_uuid_list), [`list`](Self::list) | `u64_be(count)` ‖ elements |
+///
+/// Under `Proxiima.Payloads.receiptPresence`, a presence byte is `1` followed by the value's own bytes, or the
+/// single byte `0` and nothing after it.
+///
+/// # The invariant
+///
+/// Two payloads produce the same key **iff** they declare the same
+/// values. The builder exists so every schema inherits that property
+/// from one place instead of re-deriving it, and so the property can be
+/// tested once.
+///
+/// Optional fields are where it is easiest to lose, so every option kind
+/// has a blessed spelling and three distinct byte sequences:
+///
+/// - the field is **never declared** — no frame at all;
+/// - the field is declared **`None`** — the frame, then presence `0`;
+/// - the field is declared **`Some(default)`** — the frame, then
+///   presence `1`, then the default value's own bytes.
+///
+/// Those are three different statements about the world and they are
+/// three different identities. A hand-rolled absence encoding collapses
+/// at least two of them: spelling a missing string as `""` makes `None`
+/// and `Some("")` one Fact; skipping the field when it is `None` makes
+/// *not asked* and *known to be absent* one Fact, and leaves the key of
+/// a payload with two optional fields depending on which of them was
+/// absent. Use the `field_option_*` methods; replacing those inventions
+/// is what they are for.
 #[derive(Debug, Clone)]
 pub struct PayloadKeyBuilder {
     bytes: Vec<u8>,
@@ -151,6 +227,7 @@ impl PayloadKeyBuilder {
         let mut this = Self {
             bytes: HEADER.to_vec(),
         };
+        // The header frames the schema ID before writing the big-endian version.
         this.raw_str(schema_id);
         this.bytes.extend_from_slice(&schema_version.to_be_bytes());
         this
