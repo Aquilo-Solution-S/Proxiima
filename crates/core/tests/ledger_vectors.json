@@ -1136,11 +1136,6 @@
   {"out": "later", "in": ["omitted", "supplied"]},
   {"out": "earlier", "in": ["supplied", "omitted"]},
   {"out": "later", "in": ["supplied", "supplied"]}],
- "Proxiima.Composition.serviceVisibility":
- [{"out": "hostSupplied", "in": ["construction"]},
-  {"out": "composed", "in": ["running"]}],
- "Proxiima.Composition.serviceAdmission":
- [{"out": "duplicate", "in": [true]}, {"out": "insert", "in": [false]}],
  "Proxiima.Composition.schemaIdentity":
  [{"out": ["id", "version", "kind"], "in": ["registration"]},
   {"out": ["kind", "id"], "in": ["persistedMemory"]}],
@@ -1148,9 +1143,6 @@
  [{"out": "lowercase", "in": ["storeName"]},
   {"out": "lowercase", "in": ["lookupName"]},
   {"out": "namesOnly", "in": ["debug"]}],
- "Proxiima.Composition.registrySource":
- [{"out": "linkedBundles", "in": ["registration"]},
-  {"out": "validatedFreeze", "in": ["serving"]}],
  "Proxiima.Composition.registersBundleSidecar":
  [{"out": true, "in": [{"entity": ["Fact"]}]},
   {"out": true, "in": [{"entity": ["Abstraction"]}]},
@@ -1166,7 +1158,7 @@
  "Proxiima.Composition.prefixSyntax":
  [{"out": "slash", "in": ["typedSchema"]},
   {"out": "slash", "in": ["opaqueCitation"]},
-  {"out": "slashOrUnderscore", "in": ["tool"]}],
+  {"out": "underscore", "in": ["tool"]}],
  "Proxiima.Composition.prefixCheck":
  [{"out": "compileTime", "in": ["typedSchema"]},
   {"out": "registration", "in": ["opaqueCitation"]},
@@ -1204,8 +1196,6 @@
   {"out": true, "in": ["subsequent", "asciiDigit"]},
   {"out": true, "in": ["subsequent", "hyphen"]},
   {"out": false, "in": ["subsequent", "other"]}],
- "Proxiima.Composition.appVersionSource":
- [{"out": "explicit", "in": [true]}, {"out": "invokingPackage", "in": [false]}],
  "Proxiima.Authentication.subjectAdmission":
  [{"out": "allow", "in": [true, true]},
   {"out": "refuse", "in": [true, false]},

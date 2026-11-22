@@ -129,6 +129,24 @@ async fn register_host_notebook(
     .await
     .expect("a registers");
     tx.commit().await.expect("commit");
+
+    let mut tx = tables.begin(both, owner_a).await.expect("served owner");
+    let refused = tx
+        .execute(
+            sqlx::query(INSERT_NOTEBOOK_SQL)
+                .bind(Uuid::now_v7())
+                .bind(owner_b.into_inner())
+                .bind("b's"),
+        )
+        .await
+        .expect_err("the owner policy refuses writing another owner's row");
+    assert!(
+        matches!(&refused, proxiima::StorageError::Internal(message)
+            if message.contains("row-level security policy")),
+        "{refused:?}"
+    );
+    drop(tx);
+
     for (owner, expected) in [(owner_a, vec![notebook_a]), (owner_b, vec![])] {
         let mut transaction = tables.begin(both, owner).await.expect("served owner");
         let rows: Vec<Uuid> = transaction
@@ -142,6 +160,13 @@ async fn register_host_notebook(
     }
     assert!(matches!(
         tables.begin(authz_a, owner_b).await,
+        Err(proxiima::StorageError::Forbidden(_))
+    ));
+    let expired = authz_a
+        .clone()
+        .with_expires_at(Some(std::time::SystemTime::UNIX_EPOCH));
+    assert!(matches!(
+        tables.begin(&expired, owner_a).await,
         Err(proxiima::StorageError::Forbidden(_))
     ));
     notebook_a

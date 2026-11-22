@@ -6,6 +6,7 @@ pub use proxiima_core::catalog::parse_wire_uuid;
 pub use proxiima_core::{memory_store_number, new_memory_uuid};
 
 pub use crate::app::{AppContext, AppInfo, Authz, SpiiceApp};
+pub use crate::connected_storage::{ConnectedStorage, StorageUploadSweeper};
 pub use crate::core_mcp::{CoreMcpError, CoreMcpErrorKind, CoreMcpTools, CoreToolInfo};
 pub use crate::features::FeatureControl;
 pub use crate::features::{BootReport, Feature, FeatureDecision, FeatureState};
@@ -609,19 +610,9 @@ pub use proxiima_server::{ScopeToken, ScopeTokenError};
 /// What [`ProxiimaHost::host_state_erase_context_for_host`] returns. Opaque and
 /// authority-free: it grants no erase by itself.
 pub use proxiima_storage_pg::PgHostStateEraseContext;
-/// The serving storage [`StorageProxiima::connect_storage`] returns. Host API only:
-/// the Spiice SDK has no storage handle.
-pub use proxiima_storage_pg::PgStorage;
 /// Trusted host owner registration on its platform transaction. This performs
 /// no authorization or transaction control; the host vouches for the write.
 pub use proxiima_storage_pg::access::owner_registry::ensure_owner_row;
-/// Begin a transaction under the caller's [`OwnerScope`] on a host-owned pool.
-///
-/// Every statement of the operation runs on the returned transaction, since
-/// pool queries do not inherit its scope. Runtime extra-table adapters use
-/// [`ProxiimaHost::owner_transactions_for_host`]. Fact and state writes go
-/// through [`UnitOfWork`] and [`UnitOfWork::apply_host_state`].
-pub use proxiima_storage_pg::begin_owner_transaction;
 /// Compare the stored core definitions with this binary, optionally under the
 /// host's [`MissingMigrationPolicy`]. These inspect the caller's connection.
 pub use proxiima_storage_pg::definitions::{
@@ -645,10 +636,9 @@ pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
     memories_citing, memory_embeddings, memory_versions, series_versions,
 };
-/// What [`PgStorage::owner_transactions`] returns and what its transactions
-/// run. The runtime publishes the service to every tool call; a spiice
-/// begins its transaction through [`crate::spiice::owner_transaction`].
-pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction, OwnerTransactions};
+/// What [`HostOwnerTransactions::begin`] returns and what those transactions
+/// run. A spiice begins its transaction through [`crate::spiice::owner_transaction`].
+pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction};
 /// Owner-RLS boot: the runtime-role guard, the platform scope
 /// [`ProxiimaHost::platform_scope_for_host`] returns, and the sqlx →
 /// [`StorageError`] classifier for host-state SQL.
@@ -684,11 +674,10 @@ pub use {
         sidecars::PgSidecarReadCtx, sidecars::SidecarInsertPermit, sidecars::SidecarOwnerMode,
     },
 };
-/// What [`PgStorage`]'s public methods take and return beyond the migration
-/// helpers: the cold store, the owner and scope surfaces, the maintenance leases,
-/// change-log pruning and cold-purge retry options and outcomes, and the host
-/// state erase selection [`HostStateEraseReceipt`] carries. Host API only, like
-/// [`PgStorage`].
+/// Maintenance leases and cold-purge retry options and outcomes for
+/// [`ConnectedStorage`]. Backend adapters also use the cold store, owner and
+/// scope surfaces, change-log pruning and the host-state erase selection
+/// [`HostStateEraseReceipt`] carries.
 pub use {
     proxiima_core::{
         ColdObjectStore, ObjectStoreId, PurgeDeleted, owner_inverse::CascadedDetail,

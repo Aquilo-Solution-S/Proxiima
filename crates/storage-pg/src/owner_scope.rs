@@ -106,7 +106,7 @@ fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
 
 fn refuse_expired(scope: &OwnerScope) -> Result<(), StorageError> {
     if scope.is_expired() {
-        return Err(StorageError::ConstraintViolation(
+        return Err(StorageError::Forbidden(
             "authenticated owner scope has expired".into(),
         ));
     }

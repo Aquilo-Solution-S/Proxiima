@@ -16,7 +16,7 @@ default = []
 # Serve the example as a `proxiima` app (`SpiiceApp`, through
 # `proxiima::spiice_app!`): the host tier, for the hosts and tools that boot it.
 host = ["dep:proxiima"]
-testkit = ["host"]
+testkit = ["host", "proxiima/testkit"]
 
 [dependencies]
 proxiima-spiice = { path = "../../crates/proxiima-spiice" }

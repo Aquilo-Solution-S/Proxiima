@@ -509,31 +509,6 @@ stateDiagram-v2
 
 ## Composition
 
-**Registry stage**: Which stage of composition owns the registry.
-
-- registration
-- serving
-
-**Registry source**: What supplies each stage's registry.
-
-- linkedBundles
-- validatedFreeze
-
-**Service admission**: The result of admitting a concrete service type.
-
-- insert
-- duplicate
-
-**Service phase**: Which service set application composition exposes.
-
-- construction
-- running
-
-**Service visibility**: The visibility of services in application code.
-
-- hostSupplied
-- composed
-
 **Header supplier**: The supplier of a request header service.
 
 - boot
@@ -560,7 +535,7 @@ stateDiagram-v2
 **Prefix syntax**: What a registration accepts after the spiice prefix.
 
 - slash
-- slashOrUnderscore
+- underscore
 
 **Prefix check**: Where registration checks a declared name's prefix.
 
@@ -587,7 +562,7 @@ stateDiagram-v2
 - surfaceReachability
 - lifecycleLegs
 
-**Core declaration refusal**: Refusals for substrate-only declarations, identified by `Proxiima.Payloads.coreOrdinal`.
+**Core declaration refusal**: Refusals for substrate-only declarations.
 
 - resources
 - kernelSurfaces
@@ -603,11 +578,6 @@ stateDiagram-v2
 - asciiDigit
 - hyphen
 - other
-
-**App version source**: The source of an application version when using the app macro.
-
-- invokingPackage
-- explicit
 
 **Core command**: Ways the canonical app composes the core.
 
@@ -645,28 +615,6 @@ stateDiagram-v2
 
 **natural key agreement** = \[matchingSchemaIdWhenPresent, uniqueColumns, matchesTypedRegistration]: Natural key agreement requires unique columns and the registered typed declaration.
 
-| registry stage | registry source |
-| --- | --- |
-| registration | linkedBundles |
-| serving | validatedFreeze |
-
-- registry source: Linked code registers at boot and only a validated registry serves calls.
-
-| bool | service admission | app version source |
-| --- | --- | --- |
-| yes | duplicate | explicit |
-| no | insert | invokingPackage |
-
-- service admission: An already present concrete service type is refused before insertion.
-- app version source: The app macro uses the invoking Cargo package version when the caller omits an override.
-
-| service phase | service visibility |
-| --- | --- |
-| construction | hostSupplied |
-| running | composed |
-
-- service visibility: Service factories see the supplied set and routes, tools and workers see the composed set.
-
 | header supplier | may supply request headers |
 | --- | --- |
 | boot | no |
@@ -697,10 +645,10 @@ stateDiagram-v2
 | --- | --- | --- |
 | typedSchema | slash | compileTime |
 | opaqueCitation | slash | registration |
-| tool | slashOrUnderscore | compileTime |
+| tool | underscore | compileTime |
 
-- prefix syntax: Declared schema names are slash-prefixed and declared tools also accept underscore.
-- prefix check: A typed schema or tool name is checked at compile time and opaque expressions at registration.
+- prefix syntax: Declared schema names are slash-prefixed and declared tools are underscore-prefixed.
+- prefix check: Typed schemas and tool names are checked at compile time, and opaque IDs at registration.
 
 | schema identity use | schema identity |
 | --- | --- |

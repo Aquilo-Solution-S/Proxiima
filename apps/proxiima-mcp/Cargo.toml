@@ -11,7 +11,7 @@ publish = false
 proxiima-core = { path = "../../crates/core" }
 proxiima-llm-openai-compat = { path = "../../crates/llm-openai-compat" }
 proxiima-blob-s3 = { path = "../../crates/blob-s3" }
-proxiima-storage-pg = { path = "../../crates/storage-pg", features = ["backend-api"] }
+proxiima-storage-pg = { path = "../../crates/storage-pg" }
 proxiima = { path = "../../crates/proxiima" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 time = { workspace = true }

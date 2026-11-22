@@ -470,7 +470,7 @@ pub(crate) fn compose_registry<A: SpiiceBundle>(
     publish_goal_changes: bool,
 ) -> Result<proxiima_core::SpiiceRegistryFrozen, ProxiimaError> {
     let mut registry = SpiiceRegistry::new();
-    // `Proxiima.Composition.registrySource`.
+    // Linked bundles register first, and only the validated registry serves calls.
     A::register(&mut registry)?;
     if publish_goal_changes {
         registry.publish_goal_changes();
@@ -529,27 +529,25 @@ fn compose_blob_stores(
     pg: PgStorage,
     s3: Option<proxiima_blob_s3::S3RuntimeConfig>,
 ) -> Result<(PgStorage, Option<CitedBlobStore>), ProxiimaError> {
-    let blobs = s3
-        .map(|s3| {
-            CitedBlobStore::new(
-                pg.clone_pool_for_backend(),
-                s3,
-                pg.platform_scope_for_host(),
-            )
-        })
-        .transpose()
-        .map_err(|error| ProxiimaError::Config(error.to_string()))?;
-    let pg = wire_cold_store(pg, blobs.as_ref())?;
-    Ok((pg, blobs))
+    match s3 {
+        Some(s3) => {
+            let (pg, blobs) = connect_blob_store(pg, s3)?;
+            Ok((pg, Some(blobs)))
+        }
+        None => Ok((pg, None)),
+    }
 }
 
-fn wire_cold_store(
+pub(crate) fn connect_blob_store(
     pg: PgStorage,
-    blobs: Option<&CitedBlobStore>,
-) -> Result<PgStorage, ProxiimaError> {
-    let Some(store) = blobs else {
-        return Ok(pg);
-    };
+    s3: proxiima_blob_s3::S3RuntimeConfig,
+) -> Result<(PgStorage, CitedBlobStore), ProxiimaError> {
+    let store = CitedBlobStore::new(
+        pg.clone_pool_for_backend(),
+        s3,
+        pg.platform_scope_for_host(),
+    )
+    .map_err(|error| ProxiimaError::Config(error.to_string()))?;
     let cold = store.cold_store();
     // Assert the composition the purge queue's `object_store` column
     // depends on. Upload rows and every debt copied from them record the
@@ -565,7 +563,7 @@ fn wire_cold_store(
             store.store_id(),
         )));
     }
-    Ok(pg.with_cold(Arc::new(cold)))
+    Ok((pg.with_cold(Arc::new(cold)), store))
 }
 
 /// Compose the engine over the frozen registry and wired storage, attaching

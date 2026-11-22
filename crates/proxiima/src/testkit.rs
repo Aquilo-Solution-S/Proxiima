@@ -8,6 +8,16 @@
 
 pub use proxiima_pg_testkit::*;
 
+/// Begin a transaction under the caller's owner scope on a host-owned pool.
+///
+/// For host or test use only, in authorized extra-table adapters. Run no
+/// `proxiima_core.*` SQL through it. This is not a Spiice SDK name.
+/// Every statement runs on the returned transaction; pool queries do not
+/// inherit its scope. Host runtime adapters use
+/// [`crate::HostOwnerTransactions`]. Fact and state writes go through
+/// [`crate::UnitOfWork`] and [`crate::UnitOfWork::apply_host_state`].
+pub use proxiima_storage_pg::begin_owner_transaction;
+
 /// A verified owner scope over several named owners (admin on each), for
 /// spiice tests that read across owners.
 pub use proxiima_core::test_fixtures::owner_scope_for_tests;

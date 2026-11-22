@@ -22,7 +22,8 @@ use proxiima_server::{
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::boot::Booted;
+use crate::boot::{Booted, ValidatedStorage};
+use crate::connected_storage::{ConnectedStorage, StorageUploadSweeper};
 use crate::features::{
     BootReport, Feature, FeatureControl, FeatureDecision, FeatureInputs, Features,
 };
@@ -283,7 +284,6 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
                 pool: booted.pool.clone(),
                 owner_transactions: booted.storage.owner_transactions(),
                 platform_scope: booted.platform_scope.clone(),
-                pg_tuning: config.storage.pg_tuning,
                 pg_sidecars: booted.pg_sidecars.clone(),
                 erase_context: booted.erase_context.clone(),
                 origin_scope: booted.origin_scope,
@@ -441,12 +441,42 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
     /// Returns config errors, [`ProxiimaError::MigrationRequired`] for a
     /// database [`Self::migrate`] has not brought to this binary,
     /// [`ProxiimaError::SchemaResetRequired`], and storage errors.
-    pub async fn connect_storage(&self) -> Result<proxiima_storage_pg::PgStorage, ProxiimaError> {
+    pub async fn connect_storage(&self) -> Result<ConnectedStorage, ProxiimaError> {
+        Ok(ConnectedStorage(
+            self.connect_validated_storage().await?.storage,
+        ))
+    }
+
+    /// Connect validated storage and wire one S3 store for upload expiry and purge.
+    ///
+    /// # Errors
+    /// Returns the errors of [`Self::connect_storage`] and configuration errors
+    /// from wiring the object store.
+    pub async fn connect_storage_with_s3(
+        &self,
+        s3: crate::S3RuntimeConfig,
+    ) -> Result<(ConnectedStorage, StorageUploadSweeper), ProxiimaError> {
+        let ValidatedStorage {
+            storage, registry, ..
+        } = self.connect_validated_storage().await?;
+        let (storage, blobs) = crate::boot::connect_blob_store(storage, s3)?;
+        // The one-shot command owns the authority of the engine it composes.
+        let (_, authority) =
+            crate::Engine::new(registry, Arc::new(storage.clone()).storage_ports())
+                .into_system_authority();
+        blobs
+            .bind_system_authority(&authority)
+            .map_err(|error| ProxiimaError::Config(error.to_string()))?;
+        Ok((
+            ConnectedStorage(storage),
+            StorageUploadSweeper { blobs, authority },
+        ))
+    }
+
+    async fn connect_validated_storage(&self) -> Result<ValidatedStorage, ProxiimaError> {
         let (config, parts) = self.resolve()?;
         let registry = crate::boot::compose_registry::<A>(false)?;
-        Ok(crate::boot::connect_storage::<A>(&config, &parts, registry)
-            .await?
-            .storage)
+        crate::boot::connect_storage::<A>(&config, &parts, registry).await
     }
 }
 
@@ -1068,7 +1098,7 @@ fn assemble_services<A: SpiiceApp>(
 ) -> Result<SpiiceServices, ProxiimaError> {
     let host = app_ctx.host();
     let mut services = host.services.clone();
-    // `Proxiima.Composition.serviceVisibility`.
+    // The service hook sees the host-provided set; the composed set serves routes, tools and workers.
     services.try_extend(A::services(app_ctx)?)?;
     debug_assert!(
         services

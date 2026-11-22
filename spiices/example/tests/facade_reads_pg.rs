@@ -42,7 +42,7 @@ async fn a_receipt_is_read_on_the_caller_transaction_and_a_unit_has_no_job_row()
         .await
         .expect("admitted");
 
-    let mut tx = proxiima::begin_owner_transaction(&runtime, scope)
+    let mut tx = proxiima::testkit::begin_owner_transaction(&runtime, scope)
         .await
         .expect("caller transaction");
     lock_scope_fence_shared_tx(&mut tx, NOTEBOOK_SCOPE, &owner, notebook_id)
@@ -78,7 +78,7 @@ async fn a_receipt_is_read_on_the_caller_transaction_and_a_unit_has_no_job_row()
 
     let other = company_owner(Uuid::now_v7());
     let other_scope = proxiima::testkit::owner_scope_for_tests(&[other]);
-    let mut other_tx = proxiima::begin_owner_transaction(&runtime, &other_scope)
+    let mut other_tx = proxiima::testkit::begin_owner_transaction(&runtime, &other_scope)
         .await
         .expect("other owner transaction");
     let hidden = ingest_receipt(&mut other_tx, &owner, &source_id, &ingest_key)
@@ -131,7 +131,7 @@ async fn the_typed_owner_reads_are_spiice_names_on_the_caller_transaction() {
         .await
         .expect("admitted");
 
-    let mut tx = proxiima::begin_owner_transaction(&runtime, scope)
+    let mut tx = proxiima::testkit::begin_owner_transaction(&runtime, scope)
         .await
         .expect("caller transaction");
     let versions = memory_versions(&mut tx, &owner, &[memory_id])

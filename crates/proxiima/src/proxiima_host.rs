@@ -10,7 +10,7 @@ use proxiima_core::{
 };
 use proxiima_storage_pg::{
     OwnerTransaction, OwnerTransactions, PgHostStateEraseContext, PgPlatformScope,
-    PgSidecarRegistryFrozen, PgTuning,
+    PgSidecarRegistryFrozen,
 };
 use sqlx::PgPool;
 
@@ -31,7 +31,6 @@ pub struct ProxiimaHost {
     pub(crate) pool: PgPool,
     pub(crate) owner_transactions: OwnerTransactions,
     pub(crate) platform_scope: PgPlatformScope,
-    pub(crate) pg_tuning: PgTuning,
     pub(crate) pg_sidecars: Arc<PgSidecarRegistryFrozen>,
     pub(crate) erase_context: PgHostStateEraseContext,
     pub(crate) origin_scope: OriginScope,
@@ -50,12 +49,16 @@ pub struct ProxiimaHost {
 pub struct HostOwnerTransactions(OwnerTransactions);
 
 impl HostOwnerTransactions {
+    pub(crate) const fn new(transactions: OwnerTransactions) -> Self {
+        Self(transactions)
+    }
+
     /// Bind the caller's authority for the served owner before opening a transaction.
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::Forbidden`] when the context cannot serve the owner.
-    /// Propagates scope expiry and database errors from [`OwnerTransactions::begin`].
+    /// [`Forbidden`](StorageError::Forbidden) when the context cannot serve the owner or has expired.
+    /// Propagates database errors.
     pub async fn begin(
         &self,
         caller: &AuthzContext,
@@ -111,13 +114,7 @@ impl ProxiimaHost {
     /// Atomic writes alongside a Fact use [`crate::UnitOfWork::apply_host_state`].
     #[must_use]
     pub fn owner_transactions_for_host(&self) -> HostOwnerTransactions {
-        HostOwnerTransactions(self.owner_transactions.clone())
-    }
-
-    /// Host-resolved Postgres query tuning for a host storage adapter.
-    #[must_use]
-    pub const fn pg_tuning_for_host(&self) -> PgTuning {
-        self.pg_tuning
+        HostOwnerTransactions::new(self.owner_transactions.clone())
     }
 
     /// The platform scope boot validated.
@@ -207,7 +204,6 @@ impl ProxiimaHost {
             pool: PgPool::connect_lazy_with(sqlx::postgres::PgConnectOptions::new()),
             owner_transactions: OwnerTransactions::for_tests(),
             platform_scope: PgPlatformScope::for_tests(),
-            pg_tuning: PgTuning::default(),
             pg_sidecars: Arc::default(),
             erase_context: PgHostStateEraseContext::for_surfaces_for_tests(
                 proxiima_core::owner_inverse::OwnerSurfaces::from_surfaces(Vec::new()),

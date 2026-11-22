@@ -1,10 +1,10 @@
 //! Isolate each freeze refusal and its accepted twin so the fixture identifies the deciding rule.
 
 use super::fixtures::{
-    CITATION_WITH_A_SIDECAR, DECLARES_A_RESOURCE, DUPLICATE_ORDINAL, DuplicateKeyFact, EMPTY,
-    FIXTURE_ACTIONS, FIXTURE_EFFECT, FIXTURE_SPIICE, FOREIGN_SCHEMA, SameKeyDifferentKindFact,
-    SameKeyDifferentTypeFact, TAG_WITHOUT_MEMORY_SURFACE, TOOL_AGREES, UNENFORCED_REFUSAL,
-    UNREGISTERED_SCHEMA, UNREGISTERED_TOOL, register_fixture_schema,
+    CITATION_WITH_A_SIDECAR, DECLARES_A_RESOURCE, DECLARES_RESOURCE_AND_KERNEL, DUPLICATE_ORDINAL,
+    DuplicateKeyFact, EMPTY, FIXTURE_ACTIONS, FIXTURE_EFFECT, FIXTURE_SPIICE, FOREIGN_SCHEMA,
+    SameKeyDifferentKindFact, SameKeyDifferentTypeFact, TAG_WITHOUT_MEMORY_SURFACE, TOOL_AGREES,
+    UNENFORCED_REFUSAL, UNREGISTERED_SCHEMA, UNREGISTERED_TOOL, register_fixture_schema,
     register_fixture_schema_of_kind, register_fixture_schema_with_key, register_fixture_tool,
     register_uniformity_schemas, registration_without_a_contract,
 };
@@ -47,6 +47,18 @@ fn freeze_refuses_kernel_surfaces_from_linked_spiices() {
     assert!(matches!(
         registry.try_freeze(),
         Err(SpiiceRegistryError::KernelSurfacesNotPermitted {
+            spiice_id: FIXTURE_SPIICE
+        })
+    ));
+}
+
+#[test]
+fn freeze_refuses_resources_before_kernel_surfaces() {
+    let mut registry = SpiiceRegistry::new();
+    registry.contracts.push(&DECLARES_RESOURCE_AND_KERNEL);
+    assert!(matches!(
+        registry.try_freeze(),
+        Err(SpiiceRegistryError::ResourcesNotPermitted {
             spiice_id: FIXTURE_SPIICE
         })
     ));

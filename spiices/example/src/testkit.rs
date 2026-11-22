@@ -25,7 +25,7 @@ pub async fn register_notebook(
     name: &str,
 ) -> Result<Uuid, Box<dyn std::error::Error + Send + Sync>> {
     let notebook_id = Uuid::now_v7();
-    let mut tx = proxiima::host::begin_owner_transaction(pool, scope).await?;
+    let mut tx = proxiima::testkit::begin_owner_transaction(pool, scope).await?;
     sqlx::query(REGISTER_NOTEBOOK_SQL)
         .bind(notebook_id)
         .bind(owner.into_inner())
@@ -214,7 +214,7 @@ async fn erase_notebook_once(
 ) -> Result<(u64, bool), (u64, Attempt)> {
     let mut erased = 0_u64;
     let registered = {
-        let mut tx = proxiima::host::begin_owner_transaction(pool, scope)
+        let mut tx = proxiima::testkit::begin_owner_transaction(pool, scope)
             .await
             .map_err(|err| (0, Attempt::Fatal(err.to_string())))?;
         let row: Option<(Uuid,)> = sqlx::query_as(NOTEBOOK_REGISTERED_SQL)
@@ -272,7 +272,7 @@ async fn find_notebook_rows(
     notebook_id: Uuid,
     limit: usize,
 ) -> Result<Vec<Uuid>, Attempt> {
-    let mut tx = proxiima::host::begin_owner_transaction(pool, scope)
+    let mut tx = proxiima::testkit::begin_owner_transaction(pool, scope)
         .await
         .map_err(|err| Attempt::Fatal(err.to_string()))?;
     let found: Vec<Uuid> = sqlx::query_scalar(FIND_NOTEBOOK_ROWS_SQL)
@@ -331,7 +331,7 @@ async fn retire_notebook(
     owner: OwnerId,
     notebook_id: Uuid,
 ) -> Result<bool, Attempt> {
-    let mut tx = proxiima::host::begin_owner_transaction(pool, scope)
+    let mut tx = proxiima::testkit::begin_owner_transaction(pool, scope)
         .await
         .map_err(|err| Attempt::Fatal(err.to_string()))?;
     sqlx::query(ERASE_LOCK_TIMEOUT_SQL)

@@ -254,7 +254,7 @@ to a host's admission boundary ([operate](operate.md#probes-and-shutdown)).
 With an object store configured, the runtime sweeps expired uploads and drains
 object-purge debt itself (`RuntimeBuilder::object_purge_interval`, default 60
 seconds, zero turns it off); a host built on the runtime writes no code for it.
-A library host that composes `PgStorage` and `CitedBlobStore` without the
+A library host that composes `proxiima_storage_pg::PgStorage` and `CitedBlobStore` without the
 runtime calls `proxiima::object_maintenance_pass` on a cadence no longer than
 the upload TTL. The pass takes the same storage maintenance lease as the
 runtime and `maintain-storage`, and skips when another pass holds it. Both
@@ -783,8 +783,9 @@ predicate on `origins` or `refs` does not use their GIN indexes under owner
 row security, on the view or on the table; search goes through
 `core_search_memories`.
 
-The transaction reads take the `Transaction` the caller holds, opened by
-`begin_owner_transaction`, and never open their own. Row security on that
+The transaction reads take the `Transaction` the caller holds and never
+open their own. A fixture can open one with
+`proxiima::testkit::begin_owner_transaction`. Row security on that
 transaction decides visibility whichever owner the argument names: a
 forgotten memory and another owner's memory are absent.
 

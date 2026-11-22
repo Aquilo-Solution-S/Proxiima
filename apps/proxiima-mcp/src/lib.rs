@@ -9,7 +9,7 @@ pub use args::{
     parse_maintain_blobs_args, parse_migrate_args, parse_storage_maintenance_args, usage,
 };
 
-use proxiima_blob_s3::{BlobError, CitedBlobStore, S3RuntimeConfig};
+use proxiima_blob_s3::{BlobError, S3RuntimeConfig};
 
 use std::collections::{BTreeSet, HashSet};
 use std::num::NonZeroU32;
@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use proxiima::spiice::SpiiceBundle;
 use proxiima::{
-    AppContext, AppInfo, EmbeddingRuntimePolicy, Proxiima, ProxiimaError, RunningProxiima,
-    RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices, StorageProxiima,
-    embedding_runtime_policy_from_lookup,
+    AppContext, AppInfo, ConnectedStorage, EmbeddingRuntimePolicy, Proxiima, ProxiimaError,
+    RunningProxiima, RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices,
+    StorageProxiima, StorageUploadSweeper, embedding_runtime_policy_from_lookup,
 };
 use proxiima_core::embedding::{
     BoundEmbeddingClient, QueryInstruction, QueryInstructions, QueryTask, SingleClientRouter,
@@ -32,7 +32,7 @@ use proxiima_core::{
 use proxiima_llm_openai_compat::OpenAiCompatEmbeddingClient;
 use proxiima_storage_pg::{
     ColdPurgeRetryOptions, ColdPurgeRetryOutcome, EmbeddingReconcileOptions,
-    EmbeddingReconcileScope, PgStorage,
+    EmbeddingReconcileScope,
 };
 
 use settings::{
@@ -527,30 +527,12 @@ async fn run_maintain_storage(
         })
         .transpose()?;
 
-    let storage = maintenance_app(config.database_url.clone(), lookup)
-        .connect_storage()
-        .await?;
-
+    let app = maintenance_app(config.database_url.clone(), lookup);
     let (storage, sweeper) = if let Some(s3) = s3 {
-        let registry = build_frozen_registry()?;
-        let blobs = CitedBlobStore::new(
-            storage.clone_pool_for_backend(),
-            s3,
-            storage.platform_scope_for_host(),
-        )
-        .map_err(|err| ProxiimaError::Config(err.to_string()))?;
-        // This command is its own boot: its engine's authority is the one
-        // the store answers host-wide operations to.
-        let (_, authority) =
-            proxiima::Engine::new(registry, Arc::new(storage.clone()).storage_ports())
-                .into_system_authority();
-        blobs
-            .bind_system_authority(&authority)
-            .map_err(|err| ProxiimaError::Config(err.to_string()))?;
-        let storage = storage.with_cold(Arc::new(blobs.cold_store()));
-        (storage, Some((blobs, authority)))
+        let (storage, sweeper) = app.connect_storage_with_s3(s3).await?;
+        (storage, Some(sweeper))
     } else {
-        (storage, None)
+        (app.connect_storage().await?, None)
     };
 
     let Some(lock) = storage
@@ -575,14 +557,14 @@ async fn run_maintain_storage(
 /// The steps of one storage-maintenance pass, run under its lease.
 async fn storage_maintenance_steps(
     config: &StorageMaintenanceConfig,
-    storage: &PgStorage,
-    sweeper: Option<&(CitedBlobStore, proxiima_core::authz::SystemAuthority)>,
+    storage: &ConnectedStorage,
+    sweeper: Option<&StorageUploadSweeper>,
     lock: &proxiima_storage_pg::StorageMaintenanceLock,
 ) -> Result<(), CliError> {
     let dry_run_suffix = if config.dry_run { " (dry-run)" } else { "" };
 
     if config.sweep_expired_uploads {
-        let (blobs, authority) = sweeper.ok_or_else(|| {
+        let sweeper = sweeper.ok_or_else(|| {
             ProxiimaError::Config("the expired-upload sweep needs the PROXIIMA_S3_* block".into())
         })?;
         let limit = config.batch_size.get();
@@ -592,8 +574,8 @@ async fn storage_maintenance_steps(
             lock.renew()
                 .await
                 .map_err(|err| ProxiimaError::Storage(err.into()))?;
-            let batch = blobs
-                .sweep_expired_uploads(authority, limit)
+            let batch = sweeper
+                .sweep_expired_uploads(limit)
                 .await
                 .map_err(|err| ProxiimaError::Storage(err.into()))?;
             expired += batch.expired;
@@ -829,6 +811,7 @@ fn resolve_served_surface(
     let registered_ids = registered.all.as_slice();
     let allow = parse_tool_id_csv(allow_raw, &PROXIIMA_TOOL_ALLOW)?;
     let deny = parse_tool_id_csv(deny_raw, &PROXIIMA_TOOL_DENY)?;
+    // `Proxiima.Composition.profileDenial`.
     reject_unknown_tool_ids(&allow, registered_ids, &PROXIIMA_TOOL_ALLOW)?;
     reject_unknown_tool_ids(&deny, registered_ids, &PROXIIMA_TOOL_DENY)?;
     // PROXIIMA_TOOL_DENY refuses any mandatory served read.

@@ -5,51 +5,6 @@ import Proxiima.Payloads
 
 namespace Proxiima.Composition
 
-/-- Which stage of composition owns the registry. -/
-inductive RegistryStage where
-  | registration
-  | serving
-  deriving DecidableEq
-
-/-- What supplies each stage's registry. -/
-inductive RegistrySource where
-  | linkedBundles
-  | validatedFreeze
-  deriving DecidableEq
-
-/-- Linked code registers at boot and only a validated registry serves calls. -/
-def registrySource : RegistryStage → RegistrySource
-  | .registration => .linkedBundles
-  | .serving => .validatedFreeze
-
-/-- The result of admitting a concrete service type. -/
-inductive ServiceAdmission where
-  | insert
-  | duplicate
-  deriving DecidableEq
-
-/-- An already present concrete service type is refused before insertion. -/
-def serviceAdmission : (alreadyPresent : Bool) → ServiceAdmission
-  | false => .insert
-  | true => .duplicate
-
-/-- Which service set application composition exposes. -/
-inductive ServicePhase where
-  | construction
-  | running
-  deriving DecidableEq
-
-/-- The visibility of services in application code. -/
-inductive ServiceVisibility where
-  | hostSupplied
-  | composed
-  deriving DecidableEq
-
-/-- Service factories see the supplied set and routes, tools and workers see the composed set. -/
-def serviceVisibility : ServicePhase → ServiceVisibility
-  | .construction => .hostSupplied
-  | .running => .composed
-
 /-- The supplier of a request header service. -/
 inductive HeaderSupplier where
   | boot
@@ -95,13 +50,13 @@ inductive RegisteredName where
 /-- What a registration accepts after the spiice prefix. -/
 inductive PrefixSyntax where
   | slash
-  | slashOrUnderscore
+  | underscore
   deriving DecidableEq
 
-/-- Declared schema names are slash-prefixed and declared tools also accept underscore. -/
+/-- Declared schema names are slash-prefixed and declared tools are underscore-prefixed. -/
 def prefixSyntax : RegisteredName → PrefixSyntax
   | .typedSchema | .opaqueCitation => .slash
-  | .tool => .slashOrUnderscore
+  | .tool => .underscore
 
 /-- Where registration checks a declared name's prefix. -/
 inductive PrefixCheck where
@@ -109,7 +64,7 @@ inductive PrefixCheck where
   | registration
   deriving DecidableEq
 
-/-- A typed schema or tool name is checked at compile time and opaque expressions at registration. -/
+/-- Typed schemas and tool names are checked at compile time, and opaque IDs at registration. -/
 def prefixCheck : RegisteredName → PrefixCheck
   | .typedSchema | .tool => .compileTime
   | .opaqueCitation => .registration
@@ -146,7 +101,7 @@ inductive ContractCheck where
 def contractCheckOrder : List ContractCheck :=
   [.registrationAgreement, .projectionUniformity, .projectionReachability, .bespokeLegAuthority, .surfaceReachability, .lifecycleLegs]
 
-/-- Refusals for substrate-only declarations, identified by `Proxiima.Payloads.coreOrdinal`. -/
+/-- Refusals for substrate-only declarations. -/
 inductive CoreDeclarationRefusal where
   | resources
   | kernelSurfaces
@@ -178,17 +133,6 @@ inductive TagCharacter where
 def capabilityTagCharacter : TagPosition → TagCharacter → Bool
   | .first, .asciiLowercase | .subsequent, .asciiLowercase | .subsequent, .asciiDigit | .subsequent, .hyphen => true
   | .first, .asciiDigit | .first, .hyphen | .first, .other | .subsequent, .other => false
-
-/-- The source of an application version when using the app macro. -/
-inductive AppVersionSource where
-  | invokingPackage
-  | explicit
-  deriving DecidableEq
-
-/-- The app macro uses the invoking Cargo package version when the caller omits an override. -/
-def appVersionSource : (overrideSupplied : Bool) → AppVersionSource
-  | true => .explicit
-  | false => .invokingPackage
 
 /-- Ways the canonical app composes the core. -/
 inductive CoreCommand where

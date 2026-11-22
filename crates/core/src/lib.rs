@@ -210,6 +210,7 @@ macro_rules! proxiima_spiice {
             {
                 let schema_id: &str = $schema_id;
                 let schema_id = $crate::SchemaId::new(schema_id.to_string());
+                // `Proxiima.Composition.prefixCheck`: opaque IDs are checked at registration.
                 if !schema_id.as_str().starts_with(::std::concat!($name, "/")) {
                     return ::std::result::Result::Err($crate::SpiiceRegistryError::SchemaIngressMismatch {
                         schema_id,
@@ -357,18 +358,15 @@ macro_rules! proxiima_spiice {
             ]);)?
             $($(
                 {
-                    // `Proxiima.Composition.prefixSyntax`. Registry admission then requires provider-safe spelling.
+                    // `Proxiima.Composition.prefixSyntax`. Registration checks the provider pattern `^[a-zA-Z0-9_-]{1,64}$`.
                     const _: () = ::std::assert!(
                         $crate::schema_id_has_prefix(
-                            <$tool as $crate::Tool>::NAME,
-                            ::std::concat!($name, "/"),
-                        ) || $crate::schema_id_has_prefix(
                             <$tool as $crate::Tool>::NAME,
                             ::std::concat!($name, "_"),
                         ),
                         ::std::concat!(
                             "Tool::NAME for ", ::std::stringify!($tool),
-                            " must start with \"", $name, "/\" or \"", $name, "_\"",
+                            " must start with \"", $name, "_\"",
                         ),
                     );
                     registry.try_add_tool::<$tool>($name)?;

@@ -136,6 +136,7 @@ mod app;
 pub mod auth;
 mod boot;
 mod config;
+mod connected_storage;
 mod core_mcp;
 mod features;
 mod health;

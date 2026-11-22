@@ -102,6 +102,10 @@ pub(super) const RESOURCE: ResourceContract = ResourceContract {
 pub(super) static EMPTY: SpiiceContract = contract(7, &[], &[], &[]);
 pub(super) static DUPLICATE_ORDINAL: SpiiceContract = contract(0, &[], &[], &[]);
 pub(super) static DECLARES_A_RESOURCE: SpiiceContract = contract(7, &[], &[], &[RESOURCE]);
+pub(super) static DECLARES_RESOURCE_AND_KERNEL: SpiiceContract = SpiiceContract {
+    kernel_surfaces: crate::spiice::SPIICE_0.kernel_surfaces,
+    ..DECLARES_A_RESOURCE
+};
 pub(super) static FOREIGN_SCHEMA: SpiiceContract = contract(
     7,
     &[schema(

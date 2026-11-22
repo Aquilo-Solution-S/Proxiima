@@ -79,7 +79,7 @@ impl SpiiceServices {
         T: Send + Sync + 'static,
     {
         let type_id = TypeId::of::<T>();
-        // `Proxiima.Composition.serviceAdmission`.
+        // A concrete service type can be inserted only once.
         if self.values.contains_key(&type_id) {
             return Err(SpiiceServiceError::DuplicateService {
                 type_name: std::any::type_name::<T>(),

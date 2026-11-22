@@ -31,4 +31,6 @@ The canonical host is [proxiima-mcp](apps/proxiima-mcp). See
 registry. Crates are unpublished. Rust consumers pin the same git selector
 across the graph.
 
+It serves the core only and links no spiice. A host that wants a spiice links it.
+
 License: [Apache-2.0](LICENSE), [contribution terms](LICENSING.md).

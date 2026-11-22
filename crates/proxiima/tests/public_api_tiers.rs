@@ -999,7 +999,7 @@ impl proxiima::SpiiceApp for TierExtensionApp {
     ) -> Result<proxiima::spiice::SpiiceServices, proxiima::spiice::SpiiceServiceError> {
         // A host composes its store from `ctx.host().owner_transactions_for_host()`.
         // This test only pins that the override is writable; the bridge
-        // itself is named in `host_extra_table_bridge_is_on_app_context`.
+        // itself is named in `host_extra_table_bridge_is_on_proxiima_host`.
         let _ = ctx;
         let mut services = proxiima::spiice::SpiiceServices::default();
         services.try_insert(TierSpiiceStore { marker: "store" })?;
@@ -1219,8 +1219,8 @@ fn host_extra_table_bridge_is_on_proxiima_host() {
     let _ = begin;
     let _: fn(&proxiima::ProxiimaHost) -> proxiima::HostOwnerTransactions =
         proxiima::ProxiimaHost::owner_transactions_for_host;
-    let _: fn(&proxiima::ProxiimaHost) -> proxiima::PgTuning =
-        proxiima::ProxiimaHost::pg_tuning_for_host;
+    let _: fn(&proxiima::ConnectedStorage) -> proxiima::HostOwnerTransactions =
+        proxiima::ConnectedStorage::owner_transactions_for_host;
     let _: fn(&proxiima::AppContext) -> &proxiima::ProxiimaHost = proxiima::AppContext::host;
 }
 
@@ -1240,24 +1240,24 @@ fn every_runtime_handle_reaches_the_one_host_accessor_set() {
         proxiima::ProxiimaHost::origin_scope_for_host;
 }
 
-/// #413: the types the host accessors return are the facade's own names, and
-/// the storage handle and the owner-scoped transaction are host-tier only.
+/// Raw fixture storage and transactions are available through testkit.
 #[test]
-fn host_tier_names_the_storage_and_publication_types_its_signatures_expose() {
+fn testkit_reaches_the_storage_and_raw_transaction_for_fixtures() {
     async fn adapter_transaction(
         pool: &sqlx::PgPool,
         scope: &proxiima::OwnerScope,
     ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, proxiima::StorageError> {
-        proxiima::begin_owner_transaction(pool, scope).await
+        proxiima::testkit::begin_owner_transaction(pool, scope).await
     }
     fn is_eligibility_port<P: proxiima::PublicationOriginEligibilityPort>() {}
+    use proxiima_storage_pg::PgStorage;
 
-    let _: fn(
-        &proxiima::PgStorage,
-    ) -> Result<proxiima::PgHostStateEraseContext, proxiima::StorageError> =
-        proxiima::PgStorage::host_state_erase_context;
+    let _: fn(proxiima::ConnectedStorage) -> PgStorage =
+        proxiima::ConnectedStorage::into_pg_storage_for_tests;
+    let _: fn(&PgStorage) -> Result<proxiima::PgHostStateEraseContext, proxiima::StorageError> =
+        PgStorage::host_state_erase_context;
     std::hint::black_box(adapter_transaction);
-    is_eligibility_port::<proxiima::PgStorage>();
+    is_eligibility_port::<PgStorage>();
     let _: Option<proxiima::PublicationOriginEligibility> = None;
 }
 

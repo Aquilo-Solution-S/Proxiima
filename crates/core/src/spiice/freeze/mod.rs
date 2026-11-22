@@ -134,7 +134,6 @@ impl SpiiceRegistry {
         self.validate_schema_evolutions()?;
         self.validate_scope_declarations()?;
         self.validate_embedding_recipes_match_behavior()?;
-        // `Proxiima.Composition.registrySource`.
         SpiiceRegistryFrozen::from_registry(self)
     }
 

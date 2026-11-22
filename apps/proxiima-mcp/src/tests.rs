@@ -158,6 +158,20 @@ fn registered(all: Vec<ScopeKey>) -> RegisteredKeys {
     }
 }
 
+fn composition_vectors(declaration: &str) -> Vec<serde_json::Value> {
+    let ledger: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../crates/core/tests/ledger_vectors.json"
+    ))
+    .expect("generated ledger vectors");
+    serde_json::from_value(
+        ledger
+            .get(declaration)
+            .cloned()
+            .expect("decision missing from ledger"),
+    )
+    .expect("decision vector shape")
+}
+
 fn build_app<'env>(
     config: McpConfig,
     lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'env,
@@ -514,6 +528,18 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
     )
     .await
     .expect("maintain-storage ignores the serving settings");
+    run_maintain_storage(
+        StorageMaintenanceConfig {
+            database_url: db.runtime_url().to_owned(),
+            retry_cold_object_purges: true,
+            sweep_expired_uploads: true,
+            batch_size: NonZeroU32::MIN,
+            dry_run: false,
+        },
+        pairs(&env),
+    )
+    .await
+    .expect("one-shot S3 maintenance can sweep and drain an empty store");
 
     // The embedding runtime policy is a storage setting: the storage
     // maintenance reconciles and reports by carries it.
@@ -527,7 +553,10 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
         .await
         .expect("validated storage");
     assert_eq!(
-        storage.embedding_runtime_policy().stale_claim_timeout(),
+        storage
+            .into_pg_storage_for_tests()
+            .embedding_runtime_policy()
+            .stale_claim_timeout(),
         std::time::Duration::from_mins(30)
     );
     let mut malformed_policy = env;
@@ -893,6 +922,34 @@ fn tool_profile_resolver_builds_deployment_scope() {
     .expect("overridden memory profile");
     assert!(!configured(&overridden, &key(protocol_resource::MEMORY)));
     assert!(configured(&overridden, &key("test-spiice_emit_request")));
+}
+
+#[test]
+fn profile_denial_replays_ledger_vectors() {
+    for row in composition_vectors("Proxiima.Composition.profileDenial") {
+        let input = row["in"].as_array().expect("profile input");
+        let registered_input = input[0].as_bool().expect("registered input");
+        let mandatory_input = input[1].as_bool().expect("mandatory input");
+        let expected = row["out"].as_bool().expect("profile output");
+        let key_name = "test-profile-key";
+        let registered = registered_input.then(|| key(key_name));
+        let mandatory = mandatory_input.then(|| key(key_name));
+        let fixture = RegisteredKeys {
+            all: registered.into_iter().collect(),
+            served_reads: mandatory.into_iter().collect(),
+        };
+        let resolved = resolve_served_surface(
+            Some(protocol_profile::MEMORY),
+            None,
+            Some(key_name),
+            &fixture,
+        );
+        assert_eq!(
+            resolved.is_ok(),
+            expected,
+            "registered={registered_input}, mandatory={mandatory_input}"
+        );
+    }
 }
 
 /// `PROXIIMA_TOOL_PROFILE=code` is a startup refusal that names the

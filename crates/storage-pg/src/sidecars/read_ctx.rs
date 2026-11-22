@@ -332,7 +332,12 @@ pub(crate) fn validate_sidecar_read_sql(
 /// [`OwnerTransaction`](crate::OwnerTransaction) apply it before they run a
 /// statement.
 pub(crate) fn refuse_core_schema_sql(sql: &str) -> Result<(), StorageError> {
-    if sql.to_ascii_lowercase().contains("proxiima_core.") {
+    let normalized: String = sql
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '"')
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect();
+    if normalized.contains("proxiima_core.") {
         return Err(StorageError::Internal(
             "spiice SQL must not reference proxiima_core.*".to_string(),
         ));

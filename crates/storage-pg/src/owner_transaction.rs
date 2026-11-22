@@ -257,10 +257,8 @@ fn refuse_other_than_data_statement(sql: &str) -> Result<(), StorageError> {
     }
 }
 
-/// A statement whose text passed [`refuse_other_than_data_statement`] and
-/// [`refuse_core_schema_sql`], with the binds and caching choice it was
-/// built with. It always carries binds (none is an empty set), so it runs as
-/// a prepared statement.
+/// A validated data statement with its binds and caching choice. Even an empty
+/// bind set makes it run as a prepared statement.
 struct Checked {
     sql: SqlStr,
     arguments: Option<PgArguments>,
@@ -271,8 +269,20 @@ impl Checked {
     fn new(statement: impl sealed::Sealed) -> Result<Self, StorageError> {
         let (arguments, persistent, sql) = statement.into_parts();
         let arguments = arguments.map_err(|error| map_err(sqlx::Error::Encode(error)))?;
-        refuse_other_than_data_statement(sql.as_str())?;
-        refuse_core_schema_sql(sql.as_str())?;
+        let text = sql.as_str();
+        refuse_other_than_data_statement(text)?;
+        // Reserve the settings function name, including quoted and qualified spellings.
+        let mut identifiers =
+            text.split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '$');
+        if identifiers.any(|name| name.eq_ignore_ascii_case("set_config"))
+            || text.to_ascii_lowercase().contains("u&\"")
+        {
+            return Err(StorageError::Internal(
+                "an owner transaction does not accept settings functions or Unicode-escaped identifiers"
+                    .into(),
+            ));
+        }
+        refuse_core_schema_sql(text)?;
         Ok(Self {
             sql,
             arguments: Some(arguments.unwrap_or_default()),
@@ -317,7 +327,42 @@ mod tests {
             matches!(&refused, StorageError::Internal(message) if message.contains("proxiima_core")),
             "{refused:?}"
         );
+        for sql in [
+            r#"SELECT t FROM "proxiima_core".memory"#,
+            "SELECT t FROM proxiima_core . memory",
+            r#"SELECT t FROM "proxiima_core" . "memory""#,
+        ] {
+            assert!(
+                matches!(Checked::new(sqlx::query(sql)), Err(StorageError::Internal(message))
+                    if message.contains("proxiima_core")),
+                "{sql:?} must be refused"
+            );
+        }
         assert!(Checked::new(sqlx::query("SELECT 1 FROM proxiima_example.notebooks")).is_ok());
+    }
+
+    #[test]
+    fn statements_that_change_settings_are_refused_before_they_run() {
+        for sql in [
+            "SELECT set_config('app.owner', $1, true)",
+            "SELECT pg_catalog.set_config('app.owner', $1, false)",
+            r#"SELECT "set_config" ('app.owner', $1, true)"#,
+            r#"SELECT "pg_catalog"."set_config"('app.owner', $1, false)"#,
+            r#"SELECT U&"set\005fconfig"('app.owner', $1, false)"#,
+            "SET app.owner = 'value'",
+            "RESET app.owner",
+        ] {
+            assert!(
+                Checked::new(sqlx::query(sql)).is_err(),
+                "{sql:?} must be refused"
+            );
+        }
+        assert!(
+            Checked::new(sqlx::query(
+                "UPDATE proxiima_example.notebooks SET name = $1 WHERE notebook_id = $2",
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
