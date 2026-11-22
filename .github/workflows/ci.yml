@@ -120,7 +120,7 @@ jobs:
       - name: install git-cliff
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.release == 'true' }}
         # taiki-e/install-action@v2; same generator as the tag workflow.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
         with:
           tool: git-cliff@2.13.1
       - name: release-note configuration
@@ -299,7 +299,7 @@ jobs:
         # taiki-e/install-action@v2. The tool is an input, not the `@nextest`
         # tag: a pinned commit names no tool, and a dependabot bump of the pin
         # then installs nothing.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
         with:
           tool: nextest
       # All features cover REST. The shipped substrate host also runs its
@@ -410,7 +410,7 @@ jobs:
           test "$(psql "$PROXIIMA_TEST_PGBOUNCER_URL" -Atc 'SELECT 1')" = 1
       - name: install nextest
         # taiki-e/install-action@v2
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
         with:
           tool: nextest
       - name: test through pgbouncer
