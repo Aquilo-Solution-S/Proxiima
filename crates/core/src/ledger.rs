@@ -157,6 +157,58 @@ macro_rules! ledger {
     (Proxiima.DatabaseAuthority.transientSqlstates) => {
         ["40P01", "40001", "55P03"]
     };
+    // Whether neighbor edges are expanded when the request omits the flag.
+    (Proxiima.Edges.defaultNeighborExpansion) => {
+        false
+    };
+    // The largest host read set, counted in distinct exact versions.
+    (Proxiima.Edges.maxReadPins) => {
+        1024
+    };
+    // The maximum number of raw sources in one derive declaration.
+    (Proxiima.Edges.maxDeriveSources) => {
+        256
+    };
+    // The maximum number of seeds in a Think request.
+    (Proxiima.Edges.maxThinkSeeds) => {
+        8
+    };
+    // The default number of hops in a walk.
+    (Proxiima.Edges.defaultWalkDepth) => {
+        3
+    };
+    // The maximum number of hops in a walk.
+    (Proxiima.Edges.maxWalkDepth) => {
+        8
+    };
+    // The maximum number of distinct remote leaves read per lineage page.
+    (Proxiima.Edges.maxRemoteLeaves) => {
+        64
+    };
+    // The character ceiling for a remote walk sketch.
+    (Proxiima.Edges.maxRemoteSketchChars) => {
+        200
+    };
+    // The maximum number of hydrated pins per neighbor read.
+    (Proxiima.Edges.maxNeighborPins) => {
+        200
+    };
+    // The minimum number of candidate source rows in an inbound page read.
+    (Proxiima.Edges.inboundSourceFloor) => {
+        256
+    };
+    // The source limit for an inbound probe requesting just one edge.
+    (Proxiima.Edges.singlePinProbeRows) => {
+        2
+    };
+    // The edge ceiling of a query snapshot, independent of its node window.
+    (Proxiima.Edges.maxSnapshotEdges) => {
+        50000
+    };
+    // Pin target requests attempted before coarse locking is considered.
+    (Proxiima.Edges.finePinLockBudget) => {
+        256
+    };
     // The largest trimmed Goal title in characters.
     (Proxiima.Goals.titleMax) => {
         240

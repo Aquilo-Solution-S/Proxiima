@@ -960,6 +960,193 @@ stateDiagram-v2
 
 - storage error category: Reads collapse storage failures to internal; writes distinguish caller-fixable conflicts and constraints from exhausted retries.
 
+## Edges
+
+**Pin kind**: The kinds of pins, in projection order.
+
+- origin
+- reference
+- read
+
+**Pin field**: The relationship fields of a Memory admission.
+
+- origins
+- refs
+- goalRefs
+- guidedBy
+- reads
+- forkedFrom
+
+**Pin shape**: How a pin field stores its targets.
+
+- array
+- scalar
+
+**Pin field spec**: The role, storage shape and target layers of a pin field.
+
+- column
+- kind
+- shape
+- fact
+- abstraction
+- perspective
+
+**Derived kind**: The Memory layers admitted by derivation.
+
+- Abstraction
+- Perspective
+
+**Target projection**: The precedence of exact target states when a pin's source is readable.
+
+- visible
+- forgotten
+- erased
+- redacted
+
+**Erased target**: A historical witness stores only the exact version identity and its kind.
+
+- version
+- kind
+
+**Provenance**: The origin or subject declaration a schema contributes to ancestor traversal.
+
+- undeclared
+- originEdges
+- payloadOnly
+- none
+
+**Page key**: The continuation key for a pin page, compared newest first and exclusive of the cursor.
+
+- sourceTime
+- sourceId
+- targetId
+- kind
+
+**Admission**: How a pin is presented at admission.
+
+- fresh
+- forkRevision
+- schemaEvolution
+
+**Admission witness**: What witnesses an exact pin during admission.
+
+- liveReadableTarget
+- capturedSourcePin
+
+**grounding fields** = \[origins, refs]: Local storage fields that can ground a derived Memory, per `Causa.GroundsInFact`.
+
+**pin order** = \[origin, reference, read]: Pin projection groups kinds in this order and preserves field order within each kind.
+
+**local descendant kinds** = \[origin, read]: Local descendant traversal follows origins and read context.
+
+**page key** = \[sourceTime, sourceId, targetId, kind]: The pin page key in comparison order.
+
+**default neighbor expansion** = no: Whether neighbor edges are expanded when the request omits the flag.
+
+**external replay kinds** = \[origin, reference]: The pin kinds compared for external-edge replay.
+
+**max read pins** = 1024: The largest host read set, counted in distinct exact versions.
+
+**max derive sources** = 256: The maximum number of raw sources in one derive declaration.
+
+**max think seeds** = 8: The maximum number of seeds in a Think request.
+
+**default walk depth** = 3: The default number of hops in a walk.
+
+**max walk depth** = 8: The maximum number of hops in a walk.
+
+**max remote leaves** = 64: The maximum number of distinct remote leaves read per lineage page.
+
+**max remote sketch chars** = 200: The character ceiling for a remote walk sketch.
+
+**max neighbor pins** = 200: The maximum number of hydrated pins per neighbor read.
+
+**inbound source floor** = 256: The minimum number of candidate source rows in an inbound page read.
+
+**single pin probe rows** = 2: The source limit for an inbound probe requesting just one edge.
+
+**max snapshot edges** = 50000: The edge ceiling of a query snapshot, independent of its node window.
+
+**fine pin lock budget** = 256: Pin target requests attempted before coarse locking is considered.
+
+| pin kind | pin label |
+| --- | --- |
+| origin | "origin" |
+| reference | "reference" |
+| read | "read" |
+
+- pin label: The wire and cross-store storage label of a pin kind.
+
+| pin field | pin field |
+| --- | --- |
+| origins | column: "origins", kind: origin, shape: array, fact: \[], abstraction: \[Fact, Abstraction], perspective: \[Abstraction] |
+| refs | column: "refs", kind: reference, shape: array, fact: \[Fact, Abstraction, Perspective], abstraction: \[Fact, Abstraction, Perspective], perspective: \[Fact, Abstraction, Perspective] |
+| goalRefs | column: "goal\_refs", kind: reference, shape: array, fact: \[Goal], abstraction: \[Goal], perspective: \[Goal] |
+| guidedBy | column: "guided\_by", kind: reference, shape: array, fact: \[], abstraction: \[], perspective: \[Goal] |
+| reads | column: "reads", kind: read, shape: array, fact: \[Fact, Abstraction, Perspective], abstraction: \[Fact, Abstraction, Perspective], perspective: \[Fact, Abstraction, Perspective] |
+| forkedFrom | column: "forked\_from", kind: reference, shape: scalar, fact: \[Fact, Abstraction, Perspective], abstraction: \[Fact, Abstraction, Perspective], perspective: \[Fact, Abstraction, Perspective] |
+
+- pin field: The storage bound for each pin field gives its role, shape and admitted target kinds.
+
+| derived kind | requires origins |
+| --- | --- |
+| Abstraction | yes |
+| Perspective | no |
+
+- requires origins: An Abstraction requires origins; a Perspective can be grounded through references.
+
+| bool | bool | bool | project target | keep read pin |
+| --- | --- | --- | --- | --- |
+| yes | yes | yes | visible | no |
+| yes | yes | no | visible | no |
+| yes | no | yes | visible | no |
+| yes | no | no | visible | no |
+| no | yes | yes | forgotten | no |
+| no | yes | no | forgotten | no |
+| no | no | yes | erased | no |
+| no | no | no | redacted | yes |
+
+- project target: Live wins over readable forgotten or erased witnesses, and other targets are redacted.
+- keep read pin: Read pins yield to an origin, reference or fork anchor to the same target.
+
+| provenance | local ancestor kinds |
+| --- | --- |
+| undeclared | \[origin, read] |
+| originEdges | \[origin, read] |
+| payloadOnly | \[reference, read] |
+| none | \[read] |
+
+- local ancestor kinds: Local ancestor edge kinds by schema provenance; payload references are limited to declared subject fields.
+
+| entity kind | entity kind | admits reference layer |
+| --- | --- | --- |
+| Fact | Fact | yes |
+| Fact | Abstraction | no |
+| Fact | Perspective | no |
+| Fact | Goal | yes |
+| Abstraction | Fact | yes |
+| Abstraction | Abstraction | yes |
+| Abstraction | Perspective | no |
+| Abstraction | Goal | yes |
+| Perspective | Fact | yes |
+| Perspective | Abstraction | yes |
+| Perspective | Perspective | yes |
+| Perspective | Goal | yes |
+| Goal | Fact | yes |
+| Goal | Abstraction | yes |
+| Goal | Perspective | yes |
+| Goal | Goal | yes |
+
+- admits reference layer: The engine's layering rule for a declared reference, with Goals on a separate spine.
+
+| admission | pin admission witness |
+| --- | --- |
+| fresh | liveReadableTarget |
+| forkRevision | capturedSourcePin |
+| schemaEvolution | capturedSourcePin |
+
+- pin admission witness: Fresh pins require a live readable target, while a retained pin requires an exact captured source pin.
+
 ## Goals
 
 **Goal state**: The lifecycle state of a Goal version.
