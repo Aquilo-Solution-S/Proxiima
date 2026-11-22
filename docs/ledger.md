@@ -1,5 +1,518 @@
 # The ledger
 
+## Authentication
+
+**Token check**: The required checks before returning claims from an OIDC token.
+
+- keyFamilySignature
+- exactIssuer
+- audienceMembership
+- expiry
+- subjectString
+- presentNotBefore
+
+**Key family**: Verification key families considered by the JWT validator.
+
+- rsa
+- p256
+- ed25519
+- sharedSecret
+
+**Token type**: The token type classified before key resolution.
+
+- absentOrGeneric
+- access
+- other
+
+**Public refusal**: The credential refusal exposed by a bearer authenticator.
+
+- invalidCredentials
+
+**Transport**: URL classes used to validate issuer and key endpoints.
+
+- https
+- loopbackHttp
+- other
+
+**Bootstrap url**: The URL boundary checked before reading the subject map or opening storage.
+
+- publicUrl
+- issuer
+- explicitKeyEndpoint
+
+**Issuer companion**: The setting categories an operator may supply with an issuer.
+
+- audience
+- publicUrl
+- subjectMap
+- keyUri
+- inlineKeys
+- timeout
+- subjects
+- strictType
+
+**Key source**: The source of the public verification keys.
+
+- discovery
+- endpoint
+- inlineDocument
+- conflict
+
+**Key document**: How a JWKS document reached the resolver.
+
+- pinned
+- fetched
+
+**Invalid key entry**: Handling of an invalid entry in a JWKS document.
+
+- refuseDocument
+- skipEntry
+
+**Cached key**: A resolver's view of a requested key before a refresh attempt.
+
+- fresh
+- aging
+- absent
+
+**Cache action**: What a lookup does at the refresh gate.
+
+- returnCached
+- tryRefresh
+- waitForRefresh
+
+**Subject binding**: The key by which verified issuer and subject resolve a principal; empty keys, duplicate bindings and malformed records are refused.
+
+- issuer
+- subject
+- principal
+- runner
+
+**Subject admission**: The allowlist operates on the verified subject before principal mapping, with an omitted list leaving mapping alone.
+
+- allow
+- refuse
+
+**Party check**: The presented authorized party after reading the validated token's audience and exact nonempty route allowset.
+
+- missingSingleAudience
+- missingMultipleAudiences
+- listed
+- unlisted
+- malformed
+
+**Binding candidates**: A readable unsigned issuer prunes verification candidates; the route set is nonempty with unique issuer and audience pairs.
+
+- issuerMatches
+- allRoutes
+
+**Shaper action**: What a policy may do to a credential-bound authorization field.
+
+- preserve
+- narrow
+
+**Shaped field**: Fields a host role shaper receives after verification and initial resolution.
+
+- identity
+- writer
+- path
+- runner
+- requiredOwner
+- roles
+- tools
+- expiry
+
+**Claims carry**: When optional verified payload context is preserved.
+
+- clone
+- narrowToOwner
+
+**Header exposure**: Header context is constructed at request intake from the host's selected names.
+
+- allowlistedRequestHeaders
+
+**Session authority check**: Each transport request verifies its own credential and any session must agree with the current principal and owner.
+
+- authenticateRequest
+- agreeWithPrincipal
+- agreeWithOwner
+
+**Owner resolver consumer**: The consumers that resolve roles through the runtime's once-bound owner access port.
+
+- mcpEdge
+- environmentOidc
+- delegation
+- platformFactory
+
+**Authenticator forms**: A layer may set neither, either or both authenticator forms.
+
+- neither
+- direct
+- factory
+- both
+
+**Authenticator slot**: Resolution keeps each layer's supplied form, rejects a selected layer with both forms and runs a selected factory after platform admission.
+
+- inherit
+- useDirect
+- buildWithPlatform
+- conflict
+
+**Credential route**: Credential routes available to a verified request.
+
+- membership
+- forwarded
+
+**Forwarding role**: The non-managing role names admitted with a nonempty set of forwarder subjects.
+
+- viewer
+- ingest
+- editor
+
+**Forwarding check**: A forwarded request keeps its subject, verifies owner agreement and resolves only the claim's registered personal or group owner at the configured capped role.
+
+- verifiedIdentityAndWriter
+- exactOwner
+- liveCredential
+- configuredCeiling
+- registeredOwner
+
+**Scope source**: The credential-free boot witness confines a synthetic host bearer to its personal owner.
+
+- verifiedCredential
+- singleOwnerBoot
+
+**Engine permit**: Only engine gates construct read and write permits from their checked authority.
+
+- entryRead
+- write
+
+**Model claim**: The caller's normalized model label relative to any attestation.
+
+- absent
+- matching
+- supplied
+
+**Model label source**: The effective provenance label or a refusal.
+
+- credential
+- caller
+- unknown
+- conflict
+
+**Stream observation**: Conditions observed by the generic wrapper, which has no live revocation probe.
+
+- beforeDeadlines
+- credentialExpired
+- lifetimeElapsed
+- sourceEnded
+
+**Stream state**: A wrapped stream's observable state.
+
+- open
+- ended
+
+**Protected resource**: The OAuth metadata selected by a request path, with the resource URL independent of token audience.
+
+- origin
+- mcp
+
+**Facade route**: Requests published only in public-client facade deployments.
+
+- authorizationMetadata
+- registration
+
+**Registration check**: Registration takes at least one absolute redirect URL and public token endpoint authentication. The provider admits redirects.
+
+- nonemptyAbsoluteRedirects
+- publicAuthentication
+
+**Delegated command**: A registered delegated command is a flat tool or a dispatcher leaf, with serialized scope derived from the typed command.
+
+- flat
+- dispatcherLeaf
+
+**Auth service**: The service a runtime can publish for queued delegated commands.
+
+- delegation
+
+**Grant handle**: A queued job stores an opaque redacted UUIDv7 grant handle and no bearer.
+
+- id
+
+**Grant issue check**: Issuance checks recorded before minting a grant for a finite verified host bearer.
+
+- finiteVerifiedBearer
+- currentMembership
+- sourceRole
+- nonManagingCeiling
+- registeredCommand
+- callerScope
+- deployment
+- sourceExpiry
+- attestedWriter
+
+**Grant redemption check**: Admission checks performed anew at each delegated phase.
+
+- exactOwnerAndCommand
+- expiry
+- revocation
+- callerProfile
+- currentMembership
+
+**Grant revoker**: Who may revoke a grant after proving current bearer membership in its owner.
+
+- issuer
+- ownerManager
+
+**Phase check**: A noncloneable phase is checked at the engine against its originating runtime, finite expiry, exact purpose and target.
+
+- runtime
+- expiry
+- purpose
+- target
+
+**Blob operation**: Admission of a cited-blob maintenance operation under delegation.
+
+- delivery
+- verifiedCollection
+- ownerReconciliation
+
+**token checks** = \[keyFamilySignature, exactIssuer, audienceMembership, expiry, subjectString, presentNotBefore]: A single verified payload supplies both the registered claims and the host's typed claims.
+
+**short access token type** = "at+jwt": The short RFC 9068 access-token media type.
+
+**full access token type** = "application/at+jwt": The full RFC 9068 access-token media type.
+
+**access token types** = \["at+jwt", "application/at+jwt"]: Access-token media types, matched without ASCII case distinctions.
+
+**generic token type** = "JWT": The generic JWT media type, matched without ASCII case distinctions.
+
+**require access token type** = no: Whether strict access-token type checking is enabled by default.
+
+**public token refusal** = invalidCredentials: A token check's detailed refusal is internal to the host.
+
+**bootstrap url checks** = \[publicUrl, issuer, explicitKeyEndpoint]: The public HTTP(S) URL requires a host and excludes credentials, query and fragment; URL diagnostics omit its input.
+
+**required issuer companions** = \[audience, publicUrl, subjectMap]: An environment issuer requires a resource audience, a public URL and an issuer-aware subject map.
+
+**optional issuer companions** = \[keyUri, inlineKeys, timeout, subjects, strictType]: The remaining issuer settings may be omitted.
+
+**refresh cooldown seconds** = 60: Minimum seconds between JWKS fetch attempts, including failed attempts.
+
+**fresh key seconds** = 3600: Age in seconds of a successful JWKS fetch at which cached keys become refreshable.
+
+**trusted key seconds** = 14400: Age in seconds of a successful JWKS fetch beyond which cached keys are no longer trusted.
+
+**default key request seconds** = 10: Default complete-request timeout in seconds for each discovery or JWKS request.
+
+**max key request seconds** = 300: Maximum complete-request timeout in seconds for each discovery or JWKS request.
+
+**max key response bytes** = 1048576: Maximum bytes read from each discovery or JWKS response.
+
+**key coordinate bytes** = 32: Byte width of P-256 coordinates and Ed25519 public keys.
+
+**clock skew seconds** = 60: The stock validator's JWT clock tolerance in seconds.
+
+**verified context** = \[clone, narrowToOwner]: Verified payload context is immutable and carries neither bearer bytes nor authorization.
+
+**request header exposure** = allowlistedRequestHeaders: A service may read only the header names selected by its host.
+
+**session checks** = \[authenticateRequest, agreeWithPrincipal, agreeWithOwner]: A transport session binds selection, while authority comes from each request.
+
+**owner resolver consumers** = \[mcpEdge, environmentOidc, delegation, platformFactory]: Serving binds one owner access port before any consumer uses it.
+
+**forwarding cap** = read: perspective, write: perspective, goals: reads, administers: no, manages: no: Forwarded roles may read Goals and have neither Goal work, owner administration nor group management.
+
+**forwarding checks** = \[verifiedIdentityAndWriter, exactOwner, liveCredential, configuredCeiling, registeredOwner]: Membership roles are never unioned with a forwarded role.
+
+**scope sources** = \[verifiedCredential, singleOwnerBoot]: Verified credential admission seals owner roles, deadline and writer for engine operations; ordinary contexts carry no witness.
+
+**engine permits** = \[entryRead, write]: The engine permit families subject to `Proxiima.OwnerAuthority.ScopeRestriction.expiry`.
+
+**max trusted model chars** = 120: Largest credential-attested model label in Unicode characters after trimming; blank labels are refused.
+
+**max host run extensions** = 8: Maximum validated host run attributes carried with Fact capture; binds merge without clearing and refuse duplicate names.
+
+**default stream lifetime seconds** = 3600: Default maximum lifetime in seconds of authenticated streams.
+
+**scope token byte bounds** = \[33, 126]: Inclusive ASCII byte bounds for each byte of a nonempty OAuth scope token.
+
+**scope token excluded bytes** = \[34, 92]: The quote and backslash bytes excluded from an OAuth scope token.
+
+**default scopes** = \["openid", "offline\_access"]: Advertise the built-in sign-in and refresh scopes first, then unique validated extra scopes in order.
+
+**public grant types** = \["authorization\_code", "refresh\_token"]: Flows advertised for the stateless public client, which uses the upstream sign-in and token endpoints.
+
+**public client routes** = \[authorizationMetadata, registration]: Facade metadata and registration return the same configured public client; other deployments publish neither.
+
+**registration checks** = \[nonemptyAbsoluteRedirects, publicAuthentication]: An omitted registration auth method defaults to public authentication.
+
+**delegated commands** = \[flat, dispatcherLeaf]: The two command kinds admitted for delegation, excluding resources and bare dispatchers.
+
+**max delegated command chars** = 200: Maximum delegated tool identifier length in characters.
+
+**grant issue checks** = \[finiteVerifiedBearer, sourceRole, sourceExpiry, nonManagingCeiling, currentMembership, registeredCommand, callerScope, deployment, attestedWriter]: Issuance bounds the exact command and selected owner by the bearer, current membership and deployment policy.
+
+**grant redemption checks** = \[exactOwnerAndCommand, revocation, expiry, callerProfile, currentMembership]: Each new phase retains the recorded role ceiling and exact tool scope after fresh redemption.
+
+**grant revokers** = \[issuer, ownerManager]: Revocation is idempotent and blocks future redemption; an admitted phase retains its finite expiry.
+
+**phase checks** = \[runtime, expiry, purpose, target]: Checks on each use of sealed delegated authority before a backend operation.
+
+| key family | signature algorithms |
+| --- | --- |
+| rsa | \["RS256", "RS384", "RS512"] |
+| p256 | \["ES256"] |
+| ed25519 | \["EdDSA"] |
+| sharedSecret | \[] |
+
+- signature algorithms: The resolved key family determines the accepted signature algorithms.
+
+**admit token type**: Strict mode accepts access-token types alone, while compatibility mode also accepts absent and generic types.
+
+```mermaid
+stateDiagram-v2
+  state "yes" as s0
+  state "no" as s1
+  s0 --> s1 : absentOrGeneric
+  s0 --> s0 : access
+  s0 --> s1 : other
+  s1 --> s0 : absentOrGeneric
+  s1 --> s0 : access
+  s1 --> s1 : other
+```
+
+| transport | issuer transport |
+| --- | --- |
+| https | yes |
+| loopbackHttp | yes |
+| other | no |
+
+- issuer transport: Issuer URLs permit paths and exclude query and fragment delimiters.
+
+**key transport**: Configured, discovered and redirected key endpoints use HTTPS, or loopback HTTP when their issuer is also loopback.
+
+```mermaid
+stateDiagram-v2
+  state "yes" as s0
+  state "no" as s1
+  s0 --> s0 : https
+  s0 --> s0 : loopbackHttp
+  s0 --> s1 : other
+  s1 --> s0 : https
+  s1 --> s1 : loopbackHttp
+  s1 --> s1 : other
+```
+
+| bool | bool | key source | subject admission |
+| --- | --- | --- | --- |
+| yes | yes | conflict | allow |
+| yes | no | endpoint | refuse |
+| no | yes | inlineDocument | allow |
+| no | no | discovery | allow |
+
+- key source: A pinned document requires no fetch; explicit endpoints skip discovery, and the two overrides exclude each other.
+- subject admission: A configured allowlist that names no subjects is refused at setting intake.
+
+| bool | discovered issuer agrees | binding candidates | request role source | publish delegation service |
+| --- | --- | --- | --- | --- |
+| yes | endpoint | issuerMatches | forwarded | delegation |
+| no | — | allRoutes | membership | — |
+
+- discovered issuer agrees: Discovery accepts the key endpoint only if the response names the configured issuer exactly.
+- binding candidates: Which routes to verify before requiring exactly one match.
+- request role source: Ordinary requests take only membership; a configured forwarder uses a verified exact owner and writer claim before any owner role is resolved.
+- publish delegation service: Authentication is required to publish the service for issuing and redeeming delegation grants.
+
+| key document | invalid key entry |
+| --- | --- |
+| pinned | refuseDocument |
+| fetched | skipEntry |
+
+- invalid key entry: Pinned keys must be named, distinct, supported public signature keys; remote parsing keeps usable siblings and tolerates recoverable key-type spelling.
+
+| cached key | cached key lookup |
+| --- | --- |
+| fresh | returnCached |
+| aging | tryRefresh |
+| absent | waitForRefresh |
+
+- cached key lookup: Aging hits may use an incumbent during refresh; absent or untrusted keys wait for the gate.
+
+| party check | admit authorized party |
+| --- | --- |
+| missingSingleAudience | yes |
+| missingMultipleAudiences | no |
+| listed | yes |
+| unlisted | no |
+| malformed | no |
+
+- admit authorized party: A set route policy accepts a listed party or an omitted party with a single distinct audience.
+
+| shaped field | host shape |
+| --- | --- |
+| identity | preserve |
+| writer | preserve |
+| path | preserve |
+| runner | preserve |
+| requiredOwner | preserve |
+| roles | narrow |
+| tools | narrow |
+| expiry | narrow |
+
+- host shape: Host shaping preserves attribution and owner confinement, and can only reduce rights, tool scope and time.
+
+| authenticator forms | authenticator slot |
+| --- | --- |
+| neither | inherit |
+| direct | useDirect |
+| factory | buildWithPlatform |
+| both | conflict |
+
+- authenticator slot: How the selected layer supplies authentication.
+
+| bool | model claim | model label source |
+| --- | --- | --- |
+| yes | absent | credential |
+| yes | matching | credential |
+| yes | supplied | conflict |
+| no | absent | unknown |
+| no | matching | caller |
+| no | supplied | caller |
+
+- model label source: Verified model attestation survives narrowing; a different explicit label is refused and a blank label is omitted.
+
+**stream lifetime**: The first observed expiry or positive configured lifetime deadline ends the stream silently, including while its source is ready.
+
+```mermaid
+stateDiagram-v2
+  state "open" as s0
+  state "ended" as s1
+  s0 --> s0 : beforeDeadlines
+  s0 --> s1 : credentialExpired
+  s0 --> s1 : lifetimeElapsed
+  s0 --> s1 : sourceEnded
+  s1 --> s1 : beforeDeadlines
+  s1 --> s1 : credentialExpired
+  s1 --> s1 : lifetimeElapsed
+  s1 --> s1 : sourceEnded
+```
+
+| protected resource | metadata path |
+| --- | --- |
+| origin | "/.well-known/oauth-protected-resource" |
+| mcp | "/.well-known/oauth-protected-resource/mcp" |
+
+- metadata path: The resource metadata URL used by an origin or MCP authentication challenge.
+
+| blob operation | delegate blob operation |
+| --- | --- |
+| delivery | yes |
+| verifiedCollection | yes |
+| ownerReconciliation | no |
+
+- delegate blob operation: Verified collection needs a positive bound and owner reconciliation requires owner authority.
+
 ## Configuration
 
 **Presence**: Whether a configuration layer supplies the slot being resolved.

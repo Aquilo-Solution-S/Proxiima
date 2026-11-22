@@ -13,11 +13,8 @@ structure User where
   private token : String
   deriving DecidableEq, Repr
 
-/-- Constructs a user identity from an engine token. -/
-def User.ofToken (t : String) : User := ⟨t⟩
-
 /-- The synthetic identity used by closed proof witnesses. -/
-instance : Inhabited User := ⟨User.ofToken "causa-kernel-witness"⟩
+instance : Inhabited User := ⟨⟨"causa-kernel-witness"⟩⟩
 
 /-- The memory kinds ranked by `Proxiima.OwnerAuthority.coveringCeiling`. -/
 abbrev AccessKind := Proxiima.Memory.Kind

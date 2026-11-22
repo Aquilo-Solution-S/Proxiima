@@ -1,3 +1,4 @@
+import Proxiima.Authentication
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
@@ -34,11 +35,10 @@ theorem may_write_implies_read :
   exact ⟨x, hx, Nat.le_trans hw x.write_le_read⟩
 
 /-- Roles available to verified forwarders. -/
-inductive ForwardingRole where
-  | viewer | ingest | editor
+abbrev ForwardingRole := Proxiima.Authentication.ForwardingRole
 
 /-- The upper bound on a forwarded role. -/
-def Role.forwardingCap : Role := ⟨3, 3, .reads, false, false, by omega⟩
+def Role.forwardingCap : Role := .ofPreset Proxiima.Authentication.forwardingCap
 
 def ForwardingRole.preset : ForwardingRole → Role
   | .viewer => Role.viewer
@@ -95,7 +95,7 @@ theorem forwarding_role_no_management (s : OwnerState) (p : ForwardingPolicy)
   obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
   intro hm
   have := (Role.meet_capped x Role.forwardingCap).2.2 hm
-  simp [Role.manages, Role.forwardingCap] at this
+  simp [Role.manages, Role.forwardingCap, Role.ofPreset, Proxiima.Authentication.forwardingCap] at this
 
 theorem forwarding_role_no_administration (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
@@ -103,7 +103,7 @@ theorem forwarding_role_no_administration (s : OwnerState) (p : ForwardingPolicy
   obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
   intro ha
   have := (Role.meet_capped x Role.forwardingCap).2.1 ha
-  simp [Role.administers, Role.forwardingCap] at this
+  simp [Role.administers, Role.forwardingCap, Role.ofPreset, Proxiima.Authentication.forwardingCap] at this
 
 theorem forwarding_role_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
     (r : User) (c : VerifiedForwardedOwner) (o : OwnerRef) (role : Role)
@@ -111,7 +111,7 @@ theorem forwarding_role_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
   obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
   intro hw
   have := (Role.meet_capped x Role.forwardingCap).1 hw
-  simp [Role.worksGoals, Role.forwardingCap] at this
+  simp [Role.worksGoals, Role.forwardingCap, Role.ofPreset, Proxiima.Authentication.forwardingCap] at this
 
 /-- Owner-scoped Goal work authorization. -/
 def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)
