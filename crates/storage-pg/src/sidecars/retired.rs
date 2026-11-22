@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stored_retired_schema_refuses_restore_before_mutating_the_memory() {
+    async fn retired_schema_refuses_restore_in_both_lifecycle_states() {
         use crate::verbs::fact_embeddings::RouteSpaces;
         use crate::verbs::forget::{Reach, restore_marked};
         use proxiima_core::storage_ports::{FactIngestPort, MemoryAuthoringPort, OwnerWritePermit};
@@ -201,32 +201,36 @@ mod tests {
         let mut draft = crate::verbs::forget::forget_pg_tests::draft(None);
         draft.schema_id = SchemaId::new(SCHEMA.to_owned());
         let memory = pg.ingest_fact_atomic(&permit, &draft, None).await.unwrap();
-        pg.forget_memory(&permit, memory.memory_id).await.unwrap();
-
-        let mut tx = pg.pool_for_tests().begin().await.unwrap();
-        let result = restore_marked(
-            &mut tx,
-            &frozen,
-            memory.memory_id.into_inner(),
-            &Reach::of(&permit),
-            RouteSpaces {
-                spaces: &[],
-                non_embeddable_schemas: &[],
-            },
-        )
-        .await;
-        assert!(
-            matches!(result, Err(StorageError::ConstraintViolation(ref message)) if message.contains("retired Fact"))
-        );
-        tx.commit().await.unwrap();
-        let forgotten: bool = sqlx::query_scalar(
-            "SELECT forgotten_at IS NOT NULL FROM proxiima_core.memory WHERE t = $1",
-        )
-        .bind(memory.memory_id.into_inner())
-        .fetch_one(pg.pool_for_tests())
-        .await
-        .unwrap();
-        assert!(forgotten);
+        // `Proxiima.ForgetRestore.restoreAdmission`.
+        for forgotten in [false, true] {
+            if forgotten {
+                pg.forget_memory(&permit, memory.memory_id).await.unwrap();
+            }
+            let mut tx = pg.pool_for_tests().begin().await.unwrap();
+            let result = restore_marked(
+                &mut tx,
+                &frozen,
+                memory.memory_id.into_inner(),
+                &Reach::of(&permit),
+                RouteSpaces {
+                    spaces: &[],
+                    non_embeddable_schemas: &[],
+                },
+            )
+            .await;
+            assert!(
+                matches!(result, Err(StorageError::ConstraintViolation(ref message)) if message.contains("retired Fact"))
+            );
+            tx.commit().await.unwrap();
+            let still_forgotten: bool = sqlx::query_scalar(
+                "SELECT forgotten_at IS NOT NULL FROM proxiima_core.memory WHERE t = $1",
+            )
+            .bind(memory.memory_id.into_inner())
+            .fetch_one(pg.pool_for_tests())
+            .await
+            .unwrap();
+            assert_eq!(still_forgotten, forgotten);
+        }
     }
 
     #[test]

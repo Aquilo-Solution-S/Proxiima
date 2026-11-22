@@ -677,8 +677,8 @@ impl Engine {
 
     /// Restore one owned forgotten memory `t`: it is searchable, recallable
     /// and the head of its series again (unless a newer live version is).
-    /// Restoring a live memory is a no-op success. No object store is
-    /// involved.
+    /// Restoring a live memory with a restorable schema is a no-op success.
+    /// No object store is involved.
     ///
     /// The restored memory is queued for embedding in the spaces the
     /// Owner's route names now; a route error refuses the restore like any
@@ -699,6 +699,7 @@ impl Engine {
         A: EngineAuthority + ?Sized,
     {
         let write_permit = self.authorize_write_limit(authority, &owner).await?;
+        // `Proxiima.ForgetRestore.restoreSteps`.
         let embedding_spaces = self.write_route(&owner).await?.write_spaces();
         self.storage()
             .memory_authoring

@@ -68,8 +68,8 @@ pub trait MemoryAuthoringPort: Send + Sync {
     /// Bring one forgotten memory `t` back: clear its `forgotten_at`,
     /// rebuild what forget deleted (search projection in the memory's own
     /// lexical language, embedding jobs for `embedding_spaces`) and move the
-    /// series head back. Restoring a live memory is a no-op success; an
-    /// absent, foreign or unwritable-kind `t` is `NotFound`.
+    /// series head back. Restoring a live memory with a restorable schema is
+    /// a no-op success. An absent, foreign or unwritable-kind `t` is `NotFound`.
     ///
     /// `embedding_spaces` are the spaces the permit Owner's route names now,
     /// not the ones the memory had vectors in before the forget.

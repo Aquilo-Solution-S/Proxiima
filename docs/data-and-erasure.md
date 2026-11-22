@@ -38,7 +38,8 @@ Restore (`core_restore`) clears the mark: the search
 projection is rebuilt in the language the memory was written in, embedding jobs
 are queued for the spaces the owner's route names now, and the memory is the
 head of its series again unless a newer live version is. Restoring a live
-memory changes nothing. Neither forget nor restore touches an object store.
+memory with a restorable schema changes nothing. Neither forget nor restore
+touches an object store. See [`Proxiima.ForgetRestore`](ledger.md#forget-and-restore).
 
 The kernel states `wipeable` and owner-scope principles in
 [`Compliance.lean`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Compliance.lean).

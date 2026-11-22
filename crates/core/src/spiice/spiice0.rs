@@ -831,8 +831,7 @@ const KERNEL_SURFACES: &[Surface] = &[
         },
         lexical_language_column: None,
         counter: CounterRule::Counted("external_origins"),
-        // No FK, by design: nothing points at the remote side, and the row
-        // must outlive forget's delete of the hot memory row.
+        // The remote target has no local FK. See `Proxiima.ForgetRestore.retainedOnForget`.
         completeness: None,
     },
     Surface {
@@ -848,10 +847,9 @@ const KERNEL_SURFACES: &[Surface] = &[
             why: "a captured event is a delivery obligation of the owner it was captured \
                   for; the Fact moves, the event that already described it does not",
         },
-        // Owner-pinned, not keyed: `forget` deletes the hot `memory` row
-        // while the record stays (below), so an erase that selected on the
-        // memory set would walk past exactly the records a forgotten Fact
-        // left behind.
+        // Forget retains the admission and cancels undelivered lanes.
+        // Erasure follows the owner captured on the publication, which can differ
+        // from the admission's current owner after transfer.
         erase: EraseRule::ByOwner,
         export: ExportRule::DerivedFrom {
             source: "proxiima_core.memory",
