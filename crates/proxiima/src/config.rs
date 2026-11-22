@@ -37,7 +37,9 @@ pub(crate) fn pg_pool_config_from_lookup(
 }
 
 /// How often the object-purge feature runs when nothing says otherwise.
-pub(crate) const DEFAULT_OBJECT_PURGE_INTERVAL: Duration = Duration::from_mins(1);
+pub(crate) const DEFAULT_OBJECT_PURGE_INTERVAL: Duration = Duration::from_secs(
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeIntervalSeconds),
+);
 
 /// Read the object-purge interval. `Some(Duration::ZERO)` is the explicit
 /// opt-out; `None` leaves the default.

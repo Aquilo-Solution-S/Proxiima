@@ -24,15 +24,14 @@ use crate::error::map_err;
 use crate::sidecars::{int_to_u32, int_to_u64};
 
 /// Most stuck debts an outcome names.
-pub const MAX_STUCK_PURGE_DEBTS: usize = 32;
+pub const MAX_STUCK_PURGE_DEBTS: usize =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.stuckSampleMax);
 
 /// Most other stores an outcome names.
-pub const MAX_FOREIGN_PURGE_STORES: usize = 8;
+pub const MAX_FOREIGN_PURGE_STORES: usize =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.foreignStoreSampleMax);
 
-/// How a failed delete backs its debt off.
-///
-/// After the `n`th failed attempt the debt is due again after
-/// `min(base * 2^(n-1), max)`.
+/// The configured bounds used by `Causa.purgeRetryDelay`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PurgeBackoff {
     pub(crate) base: Duration,
@@ -48,10 +47,15 @@ impl Default for PurgeBackoff {
     }
 }
 
-const DEFAULT_BATCH_SIZE: i64 = 100;
-const DEFAULT_BACKOFF_BASE: Duration = Duration::from_secs(30);
-const DEFAULT_BACKOFF_MAX: Duration = Duration::from_hours(6);
-const DEFAULT_STUCK_AFTER: u32 = 8;
+const DEFAULT_BATCH_SIZE: i64 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeBatchDefault);
+const DEFAULT_BACKOFF_BASE: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.ObjectMaintenance.purgeBackoffBaseSeconds
+));
+const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.ObjectMaintenance.purgeBackoffMaxSeconds
+));
+const DEFAULT_STUCK_AFTER: u32 = proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeStuckAfter);
 
 /// Options for one bounded drain of object-purge debt.
 ///
@@ -77,7 +81,7 @@ impl Default for ColdPurgeRetryOptions {
     fn default() -> Self {
         Self {
             batch_size: DEFAULT_BATCH_SIZE,
-            dry_run: false,
+            dry_run: proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeDryRunDefault),
             backoff: PurgeBackoff::default(),
             stuck_after: DEFAULT_STUCK_AFTER,
         }
@@ -99,7 +103,8 @@ impl ColdPurgeRetryOptions {
         self
     }
 
-    /// Delay after a debt's first failed attempt; doubles per attempt.
+    /// Delay after a debt's first failed attempt. Later delays double up
+    /// to the exponent and configured delay ceilings.
     #[must_use]
     pub const fn backoff_base(mut self, base: Duration) -> Self {
         self.backoff.base = base;
@@ -248,8 +253,7 @@ pub(crate) async fn drain_due_purge_debt(
         if pass.batches >= max_batches {
             break;
         }
-        // A batch deletes objects with no transaction open; confirm the pass
-        // still holds the store's maintenance lease before starting one.
+        // `Proxiima.ObjectMaintenance.drainOrder`. Provider I/O runs outside the transaction.
         lease.renew().await?;
         let batch = retry_cold_object_purges(pool, platform, cold, options).await?;
         pass.batches += 1;

@@ -1392,28 +1392,33 @@ fn object_maintenance_cadence_is_validated_before_startup() {
             .is_ok()
     );
     let builder = builder.s3(s3);
-    let Err(ProxiimaError::Config(message)) = builder
-        .clone()
-        .object_purge_interval(Duration::from_millis(60_001))
-        .resolve()
-    else {
-        panic!("an interval longer than the upload TTL must fail startup");
-    };
-    assert!(
-        message.contains("PROXIIMA_OBJECT_PURGE_INTERVAL_SECS"),
-        "{message}"
-    );
-    assert!(
-        message.contains("PROXIIMA_S3_UPLOAD_TTL_SECONDS"),
-        "{message}"
-    );
-    for interval in [Duration::ZERO, Duration::from_secs(60)] {
-        assert!(
-            builder
-                .clone()
-                .object_purge_interval(interval)
-                .resolve()
-                .is_ok()
-        );
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.ObjectMaintenance.cadenceAdmitted"]
+        .as_array()
+        .unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let interval = match row["in"][0].as_str().unwrap() {
+            "disabled" => Duration::ZERO,
+            "withinTtl" => Duration::from_secs(60),
+            "exceedsTtl" => Duration::from_millis(60_001),
+            other => panic!("unknown cadence {other}"),
+        };
+        let resolved = builder.clone().object_purge_interval(interval).resolve();
+        assert_eq!(row["out"], resolved.is_ok(), "{row}");
+        if let Err(error) = resolved {
+            let ProxiimaError::Config(message) = error else {
+                panic!("expected config error, got {error}");
+            };
+            assert!(
+                message.contains("PROXIIMA_OBJECT_PURGE_INTERVAL_SECS"),
+                "{message}"
+            );
+            assert!(
+                message.contains("PROXIIMA_S3_UPLOAD_TTL_SECONDS"),
+                "{message}"
+            );
+        }
     }
 }

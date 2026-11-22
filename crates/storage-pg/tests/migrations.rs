@@ -781,6 +781,8 @@ async fn embedding_lanes_refuse_unsupported_dimensions_and_widths() {
 /// A staged upload content hash remains exactly 32 bytes.
 #[tokio::test]
 async fn blob_upload_content_hash_rejects_noncanonical_length() {
+    const MAX_STORE_BYTES: usize =
+        proxiima_core::ledger!(Proxiima.ObjectMaintenance.storeIdMaxBytes);
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     create_db(&db_name)
         .await
@@ -804,6 +806,26 @@ async fn blob_upload_content_hash_rejects_noncanonical_length() {
         .bind(owner)
         .execute(pool)
         .await?;
+        let store_at_limit = format!("s3:aws/{}", "b".repeat(MAX_STORE_BYTES - "s3:aws/".len()));
+        let update_store =
+            "UPDATE proxiima_core.blob_uploads SET object_store = $1 WHERE upload_id = $2";
+        sqlx::query(update_store)
+            .bind(&store_at_limit)
+            .bind(upload)
+            .execute(pool)
+            .await?;
+        let too_long = sqlx::query(update_store)
+            .bind(format!("{store_at_limit}b"))
+            .bind(upload)
+            .execute(pool)
+            .await
+            .expect_err("the upload store identity byte bound");
+        assert_eq!(
+            too_long
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code),
+            Some("23514".into())
+        );
         let malformed = sqlx::query(
             "UPDATE proxiima_core.blob_uploads SET content_hash = decode('00', 'hex')
               WHERE upload_id = $1",

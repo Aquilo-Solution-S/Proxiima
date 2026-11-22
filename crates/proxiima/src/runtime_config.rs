@@ -1259,7 +1259,12 @@ impl RuntimeBuilder {
                 self.object_purge_interval
                     .unwrap_or(crate::config::DEFAULT_OBJECT_PURGE_INTERVAL),
             )
-            .filter(|interval| !interval.is_zero()),
+            .filter(|interval| {
+                *interval
+                    != Duration::from_secs(proxiima_core::ledger!(
+                        Proxiima.ObjectMaintenance.purgeDisabledSeconds
+                    ))
+            }),
             outbox_consumers: self.outbox_consumers,
         };
         config.validate()?;
@@ -1532,6 +1537,7 @@ impl RuntimeConfig {
     /// or when the object maintenance interval exceeds the configured upload TTL.
     pub fn validate(&self) -> Result<(), ProxiimaError> {
         self.storage.validate()?;
+        // `Proxiima.ObjectMaintenance.cadenceAdmitted`.
         if let (Some(interval), Some(s3)) = (self.object_purge_interval, &self.s3)
             && interval > Duration::from_secs(s3.upload_ttl_seconds)
         {

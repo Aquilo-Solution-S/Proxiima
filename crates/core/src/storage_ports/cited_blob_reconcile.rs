@@ -44,7 +44,8 @@ use crate::storage::StorageError;
 /// because the caller is a report and not a work queue — a deployment with
 /// fifty thousand orphans does not want fifty thousand strings, it wants
 /// the number and enough keys to recognise the cause.
-pub const MAX_RECONCILE_SAMPLE: usize = 100;
+pub const MAX_RECONCILE_SAMPLE: usize =
+    crate::ledger!(Proxiima.ObjectMaintenance.reconcileSampleMax);
 
 /// An artefact the corpus claims to hold whose object is not in the store.
 ///

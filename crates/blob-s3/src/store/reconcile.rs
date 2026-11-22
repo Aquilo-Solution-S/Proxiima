@@ -27,7 +27,7 @@ use super::rows::byte_len_from_column;
 ///
 /// Live rows page newest completion first, with upload id as the tie-breaker.
 /// Historical claims page on the upload primary key, independently of blob id.
-const ROW_PAGE: i64 = 1000;
+const ROW_PAGE: i64 = proxiima_core::ledger!(Proxiima.ObjectMaintenance.reconcileRowPage);
 
 #[derive(Debug, Clone, Copy)]
 struct LiveUploadCursor {
@@ -114,6 +114,7 @@ impl CitedBlobStore {
         &self,
         authority: &SystemAuthority,
     ) -> Result<CitedBlobReconcileOutcome, StorageError> {
+        // `Proxiima.ObjectMaintenance.reconcileVisibility`.
         self.require_system_authority(authority, "global cited-blob reconciliation")?;
         // THE OBJECT SIDE FIRST, AND ENTIRELY. Holding the key set is what
         // lets the row side stream, and it is what removes any dependency
@@ -147,8 +148,7 @@ impl CitedBlobStore {
         let ended = self
             .claim_row_keys(&mut objects, &mut transfers, &mut claimed)
             .await?;
-        // A key that already has purge debt with this store is owed, not
-        // orphaned: the drain will remove it.
+        // `Proxiima.ObjectMaintenance.reconcileCanonical`.
         outcome.owed_objects = self.drop_owed_keys(&mut objects, &mut transfers).await?;
         outcome.newly_owed_objects = self.owe_ended_objects(&mut objects, ended).await?;
         outcome.owed_objects = outcome
@@ -175,6 +175,7 @@ impl CitedBlobStore {
                 // row is allowed to name is the one derived from its own
                 // `upload_id`, and nothing else in the canonical prefix
                 // counts as this row's object.
+                // `Proxiima.ObjectMaintenance.reconcileLocator`.
                 if !self.mints_locator(
                     &row.object_store,
                     &row.bucket,
@@ -333,6 +334,7 @@ impl CitedBlobStore {
         let mut after: Option<Uuid> = None;
         loop {
             let mut tx = self.begin_reconcile_transaction().await?;
+            // `Proxiima.ObjectMaintenance.claimsKey`.
             let page = sqlx::query_as::<_, ClaimRow>(
                 "SELECT owner_id, upload_id, mounted_from_upload_id,
                         status IN ('pending', 'completed') AS live,
@@ -380,11 +382,8 @@ impl CitedBlobStore {
         Ok(ended)
     }
 
-    /// Owe each listed canonical object that only ended uploads imply and no
-    /// debt already covers, and count them. Each is decided in its own
-    /// transaction, in the erase's lock order: owner fence, then the key.
-    /// Under the key fence the claim is checked again, so an object a live
-    /// row now implies is never owed.
+    /// `Proxiima.ObjectMaintenance.reconcileCanonical`, one transaction per key.
+    /// Acquire the owner fence before the key fence, then recheck the claim.
     async fn owe_ended_objects(
         &self,
         objects: &mut BTreeSet<String>,
@@ -569,9 +568,8 @@ fn next_list_token(
     Ok(Some(next.to_owned()))
 }
 
-/// The keyset follows the descending completion order through equal timestamps
-/// and then through NULL completions. Upload primary keys make every boundary
-/// unique, including when many live rows mount the same object.
+/// The keyset follows `Proxiima.ObjectMaintenance.missingSampleOrder` through NULL completions.
+/// Upload primary keys make boundaries unique even for multiple mounts of one object.
 async fn load_live_upload_page(
     connection: &mut sqlx::PgConnection,
     owner_id: Option<Uuid>,

@@ -321,6 +321,110 @@ macro_rules! ledger {
     (Proxiima.Migrations.catalogRetryDelayMillis) => {
         100
     };
+    // Maximum bytes in a stored object-store identity.
+    (Proxiima.ObjectMaintenance.storeIdMaxBytes) => {
+        512
+    };
+    // Maximum ASCII bytes in an operator-selected object-store name.
+    (Proxiima.ObjectMaintenance.operatorIdMaxBytes) => {
+        64
+    };
+    // The persisted sentinel for the in-process purge store.
+    (Proxiima.ObjectMaintenance.memoryStoreId) => {
+        "memory:"
+    };
+    // Maximum UTF-8 bytes in a stored purge diagnostic.
+    (Proxiima.ObjectMaintenance.purgeErrorMaxBytes) => {
+        1024
+    };
+    // Maximum stuck debts included in a maintenance sample.
+    (Proxiima.ObjectMaintenance.stuckSampleMax) => {
+        32
+    };
+    // Maximum foreign stores included in a maintenance sample.
+    (Proxiima.ObjectMaintenance.foreignStoreSampleMax) => {
+        8
+    };
+    // Default maximum due debts selected by one drain batch.
+    (Proxiima.ObjectMaintenance.purgeBatchDefault) => {
+        100
+    };
+    // Whether a default drain is a preview.
+    (Proxiima.ObjectMaintenance.purgeDryRunDefault) => {
+        false
+    };
+    // Default delay in seconds after the first failed delete.
+    (Proxiima.ObjectMaintenance.purgeBackoffBaseSeconds) => {
+        30
+    };
+    // Default ceiling in seconds on a failed delete's retry delay.
+    (Proxiima.ObjectMaintenance.purgeBackoffMaxSeconds) => {
+        21600
+    };
+    // Default failure count at which a debt is reported as stuck.
+    (Proxiima.ObjectMaintenance.purgeStuckAfter) => {
+        8
+    };
+    // Maximum exponent applied to the initial delay.
+    (Proxiima.ObjectMaintenance.purgeBackoffExponentMax) => {
+        40
+    };
+    // Default worker cadence in seconds when an object store is configured.
+    (Proxiima.ObjectMaintenance.purgeIntervalSeconds) => {
+        60
+    };
+    // Interval in seconds that disables the worker.
+    (Proxiima.ObjectMaintenance.purgeDisabledSeconds) => {
+        0
+    };
+    // Expired uploads one runtime sweep batch can decide.
+    (Proxiima.ObjectMaintenance.runtimeSweepBatch) => {
+        500
+    };
+    // Maximum sweep batches in one runtime maintenance pass.
+    (Proxiima.ObjectMaintenance.runtimeSweepBatches) => {
+        20
+    };
+    // Maximum drain batches in one runtime maintenance pass.
+    (Proxiima.ObjectMaintenance.runtimePurgeBatches) => {
+        100
+    };
+    // Default batch size for the one-shot storage command.
+    (Proxiima.ObjectMaintenance.cliBatchDefault) => {
+        1000
+    };
+    // Maximum concurrent stages for one store instance and its clones.
+    (Proxiima.ObjectMaintenance.stagesPerStore) => {
+        8
+    };
+    // Default S3 path style setting.
+    (Proxiima.ObjectMaintenance.forcePathStyleDefault) => {
+        false
+    };
+    // Default upload URL lifetime in seconds.
+    (Proxiima.ObjectMaintenance.uploadTtlDefaultSeconds) => {
+        900
+    };
+    // Maximum upload URL lifetime in seconds supported by signing.
+    (Proxiima.ObjectMaintenance.uploadTtlMaxSeconds) => {
+        604800
+    };
+    // Default ceiling in bytes for a cited object.
+    (Proxiima.ObjectMaintenance.blobMaxBytesDefault) => {
+        104857600
+    };
+    // Maximum examples per reconciliation divergence class.
+    (Proxiima.ObjectMaintenance.reconcileSampleMax) => {
+        100
+    };
+    // Maximum reconciliation rows fetched per page.
+    (Proxiima.ObjectMaintenance.reconcileRowPage) => {
+        1000
+    };
+    // Text substituted for the private S3 secret in debug output.
+    (Proxiima.ObjectMaintenance.secretDebugMarker) => {
+        "[REDACTED]"
+    };
     // Memory ceiling ranks in declaration order for Rust.
     (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
         [0, 1, 2, 3]

@@ -1681,10 +1681,7 @@ async fn delete_blobs(
 
 /// Which of the erased scope's objects may actually be destroyed.
 ///
-/// REFCOUNT BY QUERY, not by counter — `gc_unreferenced_content`'s idiom,
-/// one level down. A mount makes object-to-upload-row many-to-one: two
-/// owners' rows may name one object, so erasing one owner must leave the
-/// bytes the other still reads.
+/// `Proxiima.ObjectMaintenance.purgeOrder`. Mounted rows can share an object.
 ///
 /// The anti-join runs BEFORE the erase deletes this scope's rows, so it has
 /// to exclude them explicitly rather than rely on them being gone: the

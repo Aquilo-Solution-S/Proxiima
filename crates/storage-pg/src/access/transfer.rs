@@ -506,32 +506,10 @@ fn series_leg_sql(table: &str, leg: TransferLeg) -> Result<SqlText, StorageError
     }
 }
 
-/// Move the handle's cited blobs to the destination, deduping rather than
-/// refusing when the bytes are shared.
+/// Transfer cited objects under `Proxiima.ObjectMaintenance.citedObjectTransfer`.
 ///
-/// `TransferRule::FollowOrDedupe` on `proxiima_core.blob`, three cases:
-///
-/// 1. **The destination already holds these bytes.** Its own row wins;
-///    this handle's references are repointed at it and the source keeps
-///    whatever it still uses. Moving the row instead would collide with the
-///    destination's UNIQUE `(owner_id, schema_id, content_hash)`.
-/// 2. **Nothing else references the bytes.** Move the rows in place: same
-///    `blob_id`, same `upload_id`, same object, no mount. The common case
-///    does not pay for the uncommon one, and a citation id a client already
-///    holds does not move under it.
-/// 3. **Another owner's live series references the bytes.** The destination
-///    gets a row of its own and an upload row that MOUNTS the source's
-///    object — OCI's cross-repo blob mount, where a mount is an optimisation
-///    over a copy and never a correctness requirement. Nothing in S3 is
-///    read, written or copied; ownership is metadata over an immutable
-///    store.
-///
-/// The source's rows are never deleted here. Deleting a blob row decides
-/// the fate of an S3 object, and a transfer has no object-store handle in
-/// scope; erase does, and its purge is refcounted precisely so a shared
-/// object survives one owner leaving. An unreferenced source row is the
-/// source owner's own row, reachable by its own erase and reported by
-/// reconcile.
+/// Transfer remaps object metadata. The erase path owns refcounted byte
+/// deletion, so another owner can continue reading a shared object.
 async fn transfer_cited_blobs(
     tx: &mut Transaction<'_, Postgres>,
     surfaces: &OwnerSurfaces,
@@ -686,10 +664,7 @@ async fn transfer_one_cited_blob(
         return Ok(());
     }
 
-    // Case 2: nobody else's live series names these bytes, so the rows can
-    // simply change hands. Read `handle <> $2 AND owner_id <> $3` carefully:
-    // `$3` is the DESTINATION, so the source owner's OWN second series
-    // satisfies it and does not count as sharing.
+    // Another handle under the source owner also keeps a claim on the object.
     let shared: bool = sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1

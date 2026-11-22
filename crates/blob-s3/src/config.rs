@@ -12,13 +12,16 @@ use crate::settings::{
     PROXIIMA_S3_SECRET_ACCESS_KEY, PROXIIMA_S3_STORE_ID, PROXIIMA_S3_UPLOAD_TTL_SECONDS,
 };
 
-pub(crate) const DEFAULT_UPLOAD_TTL_SECONDS: u64 = 900;
-pub(crate) const DEFAULT_MAX_BLOB_BYTES: u64 = 100 * 1024 * 1024;
+pub(crate) const DEFAULT_UPLOAD_TTL_SECONDS: u64 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.uploadTtlDefaultSeconds);
+pub(crate) const DEFAULT_MAX_BLOB_BYTES: u64 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.blobMaxBytesDefault);
 
 /// `SigV4` ceiling on a presigned URL (7 days). Bound here: `prepare_upload`
 /// computes `now + Duration::seconds(ttl)` before
 /// `PresigningConfig::expires_in`, and that add panics on overflow.
-pub(crate) const MAX_PRESIGN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
+pub(crate) const MAX_PRESIGN_TTL_SECONDS: u64 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.uploadTtlMaxSeconds);
 
 /// Reject a TTL no presigned URL could carry, naming the variable.
 pub(crate) fn validate_presign_ttl(key: &Setting, seconds: u64) -> Result<(), BlobError> {
@@ -67,7 +70,10 @@ impl std::fmt::Debug for S3KeyPair {
         formatter
             .debug_struct("S3KeyPair")
             .field("access_key_id", &self.access_key_id)
-            .field("secret_access_key", &"[REDACTED]")
+            .field(
+                "secret_access_key",
+                &proxiima_core::ledger!(Proxiima.ObjectMaintenance.secretDebugMarker),
+            )
             .finish()
     }
 }
@@ -144,8 +150,7 @@ impl S3RuntimeConfig {
     pub fn from_lookup_source(
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, BlobError> {
-        // Parsed before the bucket check so a malformed setting fails boot
-        // whether or not this lane is configured.
+        // `Proxiima.ObjectMaintenance.optionalS3`.
         let plaintext_hosts = PlaintextHosts::from_lookup(lookup)
             .map_err(|error| BlobError::Config(error.to_string()))?;
         let Some(bucket) = PROXIIMA_S3_BUCKET.read_source(lookup) else {
@@ -237,6 +242,7 @@ impl S3RuntimeConfig {
                 None,
                 "proxiima-s3-config",
             ));
+        // `Proxiima.ObjectMaintenance.endpointChoice`.
         if let Some(endpoint_url) = endpoint_url {
             builder = builder.endpoint_url(endpoint_url);
         }
@@ -258,7 +264,9 @@ fn parse_bool_env(
     key: &Setting,
 ) -> Result<bool, BlobError> {
     let Some(value) = key.read_source(lookup) else {
-        return Ok(false);
+        return Ok(proxiima_core::ledger!(
+            Proxiima.ObjectMaintenance.forcePathStyleDefault
+        ));
     };
     proxiima_core::parse_bool_word(&value)
         .ok_or_else(|| BlobError::Config(format!("invalid boolean {key}={value}")))
@@ -300,16 +308,13 @@ fn parse_optional_u64_env(
         .map_err(|_| BlobError::Config(format!("invalid integer {key}={value}")))
 }
 
-/// Reject an S3 endpoint that would carry presigned URLs (and the credentials
-/// signed into them) over plaintext HTTP. HTTPS is always accepted; plaintext
-/// HTTP is accepted only for a loopback host or a host named in
-/// `plaintext_hosts` (local object store/dev, or a sidecar on a network with
-/// no route out), unlike production S3 endpoints which must be TLS.
+/// Validate the URL that object I/O and signing use.
 pub(crate) fn validate_endpoint_url(
     key: &Setting,
     raw: &str,
     plaintext_hosts: &PlaintextHosts,
 ) -> Result<(), BlobError> {
+    // `Proxiima.ObjectMaintenance.endpointAdmitted`.
     validate_endpoint_url_for_hosts(raw, EndpointUrlPolicy::AllowLoopbackHttp, plaintext_hosts)
         .map_err(|error| match error {
             EndpointUrlError::InvalidUrl(reason) => BlobError::Config(format!(

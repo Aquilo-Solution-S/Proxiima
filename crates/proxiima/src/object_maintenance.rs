@@ -22,11 +22,13 @@ use tokio_util::sync::CancellationToken;
 use crate::workers::{Backoff, Pass, Wake, WorkerPass};
 
 /// Expired uploads one sweep call decides.
-const SWEEP_BATCH: u32 = 500;
+const SWEEP_BATCH: u32 = proxiima_core::ledger!(Proxiima.ObjectMaintenance.runtimeSweepBatch);
 /// Sweep calls one pass makes at most.
-const MAX_SWEEP_BATCHES: u32 = 20;
+const MAX_SWEEP_BATCHES: u32 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.runtimeSweepBatches);
 /// Drain batches one pass runs at most, of the default batch size.
-const MAX_PURGE_BATCHES: u32 = 100;
+const MAX_PURGE_BATCHES: u32 =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.runtimePurgeBatches);
 
 /// What one [`object_maintenance_pass`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -67,6 +69,7 @@ pub async fn object_maintenance_pass(
 ) -> Result<ObjectMaintenanceOutcome, StorageError> {
     let options = ColdPurgeRetryOptions::default();
     let (storage, census) = wired_census(storage, blobs, options).await?;
+    // `Proxiima.ObjectMaintenance.maintenanceLease`.
     let Some(lock) = storage.try_storage_maintenance_lock().await? else {
         let mut purge = census;
         purge.skipped = true;
@@ -86,6 +89,7 @@ async fn sweep_and_drain(
     lock: &StorageMaintenanceLock,
     options: ColdPurgeRetryOptions,
 ) -> Result<ObjectMaintenanceOutcome, StorageError> {
+    // `Proxiima.ObjectMaintenance.maintenanceOrder`.
     let mut sweep = UploadExpirySweepOutcome::default();
     for _ in 0..MAX_SWEEP_BATCHES {
         lock.renew().await?;
@@ -112,6 +116,7 @@ pub(crate) fn refuse_foreign_debt(
     configured: &proxiima_core::ObjectStoreId,
     census: &ObjectPurgePassOutcome,
 ) -> Result<(), StorageError> {
+    // `Proxiima.ObjectMaintenance.foreignDebt`.
     if census.foreign == 0 {
         return Ok(());
     }
@@ -218,10 +223,7 @@ pub(crate) struct ObjectPurgeWorker {
 
 /// Run [`object_maintenance_pass`] every `interval` until cancellation.
 ///
-/// The gate is checked before every pass: a quiesce lets the pass in
-/// progress finish, then parks. The first pass runs at once, so a restart
-/// drains what the previous process left owed. A pass drains up to its own
-/// bound, so the next one waits the interval whatever this one did.
+/// `Proxiima.ObjectMaintenance.workerCycle`. The shared gate parks between passes.
 pub(crate) async fn object_purge_worker(
     worker: ObjectPurgeWorker,
     cancel: CancellationToken,
@@ -249,8 +251,7 @@ impl WorkerPass for ObjectPurgePass {
                 let snapshot = ObjectPurgeSnapshot::of(&outcome.purge);
                 worker.health.record(snapshot);
                 log_pass(&outcome);
-                // Warn when the stuck count changes, not on every pass:
-                // it stays visible on the probe.
+                // `Proxiima.ObjectMaintenance.warnStuck`. The probe keeps the current count.
                 if snapshot.stuck != self.stuck_seen {
                     if snapshot.stuck > 0 {
                         tracing::warn!(
@@ -318,7 +319,21 @@ mod tests {
     fn foreign_debt_is_refused_naming_both_stores_and_the_count() {
         let configured = ObjectStoreId::operator("here").expect("valid id");
         let mut census = ObjectPurgePassOutcome::default();
-        assert!(refuse_foreign_debt(&configured, &census).is_ok());
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.ObjectMaintenance.foreignDebt"]
+            .as_array()
+            .unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            census.foreign = u64::from(row["in"][0].as_bool().unwrap());
+            let admitted = refuse_foreign_debt(&configured, &census).is_ok();
+            assert_eq!(
+                row["out"],
+                if admitted { "proceed" } else { "refuse" },
+                "{row}"
+            );
+        }
         census.foreign = 3;
         census.foreign_stores = vec![(ObjectStoreId::operator("there").expect("valid id"), 3)];
         let Err(StorageError::ConstraintViolation(message)) =

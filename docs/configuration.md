@@ -21,6 +21,10 @@ An empty or whitespace-only value is unset. At startup the host logs a warning
 naming each `PROXIIMA_*` environment variable that no setting declares; the
 variable is ignored.
 
+When S3 is configured, set `PROXIIMA_OBJECT_PURGE_INTERVAL_SECS` at or below
+`PROXIIMA_S3_UPLOAD_TTL_SECONDS`. An interval of `0` disables scheduled object
+maintenance. See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaintenance).
+
 <!-- settings:begin -->
 
 | Setting | Purpose | When needed | Type | Default |

@@ -438,3 +438,50 @@ async fn an_object_purge_pass_drains_or_skips_under_the_maintenance_lock() -> Te
     let _ = drop_db(&db_name).await;
     result
 }
+
+#[tokio::test]
+async fn persisted_debt_bounds_match_the_ledger() -> TestResult {
+    let (db_name, pg) = fresh().await?;
+    let result: TestResult = async {
+        const STORE_MAX: usize = proxiima_core::ledger!(Proxiima.ObjectMaintenance.storeIdMaxBytes);
+        const ERROR_MAX: usize =
+            proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeErrorMaxBytes);
+        let pool = pg.pool_for_tests();
+        let error_at_limit = format!("{}{}", "é".repeat(ERROR_MAX / 2), "a".repeat(ERROR_MAX % 2));
+        owe(pool, &keys(0..1)).await?;
+        sqlx::query(
+            "UPDATE proxiima_core.cold_purge_pending SET object_store = $1, last_error = $2",
+        )
+        .bind(format!("test:{}", "a".repeat(STORE_MAX - "test:".len())))
+        .bind("é".repeat(ERROR_MAX / 'é'.len_utf8()))
+        .execute(pool)
+        .await?;
+        for (sql, value) in [
+            (
+                "UPDATE proxiima_core.cold_purge_pending SET object_store = $1",
+                format!("test:{}", "a".repeat(STORE_MAX + 1 - "test:".len())),
+            ),
+            (
+                "UPDATE proxiima_core.cold_purge_pending SET last_error = $1",
+                format!("{error_at_limit}a"),
+            ),
+        ] {
+            let error = sqlx::query(sql)
+                .bind(value)
+                .execute(pool)
+                .await
+                .expect_err("one byte over the limit");
+            assert_eq!(
+                error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .as_deref(),
+                Some("23514")
+            );
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result
+}

@@ -26,6 +26,36 @@ fn from_lookup_requires_a_region_alongside_the_bucket() {
 }
 
 #[test]
+fn optional_s3_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.ObjectMaintenance.optionalS3"]
+        .as_array()
+        .unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let host_policy_valid = row["in"][0].as_bool().unwrap();
+        let bucket_set = row["in"][1].as_bool().unwrap();
+        let companions_valid = row["in"][2].as_bool().unwrap();
+        let pairs = bucketed(&[]);
+        let provided = env(&pairs);
+        let lookup = |key: &str| match key {
+            "PROXIIMA_PLAINTEXT_HOSTS" if !host_policy_valid => Some("invalid/host".into()),
+            "PROXIIMA_S3_BUCKET" if !bucket_set => Some("  ".into()),
+            "PROXIIMA_S3_REGION" if !companions_valid => None,
+            _ => provided(key),
+        };
+        let actual = match S3RuntimeConfig::from_lookup(&lookup) {
+            Ok(Some(_)) => "configured",
+            Ok(None) => "disabled",
+            Err(BlobError::Config(_)) => "refuse",
+            Err(other) => panic!("unexpected S3 admission error: {other}"),
+        };
+        assert_eq!(row["out"], actual, "{row}");
+    }
+}
+
+#[test]
 fn object_store_source_matches_ledger_vectors() {
     let ledger: serde_json::Value =
         serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
@@ -263,6 +293,27 @@ fn from_lookup_rejects_a_ttl_no_presigned_url_could_carry() {
         panic!("wrong variant");
     };
     assert!(msg.contains("greater than zero"), "{msg}");
+}
+
+#[test]
+fn endpoint_admission_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.ObjectMaintenance.endpointAdmitted"]
+        .as_array()
+        .unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let (endpoint, hosts) = match row["in"][0].as_str().unwrap() {
+            "https" => ("https://s3.example.com", None),
+            "loopbackHttp" => ("http://localhost", None),
+            "admittedHttp" => ("http://gateway:9090", Some("gateway")),
+            "otherHttp" => ("http://s3.example.com", None),
+            "invalidOrUnsupported" => ("s3.example.com", None),
+            other => panic!("unknown endpoint transport {other}"),
+        };
+        assert_eq!(row["out"], with_endpoint(endpoint, hosts).is_ok(), "{row}");
+    }
 }
 
 #[test]

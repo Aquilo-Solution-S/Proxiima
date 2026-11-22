@@ -5,18 +5,11 @@ pub const DEFAULT_BIND: &str = "127.0.0.1:31415";
 pub const DEFAULT_DATABASE_URL: &str =
     proxiima_core::ledger!(Proxiima.Repository.mcpDefaultDatabaseUrl);
 
-// Each action spelling feeds the parser, diagnostics and static help.
-macro_rules! storage_action_flag {
-    (retry) => {
-        "--retry-cold-object-purges"
-    };
-    (sweep) => {
-        "--sweep-expired-uploads"
-    };
-}
-
 /// Rows per transaction of `maintain-storage` without `--batch-size`.
-const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();
+const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(proxiima_core::ledger!(
+    Proxiima.ObjectMaintenance.cliBatchDefault
+))
+.unwrap();
 
 /// `DATABASE_URL`, or the dev default when it is not configured.
 fn database_url_from_env() -> String {
@@ -151,7 +144,32 @@ Optional:
   -h, --help               Print this help
 ";
 
-pub const STORAGE_MAINTENANCE_USAGE: &str = concat!(
+// The action declarations generate both flag recognition and static help.
+macro_rules! storage_actions {
+    ($header:literal, $options:literal; $($action:ident = $flag:literal => $help:literal),+ $(,)?) => {
+        enum StorageAction { $($action),+ }
+
+        impl StorageAction {
+            fn parse(flag: &str) -> Option<Self> {
+                match flag {
+                    $($flag => Some(Self::$action),)+
+                    _ => None,
+                }
+            }
+
+            const fn flag(self) -> &'static str {
+                match self {
+                    $(Self::$action => $flag,)+
+                }
+            }
+        }
+
+        pub const STORAGE_MAINTENANCE_USAGE: &str =
+            concat!($header, $("  ", $flag, $help, "\n",)+ $options);
+    };
+}
+
+storage_actions! {
     "\
 Usage: proxiima-mcp maintain-storage [OPTIONS]
 
@@ -171,28 +189,25 @@ At least one action flag is required — there are deliberately no
 destruction defaults.
 
 Actions (at least one):
-  ",
-    storage_action_flag!(retry),
+",
     "
-                           Retry a bounded batch of exact object-store keys
-                           left by committed owner erases. Live retry
-                           requires the serving host's PROXIIMA_S3_* block.
-                           Exits non-zero while debt is owed to another
-                           object store
-  ",
-    storage_action_flag!(sweep),
-    "  Expire uploads whose TTL passed before they were
-                           staged, owing both of their keys. Requires the
-                           PROXIIMA_S3_* block; not with --dry-run
-
 Optional:
   --database-url <URL>     Postgres URL (defaults to DATABASE_URL or proxiima_dev)
   --batch-size <N>         Rows per transaction (default 1000)
   --dry-run                Report what would be purged without
                            changing anything
   -h, --help               Print this message
-"
-);
+";
+    Retry = "--retry-cold-object-purges" => "
+                           Retry a bounded batch of exact object-store keys
+                           left by committed owner erases. Live retry
+                           requires the serving host's PROXIIMA_S3_* block.
+                           Exits non-zero while debt is owed to another
+                           object store",
+    Sweep = "--sweep-expired-uploads" => "  Expire uploads whose TTL passed before they were
+                           staged, owing both of their keys. Requires the
+                           PROXIIMA_S3_* block; not with --dry-run",
+}
 
 #[derive(Clone)]
 pub struct McpConfig {
@@ -477,8 +492,6 @@ pub fn parse_storage_maintenance_args<I: IntoIterator<Item = String>>(
     let mut flags = Flags::new(args);
     while let Some(flag) = flags.next_flag()? {
         match flag.as_str() {
-            storage_action_flag!(retry) => retry_cold_object_purges = true,
-            storage_action_flag!(sweep) => sweep_expired_uploads = true,
             "--dry-run" => dry_run = true,
             "--database-url" => database_url = Some(flags.value("--database-url")?),
             "--batch-size" => {
@@ -489,25 +502,27 @@ pub fn parse_storage_maintenance_args<I: IntoIterator<Item = String>>(
                 batch_size = NonZeroU32::new(parsed)
                     .ok_or_else(|| ArgsError::Invalid("--batch-size must be positive".into()))?;
             }
-            other => return Err(unknown_flag(other)),
+            other => match StorageAction::parse(other) {
+                Some(StorageAction::Retry) => retry_cold_object_purges = true,
+                Some(StorageAction::Sweep) => sweep_expired_uploads = true,
+                None => return Err(unknown_flag(other)),
+            },
         }
     }
 
+    // `Proxiima.ObjectMaintenance.storageActions`.
     if !retry_cold_object_purges && !sweep_expired_uploads {
-        return Err(ArgsError::Invalid(
-            concat!(
-                "maintain-storage requires ",
-                storage_action_flag!(retry),
-                " or ",
-                storage_action_flag!(sweep),
-            )
-            .into(),
-        ));
+        return Err(ArgsError::Invalid(format!(
+            "maintain-storage requires {} or {}",
+            StorageAction::Retry.flag(),
+            StorageAction::Sweep.flag()
+        )));
     }
     if sweep_expired_uploads && dry_run {
-        return Err(ArgsError::Invalid(
-            concat!(storage_action_flag!(sweep), " has no dry run").into(),
-        ));
+        return Err(ArgsError::Invalid(format!(
+            "{} has no dry run",
+            StorageAction::Sweep.flag()
+        )));
     }
 
     let database_url = database_url.unwrap_or_else(database_url_from_env);
@@ -684,6 +699,49 @@ mod tests {
         .expect_err("no dry run");
         assert!(err.to_string().contains("no dry run"));
         assert!(STORAGE_MAINTENANCE_USAGE.contains("--sweep-expired-uploads"));
+    }
+
+    #[test]
+    fn storage_actions_match_ledger_vectors() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../crates/core/tests/ledger_vectors.json"
+        ))
+        .unwrap();
+        let rows = vectors["Proxiima.ObjectMaintenance.storageActions"]
+            .as_array()
+            .unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let action = row["in"][0].as_str().unwrap();
+            let dry_run = row["in"][1].as_bool().unwrap();
+            let mut args = vec!["--database-url", "postgres://localhost/test"];
+            let retry = matches!(action, "retry" | "both");
+            let sweep = matches!(action, "sweep" | "both");
+            if retry {
+                args.push(StorageAction::Retry.flag());
+            }
+            if sweep {
+                args.push(StorageAction::Sweep.flag());
+            }
+            if dry_run {
+                args.push("--dry-run");
+            }
+            match parse_storage_maintenance_args(args.into_iter().map(str::to_owned)) {
+                Ok(config) => {
+                    assert_eq!(row["out"]["ok"], action);
+                    assert_eq!(config.retry_cold_object_purges, retry);
+                    assert_eq!(config.sweep_expired_uploads, sweep);
+                    assert_eq!(config.dry_run, dry_run);
+                }
+                Err(err) if err.to_string().contains("requires") => {
+                    assert_eq!(row["out"]["error"], "missingAction");
+                }
+                Err(err) => {
+                    assert!(err.to_string().contains("has no dry run"), "{err}");
+                    assert_eq!(row["out"]["error"], "sweepDryRun");
+                }
+            }
+        }
     }
 
     #[test]

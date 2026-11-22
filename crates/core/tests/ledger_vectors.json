@@ -338,6 +338,99 @@
   {"out": 1, "in": ["fact"]},
   {"out": 2, "in": ["abstraction"]},
   {"out": 3, "in": ["perspective"]}],
+ "Proxiima.ObjectMaintenance.warnStuck":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.ObjectMaintenance.storageActions":
+ [{"out": {"error": "missingAction"}, "in": ["none", true]},
+  {"out": {"error": "missingAction"}, "in": ["none", false]},
+  {"out": {"ok": "retry"}, "in": ["retry", true]},
+  {"out": {"ok": "retry"}, "in": ["retry", false]},
+  {"out": {"error": "sweepDryRun"}, "in": ["sweep", true]},
+  {"out": {"ok": "sweep"}, "in": ["sweep", false]},
+  {"out": {"error": "sweepDryRun"}, "in": ["both", true]},
+  {"out": {"ok": "both"}, "in": ["both", false]}],
+ "Proxiima.ObjectMaintenance.settlePurge":
+ [{"out": "clear", "in": ["removed"]},
+  {"out": "clear", "in": ["absent"]},
+  {"out": "backOff", "in": ["failed"]}],
+ "Proxiima.ObjectMaintenance.reconcileVisibility":
+ [{"out": "bucketAndRows", "in": ["global"]},
+  {"out": "ownLiveRows", "in": ["owner"]}],
+ "Proxiima.ObjectMaintenance.reconcileLocator":
+ [{"out": "present", "in": [true, true]},
+  {"out": "missing", "in": [true, false]},
+  {"out": "foreign", "in": [false, true]},
+  {"out": "foreign", "in": [false, false]}],
+ "Proxiima.ObjectMaintenance.reconcileCanonical":
+ [{"out": "owed", "in": ["existingDebt"]},
+  {"out": "recordDebt", "in": ["endedOnly"]},
+  {"out": "orphan", "in": ["unclaimed"]},
+  {"out": "retained", "in": ["live"]}],
+ "Proxiima.ObjectMaintenance.purgeDiagnosticCharacter":
+ [{"out": "space", "in": [true]}, {"out": "preserve", "in": [false]}],
+ "Proxiima.ObjectMaintenance.persistedStoreAdmitted":
+ [{"out": true, "in": ["knownCanonical"]},
+  {"out": false, "in": ["knownMalformed"]},
+  {"out": true, "in": ["externalScheme"]},
+  {"out": false, "in": ["malformedEnvelope"]}],
+ "Proxiima.ObjectMaintenance.optionalS3":
+ [{"out": "configured", "in": [true, true, true]},
+  {"out": "refuse", "in": [true, true, false]},
+  {"out": "disabled", "in": [true, false, true]},
+  {"out": "disabled", "in": [true, false, false]},
+  {"out": "refuse", "in": [false, true, true]},
+  {"out": "refuse", "in": [false, true, false]},
+  {"out": "refuse", "in": [false, false, true]},
+  {"out": "refuse", "in": [false, false, false]}],
+ "Proxiima.ObjectMaintenance.mayExpire":
+ [{"out": true, "in": ["pendingUnstaged", true]},
+  {"out": false, "in": ["pendingUnstaged", false]},
+  {"out": false, "in": ["pendingStaged", true]},
+  {"out": false, "in": ["pendingStaged", false]},
+  {"out": false, "in": ["terminal", true]},
+  {"out": false, "in": ["terminal", false]}],
+ "Proxiima.ObjectMaintenance.maintenanceLease":
+ [{"out": "runPass", "in": [true]}, {"out": "skipPass", "in": [false]}],
+ "Proxiima.ObjectMaintenance.lostStageClaims":
+ [{"out": "preserveBytes", "in": [true]}, {"out": "recordDebt", "in": [false]}],
+ "Proxiima.ObjectMaintenance.foreignDebt":
+ [{"out": "refuse", "in": [true]}, {"out": "proceed", "in": [false]}],
+ "Proxiima.ObjectMaintenance.endpointChoice":
+ [{"out": "configured", "in": [true]},
+  {"out": "defaultResolver", "in": [false]}],
+ "Proxiima.ObjectMaintenance.endpointAdmitted":
+ [{"out": true, "in": ["https"]},
+  {"out": true, "in": ["loopbackHttp"]},
+  {"out": true, "in": ["admittedHttp"]},
+  {"out": false, "in": ["otherHttp"]},
+  {"out": false, "in": ["invalidOrUnsupported"]}],
+ "Proxiima.ObjectMaintenance.debtStoreMatch":
+ [{"out": "attempt", "in": [true]}, {"out": "retain", "in": [false]}],
+ "Proxiima.ObjectMaintenance.commandSucceeded":
+ [{"out": true, "in": ["completed"]},
+  {"out": true, "in": ["leaseContended"]},
+  {"out": false, "in": ["failed"]}],
+ "Proxiima.ObjectMaintenance.claimsKey":
+ [{"out": true, "in": ["inFlight", "transfer"]},
+  {"out": true, "in": ["inFlight", "canonical"]},
+  {"out": false, "in": ["expiredPending", "transfer"]},
+  {"out": true, "in": ["expiredPending", "canonical"]},
+  {"out": false, "in": ["completed", "transfer"]},
+  {"out": true, "in": ["completed", "canonical"]},
+  {"out": false, "in": ["ended", "transfer"]},
+  {"out": false, "in": ["ended", "canonical"]}],
+ "Proxiima.ObjectMaintenance.citedObjectTransfer":
+ [{"out": "reuseDestination", "in": [true, true]},
+  {"out": "reuseDestination", "in": [true, false]},
+  {"out": "mountSource", "in": [false, true]},
+  {"out": "moveRows", "in": [false, false]}],
+ "Proxiima.ObjectMaintenance.cadenceAdmitted":
+ [{"out": true, "in": ["disabled"]},
+  {"out": true, "in": ["withinTtl"]},
+  {"out": false, "in": ["exceedsTtl"]}],
  "Proxiima.Migrations.schemaWork":
  [{"out": "apply", "in": ["explicitMigrate"]},
   {"out": "validate", "in": ["serving"]},

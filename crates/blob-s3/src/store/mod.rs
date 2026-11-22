@@ -78,7 +78,8 @@ pub struct CitedBlobStore {
 }
 
 /// How many uploads one store stages at once; later stages wait for a slot.
-pub(super) const MAX_CONCURRENT_STAGES: usize = 8;
+pub(super) const MAX_CONCURRENT_STAGES: usize =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.stagesPerStore);
 
 impl CitedBlobStore {
     /// Validate and normalize the S3 configuration at its consuming boundary.

@@ -2462,6 +2462,392 @@ stateDiagram-v2
 
 - retry catalog: Only shared-catalog contention is eligible for the migration retry budget.
 
+## ObjectMaintenance
+
+**Pass step**: Steps of a leased object-maintenance pass.
+
+- sweep
+- drain
+
+**Leased work**: Work selected by the shared storage maintenance lease.
+
+- runPass
+- skipPass
+
+**Storage actions**: Which maintenance command action flags were selected.
+
+- none
+- retry
+- sweep
+- both
+
+**Action refusal**: Why the selected action flags are refused.
+
+- missingAction
+- sweepDryRun
+
+**Upload cadence**: The state of the configured cadence when S3 is wired.
+
+- disabled
+- withinTtl
+- exceedsTtl
+
+**Purge step**: The ordered boundaries of object debt discharge.
+
+- persistUnclaimedDebt
+- commit
+- readCurrentVersion
+- deleteExactKey
+- settleObservedVersion
+
+**Provider result**: The outcome of deleting the exact key and its versions.
+
+- removed
+- absent
+- failed
+
+**Settlement**: Whether to retire the observed debt or schedule its retry.
+
+- clear
+- backOff
+
+**Upload key**: Which provider keys an unstaged upload can imply.
+
+- transfer
+- canonical
+
+**Version delete step**: The phases of checking and deleting a provider page.
+
+- checkCursor
+- collectExactVersionIds
+- deleteVersions
+- checkAcknowledgements
+
+**Canonical claim**: Whether a listed key is owed, unclaimed or still claimed by a live upload.
+
+- existingDebt
+- endedOnly
+- unclaimed
+- live
+
+**Canonical finding**: How reconciliation classifies a listed canonical key.
+
+- owed
+- recordDebt
+- orphan
+- retained
+
+**Endpoint choice**: Whether an endpoint was provided by the host.
+
+- configured
+- defaultResolver
+
+**Debt disposition**: Outcomes of comparing stored debt with the wired store.
+
+- attempt
+- retain
+
+**Drain step**: Steps taken by a leased debt drain.
+
+- renewLease
+- selectDueForStore
+- tryBatch
+- reportCounts
+
+**Claim phase**: Whether an upload row claims a listed object of each key class.
+
+- inFlight
+- expiredPending
+- completed
+- ended
+
+**Reconcile scope**: Reconciliation source visibility.
+
+- global
+- owner
+
+**Reconcile observations**: Which observations can be returned from the chosen reconciliation scope.
+
+- bucketAndRows
+- ownLiveRows
+
+**S3 admission**: The outcome of consuming the S3 settings block.
+
+- disabled
+- configured
+- refuse
+
+**Lost stage disposition**: The outcome of rechecking claims after a stage loses the locator write.
+
+- preserveBytes
+- recordDebt
+
+**Locator finding**: The finding made when comparing the ordinary read winner with this store.
+
+- foreign
+- present
+- missing
+
+**Census admission**: Whether boot and the runtime pass can proceed with the current purge census.
+
+- proceed
+- refuse
+
+**Expiry state**: The state of one upload at the expiry decision.
+
+- pendingUnstaged
+- pendingStaged
+- terminal
+
+**Diagnostic character**: How to render a provider diagnostic character.
+
+- preserve
+- space
+
+**Cited object transfer**: Transfer's disposition of the cited object's metadata.
+
+- reuseDestination
+- moveRows
+- mountSource
+
+**Worker step**: The boundary at which the purge worker checks for quiesce.
+
+- checkpoint
+- pass
+- wait
+
+**Persisted store form**: Classification of a stored object identity at the read boundary.
+
+- knownCanonical
+- knownMalformed
+- externalScheme
+- malformedEnvelope
+
+**Missing sample sort key**: Deterministic ordering keys for samples of missing live uploads.
+
+- completionNewestFirst
+- uploadIdDescending
+
+**Endpoint transport**: Transport and host classes distinguished by S3 endpoint validation.
+
+- https
+- loopbackHttp
+- admittedHttp
+- otherHttp
+- invalidOrUnsupported
+
+**Command completion**: Completion of an operator maintenance command.
+
+- completed
+- leaseContended
+- failed
+
+**store id max bytes** = 512: Maximum bytes in a stored object-store identity.
+
+**operator id max bytes** = 64: Maximum ASCII bytes in an operator-selected object-store name.
+
+**memory store id** = "memory:": The persisted sentinel for the in-process purge store.
+
+**purge error max bytes** = 1024: Maximum UTF-8 bytes in a stored purge diagnostic.
+
+**stuck sample max** = 32: Maximum stuck debts included in a maintenance sample.
+
+**foreign store sample max** = 8: Maximum foreign stores included in a maintenance sample.
+
+**purge batch default** = 100: Default maximum due debts selected by one drain batch.
+
+**purge dry run default** = no: Whether a default drain is a preview.
+
+**purge backoff base seconds** = 30: Default delay in seconds after the first failed delete.
+
+**purge backoff max seconds** = 21600: Default ceiling in seconds on a failed delete's retry delay.
+
+**purge stuck after** = 8: Default failure count at which a debt is reported as stuck.
+
+**purge backoff exponent max** = 40: Maximum exponent applied to the initial delay.
+
+**purge interval seconds** = 60: Default worker cadence in seconds when an object store is configured.
+
+**purge disabled seconds** = 0: Interval in seconds that disables the worker.
+
+**runtime sweep batch** = 500: Expired uploads one runtime sweep batch can decide.
+
+**runtime sweep batches** = 20: Maximum sweep batches in one runtime maintenance pass.
+
+**runtime purge batches** = 100: Maximum drain batches in one runtime maintenance pass.
+
+**cli batch default** = 1000: Default batch size for the one-shot storage command.
+
+**stages per store** = 8: Maximum concurrent stages for one store instance and its clones.
+
+**force path style default** = no: Default S3 path style setting.
+
+**upload ttl default seconds** = 900: Default upload URL lifetime in seconds.
+
+**upload ttl max seconds** = 604800: Maximum upload URL lifetime in seconds supported by signing.
+
+**blob max bytes default** = 104857600: Default ceiling in bytes for a cited object.
+
+**reconcile sample max** = 100: Maximum examples per reconciliation divergence class.
+
+**reconcile row page** = 1000: Maximum reconciliation rows fetched per page.
+
+**maintenance order** = \[sweep, drain]: When a pass does both, expired uploads are swept before due debt is drained.
+
+**purge order** = \[persistUnclaimedDebt, commit, readCurrentVersion, deleteExactKey, settleObservedVersion]: Liveness and debt commit together before provider I/O, with settlement limited to the observed debt version.
+
+**terminal upload debt** = \[transfer, canonical]: Abort and expiry owe both implied keys in the status transaction.
+
+**exact version deletion** = \[checkCursor, collectExactVersionIds, deleteVersions, checkAcknowledgements]: Each version page must advance, target the exact key and acknowledge every requested version and delete marker.
+
+**drain order** = \[renewLease, selectDueForStore, tryBatch, reportCounts]: Batches renew the lease before trying due rows of the wired store in due-time order.
+
+**worker cycle** = \[checkpoint, pass, wait]: The worker starts with a checkpoint and pass, then waits between passes.
+
+**missing sample order** = \[completionNewestFirst, uploadIdDescending]: Missing samples are newest first, breaking completion ties by descending upload identity.
+
+**secret debug marker** = "\[REDACTED]": Text substituted for the private S3 secret in debug output.
+
+| bool | maintenance lease | endpoint choice | debt store match | lost stage claims | foreign debt | purge diagnostic character |
+| --- | --- | --- | --- | --- | --- | --- |
+| yes | runPass | configured | attempt | preserveBytes | refuse | space |
+| no | skipPass | defaultResolver | retain | recordDebt | proceed | preserve |
+
+- maintenance lease: A holder runs the pass and a contender skips both jobs.
+- endpoint choice: Object I/O and upload signing choose the configured endpoint or the AWS resolver.
+- debt store match: Provider deletion is authorized only by debt for the exact wired store.
+- lost stage claims: When the owner row disappears during a stage, a surviving reference preserves the canonical bytes.
+- foreign debt: A queue containing any foreign debt refuses object-store boot or an in-process pass.
+- purge diagnostic character: Purge diagnostics preserve printable content and replace control characters with spaces.
+
+**storage actions**: The command requires an action and forbids a dry run of the expiry sweep.
+
+```mermaid
+stateDiagram-v2
+  state "none" as s0
+  state "retry" as s1
+  state "sweep" as s2
+  state "both" as s3
+  s1 --> s1 : yes
+  s1 --> s1 : no
+  s2 --> s2 : no
+  s3 --> s3 : no
+```
+
+| storage actions | bool | answer |
+| --- | --- | --- |
+| none | yes | refused: missingAction |
+| none | no | refused: missingAction |
+| sweep | yes | refused: sweepDryRun |
+| both | yes | refused: sweepDryRun |
+
+| upload cadence | cadence admitted |
+| --- | --- |
+| disabled | yes |
+| withinTtl | yes |
+| exceedsTtl | no |
+
+- cadence admitted: A configured worker interval at or below the upload TTL is admissible, as is a disabled worker.
+
+| provider result | settle purge |
+| --- | --- |
+| removed | clear |
+| absent | clear |
+| failed | backOff |
+
+- settle purge: Absence discharges debt like deletion, and failure retains it with backoff.
+
+| canonical claim | reconcile canonical |
+| --- | --- |
+| existingDebt | owed |
+| endedOnly | recordDebt |
+| unclaimed | orphan |
+| live | retained |
+
+- reconcile canonical: Only a key implied solely by an ended upload acquires new debt, after a fenced recheck.
+
+| claim phase | upload key | claims key |
+| --- | --- | --- |
+| inFlight | transfer | yes |
+| inFlight | canonical | yes |
+| expiredPending | transfer | no |
+| expiredPending | canonical | yes |
+| completed | transfer | no |
+| completed | canonical | yes |
+| ended | transfer | no |
+| ended | canonical | no |
+
+- claims key: Pending and completed rows claim canonical objects, and only in-flight rows claim transfer objects.
+
+| reconcile scope | reconcile visibility |
+| --- | --- |
+| global | bucketAndRows |
+| owner | ownLiveRows |
+
+- reconcile visibility: Boot authority permits bucket-wide findings and locator samples, while Fact-read authority sees its owner's live upload findings without coordinates.
+
+| bool | bool | bool | optional s3 |
+| --- | --- | --- | --- |
+| yes | yes | yes | configured |
+| yes | yes | no | refuse |
+| yes | no | yes | disabled |
+| yes | no | no | disabled |
+| no | yes | yes | refuse |
+| no | yes | no | refuse |
+| no | no | yes | refuse |
+| no | no | no | refuse |
+
+- optional s3: Plaintext host policy is parsed even without a bucket, which otherwise opts in and requires its companion settings.
+
+| bool | bool | reconcile locator | cited object transfer | warn stuck |
+| --- | --- | --- | --- | --- |
+| yes | yes | present | reuseDestination | yes |
+| yes | no | missing | reuseDestination | no |
+| no | yes | foreign | mountSource | no |
+| no | no | foreign | moveRows | no |
+
+- reconcile locator: A foreign locator is counted separately from a missing local object.
+- cited object transfer: Reuse identical destination metadata first, move unshared rows in place, or mount shared bytes with independent metadata.
+- warn stuck: Inputs that determine whether a stuck-debt warning is emitted.
+
+| expiry state | bool | may expire |
+| --- | --- | --- |
+| pendingUnstaged | yes | yes |
+| pendingUnstaged | no | no |
+| pendingStaged | yes | no |
+| pendingStaged | no | no |
+| terminal | yes | no |
+| terminal | no | no |
+
+- may expire: Only an unstaged pending upload past its TTL may be expired by the sweep.
+
+| persisted store form | persisted store admitted |
+| --- | --- |
+| knownCanonical | yes |
+| knownMalformed | no |
+| externalScheme | yes |
+| malformedEnvelope | no |
+
+- persisted store admitted: Built-in scheme bodies must reconstruct canonically and external schemes retain their bounded syntax.
+
+| endpoint transport | endpoint admitted |
+| --- | --- |
+| https | yes |
+| loopbackHttp | yes |
+| admittedHttp | yes |
+| otherHttp | no |
+| invalidOrUnsupported | no |
+
+- endpoint admitted: Allow HTTPS and plaintext HTTP to a loopback or explicitly named host.
+
+| command completion | command succeeded |
+| --- | --- |
+| completed | yes |
+| leaseContended | yes |
+| failed | no |
+
+- command succeeded: Findings on a completed pass and contention for a lease preserve a successful exit.
+
 ## Owner authority
 
 **Access ceiling**: The highest memory kind a role can read or write.
@@ -4019,6 +4405,10 @@ Causa — Memory
 - Premise **fact empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Fact → Causa.memory\_origins m = \[]
 - Premise **abs fact or abs**: Causa.memory\_kind m = Proxiima.Memory.Kind.Abstraction → ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.pinKindFactOrAbstraction memories id
 - Premise **persp abs or empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Perspective → Causa.memory\_origins m = \[] ∨ ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.pinKindIs memories id Proxiima.Memory.Kind.Abstraction
+
+## Object maintenance retry arithmetic
+
+✓ **purge retry delay saturates** (axioms: `propext`, `Quot.sound`): Additional failures past the exponent cap do not increase the delay.
 
 Causa — Operators
 

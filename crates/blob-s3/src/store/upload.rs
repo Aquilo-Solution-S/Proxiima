@@ -749,7 +749,8 @@ impl CitedBlobStore {
     /// the row named at the time, `pending/<upload_id>` — never the canonical
     /// key this stage went on to PUT. Nothing then referenced the canonical
     /// object and nothing was owed it, so it survived every erase, every
-    /// drain, and `reconcile_all`'s report, which only reports.
+    /// and drain. With no remaining upload row, reconciliation has no ended
+    /// claim from which to queue the object.
     ///
     /// The question is a refcount, asked while holding the key: does any
     /// `blob_uploads` row under ANY owner name this object — by key, by being
@@ -797,6 +798,7 @@ impl CitedBlobStore {
         .fetch_one(&mut *platform_tx)
         .await
         .map_err(BlobError::Db)?;
+        // `Proxiima.ObjectMaintenance.lostStageClaims`.
         if still_referenced {
             return Ok(());
         }

@@ -1,10 +1,6 @@
 //! Expire abandoned uploads nobody touches again.
 //!
-//! An upload expires on touch: a stage or finish that finds its TTL past
-//! marks it `expired`. A prepare that nobody touches again would otherwise
-//! stay `pending` forever, and the bytes a client PUT under its transfer key
-//! with it. The sweep expires such rows in bounded batches and owes both of
-//! their keys, exactly as the touch path does.
+//! Stage and finish can also expire an upload on touch.
 
 use proxiima_core::StorageError;
 use proxiima_core::authz::SystemAuthority;
@@ -27,9 +23,7 @@ pub struct UploadExpirySweepOutcome {
     pub remaining: u64,
 }
 
-/// Expirable: a pending, unstaged upload of this store whose TTL is past. A
-/// staged row is not expirable: only a finish or an abort decides it. The
-/// three statements below spell the predicate out alike.
+/// `Proxiima.ObjectMaintenance.mayExpire`, scoped to the wired store.
 macro_rules! expirable {
     () => {
         "status = 'pending' AND content_hash IS NULL AND expires_at < now() AND object_store = $1"

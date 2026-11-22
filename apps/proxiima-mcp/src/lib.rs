@@ -318,10 +318,7 @@ async fn run_migrate(
 /// Reconciliation can record purge debt for a late canonical object.
 /// The owner and key fences protect that write.
 ///
-/// EXITS 0 EVEN WHEN ARTEFACTS ARE MISSING, matching `maintain-embeddings`
-/// and `maintain-storage`. A non-zero exit here would mean "the pass
-/// failed", and the pass did not fail — it succeeded, and the news is bad.
-/// Alert on the `missing=` number.
+/// Alert on the `missing=` count to detect missing objects.
 async fn run_maintain_blobs(
     config: MaintainBlobsConfig,
     lookup: impl EnvLookup + Send + Sync,
@@ -333,7 +330,7 @@ async fn run_maintain_blobs(
     })?;
     let built = maintenance_app(config.database_url, lookup)
         .into_app()
-        .configure(|b| b.s3(s3))
+        .configure(|b| b.s3(s3).object_purge_interval(std::time::Duration::ZERO))
         .build()
         .await?;
     let outcome = match built.blobs() {
@@ -346,6 +343,7 @@ async fn run_maintain_blobs(
         )),
     };
     built.shutdown().await;
+    // `Proxiima.ObjectMaintenance.commandSucceeded`.
     let outcome = outcome?;
 
     println!(
@@ -558,6 +556,7 @@ async fn run_maintain_storage(
         .await
         .map_err(|err| ProxiimaError::Storage(err.into()))?
     else {
+        // `Proxiima.ObjectMaintenance.commandSucceeded`.
         println!("skipped: another storage maintenance pass holds the lease");
         return Ok(());
     };

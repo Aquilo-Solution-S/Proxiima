@@ -6,11 +6,6 @@
 //! not kept that promise while the objects are still fetchable, so the
 //! inverse of storing a blob has to include this half.
 //!
-//! The half lives in ONE place: the erase transaction enqueues every object
-//! key it orphans in `proxiima_core.cold_purge_pending` — under the object-key
-//! lock, so the refcount that decided it is true at decision time — and the
-//! wired `ColdObjectStore` drains that queue after the commit. There is no
-//! second, owner-enumerating pass here.
 
 use proxiima_core::count_u64;
 use std::collections::{HashMap, HashSet};
@@ -68,6 +63,7 @@ async fn purge_versions(
         let page = list.send().await.map_err(|e| {
             StorageError::Unavailable(format!("list object versions under {listing_prefix}: {e}"))
         })?;
+        // `Proxiima.ObjectMaintenance.exactVersionDeletion`.
         if page.is_truncated() == Some(true) {
             // A key may span pages, so progress is the complete cursor pair.
             // Check before deleting: a broken cursor must not repeat a batch.

@@ -189,7 +189,7 @@ pub(crate) async fn purge_cold_objects_with_backoff(
     };
     for entry in plan.entries() {
         let key = entry.object_key.as_str();
-        // A different store leaves the debt queued and counts it as failed in the receipt.
+        // `Proxiima.ObjectMaintenance.debtStoreMatch`. Count unmatched debt in the receipt.
         if entry.object_store != cold.store_id().as_str() {
             outcome.failed = outcome.failed.saturating_add(1);
             tracing::warn!(
@@ -257,6 +257,7 @@ async fn purge_current_cold_debt(
     // No database transaction or connection remains held during provider I/O.
     // A producer may publish bytes and renew this debt while delete is in
     // flight; its new row version must survive our earlier acknowledgement.
+    // `Proxiima.ObjectMaintenance.settlePurge`.
     let discharged = match cold.delete(object_key).await {
         Ok(PurgeDeleted::Absent) | Err(StorageError::NotFound) => Discharged::Absent,
         Ok(_) => Discharged::Removed,
@@ -288,11 +289,13 @@ async fn purge_current_cold_debt(
 }
 
 /// Longest failure text a debt keeps, in bytes.
-const MAX_PURGE_ERROR_BYTES: usize = 1024;
+const MAX_PURGE_ERROR_BYTES: usize =
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeErrorMaxBytes);
 
 /// The failure text a debt records: control characters replaced, bounded on
 /// a character boundary.
 fn purge_error_text(error: &StorageError) -> String {
+    // `Proxiima.ObjectMaintenance.purgeDiagnosticCharacter`.
     let text: String = error
         .to_string()
         .chars()
@@ -319,16 +322,17 @@ async fn record_purge_failure(
     backoff: PurgeBackoff,
     error: &StorageError,
 ) -> Result<bool, StorageError> {
+    const EXPONENT_MAX: i32 =
+        proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeBackoffExponentMax);
     let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;
-    // Delay after the nth failure: min(base * 2^(n-1), max). `attempts` is
-    // the count before this failure, so it is the exponent.
+    // `Causa.purgeRetryDelay`. Postgres uses fractional seconds and counts prior failures.
     let updated = sqlx::query(
         "UPDATE proxiima_core.cold_purge_pending
             SET attempts = attempts + 1,
                 last_attempt_at = now(),
                 last_error = $5,
                 next_attempt_at = now() + make_interval(secs => LEAST(
-                    $6::double precision * power(2::double precision, LEAST(attempts, 40)),
+                    $6::double precision * power(2::double precision, LEAST(attempts, $8::integer)),
                     $7::double precision))
           WHERE object_store = $1 AND object_key = $2
             AND xmin::text = $3 AND ctid::text = $4",
@@ -340,6 +344,7 @@ async fn record_purge_failure(
     .bind(purge_error_text(error))
     .bind(backoff.base.as_secs_f64())
     .bind(backoff.max.as_secs_f64())
+    .bind(EXPONENT_MAX)
     .execute(tx.as_mut())
     .await
     .map_err(map_err)?;
@@ -1574,6 +1579,33 @@ mod forget_marks_pg_tests;
 #[cfg(test)]
 mod tests {
     use super::{ForgetLeg, OwnerSurfaces, forget_leg_sql};
+
+    #[test]
+    fn purge_diagnostic_characters_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.ObjectMaintenance.purgeDiagnosticCharacter"]
+            .as_array()
+            .unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let character = if row["in"][0].as_bool().unwrap() {
+                '\n'
+            } else {
+                'é'
+            };
+            let expected = match row["out"].as_str().unwrap() {
+                "space" => ' ',
+                "preserve" => character,
+                other => panic!("unknown diagnostic rendering {other}"),
+            };
+            let error = proxiima_core::StorageError::Unavailable(format!("[{character}]"));
+            assert!(
+                super::purge_error_text(&error).ends_with(&format!("[{expected}]")),
+                "{row}"
+            );
+        }
+    }
 
     fn shipped() -> OwnerSurfaces {
         OwnerSurfaces::for_registry(

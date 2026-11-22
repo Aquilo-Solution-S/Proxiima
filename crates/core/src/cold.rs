@@ -1,8 +1,4 @@
 //! The object store a purge deletes from.
-//!
-//! Forget keeps the Memory row (#488), so nothing is written to or read from
-//! an object store on forget or restore. What is left is the durable purge
-//! queue's other end: deleting an object a hard erase let go of.
 
 use crate::StorageError;
 
@@ -61,10 +57,12 @@ pub trait ColdObjectStore: Send + Sync {
 }
 
 /// Longest stored object-store identity, in bytes.
-pub const MAX_OBJECT_STORE_ID_BYTES: usize = 512;
+pub const MAX_OBJECT_STORE_ID_BYTES: usize =
+    crate::ledger!(Proxiima.ObjectMaintenance.storeIdMaxBytes);
 
 /// Longest operator-chosen identity (`PROXIIMA_S3_STORE_ID`), in bytes.
-pub const MAX_OPERATOR_STORE_ID_BYTES: usize = 64;
+pub const MAX_OPERATOR_STORE_ID_BYTES: usize =
+    crate::ledger!(Proxiima.ObjectMaintenance.operatorIdMaxBytes);
 
 /// Which object store holds a purge debt's bytes, or a staged upload's.
 ///
@@ -100,7 +98,7 @@ impl ObjectStoreId {
     /// The in-process store dev and test hosts wire without an object store.
     #[must_use]
     pub fn memory() -> Self {
-        Self("memory:".into())
+        Self(crate::ledger!(Proxiima.ObjectMaintenance.memoryStoreId).into())
     }
 
     /// An operator-named S3 store: `s3:id/<id>`.
@@ -150,6 +148,7 @@ impl ObjectStoreId {
     /// lacks a lower-case scheme prefix (`[a-z][a-z0-9]*:`), or has a
     /// noncanonical body under the built-in `memory` or `s3` scheme.
     pub fn parse(stored: &str) -> Result<Self, ObjectStoreIdError> {
+        // `Proxiima.ObjectMaintenance.persistedStoreAdmitted`.
         let Some((scheme, body)) = stored.split_once(':') else {
             return Err(ObjectStoreIdError::Malformed);
         };
@@ -322,22 +321,19 @@ mod tests {
     }
 
     #[test]
-    fn stored_ids_round_trip_and_reject_free_text() {
-        for id in [
+    fn stored_ids_round_trip_and_match_ledger_vectors() {
+        let known = [
             ObjectStoreId::memory(),
             ObjectStoreId::operator("a").expect("valid"),
             ObjectStoreId::derive_s3(Some("http://h:1/base"), "b").expect("valid"),
             ObjectStoreId::derive_s3(None, "b").expect("valid"),
-            ObjectStoreId::parse("custom:target").expect("external scheme"),
-        ] {
-            assert_eq!(ObjectStoreId::parse(id.as_str()), Ok(id));
+        ];
+        for id in &known {
+            assert_eq!(ObjectStoreId::parse(id.as_str()).as_ref(), Ok(id));
         }
-        for malformed in [
-            "",
-            "bucket-name",
-            "S3:aws/b",
-            "1x:y",
-            ":",
+        let canonical = known.each_ref().map(ObjectStoreId::as_str);
+        let malformed_envelopes = ["", "bucket-name", "S3:aws/b", "1x:y", ":"];
+        let malformed_bodies = [
             "memory:body",
             "s3:",
             "s3:id/",
@@ -349,12 +345,28 @@ mod tests {
             "s3:https://HOST:443/b",
             "s3:https://host//b",
             "s3:https://host?query/b",
-        ] {
-            assert_eq!(
-                ObjectStoreId::parse(malformed),
-                Err(ObjectStoreIdError::Malformed),
-                "{malformed:?}"
-            );
+        ];
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.ObjectMaintenance.persistedStoreAdmitted"]
+            .as_array()
+            .unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let values: &[&str] = match row["in"][0].as_str().unwrap() {
+                "knownCanonical" => &canonical,
+                "knownMalformed" => &malformed_bodies,
+                "externalScheme" => &["custom:target"],
+                "malformedEnvelope" => &malformed_envelopes,
+                other => panic!("unknown stored identity form {other}"),
+            };
+            for value in values {
+                let parsed = ObjectStoreId::parse(value);
+                assert_eq!(row["out"], parsed.is_ok(), "{value:?}");
+                if let Err(error) = parsed {
+                    assert_eq!(error, ObjectStoreIdError::Malformed, "{value:?}");
+                }
+            }
         }
     }
 }

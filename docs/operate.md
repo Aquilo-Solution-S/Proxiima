@@ -232,6 +232,7 @@ store refuses a body of any other length before it lands; a proxy in front of
 it must pass the header through. Staging reads an object into memory up to
 the declared length, at most eight uploads at a time per store instance
 shared by its clones. Additional uploads wait for a slot.
+See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaintenance).
 
 SigV4 signs the Host, including its port, the complete path, including any
 endpoint prefix, and the query. A proxy in front of an upload link must forward
@@ -514,8 +515,9 @@ before each batch, and deletes it when done. A pass whose lease expired
 crashed blocks other passes until its lease expires, at most a minute. The
 embedding maintenance passes (`maintain-embeddings`) hold their own lease the
 same way. A pending purge is outstanding work, not completed
-deletion. A failed delete backs its debt off, doubling the delay
-per attempt, so it never holds back other debts. The report gives `due`
+deletion. A failed delete backs its debt off so other debts can proceed.
+The delay doubles up to the configured ceiling, with the exponent capped
+at 40. See [`Causa.purgeRetryDelay`](ledger.md). The report gives `due`
 (selectable now), `deferred` (backing off) and `stuck` (failed repeatedly; each
 is listed with its key, owner, attempt count and last error). Debt owed to another
 object store is left in place and listed by store, and the command exits

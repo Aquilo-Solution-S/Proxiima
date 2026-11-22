@@ -93,6 +93,7 @@ pub async fn owe_terminal_upload_keys_tx(
     owner: &OwnerId,
     upload_id: Uuid,
 ) -> Result<Vec<crate::verbs::forget::ColdPurgeEntry>, StorageError> {
+    // `Proxiima.ObjectMaintenance.terminalUploadDebt`.
     let keys = [
         proxiima_core::citations::upload_transfer_key(upload_id),
         proxiima_core::citations::uploaded_blob_object_key(upload_id),
