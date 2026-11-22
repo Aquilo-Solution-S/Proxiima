@@ -17,9 +17,10 @@ use crate::settings::{
 /// Read the `PROXIIMA_S3_*` block through the blob crate's parser.
 /// One parser for the block; the facade must not re-read it.
 pub(crate) fn s3_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<S3RuntimeConfig>, ProxiimaError> {
-    S3RuntimeConfig::from_lookup(lookup).map_err(|error| ProxiimaError::Config(error.to_string()))
+    S3RuntimeConfig::from_lookup_source(lookup)
+        .map_err(|error| ProxiimaError::Config(error.to_string()))
 }
 
 /// Read the `PROXIIMA_PG_*` tuning block through the storage crate's parser.
@@ -29,7 +30,7 @@ pub(crate) fn s3_from_lookup(
 /// injecting its own environment cannot get a different answer than one
 /// reading the process environment.
 pub(crate) fn pg_tuning_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<PgTuning>, ProxiimaError> {
     PgTuning::from_lookup(lookup).map_err(|error| ProxiimaError::Config(error.to_string()))
 }
@@ -39,7 +40,7 @@ pub(crate) fn pg_tuning_from_lookup(
 /// Pool construction consumes this resolved value. The canonical runtime path
 /// therefore never falls back to a second process-environment read.
 pub(crate) fn pg_pool_config_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<PgPoolConfig>, ProxiimaError> {
     PgPoolConfig::from_lookup(lookup).map_err(|error| ProxiimaError::Config(error.to_string()))
 }
@@ -54,9 +55,9 @@ pub(crate) const DEFAULT_OBJECT_PURGE_INTERVAL: Duration = Duration::from_mins(1
 ///
 /// [`ProxiimaError::Config`] for a non-numeric value.
 pub(crate) fn object_purge_interval_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<Duration>, ProxiimaError> {
-    let Some(raw) = ENV_OBJECT_PURGE_INTERVAL_SECS.read(lookup) else {
+    let Some(raw) = ENV_OBJECT_PURGE_INTERVAL_SECS.read_source(lookup) else {
         return Ok(None);
     };
     let seconds: u64 = raw.parse().map_err(|_| {
@@ -92,9 +93,9 @@ pub(crate) const DEFAULT_PUBLISHED_RETENTION: Duration = Duration::from_hours(24
 /// [`ProxiimaError::Config`] for a non-numeric value or a non-zero horizon
 /// under [`MIN_PUBLISHED_RETENTION`].
 pub(crate) fn published_retention_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<Duration>, ProxiimaError> {
-    let Some(raw) = ENV_OUTBOX_PUBLISHED_RETENTION_SECS.read(lookup) else {
+    let Some(raw) = ENV_OUTBOX_PUBLISHED_RETENTION_SECS.read_source(lookup) else {
         return Ok(None);
     };
     let seconds: u64 = raw.parse().map_err(|_| {
@@ -120,12 +121,7 @@ pub(crate) fn published_retention_from_lookup(
 /// Read the publication block (docs/host-integration.md §Configuration) into the ONE value
 /// the engine is built with.
 ///
-/// The result is not optional. Every deployment has a publication
-/// configuration — a source (or none) and a pair of bounds — and the engine
-/// is always constructed through
-/// [`proxiima_core::engine::EngineBuilder::try_with_publication_config`], so
-/// a host that freezes a listenable schema without naming a source fails at
-/// boot rather than on its first admission.
+/// An absent block leaves the application layer available.
 ///
 /// The limits parsed here are the limits ENFORCED at capture: they travel
 /// with the draft on the authorization witness. There is no storage-side
@@ -140,35 +136,39 @@ pub(crate) fn published_retention_from_lookup(
 /// [`ProxiimaError::Config`] for a source that is not an absolute URI/URN, a
 /// non-numeric or zero bound.
 pub(crate) fn publication_config_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<PublicationConfig, ProxiimaError> {
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
+) -> Result<Option<PublicationConfig>, ProxiimaError> {
     let source = ENV_PUBLICATION_SOURCE
-        .read(lookup)
+        .read_source(lookup)
         .map(|raw| {
             PublicationSource::new(raw).map_err(|error| {
                 ProxiimaError::Config(format!("{ENV_PUBLICATION_SOURCE}: {error}"))
             })
         })
         .transpose()?;
+    let max_pending = parse_positive(lookup, &ENV_OUTBOX_MAX_PENDING)?;
+    let max_payload_bytes = parse_positive(lookup, &ENV_OUTBOX_MAX_PAYLOAD_BYTES)?;
+    if source.is_none() && max_pending.is_none() && max_payload_bytes.is_none() {
+        return Ok(None);
+    }
     let defaults = PublicationLimits::default();
     let limits = PublicationLimits {
-        max_pending: parse_positive(lookup, &ENV_OUTBOX_MAX_PENDING)?
-            .unwrap_or(defaults.max_pending),
-        max_payload_bytes: parse_positive(lookup, &ENV_OUTBOX_MAX_PAYLOAD_BYTES)?
+        max_pending: max_pending.unwrap_or(defaults.max_pending),
+        max_payload_bytes: max_payload_bytes
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(defaults.max_payload_bytes),
     };
-    Ok(PublicationConfig { source, limits })
+    Ok(Some(PublicationConfig { source, limits }))
 }
 
 /// A bound must be a positive integer. Zero is refused rather than treated
 /// as "unlimited": both limits are refusals, and a zero one would refuse
 /// every listenable write instead of none.
 fn parse_positive(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<Option<u64>, ProxiimaError> {
-    let Some(raw) = key.read(lookup) else {
+    let Some(raw) = key.read_source(lookup) else {
         return Ok(None);
     };
     let value: u64 = raw.parse().map_err(|_| {

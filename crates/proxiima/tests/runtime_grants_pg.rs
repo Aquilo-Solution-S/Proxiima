@@ -170,7 +170,11 @@ async fn cleanup(fixture: Fixture) {
 
 /// The facade app over the fixture, the path `PROXIIMA_RUNTIME_GRANTS` takes:
 /// its migrate step grants, its boot only validates.
-fn app(fixture: &Fixture, owner: OwnerId, runtime_grants: bool) -> Proxiima<ExampleGrantsApp> {
+fn app(
+    fixture: &Fixture,
+    owner: OwnerId,
+    runtime_grants: bool,
+) -> Proxiima<'static, ExampleGrantsApp> {
     Proxiima::<ExampleGrantsApp>::app().configure(|b| {
         b.database_url(fixture.runtime_url.clone())
             .store_number(0)
@@ -196,7 +200,7 @@ async fn migrate_with_grants_then_build(
     fixture: &Fixture,
     owner: OwnerId,
 ) -> Result<proxiima::BuiltProxiima, ProxiimaError> {
-    app(fixture, owner, true).migrate().await?;
+    app(fixture, owner, true).storage().migrate().await?;
     build(fixture, owner, false).await
 }
 
@@ -469,7 +473,7 @@ async fn runtime_grants_refuse_without_split_roles() {
             Some(url) => app.configure(|b| b.store_number(0).platform_database_url(url)),
             None => app,
         };
-        async move { app.migrate().await }
+        async move { app.storage().migrate().await }
     };
 
     let same = boot(unreachable("rtg_same"), Some(unreachable("rtg_same")))

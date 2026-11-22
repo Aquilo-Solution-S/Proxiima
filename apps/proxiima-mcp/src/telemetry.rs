@@ -39,8 +39,10 @@ impl Guard {
 ///
 /// A configuration error when the exporter refuses its environment, for
 /// example an endpoint that is not a URI.
-pub(crate) fn install(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<Guard>, CliError> {
-    if OTEL_EXPORTER_OTLP_ENDPOINT.read(lookup).is_none() {
+pub(crate) fn install(
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
+) -> Result<Option<Guard>, CliError> {
+    if OTEL_EXPORTER_OTLP_ENDPOINT.read_source(lookup).is_none() {
         return Ok(None);
     }
     let provider = build_provider(lookup)?;
@@ -49,7 +51,9 @@ pub(crate) fn install(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option
 }
 
 /// A meter provider that pushes every default interval over HTTP/protobuf.
-fn build_provider(lookup: &impl Fn(&str) -> Option<String>) -> Result<SdkMeterProvider, CliError> {
+fn build_provider(
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
+) -> Result<SdkMeterProvider, CliError> {
     let exporter = MetricExporter::builder()
         .with_http()
         .build()
@@ -66,12 +70,12 @@ fn build_provider(lookup: &impl Fn(&str) -> Option<String>) -> Result<SdkMeterPr
 
 /// The service name is `OTEL_SERVICE_NAME`, else `service.name` of
 /// `OTEL_RESOURCE_ATTRIBUTES`, else `proxiima-mcp`.
-fn resource(lookup: &impl Fn(&str) -> Option<String>) -> Resource {
+fn resource(lookup: &(impl proxiima_core::EnvLookup + ?Sized)) -> Resource {
     let named = Resource::builder_empty()
         .with_service_name(DEFAULT_SERVICE_NAME)
         .with_detector(Box::new(TelemetryResourceDetector))
         .with_detector(Box::new(EnvResourceDetector::new()));
-    match OTEL_SERVICE_NAME.read(lookup) {
+    match OTEL_SERVICE_NAME.read_source(lookup) {
         Some(name) => named.with_service_name(name),
         None => named,
     }
@@ -85,9 +89,9 @@ mod tests {
 
     #[test]
     fn nothing_is_installed_without_an_endpoint() {
-        assert!(install(&|_| None).expect("install").is_none());
+        assert!(install(&|_: &str| None).expect("install").is_none());
         assert!(
-            install(&|_| Some(String::new()))
+            install(&|_: &str| Some(String::new()))
                 .expect("install")
                 .is_none()
         );
@@ -95,18 +99,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_provider_is_built_without_a_network() {
-        let provider = build_provider(&|_| None).expect("provider");
+        let provider = build_provider(&|_: &str| None).expect("provider");
         provider.shutdown().expect("shutdown");
     }
 
     #[test]
     fn the_service_name_defaults_and_the_environment_names_win() {
         let name = |lookup: &dyn Fn(&str) -> Option<String>| {
-            resource(&lookup)
+            resource(lookup)
                 .get(&Key::from_static_str("service.name"))
                 .map(|value| value.to_string())
         };
-        assert_eq!(name(&|_| None).as_deref(), Some("proxiima-mcp"));
+        assert_eq!(name(&|_: &str| None).as_deref(), Some("proxiima-mcp"));
         assert_eq!(
             name(&|key| (key == "OTEL_SERVICE_NAME").then(|| "edge".to_owned())).as_deref(),
             Some("edge")

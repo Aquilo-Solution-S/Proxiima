@@ -482,23 +482,23 @@ async fn the_runtime_passes_its_explicit_policy_to_migrating_and_read_only_boot(
                 .served_surface(ServedSurface::All)
         })
     };
-    host().migrate().await.expect("migrated core");
+    host().storage().migrate().await.expect("migrated core");
     sqlx::query("INSERT INTO public._sqlx_migrations (version, description, success, checksum, execution_time) VALUES (9000, 'other release', true, ''::bytea, 0)")
         .execute(&pg.clone_pool_for_backend()).await.expect("unknown version");
     let allowing = || {
         host()
             .from_lookup(|key| (key == "PROXIIMA_MISSING_MIGRATION_POLICY").then(|| "allow".into()))
-            .expect("host environment policy")
     };
     for _skip in [false, true] {
         let error = host()
+            .storage()
             .migrate()
             .await
             .expect_err("the migrate step rejects unknown versions by default");
         assert!(error.to_string().contains("9000"), "{error}");
         expect_described(
             "the migrate step propagates explicit missing-version policy",
-            allowing().migrate().await,
+            allowing().storage().migrate().await,
         )
         .await;
         let strict = host();

@@ -63,7 +63,7 @@ struct Urls {
     migration: String,
 }
 
-fn app(urls: &Urls, owner: OwnerId) -> Proxiima<CoreApp> {
+fn app(urls: &Urls, owner: OwnerId) -> Proxiima<'static, CoreApp> {
     Proxiima::<CoreApp>::app().configure(|b| {
         b.database_url(&urls.runtime)
             .store_number(0)
@@ -132,7 +132,7 @@ async fn migrate_direct_serve_pooled(database: &str) -> TestResult<()> {
     let owner = OwnerId::from(GroupId::new(Uuid::now_v7()));
 
     // The migrate step uses the direct URL; serving then uses the pooler.
-    app(&urls, owner).migrate().await?;
+    app(&urls, owner).storage().migrate().await?;
     let first = boot(&urls, owner).await?;
     write_one(&first, owner, "migrated direct").await?;
     stop(first).await;
@@ -202,7 +202,7 @@ async fn migration_url_is_the_one_used(database: &str) -> TestResult<()> {
         })
     };
     assert!(
-        unreachable_migration().migrate().await.is_err(),
+        unreachable_migration().storage().migrate().await.is_err(),
         "the migrate step connects to the migration URL"
     );
     let booted = unreachable_migration().build().await;

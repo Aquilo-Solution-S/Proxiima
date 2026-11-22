@@ -273,6 +273,7 @@ async fn exercise_full_registry_erase(
                 .platform_database_url(&platform_url)
                 .served_surface(proxiima::ServedSurface::All)
         })
+        .storage()
         .migrate()
         .await?;
     let platform_pool = sqlx::PgPool::connect(&platform_url).await?;

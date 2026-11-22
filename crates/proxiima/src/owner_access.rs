@@ -100,9 +100,12 @@ impl OwnerRegistry for proxiima_storage_pg::PgOwnerAccessResolver {
 /// subject map's `user_id`) and `PROXIIMA_FORWARDER_ROLE`
 /// (`viewer` | `ingest` | `editor`). Both or neither.
 pub(crate) fn forwarder_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<ForwarderPolicy>, ProxiimaError> {
-    match (FORWARDER_SUBJECTS.read(lookup), FORWARDER_ROLE.read(lookup)) {
+    match (
+        FORWARDER_SUBJECTS.read_source(lookup),
+        FORWARDER_ROLE.read_source(lookup),
+    ) {
         (None, None) => Ok(None),
         (Some(_), None) => Err(ProxiimaError::Config(format!(
             "{FORWARDER_SUBJECTS} set without {FORWARDER_ROLE}"

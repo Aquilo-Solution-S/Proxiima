@@ -77,7 +77,9 @@ fn s3_config() -> S3RuntimeConfig {
 fn refusing(config: &S3RuntimeConfig) -> S3RuntimeConfig {
     S3RuntimeConfig {
         key_pair: S3KeyPair::new(
-            std::env::var("PROXIIMA_S3_ACCESS_KEY_ID").expect("access key"),
+            proxiima_blob_s3::settings::PROXIIMA_S3_ACCESS_KEY_ID
+                .read_source(&proxiima_core::ProcessEnv)
+                .expect("access key"),
             "not-the-secret".to_owned(),
         ),
         ..config.clone()
@@ -85,7 +87,7 @@ fn refusing(config: &S3RuntimeConfig) -> S3RuntimeConfig {
 }
 
 /// The builder a `serve` host gets: nothing about purging or sweeping.
-async fn app(database: &str, owner: OwnerId) -> TestResult<Proxiima<CoreApp>> {
+async fn app(database: &str, owner: OwnerId) -> TestResult<Proxiima<'static, CoreApp>> {
     let (runtime_url, platform_url) =
         described("split roles", split_role_urls(database).await).await?;
     migrated_app::migrate_app::<CoreApp>(&platform_url).await;

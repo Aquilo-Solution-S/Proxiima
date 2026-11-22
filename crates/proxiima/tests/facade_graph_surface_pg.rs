@@ -1782,6 +1782,7 @@ async fn composed_search_migration_refuses_unexpected_candidate_overload() {
                 .owner(company_owner(Uuid::now_v7()))
                 .served_surface(ServedSurface::All)
         })
+        .storage()
         .migrate()
         .await
         .expect_err("the migrate step refuses the overload");

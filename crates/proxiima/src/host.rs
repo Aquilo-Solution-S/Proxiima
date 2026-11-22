@@ -17,7 +17,7 @@ pub use crate::migrations::{
     preflight_without_migrations_with_policy,
 };
 /// The migration runner itself, for tests that drive it with their own
-/// lineups. A host migrates through [`Proxiima::migrate`], the one step that
+/// lineups. A host migrates through [`StorageProxiima::migrate`], the one step that
 /// also initializes the store number and applies runtime grants.
 #[cfg(feature = "testkit")]
 pub use crate::migrations::{
@@ -29,8 +29,8 @@ pub use crate::proxiima_host::ProxiimaHost;
 /// host's route that erases what a row's cutoff ages out.
 pub use crate::retention_http::RETENTION_ERASE_PATH;
 pub use crate::runtime::{
-    BuiltProxiima, Proxiima, RunningProxiima, layered_router, layered_router_with_revalidation,
-    run, serve,
+    BuiltProxiima, Proxiima, RunningProxiima, StorageProxiima, layered_router,
+    layered_router_with_revalidation, run, serve,
 };
 /// The type of the public field [`RuntimeConfig::auth`].
 pub use crate::runtime_config::RuntimeAuthState;
@@ -609,7 +609,7 @@ pub use proxiima_server::{ScopeToken, ScopeTokenError};
 /// What [`ProxiimaHost::host_state_erase_context_for_host`] returns. Opaque and
 /// authority-free: it grants no erase by itself.
 pub use proxiima_storage_pg::PgHostStateEraseContext;
-/// The serving storage [`Proxiima::connect_storage`] returns. Host API only:
+/// The serving storage [`StorageProxiima::connect_storage`] returns. Host API only:
 /// the Spiice SDK has no storage handle.
 pub use proxiima_storage_pg::PgStorage;
 /// Trusted host owner registration on its platform transaction. This performs

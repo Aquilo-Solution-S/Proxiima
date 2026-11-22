@@ -66,9 +66,9 @@ impl PlaintextHosts {
     ///
     /// Returns [`PlaintextHostsError`] as [`Self::parse`] does.
     pub fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl crate::EnvLookup + ?Sized),
     ) -> Result<Self, PlaintextHostsError> {
-        match PROXIIMA_PLAINTEXT_HOSTS.read(lookup) {
+        match PROXIIMA_PLAINTEXT_HOSTS.read_source(lookup) {
             Some(raw) => Self::parse(&raw),
             None => Ok(Self::none()),
         }

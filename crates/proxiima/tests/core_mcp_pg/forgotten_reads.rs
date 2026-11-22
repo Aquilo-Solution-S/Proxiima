@@ -265,7 +265,7 @@ async fn a_forgotten_memory_reads_as_absent_everywhere_and_unavailable_from_anot
         let router = Arc::new(TestEmbeddingRouter::default());
         let second = Proxiima::<AgentMemoryApp>::app()
             .configure(|b| b.database_url(second_db.runtime_url().to_owned()).store_number(1).platform_database_url(second_db.platform_url().to_owned()).owner(owner).served_surface(proxiima_core::ServedSurface::All).embedding_router(router.clone()));
-        second.migrate().await?;
+        second.storage().migrate().await?;
         let second = second.build().await?;
         let tools = second.host().core_mcp_tools();
         let call = |tool: &'static str, args: serde_json::Value| {

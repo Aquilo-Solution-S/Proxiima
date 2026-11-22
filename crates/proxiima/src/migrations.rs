@@ -452,7 +452,7 @@ async fn acquire_session_connection(
 /// migration DDL**.
 ///
 /// Serving boot and maintenance run this (see docs/operate.md): the host's
-/// migrate step ([`crate::Proxiima::migrate`]) applies migrations under a
+/// migrate step ([`crate::StorageProxiima::migrate`]) applies migrations under a
 /// DDL-capable role, and the long-running app then boots under a DML-only
 /// role that cannot issue DDL.
 /// This requires every embedded core migration and the current definitions

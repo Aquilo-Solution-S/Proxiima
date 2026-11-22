@@ -194,7 +194,11 @@ impl SpiiceApp for ExampleApp {
     }
 }
 
-fn app(runtime_url: String, platform_url: Option<String>, owner: OwnerId) -> Proxiima<ExampleApp> {
+fn app(
+    runtime_url: String,
+    platform_url: Option<String>,
+    owner: OwnerId,
+) -> Proxiima<'static, ExampleApp> {
     let app = Proxiima::<ExampleApp>::app().configure(|b| {
         b.store_number(0)
             .database_url(runtime_url)
@@ -306,6 +310,7 @@ async fn fresh_split_role_boot_serves_after_explicit_core_and_example_migration(
     expect_described(
         "the migrate step on a fresh database",
         app(runtime_url.clone(), Some(platform_url.clone()), owner)
+            .storage()
             .migrate()
             .await,
     )

@@ -539,7 +539,7 @@ impl RuntimeBuilder {
     }
 
     /// Grant the runtime role its DML privileges in the migrate step
-    /// ([`crate::Proxiima::migrate`]), after migrating. Serving never grants.
+    /// ([`crate::StorageProxiima::migrate`]), after migrating. Serving never grants.
     /// Opt-in; off by default. Env equivalent: `PROXIIMA_RUNTIME_GRANTS`.
     #[must_use]
     pub const fn runtime_grants(mut self, runtime_grants: bool) -> Self {
@@ -762,7 +762,7 @@ impl RuntimeBuilder {
     ///
     /// Returns `ProxiimaError::Config` when an environment value is malformed.
     pub fn apply_env(self) -> Result<Self, ProxiimaError> {
-        self.apply_lookup(proxiima_core::process_env)
+        self.apply_lookup_source(&proxiima_core::ProcessEnv)
     }
 
     /// Apply injected environment values to unset fields: the storage
@@ -779,8 +779,15 @@ impl RuntimeBuilder {
         self,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ProxiimaError> {
-        let mut builder = self.apply_storage_lookup(&lookup)?;
-        builder.apply_serving_lookup(&lookup)?;
+        self.apply_lookup_source(&lookup)
+    }
+
+    pub(crate) fn apply_lookup_source(
+        self,
+        lookup: &dyn proxiima_core::EnvLookup,
+    ) -> Result<Self, ProxiimaError> {
+        let mut builder = self.apply_storage_lookup_source(lookup)?;
+        builder.apply_serving_lookup(lookup)?;
         Ok(builder)
     }
 
@@ -797,43 +804,52 @@ impl RuntimeBuilder {
     ///
     /// Returns `ProxiimaError::Config` when a supplied value is malformed.
     pub fn apply_storage_lookup(
-        mut self,
+        self,
         lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, ProxiimaError> {
+        self.apply_storage_lookup_source(&lookup)
+    }
+
+    pub(crate) fn apply_storage_lookup_source(
+        mut self,
+        lookup: &dyn proxiima_core::EnvLookup,
     ) -> Result<Self, ProxiimaError> {
         if self.store_number.is_none() {
             self.store_number = settings::PROXIIMA_STORE_NUMBER
-                .read(&lookup)
+                .read_source(lookup)
                 .map(|value| parse_store_number(&value))
                 .transpose()?;
         }
         if self.database_url.is_none() {
-            self.database_url = settings::DATABASE_URL.read(&lookup);
+            self.database_url = settings::DATABASE_URL.read_source(lookup);
         }
         if self.platform_database_url.is_none() {
-            self.platform_database_url = settings::PROXIIMA_PLATFORM_DATABASE_URL.read(&lookup);
+            self.platform_database_url =
+                settings::PROXIIMA_PLATFORM_DATABASE_URL.read_source(lookup);
         }
         if self.migration_database_url.is_none() {
-            self.migration_database_url = settings::PROXIIMA_MIGRATION_DATABASE_URL.read(&lookup);
+            self.migration_database_url =
+                settings::PROXIIMA_MIGRATION_DATABASE_URL.read_source(lookup);
         }
         if self.missing_migration_policy.is_none() {
-            self.missing_migration_policy = missing_migration_policy_from_lookup(&lookup)?;
+            self.missing_migration_policy = missing_migration_policy_from_lookup(lookup)?;
         }
         if self.runtime_grants.is_none() {
             self.runtime_grants = settings::PROXIIMA_RUNTIME_GRANTS
-                .read(&lookup)
+                .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_RUNTIME_GRANTS, &raw))
                 .transpose()?;
         }
         if self.pg_pool_config.is_none() {
-            self.pg_pool_config = pg_pool_config_from_lookup(&lookup)?;
+            self.pg_pool_config = pg_pool_config_from_lookup(lookup)?;
         }
         if self.pg_tuning.is_none() {
-            self.pg_tuning = pg_tuning_from_lookup(&lookup)?;
+            self.pg_tuning = pg_tuning_from_lookup(lookup)?;
         }
         // The storage applies this policy to its reclaim and stale-claim
         // reads, which maintenance reports too.
-        if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(&lookup) {
-            self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(&lookup)?);
+        if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(lookup) {
+            self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(lookup)?);
         }
         Ok(self)
     }
@@ -842,13 +858,13 @@ impl RuntimeBuilder {
     /// [`Self::apply_storage_lookup`] leaves unread.
     fn apply_serving_lookup(
         &mut self,
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
         if self.s3.is_none() {
             self.s3 = s3_from_lookup(lookup)?;
         }
         if self.mcp_bind.is_none()
-            && let Some(raw) = settings::PROXIIMA_MCP_BIND.read(lookup)
+            && let Some(raw) = settings::PROXIIMA_MCP_BIND.read_source(lookup)
         {
             self.mcp_bind = Some(raw.parse().map_err(|_| {
                 ProxiimaError::Config(format!(
@@ -858,36 +874,35 @@ impl RuntimeBuilder {
         }
         if self.expose_network.is_none() {
             self.expose_network = settings::PROXIIMA_EXPOSE_NETWORK
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_EXPOSE_NETWORK, &raw))
                 .transpose()?;
         }
         if self.rest_enabled.is_none() {
             self.rest_enabled = settings::PROXIIMA_REST_ENABLED
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_REST_ENABLED, &raw))
                 .transpose()?;
         }
         self.apply_served_path_lookup(lookup)?;
         if self.allowed_origins.is_none() {
             self.allowed_origins = settings::PROXIIMA_ALLOWED_ORIGINS
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_allowed_origins(&raw));
         }
         if self.allowed_hosts.is_none() {
             self.allowed_hosts = settings::PROXIIMA_ALLOWED_HOSTS
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_allowed_hosts(&raw));
         }
         if self.stream_max_lifetime.is_none() {
             self.stream_max_lifetime = settings::PROXIIMA_STREAM_MAX_LIFETIME
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
         }
-        // Unconditional: the block is read (and validated) on every boot.
         if self.publication.is_none() {
-            self.publication = Some(publication_config_from_lookup(lookup)?);
+            self.publication = publication_config_from_lookup(lookup)?;
         }
         // Read outside the `publication` guard on purpose: retention is a
         // host-only housekeeping horizon, not part of the engine's
@@ -909,11 +924,11 @@ impl RuntimeBuilder {
     /// forwarder policy, health probes, transport, and the OIDC capture.
     fn apply_served_path_lookup(
         &mut self,
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
         if self.request_headers.is_none() {
             self.request_headers = settings::PROXIIMA_REQUEST_HEADERS
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| raw.split(',').map(ToOwned::to_owned).collect());
         }
         if self.forwarder.is_none() {
@@ -921,13 +936,13 @@ impl RuntimeBuilder {
         }
         if self.health_endpoints.is_none() {
             self.health_endpoints = settings::PROXIIMA_HEALTH_ENDPOINTS
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_HEALTH_ENDPOINTS, &raw))
                 .transpose()?;
         }
         if self.max_request_body_bytes.is_none() {
             self.max_request_body_bytes = settings::PROXIIMA_MAX_REQUEST_BODY_BYTES
-                .read(lookup)
+                .read_source(lookup)
                 .map(|raw| {
                     raw.parse::<usize>().map_err(|_| {
                         ProxiimaError::Config(format!(
@@ -940,11 +955,19 @@ impl RuntimeBuilder {
         if self.mcp_transport.is_none() {
             self.mcp_transport = mcp_transport_from_lookup(lookup)?;
         }
-        if self.oidc_env.is_none() && settings::PROXIIMA_OIDC_ISSUER.read(lookup).is_some() {
+        if self.oidc_env.is_none()
+            && self.authenticator.is_none()
+            && self.platform_authenticator.is_none()
+            && settings::PROXIIMA_OIDC_ISSUER.read_source(lookup).is_some()
+        {
             self.oidc_env = Some(
                 oidc_env_keys()
                     .iter()
-                    .filter_map(|setting| setting.read(lookup).map(|value| (setting.name(), value)))
+                    .filter_map(|setting| {
+                        setting
+                            .read_source(lookup)
+                            .map(|value| (setting.name(), value))
+                    })
                     .collect(),
             );
         }
@@ -1248,7 +1271,7 @@ struct ServedPath {
 
 /// The storage settings of the environment's storage block
 /// ([`RuntimeBuilder::apply_storage_lookup`]): all that
-/// [`crate::Proxiima::migrate`] and [`crate::Proxiima::connect_storage`] read.
+/// [`crate::StorageProxiima::migrate`] and [`crate::StorageProxiima::connect_storage`] read.
 #[derive(Clone)]
 pub struct StorageConfig {
     pub database_url: String,
@@ -1701,7 +1724,7 @@ pub enum ProxiimaError {
     /// The target database is behind this binary: a migration is not
     /// applied, or the store number was never initialized. Serving and
     /// maintenance only validate; the host's `migrate` step brings the
-    /// database current ([`crate::Proxiima::migrate`]).
+    /// database current ([`crate::StorageProxiima::migrate`]).
     #[error(
         "database is not migrated for this binary; run the host's `migrate` command first (docs/operate.md#postgresql-and-migrations): {details}"
     )]
@@ -1734,10 +1757,10 @@ fn parse_allowed_hosts(raw: &str) -> Vec<String> {
 ///
 /// Returns [`ProxiimaError::Config`] for any other nonempty value.
 pub fn missing_migration_policy_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<MissingMigrationPolicy>, ProxiimaError> {
     settings::PROXIIMA_MISSING_MIGRATION_POLICY
-        .read(lookup)
+        .read_source(lookup)
         .map(|raw| match raw.as_str() {
             "reject" => Ok(MissingMigrationPolicy::Reject),
             "allow" => Ok(MissingMigrationPolicy::Allow),
@@ -1807,7 +1830,7 @@ fn oidc_env_keys() -> &'static [Setting] {
 /// rmcp's defaults with the set values applied. Seconds of `0` disable the
 /// SSE ping, the session idle timeout, or the retry hint.
 fn mcp_transport_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<McpTransportConfig>, ProxiimaError> {
     use settings::{
         PROXIIMA_MCP_JSON_RESPONSE as JSON_RESPONSE,
@@ -1816,13 +1839,13 @@ fn mcp_transport_from_lookup(
     };
     if [KEEP_ALIVE, SESSION_IDLE, RETRY, SESSIONS, JSON_RESPONSE]
         .iter()
-        .all(|setting| setting.read(lookup).is_none())
+        .all(|setting| setting.read_source(lookup).is_none())
     {
         return Ok(None);
     }
     let optional_secs = |setting: &Setting| -> Result<Option<Option<Duration>>, ProxiimaError> {
         setting
-            .read(lookup)
+            .read_source(lookup)
             .map(|raw| parse_duration_seconds(setting, &raw))
             .transpose()
             .map(|parsed| parsed.map(|duration| (!duration.is_zero()).then_some(duration)))
@@ -1837,16 +1860,16 @@ fn mcp_transport_from_lookup(
     if let Some(retry) = optional_secs(&RETRY)? {
         transport.sse_retry = retry;
     }
-    if let Some(raw) = SESSIONS.read(lookup) {
+    if let Some(raw) = SESSIONS.read_source(lookup) {
         transport.legacy_session_mode = parse_bool_value(&SESSIONS, &raw)?;
     }
-    if let Some(raw) = JSON_RESPONSE.read(lookup) {
+    if let Some(raw) = JSON_RESPONSE.read_source(lookup) {
         transport.json_response = parse_bool_value(&JSON_RESPONSE, &raw)?;
     }
     Ok(Some(transport))
 }
 
-fn embedding_runtime_policy_env_is_set(lookup: &impl Fn(&str) -> Option<String>) -> bool {
+fn embedding_runtime_policy_env_is_set(lookup: &(impl proxiima_core::EnvLookup + ?Sized)) -> bool {
     use proxiima_core::env::{
         PROXIIMA_EMBED_BATCH_SIZE, PROXIIMA_EMBED_DRAIN_CONCURRENCY,
         PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS, PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
@@ -1860,7 +1883,7 @@ fn embedding_runtime_policy_env_is_set(lookup: &impl Fn(&str) -> Option<String>)
         PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS,
     ]
     .iter()
-    .any(|setting| setting.read(lookup).is_some())
+    .any(|setting| setting.read_source(lookup).is_some())
 }
 
 /// `PROXIIMA_MIGRATION_DATABASE_URL` is another way to reach the platform
@@ -1913,7 +1936,7 @@ pub fn parse_store_number(raw: &str) -> Result<u16, ProxiimaError> {
 ///
 /// Rejects malformed, zero, out-of-range, and unsafe policy values.
 pub fn embedding_runtime_policy_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<EmbeddingRuntimePolicy, ProxiimaError> {
     EmbeddingRuntimePolicy::from_lookup(lookup)
         .map_err(|err| ProxiimaError::Config(err.to_string()))

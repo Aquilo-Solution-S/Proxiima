@@ -187,7 +187,9 @@ impl World {
     /// A booted app over a fresh database, with whatever outbox consumers
     /// `configure` adds; `None` when no Postgres is configured.
     async fn configured(
-        configure: impl FnOnce(crate::Proxiima<OutboxProbeApp>) -> crate::Proxiima<OutboxProbeApp>,
+        configure: impl FnOnce(
+            crate::Proxiima<'static, OutboxProbeApp>,
+        ) -> crate::Proxiima<'static, OutboxProbeApp>,
     ) -> Option<Self> {
         proxiima_pg_testkit::admin_url_or_skip()?;
         let db_name = proxiima_pg_testkit::unique_db_name("in_process_outbox");
@@ -219,7 +221,7 @@ impl World {
                 ))
         });
         let app = configure(app);
-        app.migrate().await.expect("Proxiima migrates");
+        app.storage().migrate().await.expect("Proxiima migrates");
         let built = app.build().await.expect("Proxiima builds");
         Some(Self {
             db_name,
@@ -637,7 +639,7 @@ async fn an_intake_without_a_publication_source_fails_boot_naming_the_goal_chang
             .allow_insecure_single_owner()
             .outbox_intake(Arc::new(TestIntake::default()))
     });
-    app.migrate().await.expect("Proxiima migrates");
+    app.storage().migrate().await.expect("Proxiima migrates");
     let refused = app.build().await;
     let _ = proxiima_pg_testkit::drop_db(&db_name).await;
     let message = refused.expect_err("boot is refused").to_string();

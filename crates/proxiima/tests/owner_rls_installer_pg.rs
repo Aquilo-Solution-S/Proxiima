@@ -911,6 +911,7 @@ async fn preflight_refuses_missing_follows_state_and_empty_sql_run_repairs_it() 
                     .platform_database_url(db.platform_url())
                     .served_surface(proxiima::ServedSurface::All)
             })
+            .storage()
             .connect_storage()
             .await;
         assert!(
@@ -996,6 +997,7 @@ async fn preflight_refuses_an_absent_follows_table_without_asking_for_migrate() 
                 .platform_database_url(db.platform_url())
                 .served_surface(proxiima::ServedSurface::All)
         })
+        .storage()
         .connect_storage()
         .await;
     assert!(

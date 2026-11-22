@@ -150,7 +150,9 @@ impl Fixture {
             self.pg.clone_pool_for_backend(),
             S3RuntimeConfig {
                 key_pair: proxiima_blob_s3::S3KeyPair::new(
-                    std::env::var("PROXIIMA_S3_ACCESS_KEY_ID").expect("access key"),
+                    proxiima_blob_s3::settings::PROXIIMA_S3_ACCESS_KEY_ID
+                        .read_source(&proxiima_core::ProcessEnv)
+                        .expect("access key"),
                     "not-the-secret".to_owned(),
                 ),
                 ..self.config.clone()

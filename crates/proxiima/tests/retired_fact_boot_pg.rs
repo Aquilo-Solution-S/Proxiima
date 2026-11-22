@@ -387,7 +387,7 @@ impl Fixture {
             db,
         }
     }
-    fn app(&self, probe: &Probe, skip: bool) -> Proxiima<App> {
+    fn app(&self, probe: &Probe, skip: bool) -> Proxiima<'static, App> {
         let app = Proxiima::<App>::app().configure(|b| {
             b.database_url(self.db.runtime_url())
                 .platform_database_url(self.db.platform_url())

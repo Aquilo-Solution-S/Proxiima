@@ -15,8 +15,9 @@
 /// read only through [`Self::read`]. Reading by bare name is private to
 /// this crate:
 ///
-/// ```compile_fail,E0603
-/// let _ = proxiima_core::env::env_value(&proxiima_core::process_env, "PATH");
+/// ```compile_fail,E0308
+/// use proxiima_core::{EnvLookup, ProcessEnv};
+/// let _ = ProcessEnv.lookup("PATH");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Setting {
@@ -27,27 +28,26 @@ pub struct Setting {
     default: Option<&'static str>,
 }
 
-impl Setting {
-    /// The constructor [`settings!`](crate::settings!) expands to; not for
-    /// direct use.
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn __declare(
-        name: &'static str,
-        purpose: &'static str,
-        when_needed: &'static str,
-        kind: SettingKind,
-        default: Option<&'static str>,
-    ) -> Self {
-        Self {
-            name,
-            purpose,
-            when_needed,
-            kind,
-            default,
-        }
+/// Construction bridge for the cross-crate expansion of [`settings!`](crate::settings!).
+#[doc(hidden)]
+#[must_use]
+pub const fn __declare_setting(
+    name: &'static str,
+    purpose: &'static str,
+    when_needed: &'static str,
+    kind: SettingKind,
+    default: Option<&'static str>,
+) -> Setting {
+    Setting {
+        name,
+        purpose,
+        when_needed,
+        kind,
+        default,
     }
+}
 
+impl Setting {
     /// The environment variable name.
     #[must_use]
     pub const fn name(&self) -> &'static str {
@@ -92,7 +92,7 @@ impl Setting {
     /// parse site, where forgetting it turns "unset" into a parse error that
     /// names a value the operator never typed.
     ///
-    /// `lookup` is any environment source: [`process_env`] for the process
+    /// `lookup` is any environment source: [`ProcessEnv`] for the process
     /// environment, or [`env_from_pairs`] and other injected maps in tests
     /// and embedded hosts.
     ///
@@ -112,8 +112,17 @@ impl Setting {
     /// assert_eq!(EXAMPLE_MODE.read(&missing), None);
     /// ```
     #[must_use]
-    pub fn read(&self, lookup: &impl Fn(&str) -> Option<String>) -> Option<String> {
-        env_value(lookup, self.name)
+    pub fn read(&self, lookup: &(impl Fn(&str) -> Option<String> + ?Sized)) -> Option<String> {
+        self.read_source(lookup)
+    }
+
+    /// Read a setting from a typed lookup, trimming the value and treating blanks as unset.
+    #[must_use]
+    pub fn read_source(&self, lookup: &(impl EnvLookup + ?Sized)) -> Option<String> {
+        lookup.lookup(self).and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        })
     }
 }
 
@@ -216,7 +225,7 @@ macro_rules! settings {
         $(
             #[doc = $purpose]
             $(#[$meta])*
-            pub const $name: $crate::env::Setting = $crate::env::Setting::__declare(
+            pub const $name: $crate::env::Setting = $crate::env::__declare_setting(
                 ::core::stringify!($name),
                 $purpose,
                 $when_needed,
@@ -262,37 +271,27 @@ settings! {
     }
 }
 
-/// Read `key` through `lookup`, trimmed, treating an empty result as unset:
-/// the rule [`Setting::read`] states. Private to this crate, so a setting
-/// is read only through its declaration.
-fn env_value(lookup: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
-    lookup(key).and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
+/// Source of a declared setting's environment text.
+pub trait EnvLookup {
+    /// Supply the text for a declaration to [`Setting::read_source`].
+    #[doc(hidden)]
+    fn lookup(&self, setting: &Setting) -> Option<String>;
 }
 
-/// The process environment as a lookup, for callers with no injected source.
-///
-/// [`Setting::read`] takes a lookup so that hosts and tests can supply their
-/// own; the common argument is still the real environment. This is one
-/// grep-able name for "the process environment enters the program here",
-/// which is the question asked when auditing what a deployment can
-/// influence.
-///
-/// Pass it by name, not by call: it is an ordinary `fn` item and coerces
-/// wherever an `impl Fn(&str) -> Option<String>` is wanted.
-///
-/// ```
-/// let _path = proxiima_core::process_env("PATH");
-/// ```
-///
-/// Note this is the *raw* lookup: it does not trim and does not treat an
-/// empty value as unset. Those are [`Setting::read`]'s job, and every
-/// configuration read goes through it.
-#[must_use]
-pub fn process_env(key: &str) -> Option<String> {
-    std::env::var(key).ok()
+impl<F: Fn(&str) -> Option<String> + ?Sized> EnvLookup for F {
+    fn lookup(&self, setting: &Setting) -> Option<String> {
+        self(setting.name())
+    }
+}
+
+/// Source for settings read from the process environment.
+#[derive(Clone, Copy, Debug)]
+pub struct ProcessEnv;
+
+impl EnvLookup for ProcessEnv {
+    fn lookup(&self, setting: &Setting) -> Option<String> {
+        std::env::var(setting.name()).ok()
+    }
 }
 
 /// An environment lookup over fixed `pairs`, for a host that supplies its
@@ -329,10 +328,13 @@ pub fn env_from_pairs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> O
 /// ```
 #[must_use]
 pub fn parse_bool_word(raw: &str) -> Option<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
+    let word = raw.trim().to_ascii_lowercase();
+    if crate::ledger!(Proxiima.Configuration.trueWords).contains(&word.as_str()) {
+        Some(true)
+    } else if crate::ledger!(Proxiima.Configuration.falseWords).contains(&word.as_str()) {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -360,9 +362,58 @@ mod tests {
         }
     }
 
+    #[derive(serde::Deserialize)]
+    struct Vector<Output> {
+        #[serde(rename = "in")]
+        inputs: [String; 1],
+        out: Output,
+    }
+
+    fn vectors<Output: serde::de::DeserializeOwned>(name: &str) -> Vec<Vector<Output>> {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        serde_json::from_value(vectors[name].clone()).expect("configuration vectors")
+    }
+
+    // `Proxiima.Configuration.lookupPresence`
     #[test]
-    fn whitespace_only_is_unset() {
-        assert_eq!(FOO.read(&env(&[("FOO", " \t\n ")])), None);
+    fn setting_presence_matches_ledger_vectors() {
+        let cases: Vec<Vector<String>> = vectors("Proxiima.Configuration.lookupPresence");
+        assert_eq!(cases.len(), 3);
+        for Vector {
+            inputs: [class],
+            out,
+        } in cases
+        {
+            let pairs: &[(&str, &str)] = match class.as_str() {
+                "missing" => &[],
+                "blank" => &[("FOO", " \t\n ")],
+                "nonblank" => &[("FOO", " 900 ")],
+                other => panic!("unknown lookup text: {other}"),
+            };
+            let expected = match out.as_str() {
+                "omitted" => None,
+                "supplied" => Some("900"),
+                other => panic!("unknown lookup presence: {other}"),
+            };
+            assert_eq!(FOO.read(&env(pairs)).as_deref(), expected, "{class}");
+        }
+    }
+
+    // `Proxiima.Configuration.winsRepeatedPair`
+    #[test]
+    fn repeated_pair_matches_ledger_vectors() {
+        let cases: Vec<Vector<bool>> = vectors("Proxiima.Configuration.winsRepeatedPair");
+        assert_eq!(cases.len(), 2);
+        let pairs = [("FOO", "earlier"), ("FOO", "later")];
+        let read = FOO.read(&env(&pairs)).unwrap();
+        for Vector {
+            inputs: [position],
+            out,
+        } in cases
+        {
+            assert_eq!(read == position, out, "{position}");
+        }
     }
 
     /// Trailing newline from a here-doc or secret mount is trimmed, not rejected.
@@ -373,7 +424,11 @@ mod tests {
 
     #[test]
     fn interior_whitespace_is_preserved() {
-        assert_eq!(FOO.read(&env(&[("FOO", " a b ")])).as_deref(), Some("a b"));
+        assert_eq!(
+            FOO.read(&|name| (name == "FOO").then(|| " a b ".to_owned()))
+                .as_deref(),
+            Some("a b")
+        );
     }
 
     /// Every declared default of this crate is what its readers do unset.

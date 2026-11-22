@@ -14,7 +14,7 @@ const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 /// the default instead of handing an empty connection string to the pool.
 fn database_url_from_env() -> String {
     proxiima::settings::DATABASE_URL
-        .read(&proxiima_core::process_env)
+        .read_source(&proxiima_core::ProcessEnv)
         .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string())
 }
 

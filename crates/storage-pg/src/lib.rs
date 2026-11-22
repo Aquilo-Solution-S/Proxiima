@@ -1081,11 +1081,11 @@ impl std::fmt::Debug for StorageMaintenanceLock {
 /// Returns `StorageError::Unavailable` when the value is set but does not
 /// parse as `T`.
 fn env_int_or<T: std::str::FromStr>(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     setting: &Setting,
     default: T,
 ) -> Result<T, StorageError> {
-    let Some(value) = setting.read(lookup) else {
+    let Some(value) = setting.read_source(lookup) else {
         return Ok(default);
     };
     value

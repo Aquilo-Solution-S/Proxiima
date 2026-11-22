@@ -227,7 +227,7 @@ impl EmbeddingRuntimePolicy {
     ///
     /// Rejects malformed, zero, out-of-range, and unsafe combinations.
     pub fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl crate::EnvLookup + ?Sized),
     ) -> Result<Self, EmbeddingRuntimePolicyError> {
         let defaults = Self::default();
         let request_timeout = parse_duration_setting(
@@ -344,11 +344,11 @@ fn validate_duration(
 }
 
 fn parse_count_setting(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl crate::EnvLookup + ?Sized),
     setting: &Setting,
     default: usize,
 ) -> Result<usize, EmbeddingRuntimePolicyError> {
-    let Some(raw) = setting.read(lookup) else {
+    let Some(raw) = setting.read_source(lookup) else {
         return Ok(default);
     };
     raw.parse::<usize>()
@@ -359,11 +359,11 @@ fn parse_count_setting(
 }
 
 fn parse_duration_setting(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl crate::EnvLookup + ?Sized),
     setting: &Setting,
     default: Duration,
 ) -> Result<Duration, EmbeddingRuntimePolicyError> {
-    let Some(raw) = setting.read(lookup) else {
+    let Some(raw) = setting.read_source(lookup) else {
         return Ok(default);
     };
     let seconds =

@@ -81,7 +81,7 @@ pub use edge::*;
 pub use embedding::*;
 pub use engine::*;
 pub use entity::*;
-pub use env::{Setting, SettingKind, env_from_pairs, parse_bool_word, process_env};
+pub use env::{EnvLookup, ProcessEnv, Setting, SettingKind, env_from_pairs, parse_bool_word};
 pub use error::*;
 pub use goal::{SimpleTextGoalV1, TaskGoalV1, TaskPriority};
 pub use ids::*;

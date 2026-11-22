@@ -16,7 +16,9 @@ fn bucketed<'a>(extra: &'a [(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
 /// bucket without a region is a half-configured lane, not an absent one.
 #[test]
 fn from_lookup_requires_a_region_alongside_the_bucket() {
-    let err = S3RuntimeConfig::from_lookup(&env(&[("PROXIIMA_S3_BUCKET", "b")])).unwrap_err();
+    let err =
+        S3RuntimeConfig::from_lookup(&|name| (name == "PROXIIMA_S3_BUCKET").then(|| "b".into()))
+            .unwrap_err();
     let BlobError::Config(msg) = err else {
         panic!("wrong variant");
     };

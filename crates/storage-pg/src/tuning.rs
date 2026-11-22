@@ -53,11 +53,11 @@ impl HnswIterativeScan {
     }
 
     fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
         setting: &Setting,
         default: Self,
     ) -> Result<Self, StorageError> {
-        let Some(value) = setting.read(lookup) else {
+        let Some(value) = setting.read_source(lookup) else {
             return Ok(default);
         };
         match value.to_ascii_lowercase().as_str() {
@@ -101,7 +101,7 @@ impl PgTuning {
     /// Returns `StorageError::Unavailable` when a `PROXIIMA_PG_*` tuning
     /// variable is set to a value this crate cannot parse.
     pub fn from_env() -> Result<Self, StorageError> {
-        Ok(Self::from_lookup(&proxiima_core::process_env)?.unwrap_or_default())
+        Ok(Self::from_lookup(&proxiima_core::ProcessEnv)?.unwrap_or_default())
     }
 
     /// Read tuning from an injected environment, or `None` when that
@@ -133,13 +133,13 @@ impl PgTuning {
     /// Returns `StorageError::Unavailable` when a variable is set to a
     /// value this crate cannot parse.
     pub fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, StorageError> {
         let tuned = Self::resolve(lookup)?;
         Ok((tuned != Self::default()).then_some(tuned))
     }
 
-    fn resolve(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, StorageError> {
+    fn resolve(lookup: &(impl proxiima_core::EnvLookup + ?Sized)) -> Result<Self, StorageError> {
         let defaults = Self::default();
         Ok(Self {
             hnsw_ef_search: env_int_in_range(
@@ -169,7 +169,7 @@ impl PgTuning {
 /// Out of range is an error rather than a clamp: a clamped value would run
 /// an arm the operator did not ask for and report it as the one they did.
 fn env_int_in_range<T>(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     setting: &Setting,
     default: T,
     range: &RangeInclusive<T>,

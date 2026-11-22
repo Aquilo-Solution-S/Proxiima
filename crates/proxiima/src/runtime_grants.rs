@@ -2,7 +2,7 @@
 //! the platform role grants the runtime role its privileges — the runtime
 //! grant phase described in docs/operate.md.
 //!
-//! Runs once per [`crate::Proxiima::migrate`], after the migrations and the
+//! Runs once per [`crate::StorageProxiima::migrate`], after the migrations and the
 //! store number, on the platform (migration) pool, in one transaction:
 //!
 //! | # | Statement | Scope |

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use proxiima::spiice::SpiiceBundle;
 use proxiima::{
     AppContext, AppInfo, EmbeddingRuntimePolicy, Proxiima, ProxiimaError, RunningProxiima,
-    RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices,
+    RuntimeBuilder, Setting, SpiiceApp, SpiiceServiceError, SpiiceServices, StorageProxiima,
     embedding_runtime_policy_from_lookup,
 };
 use proxiima_core::embedding::{
@@ -26,7 +26,7 @@ use proxiima_core::embedding::{
 };
 use proxiima_core::protocol::profile as protocol_profile;
 use proxiima_core::{
-    ScopeKey, ServedSurface, SpiiceRegistry, SpiiceRegistryError, all_core_actions,
+    EnvLookup, ScopeKey, ServedSurface, SpiiceRegistry, SpiiceRegistryError, all_core_actions,
     all_core_resources,
 };
 use proxiima_llm_openai_compat::OpenAiCompatEmbeddingClient;
@@ -243,27 +243,27 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
         args.remove(0);
         let config = parse_migrate_args(args).map_err(cli_error(|| MIGRATE_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
-        return run_migrate(config, &proxiima_core::process_env).await;
+        return run_migrate(config, proxiima_core::ProcessEnv).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-embeddings") {
         args.remove(0);
         let config = parse_maintain_args(args).map_err(cli_error(|| MAINTAIN_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
-        return run_maintain(config, &proxiima_core::process_env).await;
+        return run_maintain(config, proxiima_core::ProcessEnv).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-storage") {
         args.remove(0);
         let config = parse_storage_maintenance_args(args)
             .map_err(cli_error(|| STORAGE_MAINTENANCE_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
-        return run_maintain_storage(config, &proxiima_core::process_env).await;
+        return run_maintain_storage(config, proxiima_core::ProcessEnv).await;
     }
     if args.first().is_some_and(|arg| arg == "maintain-blobs") {
         args.remove(0);
         let config = parse_maintain_blobs_args(args)
             .map_err(cli_error(|| MAINTAIN_BLOBS_USAGE.to_owned()))?;
         init_logging(LogSink::Stderr);
-        return run_maintain_blobs(config, &proxiima_core::process_env).await;
+        return run_maintain_blobs(config, proxiima_core::ProcessEnv).await;
     }
     if args.first().is_some_and(|arg| arg == "serve") {
         args.remove(0);
@@ -273,7 +273,7 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     // Installed before the runtime starts, which records through the global
     // meter, and shut down after the runtime has, so its last interval is
     // exported.
-    let metrics = telemetry::install(&proxiima_core::process_env)?;
+    let metrics = telemetry::install(&proxiima_core::ProcessEnv)?;
     let served = serve(config).await;
     if let Some(metrics) = metrics {
         metrics.shutdown();
@@ -300,9 +300,9 @@ async fn serve(config: McpConfig) -> Result<(), CliError> {
 /// validate the schema it leaves.
 async fn run_migrate(
     config: MigrateConfig,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: impl EnvLookup + Send + Sync,
 ) -> Result<(), CliError> {
-    maintenance_app(config.database_url, lookup)?
+    maintenance_app(config.database_url, lookup)
         .migrate()
         .await?;
     println!(
@@ -328,14 +328,15 @@ async fn run_migrate(
 /// Alert on the `missing=` number.
 async fn run_maintain_blobs(
     config: MaintainBlobsConfig,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: impl EnvLookup + Send + Sync,
 ) -> Result<(), CliError> {
-    let s3 = required_s3(lookup).map_err(|err| {
+    let s3 = required_s3(&lookup).map_err(|err| {
         ProxiimaError::Config(format!(
             "maintain-blobs needs the host's PROXIIMA_S3_* block: {err}"
         ))
     })?;
-    let built = maintenance_app(config.database_url, lookup)?
+    let built = maintenance_app(config.database_url, lookup)
+        .into_app()
         .configure(|b| b.s3(s3))
         .build()
         .await?;
@@ -391,10 +392,10 @@ async fn run_maintain_blobs(
 /// overlap is harmless by construction, not by scheduling discipline.
 async fn run_maintain(
     config: MaintainConfig,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: impl EnvLookup + Send + Sync,
 ) -> Result<(), CliError> {
-    let space = maintenance_embedding_space(config.model, lookup)?;
-    let storage = maintenance_app(config.database_url, lookup)?
+    let space = maintenance_embedding_space(config.model, &lookup)?;
+    let storage = maintenance_app(config.database_url, lookup)
         .connect_storage()
         .await?;
 
@@ -494,18 +495,18 @@ async fn run_maintain(
 /// The runtime of `migrate` and the maintenance commands on `database_url`:
 /// configured from the storage settings of `lookup` only, so the server's
 /// own environment neither starts nor refuses anything here.
-fn maintenance_app(
+fn maintenance_app<'env>(
     database_url: String,
-    lookup: &impl Fn(&str) -> Option<String>,
-) -> Result<Proxiima<MaintenanceApp>, CliError> {
-    Ok(Proxiima::<MaintenanceApp>::app()
-        .from_storage_lookup(lookup)?
-        .configure(|b| b.database_url(database_url)))
+    lookup: impl EnvLookup + Send + Sync + 'env,
+) -> StorageProxiima<'env, MaintenanceApp> {
+    StorageProxiima::app()
+        .from_lookup_source(lookup)
+        .configure(|b| b.database_url(database_url))
 }
 
 /// The `PROXIIMA_S3_*` block a command that cannot run without it requires.
-fn required_s3(lookup: &impl Fn(&str) -> Option<String>) -> Result<S3RuntimeConfig, BlobError> {
-    S3RuntimeConfig::from_lookup(lookup)?
+fn required_s3(lookup: &(impl EnvLookup + ?Sized)) -> Result<S3RuntimeConfig, BlobError> {
+    S3RuntimeConfig::from_lookup_source(lookup)?
         .ok_or_else(|| BlobError::Config("missing PROXIIMA_S3_BUCKET".to_string()))
 }
 
@@ -517,11 +518,11 @@ fn required_s3(lookup: &impl Fn(&str) -> Option<String>) -> Result<S3RuntimeConf
 /// with exit 0, like `maintain-embeddings`.
 async fn run_maintain_storage(
     config: StorageMaintenanceConfig,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: impl EnvLookup + Send + Sync,
 ) -> Result<(), CliError> {
     let s3 = ((config.retry_cold_object_purges && !config.dry_run) || config.sweep_expired_uploads)
         .then(|| {
-            required_s3(lookup).map_err(|err| {
+            required_s3(&lookup).map_err(|err| {
                 ProxiimaError::Config(format!(
                     "storage maintenance object-store actions need the host's \
                      PROXIIMA_S3_* block: {err}"
@@ -530,7 +531,7 @@ async fn run_maintain_storage(
         })
         .transpose()?;
 
-    let storage = maintenance_app(config.database_url.clone(), lookup)?
+    let storage = maintenance_app(config.database_url.clone(), lookup)
         .connect_storage()
         .await?;
 
@@ -702,24 +703,22 @@ fn reconcile_scope(scope: ReconcileScope) -> EmbeddingReconcileScope {
 /// Returns facade config, storage, schema validation, engine, bind, or
 /// transport failures.
 pub async fn run_with_handle(config: McpConfig) -> Result<RunningProxiima, CliError> {
-    let app = build_app(config, proxiima_core::process_env)?;
+    let app = build_app(config, proxiima_core::ProcessEnv)?;
     app.run().await.map_err(Into::into)
 }
 
-fn build_app(
+fn build_app<'env>(
     config: McpConfig,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Result<Proxiima<ProxiimaMcpApp>, CliError> {
+    lookup: impl EnvLookup + Send + Sync + 'env,
+) -> Result<Proxiima<'env, ProxiimaMcpApp>, CliError> {
     let registered = registered_tool_ids()?;
     let served_surface = served_surface_from_env(&lookup, &registered)?;
     let embedding_policy = embedding_runtime_policy_from_lookup(&lookup)?;
-    let mut app = Proxiima::<ProxiimaMcpApp>::app()
-        .from_lookup(&lookup)?
-        .configure(|b| {
-            b.database_url(config.database_url)
-                .served_surface(served_surface)
-                .embedding_runtime_policy(embedding_policy)
-        });
+    let mut app = Proxiima::<ProxiimaMcpApp>::app().configure(|b| {
+        b.database_url(config.database_url)
+            .served_surface(served_surface)
+            .embedding_runtime_policy(embedding_policy)
+    });
     if let Some(bind) = config.bind {
         app = app.configure(|b| b.mcp_bind(bind));
     }
@@ -727,13 +726,13 @@ fn build_app(
         let router = Arc::new(embedding_router_from_env(&lookup, client)?);
         app = app.configure(|b| b.embedding_router(router));
     }
-    Ok(app)
+    Ok(app.from_lookup_source(lookup))
 }
 
 /// Every Owner embedded through `client`, its search queries worded by the
 /// configured query instruction.
 fn embedding_router_from_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
     client: OpenAiCompatEmbeddingClient,
 ) -> Result<SingleClientRouter, CliError> {
     let bound = BoundEmbeddingClient::bind(Arc::new(client))
@@ -745,7 +744,7 @@ fn embedding_router_from_env(
 /// The instruction `PROXIIMA_EMBED_QUERY_INSTRUCTION` wraps every search
 /// query in before it is embedded. Unset embeds the query as sent.
 fn query_instructions_from_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
 ) -> Result<QueryInstructions, CliError> {
     let mut instructions = QueryInstructions::default();
     if let Some(instruction) =
@@ -759,10 +758,10 @@ fn query_instructions_from_env(
 /// One query instruction template. `\n` in the value is a newline: formats
 /// such as Qwen3's need one, and an environment value cannot easily hold it.
 fn query_instruction_from_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<Option<QueryInstruction>, CliError> {
-    key.read(lookup)
+    key.read_source(lookup)
         .map(|raw| {
             QueryInstruction::new(raw.replace("\\n", "\n"))
                 .map_err(|err| CliError::Runtime(ProxiimaError::Config(format!("{key}: {err}"))))
@@ -804,13 +803,13 @@ struct RegisteredKeys {
 }
 
 fn served_surface_from_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
     registered: &RegisteredKeys,
 ) -> Result<ServedSurface, CliError> {
     resolve_served_surface(
-        PROXIIMA_TOOL_PROFILE.read(lookup).as_deref(),
-        PROXIIMA_TOOL_ALLOW.read(lookup).as_deref(),
-        PROXIIMA_TOOL_DENY.read(lookup).as_deref(),
+        PROXIIMA_TOOL_PROFILE.read_source(lookup).as_deref(),
+        PROXIIMA_TOOL_ALLOW.read_source(lookup).as_deref(),
+        PROXIIMA_TOOL_DENY.read_source(lookup).as_deref(),
         registered,
     )
 }
@@ -954,20 +953,22 @@ fn reject_served_read_denials(
 /// 16,384 characters; set it explicitly when a provider needs a different
 /// client-side limit. See docs/10 §Bounding embedding input.
 fn embedding_client_from_env(
-    lookup: impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
     policy: EmbeddingRuntimePolicy,
 ) -> Result<Option<OpenAiCompatEmbeddingClient>, CliError> {
     // Parsed first so a wildcard or range in the setting fails boot whether
     // or not embeddings are configured.
-    let plaintext_hosts = proxiima_core::PlaintextHosts::from_lookup(&lookup)
+    let plaintext_hosts = proxiima_core::PlaintextHosts::from_lookup(lookup)
         .map_err(|err| CliError::Runtime(ProxiimaError::Config(err.to_string())))?;
-    let api_key = PROXIIMA_EMBED_API_KEY.read(&lookup);
-    let base_url = PROXIIMA_EMBED_BASE_URL.read(&lookup);
-    let model = embedding_model_from_env(&lookup);
-    let matryoshka_is_set = PROXIIMA_EMBED_MATRYOSHKA.read(&lookup).is_some();
-    let dim_is_set = PROXIIMA_EMBED_DIM.read(&lookup).is_some();
-    let max_input_is_set = PROXIIMA_EMBED_MAX_INPUT_CHARS.read(&lookup).is_some();
-    let query_instruction_is_set = PROXIIMA_EMBED_QUERY_INSTRUCTION.read(&lookup).is_some();
+    let api_key = PROXIIMA_EMBED_API_KEY.read_source(lookup);
+    let base_url = PROXIIMA_EMBED_BASE_URL.read_source(lookup);
+    let model = embedding_model_from_env(lookup);
+    let matryoshka_is_set = PROXIIMA_EMBED_MATRYOSHKA.read_source(lookup).is_some();
+    let dim_is_set = PROXIIMA_EMBED_DIM.read_source(lookup).is_some();
+    let max_input_is_set = PROXIIMA_EMBED_MAX_INPUT_CHARS.read_source(lookup).is_some();
+    let query_instruction_is_set = PROXIIMA_EMBED_QUERY_INSTRUCTION
+        .read_source(lookup)
+        .is_some();
 
     if base_url.is_none()
         && model.is_none()
@@ -991,10 +992,10 @@ fn embedding_client_from_env(
         ))
     })?;
 
-    let matryoshka = parse_bool_env(&lookup, &PROXIIMA_EMBED_MATRYOSHKA)?;
-    let dim = embedding_dim_from_env(&lookup)?.width_u32();
+    let matryoshka = parse_bool_env(lookup, &PROXIIMA_EMBED_MATRYOSHKA)?;
+    let dim = embedding_dim_from_env(lookup)?.width_u32();
 
-    let max_input_chars = parse_positive_u32_env(&lookup, &PROXIIMA_EMBED_MAX_INPUT_CHARS)?
+    let max_input_chars = parse_positive_u32_env(lookup, &PROXIIMA_EMBED_MAX_INPUT_CHARS)?
         .unwrap_or(DEFAULT_EMBED_MAX_INPUT_CHARS);
     let caps = proxiima_core::models::EmbedCaps::new(dim, matryoshka)
         .with_max_input_chars(max_input_chars);
@@ -1015,10 +1016,10 @@ fn embedding_client_from_env(
 /// Zero is refused rather than treated as "unset": a cap of zero would
 /// reject every input, and the omitted variable uses the finite default.
 fn parse_positive_u32_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<Option<NonZeroU32>, CliError> {
-    let Some(raw) = key.read(lookup) else {
+    let Some(raw) = key.read_source(lookup) else {
         return Ok(None);
     };
     raw.parse::<NonZeroU32>().map(Some).map_err(|_| {
@@ -1028,11 +1029,8 @@ fn parse_positive_u32_env(
     })
 }
 
-fn parse_bool_env(
-    lookup: &impl Fn(&str) -> Option<String>,
-    key: &Setting,
-) -> Result<bool, CliError> {
-    match key.read(lookup) {
+fn parse_bool_env(lookup: &(impl EnvLookup + ?Sized), key: &Setting) -> Result<bool, CliError> {
+    match key.read_source(lookup) {
         None => Ok(false),
         Some(raw) => proxiima_core::parse_bool_word(&raw).ok_or_else(|| {
             CliError::Runtime(ProxiimaError::Config(format!(
@@ -1042,15 +1040,15 @@ fn parse_bool_env(
     }
 }
 
-fn embedding_model_from_env(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
-    PROXIIMA_EMBED_MODEL.read(&lookup)
+fn embedding_model_from_env(lookup: &(impl EnvLookup + ?Sized)) -> Option<String> {
+    PROXIIMA_EMBED_MODEL.read_source(lookup)
 }
 
 /// `PROXIIMA_EMBED_DIM`, or 1024 when unset.
 fn embedding_dim_from_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
 ) -> Result<proxiima_core::embedding::EmbeddingDim, CliError> {
-    let Some(raw) = PROXIIMA_EMBED_DIM.read(lookup) else {
+    let Some(raw) = PROXIIMA_EMBED_DIM.read_source(lookup) else {
         return Ok(proxiima_core::embedding::EmbeddingDim::D1024);
     };
     let width = raw.parse::<usize>().map_err(|_| {
@@ -1069,9 +1067,9 @@ fn embedding_dim_from_env(
 /// `PROXIIMA_EMBED_MODEL`, at `PROXIIMA_EMBED_DIM`.
 fn maintenance_embedding_space(
     explicit: Option<String>,
-    lookup: impl Fn(&str) -> Option<String>,
+    lookup: &(impl EnvLookup + ?Sized),
 ) -> Result<proxiima_core::EmbeddingSpace, CliError> {
-    let dim = embedding_dim_from_env(&lookup)?;
+    let dim = embedding_dim_from_env(lookup)?;
     let model = explicit
         .or_else(|| embedding_model_from_env(lookup))
         .ok_or_else(|| {

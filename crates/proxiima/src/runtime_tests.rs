@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use proxiima_blob_s3::{S3KeyPair, S3RuntimeConfig};
+use proxiima_core::publication::{PublicationConfig, PublicationLimits};
 use proxiima_core::{
     AuthError, AuthPath, Authenticator, AuthzContext, Credentials, OwnerId, SpiiceRegistry,
     SpiiceRegistryError,
@@ -24,9 +25,9 @@ mod alpha {
     }
 }
 
-struct AlphaApp;
+struct AlphaApp<const APP_POOL: bool = true>;
 
-impl SpiiceBundle for AlphaApp {
+impl<const APP_POOL: bool> SpiiceBundle for AlphaApp<APP_POOL> {
     fn register(registry: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
         alpha::register(registry)
     }
@@ -36,7 +37,7 @@ impl SpiiceBundle for AlphaApp {
     }
 }
 
-impl SpiiceApp for AlphaApp {
+impl<const APP_POOL: bool> SpiiceApp for AlphaApp<APP_POOL> {
     fn app_info() -> AppInfo {
         AppInfo {
             id: "alpha",
@@ -46,14 +47,25 @@ impl SpiiceApp for AlphaApp {
     }
 
     fn configure(builder: RuntimeBuilder) -> RuntimeBuilder {
-        builder
+        let builder = builder
             .database_url("postgres://alpha/proxiima")
             .store_number(0)
             .platform_database_url("postgres://alpha/platform")
-            .pg_pool_config(PgPoolConfig {
+            .publication(PublicationConfig {
+                limits: PublicationLimits {
+                    max_pending: 19,
+                    ..PublicationLimits::default()
+                },
+                ..PublicationConfig::default()
+            });
+        if APP_POOL {
+            builder.pg_pool_config(PgPoolConfig {
                 max_connections: 3,
                 ..PgPoolConfig::default()
             })
+        } else {
+            builder
+        }
     }
 }
 
@@ -391,12 +403,165 @@ fn injected_lookup_replaces_the_ambient_process_env_source() {
                         .then(|| "postgres://unused/platform".to_string())
                 })
         })
-        .expect("injected pool lookup")
         .configure(|b| b.served_surface(ServedSurface::All))
         .resolve()
         .expect("resolved runtime config");
 
     assert_eq!(config.storage.pg_pool_config.max_connections, 4);
+}
+
+fn configuration_vectors<T: serde::de::DeserializeOwned>(name: &str) -> Vec<T> {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    serde_json::from_value(vectors[name].clone()).expect("configuration vectors")
+}
+
+// `Proxiima.Configuration.layerPrecedence`
+#[test]
+fn layer_precedence_matches_ledger_vectors() {
+    #[derive(Clone, Copy, Debug, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Presence {
+        Omitted,
+        Supplied,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Layer {
+        BuiltIn,
+        Application,
+        Environment,
+        Host,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        inputs: [Presence; 3],
+        out: Layer,
+    }
+
+    fn resolve<const APP_POOL: bool>(host: Presence, environment: Presence) -> u32 {
+        let mut app = StorageProxiima::<AlphaApp<APP_POOL>>::app().from_lookup(move |key| {
+            (matches!(environment, Presence::Supplied) && key == "PROXIIMA_PG_MAX_CONNECTIONS")
+                .then(|| "7".into())
+        });
+        if matches!(host, Presence::Supplied) {
+            app = app.configure(|b| {
+                b.pg_pool_config(PgPoolConfig {
+                    max_connections: 9,
+                    ..PgPoolConfig::default()
+                })
+            });
+        }
+        app.resolve().unwrap().0.pg_pool_config.max_connections
+    }
+
+    let rows: Vec<Vector> = configuration_vectors("Proxiima.Configuration.layerPrecedence");
+    assert_eq!(rows.len(), 8);
+    for Vector {
+        inputs: [host, env, app],
+        out,
+    } in rows
+    {
+        let actual = match app {
+            Presence::Omitted => resolve::<false>(host, env),
+            Presence::Supplied => resolve::<true>(host, env),
+        };
+        let expected = match out {
+            Layer::BuiltIn => PgPoolConfig::default().max_connections,
+            Layer::Application => 3,
+            Layer::Environment => 7,
+            Layer::Host => 9,
+        };
+        assert_eq!(actual, expected, "{host:?}, {env:?}, {app:?}");
+    }
+}
+
+#[test]
+fn host_overrides_skip_lookup_for_configured_settings() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let read_retention = AtomicBool::new(false);
+    let read_purge = AtomicBool::new(false);
+    let app = Proxiima::<AlphaApp>::app()
+        .from_lookup(|key| match key {
+            "PROXIIMA_PG_MAX_CONNECTIONS" | "PROXIIMA_OUTBOX_MAX_PENDING" => {
+                panic!("overridden setting was read: {key}");
+            }
+            "PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS" => {
+                read_retention.store(true, Ordering::Relaxed);
+                Some("120".to_string())
+            }
+            "PROXIIMA_OBJECT_PURGE_INTERVAL_SECS" => {
+                read_purge.store(true, Ordering::Relaxed);
+                Some("42".to_string())
+            }
+            _ => None,
+        })
+        .configure(|b| b.pg_pool_config(PgPoolConfig::default()))
+        .configure(|b| b.publication(PublicationConfig::default()))
+        .configure(|b| b.served_surface(ServedSurface::All));
+
+    let (config, _) = app.resolve().unwrap();
+    assert!(read_retention.swap(false, Ordering::Relaxed));
+    assert!(read_purge.swap(false, Ordering::Relaxed));
+    assert_eq!(config.published_retention, Some(Duration::from_secs(120)));
+    assert_eq!(config.object_purge_interval, Some(Duration::from_secs(42)));
+
+    let (config, _) = app
+        .configure(|b| b.published_retention(Duration::from_secs(60)))
+        .configure(|b| b.object_purge_interval(Duration::ZERO))
+        .resolve()
+        .unwrap();
+    assert!(!read_retention.load(Ordering::Relaxed));
+    assert!(!read_purge.load(Ordering::Relaxed));
+    assert_eq!(config.published_retention, Some(Duration::from_secs(60)));
+    assert_eq!(config.object_purge_interval, None);
+}
+
+#[test]
+fn application_publication_default_survives_a_silent_environment() {
+    let (config, _) = Proxiima::<AlphaApp>::app()
+        .from_lookup(|_| None)
+        .configure(|b| b.served_surface(ServedSurface::All))
+        .resolve()
+        .unwrap();
+    assert_eq!(config.publication.limits.max_pending, 19);
+}
+
+#[test]
+fn repeated_configuration_overwrites_only_supplied_options() {
+    let (config, _) = StorageProxiima::<AlphaApp>::app()
+        .configure(|b| b.store_number(2).database_url("postgres://host/runtime"))
+        .configure(|b| b.store_number(4))
+        .resolve()
+        .unwrap();
+    assert_eq!(config.store_number, 4);
+    assert_eq!(config.database_url, "postgres://host/runtime");
+}
+
+#[test]
+fn storage_commands_use_the_storage_lookup_even_from_a_serving_facade() {
+    let app = Proxiima::<AlphaApp>::app().from_lookup(|key| match key {
+        "PROXIIMA_MCP_BIND" => Some("malformed-serving-value".to_string()),
+        "PROXIIMA_EMBED_BATCH_SIZE" => Some("12".to_string()),
+        _ => None,
+    });
+
+    let error = app.resolve().unwrap_err();
+    assert!(error.to_string().contains("PROXIIMA_MCP_BIND"), "{error}");
+    let storage = app.storage();
+    let (config, _) = storage.resolve().unwrap();
+    assert_eq!(config.embedding_runtime_policy.batch_size(), 12);
+    let (config, _) = storage
+        .into_app()
+        .configure(|b| b.served_surface(ServedSurface::All))
+        .resolve()
+        .unwrap();
+    assert_eq!(config.storage.embedding_runtime_policy.batch_size(), 12);
 }
 
 #[tokio::test]

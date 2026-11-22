@@ -12,8 +12,8 @@ use proxiima_core::storage_ports::{
     CitedBlobReadService, CitedBlobService, DelegatedAuthorityService,
 };
 use proxiima_core::{
-    Authenticator, AuthzContext, DelegationRuntimeAuthority, OwnerAccessPort, RevalidationConfig,
-    ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
+    Authenticator, AuthzContext, DelegationRuntimeAuthority, EnvLookup, OwnerAccessPort,
+    ProcessEnv, RevalidationConfig, ServedSurface, SpiiceRegistryFrozen, SpiiceServices,
 };
 use proxiima_server::{
     EdgeAuth, HostAllowlist, McpStreamableService, OriginAllowlist, ToolHost, assert_loopback,
@@ -40,30 +40,43 @@ use proxiima_storage_pg::{OwnerTransactions, PgDelegationStore, PgOwnerAccessRes
 /// then this value's own builder calls — code wins. Every feature starts
 /// when its config is present (docs/configuration.md §Runtime features); [`Self::build`]
 /// and [`Self::run`] start the same ones.
-pub struct Proxiima<A: SpiiceApp> {
+pub struct Proxiima<'env, A: SpiiceApp> {
     overlay: RuntimeBuilder,
-    use_env: bool,
-    injected_env: Option<RuntimeBuilder>,
+    environment: Option<Environment<'env>>,
     _app: PhantomData<A>,
 }
 
-impl<A: SpiiceApp> std::fmt::Debug for Proxiima<A> {
+type Lookup<'env> = Arc<dyn EnvLookup + Send + Sync + 'env>;
+
+#[derive(Clone)]
+enum Environment<'env> {
+    Serving(Lookup<'env>),
+    StorageOnly(Lookup<'env>),
+}
+
+impl Environment<'_> {
+    fn into_storage(self) -> Self {
+        match self {
+            Self::Serving(lookup) | Self::StorageOnly(lookup) => Self::StorageOnly(lookup),
+        }
+    }
+}
+
+impl<A: SpiiceApp> std::fmt::Debug for Proxiima<'_, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Proxiima")
             .field("overlay", &self.overlay)
-            .field("use_env", &self.use_env)
-            .field("has_injected_env", &self.injected_env.is_some())
+            .field("has_environment", &self.environment.is_some())
             .finish()
     }
 }
 
-impl<A: SpiiceApp + 'static> Proxiima<A> {
+impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
     #[must_use]
     pub fn app() -> Self {
         Self {
             overlay: RuntimeBuilder::default(),
-            use_env: false,
-            injected_env: None,
+            environment: None,
             _app: PhantomData,
         }
     }
@@ -76,47 +89,50 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     #[must_use]
     pub fn from_env(mut self) -> Self {
         crate::settings::warn_unknown_env(A::settings());
-        self.use_env = true;
-        self.injected_env = None;
+        self.environment = Some(Environment::Serving(Arc::new(ProcessEnv)));
         self
     }
 
-    /// Resolve the environment layer through an injected lookup.
-    ///
-    /// This is the process-env-equivalent path for hosts whose configuration
-    /// source is not global process state. Resolution happens once; storage
-    /// boot consumes the resulting configuration without another env read.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProxiimaError::Config`] when a supplied value is malformed.
-    pub fn from_lookup(
-        mut self,
-        lookup: impl Fn(&str) -> Option<String>,
-    ) -> Result<Self, ProxiimaError> {
-        self.injected_env = Some(RuntimeBuilder::default().apply_lookup(lookup)?);
-        self.use_env = false;
-        Ok(self)
+    /// Supply a lookup of environment variables, validated when the facade runs the operation.
+    #[must_use]
+    pub fn from_lookup<'lookup>(
+        self,
+        lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'lookup,
+    ) -> Proxiima<'lookup, A> {
+        self.from_lookup_source(lookup)
     }
 
-    /// [`Self::from_lookup`] for a command that migrates or maintains
-    /// storage and serves nothing: only the storage settings
-    /// ([`RuntimeBuilder::apply_storage_lookup`]) are read, so such a command
-    /// shares the server's environment without starting a listener, building
-    /// an authenticator or delivering the outbox, and without being refused
-    /// by a setting only serving checks. The object store is not read: a
-    /// command that needs it sets it with [`RuntimeBuilder::s3`].
+    /// Supply a typed settings lookup used when the facade resolves its configuration.
+    #[must_use]
+    pub fn from_lookup_source<'lookup>(
+        self,
+        lookup: impl EnvLookup + Send + Sync + 'lookup,
+    ) -> Proxiima<'lookup, A> {
+        self.with_environment(Environment::Serving(Arc::new(lookup)))
+    }
+
+    fn with_environment(self, environment: Environment<'_>) -> Proxiima<'_, A> {
+        Proxiima {
+            overlay: self.overlay,
+            environment: Some(environment),
+            _app: PhantomData,
+        }
+    }
+
+    /// Use the same application, options and lookup for a storage command.
     ///
-    /// # Errors
-    ///
-    /// Returns [`ProxiimaError::Config`] when a storage value is malformed.
-    pub fn from_storage_lookup(
-        mut self,
-        lookup: impl Fn(&str) -> Option<String>,
-    ) -> Result<Self, ProxiimaError> {
-        self.injected_env = Some(RuntimeBuilder::default().apply_storage_lookup(lookup)?);
-        self.use_env = false;
-        Ok(self)
+    /// ```compile_fail,E0599
+    /// fn migrate<A: proxiima::SpiiceApp + 'static>(app: proxiima::Proxiima<'_, A>) {
+    ///     let _ = app.migrate();
+    /// }
+    /// ```
+    #[must_use]
+    pub fn storage(&self) -> StorageProxiima<'env, A> {
+        StorageProxiima(Proxiima {
+            overlay: self.overlay.clone(),
+            environment: self.environment.clone().map(Environment::into_storage),
+            _app: PhantomData,
+        })
     }
 
     /// Set runtime options through the [`RuntimeBuilder`]: the closure
@@ -128,47 +144,6 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
     pub fn configure(mut self, f: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder) -> Self {
         self.overlay = f(self.overlay);
         self
-    }
-
-    /// Bring the database to this binary: the host's migrate step.
-    ///
-    /// Resolves the storage settings only ([`RuntimeBuilder::resolve_storage`]):
-    /// no serving setting configures or refuses this step, so the app that
-    /// serves runs it. On [`crate::StorageConfig::migrations_url`] it applies
-    /// every pending core and spiice migration under the configured
-    /// missing-migration policy, initializes the store number, and applies
-    /// the runtime grants when [`RuntimeBuilder::runtime_grants`] or
-    /// `PROXIIMA_RUNTIME_GRANTS` asks for them.
-    /// Serving ([`Self::build`], [`Self::run`]) and [`Self::connect_storage`]
-    /// only validate, and refuse a database this step has not brought
-    /// current with [`ProxiimaError::MigrationRequired`].
-    ///
-    /// # Errors
-    ///
-    /// Returns config errors, [`ProxiimaError::SchemaResetRequired`] for a
-    /// database off the current baseline, and storage errors for a failed
-    /// connection, migration, store number or grant.
-    pub async fn migrate(&self) -> Result<(), ProxiimaError> {
-        let (config, parts) = self.merged_builder()?.resolve_storage()?;
-        crate::boot::migrate::<A>(&config, &parts).await
-    }
-
-    /// Resolve the storage settings only ([`RuntimeBuilder::resolve_storage`];
-    /// no serving setting configures or refuses this call), validate the
-    /// schema, and connect the serving storage, without composing an engine
-    /// or starting anything: for a one-shot maintenance command.
-    ///
-    /// # Errors
-    ///
-    /// Returns config errors, [`ProxiimaError::MigrationRequired`] for a
-    /// database [`Self::migrate`] has not brought to this binary,
-    /// [`ProxiimaError::SchemaResetRequired`], and storage errors.
-    pub async fn connect_storage(&self) -> Result<proxiima_storage_pg::PgStorage, ProxiimaError> {
-        let (config, parts) = self.merged_builder()?.resolve_storage()?;
-        let registry = crate::boot::compose_registry::<A>(false)?;
-        Ok(crate::boot::connect_storage::<A>(&config, &parts, registry)
-            .await?
-            .storage)
     }
 
     /// Resolve, validate, boot, and start every configured feature, without
@@ -363,21 +338,123 @@ impl<A: SpiiceApp + 'static> Proxiima<A> {
         })
     }
 
-    /// The overlay over the environment layer over [`SpiiceApp::configure`].
     fn merged_builder(&self) -> Result<RuntimeBuilder, ProxiimaError> {
         let base = A::configure(RuntimeBuilder::default());
-        let env_layer = if let Some(injected) = &self.injected_env {
-            injected.clone()
-        } else if self.use_env {
-            RuntimeBuilder::default().apply_env()?
-        } else {
-            RuntimeBuilder::default()
+        let overlay = self.overlay.clone();
+        let overlay = match &self.environment {
+            Some(Environment::Serving(lookup)) => overlay.apply_lookup_source(lookup.as_ref())?,
+            Some(Environment::StorageOnly(lookup)) => {
+                overlay.apply_storage_lookup_source(lookup.as_ref())?
+            }
+            None => overlay,
         };
-        Ok(self.overlay.clone().merge_over(env_layer.merge_over(base)))
+        Ok(overlay.merge_over(base))
     }
 
     fn resolve(&self) -> Result<(crate::RuntimeConfig, crate::RuntimeParts), ProxiimaError> {
         self.merged_builder()?.resolve()
+    }
+}
+
+/// Application facade for migration and one-shot storage commands.
+pub struct StorageProxiima<'env, A: SpiiceApp>(Proxiima<'env, A>);
+
+impl<A: SpiiceApp> std::fmt::Debug for StorageProxiima<'_, A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("StorageProxiima").field(&self.0).finish()
+    }
+}
+
+impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
+    /// Start a storage command for this application.
+    #[must_use]
+    pub fn app() -> Self {
+        Self(Proxiima::app())
+    }
+
+    /// Use the process environment as the command's lookup source.
+    #[must_use]
+    pub fn from_env(self) -> Self {
+        crate::settings::warn_unknown_env(A::settings());
+        self.from_lookup_source(ProcessEnv)
+    }
+
+    /// Supply a lookup of storage variables, validated when the command runs.
+    #[must_use]
+    pub fn from_lookup<'lookup>(
+        self,
+        lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'lookup,
+    ) -> StorageProxiima<'lookup, A> {
+        self.from_lookup_source(lookup)
+    }
+
+    /// Supply the typed settings lookup the command will use.
+    #[must_use]
+    pub fn from_lookup_source<'lookup>(
+        self,
+        lookup: impl EnvLookup + Send + Sync + 'lookup,
+    ) -> StorageProxiima<'lookup, A> {
+        StorageProxiima(
+            self.0
+                .with_environment(Environment::StorageOnly(Arc::new(lookup))),
+        )
+    }
+
+    /// Set command options through the same overlay as [`Proxiima::configure`].
+    #[must_use]
+    pub fn configure(self, f: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder) -> Self {
+        Self(self.0.configure(f))
+    }
+
+    /// Assemble a runtime from command settings and explicit options.
+    #[must_use]
+    pub fn into_app(self) -> Proxiima<'env, A> {
+        self.0
+    }
+
+    fn resolve(&self) -> Result<(crate::StorageConfig, crate::StorageParts), ProxiimaError> {
+        self.0.merged_builder()?.resolve_storage()
+    }
+
+    /// Bring the database to this binary: the host's migrate step.
+    ///
+    /// Resolves the storage settings only ([`RuntimeBuilder::resolve_storage`]):
+    /// no serving setting configures or refuses this step, so the app that
+    /// serves runs it. On [`crate::StorageConfig::migrations_url`] it applies
+    /// every pending core and spiice migration under the configured
+    /// missing-migration policy, initializes the store number, and applies
+    /// the runtime grants when [`RuntimeBuilder::runtime_grants`] or
+    /// `PROXIIMA_RUNTIME_GRANTS` asks for them.
+    /// Serving ([`Proxiima::build`], [`Proxiima::run`]) and [`Self::connect_storage`]
+    /// only validate, and refuse a database this step has not brought
+    /// current with [`ProxiimaError::MigrationRequired`].
+    ///
+    /// # Errors
+    ///
+    /// Returns config errors, [`ProxiimaError::SchemaResetRequired`] for a
+    /// database off the current baseline, and storage errors for a failed
+    /// connection, migration, store number or grant.
+    pub async fn migrate(&self) -> Result<(), ProxiimaError> {
+        let (config, parts) = self.resolve()?;
+        crate::boot::migrate::<A>(&config, &parts).await
+    }
+
+    /// Resolve the storage settings only ([`RuntimeBuilder::resolve_storage`];
+    /// no serving setting configures or refuses this call), validate the
+    /// schema, and connect the serving storage, without composing an engine
+    /// or starting anything: for a one-shot maintenance command.
+    ///
+    /// # Errors
+    ///
+    /// Returns config errors, [`ProxiimaError::MigrationRequired`] for a
+    /// database [`Self::migrate`] has not brought to this binary,
+    /// [`ProxiimaError::SchemaResetRequired`], and storage errors.
+    pub async fn connect_storage(&self) -> Result<proxiima_storage_pg::PgStorage, ProxiimaError> {
+        let (config, parts) = self.resolve()?;
+        let registry = crate::boot::compose_registry::<A>(false)?;
+        Ok(crate::boot::connect_storage::<A>(&config, &parts, registry)
+            .await?
+            .storage)
     }
 }
 

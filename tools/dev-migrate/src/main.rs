@@ -4,7 +4,7 @@
 //! `sqlx migrate run` cannot do this: it records every source into one
 //! `_sqlx_migrations` table, while core and each spiice keep their own ledger
 //! (`public._sqlx_migrations_<spiice>` for a spiice). This bin runs the migrate
-//! step of the facade (`Proxiima::migrate`) for the compiled spiices: core
+//! step of the facade (`StorageProxiima::migrate`) for the compiled spiices: core
 //! first, then spiices in composition order, with duplicate migration versions
 //! rejected up front, then the store number.
 //!
@@ -69,9 +69,9 @@ use settings::PROXIIMA_RESET_CONFIRM as RESET_CONFIRM_ENV;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args(std::env::args().skip(1))?;
     let missing_policy =
-        missing_migration_policy_from_lookup(&proxiima_core::process_env)?.unwrap_or_default();
-    let url = resolve_database_url(&args, &proxiima_core::process_env)?;
-    let store_number = store_number(&proxiima_core::process_env)?;
+        missing_migration_policy_from_lookup(&proxiima_core::ProcessEnv)?.unwrap_or_default();
+    let url = resolve_database_url(&args, &proxiima_core::ProcessEnv)?;
+    let store_number = store_number(&proxiima_core::ProcessEnv)?;
     print_target(&url)?;
     let pool_config = PgPoolConfig::from_env()?;
     let tuning = PgTuning::from_env()?;
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 VectorStorage::Local
             });
-        reset_local_dev_database(&pg, &url, dependent_lanes, &proxiima_core::process_env).await?;
+        reset_local_dev_database(&pg, &url, dependent_lanes, &proxiima_core::ProcessEnv).await?;
     } else if dependent_lanes == DependentLanes::Reset {
         return Err(format!("{RESET_DEPENDENT_LANES_FLAG} only qualifies {RESET_FLAG}").into());
     }
@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .pg_pool_config(pool_config)
                 .pg_tuning(tuning)
         })
+        .storage()
         .migrate()
         .await?;
     println!("migrations applied; store number {store_number}");
@@ -106,10 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The compiled spiices as a facade app on `url`, the migration role's
-/// connection, serving nothing: what [`Proxiima::migrate`] runs for this tool.
+/// connection, serving nothing: what [`proxiima::StorageProxiima::migrate`] runs for this tool.
 /// A host vector index is only the kind of store here; migrating never calls
 /// it.
-fn compiled_app(url: &str, store_number: u16, host_vector_index: bool) -> Proxiima<ExampleSpiice> {
+fn compiled_app(
+    url: &str,
+    store_number: u16,
+    host_vector_index: bool,
+) -> Proxiima<'static, ExampleSpiice> {
     let app = Proxiima::<ExampleSpiice>::app().configure(|b| {
         b.database_url(url)
             .platform_database_url(url)
@@ -212,13 +217,13 @@ fn parse_args(command_line: impl IntoIterator<Item = String>) -> Result<Args, St
 /// `--database-url=<URL>`) first, then the `DATABASE_URL` env var.
 fn resolve_database_url(
     args: &Args,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<String, Box<dyn std::error::Error>> {
     if let Some(url) = &args.database_url {
         return Ok(url.clone());
     }
     proxiima::settings::DATABASE_URL
-        .read(lookup)
+        .read_source(lookup)
         .ok_or_else(|| {
             "database URL required: pass --database-url <URL> or set DATABASE_URL, \
          e.g. postgres://proxiima:proxiima@localhost/proxiima"
@@ -228,10 +233,10 @@ fn resolve_database_url(
 
 /// `PROXIIMA_STORE_NUMBER`, which initializes the store.
 fn store_number(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<u16, Box<dyn std::error::Error>> {
     let raw = proxiima::settings::PROXIIMA_STORE_NUMBER
-        .read(lookup)
+        .read_source(lookup)
         .ok_or("PROXIIMA_STORE_NUMBER is required to initialize the store")?;
     Ok(proxiima::parse_store_number(&raw)?)
 }
@@ -333,9 +338,9 @@ SELECT DISTINCT
 /// The reset token, spelled exactly: unlike a setting, a confirmation is not
 /// trimmed into shape.
 fn require_reset_confirmation(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if lookup(RESET_CONFIRM_ENV.name()).as_deref() == Some(RESET_CONFIRM_VALUE) {
+    if lookup.lookup(&RESET_CONFIRM_ENV).as_deref() == Some(RESET_CONFIRM_VALUE) {
         return Ok(());
     }
     Err(format!(
@@ -348,7 +353,7 @@ async fn reset_local_dev_database(
     pg: &PgMigrationStorage,
     url: &str,
     dependent_lanes: DependentLanes,
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_reset_confirmation(lookup)?;
     reset_local_dev_database_confirmed(pg, url, dependent_lanes).await

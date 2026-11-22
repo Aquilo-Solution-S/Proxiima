@@ -429,7 +429,7 @@ impl Stack {
     ) -> TestResult<(RunningProxiima, String)> {
         let env = self.env(overrides);
         let running = Proxiima::<A>::app()
-            .from_lookup(move |key| env.get(key).cloned())?
+            .from_lookup(move |key| env.get(key).cloned())
             .run()
             .await?;
         let addr = running.mcp_addr().ok_or("MCP listener did not bind")?;

@@ -289,13 +289,14 @@ async fn the_publication_env_block_is_read_and_validated_by_the_facade() {
     );
 
     let result: Result<(), Box<dyn std::error::Error>> = async {
-        // A malformed bound never reaches storage: `from_lookup` resolves
-        // the whole block before a connection is opened.
+        // A malformed bound is refused before a connection is opened.
         let refused = Proxiima::<ListenableApp>::app()
             .from_lookup(env(&[
                 ("PROXIIMA_PUBLICATION_SOURCE", "urn:proxiima:facade-test"),
                 ("PROXIIMA_OUTBOX_MAX_PENDING", "not-a-number"),
             ]))
+            .build()
+            .await
             .err()
             .ok_or("a malformed outbox bound must refuse the boot")?;
         assert!(
@@ -308,6 +309,8 @@ async fn the_publication_env_block_is_read_and_validated_by_the_facade() {
                 "PROXIIMA_PUBLICATION_SOURCE",
                 "relative/reference",
             )]))
+            .build()
+            .await
             .err()
             .ok_or("a relative source must refuse the boot")?;
         assert!(
@@ -322,7 +325,7 @@ async fn the_publication_env_block_is_read_and_validated_by_the_facade() {
                 ("PROXIIMA_PUBLICATION_SOURCE", "urn:proxiima:facade-test"),
                 ("PROXIIMA_OUTBOX_MAX_PENDING", "12"),
                 ("PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES", "4096"),
-            ]))?
+            ]))
             .configure(|b| {
                 b.database_url(db_url)
                     .store_number(0)

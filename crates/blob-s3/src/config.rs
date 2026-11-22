@@ -1,7 +1,7 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use proxiima_core::{
-    EndpointUrlError, EndpointUrlPolicy, PlaintextHosts, Setting, process_env,
+    EndpointUrlError, EndpointUrlPolicy, PlaintextHosts, ProcessEnv, Setting,
     validate_endpoint_url_for_hosts,
 };
 
@@ -104,7 +104,7 @@ pub struct S3RuntimeConfig {
 impl S3RuntimeConfig {
     /// Read S3 runtime configuration from the process environment.
     ///
-    /// Thin adapter over [`Self::from_lookup`]: this crate holds the single
+    /// Thin adapter over [`Self::from_lookup_source`]: this crate holds the single
     /// `PROXIIMA_S3_*` parser, so an embedding host that injects its own
     /// environment cannot end up with different answers than a host that uses
     /// the process environment.
@@ -113,7 +113,7 @@ impl S3RuntimeConfig {
     /// Returns `BlobError::Config` when a required variable is missing
     /// or a typed setting cannot be parsed.
     pub fn from_env() -> Result<Self, BlobError> {
-        Self::from_lookup(&process_env)?
+        Self::from_lookup_source(&ProcessEnv)?
             .ok_or_else(|| BlobError::Config("missing PROXIIMA_S3_BUCKET".to_string()))
     }
 
@@ -124,7 +124,7 @@ impl S3RuntimeConfig {
     /// [`Self::from_env`] turns that into an error because its caller has
     /// already decided S3 is required.
     ///
-    /// Every value is read through [`proxiima_core::Setting::read`], so a variable
+    /// Every value is read through [`proxiima_core::Setting::read_source`], so a variable
     /// set to the empty string (or to whitespace) reads as unset rather than
     /// as a value that fails to parse.
     ///
@@ -132,16 +132,26 @@ impl S3RuntimeConfig {
     /// Returns `BlobError::Config` when a variable required alongside the
     /// bucket is missing, or a typed setting cannot be parsed.
     pub fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl Fn(&str) -> Option<String> + ?Sized),
+    ) -> Result<Option<Self>, BlobError> {
+        Self::from_lookup_source(lookup)
+    }
+
+    /// Read S3 runtime configuration from a typed setting source.
+    ///
+    /// # Errors
+    /// Returns the same configuration errors as [`Self::from_lookup`].
+    pub fn from_lookup_source(
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, BlobError> {
         // Parsed before the bucket check so a malformed setting fails boot
         // whether or not this lane is configured.
         let plaintext_hosts = PlaintextHosts::from_lookup(lookup)
             .map_err(|error| BlobError::Config(error.to_string()))?;
-        let Some(bucket) = PROXIIMA_S3_BUCKET.read(lookup) else {
+        let Some(bucket) = PROXIIMA_S3_BUCKET.read_source(lookup) else {
             return Ok(None);
         };
-        let region = PROXIIMA_S3_REGION.read(lookup).ok_or_else(|| {
+        let region = PROXIIMA_S3_REGION.read_source(lookup).ok_or_else(|| {
             BlobError::Config(
                 "missing PROXIIMA_S3_REGION (required with PROXIIMA_S3_BUCKET)".to_string(),
             )
@@ -150,11 +160,11 @@ impl S3RuntimeConfig {
             required_key(lookup, &PROXIIMA_S3_ACCESS_KEY_ID)?,
             required_key(lookup, &PROXIIMA_S3_SECRET_ACCESS_KEY)?,
         );
-        let endpoint_url = PROXIIMA_S3_ENDPOINT_URL.read(lookup);
+        let endpoint_url = PROXIIMA_S3_ENDPOINT_URL.read_source(lookup);
         if let Some(endpoint_url) = &endpoint_url {
             validate_endpoint_url(&PROXIIMA_S3_ENDPOINT_URL, endpoint_url, &plaintext_hosts)?;
         }
-        let store_id = PROXIIMA_S3_STORE_ID.read(lookup);
+        let store_id = PROXIIMA_S3_STORE_ID.read_source(lookup);
         if let Some(store_id) = &store_id {
             proxiima_core::ObjectStoreId::operator(store_id)
                 .map_err(|error| BlobError::Config(format!("PROXIIMA_S3_STORE_ID: {error}")))?;
@@ -187,7 +197,7 @@ impl S3RuntimeConfig {
     /// "configured" for a bucket [`Self::from_env`] then rejects as missing.
     #[must_use]
     pub fn present_in_env() -> bool {
-        PROXIIMA_S3_BUCKET.read(&process_env).is_some()
+        PROXIIMA_S3_BUCKET.read_source(&ProcessEnv).is_some()
     }
 
     /// The identity upload rows and purge debt record for this store.
@@ -235,19 +245,19 @@ impl S3RuntimeConfig {
 }
 
 fn required_key(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<String, BlobError> {
-    key.read(lookup).ok_or_else(|| {
+    key.read_source(lookup).ok_or_else(|| {
         BlobError::Config(format!("missing {key} (required with PROXIIMA_S3_BUCKET)"))
     })
 }
 
 fn parse_bool_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<bool, BlobError> {
-    let Some(value) = key.read(lookup) else {
+    let Some(value) = key.read_source(lookup) else {
         return Ok(false);
     };
     proxiima_core::parse_bool_word(&value)
@@ -255,11 +265,11 @@ fn parse_bool_env(
 }
 
 fn parse_u64_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
     default: u64,
 ) -> Result<u64, BlobError> {
-    let Some(value) = key.read(lookup) else {
+    let Some(value) = key.read_source(lookup) else {
         return Ok(default);
     };
     value
@@ -268,7 +278,7 @@ fn parse_u64_env(
 }
 
 fn parse_presign_ttl_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
     default: u64,
 ) -> Result<u64, BlobError> {
@@ -278,10 +288,10 @@ fn parse_presign_ttl_env(
 }
 
 fn parse_optional_u64_env(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
 ) -> Result<Option<u64>, BlobError> {
-    let Some(value) = key.read(lookup) else {
+    let Some(value) = key.read_source(lookup) else {
         return Ok(None);
     };
     value

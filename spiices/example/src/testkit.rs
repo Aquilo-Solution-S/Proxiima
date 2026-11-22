@@ -76,7 +76,7 @@ pub async fn build_engine(
             .allow_insecure_single_owner()
             .served_surface(proxiima::ServedSurface::All)
     });
-    app.migrate().await?;
+    app.storage().migrate().await?;
     app.build().await
 }
 

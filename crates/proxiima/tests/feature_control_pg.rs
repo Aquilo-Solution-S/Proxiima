@@ -188,12 +188,12 @@ impl World {
         }
     }
 
-    fn app(&self, worker_interval: Duration) -> Proxiima<BareApp> {
+    fn app(&self, worker_interval: Duration) -> Proxiima<'static, BareApp> {
         self.base_app(worker_interval)
             .configure(|b| b.embed_client(self.client.clone()))
     }
 
-    fn base_app(&self, worker_interval: Duration) -> Proxiima<BareApp> {
+    fn base_app(&self, worker_interval: Duration) -> Proxiima<'static, BareApp> {
         Proxiima::<BareApp>::app().configure(|b| {
             b.database_url(self.db.runtime_url())
                 .store_number(0)

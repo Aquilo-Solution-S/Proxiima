@@ -158,12 +158,12 @@ fn registered(all: Vec<ScopeKey>) -> RegisteredKeys {
     }
 }
 
-fn build_app(
+fn build_app<'env>(
     config: McpConfig,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Result<Proxiima<ProxiimaMcpApp>, CliError> {
+    lookup: impl Fn(&str) -> Option<String> + Send + Sync + 'env,
+) -> Result<Proxiima<'env, ProxiimaMcpApp>, CliError> {
     let platform = config.database_url.clone();
-    super::build_app(config, |key| {
+    super::build_app(config, move |key: &str| {
         lookup(key)
             .or_else(|| (key == "PROXIIMA_PLATFORM_DATABASE_URL").then(|| platform.clone()))
             .or_else(|| (key == "PROXIIMA_STORE_NUMBER").then(|| "0".into()))
@@ -333,7 +333,7 @@ async fn maintenance_commands_refuse_a_database_migrate_has_not_brought_current(
         MigrateConfig {
             database_url: db.runtime_url().to_owned(),
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("migrate");
@@ -346,7 +346,7 @@ async fn maintenance_commands_refuse_a_database_migrate_has_not_brought_current(
             scope: ReconcileScope::MissingOnly,
             limit: None,
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("maintain-embeddings on a migrated database");
@@ -358,12 +358,12 @@ async fn maintenance_commands_refuse_a_database_migrate_has_not_brought_current(
             batch_size: NonZeroU32::MIN,
             dry_run: true,
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("maintain-storage on a migrated database");
-    maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
-        .expect("maintenance app")
+    maintenance_app(db.runtime_url().to_owned(), pairs(&env))
+        .into_app()
         .build()
         .await
         .expect("maintain-blobs boots from the environment")
@@ -400,7 +400,7 @@ async fn maintenance_validates_on_the_migration_url() {
         MigrateConfig {
             database_url: db.runtime_url().to_owned(),
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("migrate");
@@ -415,8 +415,7 @@ async fn maintenance_validates_on_the_migration_url() {
         ("PROXIIMA_MIGRATION_DATABASE_URL", unreachable.to_string()),
         ("PROXIIMA_PG_ACQUIRE_TIMEOUT_SECS", "1".to_owned()),
     ]);
-    let refused = maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
-        .expect("the URLs pass the check")
+    let refused = maintenance_app(db.runtime_url().to_owned(), pairs(&env))
         .connect_storage()
         .await
         .expect_err("validation connects to the migration URL");
@@ -455,7 +454,7 @@ async fn migrate_in_the_serving_environment_applies_only_storage_settings() {
         MigrateConfig {
             database_url: db.runtime_url().to_owned(),
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("migrate ignores the serving settings");
@@ -463,7 +462,7 @@ async fn migrate_in_the_serving_environment_applies_only_storage_settings() {
         MigrateConfig {
             database_url: db.platform_url().to_owned(),
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await;
     assert!(
@@ -488,7 +487,7 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
         MigrateConfig {
             database_url: db.runtime_url().to_owned(),
         },
-        &pairs(&command_env(db.platform_url())),
+        pairs(&command_env(db.platform_url())),
     )
     .await
     .expect("migrate");
@@ -499,7 +498,7 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
             scope: ReconcileScope::MissingOnly,
             limit: None,
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("maintain-embeddings takes its model from PROXIIMA_EMBED_MODEL");
@@ -511,7 +510,7 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
             batch_size: NonZeroU32::MIN,
             dry_run: true,
         },
-        &pairs(&env),
+        pairs(&env),
     )
     .await
     .expect("maintain-storage ignores the serving settings");
@@ -523,8 +522,7 @@ async fn storage_maintenance_in_the_serving_environment_applies_only_storage_set
         "PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS",
         "1800".to_owned(),
     ));
-    let storage = maintenance_app(db.runtime_url().to_owned(), &pairs(&with_policy))
-        .expect("maintenance app")
+    let storage = maintenance_app(db.runtime_url().to_owned(), pairs(&with_policy))
         .connect_storage()
         .await
         .expect("validated storage");
@@ -565,12 +563,12 @@ async fn maintain_blobs_in_the_serving_environment_boots_without_serving() {
         MigrateConfig {
             database_url: db.runtime_url().to_owned(),
         },
-        &pairs(&command_env(db.platform_url())),
+        pairs(&command_env(db.platform_url())),
     )
     .await
     .expect("migrate");
-    let built = maintenance_app(db.runtime_url().to_owned(), &pairs(&env))
-        .expect("maintenance app")
+    let built = maintenance_app(db.runtime_url().to_owned(), pairs(&env))
+        .into_app()
         .configure(|b| b.s3(required_s3(&pairs(&env)).expect("the S3 block")))
         .build()
         .await
@@ -692,11 +690,14 @@ async fn app_construction_rejects_invalid_embedding_runtime_policy() {
 }
 
 #[tokio::test]
-async fn app_construction_resolves_pool_policy_from_its_injected_lookup() {
+async fn app_boot_resolves_pool_policy_from_its_injected_lookup() {
     let err = build_app(config(), |key| {
         (key == "PROXIIMA_PG_MAX_CONNECTIONS").then(|| "many".to_string())
     })
-    .expect_err("canonical app must resolve pool policy from this lookup");
+    .expect("canonical app accepts the lookup source")
+    .build()
+    .await
+    .expect_err("canonical app boot must resolve pool policy from this lookup");
 
     assert!(
         err.to_string().contains("PROXIIMA_PG_MAX_CONNECTIONS=many"),
@@ -1127,7 +1128,7 @@ fn partial_embedding_config_fails_closed() {
         ),
     ] {
         let err = embedding_client_from_env(
-            |key| (key == configured_key).then(|| value.to_string()),
+            &|key: &str| (key == configured_key).then(|| value.to_string()),
             EmbeddingRuntimePolicy::default(),
         )
         .expect_err("partial embedding configuration must not degrade silently");
@@ -1180,7 +1181,7 @@ fn embedding_input_cap_defaults_and_allows_override() {
     };
 
     let default_client =
-        embedding_client_from_env(configured(None), EmbeddingRuntimePolicy::default())
+        embedding_client_from_env(&configured(None), EmbeddingRuntimePolicy::default())
             .expect("default cap configures")
             .expect("embedding client is configured");
     assert_eq!(
@@ -1189,7 +1190,7 @@ fn embedding_input_cap_defaults_and_allows_override() {
     );
 
     let override_client =
-        embedding_client_from_env(configured(Some("8192")), EmbeddingRuntimePolicy::default())
+        embedding_client_from_env(&configured(Some("8192")), EmbeddingRuntimePolicy::default())
             .expect("explicit cap configures")
             .expect("embedding client is configured");
     assert_eq!(
@@ -1206,7 +1207,7 @@ fn embedding_input_cap_defaults_and_allows_override() {
 fn an_input_cap_below_the_rescue_floor_refuses_to_boot() {
     let too_low = proxiima_core::embedding::MIN_EMBED_INPUT_CAP_CHARS - 1;
     let err = embedding_client_from_env(
-        |key| match key {
+        &|key: &str| match key {
             PROXIIMA_EMBED_BASE_URL => Some("http://127.0.0.1:11434/v1".to_string()),
             PROXIIMA_EMBED_MODEL => Some("local-embed".to_string()),
             PROXIIMA_EMBED_MAX_INPUT_CHARS => Some(too_low.to_string()),
@@ -1240,7 +1241,7 @@ fn an_input_cap_must_be_a_positive_integer() {
 #[test]
 fn remote_plaintext_endpoint_is_refused() {
     let err = embedding_client_from_env(
-        |key| match key {
+        &|key: &str| match key {
             PROXIIMA_EMBED_BASE_URL => Some("http://embeddings.example/v1".to_string()),
             PROXIIMA_EMBED_MODEL => Some("hosted-embed".to_string()),
             _ => None,
@@ -1265,7 +1266,7 @@ fn plaintext_hosts_admit_only_the_named_embedding_host() {
         }
     };
     let build = |base, hosts| {
-        embedding_client_from_env(env(base, hosts), EmbeddingRuntimePolicy::default())
+        embedding_client_from_env(&env(base, hosts), EmbeddingRuntimePolicy::default())
     };
 
     let client = build(Some("http://gateway:9090/v1"), Some("gateway"))
@@ -1324,14 +1325,14 @@ fn matryoshka_flag_parses_and_rejects_garbage() {
 #[test]
 fn maintenance_space_is_explicit_or_from_generic_env() {
     assert_eq!(
-        maintenance_embedding_space(Some("flag-model".into()), |key| {
+        maintenance_embedding_space(Some("flag-model".into()), &|key: &str| {
             (key == PROXIIMA_EMBED_MODEL).then(|| "env-model".into())
         })
         .map(|space| space.model_id().to_owned())
         .expect("explicit model wins"),
         "flag-model"
     );
-    let space = maintenance_embedding_space(None, |key| match key {
+    let space = maintenance_embedding_space(None, &|key: &str| match key {
         PROXIIMA_EMBED_MODEL => Some("env-model".into()),
         PROXIIMA_EMBED_DIM => Some("768".into()),
         _ => None,
@@ -1344,7 +1345,7 @@ fn maintenance_space_is_explicit_or_from_generic_env() {
             proxiima_core::embedding::EmbeddingDim::D768
         )
     );
-    let err = maintenance_embedding_space(None, |_| None)
+    let err = maintenance_embedding_space(None, &|_: &str| None)
         .expect_err("there is no provider-specific default");
     assert!(err.to_string().contains(PROXIIMA_EMBED_MODEL), "{err}");
 }
@@ -1363,13 +1364,13 @@ fn embed_dim_selects_a_lane_and_refuses_the_rest() {
         }
     };
     for (raw, width) in [("768", 768), ("3072", 3072)] {
-        let client = embedding_client_from_env(with_dim(raw), EmbeddingRuntimePolicy::default())
+        let client = embedding_client_from_env(&with_dim(raw), EmbeddingRuntimePolicy::default())
             .expect("a lane width is accepted")
             .expect("configured");
         assert_eq!(client.dim(), width);
     }
     for raw in ["512", "wide"] {
-        let err = embedding_client_from_env(with_dim(raw), EmbeddingRuntimePolicy::default())
+        let err = embedding_client_from_env(&with_dim(raw), EmbeddingRuntimePolicy::default())
             .expect_err("a width with no lane is refused");
         assert!(err.to_string().contains(PROXIIMA_EMBED_DIM), "{raw}: {err}");
     }

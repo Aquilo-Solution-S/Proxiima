@@ -145,15 +145,15 @@ impl HttpIntake {
     /// As [`Self::new`], and a [`PROXIIMA_PLAINTEXT_HOSTS`] value that is not
     /// a list of exact host names, even while the URL is unset.
     pub(crate) fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, ProxiimaError> {
         let plaintext_hosts = PlaintextHosts::from_lookup(lookup)
             .map_err(|err| ProxiimaError::Config(err.to_string()))?;
-        let Some(url) = ENV_URL.read(lookup) else {
+        let Some(url) = ENV_URL.read_source(lookup) else {
             return Ok(None);
         };
-        let token_file = ENV_TOKEN_FILE.read(lookup).map(PathBuf::from);
-        let ca_file = ENV_CA_FILE.read(lookup).map(PathBuf::from);
+        let token_file = ENV_TOKEN_FILE.read_source(lookup).map(PathBuf::from);
+        let ca_file = ENV_CA_FILE.read_source(lookup).map(PathBuf::from);
         Self::new(&url, token_file, ca_file.as_deref(), &plaintext_hosts).map(Some)
     }
 

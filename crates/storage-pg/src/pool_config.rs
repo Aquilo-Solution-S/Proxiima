@@ -54,7 +54,7 @@ impl PgPoolConfig {
     /// Returns [`StorageError::Unavailable`] when a configured value is not a
     /// valid non-negative integer, or when max connections is zero.
     pub fn from_env() -> Result<Self, StorageError> {
-        Ok(Self::from_lookup(&proxiima_core::process_env)?.unwrap_or_default())
+        Ok(Self::from_lookup(&proxiima_core::ProcessEnv)?.unwrap_or_default())
     }
 
     /// Read pool policy from an injected lookup.
@@ -69,7 +69,7 @@ impl PgPoolConfig {
     /// Returns [`StorageError::Unavailable`] when a configured value is not a
     /// valid non-negative integer, or when max connections is zero.
     pub fn from_lookup(
-        lookup: &impl Fn(&str) -> Option<String>,
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, StorageError> {
         let (config, configured) = Self::resolve(lookup)?;
         Ok(configured.then_some(config))
@@ -90,7 +90,9 @@ impl PgPoolConfig {
         Ok(self)
     }
 
-    fn resolve(lookup: &impl Fn(&str) -> Option<String>) -> Result<(Self, bool), StorageError> {
+    fn resolve(
+        lookup: &(impl proxiima_core::EnvLookup + ?Sized),
+    ) -> Result<(Self, bool), StorageError> {
         let defaults = Self::default();
         let (max_connections, max_connections_configured) = env_int_with_presence(
             lookup,
@@ -187,11 +189,11 @@ impl PgPoolConfig {
 /// non-empty value. Value equality with the default cannot answer that
 /// presence question: an explicit default still outranks spiice configuration.
 fn env_int_with_presence<T: std::str::FromStr>(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     setting: &Setting,
     default: T,
 ) -> Result<(T, bool), StorageError> {
-    let Some(value) = setting.read(lookup) else {
+    let Some(value) = setting.read_source(lookup) else {
         return Ok((default, false));
     };
     value

@@ -91,6 +91,7 @@ fn migration_cause(refused: &proxiima::ProxiimaError) -> Option<&MigrationError>
 async fn run_compiled_migrations(platform_url: &str) -> Result<(), proxiima::ProxiimaError> {
     compiled_app(platform_url, 0, false)
         .configure(|b| b.missing_migration_policy(proxiima::MissingMigrationPolicy::Reject))
+        .storage()
         .migrate()
         .await
 }

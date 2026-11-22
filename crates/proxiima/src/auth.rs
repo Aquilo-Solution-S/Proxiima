@@ -110,20 +110,20 @@ pub use proxiima_core::{AccessError, OwnerRoles};
 /// when the subject map or pinned JWKS will not parse, or when the issuer or
 /// JWKS URI is not a secure URL.
 pub fn oidc_from_lookup(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     owner_access: Arc<dyn OwnerAccessPort>,
 ) -> Result<Option<OidcBundle>, ProxiimaError> {
-    let Some(issuer) = PROXIIMA_OIDC_ISSUER.read(lookup) else {
+    let Some(issuer) = PROXIIMA_OIDC_ISSUER.read_source(lookup) else {
         return Ok(None);
     };
-    let audience = PROXIIMA_OIDC_AUDIENCE.read(lookup).ok_or_else(|| {
+    let audience = PROXIIMA_OIDC_AUDIENCE.read_source(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_OIDC_AUDIENCE".into())
     })?;
-    let public_url = public_url(&PROXIIMA_PUBLIC_URL.read(lookup).ok_or_else(|| {
+    let public_url = public_url(&PROXIIMA_PUBLIC_URL.read_source(lookup).ok_or_else(|| {
         ProxiimaError::Config("PROXIIMA_OIDC_ISSUER set without PROXIIMA_PUBLIC_URL".into())
     })?)?;
-    let jwks_uri = JWKS_URI.read(lookup);
-    let jwks_json = JWKS_JSON.read(lookup);
+    let jwks_uri = JWKS_URI.read_source(lookup);
+    let jwks_json = JWKS_JSON.read_source(lookup);
     // Both is an error rather than a precedence rule: one says fetch keys
     // from the issuer, the other says never contact it.
     if jwks_uri.is_some() && jwks_json.is_some() {
@@ -214,9 +214,9 @@ fn public_url(raw: &str) -> Result<String, ProxiimaError> {
 /// `PROXIIMA_OIDC_ALLOWED_SUBJECTS`: comma-separated subjects, absent when unset. A value that
 /// names none (`,`) is refused, since an empty allowlist would refuse every token without a word.
 fn allowed_subjects(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Option<HashSet<String>>, ProxiimaError> {
-    let Some(raw) = ALLOWED_SUBJECTS.read(lookup) else {
+    let Some(raw) = ALLOWED_SUBJECTS.read_source(lookup) else {
         return Ok(None);
     };
     let subjects = raw
@@ -234,18 +234,18 @@ fn allowed_subjects(
 }
 
 pub(crate) fn oidc_require_access_token_typ(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<bool, ProxiimaError> {
-    let Some(raw) = OIDC_REQUIRE_ACCESS_TOKEN_TYP.read(lookup) else {
+    let Some(raw) = OIDC_REQUIRE_ACCESS_TOKEN_TYP.read_source(lookup) else {
         return Ok(false);
     };
     parse_bool_value(&OIDC_REQUIRE_ACCESS_TOKEN_TYP, &raw)
 }
 
 pub(crate) fn oidc_http_timeout(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<Duration, ProxiimaError> {
-    let Some(raw) = OIDC_HTTP_TIMEOUT_SECONDS.read(lookup) else {
+    let Some(raw) = OIDC_HTTP_TIMEOUT_SECONDS.read_source(lookup) else {
         return Ok(proxiima_auth_oidc::DEFAULT_HTTP_REQUEST_TIMEOUT);
     };
     let timeout = crate::runtime_config::parse_duration_seconds(&OIDC_HTTP_TIMEOUT_SECONDS, &raw)?;
@@ -262,9 +262,9 @@ pub(crate) fn oidc_http_timeout(
 /// Parse the issuer-aware subject map.
 ///
 fn subject_map(
-    lookup: &impl Fn(&str) -> Option<String>,
+    lookup: &(impl proxiima_core::EnvLookup + ?Sized),
 ) -> Result<proxiima_auth_oidc::OidcSubjectMap, ProxiimaError> {
-    let json = SUBJECT_MAP_JSON.read(lookup).ok_or_else(|| {
+    let json = SUBJECT_MAP_JSON.read_source(lookup).ok_or_else(|| {
         ProxiimaError::Config(format!(
             "PROXIIMA_OIDC_ISSUER set without {SUBJECT_MAP_JSON}"
         ))
