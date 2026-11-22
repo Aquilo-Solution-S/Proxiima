@@ -33,23 +33,6 @@
 - host
 - core
 
-**Child heads**: The inputs that decide closure after locking the child series heads.
-
-- empty
-- open
-- all abandoned
-- closed with achieved
-
-**Close**: Closing operations and their child-outcome rules.
-
-- achieve
-- abandon
-
-**Close refusal**: Closure refusals, listing open heads by child handle before considering all-abandoned children.
-
-- children open
-- all abandoned
-
 **Pin edit**: Whether an edit omits its pin list or supplies its replacement, including an empty list.
 
 - omitted
@@ -187,16 +170,17 @@
 
 **transfer goal** = no: A Goal remains owned by its original owner throughout its series.
 
-| goal state | is open | terminal | state label |
-| --- | --- | --- | --- |
-| active | yes | no | "Active" |
-| paused | yes | no | "Paused" |
-| achieved | no | yes | "Achieved" |
-| abandoned | no | yes | "Abandoned" |
+| goal state | is open | terminal | state label | blocks close |
+| --- | --- | --- | --- | --- |
+| active | yes | no | "Active" | yes |
+| paused | yes | no | "Paused" | yes |
+| achieved | no | yes | "Achieved" | no |
+| abandoned | no | yes | "Abandoned" | no |
 
 - is open: Whether the series can take another version.
 - terminal: Whether a Goal version requires a close Fact and ends its series.
 - state label: The label projected on Goal reads.
+- blocks close: Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike.
 
 **lifecycle**: Admission by existing head state, returning the new version state or the new child state for decomposition.
 
@@ -255,19 +239,6 @@ stateDiagram-v2
 | abandoned | abandoned | no |
 
 - may transition to: Allowed predecessors and successors on the plain write path.
-
-| close | child heads | close guard |
-| --- | --- | --- |
-| achieve | empty | yes |
-| achieve | open | refused: children open |
-| achieve | all abandoned | refused: all abandoned |
-| achieve | closed with achieved | yes |
-| abandon | empty | yes |
-| abandon | open | refused: children open |
-| abandon | all abandoned | yes |
-| abandon | closed with achieved | yes |
-
-- close guard: Closing leaves no open child and achievement of a nonempty decomposition requires an achieved child.
 
 | goal state | bool | close fact presence |
 | --- | --- | --- |
@@ -401,6 +372,8 @@ stateDiagram-v2
 - clock source: A Goal reports its series birth and the selected version's own write time.
 
 ✗ **core execution**, rejected: Core scheduling would assign Goal effects to the persistence layer.
+
+✗ **achieve needs an achieved child**, rejected: A parent whose sub-goals were all abandoned could only be abandoned, though its work may be done without them.
 
 Causa — Audience
 

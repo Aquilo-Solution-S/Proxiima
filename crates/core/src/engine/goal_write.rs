@@ -245,7 +245,7 @@ impl Engine {
             .map_err(map_goal_storage_error)
     }
 
-    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.closeGuard`.
+    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.blocksClose`.
     ///
     /// # Errors
     ///
@@ -286,7 +286,7 @@ impl Engine {
         transition_goal_authorized(&self.storage().goal_command, &atomic, permit.permit()).await
     }
 
-    /// `Proxiima.Goals.closeGuard` and `Proxiima.Goals.mayDeclareEvidence`.
+    /// `Proxiima.Goals.blocksClose` and `Proxiima.Goals.mayDeclareEvidence`.
     ///
     /// # Errors
     ///
@@ -742,13 +742,12 @@ pub(in crate::engine) async fn transition_goal_authorized(
 
 fn map_goal_edit_storage_error(permit: GoalEditPermit<'_>, error: StorageError) -> ProtocolError {
     match (permit, error) {
-        (
-            GoalEditPermit::Goal(_),
-            StorageError::GoalChildrenOpen { .. } | StorageError::GoalChildrenAllAbandoned,
-        ) => ProtocolError::invalid_argument(
-            "goal",
-            "Goal completion requirements are not satisfied",
-        ),
+        (GoalEditPermit::Goal(_), StorageError::GoalChildrenOpen { .. }) => {
+            ProtocolError::invalid_argument(
+                "goal",
+                "Goal completion requirements are not satisfied",
+            )
+        }
         (_, error) => map_goal_storage_error(error),
     }
 }
@@ -784,7 +783,7 @@ mod tests {
         )
     }
 
-    // `Proxiima.Goals.closeGuard`.
+    // `Proxiima.Goals.blocksClose`.
     #[test]
     fn goal_tree_refusals_map_to_invalid_argument() {
         let a = GoalId::new(uuid::Uuid::from_u128(0x0001));
@@ -795,12 +794,6 @@ mod tests {
             err.message,
             "invalid argument goal: goal has open children: \
              00000000-0000-0000-0000-000000000001, 00000000-0000-0000-0000-000000000002"
-        );
-        let err = map_goal_storage_error(StorageError::GoalChildrenAllAbandoned);
-        assert_eq!(err.code, ErrorCode::InvalidArgument);
-        assert_eq!(
-            err.message,
-            "invalid argument goal: goal children are all abandoned; achieve at least one child first"
         );
     }
 

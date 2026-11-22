@@ -1,5 +1,5 @@
 use super::{
-    ChildRule, GoalAtomicContext, GoalDraft, GoalId, GoalState, GoalWritePreparation, InsertedGoal,
+    GoalAtomicContext, GoalDraft, GoalId, GoalState, GoalWritePreparation, InsertedGoal,
     PayloadKind, PgSidecarKey, PgSidecarRegistryFrozen, Postgres, RowColumns, StorageError,
     Transaction, lock_prepared_goal_write, persist_prepared_goal_write, prepare_goal_write,
 };
@@ -26,9 +26,7 @@ pub(super) struct PreparedGoalInsert<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PostLockGuard {
     None,
-    /// `Proxiima.Goals.closeGuard` for achievement.
-    ChildrenClosed,
-    /// `Proxiima.Goals.closeGuard` for abandonment.
+    /// `Proxiima.Goals.blocksClose`, for achieving and abandoning alike.
     NoOpenChildren,
 }
 
@@ -59,19 +57,16 @@ pub(super) async fn insert_or_replay_goal(
             if let GoalWritePreparation::New(prepared_write) = &prepared.preparation {
                 lock_prepared_goal_write(&mut attempt, prepared_write).await?;
                 // `Proxiima.Goals.requestReplay`.
-                let rule = match guard {
-                    PostLockGuard::None => None,
-                    PostLockGuard::ChildrenClosed => Some(ChildRule::ClosedWithAchieved),
-                    PostLockGuard::NoOpenChildren => Some(ChildRule::NoneOpen),
-                };
-                if let Some(rule) = rule {
-                    super::ensure_goal_children_closed(
-                        &mut attempt,
-                        &draft.owner(),
-                        prepared_write.handle(),
-                        rule,
-                    )
-                    .await?;
+                match guard {
+                    PostLockGuard::None => {}
+                    PostLockGuard::NoOpenChildren => {
+                        super::ensure_goal_children_closed(
+                            &mut attempt,
+                            &draft.owner(),
+                            prepared_write.handle(),
+                        )
+                        .await?;
+                    }
                 }
             }
             persist_prepared_goal_insert(&mut attempt, sidecars, &prepared).await

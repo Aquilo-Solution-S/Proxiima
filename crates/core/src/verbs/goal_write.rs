@@ -81,7 +81,7 @@ impl GoalState {
         )
     }
 
-    /// `Proxiima.Goals.lifecycle`. Storage applies `Proxiima.Goals.closeGuard` under its lifecycle lock.
+    /// `Proxiima.Goals.lifecycle`. Storage applies `Proxiima.Goals.blocksClose` under its lifecycle lock.
     #[must_use]
     pub const fn may_achieve(self) -> bool {
         matches!(self, Self::Active)

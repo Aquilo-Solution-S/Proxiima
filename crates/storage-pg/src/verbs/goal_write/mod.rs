@@ -28,7 +28,7 @@ mod prior;
 mod replay;
 mod types;
 
-use children::{ChildRule, ensure_goal_children_closed};
+use children::ensure_goal_children_closed;
 use edges::assert_goal_topology_references;
 use evidence::{carried_evidence, validate_evidence_in_owner};
 use insert::{

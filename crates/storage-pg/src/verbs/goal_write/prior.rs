@@ -122,7 +122,7 @@ pub(super) fn validate_goal_transition(
     }
 }
 
-/// `Proxiima.Goals.lifecycle`. The write checks `Proxiima.Goals.closeGuard` after locking.
+/// `Proxiima.Goals.lifecycle`. The write checks `Proxiima.Goals.blocksClose` after locking.
 pub(super) fn validate_goal_achievement(prior: GoalState) -> Result<(), StorageError> {
     if prior.may_achieve() {
         Ok(())

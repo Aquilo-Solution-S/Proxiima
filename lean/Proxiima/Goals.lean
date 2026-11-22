@@ -100,36 +100,11 @@ def execution : Execution := .host
 /-- Core scheduling would assign Goal effects to the persistence layer. -/
 theorem not_core_execution : execution ≠ .core := by decide
 
-/-- The inputs that decide closure after locking the child series heads. -/
-inductive ChildHeads where
-  | empty
-  | open
-  | allAbandoned
-  | closedWithAchieved
-  deriving DecidableEq
+/-- Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike. -/
+def blocksClose (child : GoalState) : Bool := child.isOpen
 
-/-- Closing operations and their child-outcome rules. -/
-inductive Close where
-  | achieve
-  | abandon
-  deriving DecidableEq
-
-/-- Closure refusals, listing open heads by child handle before considering all-abandoned children. -/
-inductive CloseRefusal where
-  | childrenOpen
-  | allAbandoned
-  deriving DecidableEq
-
-/-- Closing leaves no open child and achievement of a nonempty decomposition requires an achieved child. -/
-def closeGuard : Close → ChildHeads → Except CloseRefusal Bool
-  | .achieve, .empty => .ok true
-  | .achieve, .open => .error .childrenOpen
-  | .achieve, .allAbandoned => .error .allAbandoned
-  | .achieve, .closedWithAchieved => .ok true
-  | .abandon, .empty => .ok true
-  | .abandon, .open => .error .childrenOpen
-  | .abandon, .allAbandoned => .ok true
-  | .abandon, .closedWithAchieved => .ok true
+/-- A parent whose sub-goals were all abandoned could only be abandoned, though its work may be done without them. -/
+theorem not_achieve_needs_an_achieved_child : blocksClose .Abandoned = false := by decide
 
 /-- Whether close-Fact presence agrees exactly with terminal state. -/
 def closeFactPresence : GoalState → Bool → Bool

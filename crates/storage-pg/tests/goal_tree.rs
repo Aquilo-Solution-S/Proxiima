@@ -379,7 +379,7 @@ fn open_children(result: Result<GoalWriteOutcome, StorageError>, what: &str) -> 
 }
 
 /// F1: decompose P into A, B; achieving P names both open children.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn achieving_a_parent_with_active_children_names_them() {
     let tree = Tree::new().await.expect("fixture");
@@ -395,7 +395,7 @@ async fn achieving_a_parent_with_active_children_names_them() {
 }
 
 /// F2: a Paused child is open and is named by its current head t.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn a_paused_child_is_open_and_named_by_its_head() {
     let tree = Tree::new().await.expect("fixture");
@@ -413,10 +413,10 @@ async fn a_paused_child_is_open_and_named_by_its_head() {
     tree.finish(result, "F2").await;
 }
 
-/// F3: all children Abandoned refuses.
-// `Proxiima.Goals.closeGuard`.
+/// F3: a parent whose children were all abandoned may still be achieved.
+// `Proxiima.Goals.not_achieve_needs_an_achieved_child`.
 #[tokio::test]
-async fn all_abandoned_children_refuse_the_parent() {
+async fn all_abandoned_children_admit_the_parent() {
     let tree = Tree::new().await.expect("fixture");
     let result = async {
         let p = tree.create("f3-p", &[]).await?;
@@ -425,10 +425,7 @@ async fn all_abandoned_children_refuse_the_parent() {
             .await?;
         tree.transition(children[1], GoalTransitionKind::Abandon, "f3-b-abandon")
             .await?;
-        match tree.achieve(p, "f3-achieve").await {
-            Err(StorageError::GoalChildrenAllAbandoned) => {}
-            other => panic!("F3: expected GoalChildrenAllAbandoned, got {other:?}"),
-        }
+        tree.achieve(p, "f3-achieve").await?;
         Ok(())
     }
     .await;
@@ -437,7 +434,7 @@ async fn all_abandoned_children_refuse_the_parent() {
 
 /// F4: children of an older parent version count after modify, pause and
 /// resume.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn children_of_an_older_parent_version_count() {
     let tree = Tree::new().await.expect("fixture");
@@ -458,7 +455,7 @@ async fn children_of_an_older_parent_version_count() {
 }
 
 /// F5: a refusal writes nothing.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn a_refused_achieve_writes_nothing() {
     let tree = Tree::new().await.expect("fixture");
@@ -595,7 +592,7 @@ async fn decompose_sets_the_parent_edge_and_versions_carry_it() {
 }
 
 /// G1-G3: no children, all Achieved, Achieved plus Abandoned: Ok.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn closed_children_or_none_admit_the_parent() {
     let tree = Tree::new().await.expect("fixture");
@@ -892,14 +889,6 @@ async fn an_abandoned_child_keeps_no_open_grandchild() {
         tree.achieve(a1, "t3-a1-achieve").await?;
         tree.abandon(a, "t3-a-abandon").await?;
         assert_tree_invariant(pool, "T3 A abandoned").await?;
-        match tree.achieve(p, "t3-p-achieve-early").await {
-            Err(StorageError::GoalChildrenAllAbandoned) => {}
-            other => {
-                return Err(format!("T3: expected GoalChildrenAllAbandoned, got {other:?}").into());
-            }
-        }
-        let b = tree.decompose(p, &["t3-b"]).await?[0];
-        tree.achieve(b, "t3-b-achieve").await?;
         tree.achieve(p, "t3-p-achieve").await?;
         assert_tree_invariant(pool, "T3 done").await?;
         assert_eq!(open_below_closed(pool).await?, 0, "T3 any depth");

@@ -51,8 +51,7 @@ impl ToolError {
             },
             Self::Storage(storage) => match storage {
                 crate::StorageError::ConstraintViolation(_)
-                | crate::StorageError::GoalChildrenOpen { .. }
-                | crate::StorageError::GoalChildrenAllAbandoned => ToolErrorKind::InvalidInput,
+                | crate::StorageError::GoalChildrenOpen { .. } => ToolErrorKind::InvalidInput,
                 crate::StorageError::Refused { rule, .. } => match rule.class() {
                     crate::RuleClass::Invalid => ToolErrorKind::InvalidInput,
                     crate::RuleClass::Conflict | crate::RuleClass::Forbidden => {

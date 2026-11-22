@@ -741,7 +741,7 @@ mod tests {
     /// The instructions and how-to for a core-only host, byte for byte. A
     /// change to the generated guidance must update these snapshots on
     /// purpose; dropping a spiice's gated text must leave them alone.
-    // `Proxiima.Goals.closeGuard` is documented in the catalog.
+    // `Proxiima.Goals.blocksClose` is documented in the catalog.
     #[test]
     fn core_only_surface_instructions_are_unchanged() {
         let tools: BTreeSet<&str> = NAMEABLE_TOOLS

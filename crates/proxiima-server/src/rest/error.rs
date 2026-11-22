@@ -158,9 +158,7 @@ const fn protocol_status(code: ErrorCode) -> (StatusCode, &'static str, &'static
 
 fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str) {
     match err {
-        StorageError::ConstraintViolation(_)
-        | StorageError::GoalChildrenOpen { .. }
-        | StorageError::GoalChildrenAllAbandoned => {
+        StorageError::ConstraintViolation(_) | StorageError::GoalChildrenOpen { .. } => {
             (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input")
         }
         StorageError::Refused { rule, .. } => match rule.class() {

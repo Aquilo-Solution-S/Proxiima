@@ -229,7 +229,7 @@ pub(crate) async fn transition_goal_atomic_in_pool(
             text: prior.text.as_deref(),
             write_act_t: None,
         },
-        // `Proxiima.Goals.closeGuard`.
+        // `Proxiima.Goals.blocksClose`.
         if req.transition == proxiima_core::verbs::goal_write::GoalTransitionKind::Abandon {
             PostLockGuard::NoOpenChildren
         } else {
@@ -325,7 +325,7 @@ pub(crate) async fn achieve_goal_atomic_in_pool(
             text: prior.text.as_deref(),
             write_act_t: None,
         },
-        PostLockGuard::ChildrenClosed,
+        PostLockGuard::NoOpenChildren,
     )
     .await?;
     if inserted.idempotent_replay {

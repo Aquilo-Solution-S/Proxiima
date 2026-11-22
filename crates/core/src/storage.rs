@@ -81,12 +81,9 @@ pub enum StorageError {
     /// message, so the engine maps it without parsing a string.
     #[error("publication refused: {0}")]
     PublicationRefused(#[from] crate::publication::PublicationError),
-    /// `Proxiima.Goals.closeGuard`.
+    /// `Proxiima.Goals.blocksClose`.
     #[error("goal has open children: {}", join_goal_ids(open))]
     GoalChildrenOpen { open: Vec<crate::GoalId> },
-    /// `Proxiima.Goals.closeGuard`.
-    #[error("goal children are all abandoned; achieve at least one child first")]
-    GoalChildrenAllAbandoned,
     /// A write replayed an admission its request key already names, but
     /// declared something other than what that admission stored. The same
     /// key with a different declaration is an idempotency conflict, and the

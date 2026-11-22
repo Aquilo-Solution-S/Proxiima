@@ -218,7 +218,7 @@ pub enum CoreGoalArgs {
     /// Replace an Active goal's title, text and payload; omitted evidence carries over.
     Modify(GoalModifyArgs),
     /// Mark a goal Achieved, optionally citing memories that show it; a goal with child goals needs every
-    /// child Achieved or Abandoned and at least one Achieved.
+    /// child Achieved or Abandoned.
     MarkAchieved(GoalMarkAchievedArgs),
     /// Create Active child Goals under a parent goal.
     Decompose(GoalDecomposeArgs),
@@ -849,7 +849,7 @@ pub struct GoalDecomposeArgs {
     pub parent_goal: String,
     #[schemars(
         length(min = 1, max = MAX_CHILD_GOALS),
-        description = format!("1-{MAX_CHILD_GOALS} child Goals; each starts Active. Parents close only after children close; achieving also needs one Achieved child.")
+        description = format!("1-{MAX_CHILD_GOALS} child Goals; each starts Active. Parents close only after children close.")
     )]
     pub children: Vec<ChildGoalInput>,
     #[serde(default)]

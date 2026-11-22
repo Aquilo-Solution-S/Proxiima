@@ -2,7 +2,7 @@
 
 use super::goal_evidence_kinds::{Env, handle_of};
 
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn mark_achieved_on_a_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_tree_mcp")
@@ -52,7 +52,7 @@ async fn mark_achieved_on_a_parent_waits_for_its_children() {
 /// T7: `core_goal transition abandon` on a parent with open children is
 /// refused as `InvalidArgument` naming them; once they are abandoned, the
 /// parent is.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn transition_abandon_on_a_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_tree_abandon_mcp")
@@ -159,7 +159,7 @@ async fn transition_abandon_on_a_paused_goal_is_one_write() {
 
 /// #515 M2: a Paused parent with open children is refused like an Active
 /// one; once the children are abandoned, the Paused parent is.
-// `Proxiima.Goals.closeGuard`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn transition_abandon_on_a_paused_parent_waits_for_its_children() {
     let env = Env::new("proxiima_goal_paused_parent_mcp")

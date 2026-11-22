@@ -163,16 +163,10 @@ structure GoalForestInv (F : GoalForest) : Prop where
   parentOlder       : ParentOlder F
   bornBelowClock    : BornBelowClock F
 
-/-- The child-state condition for achieving or abandoning a Goal. -/
+/-- No sub-goal of the series blocks its close: `Proxiima.Goals.blocksClose`. -/
 def NoOpenChild (F : GoalForest) (x : Handle) : Prop :=
   ∀ (c : Handle) (s : GoalState), F.parent c = some x → F.state c = some s →
-    s.isOpen = false
-
-/-- An achievable series has no open child and either has no children or has an achieved child. -/
-def AchievableChildren (F : GoalForest) (x : Handle) : Prop :=
-  NoOpenChild F x ∧
-    ((∀ c, ¬ forestChildOf F c x) ∨
-      ∃ c, F.parent c = some x ∧ F.state c = some .Achieved)
+    Proxiima.Goals.blocksClose s = false
 
 /-- Creation of a Goal series. -/
 structure ForestBirth (F F' : GoalForest) (x : Handle) (parent : Option Handle) : Prop where
@@ -207,7 +201,7 @@ inductive GoalStep : GoalForest → GoalForest → Prop where
   | modify {F F' : GoalForest} (x : Handle) :
       ForestRelabel F F' x .Active .Active → GoalStep F F'
   | achieve {F F' : GoalForest} (x : Handle) :
-      AchievableChildren F x → ForestRelabel F F' x .Active .Achieved → GoalStep F F'
+      NoOpenChild F x → ForestRelabel F F' x .Active .Achieved → GoalStep F F'
   | abandon {F F' : GoalForest} (x : Handle) {old : GoalState} :
       old.isOpen = true → NoOpenChild F x → ForestRelabel F F' x old .Abandoned →
       GoalStep F F'
@@ -282,7 +276,7 @@ theorem closing_relabel_preserves {F F' : GoalForest} {x : Handle} {old new : Go
     cases Classical.em (p = x) with
     | inl hpx =>
       subst hpx
-      rw [hchild c sc hp hc] at hopen
+      rw [show sc.isOpen = false from hchild c sc hp hc] at hopen
       cases hopen
     | inr hpx =>
       rw [r.state_eq p hpx] at hsp
@@ -404,7 +398,7 @@ theorem goalStep_preserves_inv :
   | pause _ r => exact pause_preserves inv r
   | resume _ r => exact resume_preserves inv r
   | modify _ r => exact modify_preserves inv r
-  | achieve _ hchild r => exact achieve_preserves inv hchild.1 r
+  | achieve _ hchild r => exact achieve_preserves inv hchild r
   | abandon _ _ hchild r => exact abandon_preserves inv hchild r
 
 def emptyForest : GoalForest where

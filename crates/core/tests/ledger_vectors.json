@@ -154,15 +154,6 @@
   {"out": "returnOriginal", "in": ["allExact"]},
   {"out": "conflict", "in": ["mixed"]},
   {"out": "conflict", "in": ["conflicting"]}],
- "Proxiima.Goals.closeGuard":
- [{"out": {"ok": true}, "in": ["achieve", "empty"]},
-  {"out": {"error": "childrenOpen"}, "in": ["achieve", "open"]},
-  {"out": {"error": "allAbandoned"}, "in": ["achieve", "allAbandoned"]},
-  {"out": {"ok": true}, "in": ["achieve", "closedWithAchieved"]},
-  {"out": {"ok": true}, "in": ["abandon", "empty"]},
-  {"out": {"error": "childrenOpen"}, "in": ["abandon", "open"]},
-  {"out": {"ok": true}, "in": ["abandon", "allAbandoned"]},
-  {"out": {"ok": true}, "in": ["abandon", "closedWithAchieved"]}],
  "Proxiima.Goals.closeFactPresence":
  [{"out": false, "in": ["Active", true]},
   {"out": true, "in": ["Active", false]},
@@ -183,6 +174,11 @@
   {"out": "plain", "in": ["resume"]},
   {"out": "plain", "in": ["achieve"]},
   {"out": "plain", "in": ["abandon"]}],
+ "Proxiima.Goals.blocksClose":
+ [{"out": true, "in": ["Active"]},
+  {"out": true, "in": ["Paused"]},
+  {"out": false, "in": ["Achieved"]},
+  {"out": false, "in": ["Abandoned"]}],
  "Proxiima.Goals.GoalState.terminal":
  [{"out": false, "in": ["Active"]},
   {"out": false, "in": ["Paused"]},
