@@ -1,6 +1,13 @@
 # Compile-time performance optimizations for Proxiima workspace
 # See: https://doc.rust-lang.org/cargo/reference/config.html
 
+# A crates.io version must be 7 days old before `cargo update` or `cargo add`
+# resolves to it; Dependabot's `cooldown` in .github/dependabot.yml holds its
+# PRs as long. `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow` lets one
+# urgent update through.
+[registry]
+global-min-publish-age = "7 days"
+
 [build]
 # Enable incremental compilation - cache compilation artifacts between builds
 # This is the single biggest win for iterative development

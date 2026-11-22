@@ -1,11 +1,16 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 # Native crypto dependencies require cmake and pkg-config.
-FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+# The image carries rustup and the OS, not the compiler: rust-toolchain.toml
+# names that, and the layer below installs it, so its tag names no Rust version.
+FROM rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/*.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+# Its own layer, so the toolchain download stays cached until the pin moves.
+COPY rust-toolchain.toml ./
+RUN rustup toolchain install
 COPY . .
 RUN cargo build --release --locked -p proxiima-mcp \
     && cp target/release/proxiima-mcp /proxiima-mcp

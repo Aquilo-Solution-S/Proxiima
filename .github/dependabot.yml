@@ -1,4 +1,6 @@
 version: 2
+# Every ecosystem waits 7 days after a release before proposing it, the age
+# .cargo/config.toml asks of `cargo update`. Security updates do not wait.
 updates:
   # Rust dependencies (single workspace at the repo root).
   - package-ecosystem: cargo
@@ -6,6 +8,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     # Default versioning-strategy (auto): bump the lockfile, widen manifest
     # ranges only when required. Keeps Cargo.lock churn reviewable.
@@ -27,6 +31,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       github-actions:
@@ -43,6 +49,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       pip-minor-patch:
@@ -53,12 +61,27 @@ updates:
     commit-message:
       prefix: "chore(docs)"
 
-  # Container base image (Dockerfile at the repo root).
+  # The Rust compiler: rust-toolchain.toml is its one pin, and the image
+  # builds with it. A bump runs every CI lane.
+  - package-ecosystem: rust-toolchain
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Container base images (Dockerfile at the repo root). The builder's tag
+  # names no Rust version; its compiler comes from rust-toolchain.toml.
   - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       docker:
