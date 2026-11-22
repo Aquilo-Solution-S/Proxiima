@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Read the review record of the commits `verified` is about to advance over.
-
-`verified` is the last commit that passed CI. `.github/workflows/verify.yml`
-moves it only when this script finds every commit of `verified..tip` covered:
-
-  authors   a commit's git author address and the address of each
-            `Co-Authored-By` trailer.
-  covered   the commit, or a later commit in the range, carries a
-            `Reviewed-By: Name <address>` trailer whose address is not one of
-            the commit's authors.
-
-An address is what stands between `<` and `>` at the end of a trailer value,
-compared case-insensitively. A `Reviewed-By` or `Co-Authored-By` value without
-one records nothing and is named in the failure output.
-
-Subcommands:
-
-  check --base B --tip T       exit 0 when no commit of B..T is uncovered,
-                               exit 1 and the reasons on stderr otherwise.
-"""
+"""Check review coverage over a Git candidate range."""
 
 from __future__ import annotations
 
@@ -72,6 +53,7 @@ class Repo:
         return out.decode("utf-8", errors="replace")
 
 
+# `Proxiima.Repository.ReviewAddress`.
 def address(value: str) -> str | None:
     found = TRAILING_ADDRESS.search(value)
     return found.group(1).lower() if found else None
@@ -115,6 +97,7 @@ def read_range(repo: Repo, base: str, tip: str) -> list[Commit]:
     return [read_commit(repo, sha) for sha in shas.split()]
 
 
+# `Proxiima.Repository.reviewCovers`.
 def uncovered(commits: list[Commit]) -> list[Commit]:
     """The commits no later (or own) reviewer outside their authors covers."""
     seen: set[str] = set()

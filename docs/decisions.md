@@ -6,27 +6,11 @@ live catalog.
 
 ## Principles and behavior have separate owners
 
-The Lean kernel states domainless principles. Rust code and tests are the
-behavior. A principle change starts in the kernel, then code and tests follow.
-This keeps the kernel meaningful without treating it as an executable claim
-about every implementation detail.
-
-Source: [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean).
+[`Proxiima.Repository`](ledger.md#repository), [the repository's source authority](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#scope-and-authority), and [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean).
 
 ## One owner per fact
 
-| Fact | Owner |
-|---|---|
-| Settings | Each crate's `settings!` block; [Configuration](configuration.md) is rendered from them |
-| Types, defaults, limits | Rustdoc |
-| Tool and resource schemas | Live catalog: `tools/list`, `proxiima://tools`, OpenAPI |
-| Tables | SQL migrations |
-| Core functions, triggers, policies, views | `crates/storage-pg/definitions/` |
-| Invariants | Lean kernel |
-| Release changes | Release notes and `Upgrade:` footers |
-
-When a description is needed elsewhere, link to its owner. Do not copy the
-table, schema, or default.
+See the [repository's source authority](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#scope-and-authority).
 
 ## Build-time spiice composition
 

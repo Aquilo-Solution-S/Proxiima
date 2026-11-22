@@ -10,6 +10,7 @@ theme:
     - navigation.sections
     - navigation.indexes
     - content.code.copy
+# `Proxiima.Repository.PublicDocumentation`.
 markdown_extensions:
   - admonition
   - tables

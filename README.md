@@ -24,12 +24,7 @@ identity, event sources, model clients, scheduling, and effects. See the
 | Find settings | [Configuration](docs/configuration.md) |
 | Contribute or build this site | [Contributing](docs/contributing.md) |
 
-The [documentation](docs/index.md) owns concepts and integration
-instructions. The [ledger](docs/ledger.md) states Goal rules and the Causa proofs.
-Rustdoc owns other types, defaults, and limits. Migrations own table shape.
-The running catalog owns operation schemas. Rust code and its tests define
-runtime behavior. `lake exe ledger check` checks ledger consistency and link
-resolution. A passing check does not establish that Rust refines the ledger.
+The [guide](docs/index.md), [ledger](docs/ledger.md), and [repository guidance](AGENTS.md) are the starting points for contributors.
 
 One deployment links core, storage, transports, and spiice crates at build
 time. The canonical host is [proxiima-mcp](apps/proxiima-mcp); it serves the

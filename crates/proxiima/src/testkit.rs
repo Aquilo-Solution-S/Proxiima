@@ -34,23 +34,9 @@ pub const TEMPLATE_STORE_NUMBER: u16 = proxiima_core::ledger!(Proxiima.Repositor
 /// A migrated, split-role template database a host suite clones once per
 /// test.
 ///
-/// The template holds the split roles and everything the migrate step
-/// writes: core, the spiices and the host's own migrators, applied as the
-/// platform role, and the store number [`TEMPLATE_STORE_NUMBER`].
-/// [`Self::clone_split_role`] hands each test a [`SplitRoleDb`] cloned from
-/// it, so a boot over the clone with that store number validates and
-/// applies nothing, and the roles are the ones every [`SplitRoleDb`] has: the
-/// runtime role is `NOSUPERUSER NOBYPASSRLS`, owns nothing and cannot write a
-/// migration ledger, so owner RLS is enforced in the clone as in production.
-///
-/// The template's name is a [`TemplateFamily`] prefix and 16 hex digits of a
-/// hash of everything the migrators contribute: for core and each migrator,
-/// its source id, its ledger and every `(version, checksum)` it applies, in
-/// order, the frozen sidecars' schema/Follows table sets, and `fingerprint`.
-/// A changed migration or Follows composition is a different template, and
-/// the old one is dropped once nothing is connected to it. `fingerprint`
-/// carries only what the migrators cannot show, such as seed SQL a host
-/// applies on top.
+/// `Proxiima.Repository.TemplateLifecycle` and `Proxiima.Repository.CloneRole`.
+/// Boot clones with [`TEMPLATE_STORE_NUMBER`]. The caller fingerprint can mark
+/// seed inputs the migrators do not carry.
 ///
 /// ```compile_fail,E0308
 /// // The family is a validated `TemplateFamily`; a host never passes a raw name.
@@ -222,12 +208,7 @@ impl HostTemplate {
     }
 }
 
-/// The template hash: `fingerprint`, the definitions, release and store
-/// number the template holds, then each source's id, ledger and
-/// `(version, checksum)` pairs in run order, from the enumeration the ledger
-/// checks and the migration plan use (`MigrationSource::lane`), followed by
-/// sorted spiice schema and Follows table sets. Every field is length-prefixed
-/// and each list has a count, so different inputs cannot spell the same bytes.
+/// `Proxiima.Repository.TemplateFingerprintInput`. Length framing separates successive inputs.
 fn fingerprint_hash(
     fingerprint: &str,
     vectors: VectorStorage,
@@ -277,12 +258,7 @@ fn fingerprint_hash(
     hash
 }
 
-/// A verified [`AuthzContext`] scoped to exactly `owner`, as a trusted host
-/// resolves one: a personal owner is its own subject; a group owner is
-/// reached by a fresh subject holding `admin` on it.
-///
-/// The context carries the sealed owner scope only the authentication path
-/// mints, so owner-RLS reads and writes run as they do in production.
+/// `Proxiima.Repository.FixtureOwnerContext`.
 ///
 /// # Panics
 ///
@@ -311,13 +287,9 @@ pub fn shared_authz(owners: &[OwnerId]) -> AuthzContext {
     ))
 }
 
-/// Assert that every declaration and presence trigger the substrate
-/// generates for spiice `F`'s memory sidecars appears verbatim in one of
-/// `migrations` (the spiice's SQL, e.g. `include_str!` of its files).
+/// Compare generated sidecar triggers with migration SQL. `Proxiima.Repository.TriggerFixtureRefusal`.
 ///
-/// The generated statements are what boot compares the live database
-/// against; a hand-copied trigger that drifted from them fails boot on
-/// every database that applied it.
+/// Boot compares the same statements with the live database.
 ///
 /// # Panics
 ///

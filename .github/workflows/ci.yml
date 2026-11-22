@@ -1,13 +1,9 @@
 name: CI
 
 on:
-  # Outside contributions still arrive as PRs.
   pull_request:
     branches: [main]
-  # verify.yml calls this for the `main` commit it tests. Checkout uses
-  # github.sha (the PR merge commit, or the verify caller commit). Rust caches
-  # save only on `main`: a PR can restore the base branch cache but cannot
-  # write it.
+  # `Proxiima.Repository.pathSource`.
   workflow_call:
     inputs:
       base:
@@ -15,15 +11,13 @@ on:
         type: string
         required: true
 
-# Least-privilege default: every job's GITHUB_TOKEN is read-only (no job
-# writes contents, packages, or PRs).
+# `Proxiima.Repository.validationGrants`.
 permissions:
   contents: read
 
-# A new PR revision supersedes its previous validation run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: true # `Proxiima.Repository.cancelSupersededValidation`.
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,10 +39,9 @@ jobs:
       release: ${{ steps.paths.outputs.release }}
       all: ${{ steps.paths.outputs.all }}
     steps:
+      # `Proxiima.Repository.WorkflowPin`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # dorny/paths-filter@v4; resolve the PR diff through the GitHub API.
-      # Under verify, diff the commit against the last verified one; a PR
-      # passes neither end.
+      # dorny/paths-filter@v4
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
         id: paths
         with:
@@ -57,9 +50,7 @@ jobs:
           predicate-quantifier: some-with-excludes
           filters: .github/ci-paths.yml
 
-  # Preserve required check names and run the workflow for every PR into main.
-  # Skipped jobs satisfy branch protection; path-filtered workflows stay pending.
-  # If path detection fails, run validation instead of skipping it.
+  # `Proxiima.Repository.validateLane`. Skipped jobs satisfy branch protection.
   lint:
     name: fmt + clippy + doc
     needs: changes
@@ -74,11 +65,11 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
+      # `Proxiima.Repository.RustLane`.
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        # Workspace lints set warnings = deny, clippy::pedantic = deny.
         run: cargo clippy --workspace --all-targets --all-features --locked
       - name: clippy (default features)
         # The test job builds with every feature on, so this is the one place
@@ -92,6 +83,7 @@ jobs:
       - name: doctest
         run: cargo test --doc --workspace --all-features --locked
 
+  # `Proxiima.Repository.validateDocs`.
   docs:
     name: docs links + lean
     needs: changes
@@ -101,12 +93,7 @@ jobs:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # The release-version check answers "is this version already cut?"
-          # from the tags. A clone without them reads as "first release ever"
-          # and would accept any number at all. The released-migration lock in
-          # check-migrations.py reads each tag's tree (`git ls-tree -r
-          # <tag>`); checkout fetches `+refs/tags/*` at depth 1, which carries
-          # every tag's commit and tree, and the check fails closed without them.
+          # `Proxiima.Repository.versionAccepted`. The migration lock also reads each tag tree.
           fetch-tags: true
       - name: install docs dependencies
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.docs == 'true' }}
@@ -128,9 +115,6 @@ jobs:
           shellcheck scripts/changelog.sh
           python3 scripts/check-upgrade-notes.py --self-test
           git cliff --offline --unreleased --output "${RUNNER_TEMP}/release-notes.md"
-      # A bump to the workspace version in `Cargo.toml` cuts that tag and publishes
-      # its notes once `verified` reaches it (.github/workflows/release.yml).
-      # This check is the last moment the number is still free to change.
       - name: release version
         run: |
           python3 scripts/check-release-version.py --self-test
@@ -186,10 +170,7 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # Build only, never push. Dependabot bumps the pinned base-image digests
-      # weekly (see .github/dependabot.yml); without this job those bumps land
-      # with zero validation and the first person to discover a broken image is
-      # an operator running the documented `docker build` after a tag is public.
+      # `Proxiima.Repository.ImageEvidence`.
       - name: build image
         run: |
           docker build \
@@ -225,13 +206,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-      # S3-compatible object store for the cited-blob lane. Every test that
-      # needs it is `#[ignore]`d and panics when `PROXIIMA_S3_*` is unset, so
-      # the test steps below run ignored tests too — including the
-      # versioned-bucket `purge_owner_objects` erase, which is a compliance
-      # guarantee. RustFS rather than MinIO: Apache-2.0, so it carries none of
-      # MinIO's AGPL licensing constraints. Pinned by digest like every other
-      # image here; note RustFS is pre-1.0, so bump deliberately.
+      # `Proxiima.Repository.ObjectFixture`. RustFS is available under Apache-2.0.
       s3:
         image: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
         env:
@@ -240,16 +215,11 @@ jobs:
         ports:
           - 9000:9000
     env:
-      # pg-testkit clones per-test DBs from this template (admin) URL.
+      # `Proxiima.Repository.PostgresFixture`.
       PROXIIMA_TEST_PG_URL: postgres://proxiima:proxiima@localhost:5432/proxiima
-      # The catalog, OIDC and multi-owner e2e suites create their own
-      # pg-testkit databases, so all-feature and shipped-default hosts can run
-      # in the same job.
-      # Cited-blob lane. The `#[ignore]`d S3 tests read these through
-      # `S3RuntimeConfig::from_env()` and fail without them.
+      PROXIIMA_S3_ENDPOINT_URL: http://localhost:9000
       PROXIIMA_S3_BUCKET: proxiima-cited-blobs
       PROXIIMA_S3_REGION: us-east-1
-      PROXIIMA_S3_ENDPOINT_URL: http://localhost:9000
       PROXIIMA_S3_ACCESS_KEY_ID: proxiima
       PROXIIMA_S3_SECRET_ACCESS_KEY: proxiima-dev
     steps:
@@ -258,7 +228,7 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
       - name: relax test Postgres durability, size its connections
         # Disposable database: crash safety buys nothing here. Every per-test
         # DROP DATABASE forces a checkpoint, and with fsync on each one waits
@@ -285,8 +255,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ env.PROXIIMA_S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ env.PROXIIMA_S3_SECRET_ACCESS_KEY }}
         run: |
-          # Any HTTP response means it is up. Not `curl -f`: an S3 root
-          # request is unauthenticated, so a healthy server answers 403.
+          # A healthy listener can return HTTP 403 to the unsigned probe.
           for _ in $(seq 1 30); do
             curl -s -o /dev/null http://localhost:9000 && break
             sleep 2
@@ -302,8 +271,7 @@ jobs:
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
           tool: nextest
-      # All features cover REST. The shipped substrate host also runs its
-      # default-feature tests below.
+      # `Proxiima.Repository.TestFeatureLane`.
       - name: build
         run: cargo build --workspace --all-targets --all-features --locked
       - name: test
@@ -311,12 +279,7 @@ jobs:
       - name: test shipped host defaults
         run: cargo nextest run -p proxiima-mcp --all-targets --locked --run-ignored all
 
-  # The storage suites whose correctness depends on what a connection carries
-  # between transactions (the export/erase fence, the maintenance lease, the
-  # pool's startup parameters), run with their serving pools behind PgBouncer
-  # in transaction mode. pg-testkit routes the fixtures' runtime and platform
-  # pools through PROXIIMA_TEST_PGBOUNCER_URL; migrations and the admin pool
-  # stay direct, as production migrations must.
+  # `Proxiima.Repository.usesTestPooler`.
   pgbouncer:
     name: test (pgbouncer transaction mode)
     needs: changes
@@ -346,7 +309,8 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
+      # `Proxiima.Repository.PoolerVerification`.
       - name: start pgbouncer in transaction mode
         # Not a service container: PgBouncer is configured by its ini file,
         # and a service takes no file or command line. It runs as the runner
@@ -420,8 +384,8 @@ jobs:
           | binary(purge_backoff) | binary(owner_export) | binary(owner_erase)'
       - name: boot through pgbouncer, migrations direct
         run: cargo nextest run -p proxiima --all-features --locked -E 'binary(pooler_boot_pg)'
-      - name: every client went through the pooler
-        # A lane that silently connected direct would pass and prove nothing.
+      - name: check aggregate pooler activity
+        # A lane that silently connected directly would pass without exercising PgBouncer.
         run: |
           log="$RUNNER_TEMP/pgbouncer/pgbouncer.log"
           logins="$(grep -c 'login attempt: db=proxiima_test' "$log" || true)"

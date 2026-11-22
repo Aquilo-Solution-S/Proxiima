@@ -1,11 +1,7 @@
 //! Proxiima engine core.
 extern crate self as proxiima_core;
 
-/// The Proxiima release this build belongs to, as reported to MCP clients on
-/// `initialize` and to operators.
-///
-/// This is the workspace version in the root `Cargo.toml`, shared by every
-/// member. Releases are git tags, cut when that version is bumped.
+/// Server release version. `Proxiima.Repository.VersionSource`.
 pub const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod access;

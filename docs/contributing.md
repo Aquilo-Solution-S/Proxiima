@@ -1,24 +1,10 @@
 # Contributing
 
-Proxiima has two authorities: the Lean kernel under
-[`lean/Causa`](https://github.com/Aquilo-Solution-S/proxiima/tree/main/lean/Causa)
-defines domainless invariants; Rust code, SQL, tests, and the live MCP/REST
-catalog implement and expose them. A prose page explains a contract but does
-not amend the kernel. If the implementation and kernel disagree, stop and
-resolve the contract before coding.
+Use the repository guidance and the Repository ledger alongside this guide. [Repository guidance](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md) · [Repository ledger](ledger.md#repository)
 
 ## Before editing
 
-Read [concepts](concepts.md), the relevant integration page, and the
-repository's `AGENTS.md` instructions. Map the data stream from its external input
-to its consumer. Join existing contracts instead of adding a second source of
-truth. Keep scratch plans, review notes, and bulky evidence under ignored
-`.local/`; tracked docs contain durable decisions and executable checks.
-
-The core boundary is deliberate: strict F/A/P/Goal layering, server-resolved
-owner scope, typed payloads and sidecars, build-time spiice registration,
-atomic command-port writes, and hard deletion only through an authorized
-`wipeable` path. Similarity is query-time behavior and never authors an edge.
+Read [concepts](concepts.md) and the relevant integration page.
 
 ## Code and tests
 
@@ -116,16 +102,17 @@ proceed directly.
 
 ## Local verification
 
-Use the smallest relevant check during iteration, then the complete gates
-before pushing. This is the one list; CI runs the same commands, and its test
-job adds `--run-ignored all` for the S3 lane described below.
+Run focused checks during iteration and the complete gates before pushing.
+Report skipped checks explicitly.
+Set `PROXIIMA_TEST_PG_URL` to your disposable PostgreSQL server. [Development bootstrap](get-started.md#1-boot-postgres)
 
 ```sh
 cargo fmt --all -- --check
 cargo check --workspace
 cargo clippy --workspace --all-targets --all-features --locked
 cargo clippy --workspace --all-targets --locked
-cargo nextest run --workspace --all-targets --all-features
+cargo nextest run --workspace --all-targets --all-features --locked
+cargo nextest run -p proxiima-mcp --all-targets --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 cargo test --doc --workspace --all-features --locked
 (cd lean && lake build && lake exe ledger check)
@@ -144,48 +131,33 @@ python3 -m pip install -r requirements-docs.txt
 python3 -m mkdocs build --strict
 ```
 
-Postgres-backed tests need `PROXIIMA_TEST_PG_URL`; the local development
-bootstrap is described in [get started](get-started.md).
+### PgBouncer
 
-Test seams (`*_for_tests` constructors, fixture modules, SQL text accessors)
-compile only under `cfg(test)` of their own crate or the `testkit` Cargo
-feature, which every crate that has seams defines and no release build enables.
+Run PgBouncer 1.26.1 or later in transaction mode in front of
+`PROXIIMA_TEST_PG_URL`, following the `pgbouncer` job configuration. Set
+`PROXIIMA_TEST_PGBOUNCER_URL` to that listener and run the job's nextest
+filters for the storage suites and the host boot test. Without the pooler URL,
+`pgbouncer_pg` returns early and the other suites connect directly.
+[CI workflow](https://github.com/Aquilo-Solution-S/proxiima/blob/main/.github/workflows/ci.yml)
 
-The suite runs eight test processes at once with no retries
-(`.config/nextest.toml`), and they share the server's `max_connections`.
-The dev compose file and CI set it to 200. A full run peaks near 60 client
-backends; re-measure (`pg_stat_activity`) before raising `test-threads`.
-A fixture boot that times out on its pool reports the server's connection
-use in its panic.
+### S3 integration tests
 
-Every `DROP DATABASE` forces a checkpoint. With `fsync` on, those
-checkpoints wait on disk and a full local run pays seconds per drop. The
-dev compose file and CI turn `fsync`, `synchronous_commit`, and
-`full_page_writes` off on that disposable server; crash safety is
-irrelevant for per-test databases. Do not restore them in CI.
+Start the local S3 service on Compose port 9100 and initialize the versioned
+`proxiima-dev` bucket. Set the five S3 variables before running nextest.
 
-The PgBouncer lane runs the storage suites that depend on what a connection
-carries between transactions (export/erase fence, maintenance lease, pool
-startup parameters) with their serving pools behind PgBouncer 1.26.1 or later
-in transaction mode. Set `PROXIIMA_TEST_PGBOUNCER_URL` to that PgBouncer (in
-front of the `PROXIIMA_TEST_PG_URL` server, configured like the `pgbouncer`
-job in `.github/workflows/ci.yml`) and run the job's nextest filter. Without
-the variable, `pgbouncer_pg` returns early and the other suites connect
-direct.
+```sh
+docker compose -f docker-compose.dev.yml up -d --wait s3
+docker compose -f docker-compose.dev.yml --profile init run --rm s3-init
+export PROXIIMA_S3_ENDPOINT_URL=http://127.0.0.1:9100
+export PROXIIMA_S3_BUCKET=proxiima-dev
+export PROXIIMA_S3_REGION=us-east-1
+export PROXIIMA_S3_ACCESS_KEY_ID=proxiima
+export PROXIIMA_S3_SECRET_ACCESS_KEY=proxiima-dev
+cargo nextest run --workspace --all-targets --all-features --locked --run-ignored all
+```
 
-The cited-blob tests are `#[ignore]`d, so a run without the `PROXIIMA_S3_*`
-variables reports them as ignored, not passed. A complete run needs an
-S3-compatible store with a versioned bucket, the five variables CI sets in
-`.github/workflows/ci.yml`, and `--run-ignored all` on the nextest command;
-a missing variable then fails the test naming it. CI
-serves bucket `proxiima-cited-blobs` at `http://localhost:9000`. Locally, the
-dev compose file serves `http://127.0.0.1:9100` (`PROXIIMA_DEV_S3_PORT`
-overrides the port) with keys `proxiima` / `proxiima-dev`, and
-`docker compose -f docker-compose.dev.yml --profile init up s3-init` creates
-its versioned bucket `proxiima-dev`; region `us-east-1` works for both. Report
-a run without `--run-ignored all` as not running that lane. Do not hide a failing
-required check. Fix it, record a precise `.local` ledger entry with command
-and output, or escalate the blocker.
+If you set `PROXIIMA_DEV_S3_PORT`, use that port in the endpoint URL. Report
+a run without `--run-ignored all` as not running the S3 lane.
 
 ### Settings
 
@@ -207,57 +179,28 @@ a shipped host, so they are not on the operator page.
 
 | Setting | Purpose | Reader |
 |---|---|---|
-| `PROXIIMA_TEST_PG_URL` | admin URL of the test Postgres server | `pg-testkit`; schema script fallback |
+| `PROXIIMA_TEST_PG_URL` | admin URL of an owned test Postgres server | `pg-testkit` and the schema script fallback |
 | `PROXIIMA_TEST_PGBOUNCER_URL` | transaction-mode PgBouncer in front of the test server; the storage fixtures route serving pools through it | `pg-testkit` |
 | `PROXIIMA_PG_TESTKIT_CHILD` | child-process marker | `pg-testkit` split-template and admin URL tests |
 | `PROXIIMA_PG_TESTKIT_TEMPLATE` | template database name | `pg-testkit` split-template test |
 | `PROXIIMA_DIFFERENTIAL_DIR` | directory the owner differential tests dump their actuals to | storage-pg differential tests |
 | `PROXIIMA_SCALE_EMBEDDINGS`, `PROXIIMA_SCALE_QUERIES`, `PROXIIMA_SCALE_ERASE_MEMORIES` | size of the scale harness run ([operate](operate.md)) | `crates/storage-pg/tests/scale_run.rs` |
-| `PROXIIMA_DEV_POSTGRES_PORT` | host port of the Compose Postgres (default 5434) | `docker-compose.dev.yml` |
-| `PROXIIMA_DEV_S3_PORT` | host port of the Compose S3 store (default 9100) | `docker-compose.dev.yml` |
+| `PROXIIMA_DEV_POSTGRES_PORT` | host port of the Compose Postgres | `docker-compose.dev.yml` |
+| `PROXIIMA_DEV_S3_PORT` | host port of the Compose S3 store | `docker-compose.dev.yml` |
 | `PROXIIMA_SCHEMA_PG_URL` | admin URL of the schema dump | `scripts/regen-schema-sql.sh` |
 | `PROXIIMA_PG_DUMP` | `pg_dump` command of the schema dump | `scripts/regen-schema-sql.sh` |
 | `PROXIIMA_RESET_CONFIRM` | reset confirmation token, spelled exactly `reset-my-dev-db` | `tools/dev-migrate --reset` (declared in its own `settings!` block) |
 
 ## Review and release
 
-Keep commits narrow and use the repository subjects: `docs(<scope>): …`,
-`feat(<component>): …`, `fix(<component>): …`, or `chore(<component>): …`.
-The orchestrating engineer reviews actual diffs, reruns load-bearing gates,
-and owns commits, pushes, and publication. Do not commit from delegated work.
-The review record a pushed range carries is defined in the
-[branch policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#branch-and-release-policy),
-and `python3 scripts/verify-review.py check --base origin/verified --tip HEAD`
-reads a range the way `verify.yml` will.
+Follow the branch policy for reviewing and releasing changes. [Branch policy](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#branch-and-release-policy)
 
-Breaking commits carry an `Upgrade:` footer with concrete operator/client
-actions. `cliff.toml` renders these in the release notes;
-`scripts/check-upgrade-notes.py --self-test` tests the actual parser/template.
-Per-release changes live only in those notes.
-
-Changes are pushed to `main` directly; `verified` names the last `main`
-commit that passed CI, and new work starts from it. After CI passes, `verify.yml`
-atomically advances `verified` and the lightweight `nightly` tag to that tested
-commit. `nightly` follows every successful verification; it has no daily schedule
-or GitHub Release entry. Routine changes leave the workspace version in the root `Cargo.toml`
-(`[workspace.package] version`, exposed as `proxiima_core::RELEASE_VERSION`)
-unchanged.
-
-A numbered release is cut by a deliberate bump of that version: once
-`verify.yml` advances `verified` onto the commit, the value becomes the
-`v${VERSION}` tag and git-cliff generates notes. A commit that leaves the
-version unchanged cuts no release. Members inherit it with
-`version.workspace = true`; `scripts/check-release-version.py` refuses a member
-that does not.
-Run full local gates before pushing, and `scripts/check-release-version.py`
-for a version bump. Do not tag by hand.
-
-`nightly` is a moving source selector. Use an immutable numbered tag or commit
-SHA for reproducible builds, and keep the same git selector across all Proxiima
-dependencies. Cargo locks git dependencies to a commit until `cargo update`.
-For a local clone that already has `nightly`, explicitly refresh only that tag
-with `git fetch origin +refs/tags/nightly:refs/tags/nightly`. Nightly source trees
-retain the last declared release version; identify their exact source by SHA.
+`nightly` is a moving source selector. Refresh it in an existing clone with
+`git fetch origin +refs/tags/nightly:refs/tags/nightly`. Nightly trees keep the
+last declared release version, so identify them by SHA. Pin the same immutable
+numbered tag or commit across consumer dependencies. Cargo locks a git
+dependency to a commit until `cargo update`. Per-release changes live only in
+the release notes.
 
 For a spiice change, also verify the served catalog and the host e2e path. For
 an outbox or host-state change, exercise the transaction and retry or rollback

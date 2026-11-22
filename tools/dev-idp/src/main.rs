@@ -13,19 +13,11 @@
 //! server verifies it with exactly the code an operator runs against Entra,
 //! Zitadel, or Auth0.
 //!
-//! It binds loopback only and refuses anything else. Plaintext HTTP is
-//! acceptable here for the same reason it is acceptable for a local model
-//! endpoint: the bearer never leaves the host. See
-//! `crates/auth-oidc/src/config.rs::validate_https_url`, which admits
-//! loopback HTTP for issuers and — only for a loopback issuer — its JWKS.
-//!
-//! The signing key is persisted (mode 0600 on Unix) so tokens survive a restart; without
-//! that, every restart would silently invalidate the bearer sitting in your
-//! agent's MCP config. Use `--ephemeral` to keep it in memory instead.
-//!
 //! ```text
 //! cargo run -p proxiima-dev-idp
 //! ```
+//!
+//! The persisted key keeps tokens valid across restarts. Use `--ephemeral` for an in-memory key.
 //!
 //! Never deploy this. It mints tokens for anyone who can run it.
 
@@ -172,6 +164,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
     let bind: SocketAddr = bind
         .parse()
         .map_err(|_| ArgError::Message(format!("--bind is not an address:port: {bind}")))?;
+    // `Proxiima.Repository.DevIssuerInput`.
     if !bind.ip().is_loopback() {
         return Err(ArgError::Message(format!(
             "--bind must be loopback; {bind} would expose a token-minting issuer on the network"
@@ -202,9 +195,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
     })
 }
 
-/// Load the persisted signing key, generating and storing one on first run.
-///
-/// On Unix, the key file is created with owner-only permissions.
+/// `Proxiima.Repository.DevSigner`.
 fn load_or_create_key(path: Option<&PathBuf>) -> Result<RsaKeyPair, String> {
     let Some(path) = path else {
         return generate_key();
@@ -235,8 +226,7 @@ fn read_key(path: &std::path::Path) -> Result<Option<RsaKeyPair>, String> {
     }
 }
 
-/// Store a new key at `path`. The file is created exclusively, so a key another process wrote
-/// since the read is the key used, never one overwritten.
+/// `Proxiima.Repository.DevSigner`. A creation conflict points back to the stored file.
 fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
     let key = generate_key()?;
     let der = AsDer::<aws_lc_rs::encoding::Pkcs8V1Der<'_>>::as_der(&key)
@@ -265,6 +255,7 @@ fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
 }
 
 /// Whole seconds since the Unix epoch at `time`; a clock before the epoch is refused, not read as 0.
+// `Proxiima.Repository.DevClaims`.
 fn epoch_secs(time: SystemTime) -> Result<u64, String> {
     time.duration_since(UNIX_EPOCH)
         .map(|since| since.as_secs())
@@ -273,6 +264,7 @@ fn epoch_secs(time: SystemTime) -> Result<u64, String> {
 
 /// The JWKS this issuer publishes: one RSA key, by `n`/`e`, exactly the shape
 /// `HttpJwksResolver` materializes.
+// `Proxiima.Repository.DevClaims`.
 fn jwks(key: &RsaKeyPair) -> String {
     let components: PublicKeyComponents<Vec<u8>> = key.public_key().into();
     serde_json::json!({
@@ -289,6 +281,7 @@ fn jwks(key: &RsaKeyPair) -> String {
 }
 
 /// Mint an RS256 bearer for `config`'s subject, issued at `now` (seconds since the epoch).
+// `Proxiima.Repository.DevClaims`.
 fn mint(key: &RsaKeyPair, issuer: &str, config: &Config, now: u64) -> Result<String, String> {
     let header = serde_json::json!({ "alg": "RS256", "kid": KID, "typ": "JWT" });
     let claims = serde_json::json!({

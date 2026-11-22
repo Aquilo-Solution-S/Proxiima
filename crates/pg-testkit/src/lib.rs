@@ -1,26 +1,6 @@
 //! Postgres test harness for clone-per-test isolation.
 //!
-//! Matches the `#[sqlx::test]` shape without a proc-macro crate:
-//!
-//! - each clone is recorded in `_proxiima_test.databases` on the admin DB
-//! - a successful [`DbGuard`] drop runs `DROP DATABASE … WITH (FORCE)`
-//! - a panicking test **keeps** the database and prints a redacted `psql` URL
-//! - the first admin operation in a process sweeps clones older than
-//!   five minutes with nobody connected (`pg_stat_activity`)
-//! - [`ensure_template`] drops other hashes in the same family (`proxiima_tmpl_core_*`
-//!   / `proxiima_tmpl_split_*`), keeping only the current fingerprint
-//! - a host owns a [`TemplateFamily`] of its own: [`ensure_template_in`] builds
-//!   `<prefix><hash>` and collects only idle templates of that family
-//! - the admin URL is `PROXIIMA_TEST_PG_URL` and nothing else: unset is a
-//!   configuration error ([`admin_url_or_skip`] for a visible skip), never a
-//!   guess at a local server
-//! - every lock (builds, leases, the sweep) and the catalog live in the
-//!   database the admin URL names, so processes coordinate only when their
-//!   `PROXIIMA_TEST_PG_URL` names the same database
-//!
-//! Failed tests stay until that grace elapses with no live session, so a
-//! later nextest binary cannot drop an in-flight clone in the create-then-connect
-//! window.
+//! Locks and clone records are shared when test processes name the same admin database.
 
 use std::fmt;
 use std::future::Future;
@@ -100,7 +80,6 @@ const SPLIT_ROLE_SCRAM_VERIFIER: &str = "SCRAM-SHA-256$4096:cHJveGlpbWEtZml4dHVy
 /// The query parameters `sqlx` lets override the authority's credentials.
 const QUERY_USER: &str = "user";
 const QUERY_PASSWORD: &str = "password";
-/// A template database name ends in this many lowercase hex digits (`{hash:016x}`).
 const TEMPLATE_HASH_DIGITS: usize = proxiima_core::ledger!(Proxiima.Repository.templateHashDigits);
 /// `PostgreSQL` identifiers hold 63 bytes; a family prefix leaves room for the hash.
 const MAX_FAMILY_PREFIX_BYTES: usize = 63 - TEMPLATE_HASH_DIGITS;
@@ -123,15 +102,7 @@ static PROCESS_START: OnceLock<OffsetDateTime> = OnceLock::new();
 static SWEEP_DONE: AtomicBool = AtomicBool::new(false);
 static CATALOG_READY: AtomicBool = AtomicBool::new(false);
 
-/// `PROXIIMA_TEST_PG_URL`, trimmed; `None` when it is unset, empty or
-/// whitespace-only — the rule `proxiima_core::Setting::read` states for every
-/// configuration variable in the workspace. Applied by hand rather than by
-/// calling it, because this is a deliberately minimal test-support crate
-/// (sqlx/tokio/tracing/url/uuid) and one env var does not justify a
-/// dependency on `proxiima-core`.
-///
-/// The one place the variable is read: every other spelling of "no admin URL"
-/// derives from this answer.
+/// `Proxiima.Repository.adminConfiguration`.
 fn configured_admin_url() -> Option<String> {
     trimmed_url(std::env::var(ADMIN_URL_VAR).ok())
 }
@@ -143,18 +114,16 @@ fn trimmed_url(raw: Option<String>) -> Option<String> {
 
 const POOLER_URL_VAR: &str = "PROXIIMA_TEST_PGBOUNCER_URL";
 
-/// `PROXIIMA_TEST_PGBOUNCER_URL`, trimmed: a transaction-mode pooler in front
-/// of the `PROXIIMA_TEST_PG_URL` server. `None` when unset or empty. When set,
-/// the storage fixtures connect their serving pools through it; migrations
-/// and the admin pool stay direct, as they must in production.
+/// Return the trimmed `PROXIIMA_TEST_PGBOUNCER_URL` when set and nonblank.
+/// The transaction-mode pooler fronts the `PROXIIMA_TEST_PG_URL` server.
+/// `Proxiima.Repository.usesTestPooler`.
 #[must_use]
 pub fn test_pooler_url() -> Option<String> {
     trimmed_url(std::env::var(POOLER_URL_VAR).ok())
 }
 
-/// `url` with its host and port replaced by the pooler's from
-/// [`test_pooler_url`]; `url` unchanged when no pooler is configured. Role,
-/// password and database stay those of `url`.
+/// Replace the host and port with the configured pooler endpoint, or return the original URL when unset.
+/// `Proxiima.Repository.usesTestPooler`.
 ///
 /// # Panics
 ///
@@ -185,13 +154,8 @@ fn try_admin_url() -> Result<String, sqlx::Error> {
     configured_admin_url().ok_or_else(|| sqlx::Error::Configuration(ADMIN_URL_UNSET.into()))
 }
 
-/// The admin connection URL from `PROXIIMA_TEST_PG_URL`.
-///
-/// Trims, and treats an empty or whitespace-only value as unset. There is no
-/// default server: the sweep and the template GC act on every database
-/// behind this URL that matches their patterns, so a suite pointed at
-/// whatever answers on `localhost` could drop another suite's idle clones.
-/// Use [`admin_url_or_skip`] to skip a test when it is unconfigured.
+/// Explicit admin URL for strict callers. Use [`admin_url_or_skip`] for a local test
+/// that may skip. The sweep spans matching databases on the selected server.
 ///
 /// # Panics
 ///
@@ -209,6 +173,7 @@ pub fn admin_url() -> String {
 ///
 /// Panics under `CI=true` instead of skipping: a CI run that silently ran no
 /// Postgres test would report green having tested nothing.
+/// `Proxiima.Repository.adminConfiguration`.
 #[must_use]
 pub fn admin_url_or_skip() -> Option<String> {
     let url = configured_admin_url();
@@ -314,6 +279,7 @@ impl fmt::Display for DbGuard {
 }
 
 impl Drop for DbGuard {
+    // `Proxiima.Repository.cloneGuard`.
     fn drop(&mut self) {
         if !self.drop_on_success {
             return;
@@ -393,10 +359,7 @@ fn redacted_db_url(name: &str) -> String {
     }
 }
 
-/// `<prefix>_<uuid v7>`: a database name no other call returns, whose time
-/// the sweep reads to tell a leftover from a clone in flight. A prefix that
-/// would push the name past the 63 bytes `PostgreSQL` keeps is cut, so the
-/// uuid always survives.
+/// `Proxiima.Repository.CloneNamePart`. The sweep reads the UUID timestamp.
 #[must_use]
 pub fn unique_db_name(prefix: &str) -> String {
     const UUID_BYTES: usize = 32;
@@ -850,6 +813,7 @@ fn role_url_from_admin(admin: &str, database: &str, role: &str) -> Result<url::U
 /// role's default privileges — the shape the runtime RLS guard requires.
 #[derive(Debug)]
 #[must_use]
+/// `Proxiima.Repository.CloneRole`.
 pub struct SplitRoleDb {
     guard: DbGuard,
     runtime_url: String,
@@ -943,17 +907,8 @@ impl SplitRoleDb {
     }
 }
 
-/// A host's own family of template databases: `<prefix><hash:016x>`.
-///
-/// The family is what makes garbage collection safe: [`ensure_template_in`]
-/// and [`drop_stale_templates_in`] drop idle templates of this family only,
-/// so a host's stale templates are collected and nobody else's are touched.
-/// [`ensure_template`] and [`drop_stale_templates`] keep their two built-in
-/// families (`proxiima_tmpl_{core,split}_`); [`Self::new`] refuses any
-/// prefix that could reach one, so the two collectors never meet.
-///
-/// The family is passed to the call that builds the template. There is no
-/// registry of families.
+/// A host-selected family of templates for [`ensure_template_in`].
+/// `Proxiima.Repository.TemplateFamilyRule`. Families have no global registry.
 ///
 /// ```compile_fail,E0451
 /// // `new` is the only way in: a family is validated or it does not exist.
@@ -965,11 +920,9 @@ pub struct TemplateFamily {
 }
 
 impl TemplateFamily {
-    /// A family named by `prefix`, a database-name prefix: lowercase ASCII
-    /// letters, digits and `_`, starting with a letter, ending with `_`, at
-    /// most 47 bytes (so `prefix` plus 16 hex digits fits the 63-byte
-    /// database name limit), and neither equal to, prefixed by, nor a prefix
-    /// of a built-in family or of the `proxiima_tmpl_build_` staging prefix.
+    /// Validate a lowercase ASCII identifier prefix that starts with a letter
+    /// and ends with an underscore. `Proxiima.Repository.TemplateFamilyRule`.
+    /// The prefix is at most 47 bytes and must be disjoint from the built-in families.
     ///
     /// # Errors
     ///
@@ -1010,18 +963,13 @@ impl TemplateFamily {
         &self.prefix
     }
 
-    /// The database name of the template with fingerprint `hash`: the prefix
-    /// and 16 lowercase hex digits. The digits keep the name from parsing as
-    /// a clone name (`<prefix>_<uuid>`), so the untracked-leftover sweep
-    /// cannot take a template.
+    /// Build the template name. The hash suffix keeps it outside the clone sweep.
     #[must_use]
     pub fn template_name(&self, hash: u64) -> String {
         format!("{}{hash:0TEMPLATE_HASH_DIGITS$x}", self.prefix)
     }
 
-    /// Whether `name` is a template of this family: the prefix and exactly
-    /// 16 lowercase hex digits. Stricter than a `LIKE` on the prefix, so a
-    /// family whose prefix extends another's does not reach into it.
+    /// `Proxiima.Repository.TemplateFamilyRule`. An exact suffix also separates nested families.
     fn owns(&self, name: &str) -> bool {
         name.strip_prefix(self.prefix.as_str()).is_some_and(|hash| {
             hash.len() == TEMPLATE_HASH_DIGITS
@@ -1036,8 +984,7 @@ impl TemplateFamily {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateFamilyError {
     Empty,
-    /// More than 47 bytes: the prefix plus 16 hex digits would not fit a
-    /// 63-byte database name.
+    /// The prefix and hash would exceed the PostgreSQL identifier limit.
     TooLong {
         len: usize,
     },
@@ -1226,6 +1173,7 @@ pub async fn drop_stale_templates_in(
 /// The body of [`ensure_template`] and [`ensure_template_in`]. `family` is
 /// `None` for a template named by hand, whose built-in family (if any) is
 /// read off its name. The returned lease is held on `conn`.
+// `Proxiima.Repository.TemplateLifecycle`.
 async fn ensure_template_collecting<F, Fut>(
     template: &str,
     family: Option<&TemplateFamily>,
@@ -1661,9 +1609,7 @@ async fn record_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Erro
     Ok(())
 }
 
-/// [`record_db`] for a database this call just created: when it cannot be
-/// recorded it is dropped again, so no created database is left outside the
-/// catalog the sweep reads.
+/// `Proxiima.Repository.CloneRegistration`. The UUID sweep covers surviving untracked fixture names.
 async fn record_new_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Error> {
     if let Err(error) = record_db(conn, name).await {
         if let Err(cleanup_error) = drop_db_on(conn, name).await {
@@ -1695,6 +1641,7 @@ async fn drop_db_on(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Err
     Ok(())
 }
 
+// `Proxiima.Repository.staleCloneCollectible`.
 async fn sweep_stale_on(conn: &mut PgConnection) -> Result<usize, sqlx::Error> {
     ensure_catalog(conn).await?;
     let start = process_start(conn).await?;
@@ -1806,6 +1753,7 @@ async fn drop_idle_templates_on(
 
 /// Drop the template `name` unless it is leased ([`TemplateLease`]) or in
 /// use. `false` is a skip, not a failure.
+// `Proxiima.Repository.collectTemplate`.
 async fn drop_unleased_on(conn: &mut PgConnection, name: &str) -> Result<bool, sqlx::Error> {
     let key = lease_key(name);
     let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -1976,6 +1924,7 @@ pub fn is_connection_exhaustion(message: &str) -> bool {
 /// connections from an operation that stalled for another reason. The
 /// budget is read over a superuser admin connection, which the reserved
 /// slots normally still admit; when even that fails, the message says so.
+/// `Proxiima.Repository.ConnectionDiagnostic`.
 pub async fn describe_connection_error(context: &str, error: &dyn fmt::Display) -> String {
     let message = format!("{context}: {error}");
     if !is_connection_exhaustion(&message) {

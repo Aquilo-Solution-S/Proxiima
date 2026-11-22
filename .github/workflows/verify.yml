@@ -1,23 +1,6 @@
 name: Verify
 
-# `main` takes direct pushes; `verified` names the last commit that passed CI.
-# Work starts from `verified`, releases are cut only from it, and this workflow
-# is the only writer of it and the rolling `nightly` tag.
-#
-#   green  CI passes on the newest `main` commit and every commit since
-#          `verified` has a review record (scripts/verify-review.py) ->
-#          `verified` fast-forwards and `nightly` moves to that same commit
-#          atomically. release.yml cuts a numbered tag only if the workspace
-#          version was deliberately bumped.
-#   no record
-#          CI passes but a commit lacks the record: `verified` stays where it
-#          is until a later push records the review.
-#   red    `verified` stays where it is, and `main` stays red until a commit
-#          fixes it.
-#
-# One run at a time. GitHub keeps one pending run per group and lets a newer
-# push replace it, so pushes that land during a run are verified together.
-
+# `Proxiima.Repository.VerificationTarget`. GitHub keeps one pending run per group.
 on:
   push:
     branches: [main]
@@ -29,7 +12,7 @@ permissions:
 
 concurrency:
   group: verify
-  cancel-in-progress: false
+  cancel-in-progress: false # `Proxiima.Repository.cancelSupersededValidation`.
 
 jobs:
   target:
@@ -50,6 +33,7 @@ jobs:
           # from main's history. That is what makes running it with
           # main's cache scope safe, and a dispatch from any other branch
           # would otherwise verify and release an unmerged commit.
+          # `Proxiima.Repository.verifyRange`.
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "::error::verify runs on main only, not ${GITHUB_REF}"
             exit 1
@@ -117,9 +101,7 @@ jobs:
         with:
           ref: ${{ needs.target.outputs.tip }}
           fetch-depth: 0
-      # One transaction keeps both refs on the tested commit. Only the rolling
-      # tag is forced; `verified` still requires a fast-forward. No release
-      # object is created for nightly, and numbered tags are never moved.
+      # `Proxiima.Repository.advanceVerified`.
       - name: publish verified and nightly
         run: git push --atomic origin HEAD:refs/heads/verified +HEAD:refs/tags/nightly
 

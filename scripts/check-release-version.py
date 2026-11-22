@@ -28,6 +28,7 @@ def read_workspace_version(manifest: dict) -> str:
     return version
 
 
+# `Proxiima.Repository.VersionSource`.
 def uninherited_members(manifest: dict, read_member: Callable[[str], dict]) -> list[str]:
     """Workspace members whose `[package].version` is not `version.workspace = true`."""
     return [
@@ -63,6 +64,7 @@ def show(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
 
+# `Proxiima.Repository.versionAccepted`.
 def validate(current: str, tags: list[str]) -> tuple[bool, str]:
     parsed = parse(current)
     if parsed is None:
@@ -70,11 +72,11 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
 
     released = sorted(filter(None, (parse(tag[1:]) for tag in tags if tag.startswith("v"))))
     if not released:
-        return True, f"no released tag yet; verification cuts v{current}"
+        return True, f"no released tag yet. Verification cuts v{current}"
 
     latest = released[-1]
     if parsed == latest:
-        return True, f"workspace version is v{current}, already released; verification cuts no tag"
+        return True, f"workspace version is v{current}, already released. Verification cuts no tag"
 
     if parsed in released:
         return False, (
@@ -89,7 +91,7 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
             f"Expected one of: {', '.join('v' + show(nxt) for nxt in allowed)}"
         )
 
-    return True, f"workspace version bumped v{show(latest)} -> v{current}; verification cuts that tag"
+    return True, f"workspace version bumped v{show(latest)} -> v{current}. Verification cuts that tag"
 
 
 def git_tags() -> list[str]:

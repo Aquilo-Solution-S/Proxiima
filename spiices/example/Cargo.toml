@@ -32,7 +32,7 @@ uuid = { workspace = true }
 proxiima = { path = "../../crates/proxiima", features = ["testkit"] }
 proxiima-example = { path = ".", features = ["testkit"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-toml = { workspace = true }
+toml = { workspace = true } # `Proxiima.Repository.TestDependency`.
 
 [lints]
 workspace = true

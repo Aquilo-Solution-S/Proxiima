@@ -17,13 +17,8 @@ concepts and integration; avoid a second invariant or configuration ledger.
   [configuration](docs/configuration.md) is rendered from the blocks and kept
   current by a regenerating test in `apps/proxiima-mcp`. Action/resource
   schemas: the live catalog.
-- Keep work within existing crates/packages. Adding a binary, crate, service,
-  migration, protocol surface, or registration path requires an explicit task;
-  the pre-push review enforces this boundary. Example: a retrieval fix does
-  not authorize a new inference service.
-- Scratch plans and bulky review evidence belong in ignored `.local/`. This is
-  a review judgment: tracked docs should survive the task; a failed-command
-  transcript belongs in a ledger, a lasting decision in `docs/decisions.md`.
+- Require explicit task authorization for new crates, binaries, services, migrations, protocol surfaces and registration paths so review can enforce scope.
+- Keep transient plans and bulky evidence in ignored `.local/` so tracked documents remain durable.
 
 ## Workspace
 
@@ -42,37 +37,10 @@ concepts and integration; avoid a second invariant or configuration ledger.
 
 ## Branch and release policy
 
-1. Push to `main` directly. History stays linear: rebase, never merge or
-   force-push branches or numbered tags. Only `verify.yml` moves the rolling
-   `nightly` tag. Before pushing, run the complete local gates and an independent
-   review of `origin/main..HEAD` by a vendor other than the one the commits'
-   `Co-Authored-By` trailers name. The last commit of the pushed range records
-   it as a `Reviewed-By: <reviewer> <address>` trailer (example
-   `Reviewed-By: Codex <noreply@openai.com>`), the address being the one that
-   vendor's `Co-Authored-By` trailers use; a commit a person wrote alone is
-   recorded the same way, by anyone but its author. The trailer also covers
-   commits already on `main` that carry no record yet, so the review includes
-   those. Every rule in this file that says "review" means this review;
-   nothing else reads a change before it lands.
-2. `verified` is the last `main` commit that passed CI; only `verify.yml`
-   moves it. Start work from `origin/verified`, not `origin/main`: commits on
-   `main` past `verified` are untested and are not ground truth.
-3. `verify.yml` runs CI on the newest `main` commit and batches pushes that
-   land meanwhile. It advances only over recorded commits: each commit past
-   `verified` needs a `Reviewed-By` trailer, on itself or on a later commit,
-   whose address is neither the commit's author nor one of its
-   `Co-Authored-By` (`scripts/verify-review.py`). Green on such a range
-   atomically fast-forwards `verified` and moves the lightweight `nightly` tag
-   to the same tested commit; without the record `verified` stays until a
-   later push carries it. Red leaves `verified` where it is, and `main` stays
-   red until a commit fixes it. Only verify runs save Rust caches. PRs remain
-   for outside contributors.
-4. Routine changes leave the workspace version in `Cargo.toml` (exposed as
-   `proxiima_core::RELEASE_VERSION`) unchanged and ship through `nightly`,
-   without creating a GitHub Release. A deliberate bump cuts `v${VERSION}`
-   through `release.yml` once `verified` reaches it. No release is cut from an
-   unverified commit. The version checker validates the next
-   published number.
+1. Start from `origin/verified` so work starts after CI. Push directly to `main` with linear history and keep branches and numbered tags free of force rewrites. Outside contributions use pull requests.
+2. Before pushing, review `origin/main..HEAD` and every still-unrecorded commit since `origin/verified`. Use a different authoring vendor, or a different person for an unaided author. Record its co-author address in `Reviewed-By` on the tip to cover outstanding commits. The trailer states the reviewer's claim, and Verify checks only that it is present and that its address differs from the authors' addresses.
+3. Leave the workspace version alone for routine changes. A deliberate bump requests a numbered release through Verify. Do not tag by hand.
+4. See [`Proxiima.Repository`](docs/ledger.md#repository).
 5. Released migrations are immutable; `scripts/check-migrations.py` pins every
    released file from `RELEASE_EPOCH`. New migration versions must be above all
    released versions in their directory. Definitions are edited in place; see
@@ -98,59 +66,21 @@ in a Perspective payload, not a new edge kind.
 
 ## Delegation
 
-Prefer native read-only Codex workers for non-trivial orientation and dependency
-tracing. After intent and invariants are clear, prefer bounded native Codex
-implementation workers with disjoint file ownership and executable gates.
-This is a judgment call to preserve the engineer's critical path: skip a worker
-for one known `rg` lookup. Non-Codex workers need explicit user selection.
-
-The calling engineer owns scope, architecture, actual diff review, load-bearing
-verification, commits, pushes, and publication. Workers never commit or stage;
-in a worktree the index can be outside their write boundary. Do not revert
-other workers' edits or delegate secrets, customer data, or sensitive fixtures.
-These boundaries are enforced by worker briefs and orchestrator diff review.
+Prefer native read-only Codex workers for non-trivial tracing and scoped native Codex workers with disjoint ownership and executable gates for implementation, to preserve the critical path. Non-Codex workers need explicit selection.
+The caller owns scope, diff review, verification, commits and publication. Workers never stage or commit because the worktree index may be outside their write scope. Preserve others' edits and withhold sensitive material from delegates.
 
 ## Verification and failures
 
-The complete local gates are listed once, in
-[contributing](docs/contributing.md#local-verification); CI runs the same
-commands. Workspace lints deny warnings and Clippy pedantic findings. Use
-`cargo check` and selected nextest tests during iteration; per-package success
-does not verify a spiice's served catalog. Changes to `mcp_tools` require the
-host e2e path. Verify both the all-features lane and the default substrate-only
-host.
-
-PG tests require `PROXIIMA_TEST_PG_URL`, an admin URL for a server you own.
-Testkit sweep/GC touches every matching test database behind that URL.
-`admin_url_or_skip()` skips locally and fails in CI; report every skip.
-
-If any check fails, fix it, ledger exact command/output and a concrete deferral
-reason under `.local`, or escalate a blocker. Review must account for every
-observed failure; never report required checks green while one still fails.
-Never weaken, delete, or ignore a surviving behavioral assertion to pass.
+Run focused checks while iterating and the [contributing gates](docs/contributing.md#local-verification) before pushing. Serve the MCP catalog for tool changes because registration alone cannot verify what a client sees.
+Compile `*_for_tests` constructors and fixtures only under `cfg(test)` or the `testkit` feature.
+Point PG tests only at an owned server because the fixture sweep operates across it.
+Fix, record or escalate each observed red or skip with exact commands, output and any deferral reason under `.local/`. Keep every surviving behavioral assertion.
 
 ## Artifacts and commits
 
-- English repository artifacts. Documentation review favors technical facts,
-  signatures, tables, and links over repeated explanations: a second defaults
-  table would drift from rustdoc. The link gate and the settings table test
-  enforce their own boundaries.
-- Mermaid diagrams are inline and rendered by `pymdownx.superfences` in the
-  strict MkDocs build. Keep diagrams conceptual; schemas remain generated.
-- Subjects use Conventional Commits: `docs(<scope>): …`,
-  `feat(<component>): …`, `fix(<component>): …`, `chore(<component>): …`.
-  Use existing crate/component names. Git-cliff groups these subjects.
-- Breaking changes carry an `Upgrade:` footer naming the concrete client or
-  operator action. Review judgment: readers need one usable upgrade note;
-  e.g. `Upgrade: Replace the retired resource with the host outbox intake.`
-  `cliff.toml` renders the footer; its fixture gate verifies rendering.
-- AI commits carry a `Co-Authored-By` trailer naming the model that wrote
-  them, e.g. `Codex <noreply@openai.com>` or
-  `Claude Opus 5.5 <noreply@anthropic.com>`. The independent review and
-  `verify.yml` read it to exclude the authoring vendor, so a borrowed trailer
-  defeats the review.
-  Add `Tesla-Valve:` trailers for decisions made under that skill.
+- Write technical artifacts in English and keep diagrams conceptual, so the generated schema stays authoritative.
+- Scope Conventional Commit subjects to an existing component for release-note grouping.
+- Put a concrete operator or client action in a breaking commit's `Upgrade:` footer so the rendered note is actionable.
+- Attribute AI work to its actual authoring model in `Co-Authored-By` so review can exclude that vendor, and record applicable decisions in `Tesla-Valve` trailers.
 
-If a requirement is ambiguous or conflicts with a principle, ask before making
-an architectural choice. Judgment: such choices compound; an unfamiliar helper
-name needs source inspection, a new authorization model needs agreement.
+Resolve conflicts with a principle before changing architecture because those decisions compound.

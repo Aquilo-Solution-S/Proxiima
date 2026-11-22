@@ -375,7 +375,7 @@ def cloneGuard : (keep : Bool) → (panics : Bool) → CloneDisposition
   | false, true => .keepWithRedactedDiagnostic
   | false, false => .drop
 
-/-- Failed registration attempts cleanup and reports a cleanup failure; fixture-named survivors can be swept without a record. -/
+/-- Failed registration attempts cleanup and reports a cleanup failure. Fixture-named survivors can be swept without a record. -/
 inductive CloneRegistration where
   | track
   | cleanUpAfterFailure
@@ -478,7 +478,7 @@ inductive DevIssuerInput where
   | subjectDerivedUser
   deriving DecidableEq
 
-/-- The development issuer reuses a persisted signer, creates it exclusively and reuses a concurrent winner, or uses an in-memory signer for ephemeral operation. -/
+/-- The development issuer loads a persisted signer, creates a missing file exclusively, reads the winning file after a creation conflict, or uses an in-memory signer in ephemeral mode. -/
 inductive DevSigner where
   | loadExisting
   | createExclusively

@@ -71,6 +71,7 @@ def is_ignored_scheme(target: str) -> bool:
     return target.startswith(("http://", "https://", "mailto:", "proxiima://"))
 
 
+# `Proxiima.Repository.MarkdownLinkRefusal`.
 def main() -> int:
     paths = [Path(arg) for arg in sys.argv[1:]] if len(sys.argv) > 1 else markdown_files()
     failures: list[str] = []

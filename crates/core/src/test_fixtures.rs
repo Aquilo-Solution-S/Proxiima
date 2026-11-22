@@ -53,6 +53,7 @@ pub fn no_access_context() -> AuthzContext {
 ///
 /// # Panics
 /// The supplied fixture must already contain server-resolved owner roles.
+/// `Proxiima.Repository.CoreFixture`.
 #[must_use]
 pub fn authenticated_context(context: AuthzContext) -> AuthzContext {
     struct FixtureVerifier(proxiima_core::AuthzContext);
@@ -256,6 +257,7 @@ pub fn rejecting_engine(registry: impl AsRef<SpiiceRegistryFrozen>) -> Arc<Engin
 
 /// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`
 /// builds one: through [`ToolCtx::new`], serving `engine`'s registry.
+/// `Proxiima.Repository.CoreFixture`.
 #[must_use]
 pub fn tool_ctx_on(
     owner: OwnerId,

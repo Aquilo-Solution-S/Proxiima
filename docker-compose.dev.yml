@@ -9,6 +9,7 @@ services:
       POSTGRES_USER: proxiima
       POSTGRES_PASSWORD: proxiima
       POSTGRES_DB: proxiima
+    # `Proxiima.Repository.LoopbackFixture`.
     ports:
       # The host default is 5434 for compatibility. Override with
       # PROXIIMA_DEV_POSTGRES_PORT when that port is already in use.

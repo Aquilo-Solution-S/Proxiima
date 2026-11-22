@@ -118,6 +118,7 @@ fn assert_refused(manifest: &str, workspace: &str) {
     );
 }
 
+// `Proxiima.Repository.TestDependency.exampleSdkBoundary`.
 #[test]
 fn the_example_library_depends_on_no_workspace_crate_but_proxiima_spiice() {
     let offenders = workspace_crate_offenders(MANIFEST, WORKSPACE_MANIFEST);

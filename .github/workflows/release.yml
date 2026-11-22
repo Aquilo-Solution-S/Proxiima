@@ -1,20 +1,6 @@
 name: Release
 
-# A release is cut by VERIFYING, not by tagging. A commit that bumps
-# the workspace version in Cargo.toml to a version no tag holds yet becomes
-# `v${version}` the moment verify.yml advances `verified` onto it; a
-# commit that leaves the version alone cuts nothing, so ordinary changes
-# accumulate until someone decides the next release is worth naming.
-# `scripts/check-release-version.py` validates the bump in CI.
-#
-# Tagging and releasing are ONE job on purpose: a tag pushed with GITHUB_TOKEN
-# does not trigger another workflow, so a separate tag-triggered release would
-# never fire for a tag this workflow created.
-#
-# The `v*` trigger is kept for a tag pushed by hand — a backfill, or a re-run
-# after this workflow failed between the tag and the Release. Every trigger
-# refuses a commit `verified` does not contain.
-
+# A tag pushed with GITHUB_TOKEN does not trigger another workflow.
 on:
   workflow_call:
   push:
@@ -53,20 +39,19 @@ jobs:
             exit 1
           fi
           tag="v${version}"
+          # `Proxiima.Repository.numberedRelease`.
           if ! git merge-base --is-ancestor HEAD origin/verified; then
             echo "::error::$(git rev-parse HEAD) is not verified; release only what verify.yml has passed"
             exit 1
           fi
-          # The server reports the workspace version over MCP initialize and REST
-          # OpenAPI, so a Release naming a version the tagged tree does not
-          # declare is a version no client can trust. Refuse the mismatch.
+          # `Proxiima.Repository.recoverRelease`.
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
             printf '::error::Tag %s does not match the workspace version in Cargo.toml (%s)\n' "${GITHUB_REF_NAME}" "${tag}"
             exit 1
           fi
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]] \
             && git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "::notice::${tag} is already released; this verified version cuts no tag"
+            echo "::notice::${tag} is already released. This verified version cuts no tag"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -102,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.target.outputs.tag }}
-        # Pre-1.0 tags ship as pre-releases; flip the gate at the v1 tag.
+        # `Proxiima.Repository.publishPrerelease`.
         run: |
           PRERELEASE=""
           case "${TAG}" in

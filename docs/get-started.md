@@ -14,9 +14,7 @@ the repository root.
 
 ## 1. Boot Postgres
 
-The development image supplies `vector`, `pg_trgm`, and `btree_gin`. The
-bootstrap script creates separate, non-superuser serving and platform roles.
-Use the same port in every shell. The default is `5434`.
+Stop the running development hosts before replaying the bootstrap on an existing database. Use the same published PostgreSQL port in each shell. The default is `5434`. [Repository ledger](ledger.md#repository)
 
 ```sh
 export PROXIIMA_DEV_POSTGRES_PORT=5434

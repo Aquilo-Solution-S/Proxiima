@@ -3,6 +3,4 @@
 Runtime framework core: graph contracts, build-time registries, protocol verbs,
 Goal/Perspective runtime contracts, MCP substrate, and storage ports.
 
-Most applications should depend on `proxiima`, not this crate directly. The Lean
-kernel in [`../../lean/Causa`](../../lean/Causa) states principles;
-Rust code and tests define runtime behavior.
+Most applications should depend on `proxiima`, not this crate directly. See the [ledger](../../docs/ledger.md).

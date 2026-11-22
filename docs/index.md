@@ -72,12 +72,7 @@ the current actions and resources from `tools/list`, `proxiima://tools`, or
 
 ## Authority
 
-The kernel states the principles. Rust code and tests define observable
-behavior. When a principle changes, change the kernel first and then bring
-code, tests, and prose into agreement. Migrations own table shape; rustdoc
-owns types, defaults, and limits; each crate's `settings!` block owns its
-settings, which [Configuration](configuration.md) renders.
+[`Proxiima.Repository`](ledger.md#repository) and the [repository's source authority](https://github.com/Aquilo-Solution-S/proxiima/blob/main/AGENTS.md#scope-and-authority).
 
 The [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean)
-state the domainless rules. This site presents their current concepts and
-decisions; Rust code and tests define runtime behavior.
+state domainless rules.

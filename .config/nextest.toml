@@ -1,11 +1,5 @@
 [profile.default]
-# Each test is its own process with its own pools, and the eight that run at
-# once share one server's max_connections. A serving boot validates on one
-# connection per pool, and fixture Engines size their pools to four, so a
-# full workspace run at eight threads peaks near 60 client backends (about 40
-# non-superuser). The dev compose file and CI run Postgres with
-# max_connections=200; the docs-default 100 still holds with margin.
-# Re-measure before raising test-threads (docs/contributing.md).
+# Eight processes peak near 60 client backends. Check pg_stat_activity against the server's max_connections before raising test-threads.
 test-threads = 8
 # No retries: a retry turns a test that failed on a missing resource into a
 # pass and hides the failure. A failing test fails the run.

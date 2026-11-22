@@ -9,6 +9,7 @@ rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/Aquilo-Solution-S/proxiima"
 
+# `Proxiima.Repository.WorkspaceLint`.
 [workspace.lints.rust]
 warnings = "deny"
 unsafe_code = "deny"
@@ -49,17 +50,11 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 rmcp = { version = "3.4", default-features = false, features = ["server", "transport-streamable-http-server"] }
 schemars = { version = "1", features = ["uuid1", "preserve_order"] }
-# JSON Schema validator for tests only: tool results are checked against the
-# output schemas the server publishes (apps/proxiima-mcp end_to_end).
 boon = "0.6"
-# Manifest parsing for tests only: the example spiice's dependency guardrail
-# (spiices/example/tests/cargo_deps.rs) resolves every dependency table.
 toml = "1.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-# v10 split the crypto backend out of default features (default = ["use_pem"] only),
-# so a bare dep panics at first RS256 sign/verify ("could not determine CryptoProvider").
-# Enable the aws-lc-rs backend to match the workspace's rustls-0.23/aws-lc-rs posture
-# (already in-tree) and avoid the `rust_crypto` backend's `rsa` dep (RUSTSEC-2023-0071).
+# Enable the AWS-LC backend to avoid a panic at the first RS256 sign.
+# `Proxiima.Repository.CryptoProvider`.
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 aws-lc-rs = "1.15.0"
 base64 = "0.23"
@@ -73,25 +68,18 @@ tower = "0.5.2"
 hex = "0.4.3"
 whatlang = "0.18"
 sha2 = "0.11"
-# Drop aws-sdk-s3's default `rustls` feature: it pulls the LEGACY rustls 0.21
-# stack (aws-smithy-http-client/legacy-rustls-ring -> rustls-webpki 0.101.7,
-# RUSTSEC-2026-0098/0099/0104). `default-https-client` (kept) uses the modern
-# rustls 0.23 + aws-lc-rs client instead; aws-lc-sys is already in the tree.
-# Omit default `sigv4a`: it pulls crypto-bigint 0.5 (RUSTSEC-2026-0387) through
-# aws-sigv4 + p256, and aws-sigv4 still pins `crypto-bigint = "0.5.4"` with no
-# 0.5.x patch (fixed only in >=0.7.6). Cited-blob storage signs with SigV4
-# against a regional bucket; Multi-Region Access Points are not a supported
-# target.
+# The default S3 TLS feature would pull a second, legacy Rustls stack.
+# Omit `sigv4a`. Multi-Region Access Points are unsupported.
 aws-sdk-s3 = { version = "1.79.0", default-features = false, features = [
     "default-https-client",
     "rt-tokio",
 ] }
 
+# `Proxiima.Repository.ReleaseProfile`.
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
 
-# Optimize build scripts (e.g. tree-sitter cc builds) even in release.
 [profile.release.build-override]
 opt-level = 3
