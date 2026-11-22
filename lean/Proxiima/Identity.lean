@@ -182,7 +182,9 @@ inductive MintRefusal where
 
 /-- A mint advances past the revision floor and the last mint, even when the clock stalls. -/
 def monotonicMint : MintClock → CounterSpace → MintRange → Except MintRefusal MintStep
-  | _, _, .overflow => .error .timestampOverflow
+  | .aheadOrUnbound, .available, .overflow | .aheadOrUnbound, .exhausted, .overflow
+  | .atOrBehind, .available, .overflow | .atOrBehind, .exhausted, .overflow =>
+    .error .timestampOverflow
   | .aheadOrUnbound, .available, .fits | .aheadOrUnbound, .exhausted, .fits => .ok .reseedAtClock
   | .atOrBehind, .available, .fits => .ok .incrementCounter
   | .atOrBehind, .exhausted, .fits => .ok .reseedNextMillisecond

@@ -87,8 +87,8 @@ theorem not_achieve_needs_an_achieved_child : blocksClose .Abandoned = false := 
 
 /-- Whether close-Fact presence agrees exactly with terminal state. -/
 def closeFactPresence : GoalState → Bool → Bool
-  | state, true => state.terminal
-  | state, false => state.isOpen
+  | .Achieved, true | .Abandoned, true | .Active, false | .Paused, false => true
+  | .Active, true | .Paused, true | .Achieved, false | .Abandoned, false => false
 
 /-- The largest trimmed Goal title in characters. -/
 def titleMax : Nat := 240
@@ -258,7 +258,7 @@ inductive RetryAction where
 def retryTransaction : TransactionOutcome → RetryBudget → RetryAction
   | .retryable, .available | .memoryIdCollision, .available => .retry
   | .memoryIdCollision, .exhausted => .refuseCollision
-  | .retryable, .exhausted | .other, _ => .returnOutcome
+  | .retryable, .exhausted | .other, .available | .other, .exhausted => .returnOutcome
 
 /-- The steps of Goal revision persistence, from owner fencing to target revalidation. -/
 inductive AdmissionStep where

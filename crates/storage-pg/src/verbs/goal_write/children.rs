@@ -24,6 +24,7 @@ pub(super) async fn ensure_goal_children_closed(
 }
 
 /// Refuse closure if any child is open, preserving child series handle order.
+/// `Proxiima.Goals.GoalState.isOpen`
 pub(super) fn open_children(rows: &[(uuid::Uuid, GoalState)]) -> Result<(), StorageError> {
     let open: Vec<GoalId> = rows
         .iter()

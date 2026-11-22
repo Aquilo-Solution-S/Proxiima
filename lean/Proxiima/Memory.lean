@@ -95,8 +95,9 @@ inductive DerivedHeadAction where
 /-- Equal origins and references replay the stored version when guidance agrees, while changed origins permit a new revision after the forgotten-version probe. -/
 def derivedHeadAction : (originsMatch : Bool) → (referencesMatch : Bool) →
     (guidanceMatches : Bool) → DerivedHeadAction
-  | false, _, _ => .probeForgotten
-  | true, false, _ => .refuseReferenceDrift
+  | false, false, false | false, false, true | false, true, false | false, true, true =>
+    .probeForgotten
+  | true, false, false | true, false, true => .refuseReferenceDrift
   | true, true, false => .appendVersion
   | true, true, true => .replayStoredVersion
 
@@ -110,7 +111,7 @@ inductive OccurrenceSource where
 def occurrenceSource : Kind → (supplied : Bool) → Option OccurrenceSource
   | .Fact, true => some .supplied
   | .Fact, false => some .admissionTime
-  | .Abstraction, _ | .Perspective, _ => none
+  | .Abstraction, true | .Abstraction, false | .Perspective, true | .Perspective, false => none
 
 /-- The greatest allowed future occurrence offset, in minutes relative to the admission clock. -/
 def futureOccurrenceMinutes : Nat := 5
@@ -174,7 +175,9 @@ inductive OperatorPhase where
 /-- The admissible input layers for an operator invocation. -/
 def operatorAdmitsInput : OperatorPhase → EntityKind → Bool
   | .ToA, .Fact | .ToA, .Abstraction | .AtoP, .Abstraction | .AtoGoal, .Abstraction => true
-  | _, _ => false
+  | .ToA, .Perspective | .ToA, .Goal
+  | .AtoP, .Fact | .AtoP, .Perspective | .AtoP, .Goal
+  | .AtoGoal, .Fact | .AtoGoal, .Perspective | .AtoGoal, .Goal => false
 
 /-- The layer or spine of each operator phase's output. -/
 def operatorOutput : OperatorPhase → EntityKind

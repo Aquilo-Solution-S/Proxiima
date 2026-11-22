@@ -6,5 +6,5 @@ unsafe def main (args : List String) : IO UInt32 :=
     ledger := `Proxiima
     proofs := [`Causa]
     scopes := [{ rules := `Proxiima, code := [".", ":!lean", ":!docs", ":!*.md",
-      ":!llms*.txt", ":!crates/core/src/ledger.rs", ":!crates/core/tests/ledger_vectors.json"] }]
+      ":!llms*.txt", ":!crates/core/tests/ledger_vectors.json"] }]
   } args

@@ -26,12 +26,6 @@
 - serving
 - objectStore
 
-**Publication block**: The independently configurable settings for capturing and maintaining publication.
-
-- capture
-- retention
-- objectPurge
-
 **Lookup text**: The lexical outcomes of trimming a setting's lookup result.
 
 - missing
@@ -75,11 +69,11 @@
 
 **storage policy source** = resolvedConfiguration: Facade storage boot consumes its resolved pool and query policy without a second environment lookup.
 
-**true words** = ["1", "true", "yes", "on"]: The case-insensitive boolean words that read as true after trimming.
+**true words** = \["1", "true", "yes", "on"]: The case-insensitive boolean words that read as true after trimming.
 
-**false words** = ["0", "false", "no", "off"]: The case-insensitive boolean words that read as false after trimming.
+**false words** = \["0", "false", "no", "off"]: The case-insensitive boolean words that read as false after trimming.
 
-**documentation sources** = [facade, core, postgres, objectStore, host]: The composition order for settings documentation and help, with development tools outside the composition.
+**documentation sources** = \[facade, core, postgres, objectStore, host]: The composition order for settings documentation and help, with development tools outside the composition.
 
 | presence | presence | presence | layer precedence |
 | --- | --- | --- | --- |
@@ -114,35 +108,6 @@
 | storageOnly | objectStore | no |
 
 - reads group: Storage commands read storage and its embedding runtime policy, with object configuration acquired separately by commands that need it.
-
-| publication block | presence | presence | presence | read publication block |
-| --- | --- | --- | --- | --- |
-| capture | omitted | omitted | omitted | yes |
-| capture | omitted | omitted | supplied | yes |
-| capture | omitted | supplied | omitted | yes |
-| capture | omitted | supplied | supplied | yes |
-| capture | supplied | omitted | omitted | no |
-| capture | supplied | omitted | supplied | no |
-| capture | supplied | supplied | omitted | no |
-| capture | supplied | supplied | supplied | no |
-| retention | omitted | omitted | omitted | yes |
-| retention | omitted | omitted | supplied | yes |
-| retention | omitted | supplied | omitted | no |
-| retention | omitted | supplied | supplied | no |
-| retention | supplied | omitted | omitted | yes |
-| retention | supplied | omitted | supplied | yes |
-| retention | supplied | supplied | omitted | no |
-| retention | supplied | supplied | supplied | no |
-| objectPurge | omitted | omitted | omitted | yes |
-| objectPurge | omitted | omitted | supplied | no |
-| objectPurge | omitted | supplied | omitted | yes |
-| objectPurge | omitted | supplied | supplied | no |
-| objectPurge | supplied | omitted | omitted | yes |
-| objectPurge | supplied | omitted | supplied | no |
-| objectPurge | supplied | supplied | omitted | yes |
-| objectPurge | supplied | supplied | supplied | no |
-
-- read publication block: Given the block and the presence of capture, retention and object purge overrides in that order, only an override for that block suppresses its lookup.
 
 | lookup text | lookup presence |
 | --- | --- |
@@ -348,15 +313,15 @@
 
 **decompose root key max** = 162: The root key character ceiling that leaves room for the child prefix, separators and largest index.
 
-**decompose child prefix** = "goal_decompose": The prefix of each child request key, followed by the root key and zero-based index.
+**decompose child prefix** = "goal\_decompose": The prefix of each child request key, followed by the root key and zero-based index.
 
-**evidence declaration** = "goal.evidence_t": Goal evidence is read from the exact declaration whose pins are projected by `Causa.goalDeclaredTargetIds`.
+**evidence declaration** = "goal.evidence\_t": Goal evidence is read from the exact declaration whose pins are projected by `Causa.goalDeclaredTargetIds`.
 
-**motivation declaration** = "goal.motivated_by": The authoritative field behind the reverse index, with targets governed by `Causa.goal_motivations_valid`.
+**motivation declaration** = "goal.motivated\_by": The authoritative field behind the reverse index, with targets governed by `Causa.goal_motivations_valid`.
 
-**operator authorship** = "system_operator": Operators use their authorship category in the durable command and its replay identity.
+**operator authorship** = "system\_operator": Operators use their authorship category in the durable command and its replay identity.
 
-**admission order** = [fenceOwners, reserveFactIdentity, lockMemoryHandles, lockLifecycleUnion, lockGoalHeads, revalidateTargets]: Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head.
+**admission order** = \[fenceOwners, reserveFactIdentity, lockMemoryHandles, lockLifecycleUnion, lockGoalHeads, revalidateTargets]: Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head.
 
 **transfer goal** = no: A Goal remains owned by its original owner throughout its series.
 
@@ -679,7 +644,7 @@ stateDiagram-v2
 - operator
 - endpointAndBucket
 
-**receipt fields** = [source, owner, payload]: A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes.
+**receipt fields** = \[source, owner, payload]: A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes.
 
 **uuid timestamp bits** = 48: Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
 
@@ -891,7 +856,7 @@ stateDiagram-v2
 
 **confidence default** = 80: The interpretation confidence used when the tool receives no score.
 
-**interpretation key** = [destinationNamespace, operatorLabel, claim, confidence, localSubjectVersions, sortedRemoteSubjectHandles]: The handle hashes the local key and folds in sorted remote handles when present, so reasserting the same interpretation lands on one memory.
+**interpretation key** = \[destinationNamespace, operatorLabel, claim, confidence, localSubjectVersions, sortedRemoteSubjectHandles]: The handle hashes the local key and folds in sorted remote handles when present, so reasserting the same interpretation lands on one memory.
 
 | entity kind | memory kind |
 | --- | --- |
@@ -1218,31 +1183,31 @@ stateDiagram-v2
 - follows: Move keyed data with its series under the destination owner.
 - retainAtSource: Export and erasure follow the row's own owner. Transfer and forget/restore skip the row.
 
-**memory ceiling ranks** = [0, 1, 2, 3]: Memory ceiling ranks in declaration order for Rust.
+**memory ceiling ranks** = \[0, 1, 2, 3]: Memory ceiling ranks in declaration order for Rust.
 
-**goal access ranks** = [0, 1, 2]: Goal capability ranks in declaration order for Rust.
+**goal access ranks** = \[0, 1, 2]: Goal capability ranks in declaration order for Rust.
 
 **owner id bytes** = 36: The hyphenated owner UUID's length in bytes.
 
 **current space key** = "current": The key selecting the session's current memory space.
 
-**space write order** = [resolve, narrow, authorizeVerb]: The admission order of a write into a selected space.
+**space write order** = \[resolve, narrow, authorizeVerb]: The admission order of a write into a selected space.
 
-**group forest** = [singleParent, distinctEndpoints, acyclic]: Multiple children and arbitrary nesting depth are allowed under these group edge invariants.
+**group forest** = \[singleParent, distinctEndpoints, acyclic]: Multiple children and arbitrary nesting depth are allowed under these group edge invariants.
 
-**authority facts** = [currentPersonRole, directRelations, registeredOwnerKind, containment]: An authority session fences the declared targets before returning role, registry and topology facts.
+**authority facts** = \[currentPersonRole, directRelations, registeredOwnerKind, containment]: An authority session fences the declared targets before returning role, registry and topology facts.
 
-**authority fence order** = [lockGroupTrees, verifyRoots, lockOwnerKinds, lockPersonProjections, verifyDirectGroupRoots]: The group authority locks persist through transaction completion and footprint drift requires retrying the transaction.
+**authority fence order** = \[lockGroupTrees, verifyRoots, lockOwnerKinds, lockPersonProjections, verifyDirectGroupRoots]: The group authority locks persist through transaction completion and footprint drift requires retrying the transaction.
 
-**member page order** = [memberId, relation]: The ordered key of a member page, with one excess row read to detect continuation.
+**member page order** = \[memberId, relation]: The ordered key of a member page, with one excess row read to detect continuation.
 
-**owner gate order** = [resolve, checkEffect, hostVeto, observe]: One optional resolver precedes the role gate. Hooks veto in registration order and observers receive the outcome.
+**owner gate order** = \[resolve, checkEffect, hostVeto, observe]: One optional resolver precedes the role gate. Hooks veto in registration order and observers receive the outcome.
 
-**owner list order** = [personalFirst, ownerId]: Ordering across read, write and Goal owner lists.
+**owner list order** = \[personalFirst, ownerId]: Ordering across read, write and Goal owner lists.
 
-**transfer order** = [checkEntityKind, refuseOwnPersonalDestination, findVisibleSource, authorizeSource, authorizeDestination, checkSchema, refuseSameOwner, applyVetoes, resolveDestinationEmbeddings, moveSeries]: An authorized transfer changes all versions and the head in place, preserving identities, writer attribution and forgotten status.
+**transfer order** = \[checkEntityKind, refuseOwnPersonalDestination, findVisibleSource, authorizeSource, authorizeDestination, checkSchema, refuseSameOwner, applyVetoes, resolveDestinationEmbeddings, moveSeries]: An authorized transfer changes all versions and the head in place, preserving identities, writer attribution and forgotten status.
 
-**captured transfer** = [lockBothOwners, lockSeriesVersions, requireSelectedVersion, compareHeadOwner]: A stale capture cannot transfer a replacement series at the same handle.
+**captured transfer** = \[lockBothOwners, lockSeriesVersions, requireSelectedVersion, compareHeadOwner]: A stale capture cannot transfer a replacement series at the same handle.
 
 | access ceiling | rank |
 | --- | --- |
@@ -1757,7 +1722,7 @@ stateDiagram-v2
 
 **example fixture pool size** = 4: Serving connections in the example engine fixture.
 
-**mcp default database url** = "postgres://postgres@localhost/proxiima_dev": The local development database URL used by the canonical CLI without explicit configuration.
+**mcp default database url** = "postgres://postgres@localhost/proxiima\_dev": The local development database URL used by the canonical CLI without explicit configuration.
 
 | changed paths | validate lane |
 | --- | --- |

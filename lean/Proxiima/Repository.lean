@@ -97,7 +97,8 @@ inductive DocumentationLane where
 
 /-- Every uncancelled validation checks Markdown links and audits the Lean ledger, while MkDocs builds on relevant changes or an unknown diff. -/
 def validateDocs : DocumentationLane → ChangedPaths → Bool
-  | .markdownLinks, _ | .leanLedger, _ => true
+  | .markdownLinks, .relevant | .markdownLinks, .unrelated | .markdownLinks, .unknown
+  | .leanLedger, .relevant | .leanLedger, .unrelated | .leanLedger, .unknown => true
   | .mkdocs, .relevant | .mkdocs, .unknown => true
   | .mkdocs, .unrelated => false
 
@@ -161,7 +162,8 @@ inductive PoolerVerification where
 /-- Verify accepts a candidate from main only after checking that it extends the previously verified history without merge commits. -/
 def verifyRange : (main : Bool) → (extendsVerified : Bool) → (hasMerge : Bool) → Bool
   | true, true, false => true
-  | _, _, _ => false
+  | true, true, true | true, false, true | true, false, false
+  | false, true, true | false, true, false | false, false, true | false, false, false => false
 
 /-- Verify uses the selected main event's commit and serializes runs without cancelling work already in flight. -/
 inductive VerificationTarget where
@@ -172,7 +174,7 @@ inductive VerificationTarget where
 /-- Each commit since verified needs a reviewer address outside its Git author and co-author addresses, on that commit or a later one in the candidate range. -/
 def reviewCovers : (recordInSuffix : Bool) → (differentAddress : Bool) → Bool
   | true, true => true
-  | _, _ => false
+  | true, false | false, true | false, false => false
 
 /-- Review and co-author records use a final angle-bracket address compared case-insensitively. -/
 inductive ReviewAddress where
@@ -189,7 +191,7 @@ inductive VerifiedRef where
 /-- Failed CI or missing review leaves both references in place. -/
 def advanceVerified : (ciPassed : Bool) → (reviewCovered : Bool) → List VerifiedRef
   | true, true => [.verifiedFastForward, .nightlyLightweightTag]
-  | _, _ => []
+  | true, false | false, true | false, false => []
 
 /-- The numbered-release action after a candidate reaches verified. -/
 inductive ReleaseAction where
@@ -202,12 +204,12 @@ inductive ReleaseAction where
 def numberedRelease : (verified : Bool) → (tagExists : Bool) → ReleaseAction
   | true, false => .tagAndPublish
   | true, true => .skip
-  | false, _ => .refuseUnverified
+  | false, true | false, false => .refuseUnverified
 
 /-- A matching verified tag can publish its notes through the same workflow for backfill or recovery. -/
 def recoverRelease : (verified : Bool) → (tagMatchesWorkspace : Bool) → Bool
   | true, true => true
-  | _, _ => false
+  | true, false | false, true | false, false => false
 
 /-- Cargo workspace members inherit the workspace version, which the server reports from its build metadata. -/
 inductive VersionSource where
@@ -246,7 +248,7 @@ inductive ReleaseNotes where
 /-- Breaking commits in the candidate range require one nonempty Upgrade footer whose continuation is retained in the rendered notes. -/
 def renderUpgrade : (breaking : Bool) → (oneNonemptyFooter : Bool) → Bool
   | true, true => true
-  | _, _ => false
+  | true, false | false, true | false, false => false
 
 /-- Build-time workspace lint policy inherited by its Rust member crates. -/
 inductive WorkspaceLint where
@@ -352,9 +354,9 @@ inductive AdminConfiguration where
 
 /-- A blank or absent admin URL is a visible skip only in a local test that opts into skipping. -/
 def adminConfiguration : (configured : Bool) → (skippable : Bool) → (ci : Bool) → AdminConfiguration
-  | true, _, _ => .connect
+  | true, true, true | true, true, false | true, false, true | true, false, false => .connect
   | false, true, false => .skip
-  | false, _, _ => .refuse
+  | false, true, true | false, false, true | false, false, false => .refuse
 
 /-- Each clone name carries a UUIDv7, with the prefix truncated to fit PostgreSQL's identifier limit. -/
 inductive CloneNamePart where
@@ -371,7 +373,7 @@ inductive CloneDisposition where
 
 /-- Explicit retention preserves a clone, as does panic, which otherwise reports its redacted URL. -/
 def cloneGuard : (keep : Bool) → (panics : Bool) → CloneDisposition
-  | true, _ => .keep
+  | true, true | true, false => .keep
   | false, true => .keepWithRedactedDiagnostic
   | false, false => .drop
 
@@ -385,7 +387,7 @@ inductive CloneRegistration where
 /-- The sweeper considers stale tracked and fixture-named untracked clones and lets PostgreSQL recheck for live clients at deletion. -/
 def staleCloneCollectible : (stale : Bool) → (liveClient : Bool) → Bool
   | true, false => true
-  | _, _ => false
+  | true, true | false, true | false, false => false
 
 /-- Minimum age in seconds for stale test clones considered by the sweeper. -/
 def cloneGraceSeconds : Nat := 300
@@ -419,7 +421,7 @@ inductive TemplateLifecycle where
 /-- Template collection takes an exclusive lease and retains a database that has gained a client. -/
 def collectTemplate : (leaseAvailable : Bool) → (liveClient : Bool) → Bool
   | true, false => true
-  | _, _ => false
+  | true, true | false, true | false, false => false
 
 /-- The validated host lineup and its length-framed inputs define its template fingerprint. -/
 inductive TemplateFingerprintInput where

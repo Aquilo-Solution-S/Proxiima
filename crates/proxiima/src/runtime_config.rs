@@ -897,15 +897,15 @@ impl RuntimeBuilder {
                 .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readPublicationBlock`
+        // `Proxiima.Configuration.readEnvironment`
         if self.publication.is_none() {
             self.publication = publication_config_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readPublicationBlock`
+        // `Proxiima.Configuration.readEnvironment`
         if self.published_retention.is_none() {
             self.published_retention = crate::config::published_retention_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readPublicationBlock`
+        // `Proxiima.Configuration.readEnvironment`
         if self.object_purge_interval.is_none() {
             self.object_purge_interval = crate::config::object_purge_interval_from_lookup(lookup)?;
         }

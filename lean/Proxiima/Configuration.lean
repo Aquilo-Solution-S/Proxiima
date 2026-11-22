@@ -55,18 +55,6 @@ def readsGroup : LookupProfile → SettingGroup → Bool
   | .storageOnly, .storage | .storageOnly, .embeddingRuntime => true
   | .storageOnly, .serving | .storageOnly, .objectStore => false
 
-/-- The independently configurable settings for capturing and maintaining publication. -/
-inductive PublicationBlock where
-  | capture
-  | retention
-  | objectPurge
-  deriving DecidableEq
-
-/-- Given the block and the presence of capture, retention and object purge overrides in that order, only an override for that block suppresses its lookup. -/
-def readPublicationBlock : PublicationBlock → Presence → Presence → Presence → Bool
-  | .capture, .omitted, _, _ | .retention, _, .omitted, _ | .objectPurge, _, _, .omitted => true
-  | .capture, .supplied, _, _ | .retention, _, .supplied, _ | .objectPurge, _, _, .supplied => false
-
 /-- The lexical outcomes of trimming a setting's lookup result. -/
 inductive LookupText where
   | missing

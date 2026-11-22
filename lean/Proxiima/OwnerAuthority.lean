@@ -31,8 +31,10 @@ def coveringCeiling : Proxiima.Memory.Kind → AccessCeiling
 
 /-- A direction-specific ceiling covers the selected memory kind and every lower kind. -/
 def covers : AccessCeiling → Proxiima.Memory.Kind → Bool
-  | .perspective, _ | .abstraction, .Fact | .abstraction, .Abstraction | .fact, .Fact => true
-  | .none, _ | .fact, .Abstraction | .fact, .Perspective | .abstraction, .Perspective => false
+  | .perspective, .Fact | .perspective, .Abstraction | .perspective, .Perspective
+  | .abstraction, .Fact | .abstraction, .Abstraction | .fact, .Fact => true
+  | .none, .Fact | .none, .Abstraction | .none, .Perspective
+  | .fact, .Abstraction | .fact, .Perspective | .abstraction, .Perspective => false
 
 /-- Goal access is independent of memory access. -/
 inductive GoalAccess where
@@ -63,7 +65,8 @@ def GoalAccess.canWork : GoalAccess → Bool
 def ceilingAdmitted : (read write : AccessCeiling) → Bool
   | .none, .none | .fact, .none | .fact, .fact
   | .abstraction, .none | .abstraction, .fact | .abstraction, .abstraction
-  | .perspective, _ => true
+  | .perspective, .none | .perspective, .fact | .perspective, .abstraction
+  | .perspective, .perspective => true
   | .none, .fact | .none, .abstraction | .none, .perspective
   | .fact, .abstraction | .fact, .perspective | .abstraction, .perspective => false
 
@@ -163,7 +166,8 @@ inductive RegistrationState where
 /-- The first owner registration fixes the kind. Explicit group creation refuses a personal ID. -/
 def registerOwner : RegistrationState → Registration → Option OwnerKind
   | .unregistered, .admit | .registered .personal, .admit => some .personal
-  | .unregistered, .createGroup | .registered .group, _ => some .group
+  | .unregistered, .createGroup | .registered .group, .admit
+  | .registered .group, .createGroup => some .group
   | .registered .personal, .createGroup => none
 
 /-- The spine selected for a stored entity's owner probe. -/
@@ -261,7 +265,7 @@ inductive MembershipConsent where
 
 /-- Adding or changing a group edge needs both groups. Detaching needs either group, and person edits need the parent. -/
 def membershipConsent : MembershipChange → OwnerKind → MembershipConsent
-  | .bootstrapFirstAdmin, _ => .hostBootstrap
+  | .bootstrapFirstAdmin, .personal | .bootstrapFirstAdmin, .group => .hostBootstrap
   | .add, .group | .replace, .group => .bothGroups
   | .removeOne, .group | .removeAll, .group => .eitherGroup
   | .add, .personal | .replace, .personal | .removeOne, .personal | .removeAll, .personal => .parent
@@ -312,9 +316,11 @@ inductive GoalWorkPath where
 
 /-- Goal work requires its own capability, with administration also required for delegated and system work. -/
 def goalWorkAdmitted : GoalWorkPath → (works administers : Bool) → Bool
-  | _, false, _ => false
-  | .hostBearer, true, _ => true
+  | .hostBearer, true, true | .hostBearer, true, false
   | .delegated, true, true | .system, true, true => true
+  | .hostBearer, false, true | .hostBearer, false, false
+  | .delegated, false, true | .delegated, false, false
+  | .system, false, true | .system, false, false
   | .delegated, true, false | .system, true, false => false
 
 /-- The read gate's treatment of a candidate owner's stored identity. -/
