@@ -8,7 +8,7 @@ import Causa.Goals
 
 namespace Causa
 
-/-- The relationship pins carried by a Memory admission. -/
+/-- Memory pin projection under `Proxiima.Edges.pinField`. -/
 def derivePins (m : Memory) :
     List MemoryId × List MemoryId × List GoalId × List GoalId × List MemoryId :=
   (memory_origins m, memory_reference_ids m,

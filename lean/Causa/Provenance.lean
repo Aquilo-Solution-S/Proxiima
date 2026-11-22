@@ -1,12 +1,17 @@
 import Causa.Operators
+import Proxiima.Edges
 
 /-! Causa — Provenance grounding -/
 
 namespace Causa
 
+/-- The origins and references that contribute to `Proxiima.Edges.groundingFields`. -/
+def groundingFrom (m tgt : Memory) : Prop :=
+  memory_t tgt ∈ memory_origins m ∨ memory_t tgt ∈ memory_refs m
+
+/-- The stored pins subject to the graph's insertion order, including fork lineage. -/
 def pinFrom (m tgt : Memory) : Prop :=
-  memory_t tgt ∈ memory_origins m ∨ memory_t tgt ∈ memory_refs m ∨
-    memory_forked_from m = some (memory_t tgt)
+  groundingFrom m tgt ∨ memory_forked_from m = some (memory_t tgt)
 
 def pinFromInTable (memories : Set Memory) (m tgt : Memory) : Prop :=
   m ∈ memories ∧ tgt ∈ memories ∧ pinFrom m tgt
@@ -43,13 +48,10 @@ structure MemoryGraphValid
   derivedProvenance :
     ∀ m : Memory, m ∈ memories → memory_kind m ≠ .Fact →
       memory_origins m ≠ [] ∨ memory_refs m ≠ []
-  /-- Stored support for grounding derived Memory. -/
+  /-- Stored support under `Proxiima.Edges.groundingFields`. -/
   groundingSupport :
     ∀ m : Memory, m ∈ memories → memory_kind m ≠ .Fact →
-      ∃ id : MemoryId,
-        (id ∈ memory_origins m ∨ id ∈ memory_refs m ∨
-          memory_forked_from m = some id) ∧
-        (∃ tgt : Memory, tgt ∈ memories ∧ memory_t tgt = id)
+      ∃ tgt : Memory, tgt ∈ memories ∧ groundingFrom m tgt
   /-- The insertion order of stored pin targets. -/
   pinTimeStrict :
     ∀ m tgt : Memory, m ∈ memories → tgt ∈ memories →
@@ -121,7 +123,7 @@ theorem grounding_wf
 
 inductive GroundsInFact (memories : Set Memory) : Memory → Prop where
   | fact {m} : memory_kind m = .Fact → GroundsInFact memories m
-  | step {m tgt} : pinFrom m tgt →
+  | step {m tgt} : groundingFrom m tgt →
       GroundsInFact memories tgt → GroundsInFact memories m
 
 theorem memory_grounds_in_facts
@@ -135,16 +137,8 @@ theorem memory_grounds_in_facts
   intro m ih hm
   by_cases hfact : memory_kind m = .Fact
   · exact GroundsInFact.fact hfact
-  · obtain ⟨id, hpin⟩ := hgraph.groundingSupport m hm hfact
-    obtain ⟨hid, tgt, htgt, ht⟩ := hpin
-    have hfrom : pinFrom m tgt := by
-      cases hid with
-      | inl ho => exact Or.inl (by rw [ht]; exact ho)
-      | inr hr =>
-          cases hr with
-          | inl hr => exact Or.inr (Or.inl (by rw [ht]; exact hr))
-          | inr hfork => exact Or.inr (Or.inr (by rw [ht]; exact hfork))
-    have htable : pinFromInTable memories m tgt := ⟨hm, htgt, hfrom⟩
+  · obtain ⟨tgt, htgt, hfrom⟩ := hgraph.groundingSupport m hm hfact
+    have htable : pinFromInTable memories m tgt := ⟨hm, htgt, Or.inl hfrom⟩
     exact GroundsInFact.step hfrom (ih tgt htable htgt)
 
 theorem perspective_has_provenance :

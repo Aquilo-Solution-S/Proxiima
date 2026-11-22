@@ -2962,7 +2962,7 @@ Causa — Provenance grounding
 
 ✓ **derived provenance**: The provenance requirement for derived Memory.
 
-✓ **grounding support**: Stored support for grounding derived Memory.
+✓ **grounding support**: Stored support under `Proxiima.Edges.groundingFields`.
 
 ✓ **pin time strict**: The insertion order of stored pin targets.
 

@@ -10,13 +10,8 @@ namespace Causa
 /-- The ledger vocabulary used by Memory proofs. -/
 abbrev MemoryKind := Proxiima.Memory.Kind
 
-/-- The target kinds recorded by erase witnesses. -/
-inductive PinTargetKind where
-  | Fact
-  | Abstraction
-  | Perspective
-  | Goal
-  deriving DecidableEq, Repr
+/-- The ledger vocabulary used by `Proxiima.Edges.ErasedTarget`. -/
+abbrev PinTargetKind := Proxiima.Memory.EntityKind
 
 def MemoryKind.pinTargetKind : MemoryKind → PinTargetKind
   | .Fact        => .Fact
