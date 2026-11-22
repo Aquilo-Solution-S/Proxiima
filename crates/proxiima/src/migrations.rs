@@ -1024,10 +1024,8 @@ async fn pin_migration_search_path(conn: &mut PgConnection) -> Result<(), sqlx::
     sqlx::query("SET search_path TO public")
         .execute(&mut *conn)
         .await?;
-    // The pool's request-serving `statement_timeout`
-    // must not abort a long schema migration (CREATE INDEX / backfill) mid-way.
-    // Disable it for this boot connection; `acquire_session_connection` marks
-    // it close-on-drop so the override never returns to the shared pool.
+    // `acquire_session_connection` marks this connection close-on-drop.
+    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
     sqlx::query("SET statement_timeout = 0")
         .execute(&mut *conn)
         .await?;

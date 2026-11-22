@@ -97,10 +97,10 @@ impl PgPoolConfig {
     /// Returns [`StorageError::Unavailable`] when max connections is zero.
     pub fn validate(self) -> Result<Self, StorageError> {
         if self.max_connections < MIN_POOL_CONNECTIONS {
-            return Err(StorageError::Unavailable(
-                "PROXIIMA_PG_MAX_CONNECTIONS=0 is not a usable pool size; a connection pool needs at least one connection"
-                    .into(),
-            ));
+            return Err(StorageError::Unavailable(format!(
+                "PROXIIMA_PG_MAX_CONNECTIONS={} is below the minimum pool size of {MIN_POOL_CONNECTIONS}",
+                self.max_connections
+            )));
         }
         Ok(self)
     }
@@ -183,6 +183,7 @@ impl PgPoolConfig {
         // prepared queries use, are unaffected either way.
         // `Proxiima.DatabaseAuthority.PoolerCompatibility`
         options = options.extra_float_digits(None::<i8>);
+        // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
         if self.statement_timeout != OMIT_STATEMENT_TIMEOUT {
             options = options.options([(
                 "statement_timeout",
@@ -278,7 +279,7 @@ mod tests {
             (
                 "PROXIIMA_PG_MAX_CONNECTIONS",
                 "0",
-                "at least one connection",
+                "is below the minimum pool size",
             ),
         ] {
             let error = PgPoolConfig::from_lookup(&env(&[(key, value)]))

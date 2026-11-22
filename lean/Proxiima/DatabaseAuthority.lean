@@ -31,27 +31,11 @@ inductive SystemWriteAuthority where
   | matchBootWitness
   deriving DecidableEq
 
-/-- Data access axes in ordinary owner RLS, independent of administration. -/
-inductive OwnerDataAccess where
-  | memoryRead
-  | memoryWrite
-  | goalRead
-  | goalWork
-  deriving DecidableEq
-
 /-- An owner transaction sets its sealed subject's memory ceilings and Goal access for that transaction only. -/
 inductive OwnerTransactionScope where
-  | data (access : OwnerDataAccess)
+  | data
   | goalSubject
   | ownerManagement
-  deriving DecidableEq
-
-/-- Authority sessions use READ COMMITTED and fence and recheck a declared footprint; newly discovered targets require a new transaction. -/
-inductive AuthoritySessionRule where
-  | readCommitted
-  | declareFootprintBeforeHostLocks
-  | fenceAndRecheck
-  | retryWithNewTargets
   deriving DecidableEq
 
 /-- Scoped SPIICE reads reuse the caller's transaction; version and receipt locks last through it, and a shared memory lock requires write authority. -/
@@ -140,6 +124,12 @@ inductive ScopedReader where
   | goalVisibility
   deriving DecidableEq
 
+/-- For a table with definer-only writes, the owner-write policy admits no rows and a platform-owned `SECURITY DEFINER` function is the sole writer. -/
+inductive PlatformWriteDefiner where
+  | denyOwnerWrites
+  | writeThroughPlatformDefiner
+  deriving DecidableEq
+
 /-- Serving transactions keep settings and locks transaction-local; connection startup omits the float-format parameter. -/
 inductive PoolerCompatibility where
   | localSettings
@@ -156,7 +146,7 @@ inductive DatabaseOperation where
   | validateSchema
   deriving DecidableEq
 
-/-- The runtime, platform and migration pools each use the resolved per-pool configuration. -/
+/-- The runtime, platform and migration pools use their resolved per-pool settings at startup. -/
 inductive ConnectionPurpose where
   | runtime
   | platform
@@ -168,6 +158,16 @@ def connectionPurpose : DatabaseOperation → ConnectionPurpose
   | .serve => .runtime
   | .operateAsPlatform => .platform
   | .migrate | .validateSchema => .migration
+
+/-- The statement timeout policy depends on the work the connection performs. -/
+inductive StatementTimeoutPolicy where
+  /-- Pool startup applies the resolved statement timeout when configured to send it. -/
+  | poolStartup
+  /-- A migration session disables the statement timeout for that session. -/
+  | migrationSession
+  /-- Bulk owner erase disables the statement timeout for its transaction only. -/
+  | ownerEraseTransaction
+  deriving DecidableEq
 
 /-- Migration, boot and maintenance require the runtime URL, platform URL and store number. -/
 inductive RequiredStorageSetting where
@@ -235,7 +235,7 @@ def overlaySupplied : StorageOverlay → OverlayInput → Bool
   | .pool, .unset | .tuning, .unset | .tuning, .explicitDefault => false
   | .pool, .explicitDefault | .pool, .nonDefault | .tuning, .nonDefault => true
 
-/-- The advisory lock key serializing the platform grant phase. -/
+/-- The advisory lock key serializing the platform grant phase is ASCII `proxgrnt` interpreted as a big-endian integer. -/
 def runtimeGrantLockKey : Nat := 0x70726f7867726e74
 
 /-- Runtime grants are opt-in on the migration path. -/
@@ -307,16 +307,6 @@ inductive StoragePortRequirement where
   | collectMissingRequired
   | optionalEraseAuthority
   | optionalPersonalDropProof
-  deriving DecidableEq
-
-/-- PostgreSQL bindings distinguish catalog enums even where their underlying domain types share cases. -/
-inductive PostgresEnumBinding where
-  | memoryKind
-  | interpretationSubjectKind
-  | sketchKind
-  | pinTargetKind
-  | publicationDeliveryState
-  | publicationRecordState
   deriving DecidableEq
 
 /-- The external storage outcomes whose protocol category differs by operation. -/

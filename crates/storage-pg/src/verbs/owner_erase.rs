@@ -83,6 +83,7 @@ async fn begin_bulk_erase_tx(
     // Before the owner fence and before the selection; the wait is bounded by
     // the lock timeout above.
     crate::access::fences::lock_evolution_tables_for_erase_tx(&mut tx).await?;
+    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
     sqlx::query("SET LOCAL statement_timeout = 0")
         .execute(&mut *tx)
         .await

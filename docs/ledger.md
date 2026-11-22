@@ -180,25 +180,11 @@
 - consumeEngine
 - matchBootWitness
 
-**Owner data access**: Data access axes in ordinary owner RLS, independent of administration.
-
-- memoryRead
-- memoryWrite
-- goalRead
-- goalWork
-
 **Owner transaction scope**: An owner transaction sets its sealed subject's memory ceilings and Goal access for that transaction only.
 
 - data
 - goalSubject
 - ownerManagement
-
-**Authority session rule**: Authority sessions use READ COMMITTED and fence and recheck a declared footprint; newly discovered targets require a new transaction.
-
-- readCommitted
-- declareFootprintBeforeHostLocks
-- fenceAndRecheck
-- retryWithNewTargets
 
 **Scoped read**: Scoped SPIICE reads reuse the caller's transaction; version and receipt locks last through it, and a shared memory lock requires write authority.
 
@@ -270,6 +256,11 @@
 - searchCandidates
 - goalVisibility
 
+**Platform write definer**: For a table with definer-only writes, the owner-write policy admits no rows and a platform-owned `SECURITY DEFINER` function is the sole writer.
+
+- denyOwnerWrites
+- writeThroughPlatformDefiner
+
 **Pooler compatibility**: Serving transactions keep settings and locks transaction-local; connection startup omits the float-format parameter.
 
 - localSettings
@@ -284,11 +275,17 @@
 - migrate
 - validateSchema
 
-**Connection purpose**: The runtime, platform and migration pools each use the resolved per-pool configuration.
+**Connection purpose**: The runtime, platform and migration pools use their resolved per-pool settings at startup.
 
 - runtime
 - platform
 - migration
+
+**Statement timeout policy**: The statement timeout policy depends on the work the connection performs.
+
+- poolStartup: Pool startup applies the resolved statement timeout when configured to send it.
+- migrationSession: A migration session disables the statement timeout for that session.
+- ownerEraseTransaction: Bulk owner erase disables the statement timeout for its transaction only.
 
 **Required storage setting**: Migration, boot and maintenance require the runtime URL, platform URL and store number.
 
@@ -372,15 +369,6 @@
 - optionalEraseAuthority
 - optionalPersonalDropProof
 
-**Postgres enum binding**: PostgreSQL bindings distinguish catalog enums even where their underlying domain types share cases.
-
-- memoryKind
-- interpretationSubjectKind
-- sketchKind
-- pinTargetKind
-- publicationDeliveryState
-- publicationRecordState
-
 **Storage outcome**: The external storage outcomes whose protocol category differs by operation.
 
 - conflictOrConstraint
@@ -420,7 +408,7 @@
 
 **default max lifetime secs** = 1800: The default connection lifetime in seconds.
 
-**runtime grant lock key** = 8102661242515254900: The advisory lock key serializing the platform grant phase.
+**runtime grant lock key** = 8102661242515254900: The advisory lock key serializing the platform grant phase is ASCII `proxgrnt` interpreted as a big-endian integer.
 
 **default runtime grants** = no: Runtime grants are opt-in on the migration path.
 
@@ -2186,8 +2174,6 @@ Causa — Audience
 Causa — Authorization
 
 ✓ **may write implies read**: Owner-scoped writes imply reads at the same memory kind.
-
-✓ **administration independent of data access**: Changing an owner's administration bit leaves its ordinary memory and Goal access unchanged.
 
 ✓ **forwarding role capped**: A forwarded role is bounded by `Causa.Role.forwardingCap`.
 

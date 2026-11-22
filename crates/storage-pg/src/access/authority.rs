@@ -63,12 +63,11 @@ enum PgOwnerKind {
 /// retry. `PostgreSQL` retains all fences until that transaction ends, even if
 /// this Rust borrow is dropped. Results are facts, not authorization witnesses.
 ///
-/// Declare the complete selection before construction. Host binding locks
-/// precede this gateway; host revision/claim mutation locks follow it. Keep
-/// membership edits within the declared selection. A newly discovered target
-/// requires restarting the transaction, rather than acquiring a later tree
-/// lock. Arbitrary earlier host row locks retain `PostgreSQL`'s ordinary
-/// deadlock/serialization retry requirements.
+/// Declare the complete selection before taking host revision/claim mutation locks.
+/// Host binding locks precede this gateway. Keep membership edits within
+/// the declared selection. A newly discovered target requires restarting
+/// the transaction. Arbitrary earlier host row locks retain `PostgreSQL`'s
+/// ordinary deadlock/serialization retry requirements.
 ///
 /// ```no_run
 /// # use proxiima_storage_pg::{AuthorityTargets, PgPlatformScope};

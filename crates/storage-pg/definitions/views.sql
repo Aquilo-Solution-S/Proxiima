@@ -1,4 +1,5 @@
 -- `Proxiima.DatabaseAuthority.MemorySqlRoute` `Proxiima.DatabaseAuthority.CoreViewRule`
+-- In platform scope the view is the only filter for forgotten rows.
 -- A row lock needs UPDATE, which the serving role lacks on core views.
 -- A sidecar policy delegates visibility to the spine policy directly.
 --

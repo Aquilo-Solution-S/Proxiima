@@ -41,7 +41,7 @@ macro_rules! ledger {
     (Proxiima.DatabaseAuthority.defaultMaxLifetimeSecs) => {
         1800
     };
-    // The advisory lock key serializing the platform grant phase.
+    // The advisory lock key serializing the platform grant phase is ASCII `proxgrnt` interpreted as a big-endian integer.
     (Proxiima.DatabaseAuthority.runtimeGrantLockKey) => {
         8102661242515254900
     };

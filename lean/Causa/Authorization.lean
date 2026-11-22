@@ -1,7 +1,6 @@
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
-import Proxiima.DatabaseAuthority
 
 /-! Causa — Authorization -/
 
@@ -33,22 +32,6 @@ theorem may_write_implies_read :
       may_write r o k → may_read r o k := by
   rintro r o k ⟨x, hx, hw⟩
   exact ⟨x, hx, Nat.le_trans hw x.write_le_read⟩
-
-/-- Access on one owner data axis at a given memory kind. -/
-def Role.ownerDataAccess (role : Role) (kind : AccessKind) :
-    Proxiima.DatabaseAuthority.OwnerDataAccess → Prop
-  | .memoryRead => role.mayRead kind
-  | .memoryWrite => role.mayWrite kind
-  | .goalRead => role.readsGoals
-  | .goalWork => role.worksGoals
-
-/-- Changing an owner's administration bit leaves its ordinary memory and Goal access unchanged. -/
-theorem Role.administration_independent_of_data_access
-    (role : Role) (administer : Bool) (kind : AccessKind)
-    (access : Proxiima.DatabaseAuthority.OwnerDataAccess) :
-    ({ role with administer } : Role).ownerDataAccess kind access ↔
-      role.ownerDataAccess kind access := by
-  cases access <;> exact Iff.rfl
 
 /-- Roles available to verified forwarders. -/
 inductive ForwardingRole where

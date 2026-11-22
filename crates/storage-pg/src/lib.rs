@@ -627,6 +627,7 @@ async fn run_migrations_on_pool(
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
     let mut conn = pool.acquire().await.map_err(internal)?;
+    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
     sqlx::query("SET statement_timeout = 0")
         .execute(&mut *conn)
         .await
@@ -1225,14 +1226,7 @@ impl PgStorage {
         vectors: vector_index::StoreVectors,
     ) -> Result<Self, StorageError> {
         let pool_config = pool_config.validate()?;
-        // A conservative per-statement timeout bounds
-        // a runaway query (e.g. a pathological search) so it cannot pin a pool
-        // connection indefinitely and starve the gateway. Generous by default
-        // (5 min — only a truly stuck statement hits it); tune or disable (0)
-        // per deployment. The two operations that can legitimately exceed it —
-        // schema migrations and bulk owner erase — explicitly opt out
-        // (`run_migrations` runs on a detached timeout-free connection; the erase
-        // transaction issues `SET LOCAL statement_timeout = 0`).
+        // Send the timeout as a startup option so it takes effect on every pooled connection.
         let connect_options = pool_config.connect_options(url)?;
         // Lazy, then one explicit acquire: boot validates on that one held
         // connection. An eager connect hands its first connection back in a

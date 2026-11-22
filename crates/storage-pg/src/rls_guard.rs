@@ -732,6 +732,7 @@ async fn assert_definers(
             assert_definer_path(function, &namespaces, platform)?;
             continue;
         }
+        // `Proxiima.DatabaseAuthority.PlatformWriteDefiner`
         if function.owner_superuser
             || function.owner_bypass_rls
             || !function.platform_owner

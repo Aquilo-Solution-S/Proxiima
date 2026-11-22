@@ -184,7 +184,6 @@ impl PgPlatformScope {
         targets: crate::AuthorityTargets,
         subjects: &[proxiima_core::OwnerId],
     ) -> Result<crate::PgAuthoritySession<'session, 'connection>, StorageError> {
-        // `Proxiima.DatabaseAuthority.AuthoritySessionRule`
         crate::PgAuthoritySession::new(self, transaction, targets, subjects).await
     }
 
