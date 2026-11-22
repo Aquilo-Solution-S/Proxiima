@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 
 use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle};
-use proxiima::testkit::{SplitRoleDb, assert_trigger_migrations, scoped_authz};
+use proxiima::testkit::{SplitRoleDb, assert_trigger_migrations, group_authz};
 use proxiima::{AppInfo, Proxiima, QueryRequest, ServedSurface, SpiiceApp, company_owner};
 use proxiima_core::SqlText;
 use proxiima_example::testkit::{register_notebook, remember_note};
@@ -434,7 +434,7 @@ async fn write_and_read_a_note<F: SpiiceApp + 'static>(db: &SplitRoleDb, expect:
         .await
         .expect(expect);
 
-    let authz = scoped_authz(owner);
+    let authz = group_authz(owner);
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
     let notebook_id = register_notebook(
         &runtime,
@@ -648,7 +648,7 @@ async fn a_spiice_invoker_view_boots_and_hides_other_owners() {
             .unwrap();
     }
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
-    let authz = scoped_authz(owner);
+    let authz = group_authz(owner);
     let mut transaction = proxiima_storage_pg::begin_owner_transaction(
         &runtime,
         authz.owner_scope().expect("authenticated owner scope"),

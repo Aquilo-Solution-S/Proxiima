@@ -7,7 +7,7 @@ use proxiima::spiice::{
     lexical_languages, lock_memory_shared, lock_scope_fence_shared_tx, memories_citing,
     memory_embeddings, memory_versions, series_versions,
 };
-use proxiima::testkit::{SplitRoleDb, scoped_authz};
+use proxiima::testkit::{SplitRoleDb, group_authz};
 use proxiima_example::NoteV1;
 use proxiima_example::payload::{NOTE_SCHEMA_ID, NOTEBOOK_SCOPE};
 use proxiima_example::testkit::{build_engine, register_notebook, remember_note};
@@ -22,7 +22,7 @@ async fn a_receipt_is_read_on_the_caller_transaction_and_a_unit_has_no_job_row()
     let built = build_engine(db.runtime_url(), db.platform_url(), owner)
         .await
         .expect("the example boots");
-    let authz = scoped_authz(owner);
+    let authz = group_authz(owner);
     let scope = authz.owner_scope().expect("owner scope");
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
     let notebook_id = register_notebook(&runtime, scope, owner, "inbox")
@@ -115,7 +115,7 @@ async fn the_typed_owner_reads_are_spiice_names_on_the_caller_transaction() {
     let built = build_engine(db.runtime_url(), db.platform_url(), owner)
         .await
         .expect("the example boots");
-    let authz = scoped_authz(owner);
+    let authz = group_authz(owner);
     let scope = authz.owner_scope().expect("owner scope");
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
     let notebook_id = register_notebook(&runtime, scope, owner, "inbox")

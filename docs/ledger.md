@@ -1073,11 +1073,15 @@ stateDiagram-v2
 - platformMigration
 - scopedRuntime
 
-**Fixture owner context**: Single-owner fixture contexts seal a fresh subject with the admin role scoped to the supplied owner.
+**Fixture owner**: The owner kind a single-owner test context acts in.
 
-- freshSubject
-- scopedAdmin
-- sealedAuthentication
+- personal
+- group
+
+**Fixture subject**: Who a sealed single-owner test context acts as.
+
+- ownUser
+- freshAdmin
 
 **Trigger fixture refusal**: The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations.
 
@@ -1098,7 +1102,7 @@ stateDiagram-v2
 - nonblankAudience
 - subjectDerivedUser
 
-**Dev signer**: The development issuer loads a persisted signer, creates a missing file exclusively, reads the winning file after a creation conflict, or uses an in-memory signer in ephemeral mode.
+**Dev signer**: The development issuer loads a persisted signer, links a whole private key into place when the file is missing, reads the winning file after a link conflict, or uses an in-memory signer in ephemeral mode.
 
 - loadExisting
 - createExclusively
@@ -1233,6 +1237,13 @@ stateDiagram-v2
 | undeclaredGit | deny |
 
 - dependency policy: Cargo-deny's configured enforcement for dependency inputs.
+
+| fixture owner | fixture subject |
+| --- | --- |
+| personal | ownUser |
+| group | freshAdmin |
+
+- fixture subject: A personal fixture acts as its own user; a Group fixture acts as a fresh admin of that Group.
 
 ## Causa
 

@@ -67,6 +67,9 @@
   {"out": "tagAndPublish", "in": [true, false]},
   {"out": "refuseUnverified", "in": [false, true]},
   {"out": "refuseUnverified", "in": [false, false]}],
+ "Proxiima.Repository.fixtureSubject":
+ [{"out": "ownUser", "in": ["personal"]},
+  {"out": "freshAdmin", "in": ["group"]}],
  "Proxiima.Repository.dependencyPolicy":
  [{"out": "deny", "in": ["vulnerability"]},
   {"out": "deny", "in": ["yank"]},

@@ -258,13 +258,29 @@ fn fingerprint_hash(
     hash
 }
 
-/// `Proxiima.Repository.FixtureOwnerContext`.
+/// A verified caller acting in its own personal owner, sealed to it.
+/// `Proxiima.Repository.fixtureSubject`.
+///
+/// # Panics
+///
+/// Never: a personal owner narrows to its own user by construction.
+#[must_use]
+pub fn personal_authz(user: UserId) -> AuthzContext {
+    proxiima_core::test_fixtures::authenticated_context(
+        AuthzContext::for_subject(user, AuthPath::HostBearer)
+            .narrowed_to_owner(user.into())
+            .expect("a personal owner narrows to its own user"),
+    )
+}
+
+/// A fresh verified caller with the admin role on the Group `owner`, sealed to it.
+/// `Proxiima.Repository.fixtureSubject`.
 ///
 /// # Panics
 ///
 /// Never: an admin on exactly `owner` narrows to it by construction.
 #[must_use]
-pub fn scoped_authz(owner: OwnerId) -> AuthzContext {
+pub fn group_authz(owner: OwnerId) -> AuthzContext {
     let context = AuthzContext::for_subject_with_role(
         UserId::new(uuid::Uuid::now_v7()),
         [(owner, Role::admin())],

@@ -33,13 +33,7 @@ async fn harness() -> Harness {
 
 fn personal() -> (OwnerId, AuthzContext) {
     let user = UserId::new(Uuid::now_v7());
-    (
-        OwnerId::from(user),
-        proxiima_core::test_fixtures::authenticated_context(AuthzContext::for_subject(
-            user,
-            AuthPath::HostBearer,
-        )),
-    )
+    (OwnerId::from(user), proxiima::testkit::personal_authz(user))
 }
 
 fn note(notebook_id: Uuid, key: &str) -> NoteV1 {

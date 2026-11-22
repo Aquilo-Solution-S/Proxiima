@@ -446,12 +446,22 @@ inductive CloneRole where
   | scopedRuntime
   deriving DecidableEq
 
-/-- Single-owner fixture contexts seal a fresh subject with the admin role scoped to the supplied owner. -/
-inductive FixtureOwnerContext where
-  | freshSubject
-  | scopedAdmin
-  | sealedAuthentication
+/-- The owner kind a single-owner test context acts in. -/
+inductive FixtureOwner where
+  | personal
+  | group
   deriving DecidableEq
+
+/-- Who a sealed single-owner test context acts as. -/
+inductive FixtureSubject where
+  | ownUser
+  | freshAdmin
+  deriving DecidableEq
+
+/-- A personal fixture acts as its own user; a Group fixture acts as a fresh admin of that Group. -/
+def fixtureSubject : FixtureOwner → FixtureSubject
+  | .personal => .ownUser
+  | .group => .freshAdmin
 
 /-- The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations. -/
 inductive TriggerFixtureRefusal where
@@ -478,7 +488,7 @@ inductive DevIssuerInput where
   | subjectDerivedUser
   deriving DecidableEq
 
-/-- The development issuer loads a persisted signer, creates a missing file exclusively, reads the winning file after a creation conflict, or uses an in-memory signer in ephemeral mode. -/
+/-- The development issuer loads a persisted signer, links a whole private key into place when the file is missing, reads the winning file after a link conflict, or uses an in-memory signer in ephemeral mode. -/
 inductive DevSigner where
   | loadExisting
   | createExclusively

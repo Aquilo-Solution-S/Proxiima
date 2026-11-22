@@ -2,7 +2,7 @@
 //! its one tool's owner scope.
 
 use proxiima::spiice::owner_transaction;
-use proxiima::testkit::{SplitRoleDb, scoped_authz, shared_authz};
+use proxiima::testkit::{SplitRoleDb, group_authz, shared_authz};
 use proxiima::{AuthzContext, BuiltProxiima, OwnerId, QueryRequest, company_owner};
 use proxiima_example::NoteV1;
 use proxiima_example::contract::LIST_NOTEBOOKS_TOOL;
@@ -20,7 +20,7 @@ async fn the_baseline_applies_under_split_roles_and_the_census_passes() {
     let built = build_engine(db.runtime_url(), db.platform_url(), owner)
         .await
         .expect("the example baseline boots under the runtime RLS guard");
-    let authz = scoped_authz(owner);
+    let authz = group_authz(owner);
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
     let notebook_id = register_notebook(
         &runtime,
@@ -125,7 +125,7 @@ async fn the_tool_lists_the_callers_notebooks_on_its_owner_transaction() {
         .await
         .expect("boot");
     let runtime = sqlx::PgPool::connect(db.runtime_url()).await.unwrap();
-    let authz_a = scoped_authz(owner_a);
+    let authz_a = group_authz(owner_a);
     let scope_a = authz_a.owner_scope().expect("scope a");
     let notebook_a = register_notebook(&runtime, scope_a, owner_a, "a's")
         .await

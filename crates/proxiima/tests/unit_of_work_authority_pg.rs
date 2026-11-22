@@ -20,10 +20,10 @@ use proxiima::host::{
     AgreedCommand, HostStateCommand, HostStateHandler, HostStatePayloadOwners,
     HostStateWritePermit, PgCommandDispatcher, StateSurfaceName,
 };
-use proxiima::testkit::SplitRoleDb;
+use proxiima::testkit::{SplitRoleDb, personal_authz};
 use proxiima::{
-    AuthPath, AuthzContext, BuiltProxiima, ErrorCode, HostStateOutcome, PgHostStateSession,
-    Proxiima, ServedSurface,
+    AuthzContext, BuiltProxiima, ErrorCode, HostStateOutcome, PgHostStateSession, Proxiima,
+    ServedSurface,
 };
 use proxiima_core::verbs::goal_write::{
     GoalAuthorship, GoalCreateRequest, GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite,
@@ -365,14 +365,6 @@ impl Harness {
     }
 }
 
-fn personal_authz(subject: UserId) -> AuthzContext {
-    proxiima_core::test_fixtures::authenticated_context(
-        AuthzContext::for_subject(subject, AuthPath::HostBearer)
-            .narrowed_to_owner(subject.into())
-            .expect("personal owner"),
-    )
-}
-
 fn permitted(result: HostStateOutcome<Snapshot>) -> Snapshot {
     match result {
         HostStateOutcome::Permitted(snapshot) => snapshot,
@@ -461,7 +453,7 @@ async fn personal_writer_reads_complete_direct_and_inherited_authority_without_w
     let engine = h.built.host().engine();
     let group_fact = engine
         .ingest_fact(
-            &proxiima::testkit::scoped_authz(child.into()),
+            &proxiima::testkit::group_authz(child.into()),
             proxiima::FactWrite::new(child.into(), "group-authority", &note("group")),
         )
         .await?;
