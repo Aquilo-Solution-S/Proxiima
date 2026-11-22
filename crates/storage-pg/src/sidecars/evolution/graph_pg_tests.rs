@@ -88,6 +88,7 @@ async fn migrate_fact(
     fact_handle: Uuid,
     fact_t: Uuid,
     goal_refs: Vec<Uuid>,
+    refs: Vec<Uuid>,
 ) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
@@ -112,12 +113,15 @@ async fn migrate_fact(
         .bind(fact_handle)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE proxiima_core.memory SET schema_id = $1, goal_refs = $2 WHERE t = $3")
-        .bind(TARGET_SCHEMA)
-        .bind(goal_refs)
-        .bind(fact_t)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE proxiima_core.memory SET schema_id = $1, goal_refs = $2, refs = $3 WHERE t = $4",
+    )
+    .bind(TARGET_SCHEMA)
+    .bind(goal_refs)
+    .bind(refs)
+    .bind(fact_t)
+    .execute(&mut *tx)
+    .await?;
     Ok(tx)
 }
 
@@ -436,7 +440,8 @@ async fn graph_accepts_migrated_fact_goal_reference() {
         let platform = PgPool::connect(&platform_url).await?;
         let owner = owner_id(&platform).await?;
         let (goal_t, fact_handle, fact_t) = seed_goal_and_fact(&platform, owner).await?;
-        let mut tx = migrate_fact(&platform, owner, fact_handle, fact_t, vec![goal_t]).await?;
+        let mut tx =
+            migrate_fact(&platform, owner, fact_handle, fact_t, vec![goal_t], vec![]).await?;
         graph::validate(&mut tx)
             .await
             .expect("a live Goal is valid for memory.goal_refs");
@@ -459,7 +464,8 @@ async fn graph_rejects_migrated_fact_goal_reference_to_fact() {
         let platform = PgPool::connect(&platform_url).await?;
         let owner = owner_id(&platform).await?;
         let (_goal_t, fact_handle, fact_t) = seed_goal_and_fact(&platform, owner).await?;
-        let mut tx = migrate_fact(&platform, owner, fact_handle, fact_t, vec![fact_t]).await?;
+        let mut tx =
+            migrate_fact(&platform, owner, fact_handle, fact_t, vec![fact_t], vec![]).await?;
         let error = graph::validate(&mut tx)
             .await
             .expect_err("goal_refs must not accept a Fact target");
@@ -527,4 +533,44 @@ async fn goal_erase_follows_a_two_step_migration_chain() {
     }.await;
     drop_db(&database).await.expect("drop test database");
     result.expect("Goal migration chain erase");
+}
+
+#[tokio::test]
+async fn graph_accepts_migrated_fact_reference_to_older_abstraction() {
+    let database = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_core_db(&database)
+        .await
+        .expect("PG required for test");
+    let result = async {
+        let (_, platform_url) = split_role_urls(&database).await?;
+        let platform = PgPool::connect(&platform_url).await?;
+        let owner = owner_id(&platform).await?;
+        let ids = GraphSeedIds {
+            fact_handle: Uuid::now_v7(),
+            fact_t: Uuid::now_v7(),
+            support_fact_handle: Uuid::now_v7(),
+            support_fact_t: Uuid::now_v7(),
+            old_abstraction_handle: Uuid::now_v7(),
+            old_abstraction_t: Uuid::now_v7(),
+        };
+        seed_graph_memory(&platform, owner, &ids).await?;
+        let (goal_t, fact_handle, fact_t) = seed_goal_and_fact(&platform, owner).await?;
+        let mut tx = migrate_fact(
+            &platform,
+            owner,
+            fact_handle,
+            fact_t,
+            vec![goal_t],
+            vec![ids.old_abstraction_t],
+        )
+        .await?;
+        graph::validate(&mut tx)
+            .await
+            .expect("a migrated Fact may reference an older Abstraction");
+        tx.rollback().await?;
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+    drop_db(&database).await.expect("drop test database");
+    result.expect("cross-layer reference graph validation");
 }
