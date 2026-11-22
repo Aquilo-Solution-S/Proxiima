@@ -65,6 +65,38 @@ macro_rules! ledger {
     (Proxiima.Identity.storeNumberMutable) => {
         false
     };
+    // The greatest allowed future occurrence offset, in minutes relative to the admission clock.
+    (Proxiima.Memory.futureOccurrenceMinutes) => {
+        5
+    };
+    // The UTC occurrence precision in nanoseconds per stored tick.
+    (Proxiima.Memory.occurrenceQuantumNanoseconds) => {
+        1000
+    };
+    // The largest trimmed title in characters for remembered notes and core derivations.
+    (Proxiima.Memory.titleMax) => {
+        240
+    };
+    // The largest trimmed body in characters for remembered notes, core derivations and recorded utterances.
+    (Proxiima.Memory.bodyMax) => {
+        20000
+    };
+    // The largest trimmed interpretation claim in characters.
+    (Proxiima.Memory.claimMax) => {
+        1000
+    };
+    // The largest raw interpretation subject list.
+    (Proxiima.Memory.subjectMax) => {
+        64
+    };
+    // The highest admitted confidence on the inclusive interpretation scale.
+    (Proxiima.Memory.confidenceMax) => {
+        100
+    };
+    // The interpretation confidence used when the tool receives no score.
+    (Proxiima.Memory.confidenceDefault) => {
+        80
+    };
     // Memory ceiling ranks in declaration order for Rust.
     (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
         [0, 1, 2, 3]

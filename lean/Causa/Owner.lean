@@ -20,7 +20,7 @@ def User.ofToken (t : String) : User := ⟨t⟩
 instance : Inhabited User := ⟨User.ofToken "causa-kernel-witness"⟩
 
 /-- The memory kinds ranked by `Proxiima.OwnerAuthority.coveringCeiling`. -/
-abbrev AccessKind := Proxiima.Identity.MemoryKind
+abbrev AccessKind := Proxiima.Memory.Kind
 
 /-- The Goal capability used by the proof lattice. -/
 abbrev GoalAccess := Proxiima.OwnerAuthority.GoalAccess

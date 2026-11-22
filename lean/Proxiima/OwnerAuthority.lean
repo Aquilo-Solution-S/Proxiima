@@ -4,7 +4,7 @@ import Proxiima.Identity
 
 namespace Proxiima.OwnerAuthority
 
-open Proxiima.Identity (EmbeddableEntity MemoryKind)
+open Proxiima.Identity (EmbeddableEntity)
 
 /-- The highest memory kind a role can read or write. -/
 inductive AccessCeiling where
@@ -24,13 +24,13 @@ def memoryCeilingRanks : List Nat :=
    AccessCeiling.rank .perspective]
 
 /-- The lowest ceiling covering each of the three memory kinds. -/
-def coveringCeiling : MemoryKind → AccessCeiling
+def coveringCeiling : Proxiima.Memory.Kind → AccessCeiling
   | .Fact => .fact
   | .Abstraction => .abstraction
   | .Perspective => .perspective
 
 /-- A direction-specific ceiling covers the selected memory kind and every lower kind. -/
-def covers : AccessCeiling → MemoryKind → Bool
+def covers : AccessCeiling → Proxiima.Memory.Kind → Bool
   | .perspective, _ | .abstraction, .Fact | .abstraction, .Abstraction | .fact, .Fact => true
   | .none, _ | .fact, .Abstraction | .fact, .Perspective | .abstraction, .Perspective => false
 

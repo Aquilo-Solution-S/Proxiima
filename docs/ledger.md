@@ -792,6 +792,197 @@ stateDiagram-v2
 
 - object store source: An explicit validated identity takes precedence over derivation from endpoint and bucket.
 
+## Memory
+
+**Kind**: The three layers of the Memory spine.
+
+- Fact: An admitted observation.
+- Abstraction: A typed pattern derived from admitted inputs.
+- Perspective: A derived stance or an interpretation.
+
+**Entity kind**: The layers of Memory and the separate Goal spine.
+
+- Fact
+- Abstraction
+- Perspective
+- Goal
+
+**Version change**: The lifecycle surfaces that can change a stored admission or its equivalent storage pointers.
+
+- observationOrRevision
+- forgetOrRestore
+- ownerTransfer
+- capturedSchemaEvolution
+
+**Version action**: How each operation acts on the stored admission.
+
+- appendVersion
+- updateLifecycle
+- updateOwnerAndEquivalentPointers
+- applyCapturedMapping
+
+**Write target**: How a write selects its series.
+
+- namedSeries
+- supersedesVersion
+
+**Series source**: The source of the series handle.
+
+- requestedHandle
+- targetVersionHandle
+
+**Reserved head**: The locked comparison of the series head against the snapshot taken before minting a greater version ID.
+
+- unchanged
+- moved
+
+**Head action**: What the locked writer does after checking the reserved head.
+
+- materialize
+- retry
+
+**Derived head action**: The action for a deterministic derived-series head probe.
+
+- replayStoredVersion
+- refuseReferenceDrift
+- appendVersion
+- probeForgotten
+
+**Occurrence source**: Where an admission's occurrence time comes from when it has one.
+
+- supplied
+- admissionTime
+
+**Stateful version**: Version states in the caller's readable view of a series.
+
+- latestReadable
+- latestReadableTombstone
+- forgotten
+- olderReadable
+
+**Interpretation key field**: The ordered components of the deterministic interpretation handle.
+
+- destinationNamespace
+- operatorLabel
+- claim
+- confidence
+- localSubjectVersions
+- sortedRemoteSubjectHandles
+
+**Operator phase**: Stages that derive a Memory or a Goal from admitted inputs.
+
+- ToA
+- AtoP
+- AtoGoal
+
+**future occurrence minutes** = 5: The greatest allowed future occurrence offset, in minutes relative to the admission clock.
+
+**occurrence quantum nanoseconds** = 1000: The UTC occurrence precision in nanoseconds per stored tick.
+
+**title max** = 240: The largest trimmed title in characters for remembered notes and core derivations.
+
+**body max** = 20000: The largest trimmed body in characters for remembered notes, core derivations and recorded utterances.
+
+**claim max** = 1000: The largest trimmed interpretation claim in characters.
+
+**subject max** = 64: The largest raw interpretation subject list.
+
+**confidence max** = 100: The highest admitted confidence on the inclusive interpretation scale.
+
+**confidence default** = 80: The interpretation confidence used when the tool receives no score.
+
+**interpretation key** = [destinationNamespace, operatorLabel, claim, confidence, localSubjectVersions, sortedRemoteSubjectHandles]: The handle hashes the local key and folds in sorted remote handles when present, so reasserting the same interpretation lands on one memory.
+
+| entity kind | memory kind |
+| --- | --- |
+| Fact | Fact |
+| Abstraction | Abstraction |
+| Perspective | Perspective |
+| Goal | — |
+
+- memory kind: The Memory layer of an entity, with Goals on their own spine.
+
+| version change | version action |
+| --- | --- |
+| observationOrRevision | appendVersion |
+| forgetOrRestore | updateLifecycle |
+| ownerTransfer | updateOwnerAndEquivalentPointers |
+| capturedSchemaEvolution | applyCapturedMapping |
+
+- version action: Observations and revisions append, and in-place changes are limited to the lifecycle, transfer and captured-evolution paths.
+
+| write target | series source |
+| --- | --- |
+| namedSeries | requestedHandle |
+| supersedesVersion | targetVersionHandle |
+
+- series source: Supersession selects the existing series of the named version and writes no supersession pin.
+
+| reserved head | head reservation |
+| --- | --- |
+| unchanged | materialize |
+| moved | retry |
+
+- head reservation: Only the reserved head permits materialization of the minted version.
+
+| bool | bool | bool | derived head action |
+| --- | --- | --- | --- |
+| yes | yes | yes | replayStoredVersion |
+| yes | yes | no | appendVersion |
+| yes | no | yes | refuseReferenceDrift |
+| yes | no | no | refuseReferenceDrift |
+| no | yes | yes | probeForgotten |
+| no | yes | no | probeForgotten |
+| no | no | yes | probeForgotten |
+| no | no | no | probeForgotten |
+
+- derived head action: Equal origins and references replay the stored version when guidance agrees, while changed origins permit a new revision after the forgotten-version probe.
+
+| kind | bool | occurrence source |
+| --- | --- | --- |
+| Fact | yes | supplied |
+| Fact | no | admissionTime |
+| Abstraction | yes | — |
+| Abstraction | no | — |
+| Perspective | yes | — |
+| Perspective | no | — |
+
+- occurrence source: Facts use the supplied occurrence or the write time encoded by their admission ID, and derived Memory has no occurrence time.
+
+| stateful version | stateful head visible |
+| --- | --- |
+| latestReadable | yes |
+| latestReadableTombstone | yes |
+| forgotten | no |
+| olderReadable | no |
+
+- stateful head visible: Natural-key prefix reads page the newest readable Fact per series, including a visible Goal publication or spiice tombstone.
+
+| operator phase | entity kind | operator admits input |
+| --- | --- | --- |
+| ToA | Fact | yes |
+| ToA | Abstraction | yes |
+| ToA | Perspective | no |
+| ToA | Goal | no |
+| AtoP | Fact | no |
+| AtoP | Abstraction | yes |
+| AtoP | Perspective | no |
+| AtoP | Goal | no |
+| AtoGoal | Fact | no |
+| AtoGoal | Abstraction | yes |
+| AtoGoal | Perspective | no |
+| AtoGoal | Goal | no |
+
+- operator admits input: The admissible input layers for an operator invocation.
+
+| operator phase | operator output |
+| --- | --- |
+| ToA | Abstraction |
+| AtoP | Perspective |
+| AtoGoal | Goal |
+
+- operator output: The layer or spine of each operator phase's output.
+
 ## Owner authority
 
 **Access ceiling**: The highest memory kind a role can read or write.
@@ -1062,7 +1253,7 @@ stateDiagram-v2
 
 - rank: The ordinal of a ceiling, with zero covering no memory.
 
-| memory kind | covering ceiling |
+| kind | covering ceiling |
 | --- | --- |
 | Fact | fact |
 | Abstraction | abstraction |
@@ -1070,7 +1261,7 @@ stateDiagram-v2
 
 - covering ceiling: The lowest ceiling covering each of the three memory kinds.
 
-| access ceiling | memory kind | covers |
+| access ceiling | kind | covers |
 | --- | --- | --- |
 | none | Fact | no |
 | none | Abstraction | no |
