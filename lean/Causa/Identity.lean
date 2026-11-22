@@ -1,105 +1,59 @@
-/-
-Causa — Identity
-
-ID types and the append-only storage discipline (doc 07; v0.0.8 timeseries).
-
-Identity (UML §0):
-  series  = handle
-  version = t            UUIDv8 UNIQUE     -- this is the row id
-  row     = (handle, t)
-  head    = memory_head.t / goal_head.t    -- DISPLAY / SEARCH ONLY
-  link    = target t, frozen at write      -- NEVER a handle, NEVER follow-at-read
-
-There is no `FactEntity`, no `EdgeId`, no `CitationMappingId`. Citation is
-`blob_id` 0..1 on the Memory row. Schema lives on the handle catalog, not on
-every version. Typed payload is `Content` (owner-scoped); many admissions
-may share one `ContentId`. The kernel's time axis is `tick : Instant`, the
-model of UUIDv8 `t` order — not a second storage column named `created_at`.
--/
-
 import Causa.Prelude
 import Causa.Owner
 
+/-! Causa — Identity -/
+
 namespace Causa
 
--- ============================================================
--- Identity — ONE opaque token (doc 07 §ID Types)
--- ============================================================
-
-/-- The one identity primitive: a fresh, unique, engine-minted token.
-    EQUALITY is all the kernel asks of it. Memory UUIDv8 layout and time-sortability are
-    engine commitments. The kernel's time axis is `Instant` (the order of `t`),
-    never a second wall-clock field on the row. -/
+/-- The kernel's opaque identity token. -/
 opaque Id : Type := String
 
-/-- Version id — Memory `t` / Goal `t`. Globally unique. The row id. -/
+/-- Identifier of one Memory version. -/
 abbrev MemoryId          : Type := Id
 abbrev GoalId            : Type := Id
-/-- Series id — one real-world thing / one judgment / one goal. -/
+/-- Identifier of one series. -/
 abbrev Handle            : Type := Id
 abbrev BlobId            : Type := Id
-/-- Typed sidecar payload. Not an admission. Shareable within one owner. -/
+/-- Identifier of a typed sidecar payload. -/
 abbrev ContentId         : Type := Id
-/-- Engine digest of a Content payload. Opaque equality only. -/
+/-- The engine digest of a content payload. -/
 opaque ContentHash : Type := String
-/-- Kernel face of a retrieval situation: admitted `t`s in scope. -/
+/-- The version identities describing a retrieval situation. -/
 abbrev Cue : Type := Set MemoryId
 
-/-- The writer attested by the authenticator, independent of the owner and
-    the payload. `via` names the caller or session; `none` means the
-    principal called directly. Attribution grants no authority. -/
+/-- Authenticated authorship of a write. -/
 structure WriterAttribution where
   «by» : User
   via  : Option Id
 
-/-- Stable persisted owner-table reference: the owner id, one `Id`. This is
-    not the resolved membership map (`Owner := User → Option Role`). Entity
-    rows store this id; the host resolves it through `OwnerState` before
-    authorization. The id carries no kind: whether it names a user or a group
-    is the host registry's fact, read only where a check needs it. No new
-    axiom: owner ids reuse the existing engine-minted `Id`. -/
+/-- Stable identifier used for a persisted owner. -/
 structure OwnerRef where
   id : Id
 
-/-- The resolved Leopard-style owner map used by pure authorization rules. -/
+/-- The owner membership view used by authorization. -/
 abbrev ResolvedOwner : Type := Owner
 
-/-- Server/host owner state: the trusted boundary that resolves stable owner refs
-    into current role maps. The kernel does not model the Leopard expansion
-    algorithm, SQL tables, or caches; it consumes only this resolved function. -/
+/-- Trusted owner resolution supplied by the host. -/
 structure OwnerState where
   resolve : OwnerRef → ResolvedOwner
-  /-- A user's own owner id: the id the user is known by. -/
+  /-- The identifier by which the owner registry knows a user. -/
   own : User → OwnerRef
-  /-- A user's own id resolves to that user's personal group. -/
+  /-- The personal-owner resolution law. -/
   personal_resolves : ∀ u : User, resolve (own u) = Owner.ofUser u
 
-/-- Which operator produced a derived memory. Reproducibility metadata stays
-    engine/sidecar — not a Memory column. -/
+/-- Identifier of the operator that produced a derived memory. -/
 opaque OperatorId : Type := String
 
-/-- The F→A input contract token. Opaque equality only. Not a Memory column. -/
+/-- Identifier of a Fact-to-Abstraction input contract. -/
 opaque InputContract : Type := String
 
-/-- The opaque schema tag. Stored once on `memory_head` / `goal_head` / `blob`,
-    never on every version row. Ordinary admission with a new shape uses a new
-    schema and handle; the dedicated spiice migration operation may explicitly
-    replace admission IDs while mapping the old series into the target shape.
-    No `schema_version`. -/
+/-- The opaque tag of a typed schema. -/
 opaque SchemaRef : Type := String
 
--- ============================================================
--- Lifecycle capability classes (doc 07 §Append-Only)
--- ============================================================
-
-/-- ST-11 — no UPDATE in the cognitive lifecycle. Marker class. -/
+/-- Marker for the append-only lifecycle. -/
 class AppendOnly (α : Type) : Prop
 
-/-- Never updated in place. Facts, blobs. Forget sets only the forgotten flag
-    on the Memory row and restore clears it (#488); no payload or pin changes. -/
+/-- Marker for immutable content. -/
 class Immutable (α : Type) : Prop
-
-/- ST-15..17 — vector-store independence is carried by ABSENCE: the kernel
-   declares no `Embedding` entity and no `Memory → Embedding` accessor. -/
 
 end Causa

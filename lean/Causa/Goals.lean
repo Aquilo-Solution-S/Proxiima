@@ -1,40 +1,11 @@
-/-
-Causa — Goals
-
-Goal is its own timeseries (UML §3). Not Memory.
-
-  series  = handle
-  version = t
-
-The runtime orders the versions of a handle: a later `t` is the new head, and
-a terminal state admits no later `t`. The kernel states neither.
-
-No `supersedes`. No authorship blob. Title stays. `text` is on the row: the
-version's prompt, `none` when unknown, never blank (`goal_text_nonblank_chk`,
-migration 0025); the rest of the body is the sidecar. A version that changes
-the state keeps its predecessor's text (the Goal write verbs carry it).
-`close_fact_t` pins an existing Fact `t`. `assignment_t` is the historical
-single intended Perspective target on old versions; the causal
-`motivated_by` list is distinct and does not reinterpret it.
-
-The goal tree (#514): an open goal (Active or Paused) never sits under a
-closed one (Achieved or Abandoned). Each write checks one level: decompose
-needs an Active parent, achieve and abandon need no open child (abandon
-takes an Active or Paused goal, #515), and pause, resume and modify need
-nothing. `goalStep_preserves_inv` shows that keeps the
-rule, and `closed_ancestor_closes_descendant` that it holds at any depth.
--/
-
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Causa.Memory
 
-namespace Causa
+/-! Causa — Goals -/
 
--- ============================================================
--- States and lifecycle
--- ============================================================
+namespace Causa
 
 inductive GoalState where
   | Active
@@ -49,17 +20,11 @@ def GoalState.terminal : GoalState → Bool
   | .Achieved => true
   | .Abandoned => true
 
--- ============================================================
--- The Goal entity
--- ============================================================
-
-/-- The characters `goal_text_nonblank_chk` trims: ASCII whitespace (space,
-tab, line feed, carriage return, vertical tab, form feed). -/
+/-- Whitespace trimmed by the stored Goal text constraint. -/
 def goalTextBlankChar (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0b' || c == '\x0c'
 
-/-- `goal_text_nonblank_chk`: a stored text keeps a character the check does
-not trim. -/
+/-- Admissibility of a present Goal prompt. -/
 def GoalTextNonblank (s : Text) : Prop :=
   s.toByteArray.data.any (fun b => !goalTextBlankChar (Char.ofNat b.toNat)) = true
 
@@ -79,7 +44,7 @@ structure Goal where
   /-- Exact Perspective versions that motivated this Goal version. -/
   motivated_by  : List MemoryId
   write_act_t   : Option MemoryId
-  /-- The parent's series (#514), set at decompose and fixed for the series. -/
+  /-- The parent series selected at decomposition. -/
   parent_handle : Option Handle
   tick          : Instant
   terminal_close_fact :
@@ -99,7 +64,6 @@ def goal_evidence : Goal → List MemoryId := Goal.evidence_t
 def goal_motivated_by : Goal → List MemoryId := Goal.motivated_by
 def goal_write_act_t : Goal → Option MemoryId := Goal.write_act_t
 
-/- The new causal relations are source-owned, exact-version references. -/
 def goal_motivations_valid
     (memories : Set Memory) (goal : Goal) : Prop :=
   ∀ id : MemoryId, id ∈ goal_motivated_by goal →
@@ -145,7 +109,7 @@ def ErasedTargetsDisjointGoals
   ∀ e : ErasedPinTarget, e ∈ targets →
     ∀ g : Goal, g ∈ goals → erased_pin_target_t e ≠ goal_t g
 
-/-- Declared pins to other nodes (ids only). No edge table. -/
+/-- Identity targets of Goal-declared pins. -/
 def goalDeclaredTargetIds (g : Goal) : List Id :=
   (goal_assignment g).toList ++ goal_dependencies g ++ goal_evidence g ++
     goal_motivated_by g ++
@@ -160,18 +124,12 @@ def GoalIdUnique (goals : Set Goal) : Prop :=
 
 instance : AppendOnly Goal := ⟨⟩
 
--- ============================================================
--- No open goal under a closed one: the step model (refs #514)
--- ============================================================
-
-/-- Active and Paused are open; Achieved and Abandoned are closed. -/
+/-- Classification of a Goal state as open. -/
 def GoalState.isOpen : GoalState → Bool
   | .Active | .Paused => true
   | .Achieved | .Abandoned => false
 
-/-- The goal tree at one moment: one entry per series, holding its head
-    state. `parent` is a function of the handle:
-    every version of a series names the same parent. `born` orders series by creation; `clock` is the next birth. -/
+/-- The Goal tree at one moment. -/
 structure GoalForest where
   state  : Handle → Option GoalState
   parent : Handle → Option Handle
@@ -181,22 +139,22 @@ structure GoalForest where
 def forestChildOf (F : GoalForest) (c p : Handle) : Prop :=
   (F.state c).isSome = true ∧ F.parent c = some p
 
-/-- An open goal never sits under a closed one. -/
+/-- The open ancestry invariant of a Goal forest. -/
 def NoOpenUnderClosed (F : GoalForest) : Prop :=
   ∀ (c p : Handle) (sc sp : GoalState),
     F.parent c = some p → F.state c = some sc → F.state p = some sp →
     sc.isOpen = true → sp.isOpen = true
 
-/-- A live child's parent is live. -/
+/-- The parent existence invariant of a Goal forest. -/
 def ParentsExist (F : GoalForest) : Prop :=
   ∀ c p : Handle, (F.state c).isSome = true → F.parent c = some p →
     (F.state p).isSome = true
 
-/-- A parent was born before its child (the parent exists first). -/
+/-- The creation order invariant for parent and child series. -/
 def ParentOlder (F : GoalForest) : Prop :=
   ∀ c p : Handle, forestChildOf F c p → F.born p < F.born c
 
-/-- Every live series was born before the clock. -/
+/-- The birth clock invariant of a Goal forest. -/
 def BornBelowClock (F : GoalForest) : Prop :=
   ∀ h : Handle, (F.state h).isSome = true → F.born h < F.clock
 
@@ -206,12 +164,12 @@ structure GoalForestInv (F : GoalForest) : Prop where
   parentOlder       : ParentOlder F
   bornBelowClock    : BornBelowClock F
 
-/-- No child head of `x` is open: the precondition of achieve and abandon. -/
+/-- The child-state condition for achieving or abandoning a Goal. -/
 def NoOpenChild (F : GoalForest) (x : Handle) : Prop :=
   ∀ (c : Handle) (s : GoalState), F.parent c = some x → F.state c = some s →
     s.isOpen = false
 
-/-- A new series `x` is born Active under `parent`; nothing else moves. -/
+/-- Creation of a Goal series. -/
 structure ForestBirth (F F' : GoalForest) (x : Handle) (parent : Option Handle) : Prop where
   fresh     : F.state x = none
   state_x   : F'.state x = some .Active
@@ -222,8 +180,7 @@ structure ForestBirth (F F' : GoalForest) (x : Handle) (parent : Option Handle) 
   parent_eq : ∀ h, h ≠ x → F'.parent h = F.parent h
   born_eq   : ∀ h, h ≠ x → F'.born h = F.born h
 
-/-- Series `x` moves from `old` to `new`; parents, births, the clock and
-    every other series stay. -/
+/-- A state change on an existing Goal series. -/
 structure ForestRelabel (F F' : GoalForest) (x : Handle) (old new : GoalState) : Prop where
   state_old : F.state x = some old
   state_x   : F'.state x = some new
@@ -232,10 +189,7 @@ structure ForestRelabel (F F' : GoalForest) (x : Handle) (old new : GoalState) :
   born      : F'.born = F.born
   clock     : F'.clock = F.clock
 
-/-- One goal write. Each step states only its local precondition: decompose
-    needs an Active parent, achieve and abandon need no open child (abandon
-    takes an Active or Paused goal), and pause, resume and modify need
-    nothing new. -/
+/-- A lifecycle step on the Goal forest. -/
 inductive GoalStep : GoalForest → GoalForest → Prop where
   | set {F F' : GoalForest} (x : Handle) :
       ForestBirth F F' x none → GoalStep F F'
@@ -260,7 +214,7 @@ theorem relabel_isSome {F F' : GoalForest} {x : Handle} {old new : GoalState}
   | inl hx => subst hx; rw [r.state_x, r.state_old]; rfl
   | inr hx => rw [r.state_eq h hx]
 
-/-- The parts of the invariant a relabel keeps whatever the new state. -/
+/-- The forest shape conditions preserved by relabeling. -/
 theorem relabel_keeps_shape {F F' : GoalForest} {x : Handle} {old new : GoalState}
     (inv : GoalForestInv F) (r : ForestRelabel F F' x old new) :
     ParentsExist F' ∧ ParentOlder F' ∧ BornBelowClock F' := by
@@ -279,7 +233,7 @@ theorem relabel_keeps_shape {F F' : GoalForest} {x : Handle} {old new : GoalStat
     rw [r.born, r.clock]
     exact inv.bornBelowClock h hh
 
-/-- A relabel from an open state to an open state keeps the invariant. -/
+/-- Preservation of forest validity by relabeling to an open state from an open state. -/
 theorem open_relabel_preserves {F F' : GoalForest} {x : Handle} {old new : GoalState}
     (inv : GoalForestInv F) (r : ForestRelabel F F' x old new)
     (hold : old.isOpen = true) (hnew : new.isOpen = true) : GoalForestInv F' := by
@@ -303,7 +257,7 @@ theorem open_relabel_preserves {F F' : GoalForest} {x : Handle} {old new : GoalS
       rw [r.state_eq c hcx] at hc
       exact inv.noOpenUnderClosed c p sc sp hp hc hsp hopen
 
-/-- A relabel to a closed state under `NoOpenChild` keeps the invariant. -/
+/-- Preservation of forest validity by closing a series with no open child. -/
 theorem closing_relabel_preserves {F F' : GoalForest} {x : Handle} {old new : GoalState}
     (inv : GoalForestInv F) (hchild : NoOpenChild F x) (r : ForestRelabel F F' x old new)
     (hnew : new.isOpen = false) : GoalForestInv F' := by
@@ -329,11 +283,11 @@ theorem closing_relabel_preserves {F F' : GoalForest} {x : Handle} {old new : Go
       rw [r.state_eq p hpx] at hsp
       exact inv.noOpenUnderClosed c p sc sp hp hc hsp hopen
 
-/-- A birth under no parent or under an Active parent keeps the invariant. -/
+/-- Preservation of forest validity by creating a root or a child of an Active series. -/
 theorem birth_preserves {F F' : GoalForest} {x : Handle} {parent : Option Handle}
     (inv : GoalForestInv F) (b : ForestBirth F F' x parent)
     (hparent : ∀ p, parent = some p → F.state p = some .Active) : GoalForestInv F' := by
-  -- A live series of `F` is never `x`, and no live series of `F` has `x` as parent.
+
   have live_ne : ∀ h, (F.state h).isSome = true → h ≠ x := by
     intro h hh hx
     subst hx
@@ -475,19 +429,19 @@ theorem reachable_inv : ∀ {F : GoalForest}, GoalForestReachable F → GoalFore
   | empty => exact emptyForest_inv
   | step _ step ih => exact goalStep_preserves_inv ih step
 
-/-- `d` lies below `a`: the transitive closure of `forestChildOf`. -/
+/-- The transitive descendant relation of the Goal tree. -/
 inductive GoalDescends (F : GoalForest) : Handle → Handle → Prop where
   | child {d a : Handle} : forestChildOf F d a → GoalDescends F d a
   | trans {d m a : Handle} : forestChildOf F d m → GoalDescends F m a → GoalDescends F d a
 
-/-- Every goal below a closed goal is closed, at any depth. -/
+/-- Closure of all descendants of a closed Goal. -/
 theorem closed_ancestor_closes_descendant :
     ∀ {F : GoalForest} {d a : Handle} {sa : GoalState},
       GoalForestInv F → GoalDescends F d a →
       F.state a = some sa → sa.isOpen = false →
       ∃ sd, F.state d = some sd ∧ sd.isOpen = false := by
   intro F d a sa inv hdesc ha hclosed
-  -- One level: a live child of a closed goal is closed.
+
   have step : ∀ c p sp, forestChildOf F c p → F.state p = some sp → sp.isOpen = false →
       ∃ sc, F.state c = some sc ∧ sc.isOpen = false := by
     intro c p sp ⟨hc, hp⟩ hsp hpc
@@ -515,27 +469,22 @@ theorem descends_born_lt :
   | child hc => exact inv.parentOlder _ _ hc
   | trans hc _ ih => exact Nat.lt_trans ih (inv.parentOlder _ _ hc)
 
-/-- No goal lies below itself. -/
+/-- Acyclicity of the Goal tree. -/
 theorem goal_tree_acyclic :
     ∀ {F : GoalForest} {h : Handle}, GoalForestInv F → ¬ GoalDescends F h h := by
   intro F h inv hdesc
   exact Nat.lt_irrefl _ (descends_born_lt inv hdesc)
 
--- ============================================================
--- Self as query, not entity (S3: cue-indexed, not parameterless)
--- ============================================================
-
-/-- Candidate pool — owner's Perspectives. Not Self. -/
+/-- The candidate pool for situated Self. -/
 def ownerPerspectives (memories : Set Memory) (o : Owner) : Set Memory :=
   fun m => m ∈ memories ∧ memory_owner m = o ∧ memory_kind m = .Perspective
 
-/-- Situation touches this admission: the `t` is in the cue, or a pin is. -/
+/-- Relevance of an admission to a retrieval cue. -/
 def cueTouches (m : Memory) (cue : Cue) : Prop :=
   memory_t m ∈ cue ∨
   (∃ id : MemoryId, id ∈ cue ∧ (id ∈ memory_origins m ∨ id ∈ memory_refs m))
 
-/-- Self for a situation. Different cues, different Self. Question text is
-    protocol; the kernel face of situation is `Cue`. -/
+/-- The owner's current Perspectives selected by a retrieval cue. -/
 def situatedSelf
     (memories : Set Memory) (heads : Set MemoryHead)
     (o : Owner) (cue : Cue) : Set Memory :=
@@ -543,10 +492,6 @@ def situatedSelf
     m ∈ ownerPerspectives memories o ∧
     memoryIsHead memories heads m ∧
     cueTouches m cue
-
--- ============================================================
--- Goal assignment and evidence
--- ============================================================
 
 def RetainedGoalAssignmentValid
     (goals : Set Goal) (memories : Set Memory)

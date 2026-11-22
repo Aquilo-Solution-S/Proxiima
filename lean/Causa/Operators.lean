@@ -1,17 +1,11 @@
-/-
-Causa — Operators
-
-Production shapes. Provenance is the output row's `origins[]` (or a Goal's
-`evidence_t`). No edge ledger. No source-batch gate on Memory (CN-8 retired:
-visit is a Fact + refs). Recipe metadata is sidecar, not a Memory column.
--/
-
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Causa.Memory
 import Causa.Goals
 import Causa.Edges
+
+/-! Causa — Operators -/
 
 namespace Causa
 
@@ -52,8 +46,7 @@ structure InvocationShapeValid (inv : OperatorInvocation) : Prop where
   outputGoalsShape : ∀ g : Goal, g ∈ inv.outputGoals →
     inv.phase.outputGoalAllowed
 
-/-- Completeness: each memory output names every input in `origins`;
-    each Goal output names every input in `evidence_t`. -/
+/-- Input coverage by the provenance pins of an operator's outputs. -/
 structure InvocationProvenanceComplete (inv : OperatorInvocation) : Prop where
   memoryInputs : ∀ out : Memory, out ∈ inv.outputMemories →
     ∀ inp : Memory, inp ∈ inv.inputs →

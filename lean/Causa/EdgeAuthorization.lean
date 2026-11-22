@@ -1,17 +1,8 @@
-/-
-Causa — Goal collaboration authority
-
-Access on one exact Goal: the owner's group gives the capability, or a grant
-in force on that Goal does (`goal_route`). Editing a Goal, reading a
-publication and working a bound Memory are stated over that route. Reading
-the Goal itself is wider: it waives the grant's own Goal ceiling
-(`goal_read_admitted`). Achieving a Goal and forking a source version have
-their own admissions (`goal_achieve_admitted`, `fork_admitted`).
--/
-
 import Causa.Edges
 import Causa.Authorization
 import Causa.Audience
+
+/-! Causa — Goal collaboration authority -/
 
 namespace Causa
 
@@ -19,14 +10,6 @@ def MemoryKind.accessKind : MemoryKind → AccessKind
   | .Fact => .fact
   | .Abstraction => .abstraction
   | .Perspective => .perspective
-
-/- ================================================================
-   Goal collaboration authority
-
-   These predicates are deliberately separate from `may_read` and
-   `may_write`. A Goal audience is an additional, exact-version route; it is
-   never inserted into an `Owner` or used to manufacture owner authority.
-   ================================================================ -/
 
 structure GoalControllerEpoch where
   goal_handle : Handle
@@ -40,22 +23,17 @@ structure GoalPublication where
   source_generation : Nat
   controller_generation : Nat
 
-/-- A grant on one Goal: a `Grant` (a person or a group, and a role) on one
-    exact controller epoch. -/
+/-- An audience grant scoped to a Goal controller epoch. -/
 structure GoalAudienceGrant extends Grant where
   goal : GoalControllerEpoch
   controller_generation : Nat
 
-/-- The grant is on this exact Goal and carries the current controller
-    generation. A grant past its expiry is not among the Goal's grants; the
-    fence and the expiry are both facts checked again where the operation
-    commits. -/
+/-- The controller fence for an audience grant. -/
 def GoalAudienceGrant.inForce (g : GoalAudienceGrant) (goal : GoalControllerEpoch)
     (current_controller_generation : Nat) : Prop :=
   g.goal = goal ∧ g.controller_generation = current_controller_generation
 
-/-- The route every Goal operation shares: the owner's group gives the
-    capability, or a grant in force on this exact Goal does. -/
+/-- Capability resolution through the owner or a Goal's audience. -/
 def goal_route (s : OwnerState) (requester : User) (owner : Owner)
     (goal : GoalControllerEpoch) (generation : Nat)
     (grants : List GoalAudienceGrant) (c : Capability) : Prop :=
@@ -70,8 +48,7 @@ structure GoalWorkBinding where
   source_generation : Nat
   controller_generation : Nat
 
-/-- The audience route reads one exact admission.  A Goal's terminal state is
-    intentionally absent: completion does not revoke a publication. -/
+/-- Audience authorization to read a published Memory version. -/
 def goal_publication_read_admitted
     (s : OwnerState) (requester : User) (publication : GoalPublication)
     (grants : List GoalAudienceGrant) (current_controller_generation : Nat)
@@ -84,11 +61,7 @@ def goal_publication_read_admitted
   publication.controller_generation = current_controller_generation ∧
   publication.source_generation = memory_owner_generation
 
-/-- Reading the Goal itself: a role that reads the owner's Goals, or a current
-    grant on this exact Goal whose subject gives the requester a role that
-    reads Goals. This is not the uniform audience rule: it waives the grant's
-    own Goal ceiling, so every guest reads the Goal it was granted on whatever
-    the grant's role says about Goals. -/
+/-- Authorization to read the Goal itself. -/
 def goal_read_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
     (current_controller_generation : Nat) : Prop :=
@@ -100,10 +73,7 @@ def goal_read_admitted (s : OwnerState) (requester : User) (controller : GoalCon
       guest.inForce controller current_controller_generation ∧
       (s.subject guest.subject).gives requester .readsGoals)
 
-/-- Modifying or transitioning an existing Goal is Goal work, under one rule
-    for members and guests: the role works Goals. A guest's grant counts for
-    this exact stable Goal and its current controller generation. Achieving
-    the Goal is `goal_achieve_admitted`. -/
+/-- Authorization to edit a Goal under its current controller. -/
 def goal_edit_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
     (current_controller_generation : Nat) : Prop :=
@@ -113,7 +83,7 @@ def goal_edit_admitted (s : OwnerState) (requester : User) (controller : GoalCon
   goal_route s requester (goal_owner goal) controller
     current_controller_generation grants .worksGoals
 
-/-- Whoever edits a Goal reads it. -/
+/-- Goal read authorization follows from edit authorization. -/
 theorem goal_edit_implies_read (s : OwnerState) (requester : User)
     (controller : GoalControllerEpoch) (grants : List GoalAudienceGrant)
     (goal : Goal) (generation : Nat) :
@@ -133,11 +103,7 @@ theorem goal_edit_implies_read (s : OwnerState) (requester : User)
           (fun r => r.worksGoals_readsGoals)
           ((Grant.gives_iff _ _ _ _).1 hgives).2⟩
 
-/-- Achieving a Goal closes it. Over the owner that is administration; on the
-    Goal's own route it belongs to the grant that works this Goal. This is not
-    the uniform audience rule: it asks the owner route for administration and
-    the guest route for Goal work. A member's Goal work alone achieves
-    nothing. -/
+/-- Authorization to achieve a Goal. -/
 def goal_achieve_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)
     (grants : List GoalAudienceGrant) (goal : Goal)
     (current_controller_generation : Nat) : Prop :=
@@ -149,8 +115,7 @@ def goal_achieve_admitted (s : OwnerState) (requester : User) (controller : Goal
       guest.inForce controller current_controller_generation ∧
       guest.toGrant.gives s requester .worksGoals)
 
-/-- A work route is same-owner and write-ceiling bounded.  It grants no Goal
-    administration, transfer, erase, or owner-membership capability. -/
+/-- Authorization to write Memory through a Goal work binding. -/
 def goal_work_write_admitted
     (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
     (grants : List GoalAudienceGrant) (goal : Goal)
@@ -167,8 +132,7 @@ def goal_work_write_admitted
   binding.source_generation = memory_owner_generation ∧
   goal_state goal = .Active
 
-/-- Working-draft reads use the same exact binding but do not require the Goal
-    to remain Active; completing a Goal is not an implicit access revocation. -/
+/-- Authorization to read Memory through a Goal work binding. -/
 def goal_work_read_admitted
     (s : OwnerState) (requester : User) (binding : GoalWorkBinding)
     (grants : List GoalAudienceGrant) (goal : Goal)
@@ -184,8 +148,7 @@ def goal_work_read_admitted
   binding.controller_generation = current_controller_generation ∧
   binding.source_generation = memory_owner_generation
 
-/-- One rule: for grants all in force, `goal_route` is exactly the flattened
-    lookup of the owner joined with those grants. -/
+/-- Goal audience resolution agrees with `Causa.flattened` for grants in force. -/
 theorem goal_route_is_flattened (s : OwnerState) (owner : Owner)
     (goal : GoalControllerEpoch) (generation : Nat)
     (grants : List GoalAudienceGrant)
@@ -240,9 +203,7 @@ structure ForkSourcePermission where
   source_use : User → Prop
   destination_write : User → Prop
 
-/-- An independent adaptation is a fresh A/P series anchored at one exact
-    source version. Facts remain immutable admissions; Goals are not Memory
-    fork targets. -/
+/-- Authorization for an independent fork of a Memory version. -/
 def fork_admitted (permission : ForkSourcePermission)
     (source target : Memory)
     (current_source_generation current_destination_generation : Nat) : Prop :=

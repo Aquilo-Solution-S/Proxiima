@@ -1,53 +1,19 @@
-/-
-Causa — Pins (no Edge table)
-
-There is no index table: `origins[]`, `refs[]` and `reads[]` live on the
-Memory row. The kinds:
-
-  origin    = made-from   (origins)
-  reference = points-at   (refs onto Memory, goal_refs onto Goal)
-  read      = read-before (reads: memories the host certified the writing
-              session read before this write). Context, not grounding:
-              it never feeds origins or refs, and a Fact may carry it.
-
-Rebuildability is identity: the pin set IS node content. Goal pins live on
-the Goal row (`assignment_t`, `dependency_t`, `evidence_t`, `close_fact_t`,
-`write_act_t`) and never appear in `memory.refs`. `parent_handle` names the
-parent's series (the goal tree, #514); it is not a pin.
-
-E1–E7 rebase:
-E1 existence   — origin and refs t are a stored Memory.t, live or forgotten;
-                goal_refs resolves against the Goal spine. Retained historical
-                pins may also resolve through a kinded erase witness.
-  E2 ownership   — the pin is on the declaring row; no separate owner column
-  E3 layering    — OriginKindValid (UML CHECKs)
-  E4 kind follows — origins vs refs; no verb writes a pin
-  E5 / E6        — there is no pin row, so no pin id and no pin payload
-  E7 rebuild     — derivePins m = (m.origins, memory_reference_ids m, m.goal_refs, m.guided_by, m.reads)
--/
-
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Causa.Memory
 import Causa.Goals
 
+/-! Causa — Pins -/
+
 namespace Causa
 
-/-- Pins extracted from a node — THE derivation, and it is identity.
-    Five source-owned columns: the Goal spine has ordinary references and
-    explicit guidance references, kept separate from F/A/P origins; the
-    host-certified read set is a fifth column beside them. -/
+/-- The relationship pins carried by a Memory admission. -/
 def derivePins (m : Memory) :
     List MemoryId × List MemoryId × List GoalId × List GoalId × List MemoryId :=
   (memory_origins m, memory_reference_ids m,
     memory_goal_refs m, memory_guided_by m, memory_reads m)
 
-/- A reference may point at a Goal, but no longer from the same column as a
-   Memory reference. `refs` resolves against the Memory spine (`pinExists`)
-   and `goal_refs` against the Goal spine; the column IS the target's kind,
-   so nothing downstream has to re-derive it. Goal-DECLARED pins remain on
-   the Goal row and are a separate thing again. -/
 def goalReferenceTargetExists (goals : Set Goal) (id : GoalId) : Prop :=
   ∃ g : Goal, g ∈ goals ∧ goal_t g = id
 
@@ -65,21 +31,13 @@ def retainedOriginTargetExists
     (targets : Set ErasedPinTarget) (id : MemoryId) : Prop :=
   pinExists memories id ∨ recordedMemoryTargetExists targets id
 
-/-- Read-side resolution after the Goal-reference split. `goal_refs` is the STORED typing; what
-    a given reader may see is a separate question, so before projection the
-    Goals this reader cannot read are moved back into the untyped `refs`
-    carrier, where they redact exactly as an unreadable Memory does. The
-    stored discriminant must not survive into the projection: knowing that
-    a withheld target is a Goal is itself disclosure. -/
+/-- Read projection of Goal references under the requester's visibility. -/
 def resolveVisibleGoalRefs (readable : GoalId → Bool) (m : Memory) :
     List MemoryId × List GoalId :=
   (memory_refs m ++ (memory_goal_refs m).filter (fun g => !readable g),
    (memory_goal_refs m).filter readable)
 
-/-- The non-disclosure invariant. A row carrying an unreadable Goal
-    reference resolves to exactly the carrier of a row that had that id in
-    `refs` all along — so no reader downstream can tell the two apart, and
-    the split buys its typing without widening what a reader learns. -/
+/-- Indistinguishability of unreadable Goal and Memory references after projection. -/
 theorem unreadable_goal_reference_resolves_like_a_memory_reference
     (readable : GoalId → Bool) (m n : Memory) (g : GoalId)
     (hmg : memory_goal_refs m = [g]) (hng : memory_goal_refs n = [])

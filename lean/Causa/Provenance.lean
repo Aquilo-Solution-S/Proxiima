@@ -1,12 +1,6 @@
-/-
-Causa — Provenance grounding
-
-N1: persisted memories are grounded by well-founded descent inside an
-admitted memory graph. Descent runs along `origins[]` and `refs[]` (no
-Edge table). `tick` (UUIDv8 order) makes the descent well-founded.
--/
-
 import Causa.Operators
+
+/-! Causa — Provenance grounding -/
 
 namespace Causa
 
@@ -17,7 +11,7 @@ def pinFrom (m tgt : Memory) : Prop :=
 def pinFromInTable (memories : Set Memory) (m tgt : Memory) : Prop :=
   m ∈ memories ∧ tgt ∈ memories ∧ pinFrom m tgt
 
-/-- P5 — one admitted memory graph. No FactEntity. No Edge table. -/
+/-- Validity of the admitted Memory graph. -/
 structure MemoryGraphValid
     (memories : Set Memory) (goals : Set Goal)
     (heads : Set MemoryHead) : Prop where
@@ -25,10 +19,7 @@ structure MemoryGraphValid
   goalIdUnique : GoalIdUnique goals
   headAligned : MemoryHeadAligned memories heads
   forkAnchorAligned : ForkAnchorAligned memories
-  /-- Since the Goal-reference split each reference column resolves against exactly one
-      spine: `refs` against Memory (live or forgotten) and `goal_refs` against
-      Goal. Before the split `refs` had to admit either, which is what
-      forced every reader to re-derive the target's kind. -/
+  /-- Target existence for the graph's typed pins. -/
   pinTargetsExist :
     ∀ m : Memory, m ∈ memories →
       (∀ id : MemoryId, id ∈ memory_origins m → pinExists memories id) ∧
@@ -41,34 +32,30 @@ structure MemoryGraphValid
   guidanceValid :
     ∀ m : Memory, m ∈ memories → perspective_guidance_valid memories goals m
   originKind : ∀ m : Memory, m ∈ memories → OriginKindValid memories m
-  /-- Memory `t` and Goal `t` do not collide (both globally UNIQUE). -/
+  /-- Disjointness of Memory and Goal version identities. -/
   memoryGoalIdsDisjoint :
     ∀ (m : Memory) (g : Goal), m ∈ memories → g ∈ goals → memory_t m ≠ goal_t g
-  /-- Every Abstraction has nonempty origins (F→A or A→A). -/
+  /-- The origin requirement for an Abstraction. -/
   abstractionHasOrigins :
     ∀ m : Memory, m ∈ memories → memory_kind m = .Abstraction →
       memory_origins m ≠ []
-  /-- CN-6 — every non-Fact names at least one pin (origins or refs). -/
+  /-- The provenance requirement for derived Memory. -/
   derivedProvenance :
     ∀ m : Memory, m ∈ memories → memory_kind m ≠ .Fact →
       memory_origins m ≠ [] ∨ memory_refs m ≠ []
-  /-- B2 — every non-Fact pins a stored row (live or forgotten: forget keeps
-      the row, so it still grounds). -/
+  /-- Stored support for grounding derived Memory. -/
   groundingSupport :
     ∀ m : Memory, m ∈ memories → memory_kind m ≠ .Fact →
       ∃ id : MemoryId,
         (id ∈ memory_origins m ∨ id ∈ memory_refs m ∨
           memory_forked_from m = some id) ∧
         (∃ tgt : Memory, tgt ∈ memories ∧ memory_t tgt = id)
-  /-- Every stored pin target is strictly earlier. -/
+  /-- The insertion order of stored pin targets. -/
   pinTimeStrict :
     ∀ m tgt : Memory, m ∈ memories → tgt ∈ memories →
       pinFrom m tgt → memory_tick tgt < memory_tick m
 
-/-- The retained graph after hard erase.  A witness preserves only the
-    identity and closed kind needed to validate an old pin; it deliberately
-    carries neither owner nor payload and therefore cannot support the live
-    grounding claim below. -/
+/-- Validity of the retained Memory graph after hard erasure. -/
 structure RetainedMemoryGraphValid
     (memories : Set Memory) (goals : Set Goal)
     (heads : Set MemoryHead)
@@ -95,26 +82,25 @@ structure RetainedMemoryGraphValid
   originKind :
     ∀ m : Memory, m ∈ memories →
       RetainedOriginKindValid memories targets m
-  /-- Memory `t` and Goal `t` do not collide (both globally UNIQUE). -/
+  /-- Disjointness of retained Memory and Goal version identities. -/
   memoryGoalIdsDisjoint :
     ∀ (m : Memory) (g : Goal), m ∈ memories → g ∈ goals → memory_t m ≠ goal_t g
   erasedMemoryDisjoint : ErasedTargetsDisjointMemories targets memories
   erasedGoalDisjoint : ErasedTargetsDisjointGoals targets goals
-  /-- Every Abstraction has nonempty origins (F→A or A→A). -/
+  /-- The origin requirement for a retained Abstraction. -/
   abstractionHasOrigins :
     ∀ m : Memory, m ∈ memories → memory_kind m = .Abstraction →
       memory_origins m ≠ []
-  /-- CN-6 — every non-Fact names at least one pin (origins or refs). -/
+  /-- The provenance requirement for retained derived Memory. -/
   derivedProvenance :
     ∀ m : Memory, m ∈ memories → memory_kind m ≠ .Fact →
       memory_origins m ≠ [] ∨ memory_refs m ≠ []
-  /-- Every stored pin target is strictly earlier. -/
+  /-- The insertion order of retained stored pin targets. -/
   pinTimeStrict :
     ∀ m tgt : Memory, m ∈ memories → tgt ∈ memories →
       pinFrom m tgt → memory_tick tgt < memory_tick m
 
-/-- A retained committed store includes the graph shape and the Goal-row
-    carriers whose historical targets may now be witnesses. -/
+/-- Validity of the retained Memory graph and its Goal pins. -/
 structure RetainedCommittedStoreValid
     (memories : Set Memory) (goals : Set Goal)
     (heads : Set MemoryHead)

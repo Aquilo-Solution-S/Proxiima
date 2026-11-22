@@ -1,59 +1,35 @@
-/-
-Causa — Compliance
-
-Hard delete is abandonment, the forgotten path, or a spiice-scoped erase:
-
-  wipeable := abandoned ∨ (forgotten ∧ unreferenced ∧ policy) ∨ spiiceScoped
-
-Forget sets a flag on the row and keeps it (#488); erase wipes abandoned owners; a spiice-scoped erase wipes whole
-series of one spiice's own schemas under one live owner, on Admin or the
-host's system authority (renegotiated in writing, docs/13 §Spiice-scoped
-erase). An owner-to-owner transfer carries
-the entity's erase reach with it: after the move it is the DESTINATION owner
-whose abandonment wipes the row. There is no edge cascade — pins live on the
-declaring row.
--/
-
 import Causa.Prelude
 import Causa.Owner
 import Causa.Memory
 import Causa.Authorization
 import Causa.EdgeAuthorization
 
+/-! Causa — Compliance -/
+
 namespace Causa
 
 def abandoned (o : Owner) : Prop := ∀ u : User, o u = none
 
-/-- No stored row, live or forgotten, still pins this `t`. -/
+/-- Absence of incoming origins or Memory references for a version identity. -/
 def unreferenced (memories : Set Memory) (id : MemoryId) : Prop :=
   ∀ m : Memory, m ∈ memories →
     id ∉ memory_origins m ∧ id ∉ memory_reference_ids m
 
-/-- The row `id` is stored and flagged forgotten. -/
+/-- Whether a stored Memory is flagged as forgotten. -/
 def forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_forgotten m = true
 
--- ============================================================
--- Spiice-scoped erase (docs/13 §Spiice-scoped erase)
--- ============================================================
-
-/-- Who issues a spiice-scoped erase: a user, or the host's system authority
-    (a retention schedule runs with nobody in the loop). -/
+/-- The principal issuing a spiice-scoped erase. -/
 inductive EraseAuthority where
   | user (u : User)
   | system
 
-/-- Administration of the owner, the gate a transfer takes, or the host's
-    system authority. -/
+/-- Authorization to issue a spiice-scoped erase for an owner. -/
 def EraseAuthority.admits : EraseAuthority → Owner → Prop
   | .user u, o => may_administer u o
   | .system, _ => True
 
-/-- One spiice-scoped erase: whole series (`handles`), one live owner, and
-    only the named spiice's own schemas. The spiice's vocabulary is a
-    PARAMETER (`ownSchemas`), as in `Causa.Spiice`; a series carries one
-    schema (`seriesSchema`: a new shape is a new handle, Identity). Nothing
-    here requires the owner to be abandoned. -/
+/-- An authorized selection of series for spiice-scoped erasure. -/
 structure SpiiceScopedErase (memories : Set Memory) where
   owner        : Owner
   ownSchemas   : SchemaRef → Prop
@@ -62,25 +38,22 @@ structure SpiiceScopedErase (memories : Set Memory) where
   authority    : EraseAuthority
   authorized   : authority.admits owner
   ownSchema    : ∀ h : Handle, h ∈ handles → ownSchemas (seriesSchema h)
-  /-- Every version of a selected series, live or forgotten, is the owner's. -/
+  /-- Ownership of every stored version in the erase selection. -/
   inOwner      : ∀ m : Memory, m ∈ memories → memory_handle m ∈ handles →
     memory_owner m = owner
 
-/-- A `t` the erase selects: any version, live or forgotten, of a selected
-    series. -/
+/-- Whether the erase selection covers a stored version. -/
 def SpiiceScopedErase.selects {memories : Set Memory}
     (e : SpiiceScopedErase memories) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_handle m ∈ e.handles
 
-/-- CO-7 / ST-13: abandonment OR (forgotten ∧ unreferenced ∧ policy) OR
-    selected by a spiice-scoped erase of that owner. -/
+/-- Eligibility for hard erasure. -/
 def wipeable (o : Owner) (memories : Set Memory)
     (id : MemoryId) (policy : Prop) : Prop :=
   abandoned o ∨ (forgotten memories id ∧ unreferenced memories id ∧ policy) ∨
     ∃ e : SpiiceScopedErase memories, e.owner = o ∧ e.selects id
 
-/-- Target render: live or forgotten. A pin to a forgotten `t` renders
-    forgotten, not a missing origin. -/
+/-- Whether a pin resolves to a live Memory for rendering. -/
 def pin_render_live (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id ∧ memory_forgotten m = false
 
@@ -96,17 +69,11 @@ theorem pin_render_live_not_forgotten
   subst heq
   simp [hf] at hf'
 
--- ============================================================
--- Modeled hard-erase transitions
--- ============================================================
-
-/-- Remove one Memory admission by its immutable `t`.  The model does not
-    encode SQL lock order or trigger sequencing; it only describes the
-    committed set transform. -/
+/-- The committed Memory set after a hard erase. -/
 def hardEraseMemoryRows (memories : Set Memory) (target : Memory) : Set Memory :=
   fun m => m ∈ memories ∧ memory_t m ≠ memory_t target
 
-/-- Add the closed kind witness emitted when a Memory row is erased. -/
+/-- The pin-witness set after a Memory hard erase. -/
 def hardEraseMemoryWitnesses
     (targets : Set ErasedPinTarget) (target : Memory) :
     Set ErasedPinTarget :=
@@ -114,9 +81,7 @@ def hardEraseMemoryWitnesses
     (erased_pin_target_t e = memory_t target ∧
       erased_pin_target_kind e = (memory_kind target).pinTargetKind)
 
-/-- Pure state relation for a Memory hard erase.  The preconditions model the
-    database's uniqueness/disjointness fences, including rejection of an
-    already-recorded target with a conflicting kind. -/
+/-- The committed-state relation for erasing one Memory admission. -/
 structure HardEraseMemoryTransition
     (memories : Set Memory)
     (goals : Set Goal) (targets : Set ErasedPinTarget)
@@ -204,7 +169,7 @@ theorem hard_erase_memory_result_well_formed
     | inr hnew =>
         exact fun same => htransition.targetNotGoal g hg (hnew.1.symm.trans same)
 
-/-- A Goal erase records a Goal witness while leaving the Memory set intact. -/
+/-- The committed Goal set after a hard erase. -/
 def hardEraseGoalRows (goals : Set Goal) (target : Goal) : Set Goal :=
   fun g => g ∈ goals ∧ goal_t g ≠ goal_t target
 

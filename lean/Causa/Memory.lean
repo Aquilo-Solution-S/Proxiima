@@ -1,27 +1,10 @@
-/-
-Causa — Memory
-
-The F/A/P cognitive graph as a timeseries (UML §0–§2).
-
-  series  = handle
-  version = t            -- MemoryId; globally UNIQUE
-  row     = (handle, t)
-
-No `supersedes` / `text` / `authoring_*` / schema-on-version / `created_at`.
-Pins (`origins`, `refs`, `reads`) are target `t`, frozen at write. Schema and series
-contract live on `MemoryHead`. Typed payload is `Content` (owner-scoped);
-`Memory.content_id` may be shared across admissions. There is no `FactEntity`.
--/
-
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 
-namespace Causa
+/-! Causa — Memory -/
 
--- ============================================================
--- Kinds and layers (doc 02 §The Layering Principle)
--- ============================================================
+namespace Causa
 
 inductive MemoryKind where
   | Fact
@@ -29,9 +12,7 @@ inductive MemoryKind where
   | Perspective
   deriving DecidableEq, Repr
 
-/-- The closed historical vocabulary used by the database-only erase witness.
-    `Goal` is deliberately outside `MemoryKind`: a Goal witness can satisfy a
-    reference target, never a Memory origin/evidence target. -/
+/-- The target kinds recorded by erase witnesses. -/
 inductive PinTargetKind where
   | Fact
   | Abstraction
@@ -44,8 +25,7 @@ def MemoryKind.pinTargetKind : MemoryKind → PinTargetKind
   | .Abstraction => .Abstraction
   | .Perspective => .Perspective
 
-/-- A hard-erased identity witness. It carries only the former `t` and its
-    closed kind; in particular it carries no owner and cannot reconstruct one. -/
+/-- The retained identity of a hard-erased pin target. -/
 structure ErasedPinTarget where
   t    : MemoryId
   kind : PinTargetKind
@@ -96,11 +76,7 @@ def recordedGoalTargetExists
     erased_pin_target_t e = id ∧
     erased_pin_target_kind e = .Goal
 
--- ============================================================
--- Content — owner-scoped typed payload (not an admission)
--- ============================================================
-
-/-- Immutable sidecar payload. No time, no pins. Shareable within one owner. -/
+/-- An owner-scoped payload that can be shared across admissions. -/
 structure Content where
   id     : ContentId
   owner  : Owner
@@ -112,15 +88,7 @@ def content_id : Content → ContentId := Content.id
 instance : AppendOnly Content := ⟨⟩
 instance : Immutable Content := ⟨⟩
 
--- ============================================================
--- The core entity — one version of a series
--- ============================================================
-
-/-- One Memory version. `t` is the row id. `tick` is the kernel face of
-    UUIDv8 `t` order (not a storage `created_at` column). Schema is not here.
-    `content_id` names the typed payload (shared across admissions).
-    `writer` records this version's authenticated attribution, separately
-    from its owner, shared payload and grounding pins. -/
+/-- One admission in a Memory series. -/
 structure Memory where
   handle     : Handle
   t          : MemoryId
@@ -128,39 +96,28 @@ structure Memory where
   owner      : Owner
   writer     : WriterAttribution
   origins    : List MemoryId
-  /-- Reference pins onto the Memory spine. Since the Goal-reference split this column is
-      Memory-only: a Goal reference lives in `goal_refs`, so the column
-      itself carries the target's kind and no reader has to re-derive it. -/
+  /-- Ordinary references to Memory versions. -/
   refs       : List MemoryId
-  /-- Reference pins onto the Goal spine, kept apart from `refs` so that
-      `refs` is typed. Goal-declared pins still live on the Goal row; this
-      is the Memory row's own reference to a Goal. -/
+  /-- Ordinary references to Goal versions declared by this Memory admission. -/
   goal_refs  : List GoalId
-  /-- Exact Goal versions that actually guided this Perspective version.
-      These are causal references, not F/A/P grounding origins. -/
+  /-- Goal versions that guided this Perspective. -/
   guided_by  : List GoalId
-  /-- Exact source version from which an independent A/P series was forked.
-      This is an ordinary source-owned Memory reference, not a new edge kind.
-      Later versions on the same handle retain the same anchor. -/
+  /-- The source version of an independent Memory fork. -/
   forked_from : Option MemoryId
-  /-- Memories the host certified this write's session read before it
-      wrote (#677). Context, not grounding: never an origin or reference,
-      may mix layers, and may sit on a Fact. -/
+  /-- Read context from the writing session. -/
   reads      : List MemoryId
   blob_id    : Option BlobId
   content_id : Option ContentId
   tick       : Instant
-  /-- Forget sets this flag and restore clears it (#488). The row, its
-      payload and its pins stay where they are; readers that serve live
-      memory skip a forgotten row. -/
+  /-- Whether the admission is forgotten. -/
   forgotten  : Bool
-  /-- Only Perspective versions may record Goal guidance. -/
+  /-- Restriction of Goal guidance to Perspectives. -/
   guided_by_only_perspective : kind ≠ .Perspective → guided_by = []
-  /-- Fact origins are empty (UML §2). -/
+  /-- Exclusion of grounding origins from Facts. -/
   fact_origins_empty : kind = .Fact → origins = []
-  /-- A Perspective never cites (UML §4). -/
+  /-- Exclusion of blob citations from Perspectives. -/
   perspective_never_cites : kind = .Perspective → blob_id = none
-  /-- `blob_id` is F/A only. -/
+  /-- The kinds eligible to cite a blob. -/
   blob_fa_only : blob_id ≠ none → kind = .Fact ∨ kind = .Abstraction
 
 def memory_handle : Memory → Handle := Memory.handle
@@ -173,14 +130,14 @@ def memory_goal_refs : Memory → List GoalId := Memory.goal_refs
 def memory_guided_by : Memory → List GoalId := Memory.guided_by
 def memory_forked_from : Memory → Option MemoryId := Memory.forked_from
 def memory_reads : Memory → List MemoryId := Memory.reads
-/-- Memory reference pins, including the optional fork anchor. -/
+/-- Memory references including the fork anchor. -/
 def memory_reference_ids (m : Memory) : List MemoryId :=
   memory_refs m ++ (memory_forked_from m).toList
 def memory_blob_id : Memory → Option BlobId := Memory.blob_id
 def memory_tick : Memory → Instant := Memory.tick
 def memory_forgotten : Memory → Bool := Memory.forgotten
 
-/-- `t` uniqueness is a table/store invariant. -/
+/-- Uniqueness of Memory version identities in a store. -/
 def MemoryIdUnique (memories : Set Memory) : Prop :=
   ∀ m1 m2 : Memory,
     m1 ∈ memories →
@@ -196,18 +153,9 @@ def ForkAnchorAligned (memories : Set Memory) : Prop :=
 
 instance : AppendOnly Memory := ⟨⟩
 
--- ============================================================
--- Facts
--- ============================================================
-
 def Fact : Type := { m : Memory // memory_kind m = .Fact }
 
--- ============================================================
--- Series catalog (UML §2b)
--- ============================================================
-
-/-- Required catalog. `(kind, schema, owner)` are the series contract and
-    live only here. `t` is the current head (display / search). -/
+/-- The catalog entry for a Memory series. -/
 structure MemoryHead where
   handle : Handle
   kind   : MemoryKind
@@ -220,7 +168,7 @@ def memory_head_kind : MemoryHead → MemoryKind := MemoryHead.kind
 def memory_head_owner : MemoryHead → Owner := MemoryHead.owner
 def memory_head_t : MemoryHead → MemoryId := MemoryHead.t
 
-/-- Every version of a handle agrees with the catalog on kind and owner. -/
+/-- Agreement of Memory versions with their series catalog. -/
 def MemoryHeadAligned (memories : Set Memory) (heads : Set MemoryHead) : Prop :=
   ∀ (m : Memory) (h : MemoryHead),
     m ∈ memories →
@@ -229,27 +177,22 @@ def MemoryHeadAligned (memories : Set Memory) (heads : Set MemoryHead) : Prop :=
       memory_kind m = memory_head_kind h ∧
       memory_owner m = memory_head_owner h
 
-/-- A Memory lifecycle head: the catalog names this `t` for the handle. -/
+/-- Whether the series catalog names this admission as its head. -/
 def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) : Prop :=
   m ∈ memories ∧
   ∃ h : MemoryHead, h ∈ heads ∧
     memory_head_handle h = memory_handle m ∧
     memory_head_t h = memory_t m
 
--- ============================================================
--- Forgetting (#488) — a flag on the row, not a move to a stub
--- ============================================================
-
-/-- Forget sets the flag and nothing else. -/
+/-- Forgetting one Memory admission. -/
 def Memory.forget (m : Memory) : Memory := { m with forgotten := true }
 
-/-- The store after forgetting the row `id`: every row stays, that one is
-    flagged. -/
+/-- The Memory store after forgetting one admission. -/
 def forgetIn (memories : Set Memory) (id : MemoryId) : Set Memory :=
   fun m' => ∃ m : Memory, m ∈ memories ∧
     ((memory_t m = id ∧ m' = m.forget) ∨ (memory_t m ≠ id ∧ m' = m))
 
-/-- A row survives a forget, keeping `t`, kind and owner. -/
+/-- Preservation of the admission's identity, kind and owner through forgetting. -/
 theorem forgetIn_keeps_row
     (memories : Set Memory) (id : MemoryId) (m : Memory) (hm : m ∈ memories) :
     ∃ m' : Memory, m' ∈ forgetIn memories id ∧ memory_t m' = memory_t m ∧
@@ -258,24 +201,22 @@ theorem forgetIn_keeps_row
   · exact ⟨m.forget, ⟨m, hm, Or.inl ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
   · exact ⟨m, ⟨m, hm, Or.inr ⟨h, rfl⟩⟩, rfl, rfl, rfl⟩
 
-/-- A pin target exists when a row with that `t` is stored, live or
-    forgotten: forget keeps the row (#488). -/
+/-- Existence of a stored Memory pin target. -/
 def pinExists (memories : Set Memory) (id : MemoryId) : Prop :=
   ∃ m : Memory, m ∈ memories ∧ memory_t m = id
 
-/-- Kind of a pinned `t`. The row keeps its kind when forgotten, so forget
-    cannot break layering. -/
+/-- Kind lookup for a stored Memory pin target. -/
 def pinKindIs
     (memories : Set Memory)
     (id : MemoryId) (k : MemoryKind) : Prop :=
   ∃ tgt : Memory, tgt ∈ memories ∧ memory_t tgt = id ∧ memory_kind tgt = k
 
-/-- B1 — A origins are Fact or Abstraction (F→A and A→A). -/
+/-- Admissible origin target kinds for an Abstraction. -/
 def pinKindFactOrAbstraction
     (memories : Set Memory) (id : MemoryId) : Prop :=
   pinKindIs memories id .Fact ∨ pinKindIs memories id .Abstraction
 
-/-- Forget keeps the kind of every pin target. -/
+/-- Preservation of target kind across forgetting. -/
 theorem pinKindIs_forgetIn
     (memories : Set Memory) (forgotten id : MemoryId) (k : MemoryKind)
     (h : pinKindIs memories id k) : pinKindIs (forgetIn memories forgotten) id k := by
@@ -312,10 +253,6 @@ structure RetainedOriginKindValid
     ∀ id : MemoryId, id ∈ memory_origins m →
       recordedPinKindIs memories targets id .Abstraction
 
--- ============================================================
--- Origin kind CHECKs (UML §2) — Tesla valve, no extra if
--- ============================================================
-
 structure OriginKindValid
     (memories : Set Memory) (m : Memory) : Prop where
   factEmpty : memory_kind m = .Fact → memory_origins m = []
@@ -326,12 +263,5 @@ structure OriginKindValid
     memory_origins m = [] ∨
     ∀ id : MemoryId, id ∈ memory_origins m →
       pinKindIs memories id .Abstraction
-
--- ============================================================
--- Personality absence (doc 02 §Personality, D4)
--- ============================================================
-
-/- Personality is not a kernel entity. No FactEntity. No supersedes.
-   Content is a payload sort, not a fourth cognitive kind. -/
 
 end Causa

@@ -1,13 +1,6 @@
-/-
-Causa — schema evolution
-
-A spiice supplies the relation between old and new typed records. Relations,
-rather than functions, permit one admission to split into several admissions
-and several admissions to merge into one. The kernel only completes the
-shared retained-store obligations; conversion meaning stays with the spiice.
--/
-
 import Causa.Provenance
+
+/-! Causa — Schema evolution -/
 
 namespace Causa
 
@@ -18,16 +11,13 @@ structure SchemaMigrationWitness where
   newGoals : Set Goal
   oldHeads : Set MemoryHead
   newHeads : Set MemoryHead
-  /-- Existing erase witnesses are carried through, never created by a schema
-      migration. Erasure remains the separate authorized inverse operation. -/
+  /-- Erase witnesses supplied to migration validation. -/
   retainedTargets : Set ErasedPinTarget
   memoryMap : Memory → Memory → Prop
   goalMap : Goal → Goal → Prop
   memoryPinMap : MemoryId → MemoryId → Prop
   goalPinMap : GoalId → GoalId → Prop
-  /-- Every old live row is explicitly mapped to at least one new live row.
-      The relation permits split, merge, and replacement IDs; it cannot use a
-      retained erase witness as a substitute for migration coverage. -/
+  /-- Coverage of source Memory admissions by the migration relation. -/
   sourceMemoryCoverage : ∀ old, old ∈ oldMemories →
     ∃ new, new ∈ newMemories ∧ memoryMap old new
   sourceGoalCoverage : ∀ old, old ∈ oldGoals →
