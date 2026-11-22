@@ -19,7 +19,7 @@
 //! `crates/auth-oidc/src/config.rs::validate_https_url`, which admits
 //! loopback HTTP for issuers and — only for a loopback issuer — its JWKS.
 //!
-//! The signing key is persisted (0600) so tokens survive a restart; without
+//! The signing key is persisted (mode 0600 on Unix) so tokens survive a restart; without
 //! that, every restart would silently invalidate the bearer sitting in your
 //! agent's MCP config. Use `--ephemeral` to keep it in memory instead.
 //!
@@ -46,9 +46,12 @@ const DEFAULT_BIND: &str = "127.0.0.1:31416";
 const DEFAULT_AUDIENCE: &str = "proxiima-mcp";
 const DEFAULT_SUBJECT: &str = "proxiima-dev";
 const DEFAULT_TTL_DAYS: u64 = 30;
-/// A token lives at least a day, and at most ten years: far below what overflows seconds.
-const MAX_TTL_DAYS: u64 = 3650;
+/// A token lives at least a day and at most ten years.
+const TTL_DAYS: std::ops::RangeInclusive<u64> = 1..=3650;
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:31415";
+const DEFAULT_KEY_PATH: &str = ".proxiima/dev-idp.pkcs8";
+#[cfg(unix)]
+const UNIX_KEY_MODE: u32 = 0o600;
 const KID: &str = "dev-idp";
 
 /// Namespace for deriving a stable user id from a subject name. Fixed so a
@@ -59,26 +62,33 @@ const USER_ID_NAMESPACE: Uuid = Uuid::from_bytes([
     0x70, 0x72, 0x6f, 0x78, 0x69, 0x6d, 0x61, 0x2d, 0x64, 0x65, 0x76, 0x2d, 0x69, 0x64, 0x70, 0x00,
 ]);
 
-const USAGE: &str = "\
+fn usage(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+        f,
+        "\
 Usage: dev-idp [OPTIONS]
 
 A loopback OIDC issuer for running Proxiima locally. Serves JWKS discovery and
 prints a ready-to-paste bearer plus the exact env Proxiima needs.
 
 Options:
-  --bind <ADDR:PORT>    Issuer bind address (loopback only) [default: 127.0.0.1:31416]
-  --audience <AUD>      Token audience, must match PROXIIMA_OIDC_AUDIENCE [default: proxiima-mcp]
-  --subject <SUB>       Token subject [default: proxiima-dev]
+  --bind <ADDR:PORT>    Issuer bind address (loopback only) [default: {DEFAULT_BIND}]
+  --audience <AUD>      Token audience, must match PROXIIMA_OIDC_AUDIENCE [default: {DEFAULT_AUDIENCE}]
+  --subject <SUB>       Token subject [default: {DEFAULT_SUBJECT}]
   --user-id <UUID>      Proxiima user id for that subject [default: derived from --subject]
-  --ttl-days <N>        Token lifetime in days, 1..=3650 [default: 30]
+  --ttl-days <N>        Token lifetime in days, {}..={} [default: {DEFAULT_TTL_DAYS}]
   --server-url <URL>    Proxiima MCP base URL, for the printed client config
-                        [default: http://127.0.0.1:31415]
-  --key-file <PATH>     Signing key location [default: $HOME/.proxiima/dev-idp.pkcs8]
+                        [default: {DEFAULT_SERVER_URL}]
+  --key-file <PATH>     Signing key location [default: $HOME/{DEFAULT_KEY_PATH}]
   --ephemeral           Keep the signing key in memory; tokens die with this process
   -h, --help            Print this message
 
 Never deploy this binary. It issues tokens to whoever can reach it.
-";
+",
+        TTL_DAYS.start(),
+        TTL_DAYS.end(),
+    )
+}
 
 #[derive(Debug)]
 struct Config {
@@ -100,14 +110,14 @@ enum ArgError {
 impl std::fmt::Display for ArgError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Help => f.write_str(USAGE),
+            Self::Help => usage(f),
             Self::Message(message) => write!(f, "{message}"),
         }
     }
 }
 
 fn default_key_file() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".proxiima/dev-idp.pkcs8"))
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(DEFAULT_KEY_PATH))
 }
 
 fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError> {
@@ -146,10 +156,12 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
                 ttl_days = raw
                     .parse()
                     .ok()
-                    .filter(|days| (1..=MAX_TTL_DAYS).contains(days))
+                    .filter(|days| TTL_DAYS.contains(days))
                     .ok_or_else(|| {
                         ArgError::Message(format!(
-                            "--ttl-days must be a number from 1 to {MAX_TTL_DAYS}: {raw}"
+                            "--ttl-days must be a number from {} to {}: {raw}",
+                            TTL_DAYS.start(),
+                            TTL_DAYS.end(),
                         ))
                     })?;
             }
@@ -192,8 +204,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
 
 /// Load the persisted signing key, generating and storing one on first run.
 ///
-/// A generated key is written 0600 before it is used, so a partial write can
-/// never leave a world-readable signing key behind.
+/// On Unix, the key file is created with owner-only permissions.
 fn load_or_create_key(path: Option<&PathBuf>) -> Result<RsaKeyPair, String> {
     let Some(path) = path else {
         return generate_key();
@@ -239,7 +250,7 @@ fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
+        options.mode(UNIX_KEY_MODE);
     }
     let mut file = match options.open(path) {
         Ok(file) => file,
@@ -397,12 +408,12 @@ mod instruction_tests {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match parse_args(std::env::args().skip(1)) {
         Ok(config) => config,
-        Err(ArgError::Help) => {
-            print!("{USAGE}");
+        Err(help @ ArgError::Help) => {
+            print!("{help}");
             return Ok(());
         }
         Err(error) => {
-            eprintln!("error: {error}\n\n{USAGE}");
+            eprintln!("error: {error}\n\n{}", ArgError::Help);
             std::process::exit(2);
         }
     };

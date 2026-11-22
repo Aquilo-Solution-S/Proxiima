@@ -196,11 +196,12 @@ jobs:
             --build-arg VERSION="$(python3 scripts/check-release-version.py --current)" \
             --build-arg REVISION="$(git rev-parse HEAD)" \
             -t proxiima-mcp:ci .
-      - name: image reports its release
+      - name: image reports its release and revision
         run: |
-          docker image inspect proxiima-mcp:ci \
-            --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
-            | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'
+          version="$(python3 scripts/check-release-version.py --current)"
+          revision="$(git rev-parse HEAD)"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' proxiima-mcp:ci)" = "$version"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' proxiima-mcp:ci)" = "$revision"
 
   test:
     name: test (postgres + pgvector)

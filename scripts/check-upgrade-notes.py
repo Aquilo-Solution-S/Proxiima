@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise Upgrade footer parsing and release-note rendering."""
+"""Check candidate Upgrade footers and exercise release-note rendering."""
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,13 +12,18 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def cliff(*arguments: str) -> str:
+def cliff(*arguments: str, candidate: bool = False) -> str:
+    env = os.environ.copy()
+    if candidate:
+        env["GIT_CLIFF__GIT__PROTECT_BREAKING_COMMITS"] = "true"
+        env["GIT_CLIFF__GIT__FILTER_COMMITS"] = "false"
     return subprocess.run(
         ["git", "cliff", "--offline", "--config", str(ROOT / "cliff.toml"), *arguments],
-        cwd=ROOT, text=True, capture_output=True, check=True,
+        cwd=ROOT, env=env, text=True, capture_output=True, check=True,
     ).stdout
 
 
+# `Proxiima.Repository.renderUpgrade`.
 def validate(releases: list[dict]) -> list[str]:
     failures = []
     for release in releases:
@@ -59,6 +65,11 @@ def self_test() -> None:
     bad = [commit for release in duplicated for commit in release["commits"]
            if commit["message"] == "fixture duplicate"]
     assert len(validate([{"commits": bad}])) == 1
+    hidden = json.loads(cliff("--unreleased", "--context", "--with-commit",
+                              "chore(ci)!: fixture hidden breaking", candidate=True))
+    bad = [commit for release in hidden for commit in release["commits"]
+           if commit["message"] == "fixture hidden breaking"]
+    assert len(validate([{"commits": bad}])) == 1
     # GitHub renders release notes as GFM, which drops `<word>` placeholders as
     # raw HTML. Outside code spans `<` is escaped; inside them it stays literal.
     placeholder = cliff("--unreleased", "--with-commit",
@@ -73,14 +84,19 @@ def self_test() -> None:
 
 
 def main() -> int:
-    # Fixtures are the only mode: whether a breaking commit's Upgrade footer
-    # is usable is review judgment (AGENTS.md), not something this script reads
-    # from history. The flag is required so no caller mistakes it for a gate.
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true", required=True)
-    parser.parse_args()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--self-test", action="store_true")
+    mode.add_argument("--range", dest="commit_range", metavar="BASE..TIP")
+    args = parser.parse_args()
     try:
-        self_test()
+        if args.self_test:
+            self_test()
+        else:
+            failures = validate(json.loads(cliff("--context", "--", args.commit_range, candidate=True)))
+            if failures:
+                print("\n".join(failures), file=sys.stderr)
+                return 1
         return 0
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"upgrade notes check failed: {error}", file=sys.stderr)

@@ -67,6 +67,11 @@ jobs:
             echo "::error::verified (${base}) is not an ancestor of ${tip}; main was rewritten"
             exit 1
           fi
+          merges="$(git rev-list --merges --max-count=1 "${base}..${tip}")"
+          if [[ -n "$merges" ]]; then
+            echo "::error::main must be linear. The candidate range contains a merge commit. Ask a maintainer to rebuild main from verified by replaying the intended changes as linear commits, then rerun Verify."
+            exit 1
+          fi
           echo "pending=true" >> "${GITHUB_OUTPUT}"
 
   ci:
@@ -89,11 +94,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
       - env:
           BASE: ${{ needs.target.outputs.base }}
           TIP: ${{ needs.target.outputs.tip }}
         run: |
           python3 scripts/verify-review.py check --base "${BASE}" --tip "${TIP}"
+          python3 scripts/check-upgrade-notes.py --range "${BASE}..${TIP}"
 
   advance:
     name: advance verified and nightly

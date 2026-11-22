@@ -26,7 +26,8 @@ use uuid::Uuid;
 /// `max_connections` is shared out of: nextest runs eight test processes at
 /// once, each with several Engines and probe pools. Four leaves a nested
 /// acquire and a concurrent statement room without queueing.
-pub const ENGINE_POOL_CONNECTIONS: u32 = 4;
+pub const ENGINE_POOL_CONNECTIONS: u32 =
+    proxiima_core::ledger!(Proxiima.Repository.exampleFixturePoolSize);
 
 /// The pool policy of a fixture Engine: the shipped defaults, sized to
 /// [`ENGINE_POOL_CONNECTIONS`].

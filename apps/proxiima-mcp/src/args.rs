@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::num::NonZeroU32;
 
 pub const DEFAULT_BIND: &str = "127.0.0.1:31415";
-pub const DEFAULT_DATABASE_URL: &str = "postgres://postgres@localhost/proxiima_dev";
+pub const DEFAULT_DATABASE_URL: &str =
+    proxiima_core::ledger!(Proxiima.Repository.mcpDefaultDatabaseUrl);
 
 /// Rows per transaction of `maintain-storage` without `--batch-size`.
 const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();

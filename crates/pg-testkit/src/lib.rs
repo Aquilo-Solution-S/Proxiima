@@ -58,12 +58,16 @@ const ADMIN_URL_UNSET: &str = concat!(
     "PROXIIMA_TEST_PG_URL is not set (or is empty): point it at the admin URL of a disposable ",
     "Postgres, postgres://USER:PASSWORD@HOST:PORT/DATABASE; there is no default server",
 );
-const DROP_RETRIES: usize = 25;
-const DROP_RETRY_DELAY: Duration = Duration::from_millis(200);
+const DROP_RETRIES: usize = proxiima_core::ledger!(Proxiima.Repository.databaseAttempts);
+const DROP_RETRY_DELAY: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.Repository.databaseRetryMillis
+));
 const SQLSTATE_DATABASE_ACCESSED: &str = "55006";
 const SQLSTATE_UNDEFINED_DATABASE: &str = "3D000";
 /// Untracked leftovers (pre-harness leaks) older than this are swept at boot.
-const UNTRACKED_GRACE: time::Duration = time::Duration::minutes(5);
+const UNTRACKED_GRACE: time::Duration = time::Duration::seconds(proxiima_core::ledger!(
+    Proxiima.Repository.cloneGraceSeconds
+));
 /// The fixture role names as macros, so SQL text that mentions them stays one
 /// program literal (`concat!`).
 macro_rules! split_platform_role {
@@ -97,7 +101,7 @@ const SPLIT_ROLE_SCRAM_VERIFIER: &str = "SCRAM-SHA-256$4096:cHJveGlpbWEtZml4dHVy
 const QUERY_USER: &str = "user";
 const QUERY_PASSWORD: &str = "password";
 /// A template database name ends in this many lowercase hex digits (`{hash:016x}`).
-const TEMPLATE_HASH_DIGITS: usize = 16;
+const TEMPLATE_HASH_DIGITS: usize = proxiima_core::ledger!(Proxiima.Repository.templateHashDigits);
 /// `PostgreSQL` identifiers hold 63 bytes; a family prefix leaves room for the hash.
 const MAX_FAMILY_PREFIX_BYTES: usize = 63 - TEMPLATE_HASH_DIGITS;
 /// The built-in template families, collected by [`ensure_template`] and
@@ -1012,7 +1016,7 @@ impl TemplateFamily {
     /// cannot take a template.
     #[must_use]
     pub fn template_name(&self, hash: u64) -> String {
-        format!("{}{hash:016x}", self.prefix)
+        format!("{}{hash:0TEMPLATE_HASH_DIGITS$x}", self.prefix)
     }
 
     /// Whether `name` is a template of this family: the prefix and exactly
@@ -1662,7 +1666,9 @@ async fn record_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Erro
 /// catalog the sweep reads.
 async fn record_new_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Error> {
     if let Err(error) = record_db(conn, name).await {
-        let _ = drop_db_on(conn, name).await;
+        if let Err(cleanup_error) = drop_db_on(conn, name).await {
+            tracing::warn!(database = name, %cleanup_error, "failed to clean up an unregistered test clone");
+        }
         return Err(error);
     }
     Ok(())
@@ -1729,8 +1735,9 @@ async fn sweep_stale_on(conn: &mut PgConnection) -> Result<usize, sqlx::Error> {
 
     let mut dropped = 0;
     for name in names {
-        match drop_db_on(conn, &name).await {
-            Ok(()) => dropped += 1,
+        match drop_unused_db_on(conn, &name).await {
+            Ok(true) => dropped += 1,
+            Ok(false) => {}
             Err(error) => {
                 tracing::warn!(database = name, %error, "sweep failed to drop leftover test database");
             }

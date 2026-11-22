@@ -11,7 +11,7 @@ RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/*.sources \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p proxiima-mcp \
+RUN cargo build --release --locked -p proxiima-mcp \
     && cp target/release/proxiima-mcp /proxiima-mcp
 
 # Distroless cc image: glibc + libstdc++ (for aws-lc) + ca-certificates

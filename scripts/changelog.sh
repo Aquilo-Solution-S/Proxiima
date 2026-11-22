@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Preview release notes from Conventional Commit messages via git-cliff.
-#
-# This is a read-only local preview. GitHub Releases are the canonical release
-# note store; the tracked CHANGELOG.md only points there. Merging a
-# workspace version bump to main makes release.yml create the tag and generate
-# its notes.
+# Preview release notes offline. `Proxiima.Repository.ReleaseNotes`.
+# The numbered release follows `Proxiima.Repository.numberedRelease`.
 set -euo pipefail
 
 if ! command -v git-cliff >/dev/null 2>&1; then

@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the workspace version against the tags already published.
-
-The version is `[workspace.package].version` in the root `Cargo.toml`, shared by
-every member and exposed as `proxiima_core::RELEASE_VERSION`. The tag IS the
-release. `release.yml` cuts `v${version}` when a merge to `main` carries a value
-no tag holds yet, and cuts nothing when the value is unchanged, so this one
-number is the release trigger. That makes it worth checking on every PR rather
-than remembering at tag time, because the mistakes it catches are only visible
-once the tag exists and the notes are written.
-
-Two shapes pass:
-
-  unchanged   the workspace version already has a tag; merging cuts no release.
-  bumped      the workspace version is the next patch, minor or major of the
-              highest tag; merging cuts exactly that tag.
-
-Everything else fails: a version that skips a number, goes backwards, or
-reuses a tag whose notes are already published and whose commit is already
-named by a consumer's `Cargo.toml`.
-
-Every workspace member must inherit the version (`version.workspace = true`),
-so a build cannot report two. `--current` prints the workspace version alone,
-for the workflows.
-"""
+"""Validate the workspace version and print it for the build and release workflows."""
 
 from __future__ import annotations
 
@@ -35,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 MANIFEST = Path("Cargo.toml")
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 def read_workspace_version(manifest: dict) -> str:
@@ -65,7 +42,7 @@ def load(path: Path) -> dict:
 
 
 def parse(version: str) -> tuple[int, int, int] | None:
-    found = SEMVER.match(version)
+    found = SEMVER.fullmatch(version)
     if not found:
         return None
     return (int(found.group(1)), int(found.group(2)), int(found.group(3)))
@@ -91,13 +68,13 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
     if parsed is None:
         return False, f"workspace version {current!r} is not a MAJOR.MINOR.PATCH version"
 
-    released = sorted(filter(None, (parse(tag.removeprefix("v")) for tag in tags)))
+    released = sorted(filter(None, (parse(tag[1:]) for tag in tags if tag.startswith("v"))))
     if not released:
-        return True, f"no released tag yet; merging cuts v{current}"
+        return True, f"no released tag yet; verification cuts v{current}"
 
     latest = released[-1]
     if parsed == latest:
-        return True, f"workspace version is v{current}, already released; merging cuts no tag"
+        return True, f"workspace version is v{current}, already released; verification cuts no tag"
 
     if parsed in released:
         return False, (
@@ -112,7 +89,7 @@ def validate(current: str, tags: list[str]) -> tuple[bool, str]:
             f"Expected one of: {', '.join('v' + show(nxt) for nxt in allowed)}"
         )
 
-    return True, f"workspace version bumped v{show(latest)} -> v{current}; merging cuts that tag"
+    return True, f"workspace version bumped v{show(latest)} -> v{current}; verification cuts that tag"
 
 
 def git_tags() -> list[str]:
@@ -136,6 +113,10 @@ def self_test() -> int:
         ("0.0.16", tags, False, "skips a patch"),
         ("0.2.0", tags, False, "skips a minor"),
         ("0.0.14-rc1", tags, False, "not MAJOR.MINOR.PATCH"),
+        ("0.0.01", tags, False, "workspace version with a leading zero"),
+        ("０.０.１５", tags, False, "workspace version with non-ASCII digits"),
+        ("0.0.15\n", tags, False, "workspace version with a trailing newline"),
+        ("0.0.15", [*tags, "v0.00.16", "v٠.٠.١٦", "0.0.16"], True, "noncanonical tags are ignored"),
         ("0.0.1", [], True, "first release, no tags yet"),
     ]
     failures = 0

@@ -332,6 +332,11 @@ inductive LoopbackFixture where
   | objectStore
   deriving DecidableEq
 
+/-- Existing-volume bootstrap refuses while a development serving or platform client is connected to the target database. -/
+def bootstrapPreflight : (knownClient : Bool) → Bool
+  | false => true
+  | true => false
+
 /-- Shared core test fixtures are exported only in tests or with the testkit feature and use the public authentication and tool-context entry points. -/
 inductive CoreFixture where
   | sealedAuthentication

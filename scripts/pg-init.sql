@@ -1,7 +1,18 @@
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+-- Stop existing development hosts before replay. `Proxiima.Repository.bootstrapPreflight`.
+DO $bootstrap$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND usename IN ('proxiima_runtime', 'proxiima_platform')
+          AND pid <> pg_backend_pid()
+    ) THEN
+        RAISE EXCEPTION 'Stop the existing development hosts and drain their connections before replaying pg-init.sql';
+    END IF;
+END
+$bootstrap$;
 
--- Loopback development bootstrap, not production credential provisioning.
--- Existing volumes must replay this file with all old Proxiima hosts stopped.
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS btree_gin;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

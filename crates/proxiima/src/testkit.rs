@@ -29,7 +29,7 @@ use crate::migrations::{MigrationError, MigrationSource, check_lineup, lineup, r
 
 /// The store number a [`HostTemplate`] initializes, as the migrate step does:
 /// a test boots its clone with `.store_number(TEMPLATE_STORE_NUMBER)`.
-pub const TEMPLATE_STORE_NUMBER: u16 = 0;
+pub const TEMPLATE_STORE_NUMBER: u16 = proxiima_core::ledger!(Proxiima.Repository.templateStore);
 
 /// A migrated, split-role template database a host suite clones once per
 /// test.
@@ -241,6 +241,11 @@ fn fingerprint_hash(
         )
     }
     let mut hash = feed(FNV_OFFSET_BASIS, fingerprint.as_bytes());
+    let vector_kind = match vectors {
+        VectorStorage::Local => b"local".as_slice(),
+        VectorStorage::HostIndex => b"host-index".as_slice(),
+    };
+    hash = feed(hash, vector_kind);
     hash = feed(
         hash,
         &proxiima_storage_pg::definitions::checksum_bytes(vectors),
@@ -248,6 +253,7 @@ fn fingerprint_hash(
     hash = feed(hash, proxiima_core::RELEASE_VERSION.as_bytes());
     hash = feed(hash, &TEMPLATE_STORE_NUMBER.to_be_bytes());
     hash = feed(hash, &sidecars.search_definitions_fingerprint());
+    hash = feed(hash, &(sources.len() as u64).to_be_bytes());
     for source in sources {
         hash = feed(hash, source.source().as_bytes());
         hash = feed(hash, source.ledger().as_bytes());
