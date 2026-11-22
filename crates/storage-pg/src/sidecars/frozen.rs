@@ -802,7 +802,7 @@ impl PgSidecarRegistryFrozen {
         key: PgSidecarKey,
         memory_id: MemoryId,
     ) -> Result<SidecarPayload, StorageError> {
-        // `Proxiima.SchemaEvolution.forkCopyChecks`.
+        // `Proxiima.Payloads.forkCopyChecks`.
         let entry = self
             .entries
             .get(&key)

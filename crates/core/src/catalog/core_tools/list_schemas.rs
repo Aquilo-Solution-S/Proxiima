@@ -31,7 +31,6 @@ pub struct SchemaItem {
 }
 
 pub(crate) fn schema_item(registry: &SpiiceRegistryFrozen, info: &SchemaInfo) -> SchemaItem {
-    // `Proxiima.SchemaEvolution.catalogFields`.
     let metadata = registry.evolution_metadata(&info.schema_id, info.schema_version, info.kind);
     SchemaItem {
         schema_id: info.schema_id.as_str().to_string(),

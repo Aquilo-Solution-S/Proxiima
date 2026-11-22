@@ -229,6 +229,7 @@ impl MigrationPlan {
         series: Uuid,
         placement: MigrationPlacement,
     ) -> Result<(Uuid, Uuid), StorageError> {
+        // `Proxiima.SchemaEvolution.IdentityRoute.retainAdmissionAndSeries`.
         let id = match placement.admission {
             MigrationAdmission::Retain => source,
             MigrationAdmission::New => {
@@ -335,7 +336,6 @@ impl MigrationPlan {
         source: &MigrationMemory,
         payload: P,
     ) -> Result<MemoryId, StorageError> {
-        // `Proxiima.SchemaEvolution.identityRoutes`.
         let target = self.fact(source, payload, MigrationPlacement::RETAIN, source.pins())?;
         self.map_memory(source, target, &[])?;
         Ok(target)

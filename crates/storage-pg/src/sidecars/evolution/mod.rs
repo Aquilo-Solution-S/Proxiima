@@ -168,7 +168,6 @@ pub(super) fn freeze_evolutions(
                 declaration.id
             )));
         }
-        // `Proxiima.SchemaEvolution.declaration`.
         execute::check_codecs(declaration, &program.schemas)?;
     }
     if let Some(id) = programs

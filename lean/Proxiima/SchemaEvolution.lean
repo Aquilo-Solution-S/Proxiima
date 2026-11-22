@@ -2,22 +2,6 @@
 
 namespace Proxiima.SchemaEvolution
 
-/-- The parts of a spiice's executable evolution declaration. -/
-inductive DeclarationPart where
-  | sourceAndTargetContracts
-  | owningMigrationAnchor
-  | stepDependencies
-  | typedCodecs
-  | transform
-  | change
-  | consumerAction
-  deriving DecidableEq
-
-/-- Freeze binds the executable and the catalog to one evolution declaration. -/
-def declaration : List DeclarationPart :=
-  [.sourceAndTargetContracts, .owningMigrationAnchor, .stepDependencies,
-   .typedCodecs, .transform, .change, .consumerAction]
-
 /-- The inputs checked before ordering the executable steps. -/
 inductive ScheduleInput where
   | owningMigrationAnchors
@@ -29,15 +13,6 @@ inductive ScheduleInput where
 /-- These inputs determine the acyclic schedule before writes. -/
 def scheduleInputs : List ScheduleInput :=
   [.owningMigrationAnchors, .explicitDependencies, .crossSchemaProducers, .earlierAnchorsInOwningLane]
-
-/-- The fields projected to consumers of an evolution target. -/
-inductive CatalogField where
-  | change
-  | consumerAction
-  deriving DecidableEq
-
-/-- A declared target projects both evolution fields. -/
-def catalogFields : List CatalogField := [.change, .consumerAction]
 
 /-- The inputs of an owner-scoped conversion. -/
 inductive ConversionInput where
@@ -63,17 +38,6 @@ inductive MappingCheck where
 def mappingChecks : List MappingCheck :=
   [.everySourceMapped, .everyTargetDeclaredAndMapped, .sameOwner, .sameAdmissionKind, .compatibleRetainedState]
 
-/-- Whether the old admission carrying a pin is still present after cutover. -/
-inductive PinCarrier where
-  | retained
-  | removed
-  deriving DecidableEq
-
-/-- Every remaining carrier must resolve its pins when the source admissions are removed. -/
-def resolveIncomingPins : PinCarrier → Bool
-  | .retained => true
-  | .removed => false
-
 /-- Goal fields carrying exact version targets during cutover. -/
 inductive GoalPinRole where
   | assignment
@@ -84,20 +48,20 @@ inductive GoalPinRole where
   | writeAct
   deriving DecidableEq
 
-/-- The exact Goal pins checked at cutover, independent of the parent series handle. -/
+/-- The exact Goal pins checked at cutover. -/
 def goalPinRoles : List GoalPinRole :=
   [.assignment, .dependency, .evidence, .motivation, .closeFact, .writeAct]
 
 /-- How retained identities are routed after transformation. -/
 inductive IdentityRoute where
-  | retainFactAdmissionAndSeries
+  | retainAdmissionAndSeries
   | primaryForHistoricalReplay
   | everySuccessorForCaptureErase
   deriving DecidableEq
 
-/-- A Fact can retain its identity; replay follows the primary target and capture erase follows every successor. -/
+/-- A target can retain its admission and series identity, replay follows the primary target, and capture erase follows every successor. -/
 def identityRoutes : List IdentityRoute :=
-  [.retainFactAdmissionAndSeries, .primaryForHistoricalReplay, .everySuccessorForCaptureErase]
+  [.retainAdmissionAndSeries, .primaryForHistoricalReplay, .everySuccessorForCaptureErase]
 
 /-- The Goal collaboration obligations of successor admissions. -/
 inductive CollaborationCheck where
@@ -176,23 +140,6 @@ inductive RebuildPart where
 def rebuildParts : List RebuildPart :=
   [.projections, .sketches, .embeddingJobsForMappedSpaces, .discardObsoleteVectorsAndClaims]
 
-/-- Schema phases that handle generated Follows and search state. -/
-inductive GeneratedStatePhase where
-  | migration
-  | serving
-  deriving DecidableEq
-
-/-- How a phase handles generated Follows and search state. -/
-inductive GeneratedStateWork where
-  | reconcile
-  | validate
-  deriving DecidableEq
-
-/-- Migration reconciles generated state even with no pending SQL; serving validates it. -/
-def generatedStateWork : GeneratedStatePhase → GeneratedStateWork
-  | .migration => .reconcile
-  | .serving => .validate
-
 /-- Steps in the boot-time inverse for a retired Fact. -/
 inductive RetiredDrainStep where
   | inventoryRawAdmissionsByAscendingOwnerPages
@@ -203,27 +150,5 @@ inductive RetiredDrainStep where
 /-- Retired Fact drain uses raw admissions and resumes at committed page boundaries. -/
 def retiredDrain : List RetiredDrainStep :=
   [.inventoryRawAdmissionsByAscendingOwnerPages, .commitEachOwnerPage, .resumeFromRemainingAdmissions]
-
-/-- The steps that prove a retired Fact's tables can be dropped. -/
-inductive DropCheck where
-  | takeWriterFence
-  | proveNoAdmissionNamesSchemaOrSurfaces
-  deriving DecidableEq
-
-/-- Destructive DDL checks that no admission names the retired schema or its tables while holding the writer fence. -/
-def fencedDropChecks : List DropCheck := [.takeWriterFence, .proveNoAdmissionNamesSchemaOrSurfaces]
-
-/-- The checks on a typed fork copy. -/
-inductive ForkCopyCheck where
-  | abstractionOrPerspective
-  | explicitCopyPolicy
-  | unpinnedSidecar
-  | sourceUse
-  | destinationWrite
-  deriving DecidableEq
-
-/-- Typed copies require an opted-in unpinned derived schema and ordinary admission. -/
-def forkCopyChecks : List ForkCopyCheck :=
-  [.abstractionOrPerspective, .explicitCopyPolicy, .unpinnedSidecar, .sourceUse, .destinationWrite]
 
 end Proxiima.SchemaEvolution

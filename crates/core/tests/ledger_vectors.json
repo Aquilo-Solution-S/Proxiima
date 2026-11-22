@@ -1,11 +1,6 @@
 {"Proxiima.SchemaEvolution.sourceWritable":
  [{"out": true, "in": ["beforeCompletion"]},
   {"out": false, "in": ["completed"]}],
- "Proxiima.SchemaEvolution.resolveIncomingPins":
- [{"out": true, "in": ["retained"]}, {"out": false, "in": ["removed"]}],
- "Proxiima.SchemaEvolution.generatedStateWork":
- [{"out": "reconcile", "in": ["migration"]},
-  {"out": "validate", "in": ["serving"]}],
  "Proxiima.Repository.versionAccepted":
  [{"out": true, "in": ["initial"]},
   {"out": true, "in": ["unchanged"]},

@@ -430,9 +430,11 @@ async fn fork_once(
         &external_references,
     )
     .await?;
+    // `Proxiima.Payloads.ForkCopyCheck.sourceUse`.
     reads
         .revalidate(storage, &mut tx, permit.scope(), &roles, &source_endpoint)
         .await?;
+    // `Proxiima.Payloads.ForkCopyCheck.destinationWrite`.
     check_destination(&mut tx, permit, &roles, access_kind).await?;
     if !same_owner_destination && !source_admin(permit.scope(), &roles, source_owner) {
         check_fork_consent(&mut tx, permit, &roles, consent, access_kind).await?;

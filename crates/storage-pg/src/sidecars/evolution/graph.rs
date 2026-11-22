@@ -31,12 +31,12 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
                     witness.t IS NOT NULL AND proxiima_core.schema_evolution_existing_pin_permits('memory',m.t,pin.id)))
                OR (pin.role IN ('origin','reference','fork') AND pin.id>=m.t)
                OR NOT COALESCE(CASE pin.role
-                    WHEN 'origin' THEN (m.kind='abstraction' AND actual.kind IN ('fact','abstraction')) OR (m.kind='perspective' AND actual.kind='abstraction')
+                    WHEN 'origin' THEN actual.kind=ANY(proxiima_core.memory_pin_kinds('origins',m.kind))
                     WHEN 'reference' THEN actual.kind=ANY(proxiima_core.memory_pin_kinds('refs',m.kind))
-                    WHEN 'goal' THEN actual.kind='goal'
-                    WHEN 'guidance' THEN m.kind='perspective' AND actual.kind='goal' AND (target_goal.t IS NULL OR target_goal.owner_id=m.owner_id)
+                    WHEN 'goal' THEN actual.kind=ANY(proxiima_core.memory_pin_kinds('goal_refs',m.kind))
+                    WHEN 'guidance' THEN actual.kind=ANY(proxiima_core.memory_pin_kinds('guided_by',m.kind)) AND (target_goal.t IS NULL OR target_goal.owner_id=m.owner_id)
                     WHEN 'fork' THEN actual.kind=m.kind::text
-                    WHEN 'read' THEN actual.kind IN ('fact','abstraction','perspective')
+                    WHEN 'read' THEN actual.kind=ANY(proxiima_core.memory_pin_kinds('reads',m.kind))
                   END,false)
           )
         ))")

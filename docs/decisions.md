@@ -138,10 +138,14 @@ see [Concepts](concepts.md#pins).
 
 ## Schema migrations are spiice-defined representation changes
 
-Spiices supply conversion semantics under [`Proxiima.SchemaEvolution`](ledger.md#schema-evolution).
+Spiices supply conversion semantics under [`Proxiima.SchemaEvolution`](ledger.md#schema-evolution), and
+[`Causa.schema_migration_pins_resolve`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/SchemaEvolution.lean) proves pin resolution in the retained migration graph.
+Replay keys, catalog registration, execution, and recovery remain runtime contracts.
 
 Prior art: Confluent's [data contracts](https://docs.confluent.io/platform/current/schema-registry/fundamentals/data-contracts.html)
 attach transformation rules and change metadata to schema versions.
+The execution fence uses PostgreSQL's [transaction and advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html)
+to serialize source writes and retirement at the database boundary, with completion committed alongside the transformed records.
 
 ## Goal collaboration keeps one durable owner
 

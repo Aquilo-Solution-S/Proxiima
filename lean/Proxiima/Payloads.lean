@@ -491,4 +491,17 @@ inductive OwnedHeadColumn where
 /-- The declared sidecar Memory key joins the current head under the current owner. -/
 def ownedHeadColumns : List OwnedHeadColumn := [.handle, .exactVersion]
 
+/-- The checks on a typed fork copy. -/
+inductive ForkCopyCheck where
+  | abstractionOrPerspective
+  | explicitCopyPolicy
+  | unpinnedSidecar
+  | sourceUse
+  | destinationWrite
+  deriving DecidableEq
+
+/-- The sidecar loader requires an opted-in unpinned Abstraction or Perspective schema. -/
+def forkCopyChecks : List ForkCopyCheck :=
+  [.abstractionOrPerspective, .explicitCopyPolicy, .unpinnedSidecar]
+
 end Proxiima.Payloads

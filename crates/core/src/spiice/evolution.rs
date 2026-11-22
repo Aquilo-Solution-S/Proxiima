@@ -58,7 +58,7 @@ struct Step<'a> {
 pub(super) fn validate_evolutions(
     contracts: &[&'static SpiiceContract],
 ) -> Result<(), SpiiceRegistryError> {
-    // `Proxiima.SchemaEvolution.declaration`.
+    // Reject empty IDs, change or consumer action text, empty source or target sets, and dependency cycles.
     let mut steps = HashMap::new();
     let mut consumed = HashSet::new();
     let mut produced = HashMap::new();

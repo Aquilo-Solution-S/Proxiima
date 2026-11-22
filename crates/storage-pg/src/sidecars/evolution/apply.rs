@@ -234,6 +234,7 @@ async fn goal_replay(
 }
 
 /// `Proxiima.SchemaEvolution.identityRoutes`. Link captures without rewriting or publishing them.
+/// This relation grants no read or write authority and is not an ordinary-read alias.
 async fn publications(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

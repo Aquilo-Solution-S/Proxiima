@@ -547,7 +547,7 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
             .ensure_owner_rls(&mut snapshot)
             .await
             .map_err(MigrationError::SidecarOwnerRls)?;
-        // `Proxiima.SchemaEvolution.generatedStateWork`.
+        // `Proxiima.Migrations.schemaWork`.
         sidecars
             .ensure_search_definitions(&mut snapshot)
             .await
@@ -1082,7 +1082,7 @@ async fn run_sources_on_connection(
                 .map_err(execute_error)?;
         }
     }
-    // `Proxiima.SchemaEvolution.generatedStateWork`.
+    // `Proxiima.Migrations.schemaWork`. Generated Follows and search state are reconciled even with zero pending SQL.
     let mut transaction = sync_owner_follows(conn, sidecars).await?;
     sidecars
         .apply_search_definitions(&mut transaction)

@@ -6,7 +6,7 @@ use super::refused;
 use crate::error::map_err;
 use crate::sidecars::PgSidecarRegistryFrozen;
 
-/// `Proxiima.SchemaEvolution.closureChecks`.
+/// `Proxiima.SchemaEvolution.closureChecks` and `Causa.schema_migration_pins_resolve`.
 pub(super) async fn finish(
     registry: &PgSidecarRegistryFrozen,
     tx: &mut Transaction<'_, Postgres>,
@@ -212,7 +212,8 @@ async fn restore_data_constraints(
     Ok(())
 }
 
-/// `Proxiima.SchemaEvolution.resolveIncomingPins`.
+/// `Causa.SchemaMigrationWitness.memoryPinsAvoidRemoved`
+/// and `Causa.SchemaMigrationWitness.goalPinsAvoidRemoved`.
 async fn incoming_pins(
     tx: &mut Transaction<'_, Postgres>,
     memories: &[Uuid],

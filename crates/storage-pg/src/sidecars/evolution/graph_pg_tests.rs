@@ -574,3 +574,124 @@ async fn graph_accepts_migrated_fact_reference_to_older_abstraction() {
     drop_db(&database).await.expect("drop test database");
     result.expect("cross-layer reference graph validation");
 }
+
+#[tokio::test]
+async fn graph_rejects_migrated_fact_reference_to_newer_memory() {
+    let database = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_core_db(&database)
+        .await
+        .expect("PG required for test");
+    let result = async {
+        let (_, platform_url) = split_role_urls(&database).await?;
+        let platform = PgPool::connect(&platform_url).await?;
+        let owner = owner_id(&platform).await?;
+        let ids = GraphSeedIds {
+            fact_handle: Uuid::now_v7(),
+            fact_t: Uuid::now_v7(),
+            support_fact_handle: Uuid::now_v7(),
+            support_fact_t: Uuid::now_v7(),
+            old_abstraction_handle: Uuid::now_v7(),
+            old_abstraction_t: Uuid::now_v7(),
+        };
+        seed_graph_memory(&platform, owner, &ids).await?;
+        let mut tx = migrate_fact(
+            &platform,
+            owner,
+            ids.fact_handle,
+            ids.fact_t,
+            vec![],
+            vec![ids.support_fact_t],
+        )
+        .await?;
+        let error = graph::validate(&mut tx)
+            .await
+            .expect_err("a Fact cannot reference a newer Memory");
+        assert!(error.to_string().contains("provenance"), "{error}");
+        tx.rollback().await?;
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+    drop_db(&database).await.expect("drop test database");
+    result.expect("newer-memory reference graph validation");
+}
+
+#[tokio::test]
+async fn graph_rejects_migrated_perspective_origin_to_fact() {
+    let database = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    create_core_db(&database)
+        .await
+        .expect("PG required for test");
+    let result = async {
+        let (_, platform_url) = split_role_urls(&database).await?;
+        let platform = PgPool::connect(&platform_url).await?;
+        let owner = owner_id(&platform).await?;
+        let (_, _, fact_t) = seed_goal_and_fact(&platform, owner).await?;
+        let perspective_handle = Uuid::now_v7();
+        let perspective_t = Uuid::now_v7();
+        let content_id = Uuid::now_v7();
+        let mut tx = platform.begin().await?;
+        sqlx::query("SELECT set_config('app.proxiima_scope', 'platform', true)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
+             VALUES ($1, 'perspective', 'test/perspective-v1', $2, $3)",
+        )
+        .bind(perspective_handle)
+        .bind(owner)
+        .bind(perspective_t)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO proxiima_core.content (content_id, owner_id, schema_id, content_hash)
+             VALUES ($1, $2, 'test/perspective-v1', decode(repeat('04', 32), 'hex'))",
+        )
+        .bind(content_id)
+        .bind(owner)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO proxiima_core.memory
+             (handle, t, kind, owner_id, schema_id, refs, \"by\", content_id)
+             VALUES ($1, $2, 'perspective', $3, 'test/perspective-v1', ARRAY[$4], $3, $5)",
+        )
+        .bind(perspective_handle)
+        .bind(perspective_t)
+        .bind(owner)
+        .bind(fact_t)
+        .bind(content_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO proxiima_core.schema_evolution_authority
+             (record_kind, source_id, target_id, source_schema, target_schema,
+              source_handle, target_handle, record_owner, primary_target)
+             VALUES ('memory', $1, $1, 'test/perspective-v1', 'test/perspective-v2', $2, $2, $3, true)",
+        )
+        .bind(perspective_t)
+        .bind(perspective_handle)
+        .bind(owner)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE proxiima_core.memory_head SET schema_id = 'test/perspective-v2' WHERE handle = $1")
+            .bind(perspective_handle)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE proxiima_core.memory SET schema_id = 'test/perspective-v2', origins = refs, refs = '{}'
+             WHERE t = $1",
+        )
+        .bind(perspective_t)
+        .execute(&mut *tx)
+        .await?;
+        let error = graph::validate(&mut tx)
+            .await
+            .expect_err("a Perspective origin must target an Abstraction");
+        assert!(error.to_string().contains("provenance"), "{error}");
+        tx.rollback().await?;
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+    drop_db(&database).await.expect("drop test database");
+    result.expect("Perspective origin graph validation");
+}
