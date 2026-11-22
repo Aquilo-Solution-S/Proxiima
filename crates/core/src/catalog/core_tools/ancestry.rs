@@ -64,7 +64,10 @@ pub(crate) async fn ancestor_edges(
             target: AncestorTarget::Local(*read),
             kind: EdgeKind::Read,
         }));
-        match ctx.registry().provenance_of(&node.schema_id, node.kind) {
+        match ctx
+            .registry()
+            .provenance_of(&node.schema_id, node.kind.entity_kind())
+        {
             None | Some(Provenance::OriginEdges) => {
                 edges.extend(node.origins.into_iter().map(|origin| AncestorEdge {
                     source: node.id,

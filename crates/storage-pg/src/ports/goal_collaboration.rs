@@ -244,7 +244,7 @@ impl GoalCollaborationPort for PgStorage {
         let mut tx = self.platform_transaction().await?;
         crate::owner_scope::bind_owner_scope(&mut tx, permit.scope()).await?;
         let row = sqlx::query(
-            "SELECT owner_id, forked_from, kind::text AS kind, origins, refs, goal_refs
+            "SELECT owner_id, forked_from, kind, origins, refs, goal_refs
              FROM proxiima_core.live_memory
              WHERE t=$1 AND forked_from IS NOT NULL
              ",
@@ -258,16 +258,16 @@ impl GoalCollaborationPort for PgStorage {
         };
         let owner = OwnerId::new(row.get("owner_id"));
         let forked_from = proxiima_core::MemoryId::new(row.get::<uuid::Uuid, _>("forked_from"));
-        let kind = match row.get::<String, _>("kind").as_str() {
-            "abstraction" => proxiima_core::EntityKind::Abstraction,
-            "perspective" => proxiima_core::EntityKind::Perspective,
-            _ => {
+        let kind = match row.try_get("kind").map_err(map_err)? {
+            crate::pg_enums::PgMemoryKind::Abstraction => proxiima_core::MemoryKind::Abstraction,
+            crate::pg_enums::PgMemoryKind::Perspective => proxiima_core::MemoryKind::Perspective,
+            crate::pg_enums::PgMemoryKind::Fact => {
                 return Err(StorageError::ConstraintViolation(
                     "invalid forked revision kind".into(),
                 ));
             }
         };
-        if owner != permit.destination_owner() || kind != permit.kind() {
+        if owner != permit.destination_owner() || kind.entity_kind() != permit.kind() {
             return Ok(None);
         }
         let origin_ids: Vec<uuid::Uuid> = row.get("origins");

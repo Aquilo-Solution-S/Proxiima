@@ -2832,7 +2832,6 @@ BEGIN
 END;
 $function$;
 
--- Rendered from the Rust table for `Proxiima.Edges.pinField`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_kinds(field text, source proxiima_core.memory_kind)
  RETURNS text[]
  LANGUAGE sql
@@ -2873,7 +2872,7 @@ AS $function$
     END
 $function$;
 
--- `Proxiima.Identity.admissionIdAvailable` and `Proxiima.Edges.groundingFields`.
+-- `Proxiima.Identity.admissionIdAvailable`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks()
  RETURNS trigger
  LANGUAGE plpgsql

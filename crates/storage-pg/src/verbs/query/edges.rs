@@ -1,8 +1,8 @@
 use proxiima_core::SqlText;
 use proxiima_core::storage_ports::{InboundPinQuery, PinTargetKind};
-use proxiima_core::verbs::query::{QueryRequest, SupersessionStatus};
+use proxiima_core::verbs::query::{MemoryRow, SupersessionStatus};
 use proxiima_core::{
-    Edge, EdgeKind, GoalId, MemoryId, MemoryPinField, OwnerId, PinNode, StorageError,
+    Edge, EdgeKind, GoalId, MemoryId, MemoryKind, MemoryPinField, OwnerId, PinNode, StorageError,
     project_window_edges,
 };
 use sqlx::postgres::PgRow;
@@ -190,16 +190,21 @@ fn inbound_pin_sql(
 }
 
 /// Snapshot-mode edges: pins whose two endpoints are both in the Query window.
-pub(super) fn query_edges(
-    _req: &QueryRequest,
-    memories: &[proxiima_core::verbs::query::MemoryRow],
-    visible_goal_ids: &[uuid::Uuid],
-) -> Vec<Edge> {
-    let visible_goal_ids: Vec<GoalId> = visible_goal_ids.iter().copied().map(GoalId::new).collect();
-    let mut nodes: Vec<PinNode> = memories.iter().map(PinNode::from).collect();
-    for node in &mut nodes {
-        node.resolve_visible_goal_refs(&visible_goal_ids);
-    }
+pub(super) fn query_edges(memories: &[(MemoryKind, MemoryRow)]) -> Vec<Edge> {
+    let nodes: Vec<_> = memories
+        .iter()
+        .map(|(kind, row)| PinNode {
+            id: row.id,
+            kind: *kind,
+            schema_id: row.schema_id.clone(),
+            origins: row.origins.clone(),
+            refs: row.refs.clone(),
+            goal_refs: row.goal_refs.clone(),
+            guided_by: row.guided_by.clone(),
+            reads: row.reads.clone(),
+            forked_from: None,
+        })
+        .collect();
     project_window_edges(&nodes, MAX_SNAPSHOT_EDGES)
 }
 

@@ -32,7 +32,8 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
-    /// `Proxiima.Edges.pinOrder`.
+    /// Every kind, in projection order: origins, references, then reads.
+    // `Proxiima.Edges.pinOrder`.
     pub const ALL: [Self; 3] = [Self::Origin, Self::Reference, Self::Read];
 
     /// The kind a wire label names; the inverse of [`Self::as_str`].
@@ -79,6 +80,9 @@ impl ReadPin {
 }
 
 /// The host-certified exact session observations for an authorized write.
+///
+/// Bind with [`crate::AuthzContext::with_read_set`]. This is never a tool
+/// argument. Sorted by memory, one entry per memory; empty by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReadSet(Vec<ReadPin>);
 
@@ -287,13 +291,19 @@ impl EdgeEndpoint {
     }
 }
 
-/// The read projection of a pin target, with an address only when visible.
+/// The read projection of a pin target. A readable edge is returned even
+/// when its target address is withheld.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum EdgeTargetProjection {
-    Visible { target: EdgeEndpoint },
+    Visible {
+        target: EdgeEndpoint,
+    },
+    /// The reader has no readable live, forgotten, or erased target.
     Redacted,
+    /// The reader could read the target, but it is forgotten.
     Forgotten,
+    /// The reader can see that the target was erased.
     Erased,
 }
 
@@ -347,6 +357,8 @@ pub enum MemoryPinField {
 
 /// How a pin column stores its targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Deserialize), serde(rename_all = "lowercase"))]
+// `Proxiima.Edges.PinShape`.
 pub enum PinShape {
     Array,
     Scalar,
@@ -374,7 +386,8 @@ impl MemoryPinField {
         Self::ForkedFrom,
     ];
 
-    /// `Proxiima.Edges.pinField`.
+    /// The pin column, edge kind, storage shape, and admitted target kinds.
+    // `Proxiima.Edges.pinField`.
     #[must_use]
     pub const fn spec(self) -> PinFieldSpec {
         const NONE: &[EntityKind] = &[];
@@ -472,7 +485,7 @@ enum PinSlot<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinNode {
     pub id: MemoryId,
-    pub kind: EntityKind,
+    pub kind: MemoryKind,
     /// Which schema wrote this row, and therefore which `Provenance` the
     /// lineage walk must consult before treating `origins` as lineage.
     ///
@@ -528,7 +541,8 @@ impl PinNode {
         })
     }
 
-    /// Memory pins following `Proxiima.Edges.pinOrder`, with the fork anchor after ordinary references.
+    /// Memory pins: origins first, then references (the fork source after
+    /// `refs`), then reads.
     pub fn pins(&self) -> impl Iterator<Item = (MemoryId, EdgeKind)> + '_ {
         Self::fields_targeting(PinTargetKind::Memory).flat_map(move |(field, kind)| {
             let ids = match self.slot(field) {
@@ -550,16 +564,18 @@ impl PinNode {
         })
     }
 
-    /// Drop the Goal references this reader may not see into the raw
-    /// carrier, keeping only the readable ones typed as Goals.
+    /// Keep readable Goal references and guidance typed as Goals.
     ///
+    /// Unreadable targets from `goal_refs` and `guided_by` move to `refs`
+    /// so projection can withhold them the same way as unreadable Memories.
+    /// The stored column only selects the spine to probe.
     pub fn resolve_visible_goal_refs(&mut self, visible: &[GoalId]) {
-        // `Causa.unreadable_goal_reference_resolves_like_a_memory_reference`.
         if self.goal_refs.is_empty() && self.guided_by.is_empty() {
             return;
         }
         let visible: std::collections::HashSet<_> = visible.iter().copied().collect();
         let mut readable = Vec::with_capacity(self.goal_refs.len());
+        // `Causa.unreadable_goal_reference_resolves_like_a_memory_reference`.
         for goal in self.goal_refs.drain(..) {
             if visible.contains(&goal) {
                 readable.push(goal);
@@ -591,21 +607,16 @@ pub fn pin_created_at(source: MemoryId) -> time::OffsetDateTime {
 /// are omitted, not redacted.
 #[must_use]
 pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
-    let visible: std::collections::HashMap<MemoryId, MemoryKind> = nodes
-        .iter()
-        .filter_map(|node| MemoryKind::of(node.kind).map(|kind| (node.id, kind)))
-        .collect();
+    let visible: std::collections::HashMap<MemoryId, MemoryKind> =
+        nodes.iter().map(|node| (node.id, node.kind)).collect();
     let mut edges = Vec::new();
     for source in nodes {
-        let Some(source_kind) = visible.get(&source.id).copied() else {
-            continue;
-        };
         for (target, kind) in source.pins() {
             let Some(target_kind) = visible.get(&target).copied() else {
                 continue;
             };
             edges.push(Edge {
-                source: EdgeEndpoint::memory(source_kind, source.id),
+                source: EdgeEndpoint::memory(source.kind, source.id),
                 target: EdgeTargetProjection::visible(EdgeEndpoint::memory(target_kind, target)),
                 kind,
                 created_at: pin_created_at(source.id),
@@ -616,7 +627,7 @@ pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
         }
         for (target, kind) in source.goal_pins() {
             edges.push(Edge {
-                source: EdgeEndpoint::memory(source_kind, source.id),
+                source: EdgeEndpoint::memory(source.kind, source.id),
                 target: EdgeTargetProjection::visible(EdgeEndpoint::goal(target)),
                 kind,
                 created_at: pin_created_at(source.id),
@@ -633,11 +644,11 @@ pub fn project_window_edges(nodes: &[PinNode], cap: usize) -> Vec<Edge> {
 #[must_use]
 pub fn project_memory_target<S: std::hash::BuildHasher>(
     target: MemoryId,
-    live: &std::collections::HashMap<MemoryId, EntityKind, S>,
+    live: &std::collections::HashMap<MemoryId, MemoryKind, S>,
     unread: &crate::verbs::query::UnreadTargets,
 ) -> EdgeTargetProjection {
     // `Proxiima.Edges.projectTarget`.
-    if let Some(kind) = live.get(&target).copied().and_then(MemoryKind::of) {
+    if let Some(kind) = live.get(&target).copied() {
         EdgeTargetProjection::visible(EdgeEndpoint::memory(kind, target))
     } else if unread.forgotten.iter().any(|node| node.memory_id == target) {
         EdgeTargetProjection::Forgotten
@@ -656,7 +667,7 @@ pub fn project_listed_edge<S: std::hash::BuildHasher>(
     source: MemoryId,
     target: MemoryId,
     kind: EdgeKind,
-    live: &std::collections::HashMap<MemoryId, EntityKind, S>,
+    live: &std::collections::HashMap<MemoryId, MemoryKind, S>,
     unread: &crate::verbs::query::UnreadTargets,
 ) -> Edge {
     Edge {

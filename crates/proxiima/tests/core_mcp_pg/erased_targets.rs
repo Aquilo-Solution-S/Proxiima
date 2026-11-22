@@ -1,5 +1,3 @@
-//! Read-side coverage of `Causa.principle_6_erasure_leaves_no_dangling_pin`.
-
 use proxiima::Proxiima;
 use proxiima_core::{AuthPath, AuthzContext, GroupId, OwnerId, Role, UserId};
 use uuid::Uuid;
@@ -83,6 +81,7 @@ async fn a_pin_to_an_erased_memory_reads_erased_target() {
         )
         .await?;
         let targets = edge_targets(&read["neighbor_edges"]);
+        // `Proxiima.Edges.projectTarget`.
         assert_eq!(targets, ["erased target"], "{read}");
 
         let lineage = read_test_model_resource(

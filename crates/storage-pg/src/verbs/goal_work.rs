@@ -40,8 +40,7 @@ async fn prepare_goal_work_authority(
     let mut endpoints: Vec<EdgeEndpoint> =
         new_origins.iter().chain(&new_references).copied().collect();
     if let Some(retained) = req.retained_pins {
-        let kind = proxiima_core::MemoryKind::of(retained.kind()).ok_or(StorageError::NotFound)?;
-        endpoints.push(EdgeEndpoint::memory(kind, retained.prior()));
+        endpoints.push(EdgeEndpoint::memory(retained.kind(), retained.prior()));
     }
     endpoints.extend(
         req.guided_by

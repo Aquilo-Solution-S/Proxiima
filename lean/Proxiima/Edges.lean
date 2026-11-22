@@ -4,7 +4,7 @@ import Proxiima.Memory
 
 namespace Proxiima.Edges
 
-open Proxiima.Memory (Kind EntityKind)
+open Proxiima.Memory (EntityKind)
 
 /-- The kinds of pins, in projection order. -/
 inductive PinKind where
@@ -29,31 +29,43 @@ inductive PinField where
   | forkedFrom
   deriving DecidableEq
 
+/-- How a pin field stores its targets. -/
+inductive PinShape where
+  | array
+  | scalar
+  deriving DecidableEq
+
 /-- The role, storage shape and target layers of a pin field. -/
 structure PinFieldSpec where
   column : String
   kind : PinKind
-  scalar : Bool
+  shape : PinShape
   fact : List EntityKind
   abstraction : List EntityKind
   perspective : List EntityKind
 
-/-- A source version declares each pin through the field that fixes its role and target kinds. -/
+/-- The storage bound for each pin field gives its role, shape and admitted target kinds. -/
 def pinField : PinField → PinFieldSpec
-  | .origins => ⟨"origins", .origin, false, [], [.Fact, .Abstraction], [.Abstraction]⟩
-  | .refs => ⟨"refs", .reference, false, [.Fact, .Abstraction, .Perspective],
+  | .origins => ⟨"origins", .origin, .array, [], [.Fact, .Abstraction], [.Abstraction]⟩
+  | .refs => ⟨"refs", .reference, .array, [.Fact, .Abstraction, .Perspective],
       [.Fact, .Abstraction, .Perspective], [.Fact, .Abstraction, .Perspective]⟩
-  | .goalRefs => ⟨"goal_refs", .reference, false, [.Goal], [.Goal], [.Goal]⟩
-  | .guidedBy => ⟨"guided_by", .reference, false, [], [], [.Goal]⟩
-  | .reads => ⟨"reads", .read, false, [.Fact, .Abstraction, .Perspective],
+  | .goalRefs => ⟨"goal_refs", .reference, .array, [.Goal], [.Goal], [.Goal]⟩
+  | .guidedBy => ⟨"guided_by", .reference, .array, [], [], [.Goal]⟩
+  | .reads => ⟨"reads", .read, .array, [.Fact, .Abstraction, .Perspective],
       [.Fact, .Abstraction, .Perspective], [.Fact, .Abstraction, .Perspective]⟩
-  | .forkedFrom => ⟨"forked_from", .reference, true, [.Fact, .Abstraction, .Perspective],
+  | .forkedFrom => ⟨"forked_from", .reference, .scalar, [.Fact, .Abstraction, .Perspective],
       [.Fact, .Abstraction, .Perspective], [.Fact, .Abstraction, .Perspective]⟩
 
+/-- The Memory layers admitted by derivation. -/
+inductive DerivedKind where
+  | Abstraction
+  | Perspective
+  deriving DecidableEq
+
 /-- An Abstraction requires origins; a Perspective can be grounded through references. -/
-def requiresOrigins : Kind → Bool
-  | .Fact | .Perspective => false
+def requiresOrigins : DerivedKind → Bool
   | .Abstraction => true
+  | .Perspective => false
 
 /-- Local storage fields that can ground a derived Memory, per `Causa.GroundsInFact`. -/
 def groundingFields : List PinField := [.origins, .refs]
@@ -95,7 +107,7 @@ def localAncestorKinds : Provenance → List PinKind
   | .payloadOnly => [.reference, .read]
   | .none => [.read]
 
-/-- Memory layering for a declared reference, with Goals on a separate spine. -/
+/-- The engine's layering rule for a declared reference, with Goals on a separate spine. -/
 def admitsReferenceLayer : EntityKind → EntityKind → Bool
   | .Fact, .Fact | .Fact, .Goal => true
   | .Fact, .Abstraction | .Fact, .Perspective => false
@@ -152,12 +164,6 @@ def externalReplayKinds : List PinKind := [.origin, .reference]
 /-- The largest host read set, counted in distinct exact versions. -/
 def maxReadPins : Nat := 1024
 
-/-- Default payload references when a schema supplies none. -/
-def defaultPayloadReferences : List String := []
-
-/-- Default session observations when no host binds a read set. -/
-def defaultReadSet : List String := []
-
 /-- The maximum number of raw sources in one derive declaration. -/
 def maxDeriveSources : Nat := 256
 
@@ -176,7 +182,7 @@ def maxRemoteLeaves : Nat := 64
 /-- The character ceiling for a remote walk sketch. -/
 def maxRemoteSketchChars : Nat := 200
 
-/-- The maximum number of hydrated neighbor pins per memory. -/
+/-- The maximum number of hydrated pins per neighbor read. -/
 def maxNeighborPins : Nat := 200
 
 /-- The minimum number of candidate source rows in an inbound page read. -/

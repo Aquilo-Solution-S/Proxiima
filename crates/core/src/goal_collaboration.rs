@@ -188,7 +188,7 @@ pub struct RevisionPinSnapshot {
     pub prior: MemoryId,
     pub owner: OwnerId,
     pub forked_from: MemoryId,
-    pub kind: crate::EntityKind,
+    pub kind: crate::MemoryKind,
     pub origins: Vec<EdgeEndpoint>,
     pub references: Vec<EdgeEndpoint>,
     pub goal_references: Vec<GoalId>,
@@ -200,7 +200,7 @@ impl RevisionPinSnapshot {
         prior: MemoryId,
         owner: OwnerId,
         forked_from: MemoryId,
-        kind: crate::EntityKind,
+        kind: crate::MemoryKind,
         origins: Vec<EdgeEndpoint>,
         references: Vec<EdgeEndpoint>,
         goal_references: Vec<GoalId>,
@@ -280,7 +280,7 @@ pub struct RetainedPins {
     prior: MemoryId,
     owner: OwnerId,
     forked_from: MemoryId,
-    kind: crate::EntityKind,
+    kind: crate::MemoryKind,
     origins: Vec<EdgeEndpoint>,
     references: Vec<EdgeEndpoint>,
     goal_references: Vec<GoalId>,
@@ -311,7 +311,7 @@ impl RetainedPins {
         self.forked_from
     }
     #[must_use]
-    pub const fn kind(&self) -> crate::EntityKind {
+    pub const fn kind(&self) -> crate::MemoryKind {
         self.kind
     }
     #[must_use]

@@ -211,7 +211,7 @@ async fn collect_cue_touch(
         .await?;
     let touch_ids: Vec<MemoryId> = inbound
         .into_iter()
-        .filter(|node| node.kind == EntityKind::Perspective && !packet.contains(node.id))
+        .filter(|node| node.kind == crate::MemoryKind::Perspective && !packet.contains(node.id))
         .map(|node| node.id)
         .collect();
     if touch_ids.is_empty() {

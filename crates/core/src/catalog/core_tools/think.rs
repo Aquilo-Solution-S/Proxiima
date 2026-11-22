@@ -15,13 +15,16 @@ use crate::{EdgeKind, InboundPinQuery, MemoryId};
 use crate::{Tool, ToolCtx, ToolError};
 
 const MAX_SEEDS: usize = crate::ledger!(Proxiima.Edges.maxThinkSeeds);
-const MAX_DEPTH: u32 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
+const MAX_DEPTH: u8 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
 const DEFAULT_DEPTH: u32 = crate::ledger!(Proxiima.Edges.defaultWalkDepth);
+// `Proxiima.Edges.localDescendantKinds`.
+const DESCENDANT_KINDS: [EdgeKind; 2] = [EdgeKind::Origin, EdgeKind::Read];
 
 fn think_direction_description() -> String {
     use EdgeKind::{Origin, Read, Reference};
+    let descendants = DESCENDANT_KINDS.map(EdgeKind::as_str).join(" and ");
     format!(
-        "ancestors (default): recursively follow {origin}, subject {reference}, and {read} pins. descendants: recursively follow local {origin} and {read} pins inbound. episode_siblings: other memories that reference what a seed references, such as items bound in one core_episode_commit.",
+        "ancestors (default): recursively follow {origin}, subject {reference}, and {read} pins. descendants: recursively follow local {descendants} pins inbound. episode_siblings: other memories that reference what a seed references, such as items bound in one core_episode_commit.",
         origin = Origin.as_str(),
         reference = Reference.as_str(),
         read = Read.as_str(),
@@ -46,7 +49,7 @@ pub struct ThinkArgs {
     #[serde(default = "default_depth")]
     #[schemars(
         range(min = 1),
-        description = "Hops to walk; values above 8 are clamped. Ignored for episode_siblings."
+        description = think_depth_description()
     )]
     pub depth: u32,
     #[serde(default = "default_limit")]
@@ -60,6 +63,12 @@ pub struct ThinkArgs {
         description = "next_cursor from the previous page; keep seeds, direction and depth unchanged."
     )]
     pub cursor: Option<String>,
+}
+
+fn think_depth_description() -> String {
+    format!(
+        "Hops to walk; values above {MAX_DEPTH} are clamped. Default {DEFAULT_DEPTH}. Ignored for episode_siblings."
+    )
 }
 
 fn default_depth() -> u32 {
@@ -151,7 +160,9 @@ async fn think(ctx: ToolCtx, args: ThinkArgs) -> Result<ThinkOutput, ToolError> 
                     raw_seeds: &args.seeds,
                     seeds: &seeds,
                     direction: args.direction,
-                    depth: u8::try_from(args.depth.clamp(1, MAX_DEPTH)).unwrap_or(8),
+                    depth: u8::try_from(args.depth)
+                        .unwrap_or(MAX_DEPTH)
+                        .clamp(1, MAX_DEPTH),
                     cursor: args.cursor.as_deref(),
                     limit,
                 },
@@ -232,7 +243,7 @@ async fn pin_bfs(
         .iter()
         .map(|node| Visit {
             id: node.id,
-            kind: Some(node.kind),
+            kind: Some(node.kind.entity_kind()),
             depth: 0,
             edge: None,
         })
@@ -264,8 +275,10 @@ async fn pin_bfs(
         } else {
             engine.pin_nodes(ctx.authz(), &local).await?
         };
-        let kinds: std::collections::HashMap<MemoryId, crate::EntityKind> =
-            pins.into_iter().map(|node| (node.id, node.kind)).collect();
+        let kinds: std::collections::HashMap<MemoryId, crate::EntityKind> = pins
+            .into_iter()
+            .map(|node| (node.id, node.kind.entity_kind()))
+            .collect();
         for (id, remote, edge) in &next {
             let kind = if *remote {
                 None
@@ -433,8 +446,7 @@ async fn next_hop(
             .collect()),
         ThinkDirection::Descendants => {
             let mut next = Vec::new();
-            // `Proxiima.Edges.localDescendantKinds`.
-            for kind in [EdgeKind::Origin, EdgeKind::Read] {
+            for kind in DESCENDANT_KINDS {
                 let inbound = engine
                     .inbound_pin_nodes(
                         ctx.authz(),
@@ -524,11 +536,12 @@ async fn episode_siblings(
         .into_iter()
         .map(|node| {
             let row = sketches.iter().find(|row| row.id == node.id);
+            let kind = node.kind.entity_kind().as_str();
             ThinkVisit {
                 handle: node.id.into_inner().to_string(),
                 space: row.map(|row| super::memory_spaces::space_key_for_owner(ctx, row.owner)),
-                kind: node.kind.as_str().to_string(),
-                sketch: row.map_or_else(|| node.kind.as_str().to_string(), |row| row.text.clone()),
+                kind: kind.to_string(),
+                sketch: row.map_or_else(|| kind.to_string(), |row| row.text.clone()),
                 depth: 1,
                 edge: None,
                 store: None,

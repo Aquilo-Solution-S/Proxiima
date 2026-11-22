@@ -11,7 +11,7 @@ use crate::verbs::query::{
     EdgeExistsRequest, EdgeExistsResponse, EdgeReadCursor, EdgeReadRequest, EdgeReadResponse,
     SupersessionStatus, UnreadTargets,
 };
-use crate::{Edge, EdgeKind, EntityKind, EntityRef, GoalId, MemoryId, OwnerId, OwnerScope};
+use crate::{Edge, EdgeKind, EntityRef, GoalId, MemoryId, MemoryKind, OwnerId, OwnerScope};
 
 use super::errors::internal_storage_error;
 
@@ -24,7 +24,7 @@ type HopKey = (time::OffsetDateTime, uuid::Uuid, uuid::Uuid, &'static str);
 
 struct PinHop {
     source_id: MemoryId,
-    source_kind: crate::MemoryKind,
+    source_kind: MemoryKind,
     target: PinTarget,
     kind: EdgeKind,
 }
@@ -106,18 +106,15 @@ async fn resolve_visible_goal_refs(
 fn expand_hops<'a>(nodes: impl IntoIterator<Item = &'a PinNode>) -> Vec<PinHop> {
     let mut hops = Vec::new();
     for node in nodes {
-        let Some(source_kind) = crate::MemoryKind::of(node.kind) else {
-            continue;
-        };
         hops.extend(node.pins().map(|(target_id, kind)| PinHop {
             source_id: node.id,
-            source_kind,
+            source_kind: node.kind,
             target: PinTarget::Memory(target_id),
             kind,
         }));
         hops.extend(node.goal_pins().map(|(target_id, kind)| PinHop {
             source_id: node.id,
-            source_kind,
+            source_kind: node.kind,
             target: PinTarget::Goal(target_id),
             kind,
         }));
@@ -149,7 +146,7 @@ fn cursor_key(cursor: Option<EdgeReadCursor>) -> Option<HopKey> {
 /// ones by kind, and what it may know of the rest.
 #[derive(Debug, Default)]
 struct Seen {
-    live: HashMap<MemoryId, EntityKind>,
+    live: HashMap<MemoryId, MemoryKind>,
     unread: UnreadTargets,
 }
 
@@ -216,7 +213,7 @@ async fn load_visible(
         .load_pin_nodes(owner_scope, read_owners, ids)
         .await
         .map_err(|err| internal_storage_error("load_pin_nodes", &err))?;
-    let live: HashMap<MemoryId, EntityKind> =
+    let live: HashMap<MemoryId, MemoryKind> =
         nodes.into_iter().map(|node| (node.id, node.kind)).collect();
     let rest: Vec<MemoryId> = ids
         .iter()

@@ -154,14 +154,16 @@ pub(crate) async fn validate_retained_pins_in_tx(
     let prior = draft.supersedes.ok_or_else(|| {
         StorageError::ConstraintViolation("retained pins require a revision prior".into())
     })?;
-    if retained.prior() != prior || retained.owner() != draft.owner || retained.kind() != draft.kind
+    if retained.prior() != prior
+        || retained.owner() != draft.owner
+        || retained.kind().entity_kind() != draft.kind
     {
         return Err(StorageError::ConstraintViolation(
             "retained pins do not match revision destination".into(),
         ));
     }
     let row = sqlx::query(
-        "SELECT owner_id, forked_from, kind::text AS kind, origins, refs, goal_refs
+        "SELECT owner_id, forked_from, kind, origins, refs, goal_refs
          FROM proxiima_core.memory
          WHERE t=$1 AND forgotten_at IS NULL
          FOR SHARE",
@@ -174,19 +176,13 @@ pub(crate) async fn validate_retained_pins_in_tx(
         StorageError::ConstraintViolation("retained revision prior is unavailable".into())
     })?;
     let owner = OwnerId::new(row.get("owner_id"));
-    let stored_kind: String = row.get("kind");
+    let stored_kind: PgMemoryKind = row.try_get("kind").map_err(map_err)?;
     let forked_from: Option<uuid::Uuid> = row.get("forked_from");
     let origins: Vec<uuid::Uuid> = row.get("origins");
     let references: Vec<uuid::Uuid> = row.get("refs");
     let goal_references: Vec<uuid::Uuid> = row.get("goal_refs");
-    let kind_matches = matches!(
-        (stored_kind.as_str(), retained.kind()),
-        ("fact", proxiima_core::EntityKind::Fact)
-            | ("abstraction", proxiima_core::EntityKind::Abstraction)
-            | ("perspective", proxiima_core::EntityKind::Perspective)
-    );
     if owner != retained.owner()
-        || !kind_matches
+        || stored_kind != PgMemoryKind::from(retained.kind())
         || forked_from != Some(retained.forked_from().into_inner())
         || origins
             != retained

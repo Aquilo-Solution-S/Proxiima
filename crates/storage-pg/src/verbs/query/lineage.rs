@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
 use proxiima_core::verbs::query::{
-    EntityKind, MemoryLineageCursor, MemoryLineageDirection, MemoryLineageEdge, MemoryLineageNode,
+    MemoryLineageCursor, MemoryLineageDirection, MemoryLineageEdge, MemoryLineageNode,
     MemoryLineageRequest, MemoryLineageResponse, UnreadTargets,
 };
 use proxiima_core::verbs::schema::MemorySearchProjection;
 use proxiima_core::{
-    Edge, EdgeEndpoint, EdgeKind, EntityRef, MemoryId, OwnerId, SchemaId, StorageError,
+    Edge, EdgeEndpoint, EdgeKind, EntityRef, MemoryId, MemoryKind, OwnerId, SchemaId, StorageError,
 };
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -142,7 +142,9 @@ pub(crate) async fn walk_memory_lineage_on_connection(
         .map(OwnerId::into_inner)
         .collect();
     let start = req.start_memory_id.into_inner();
-    let depth = req.depth.clamp(1, 8);
+    let depth = req
+        .depth
+        .clamp(1, proxiima_core::ledger!(Proxiima.Edges.maxWalkDepth));
     let page_len = usize::try_from(req.limit.min(200)).unwrap_or(usize::MAX);
     let mut hops = walk_lineage_hops_on_connection(
         connection,
@@ -190,7 +192,7 @@ async fn assemble_lineage_page_on_connection(
             external_edges: Vec::new(),
         });
     }
-    let live: HashMap<MemoryId, EntityKind> = rows
+    let live: HashMap<MemoryId, MemoryKind> = rows
         .iter()
         .map(|(id, kind, _)| (MemoryId::new(*id), *kind))
         .collect();
@@ -243,7 +245,7 @@ async fn lineage_node_rows_on_connection(
     node_ids: &[Uuid],
     owner_ids: &[Uuid],
     projections: &[MemorySearchProjection],
-) -> Result<(Vec<(Uuid, EntityKind, String)>, HashMap<Uuid, String>), StorageError> {
+) -> Result<(Vec<(Uuid, MemoryKind, String)>, HashMap<Uuid, String>), StorageError> {
     let rows: Vec<(Uuid, PgMemoryKind, String)> = sqlx::query_as(
         "SELECT m.t, m.kind, m.schema_id FROM proxiima_core.live_memory m
           WHERE m.t = ANY($1::uuid[]) AND m.owner_id = ANY($2::uuid[])",
@@ -253,7 +255,7 @@ async fn lineage_node_rows_on_connection(
     .fetch_all(&mut *connection)
     .await
     .map_err(map_err)?;
-    let rows: Vec<(Uuid, EntityKind, String)> = rows
+    let rows: Vec<(Uuid, MemoryKind, String)> = rows
         .into_iter()
         .map(|(id, kind, schema)| (id, kind.into(), schema))
         .collect();
@@ -423,7 +425,7 @@ fn node_distance(direction: MemoryLineageDirection, start: Uuid, hops: &[WalkHop
 
 fn project_lineage_edge(
     hop: &WalkHop,
-    live: &HashMap<MemoryId, EntityKind>,
+    live: &HashMap<MemoryId, MemoryKind>,
     unread: &UnreadTargets,
 ) -> MemoryLineageEdge {
     let target = proxiima_core::project_memory_target(MemoryId::new(hop.tgt), live, unread);

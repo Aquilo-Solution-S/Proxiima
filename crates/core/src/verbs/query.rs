@@ -12,7 +12,8 @@ use crate::edge::{Edge, EdgeKind};
 use crate::entity::EntityRef;
 use crate::verbs::goal_write::GoalState;
 use crate::{
-    GoalId, MemoryId, OwnerId, SchemaId, SchemaVersion, SidecarPayload, WriterAttribution,
+    GoalId, MemoryId, MemoryKind, OwnerId, SchemaId, SchemaVersion, SidecarPayload,
+    WriterAttribution,
 };
 
 /// Re-export the canonical `EntityKind` from `entity` so query
@@ -344,7 +345,7 @@ pub struct MemoryLineageCursor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryLineageNode {
     pub memory_id: MemoryId,
-    pub kind: EntityKind,
+    pub kind: MemoryKind,
     pub schema_id: SchemaId,
     pub snippet: String,
     /// Hop distance from the start (0): the level at which the walk first
@@ -553,22 +554,6 @@ pub struct MemoryRow {
     /// Typed sidecar projection populated by storage at read time. Protocol
     /// adapters serialize it at the transport boundary.
     pub payload: Option<SidecarPayload>,
-}
-
-impl From<&MemoryRow> for crate::PinNode {
-    fn from(row: &MemoryRow) -> Self {
-        Self {
-            id: row.id,
-            kind: row.kind,
-            schema_id: row.schema_id.clone(),
-            origins: row.origins.clone(),
-            refs: row.refs.clone(),
-            goal_refs: row.goal_refs.clone(),
-            guided_by: row.guided_by.clone(),
-            reads: row.reads.clone(),
-            forked_from: None,
-        }
-    }
 }
 
 /// Snapshot of a Goal row. Supersession is not a field: a later `t` on

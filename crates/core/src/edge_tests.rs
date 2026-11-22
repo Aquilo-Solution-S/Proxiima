@@ -3,7 +3,7 @@ use super::{
     project_listed_edge, project_memory_target, project_window_edges, validate_edge_layering,
     validate_not_self_loop,
 };
-use crate::{EntityKind, GoalId, MemoryId};
+use crate::{EntityKind, GoalId, MemoryId, MemoryKind};
 
 fn memory(kind: EntityKind) -> EdgeEndpoint {
     EdgeEndpoint::memory(
@@ -134,7 +134,7 @@ fn window_projection_keeps_only_pins_inside_the_node_set() {
     let nodes = [
         PinNode {
             id: leaf,
-            kind: EntityKind::Fact,
+            kind: MemoryKind::Fact,
             schema_id: crate::SchemaId::new("test/pin-v1".into()),
             origins: Vec::new(),
             refs: Vec::new(),
@@ -145,7 +145,7 @@ fn window_projection_keeps_only_pins_inside_the_node_set() {
         },
         PinNode {
             id: hub,
-            kind: EntityKind::Abstraction,
+            kind: MemoryKind::Abstraction,
             schema_id: crate::SchemaId::new("test/pin-v1".into()),
             origins: vec![leaf],
             refs: vec![outside],
@@ -171,7 +171,7 @@ fn unresolved_goal_reference_stays_a_redactable_raw_id() {
     let goal = GoalId::new(uuid::Uuid::now_v7());
     let mut node = PinNode {
         id: source,
-        kind: EntityKind::Fact,
+        kind: MemoryKind::Fact,
         schema_id: crate::SchemaId::new("test/pin-v1".into()),
         origins: Vec::new(),
         refs: Vec::new(),
@@ -197,7 +197,7 @@ fn unresolved_goal_reference_stays_a_redactable_raw_id() {
     assert!(matches!(edges.target, EdgeTargetProjection::Redacted));
 }
 
-fn pin_node(kind: EntityKind) -> PinNode {
+fn pin_node(kind: MemoryKind) -> PinNode {
     PinNode {
         id: MemoryId::new(uuid::Uuid::now_v7()),
         kind,
@@ -215,7 +215,7 @@ fn pin_node(kind: EntityKind) -> PinNode {
 fn pins_list_origins_then_references_with_the_fork_source_then_reads() {
     let [origin, reference, read, source] =
         std::array::from_fn(|_| MemoryId::new(uuid::Uuid::now_v7()));
-    let mut node = pin_node(EntityKind::Abstraction);
+    let mut node = pin_node(MemoryKind::Abstraction);
     node.origins = vec![origin];
     node.refs = vec![reference];
     node.reads = vec![read];
@@ -234,7 +234,7 @@ fn pins_list_origins_then_references_with_the_fork_source_then_reads() {
 #[test]
 fn a_fork_source_already_in_refs_is_listed_once() {
     let source = MemoryId::new(uuid::Uuid::now_v7());
-    let mut node = pin_node(EntityKind::Fact);
+    let mut node = pin_node(MemoryKind::Fact);
     node.refs = vec![source];
     node.forked_from = Some(source);
     assert_eq!(
@@ -246,7 +246,7 @@ fn a_fork_source_already_in_refs_is_listed_once() {
 #[test]
 fn goal_pins_list_goal_references_then_guidance() {
     let [referenced, guide] = std::array::from_fn(|_| GoalId::new(uuid::Uuid::now_v7()));
-    let mut node = pin_node(EntityKind::Perspective);
+    let mut node = pin_node(MemoryKind::Perspective);
     node.goal_refs = vec![referenced];
     node.guided_by = vec![guide];
     assert_eq!(
@@ -294,7 +294,7 @@ fn unresolved_guidance_stays_a_redactable_raw_id() {
     let goal = GoalId::new(uuid::Uuid::now_v7());
     let mut node = PinNode {
         id: source,
-        kind: EntityKind::Perspective,
+        kind: MemoryKind::Perspective,
         schema_id: crate::SchemaId::new("test/pin-v1".into()),
         origins: Vec::new(),
         refs: Vec::new(),
@@ -344,7 +344,7 @@ fn pin_field_table_matches_ledger_vectors() {
     struct FieldSpec {
         column: String,
         kind: EdgeKind,
-        scalar: bool,
+        shape: super::PinShape,
         fact: Vec<EntityKind>,
         abstraction: Vec<EntityKind>,
         perspective: Vec<EntityKind>,
@@ -357,11 +357,7 @@ fn pin_field_table_matches_ledger_vectors() {
         let spec = field.spec();
         assert_eq!(spec.column, row.out.column, "{field:?}");
         assert_eq!(spec.kind, row.out.kind, "{field:?}");
-        assert_eq!(
-            matches!(spec.shape, super::PinShape::Scalar),
-            row.out.scalar,
-            "{field:?}"
-        );
+        assert_eq!(spec.shape, row.out.shape, "{field:?}");
         assert_eq!(
             spec.admits,
             [
@@ -398,14 +394,14 @@ fn projected_target_precedence_matches_ledger_vectors() {
     for row in ledger_rows::<[bool; 3], String>("Proxiima.Edges.projectTarget", 8) {
         let [live, forgotten, erased] = row.input;
         let readable = live
-            .then_some((id, EntityKind::Fact))
+            .then_some((id, MemoryKind::Fact))
             .into_iter()
             .collect::<std::collections::HashMap<_, _>>();
         let unread = crate::verbs::query::UnreadTargets {
             forgotten: forgotten
                 .then(|| crate::verbs::query::MemoryLineageNode {
                     memory_id: id,
-                    kind: EntityKind::Fact,
+                    kind: MemoryKind::Fact,
                     schema_id: crate::SchemaId::new("test/pin-v1".into()),
                     snippet: String::new(),
                     distance: 0,
@@ -428,11 +424,4 @@ fn projected_target_precedence_matches_ledger_vectors() {
             );
         }
     }
-}
-
-#[test]
-fn a_read_set_without_session_observations_defaults_empty() {
-    let defaults: [&str; 0] = crate::ledger!(Proxiima.Edges.defaultReadSet);
-    assert_eq!(super::ReadSet::new_empty().pins().len(), defaults.len());
-    assert_eq!(super::ReadSet::default().pins().len(), defaults.len());
 }

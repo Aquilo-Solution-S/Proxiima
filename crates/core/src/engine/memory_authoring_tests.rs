@@ -156,20 +156,14 @@ fn required_origins_match_ledger_vectors() {
         serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
     let rows: Vec<Row> =
         serde_json::from_value(root["Proxiima.Edges.requiresOrigins"].clone()).unwrap();
-    assert_eq!(rows.len(), MemoryKind::ALL.len());
+    assert_eq!(rows.len(), 2);
     for row in rows {
         let [kind] = row.kind;
-        let required = if kind == MemoryKind::Fact {
-            assert!(
-                MemoryPinField::Origins
-                    .admitted(EntityKind::Fact)
-                    .is_empty()
-            );
-            false
-        } else {
-            derivation_phase(kind.entity_kind(), &[]).is_err()
-        };
-        assert_eq!(required, row.out, "{kind:?}");
+        assert_eq!(
+            derivation_phase(kind.entity_kind(), &[]).is_err(),
+            row.out,
+            "{kind:?}"
+        );
     }
 }
 

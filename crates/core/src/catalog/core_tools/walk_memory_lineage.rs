@@ -6,14 +6,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ancestry::{AncestorEdge, AncestorTarget, Unread};
-use crate::MemoryId;
 use crate::catalog::cursor as wire_cursor;
 use crate::storage_ports::other_stores::{NodeStatus, UnavailableReason};
 use crate::verbs::query::{MemoryLineageCursor, MemoryLineageDirection, MemoryLineageRequest};
+use crate::{MemoryId, MemoryKind};
 use crate::{ToolCtx, ToolError};
 
-const MAX_LINEAGE_DEPTH: u32 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
-const DEFAULT_LINEAGE_DEPTH: u32 = crate::ledger!(Proxiima.Edges.defaultWalkDepth);
+const MAX_DEPTH: u8 = crate::ledger!(Proxiima.Edges.maxWalkDepth);
+const DEFAULT_DEPTH: u32 = crate::ledger!(Proxiima.Edges.defaultWalkDepth);
 
 fn lineage_direction_description() -> String {
     use crate::EdgeKind::{Origin, Read, Reference};
@@ -32,8 +32,7 @@ pub struct WalkMemoryLineageArgs {
     #[schemars(description = lineage_direction_description())]
     #[serde(default = "default_direction")]
     pub direction: WalkMemoryLineageDirectionArg,
-    /// Maximum hop distance from the start memory; clamped to 1..=8,
-    /// default 3.
+    #[schemars(description = lineage_depth_description())]
     #[serde(default = "default_depth")]
     pub depth: u32,
     /// Max lineage edges per page; values above 200 are clamped, 0 is
@@ -124,6 +123,7 @@ pub struct LineageNodeOutput {
 }
 
 /// One hop of the walk: an origin, a declared subject reference, or a session read.
+/// An other-store edge carries its recorded kind.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LineageEdgeOutput {
     pub source: String,
@@ -136,8 +136,14 @@ fn default_direction() -> WalkMemoryLineageDirectionArg {
     WalkMemoryLineageDirectionArg::Ancestors
 }
 
+fn lineage_depth_description() -> String {
+    format!(
+        "Maximum hop distance from the start memory; clamped to 1..={MAX_DEPTH}, default {DEFAULT_DEPTH}."
+    )
+}
+
 fn default_depth() -> u32 {
-    DEFAULT_LINEAGE_DEPTH
+    DEFAULT_DEPTH
 }
 
 fn default_limit() -> u32 {
@@ -170,7 +176,9 @@ pub async fn walk_memory_lineage(
     let start = ctx.resolve_memory(&args.memory)?;
     let limit = super::resolve_page_limit(Some(args.limit))?;
     let direction = MemoryLineageDirection::from(args.direction);
-    let depth = u8::try_from(args.depth.clamp(1, MAX_LINEAGE_DEPTH)).unwrap_or(8);
+    let depth = u8::try_from(args.depth)
+        .unwrap_or(MAX_DEPTH)
+        .clamp(1, MAX_DEPTH);
     let fingerprint = lineage_fingerprint(&args.memory, direction, depth);
     let engine = ctx.engine();
     if matches!(direction, MemoryLineageDirection::Ancestors)
@@ -237,7 +245,7 @@ pub async fn walk_memory_lineage(
         .map(|node| LineageNodeOutput {
             memory: node.memory_id.into_inner().to_string(),
             space: spaces.remove(&node.memory_id),
-            kind: node.kind.as_str().to_string(),
+            kind: node.kind.entity_kind().as_str().to_string(),
             schema_id: node.schema_id.as_str().to_string(),
             snippet: node.snippet,
             distance: node.distance,
@@ -479,7 +487,7 @@ async fn render_ancestor_page(
     let mut unique = HashSet::new();
     local_ids.retain(|id| unique.insert(*id));
     let readable = engine.lineage_nodes(ctx.authz(), &local_ids).await?;
-    let live: HashMap<MemoryId, crate::EntityKind> = readable
+    let live: HashMap<MemoryId, MemoryKind> = readable
         .iter()
         .map(|node| (node.memory_id, node.kind))
         .collect();
@@ -490,7 +498,7 @@ async fn render_ancestor_page(
         .map(|node| LineageNodeOutput {
             memory: node.memory_id.into_inner().to_string(),
             space: spaces.remove(&node.memory_id),
-            kind: node.kind.as_str().to_string(),
+            kind: node.kind.entity_kind().as_str().to_string(),
             schema_id: node.schema_id.as_str().to_string(),
             snippet: node.snippet,
             distance: reached.get(&node.memory_id).copied().unwrap_or_default(),
@@ -514,7 +522,7 @@ async fn render_ancestor_page(
     nodes.extend(unread.forgotten.iter().map(|node| LineageNodeOutput {
         memory: node.memory_id.into_inner().to_string(),
         space: None,
-        kind: node.kind.as_str().to_string(),
+        kind: node.kind.entity_kind().as_str().to_string(),
         schema_id: node.schema_id.as_str().to_string(),
         snippet: String::new(),
         distance: reached.get(&node.memory_id).copied().unwrap_or_default(),

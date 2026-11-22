@@ -6,8 +6,8 @@ use crate::storage::{AuthorDerivedOutcome, AuthorDerivedRequest, StorageError};
 #[cfg(test)]
 use crate::storage_ports::OwnerWritePermit;
 use crate::{
-    AbstractionPayload, EntityId, EntityKind, InputContractId, MemoryId, OperatorId, OperatorPhase,
-    OwnerId, PerspectivePayload, SchemaId, SchemaVersion, SidecarPayload,
+    AbstractionPayload, EntityId, EntityKind, InputContractId, MemoryId, MemoryKind, OperatorId,
+    OperatorPhase, OwnerId, PerspectivePayload, SchemaId, SchemaVersion, SidecarPayload,
 };
 use crate::{MemoryOutputInvocation, OperatorInvocationManifest, OutputEdgeManifest};
 
@@ -148,13 +148,13 @@ fn access_kind(kind: EntityKind) -> Result<crate::MemoryKind, ProtocolError> {
 
 const ORIGIN_KINDS: &str = "an Abstraction needs Fact or Abstraction origins; a derived Perspective needs Abstraction origins";
 
-/// Derivation admission follows `Proxiima.Edges.requiresOrigins` and `Proxiima.Memory.operatorAdmitsInput`.
 fn derivation_phase(
     kind: EntityKind,
     origins: &[EdgeEndpoint],
 ) -> Result<OperatorPhase, ProtocolError> {
     let refusal = || ProtocolError::invalid_argument("origins", ORIGIN_KINDS);
     let phase = OperatorPhase::of_memory_output(kind).ok_or_else(refusal)?;
+    // `Proxiima.Edges.requiresOrigins`.
     let empty_allowed = kind == EntityKind::Perspective;
     if (origins.is_empty() && !empty_allowed)
         || origins
@@ -353,10 +353,10 @@ impl DerivedMemory {
         }
         out
     }
-    fn output_kind(&self) -> Result<EntityKind, ProtocolError> {
+    fn output_kind(&self) -> Result<MemoryKind, ProtocolError> {
         match self.sidecar_payload.kind {
-            crate::verbs::schema::PayloadKind::Abstraction => Ok(EntityKind::Abstraction),
-            crate::verbs::schema::PayloadKind::Perspective => Ok(EntityKind::Perspective),
+            crate::verbs::schema::PayloadKind::Abstraction => Ok(MemoryKind::Abstraction),
+            crate::verbs::schema::PayloadKind::Perspective => Ok(MemoryKind::Perspective),
             _ => Err(ProtocolError::invalid_argument(
                 "payload",
                 "derived memory requires an Abstraction or Perspective payload",
@@ -774,12 +774,7 @@ impl Engine {
             )
             .await?;
         let owner = command.controller();
-        let permit = crate::GoalWorkPermit::new(
-            command,
-            access_kind(kind)?,
-            memory.target,
-            authz.bound_reads(),
-        );
+        let permit = crate::GoalWorkPermit::new(command, kind, memory.target, authz.bound_reads());
         let item = self
             .prepare_derived_with_permit(authz, memory, &[], &[], owner, permit)
             .await?;
@@ -842,7 +837,7 @@ impl Engine {
         else {
             return Ok(Vec::new());
         };
-        if snapshot.owner != destination_owner || snapshot.kind != kind {
+        if snapshot.owner != destination_owner || snapshot.kind.entity_kind() != kind {
             return Err(ProtocolError::forbidden("entry not found"));
         }
         let mut retained = Vec::new();
@@ -902,9 +897,7 @@ impl Engine {
                 "Goal work requires a standalone authoring transaction",
             ));
         };
-        let write_permit = self
-            .authorize_write(authority, &owner, access_kind(kind)?)
-            .await?;
+        let write_permit = self.authorize_write(authority, &owner, kind).await?;
         let owner = *write_permit.owner();
         self.prepare_derived_with_permit(
             authority,
@@ -933,7 +926,8 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
-        let kind = memory.output_kind()?;
+        let memory_kind = memory.output_kind()?;
+        let kind = memory_kind.entity_kind();
         let (memory_id, supersedes) = match memory.target {
             MemoryTarget::Series(handle) => (MemoryId::new(handle.into_inner()), None),
             // Storage resolves the prior row's handle. This private draft key is
@@ -991,8 +985,6 @@ impl Engine {
             external_references(&external_origins, &memory.external_references)?;
         // A new version's t is allocated by storage. The layer check needs only
         // the output kind; neither a handle nor the prior t is its source row.
-        let memory_kind = crate::MemoryKind::of(kind)
-            .ok_or_else(|| ProtocolError::internal("derived memory must have a memory kind"))?;
         let source = EdgeEndpoint::memory(memory_kind, memory_id);
         let references = self
             .prepare_derived_references(
@@ -1132,7 +1124,7 @@ impl Engine {
             // The transaction's head check enforces same owner/schema as well.
             *kind
         } else if retained.is_some_and(|pins| {
-            pins.prior() == prior && pins.owner() == owner && pins.kind() == kind
+            pins.prior() == prior && pins.owner() == owner && pins.kind().entity_kind() == kind
         }) {
             kind
         } else {

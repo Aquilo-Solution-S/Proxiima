@@ -8,7 +8,9 @@ use proxiima_core::verbs::query::{
     EntityKind, MemoryRow, QueryCursor, QueryRequest, QueryResponse, SupersessionStatus,
 };
 use proxiima_core::verbs::schema::PayloadKind;
-use proxiima_core::{MemoryId, OwnerId, SchemaId, SidecarPayload, SqlText, StorageError};
+use proxiima_core::{
+    MemoryId, MemoryKind, OwnerId, SchemaId, SidecarPayload, SqlText, StorageError,
+};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -67,9 +69,9 @@ pub(crate) async fn query_memories_on_connection(
     };
     let visible_goal_ids: Vec<Uuid> = goals.iter().map(|row| row.id.into_inner()).collect();
     demote_invisible_goal_refs(&mut memories, &visible_goal_ids);
-    let edges = query_edges(req, &memories, &visible_goal_ids);
+    let edges = query_edges(&memories);
     Ok(QueryResponse {
-        memories,
+        memories: memories.into_iter().map(|(_, row)| row).collect(),
         goals,
         edges,
         next_cursor: next_memory_cursor.or(next_goal_cursor),
@@ -355,7 +357,7 @@ async fn project_memory_rows_on_connection(
     req: &QueryRequest,
     schemas: &[MemorySchemaSpec],
     rows: Vec<MemoryRowDb>,
-) -> Result<Vec<MemoryRow>, StorageError> {
+) -> Result<Vec<(MemoryKind, MemoryRow)>, StorageError> {
     let mut schema_versions = HashMap::new();
     for row in &rows {
         let kind = EntityKind::from(row.kind);
@@ -396,17 +398,20 @@ async fn project_memory_rows_on_connection(
             )));
         }
         let payload = req.include_payloads.then_some(loaded_payload).flatten();
-        memories.push(memory_row_from_db(row, payload, schema_version)?);
+        memories.push((
+            row.kind.into(),
+            memory_row_from_db(row, payload, schema_version)?,
+        ));
     }
     Ok(memories)
 }
 
 /// A Goal reference the caller may not read is not a Goal edge for this
 /// response; it stays a plain reference rather than disappearing.
-fn demote_invisible_goal_refs(memories: &mut [MemoryRow], visible_goal_ids: &[Uuid]) {
+fn demote_invisible_goal_refs(memories: &mut [(MemoryKind, MemoryRow)], visible_goal_ids: &[Uuid]) {
     let visible_goal_set: std::collections::HashSet<Uuid> =
         visible_goal_ids.iter().copied().collect();
-    for memory in memories {
+    for (_, memory) in memories {
         let mut visible = Vec::with_capacity(memory.goal_refs.len());
         for goal in memory.goal_refs.drain(..) {
             if visible_goal_set.contains(&goal.into_inner()) {

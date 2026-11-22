@@ -114,7 +114,8 @@ Use `KeyField::padded_text` only when the migration column is PostgreSQL
 remains an ordinary text column and does not apply that canonicalization.
 
 Implement `references()` when the payload carries node references. Ingest
-resolves the declared targets under [`Proxiima.Edges`](ledger.md#edges).
+resolves the declared targets and derives pins atomically. A spiice defines
+neither an edge-writing verb nor a pin kind. See [`Proxiima.Edges`](ledger.md#edges).
 
 ## 2. Persist the typed payload
 

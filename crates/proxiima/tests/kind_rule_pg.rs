@@ -447,7 +447,10 @@ async fn assert_reads(
         )
         .await?;
     for node in &descendants.nodes {
-        assert!(readable(node.kind), "{name} lineage node {node:?}");
+        assert!(
+            readable(node.kind.entity_kind()),
+            "{name} lineage node {node:?}"
+        );
     }
     for (kind, t) in &ids[1..] {
         let reached = descendants
@@ -480,7 +483,11 @@ async fn assert_reads(
                 readable(EntityKind::Perspective),
                 "{name} walks from a Perspective"
             );
-            assert!(walk.nodes.iter().all(|node| readable(node.kind)));
+            assert!(
+                walk.nodes
+                    .iter()
+                    .all(|node| readable(node.kind.entity_kind()))
+            );
         }
         Err(error) => assert!(
             !readable(EntityKind::Perspective) && hidden(&error),

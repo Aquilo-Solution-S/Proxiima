@@ -289,7 +289,7 @@ async fn pin_node_loads_are_owner_scoped_and_redact_in_memory() {
         let mut listed = Vec::new();
         for (target, kind) in hub_node.pins() {
             listed.push(project_listed_edge(
-                MemoryKind::of(hub_node.kind).expect("Memory pin node"),
+                hub_node.kind,
                 hub_node.id,
                 target,
                 kind,

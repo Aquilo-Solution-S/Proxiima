@@ -3,7 +3,7 @@ use crate::edge::PinNode;
 use crate::storage_ports::{InboundPinQuery, MemoryReadPort};
 use crate::verbs::query::{EdgeFilter, EdgeReadRequest};
 use crate::{
-    EdgeKind, EdgeTargetProjection, EntityKind, EntityRef, MemoryId, OwnerId, StorageError,
+    EdgeKind, EdgeTargetProjection, EntityRef, MemoryId, MemoryKind, OwnerId, StorageError,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 fn hop(source: MemoryId, target: MemoryId, kind: EdgeKind) -> PinHop {
     PinHop {
         source_id: source,
-        source_kind: crate::MemoryKind::Abstraction,
+        source_kind: MemoryKind::Abstraction,
         target: PinTarget::Memory(target),
         kind,
     }
@@ -44,7 +44,7 @@ fn page_hops_lists_forgotten_and_erased_targets_as_the_probe_says() {
         unread: crate::verbs::query::UnreadTargets {
             forgotten: vec![crate::verbs::query::MemoryLineageNode {
                 memory_id: forgotten,
-                kind: EntityKind::Fact,
+                kind: MemoryKind::Fact,
                 schema_id: crate::SchemaId::new("test/fact".to_owned()),
                 snippet: String::new(),
                 distance: 0,
@@ -282,7 +282,7 @@ impl MemoryReadPort for FakePins {
                 .filter(|id| memory_ids.contains(id))
                 .map(|id| crate::verbs::query::MemoryLineageNode {
                     memory_id: *id,
-                    kind: EntityKind::Fact,
+                    kind: MemoryKind::Fact,
                     schema_id: crate::SchemaId::new("test/fact".to_owned()),
                     snippet: String::new(),
                     distance: 0,
@@ -309,7 +309,7 @@ fn hub_fixture(n: usize) -> (OwnerId, MemoryId, Arc<FakePins>) {
     let hub = MemoryId::new(uuid::Uuid::now_v7());
     let mut nodes = vec![PinNode {
         id: hub,
-        kind: EntityKind::Fact,
+        kind: MemoryKind::Fact,
         schema_id: crate::SchemaId::new("test/pin-v1".into()),
         origins: Vec::new(),
         refs: Vec::new(),
@@ -321,7 +321,7 @@ fn hub_fixture(n: usize) -> (OwnerId, MemoryId, Arc<FakePins>) {
     for _ in 0..n {
         nodes.push(PinNode {
             id: MemoryId::new(uuid::Uuid::now_v7()),
-            kind: EntityKind::Abstraction,
+            kind: MemoryKind::Abstraction,
             schema_id: crate::SchemaId::new("test/pin-v1".into()),
             origins: vec![hub],
             refs: Vec::new(),

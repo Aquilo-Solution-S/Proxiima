@@ -536,7 +536,7 @@ pub trait FactPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
+        Vec::new()
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -610,7 +610,7 @@ pub trait AbstractionPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
+        Vec::new()
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -670,7 +670,7 @@ pub trait PerspectivePayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
+        Vec::new()
     }
     /// The spiice-owned lifecycle scope this schema's rows belong to
     /// (docs/build-a-spiice.md). `None` — the default — means the rows
@@ -737,7 +737,7 @@ pub trait GoalPayload:
     /// reproduces it exactly. Default: none.
     #[must_use]
     fn references(&self) -> Vec<PayloadReference> {
-        Vec::from(crate::ledger!(Proxiima.Edges.defaultPayloadReferences))
+        Vec::new()
     }
     /// Per-schema typed Goal sidecar table, or `None` when the Goal's
     /// typed payload has no schema-specific storage beyond
