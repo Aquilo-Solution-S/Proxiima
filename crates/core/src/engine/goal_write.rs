@@ -159,7 +159,7 @@ impl Engine {
         })
     }
 
-    /// Create an Active Goal from a typed payload.
+    /// Create an Active Goal from a typed payload. An unassigned Goal belongs to its Owner alone.
     ///
     /// # Errors
     ///
@@ -246,6 +246,7 @@ impl Engine {
     }
 
     /// Pause, resume, or abandon a Goal. Abandon applies to this series alone.
+    /// Pause and resume do not check children; achievement goes through `mark_goal_achieved`.
     ///
     /// # Errors
     ///

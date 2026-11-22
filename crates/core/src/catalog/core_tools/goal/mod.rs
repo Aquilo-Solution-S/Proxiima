@@ -998,7 +998,8 @@ pub(crate) fn encode_goal_payload(
     })
 }
 
-/// Resolve bare UUIDs, reading other-store evidence at its source as the caller.
+/// Resolve bare UUIDs, reading other-store evidence at its source as the caller;
+/// it is refused when its store is unavailable or the caller may not read it.
 pub(crate) async fn resolve_goal_evidence_handles(
     ctx: &ToolCtx,
     evidence: &[String],

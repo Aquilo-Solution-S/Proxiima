@@ -2,6 +2,7 @@ use super::{
     ChildGoalDraft, EvidenceTarget, GoalAuthorship, GoalDraft, GoalId, GoalPayloadWrite, GoalState,
     MemoryId, OwnerId, Postgres, SchemaId, StorageError, StoredGoal, Transaction, map_err,
 };
+use proxiima_core::verbs::goal_write::GoalTransitionKind;
 use proxiima_core::verbs::schema::PayloadKind;
 
 type PriorRow = (
@@ -111,15 +112,14 @@ pub(super) async fn validate_active_head(
 
 pub(super) fn validate_goal_transition(
     prior: GoalState,
-    next: GoalState,
-) -> Result<(), StorageError> {
-    if prior.may_transition_to(next) {
-        Ok(())
-    } else {
-        Err(StorageError::ConstraintViolation(format!(
-            "invalid goal transition: {prior:?} -> {next:?}",
-        )))
-    }
+    transition: GoalTransitionKind,
+) -> Result<GoalState, StorageError> {
+    transition.from_state(prior).ok_or_else(|| {
+        StorageError::ConstraintViolation(format!(
+            "invalid goal transition: {prior:?} -> {:?}",
+            transition.next_state(),
+        ))
+    })
 }
 
 /// Validate the head state here. The write checks the children after locking.

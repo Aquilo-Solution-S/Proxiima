@@ -546,7 +546,8 @@ pub(super) fn transition_replay_declaration(
         GoalTransitionKind::Pause { pending } => Some(pending),
         GoalTransitionKind::Resume | GoalTransitionKind::Abandon => None,
     };
-    // `Proxiima.Goals.replayIdentity`.
+    // `Proxiima.Goals.replayIdentity`. Resume and abandon declare nothing new, so a
+    // declaration stored before `pending` existed still matches them.
     replay_declaration(ReplayCommand::Transition(TransitionBody {
         prior_goal_id: prior,
         next_state: ReplayGoalState(req.transition.next_state()),

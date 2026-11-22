@@ -122,7 +122,7 @@ impl SourceReads {
         roles: &OwnerRoles,
         endpoints: &[EdgeEndpoint],
     ) -> Result<(), StorageError> {
-        // `Proxiima.Goals.sourceAdmission`.
+        // Each discovered source passes a read revalidated under the writing transaction's owner and Goal route locks.
         let current = Self::discover(storage, tx, scope, endpoints).await?;
         if self.sources != current.sources {
             return Err(StorageError::Retryable(

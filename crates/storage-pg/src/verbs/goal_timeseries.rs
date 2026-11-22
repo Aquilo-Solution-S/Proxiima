@@ -654,7 +654,7 @@ async fn insert_goal_revision(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedGoalWrite,
 ) -> Result<(), StorageError> {
-    // `Proxiima.Goals.reusesAssignment`.
+    // Earlier assignment belongs only to the historical version that declared it.
     sqlx::query(
         "INSERT INTO proxiima_core.goal
             (handle, t, owner_id, title, text, state, request_id, close_fact_t,

@@ -411,7 +411,6 @@ impl MigrationPlan {
             additional.iter().map(|id| id.into_inner()).collect(),
         )
     }
-    ///
     /// # Errors
     ///
     /// Returns an error when the source was already mapped.

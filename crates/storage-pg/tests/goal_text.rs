@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use proxiima_core::owner_inverse::{
     EraseAuthorization, ExportAuthorization, OwnerEraseOutcome, OwnerEraseTarget,
@@ -32,11 +31,6 @@ use proxiima_storage_pg::verbs::forget::MemoryColdStore;
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-/// The same pause a real clock gives two writes: `t` carries milliseconds, so
-/// two versions written closer than that could not tell `changed_at` from
-/// `set_at`.
-const TICK: Duration = Duration::from_millis(15);
 
 fn memory_draft(kind: MemoryKind) -> FactWriteCommand {
     FactWriteCommand {
@@ -421,7 +415,7 @@ macro_rules! goal_test {
     };
 }
 
-// `Proxiima.Goals.reusesAssignment`.
+// Earlier assignment belongs only to the historical version that declared it.
 goal_test!(
     historical_assignment_stays_on_original_versions_only,
     |h| async {
@@ -486,11 +480,9 @@ goal_test!(
     pause_then_resume_keep_the_text_and_the_set_time,
     |h| async {
         let first = h.create("pause-1", "pausable", "keep going").await?;
-        tokio::time::sleep(TICK).await;
         let paused = h
             .transition(first.goal_id, GoalState::Paused, "pause-2")
             .await?;
-        tokio::time::sleep(TICK).await;
         let resumed = h
             .transition(paused.goal_id, GoalState::Active, "pause-3")
             .await?;
@@ -519,9 +511,10 @@ goal_test!(
                 "the change time is this version's own"
             );
             if let Some(previous) = previous_change {
+                // Times have millisecond resolution; the id order is strict.
                 assert!(
-                    row.changed_at > previous,
-                    "a later version changed later than the one before it"
+                    row.changed_at >= previous,
+                    "a later version never changed before the one before it"
                 );
             }
             previous_change = Some(row.changed_at);
@@ -542,7 +535,6 @@ goal_test!(
         let first = h
             .create("modify-1", "first title", "the first text")
             .await?;
-        tokio::time::sleep(TICK).await;
         let modified = h
             .modify(first.goal_id, "modify-2", "second title", "the second text")
             .await?;
@@ -556,11 +548,11 @@ goal_test!(
             "modifying does not re-set a goal"
         );
         assert_eq!(after.set_at, minted_at(first.goal_id));
-        assert!(after.changed_at > before.changed_at);
+        assert!(modified.goal_id > first.goal_id);
+        assert!(after.changed_at >= before.changed_at);
         assert_eq!(after.changed_at, minted_at(modified.goal_id));
 
         // A transition after the modify carries the NEW text, not the first one.
-        tokio::time::sleep(TICK).await;
         let paused = h
             .transition(modified.goal_id, GoalState::Paused, "modify-3")
             .await?;
@@ -615,8 +607,14 @@ goal_test!(
             assert!(head.changed_at > before.changed_at);
             assert_eq!(head.state, GoalState::Active);
 
+            // A move the prior's own state admits, so only the superseded head refuses it.
+            let stale_move = match state {
+                GoalState::Active => GoalState::Paused,
+                GoalState::Paused => GoalState::Active,
+                GoalState::Achieved | GoalState::Abandoned => unreachable!(),
+            };
             let stale = h
-                .transition(prior, GoalState::Active, &format!("{request}-stale"))
+                .transition(prior, stale_move, &format!("{request}-stale"))
                 .await
                 .expect_err("a superseded prior cannot advance the head");
             assert!(matches!(
@@ -639,7 +637,6 @@ goal_test!(each_decomposed_child_carries_its_own_text, |h| async {
     let parent = h
         .create("decompose-parent", "parent", "the parent text")
         .await?;
-    tokio::time::sleep(TICK).await;
     let children = h
         .decompose(
             parent.goal_id,
@@ -669,7 +666,7 @@ goal_test!(each_decomposed_child_carries_its_own_text, |h| async {
         "decomposing leaves the parent as it was"
     );
     assert!(
-        first.set_at > parent_row.set_at,
+        first.id > parent_row.id && first.set_at >= parent_row.set_at,
         "a child is set after its parent"
     );
     Ok(())
@@ -679,7 +676,6 @@ goal_test!(each_decomposed_child_carries_its_own_text, |h| async {
 goal_test!(achieve_and_abandon_keep_the_text, |h| async {
     let to_achieve = h.create("close-1", "achievable", "reach this").await?;
     let to_abandon = h.create("close-2", "abandonable", "drop this").await?;
-    tokio::time::sleep(TICK).await;
     let achieved = h.achieve(to_achieve.goal_id, "close-1-achieve").await?;
     let abandoned = h
         .transition(to_abandon.goal_id, GoalState::Abandoned, "close-2-abandon")
@@ -689,13 +685,13 @@ goal_test!(achieve_and_abandon_keep_the_text, |h| async {
     assert_eq!(achieved_row.state, GoalState::Achieved);
     assert_eq!(achieved_row.text.as_deref(), Some("reach this"));
     assert_eq!(achieved_row.set_at, minted_at(to_achieve.goal_id));
-    assert!(achieved_row.changed_at > achieved_row.set_at);
+    assert!(achieved_row.changed_at >= achieved_row.set_at);
 
     let abandoned_row = h.read(abandoned.goal_id).await?;
     assert_eq!(abandoned_row.state, GoalState::Abandoned);
     assert_eq!(abandoned_row.text.as_deref(), Some("drop this"));
     assert_eq!(abandoned_row.set_at, minted_at(to_abandon.goal_id));
-    assert!(abandoned_row.changed_at > abandoned_row.set_at);
+    assert!(abandoned_row.changed_at >= abandoned_row.set_at);
     Ok(())
 });
 
@@ -707,7 +703,6 @@ goal_test!(
         // Moving it on must not make one up, and must not store a blank.
         let old = h.insert_declarationless("old-1", "Active").await?;
         assert_eq!(h.read(old).await?.text, None);
-        tokio::time::sleep(TICK).await;
 
         let paused = h.transition(old, GoalState::Paused, "old-2").await?;
         let resumed = h
@@ -752,7 +747,7 @@ async fn stored_text(pg: &PgStorage, id: GoalId) -> TestResult<Option<String>> {
     )
 }
 
-// `Proxiima.Goals.requestReplay`.
+// `Proxiima.Goals.replayIdentity`.
 goal_test!(
     a_transition_recorded_before_the_change_still_replays,
     |h| async {

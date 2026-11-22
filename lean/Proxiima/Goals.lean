@@ -68,19 +68,6 @@ def lifecycle : GoalState → Event → Except LifecycleRefusal GoalState
   | .Abandoned, .set | .Abandoned, .decompose | .Abandoned, .modify | .Abandoned, (.pause _)
   | .Abandoned, .resume | .Abandoned, .achieve | .Abandoned, .abandon => .error .wrongState
 
-/-- Allowed predecessors and successors on the plain write path. -/
-def mayTransitionTo : GoalState → GoalState → Bool
-  | .Active, .Active => true
-  | .Active, .Paused => true
-  | .Active, .Achieved => false
-  | .Active, .Abandoned => true
-  | .Paused, .Active => true
-  | .Paused, .Paused => false
-  | .Paused, .Achieved => false
-  | .Paused, .Abandoned => true
-  | .Achieved, .Active | .Achieved, .Paused | .Achieved, .Achieved | .Achieved, .Abandoned => false
-  | .Abandoned, .Active | .Abandoned, .Paused | .Abandoned, .Achieved | .Abandoned, .Abandoned => false
-
 /-- The label projected on Goal reads. -/
 def stateLabel : GoalState → String
   | .Active => "Active"
@@ -303,11 +290,6 @@ def admissionOrder : List AdmissionStep :=
   [.fenceOwners, .reserveFactIdentity, .lockMemoryHandles, .lockLifecycleUnion,
    .lockGoalHeads, .revalidateTargets]
 
-/-- A Goal write requires each discovered source to pass a read revalidated under the writing transaction's owner and Goal route locks. -/
-def sourceAdmission : (footprintHeld : Bool) → (readValid : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
-
 /-- The only Fact admission path allowed to use a reserved Goal-change identity. -/
 inductive FactAdmission where
   | goalTransaction
@@ -366,20 +348,6 @@ def editSpaceMatches : (explicitSpace : Bool) → (sameOwner : Bool) → Bool
 def stateFilter : (filterOmitted : Bool) → (inCanonicalSet : Bool) → Bool
   | true, false | true, true | false, true => true
   | false, false => false
-
-/-- Fact Goal filters match references to any readable revision of a selected series before page limiting. -/
-def factGoalFilter : (referencesReadableRevision : Bool) → (matchesOtherFilters : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
-
-/-- The Goal evidence vector is returned as declared when its exact version is visible. -/
-def readEvidence : (goalVisible : Bool) → Bool
-  | true => true
-  | false => false
-
-/-- Earlier assignment belongs only to the historical version that declared it. -/
-def reusesAssignment : Event → Bool
-  | .set | .decompose | .modify | (.pause _) | .resume | .achieve | .abandon => false
 
 /-- Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head. -/
 def recallActiveGoal : (hasMotivation : Bool) → (perspectiveMatches : Bool) → Bool

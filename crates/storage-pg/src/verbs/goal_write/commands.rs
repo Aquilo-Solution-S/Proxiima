@@ -17,6 +17,9 @@ use crate::PgStorage;
 use crate::error::with_bounded_retry;
 use proxiima_core::goal_collaboration::GoalEditPermit;
 
+// Each goal `*_atomic` verb wraps its `_in_pool` body in `with_bounded_retry`,
+// so a transient deadlock or serialization failure re-runs the whole idempotent transaction.
+
 pub(crate) async fn create_goal_atomic(
     storage: &PgStorage,
     req: &CreateGoalAtomicRequest<'_>,
@@ -201,8 +204,7 @@ pub(crate) async fn transition_goal_atomic_in_pool(
     }
     let prior =
         load_prior_goal(&mut tx, &req.owner, req.prior_goal_id, req.context.registry).await?;
-    let next_state = req.transition.next_state();
-    validate_goal_transition(prior.state, next_state)?;
+    let next_state = validate_goal_transition(prior.state, req.transition)?;
     let draft = draft_from_stored(
         &req.owner,
         &prior,

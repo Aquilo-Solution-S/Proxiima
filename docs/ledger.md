@@ -233,27 +233,6 @@ stateDiagram-v2
 | abandoned | achieve | refused: wrong state |
 | abandoned | abandon | refused: wrong state |
 
-| goal state | goal state | may transition to |
-| --- | --- | --- |
-| active | active | yes |
-| active | paused | yes |
-| active | achieved | no |
-| active | abandoned | yes |
-| paused | active | yes |
-| paused | paused | no |
-| paused | achieved | no |
-| paused | abandoned | yes |
-| achieved | active | no |
-| achieved | paused | no |
-| achieved | achieved | no |
-| achieved | abandoned | no |
-| abandoned | active | no |
-| abandoned | paused | no |
-| abandoned | achieved | no |
-| abandoned | abandoned | no |
-
-- may transition to: Allowed predecessors and successors on the plain write path.
-
 | goal state | bool | close fact presence |
 | --- | --- | --- |
 | active | yes | no |
@@ -274,22 +253,21 @@ stateDiagram-v2
 
 - edit pins: Omitted motivation and evidence carry forward and supplied lists replace them.
 
-| event | prompt revision | parent revision | may declare evidence | change fields | reuses assignment |
-| --- | --- | --- | --- | --- | --- |
-| set | replace | replace | yes | plain | no |
-| decompose | replace | replace | yes | parent | no |
-| modify | replace | carry | yes | plain | no |
-| pause (keep) | carry | carry | no | pending | no |
-| pause (discard) | carry | carry | no | pending | no |
-| resume | carry | carry | no | plain | no |
-| achieve | carry | carry | yes | plain | no |
-| abandon | carry | carry | no | plain | no |
+| event | prompt revision | parent revision | may declare evidence | change fields |
+| --- | --- | --- | --- | --- |
+| set | replace | replace | yes | plain |
+| decompose | replace | replace | yes | parent |
+| modify | replace | carry | yes | plain |
+| pause (keep) | carry | carry | no | pending |
+| pause (discard) | carry | carry | no | pending |
+| resume | carry | carry | no | plain |
+| achieve | carry | carry | yes | plain |
+| abandon | carry | carry | no | plain |
 
 - prompt revision: Declaring writes supply a prompt and lifecycle changes carry the stored prompt byte for byte.
 - parent revision: A child keeps the parent series chosen at birth alongside its exact parent dependency under `Causa.GoalStep`.
 - may declare evidence: Which Goal operations can supply an evidence statement, always optional.
 - change fields: Decomposition alone carries the parent revision and pause alone carries a pending disposition.
-- reuses assignment: Earlier assignment belongs only to the historical version that declared it.
 
 | evidence source | evidence admission |
 | --- | --- |
@@ -353,26 +331,24 @@ stateDiagram-v2
 
 - retry transaction: Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation.
 
-| bool | bool | source admission | publish change fact | edit space matches | state filter | fact goal filter | recall active goal |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| yes | yes | yes | publish | yes | yes | yes | yes |
-| yes | no | no | missing stamp | no | yes | no | no |
-| no | yes | no | skip | yes | yes | no | yes |
-| no | no | no | skip | yes | no | no | yes |
-
-- source admission: A Goal write requires each discovered source to pass a read revalidated under the writing transaction's owner and Goal route locks.
-- publish change fact: A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction.
-- edit space matches: An edit uses the named Goal's owner and an explicit space can only narrow that selection.
-- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
-- fact goal filter: Fact Goal filters match references to any readable revision of a selected series before page limiting.
-- recall active goal: Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head.
-
 | fact admission | reserve change fact |
 | --- | --- |
 | goal transaction | yes |
 | ordinary fact | no |
 
 - reserve change fact: A Goal-change Fact uses its reserved identity under the pre-held lock union, with no declared scope or read set.
+
+| bool | bool | publish change fact | edit space matches | state filter | recall active goal |
+| --- | --- | --- | --- | --- | --- |
+| yes | yes | publish | yes | yes | yes |
+| yes | no | missing stamp | no | yes | no |
+| no | yes | skip | yes | yes | yes |
+| no | no | skip | yes | no | yes |
+
+- publish change fact: A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction.
+- edit space matches: An edit uses the named Goal's owner and an explicit space can only narrow that selection.
+- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
+- recall active goal: Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head.
 
 | trimmed display length | display admitted |
 | --- | --- |
@@ -381,13 +357,6 @@ stateDiagram-v2
 | oversized | no |
 
 - display admitted: The Rust input boundary uses str::trim, counts the remaining Unicode scalar values and admits a title or prompt with length from one through its field limit.
-
-| bool | read evidence |
-| --- | --- |
-| yes | yes |
-| no | no |
-
-- read evidence: The Goal evidence vector is returned as declared when its exact version is visible.
 
 | goal clock | clock source |
 | --- | --- |

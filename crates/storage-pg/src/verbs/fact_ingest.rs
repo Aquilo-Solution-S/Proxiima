@@ -171,6 +171,7 @@ pub(crate) async fn ingest_authorized_fact_atomic(
     embedding_spaces: &[proxiima_core::EmbeddingSpace],
     store_number: u16,
 ) -> Result<FactIngestOutcome, StorageError> {
+    // Retry the whole transaction on transient deadlock/serialization.
     with_bounded_retry(move || async move {
         let mut tx = crate::owner_scope::begin_owner_transaction(
             pool,

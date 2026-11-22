@@ -8,20 +8,6 @@
   {"out": true, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Goals.sourceAdmission":
- [{"out": true, "in": [true, true]},
-  {"out": false, "in": [true, false]},
-  {"out": false, "in": [false, true]},
-  {"out": false, "in": [false, false]}],
- "Proxiima.Goals.reusesAssignment":
- [{"out": false, "in": ["set"]},
-  {"out": false, "in": ["decompose"]},
-  {"out": false, "in": ["modify"]},
-  {"out": false, "in": [{"pause": ["keep"]}]},
-  {"out": false, "in": [{"pause": ["discard"]}]},
-  {"out": false, "in": ["resume"]},
-  {"out": false, "in": ["achieve"]},
-  {"out": false, "in": ["abandon"]}],
  "Proxiima.Goals.retryTransaction":
  [{"out": "retry", "in": ["retryable", "available"]},
   {"out": "returnOutcome", "in": ["retryable", "exhausted"]},
@@ -52,8 +38,6 @@
  [{"out": "readableHead", "in": ["read"]},
   {"out": "readableHead", "in": ["list"]},
   {"out": "exact", "in": ["declaredReference"]}],
- "Proxiima.Goals.readEvidence":
- [{"out": true, "in": [true]}, {"out": false, "in": [false]}],
  "Proxiima.Goals.publishChangeFact":
  [{"out": "publish", "in": [true, true]},
   {"out": "missingStamp", "in": [true, false]},
@@ -81,23 +65,6 @@
   {"out": "carry", "in": ["resume"]},
   {"out": "carry", "in": ["achieve"]},
   {"out": "carry", "in": ["abandon"]}],
- "Proxiima.Goals.mayTransitionTo":
- [{"out": true, "in": ["Active", "Active"]},
-  {"out": true, "in": ["Active", "Paused"]},
-  {"out": false, "in": ["Active", "Achieved"]},
-  {"out": true, "in": ["Active", "Abandoned"]},
-  {"out": true, "in": ["Paused", "Active"]},
-  {"out": false, "in": ["Paused", "Paused"]},
-  {"out": false, "in": ["Paused", "Achieved"]},
-  {"out": true, "in": ["Paused", "Abandoned"]},
-  {"out": false, "in": ["Achieved", "Active"]},
-  {"out": false, "in": ["Achieved", "Paused"]},
-  {"out": false, "in": ["Achieved", "Achieved"]},
-  {"out": false, "in": ["Achieved", "Abandoned"]},
-  {"out": false, "in": ["Abandoned", "Active"]},
-  {"out": false, "in": ["Abandoned", "Paused"]},
-  {"out": false, "in": ["Abandoned", "Achieved"]},
-  {"out": false, "in": ["Abandoned", "Abandoned"]}],
  "Proxiima.Goals.mayDeclareEvidence":
  [{"out": true, "in": ["set"]},
   {"out": true, "in": ["decompose"]},
@@ -140,11 +107,6 @@
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "resume"]},
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "achieve"]},
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "abandon"]}],
- "Proxiima.Goals.factGoalFilter":
- [{"out": true, "in": [true, true]},
-  {"out": false, "in": [true, false]},
-  {"out": false, "in": [false, true]},
-  {"out": false, "in": [false, false]}],
  "Proxiima.Goals.evidenceAdmission":
  [{"out": "ownerTransaction", "in": ["local"]},
   {"out": "callerReadAtSource", "in": ["otherStore"]}],

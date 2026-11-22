@@ -134,6 +134,7 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
 /// Read a Goal series' current head. `raw` names the series or any of its
 /// readable versions. Both Goal resources return the series as `handle`.
 /// Goal write results return it as `goal_handle` and the version as `handle`.
+/// Listed `dependencies` and Fact Goal references carry version ids.
 ///
 /// # Errors
 ///
@@ -208,6 +209,7 @@ fn project_goals(rows: Vec<crate::verbs::query::GoalRow>) -> Vec<GoalItem> {
         .collect()
 }
 
+/// `Proxiima.Goals.stateFilter`.
 fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, ToolError> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());

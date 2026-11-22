@@ -5,7 +5,7 @@ use sqlx::PgConnection;
 
 use crate::error::map_err;
 
-/// `Proxiima.Goals.readEvidence` and `Proxiima.Goals.evidenceDeclaration`.
+/// The evidence vector is returned as declared when its exact version is visible: `Proxiima.Goals.evidenceDeclaration`.
 /// Read the Goal row directly so target visibility cannot shorten its declaration.
 pub(crate) async fn load_goal_evidence_on_connection(
     connection: &mut PgConnection,

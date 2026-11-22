@@ -1018,7 +1018,7 @@ async fn a_three_level_tree_closes_only_bottom_up() {
 }
 
 /// G1/G2: abandon a goal without children, with all children closed (mixed),
-/// and with all children Abandoned (no "one Achieved" rule on abandon).
+/// and with all children Abandoned.
 #[tokio::test]
 async fn closed_children_or_none_admit_the_abandon() {
     let tree = Tree::new().await.expect("fixture");

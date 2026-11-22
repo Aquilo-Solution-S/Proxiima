@@ -589,7 +589,7 @@ pub struct GoalRow {
     pub text: Option<String>,
     pub state: GoalState,
     pub dependency_goal_ids: Vec<GoalId>,
-    /// Historical Perspective assignment on the version that declared it.
+    /// Historical Perspective assignment on the version that declared it; new writes use `motivated_by`.
     #[serde(default)]
     pub historical_assignment: Option<MemoryId>,
     /// Exact Perspective versions that motivated this Goal version.
@@ -598,7 +598,6 @@ pub struct GoalRow {
     /// Evidence pins (`goal.evidence_t`).
     #[serde(default)]
     pub evidence: Vec<MemoryId>,
-    /// The selected version’s write time.
     /// When the series was set: the time of its first version (the least `t`
     /// of its `handle`), the same on every version of the series.
     #[serde(with = "time::serde::rfc3339")]

@@ -71,16 +71,6 @@ impl GoalState {
         }
     }
 
-    /// Check a plain transition. Achievement uses the dedicated achieve verb.
-    #[must_use]
-    pub const fn may_transition_to(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Active, Self::Active | Self::Paused | Self::Abandoned)
-                | (Self::Paused, Self::Active | Self::Abandoned)
-        )
-    }
-
     /// `Proxiima.Goals.lifecycle`. This checks only the Goal state. Storage checks child closure after locking.
     #[must_use]
     pub const fn may_achieve(self) -> bool {
@@ -148,6 +138,22 @@ impl GoalTransitionKind {
             Self::Abandon => GoalState::Abandoned,
         }
     }
+
+    /// `Proxiima.Goals.lifecycle`: the state after this transition from `prior`, or `None` when `prior` refuses it.
+    #[must_use]
+    pub const fn from_state(self, prior: GoalState) -> Option<GoalState> {
+        match (self, prior) {
+            (Self::Pause { .. }, GoalState::Active)
+            | (Self::Resume, GoalState::Paused)
+            | (Self::Abandon, GoalState::Active | GoalState::Paused) => Some(self.next_state()),
+            (Self::Pause { .. }, GoalState::Paused)
+            | (Self::Resume, GoalState::Active)
+            | (
+                Self::Pause { .. } | Self::Resume | Self::Abandon,
+                GoalState::Achieved | GoalState::Abandoned,
+            ) => None,
+        }
+    }
 }
 
 impl From<GoalTransitionKind> for GoalChange {
@@ -208,8 +214,7 @@ pub struct GoalDraft {
 }
 
 impl GoalDraft {
-    /// `Proxiima.Goals.birthState`.
-    ///
+    /// Build an Active Goal draft from an already-encoded typed payload: `Proxiima.Goals.birthState`.
     #[must_use]
     pub fn active_from_payload_write(
         owner: OwnerId,
@@ -362,7 +367,7 @@ impl<'de> serde::Deserialize<'de> for GoalTopologyWrite {
 }
 
 impl GoalTopologyWrite {
-    /// Declare optional motivation, dependencies and evidence.
+    /// Declare optional motivation, dependencies and evidence. An unmotivated Goal belongs to its Owner alone.
     ///
     /// # Errors
     ///
@@ -697,31 +702,70 @@ mod goal_state_matrix_tests {
         GoalState::Abandoned,
     ];
 
-    // `Proxiima.Goals.mayTransitionTo`
+    // `Proxiima.Goals.lifecycle`
     #[test]
     fn plain_transitions_match_ledger_vectors() {
+        use super::GoalTransitionKind;
+        use crate::PendingWork;
+
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Event {
+            Set,
+            Decompose,
+            Modify,
+            Pause([PendingWork; 1]),
+            Resume,
+            Achieve,
+            Abandon,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Outcome {
+            Ok(GoalState),
+            Error(Refusal),
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Refusal {
+            WrongState,
+        }
         #[derive(serde::Deserialize)]
         struct Vector {
             #[serde(rename = "in")]
-            states: [GoalState; 2],
-            out: bool,
+            input: (GoalState, Event),
+            out: Outcome,
         }
 
         let vectors: serde_json::Value =
             serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
                 .expect("ledger vectors are valid JSON");
-        let rows: Vec<Vector> =
-            serde_json::from_value(vectors["Proxiima.Goals.mayTransitionTo"].clone())
-                .expect("the ledger emits the plain transition matrix");
-        let cases: std::collections::BTreeSet<_> = rows.iter().map(|row| row.states).collect();
-        assert_eq!(cases.len(), ALL.len() * ALL.len());
+        let rows: Vec<Vector> = serde_json::from_value(vectors["Proxiima.Goals.lifecycle"].clone())
+            .expect("the ledger emits the lifecycle");
+        let mut replayed = 0;
         for Vector {
-            states: [prior, next],
+            input: (prior, event),
             out,
         } in rows
         {
-            assert_eq!(prior.may_transition_to(next), out, "{prior} → {next}");
+            let kind = match event {
+                Event::Pause([pending]) => GoalTransitionKind::Pause { pending },
+                Event::Resume => GoalTransitionKind::Resume,
+                Event::Abandon => GoalTransitionKind::Abandon,
+                Event::Set | Event::Decompose | Event::Modify | Event::Achieve => continue,
+            };
+            let expected = match out {
+                Outcome::Ok(next) => Some(next),
+                Outcome::Error(Refusal::WrongState) => None,
+            };
+            assert_eq!(kind.from_state(prior), expected, "{prior} {kind:?}");
+            replayed += 1;
         }
+        assert_eq!(
+            replayed,
+            ALL.len() * 4,
+            "pause twice, resume and abandon per state"
+        );
     }
 
     // `Proxiima.Goals.lifecycle`.

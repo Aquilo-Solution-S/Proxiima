@@ -230,7 +230,7 @@ async fn goal_handles_find_latest_and_open_pages_survive_lifecycle_writes() -> R
     Ok(())
 }
 
-// `Proxiima.Goals.factGoalFilter`.
+// Fact Goal filters match references to any readable revision of a selected series before page limiting.
 #[tokio::test]
 async fn fact_goal_series_filters_match_all_versions_before_paging_and_respect_scope()
 -> Result<(), TestError> {
@@ -332,7 +332,7 @@ impl proxiima_core::Authenticator for Verifier {
     }
 }
 
-// `Proxiima.Goals.factGoalFilter`.
+// Fact Goal filters match references to any readable revision of a selected series before page limiting.
 #[tokio::test]
 async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls()
 -> Result<(), TestError> {
