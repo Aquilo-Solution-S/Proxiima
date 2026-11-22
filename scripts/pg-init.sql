@@ -1,5 +1,6 @@
 -- Loopback development bootstrap. Provision production credentials separately.
--- Stop existing development hosts before replay. `Proxiima.Repository.bootstrapPreflight`.
+-- Stop existing development hosts before replay: bootstrap refuses while a development
+-- serving or platform client is connected to the target database.
 DO $bootstrap$
 BEGIN
     IF EXISTS (

@@ -232,11 +232,6 @@ def versionAccepted : VersionStep → Bool
   | .initial | .unchanged | .nextPatch | .nextMinor | .nextMajor => true
   | .invalid => false
 
-/-- GitHub publishes v0 tags as pre-releases. -/
-def publishPrerelease : (majorZero : Bool) → Bool
-  | true => true
-  | false => false
-
 /-- Release notes are rendered by git-cliff from Conventional Commits and are previewable offline. -/
 inductive ReleaseNotes where
   | groupConventionalCommits
@@ -333,11 +328,6 @@ inductive LoopbackFixture where
   | postgres
   | objectStore
   deriving DecidableEq
-
-/-- Existing-volume bootstrap refuses while a development serving or platform client is connected to the target database. -/
-def bootstrapPreflight : (knownClient : Bool) → Bool
-  | false => true
-  | true => false
 
 /-- Shared core test fixtures are exported only in tests or with the testkit feature and use the public authentication and tool-context entry points. -/
 inductive CoreFixture where

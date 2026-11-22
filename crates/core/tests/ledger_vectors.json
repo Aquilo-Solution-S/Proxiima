@@ -57,8 +57,6 @@
   {"out": false, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Repository.publishPrerelease":
- [{"out": true, "in": [true]}, {"out": false, "in": [false]}],
  "Proxiima.Repository.pathSource":
  [{"out": "pullRequestApi", "in": ["pullRequest"]},
   {"out": "verifiedToCandidate", "in": ["verify"]}],
@@ -94,8 +92,6 @@
   {"out": "drop", "in": [false, false]}],
  "Proxiima.Repository.cancelSupersededValidation":
  [{"out": true, "in": ["pullRequest"]}, {"out": false, "in": ["verify"]}],
- "Proxiima.Repository.bootstrapPreflight":
- [{"out": false, "in": [true]}, {"out": true, "in": [false]}],
  "Proxiima.Repository.advanceVerified":
  [{"out": ["verifiedFastForward", "nightlyLightweightTag"], "in": [true, true]},
   {"out": [], "in": [true, false]},

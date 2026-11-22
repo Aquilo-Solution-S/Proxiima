@@ -87,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.target.outputs.tag }}
-        # `Proxiima.Repository.publishPrerelease`.
+        # A v0 tag is published as a pre-release.
         run: |
           PRERELEASE=""
           case "${TAG}" in

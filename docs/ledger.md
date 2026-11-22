@@ -3617,14 +3617,12 @@ stateDiagram-v2
 - cancel superseded validation: A newer PR revision supersedes the previous validation run.
 - save rust cache: Only main verification saves Rust caches.
 
-| bool | validation grants | publish prerelease | bootstrap preflight |
-| --- | --- | --- | --- |
-| yes | \[contentsRead, pullRequestsRead] | yes | no |
-| no | \[contentsRead] | no | yes |
+| bool | validation grants |
+| --- | --- |
+| yes | \[contentsRead, pullRequestsRead] |
+| no | \[contentsRead] |
 
 - validation grants: Only change detection needs pull-request reads and every validation token has read-only permissions.
-- publish prerelease: GitHub publishes v0 tags as pre-releases.
-- bootstrap preflight: Existing-volume bootstrap refuses while a development serving or platform client is connected to the target database.
 
 | documentation lane | changed paths | validate docs |
 | --- | --- | --- |
@@ -3716,430 +3714,357 @@ stateDiagram-v2
 
 Causa — Audience
 
-✓ **has meet**: Capability intersection for a role cap.
+✓ **has meet** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability intersection for a role cap.
 
-✓ **has join**: Capability union across roles.
+✓ **has join** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability union across roles.
 
-✓ **has write read**: Read access follows from write access at the same memory kind.
+✓ **has write read** (axioms: none): Read access follows from write access at the same memory kind.
 
-✓ **admin has**: The capabilities of the unrestricted group role.
+✓ **admin has** (axioms: none): The capabilities of the unrestricted group role.
 
-✓ **gives mono**: Lifting capability implication from roles to groups.
+✓ **gives mono** (axioms: none): Lifting capability implication from roles to groups.
 
-✓ **gives mount**: Capability resolution under a subgroup cap.
+✓ **gives mount** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability resolution under a subgroup cap.
 
-✓ **gives union**: Capability resolution across group memberships.
+✓ **gives union** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability resolution across group memberships.
 
-✓ **gives iff**: The two conditions for a grant to convey a capability.
+✓ **gives iff** (axioms: `propext`, `Classical.choice`, `Quot.sound`): The two conditions for a grant to convey a capability.
 
-✓ **flattened gives**: Equivalence of flattened lookup and per-grant authorization.
+✓ **flattened gives** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Equivalence of flattened lookup and per-grant authorization.
 
-✓ **mount mount**: Composition of nested subgroup caps.
+✓ **mount mount** (axioms: `propext`, `Quot.sound`): Composition of nested subgroup caps.
 
-✓ **mount union**: Distribution of a subgroup cap over a group union.
+✓ **mount union** (axioms: `propext`, `Quot.sound`): Distribution of a subgroup cap over a group union.
 
-✓ **grant to person**: Capability resolution for a grant addressed directly to a person.
+✓ **grant to person** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability resolution for a grant addressed directly to a person.
 
-✓ **drop gives self**: Revocation of the removed member's group capabilities.
+✓ **drop gives self** (axioms: `propext`): Revocation of the removed member's group capabilities.
 
-✓ **drop gives other**: Preservation of other members' capabilities on removal.
+✓ **drop gives other** (axioms: `propext`, `Quot.sound`): Preservation of other members' capabilities on removal.
 
-✓ **drop ends grant**: Revocation through a group grant after membership removal.
+✓ **drop ends grant** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Revocation through a group grant after membership removal.
 
-✓ **drop keeps others**: Preservation of other recipients' grant capabilities after membership removal.
+✓ **drop keeps others** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of other recipients' grant capabilities after membership removal.
 
-✓ **may manage iff gives**: Group management expressed as a resolved capability.
+✓ **may manage iff gives** (axioms: `propext`): Group management expressed as a resolved capability.
 
 Causa — Authorization
 
-✓ **may write implies read**: Owner-scoped writes imply reads at the same memory kind.
+✓ **may write implies read** (axioms: none): Owner-scoped writes imply reads at the same memory kind.
 
-✓ **forwarding role capped**: A forwarded role is bounded by `Causa.Role.forwardingCap`.
+✓ **forwarding role capped** (axioms: `propext`, `Quot.sound`): A forwarded role is bounded by `Causa.Role.forwardingCap`.
 
-✓ **forwarding role no management**
+✓ **forwarding role no management** (axioms: `propext`, `Quot.sound`)
 
-✓ **forwarding role no administration**
+✓ **forwarding role no administration** (axioms: `propext`, `Quot.sound`)
 
-✓ **forwarding role no goal work**
+✓ **forwarding role no goal work** (axioms: `propext`, `Quot.sound`)
 
 Causa — Citations
 
-✓ **inst immutable blob**
-
-✓ **inst append only blob**
-
-✓ **citation owner match**
+✓ **citation owner match** (axioms: none)
 
 Causa — Compliance
 
-✓ **authorized**
+**Spiice scoped erase**: An authorized selection of series for spiice-scoped erasure.
 
-✓ **own schema**
+- Premise **authorized**: authority.admits owner
+- Premise **own schema**: ∀ (h : Causa.Handle), h ∈ handles → ownSchemas (seriesSchema h)
+- Premise **in owner**: Ownership of every stored version in the erase selection.
 
-✓ **in owner**: Ownership of every stored version in the erase selection.
+✓ **pin render live not forgotten** (axioms: `propext`)
 
-✓ **pin render live not forgotten**
+**Hard erase memory transition**: The committed-state relation for erasing one Memory admission.
 
-✓ **target in memories**
+- Premise **target in memories**: target ∈ memories
+- Premise **memory ids unique**: Causa.MemoryIdUnique memories
+- Premise **witness ids unique**: Causa.ErasedPinTargetIdUnique targets
+- Premise **witness memory disjoint**: Causa.ErasedTargetsDisjointMemories targets (Causa.hardEraseMemoryRows memories target)
+- Premise **witness goal disjoint**: Causa.ErasedTargetsDisjointGoals targets goals
+- Premise **target witness compatible**: Causa.ErasedPinTargetKindCompatible targets (Causa.memory\_t target) (Causa.memory\_kind target).pinTargetKind
+- Premise **target not goal**: ∀ (g : Causa.Goal), g ∈ goals → Causa.memory\_t target ≠ Causa.goal\_t g
+- Premise **memories eq**: memories' = Causa.hardEraseMemoryRows memories target
+- Premise **targets eq**: targets' = Causa.hardEraseMemoryWitnesses targets target
 
-✓ **memory ids unique**
+✓ **hard erase memory records kind** (axioms: `propext`)
 
-✓ **witness ids unique**
+✓ **hard erase memory result well formed** (axioms: `propext`)
 
-✓ **witness memory disjoint**
+**Hard erase goal transition**
 
-✓ **witness goal disjoint**
+- Premise **target in goals**: target ∈ goals
+- Premise **witness ids unique**: Causa.ErasedPinTargetIdUnique targets
+- Premise **witness memory disjoint**: Causa.ErasedTargetsDisjointMemories targets memories
+- Premise **witness goal disjoint**: Causa.ErasedTargetsDisjointGoals targets (Causa.hardEraseGoalRows goals target)
+- Premise **target witness compatible**: Causa.ErasedPinTargetKindCompatible targets (Causa.goal\_t target) Proxiima.Memory.EntityKind.Goal
+- Premise **target not memory**: ∀ (m : Causa.Memory), m ∈ memories → Causa.goal\_t target ≠ Causa.memory\_t m
+- Premise **memories eq**: memories' = memories
+- Premise **goals eq**: goals' = Causa.hardEraseGoalRows goals target
+- Premise **targets eq**: targets' = Causa.hardEraseGoalWitnesses targets target
 
-✓ **target witness compatible**
+✓ **hard erase goal records kind** (axioms: `propext`)
 
-✓ **target not goal**
-
-✓ **memories eq**
-
-✓ **targets eq**
-
-✓ **hard erase memory records kind**
-
-✓ **hard erase memory result well formed**
-
-✓ **target in goals**
-
-✓ **witness ids unique**
-
-✓ **witness memory disjoint**
-
-✓ **witness goal disjoint**
-
-✓ **target witness compatible**
-
-✓ **target not memory**
-
-✓ **memories eq**
-
-✓ **goals eq**
-
-✓ **targets eq**
-
-✓ **hard erase goal records kind**
-
-✓ **hard erase goal result well formed**
+✓ **hard erase goal result well formed** (axioms: `propext`)
 
 Causa — Goal collaboration authority
 
-✓ **no owner administration**
+**Goal audience grant**: An audience grant scoped to a Goal controller epoch.
 
-✓ **subject admitted**
+- Premise **no owner administration**: toGrant.role.administer = false
+- Premise **subject admitted**: Proxiima.GoalCollaboration.grantSubjectAdmitted (match toGrant.subject with \| Causa.Subject.person u =\> Proxiima.GoalCollaboration.GrantSubjectKind.person \| Causa.Subject.group o =\> Proxiima.GoalCollaboration.GrantSubjectKind.group) toGrant.role.manage = true
 
-✓ **goal edit implies read**: Goal read authorization follows from edit authorization.
+✓ **goal edit implies read** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Goal read authorization follows from edit authorization.
 
-✓ **goal route is flattened**: Goal audience resolution agrees with `Causa.flattened` for grants in force.
+✓ **goal route is flattened** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Goal audience resolution agrees with `Causa.flattened` for grants in force.
 
-✓ **goal work write implies read**
+✓ **goal work write implies read** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
 Causa — Pins
 
-✓ **unreadable goal reference resolves like a memory reference**: Indistinguishability of unreadable Goal and Memory references after projection.
+✓ **unreadable goal reference resolves like a memory reference** (axioms: `propext`): Indistinguishability of unreadable Goal and Memory references after projection.
 
 Causa — Goals
 
-✓ **terminal close fact**: `Proxiima.Goals.closeFactPresence`.
+**Goal**
 
-✓ **text nonblank**
+- Premise **terminal close fact**: `Proxiima.Goals.closeFactPresence`.
+- Premise **text nonblank**: ∀ (s : Causa.Text), text = some s → Causa.GoalTextNonblank s
 
-✓ **inst append only goal**
+**Goal forest inv**
 
-✓ **no open under closed**
+- Premise **no open under closed**: Causa.NoOpenUnderClosed F
+- Premise **parents exist**: Causa.ParentsExist F
+- Premise **parent older**: Causa.ParentOlder F
+- Premise **born below clock**: Causa.BornBelowClock F
 
-✓ **parents exist**
+**Forest birth**: Creation of a Goal series.
 
-✓ **parent older**
+- Premise **fresh**: F.state x = none
+- Premise **state x**: F'.state x = some Proxiima.Goals.GoalState.Active
+- Premise **parent x**: F'.parent x = parent
+- Premise **born x**: F'.born x = F.clock
+- Premise **clock**: F'.clock = F.clock + 1
+- Premise **state eq**: ∀ (h : Causa.Handle), h ≠ x → F'.state h = F.state h
+- Premise **parent eq**: ∀ (h : Causa.Handle), h ≠ x → F'.parent h = F.parent h
+- Premise **born eq**: ∀ (h : Causa.Handle), h ≠ x → F'.born h = F.born h
 
-✓ **born below clock**
+**Forest relabel**: A state change on an existing Goal series.
 
-✓ **fresh**
+- Premise **state old**: F.state x = some old
+- Premise **state x**: F'.state x = some new
+- Premise **state eq**: ∀ (h : Causa.Handle), h ≠ x → F'.state h = F.state h
+- Premise **parent**: F'.parent = F.parent
+- Premise **born**: F'.born = F.born
+- Premise **clock**: F'.clock = F.clock
 
-✓ **state x**
+✓ **relabel is some** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **parent x**
+✓ **relabel keeps shape** (axioms: `propext`, `Classical.choice`, `Quot.sound`): The forest shape conditions preserved by relabeling.
 
-✓ **born x**
+✓ **open relabel preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of forest validity by relabeling to an open state from an open state.
 
-✓ **clock**
+✓ **closing relabel preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of forest validity by closing a series with no open child.
 
-✓ **state eq**
+✓ **birth preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of forest validity by creating a root or a child of an Active series.
 
-✓ **parent eq**
+✓ **set preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **born eq**
+✓ **decompose preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **state old**
+✓ **pause preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **state x**
+✓ **resume preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **state eq**
+✓ **modify preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **parent**
+✓ **achieve preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **born**
+✓ **abandon preserves** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **clock**
+✓ **goal step preserves inv** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **relabel is some**
+✓ **empty forest inv** (axioms: none)
 
-✓ **relabel keeps shape**: The forest shape conditions preserved by relabeling.
+✓ **reachable inv** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
-✓ **open relabel preserves**: Preservation of forest validity by relabeling to an open state from an open state.
+✓ **closed ancestor closes descendant** (axioms: none): Closure of all descendants of a closed Goal.
 
-✓ **closing relabel preserves**: Preservation of forest validity by closing a series with no open child.
+✓ **descends born lt** (axioms: none)
 
-✓ **birth preserves**: Preservation of forest validity by creating a root or a child of an Active series.
-
-✓ **set preserves**
-
-✓ **decompose preserves**
-
-✓ **pause preserves**
-
-✓ **resume preserves**
-
-✓ **modify preserves**
-
-✓ **achieve preserves**
-
-✓ **abandon preserves**
-
-✓ **goal step preserves inv**
-
-✓ **empty forest inv**
-
-✓ **reachable inv**
-
-✓ **closed ancestor closes descendant**: Closure of all descendants of a closed Goal.
-
-✓ **descends born lt**
-
-✓ **goal tree acyclic**: Acyclicity of the Goal tree.
+✓ **goal tree acyclic** (axioms: none): Acyclicity of the Goal tree.
 
 Causa — Identity
 
-✓ **personal resolves**: Resolution of the singleton under `Causa.Owner.ofUser`.
+**Owner state**: Trusted owner resolution supplied by the host.
+
+- Premise **personal resolves**: Resolution of the singleton under `Causa.Owner.ofUser`.
 
 Causa — Memory
 
-✓ **erased pin target ext**
+✓ **erased pin target ext** (axioms: none)
 
-✓ **inst append only content**
+**Memory**: One admission in a Memory series.
 
-✓ **inst immutable content**
+- Premise **guided by only perspective**: Restriction of Goal guidance to Perspectives.
+- Premise **fact origins empty**: Exclusion of grounding origins from Facts.
+- Premise **perspective never cites**: Exclusion of blob citations from Perspectives.
+- Premise **blob fa only**: The kinds eligible to cite a blob.
 
-✓ **guided by only perspective**: Restriction of Goal guidance to Perspectives.
+✓ **forget in keeps row** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of the admission's identity, kind and owner through forgetting.
 
-✓ **fact origins empty**: Exclusion of grounding origins from Facts.
+✓ **pin kind is forget in** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of target kind across forgetting.
 
-✓ **perspective never cites**: Exclusion of blob citations from Perspectives.
+**Retained origin kind valid**
 
-✓ **blob fa only**: The kinds eligible to cite a blob.
+- Premise **fact empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Fact → Causa.memory\_origins m = \[]
+- Premise **abs fact or abs**: Causa.memory\_kind m = Proxiima.Memory.Kind.Abstraction → ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.recordedPinKindFactOrAbstraction memories targets id
+- Premise **persp abs or empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Perspective → Causa.memory\_origins m = \[] ∨ ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.recordedPinKindIs memories targets id Proxiima.Memory.Kind.Abstraction
 
-✓ **inst append only memory**
+**Origin kind valid**
 
-✓ **forget in keeps row**: Preservation of the admission's identity, kind and owner through forgetting.
-
-✓ **pin kind is forget in**: Preservation of target kind across forgetting.
-
-✓ **fact empty**
-
-✓ **abs fact or abs**
-
-✓ **persp abs or empty**
-
-✓ **fact empty**
-
-✓ **abs fact or abs**
-
-✓ **persp abs or empty**
+- Premise **fact empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Fact → Causa.memory\_origins m = \[]
+- Premise **abs fact or abs**: Causa.memory\_kind m = Proxiima.Memory.Kind.Abstraction → ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.pinKindFactOrAbstraction memories id
+- Premise **persp abs or empty**: Causa.memory\_kind m = Proxiima.Memory.Kind.Perspective → Causa.memory\_origins m = \[] ∨ ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.pinKindIs memories id Proxiima.Memory.Kind.Abstraction
 
 Causa — Operators
 
-✓ **inputs shape**
+**Invocation shape valid**
 
-✓ **output memories shape**
+- Premise **inputs shape**: ∀ (m : Causa.Memory), m ∈ inv.inputs → Causa.OperatorPhase.inputKind inv.phase (Causa.memory\_kind m)
+- Premise **output memories shape**: ∀ (m : Causa.Memory), m ∈ inv.outputMemories → Causa.OperatorPhase.outputMemoryKind inv.phase (Causa.memory\_kind m)
+- Premise **output goals shape**: ∀ (g : Causa.Goal), g ∈ inv.outputGoals → Causa.OperatorPhase.outputGoalAllowed inv.phase
 
-✓ **output goals shape**
+**Invocation provenance complete**: Input coverage by the provenance pins of an operator's outputs.
 
-✓ **memory inputs**
+- Premise **memory inputs**: ∀ (out : Causa.Memory), out ∈ inv.outputMemories → ∀ (inp : Causa.Memory), inp ∈ inv.inputs → Causa.memory\_t inp ∈ Causa.memory\_origins out
+- Premise **goal inputs**: ∀ (g : Causa.Goal), g ∈ inv.outputGoals → ∀ (inp : Causa.Memory), inp ∈ inv.inputs → Causa.memory\_t inp ∈ Causa.goal\_evidence g
 
-✓ **goal inputs**
-
-✓ **operator memory output not fact**
+✓ **operator memory output not fact** (axioms: `propext`)
 
 Causa — Owner
 
-✓ **write le read**
+**Role**: The capabilities supplied by a resolved membership.
 
-✓ **works goals reads goals**: Goal work includes Goal read access.
+- Premise **write le read**: write ≤ read
 
-✓ **meet capped**: Preservation of capability bounds under a role cap.
+✓ **works goals reads goals** (axioms: `propext`): Goal work includes Goal read access.
 
-✓ **meet comm**: Commutativity of the Goal capability meet.
+✓ **meet capped** (axioms: `propext`, `Quot.sound`): Preservation of capability bounds under a role cap.
 
-✓ **meet assoc**
+✓ **meet comm** (axioms: none): Commutativity of the Goal capability meet.
 
-✓ **meet join distrib**
+✓ **meet assoc** (axioms: none)
 
-✓ **ext**: Role equality determined by capability fields.
+✓ **meet join distrib** (axioms: none)
 
-✓ **meet comm**
+✓ **ext** (axioms: none): Role equality determined by capability fields.
 
-✓ **meet assoc**
+✓ **meet comm** (axioms: `propext`, `Quot.sound`)
 
-✓ **meet join distrib**: Distributivity of a role cap over a membership join.
+✓ **meet assoc** (axioms: `propext`, `Quot.sound`)
+
+✓ **meet join distrib** (axioms: `propext`, `Quot.sound`): Distributivity of a role cap over a membership join.
 
 Causa — Prelude
 
 Causa — Principles
 
-✓ **principle 1 fact has no origins**: Principle 1 — Facts are primitive observations.
+✓ **principle 1 fact has no origins** (axioms: none): Principle 1 — Facts are primitive observations.
 
-✓ **principle 2 derivation goes up and grounds in facts**: Principle 2 — The layering and grounding of derived Memory.
+✓ **principle 2 derivation goes up and grounds in facts** (axioms: `propext`): Principle 2 — The layering and grounding of derived Memory.
 
-✓ **principle access is one resolved role**: Principle 3 — Owner and audience access through one resolved role.
+✓ **principle access is one resolved role** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Principle 3 — Owner and audience access through one resolved role.
 
-✓ **principle 4 the field fixes the kind**: Relationship typing for the Memory and Goal targets in `Proxiima.Payloads.ReferenceTarget`.
+✓ **principle 4 the field fixes the kind** (axioms: `propext`): Relationship typing for the Memory and Goal targets in `Proxiima.Payloads.ReferenceTarget`.
 
-✓ **principle 5 no transition retargets a pin**: Principle 5 — Stability of pin targets through forgetting and erasure.
+✓ **principle 5 no transition retargets a pin** (axioms: `propext`): Principle 5 — Stability of pin targets through forgetting and erasure.
 
-✓ **principle 6 erasure leaves no dangling pin**: Principle 6 — Preservation of pin resolution through hard erasure.
+✓ **principle 6 erasure leaves no dangling pin** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Principle 6 — Preservation of pin resolution through hard erasure.
 
-✓ **principle 7 a read pin never grounds**: Principle 7 — Read context is independent of grounding.
+✓ **principle 7 a read pin never grounds** (axioms: none): Principle 7 — Read context is independent of grounding.
 
-✓ **principle 8 a goal never grounds**: Principle 8 — Goal intent is outside Memory grounding.
+✓ **principle 8 a goal never grounds** (axioms: `propext`): Principle 8 — Goal intent is outside Memory grounding.
 
 Causa — Provenance grounding
 
-✓ **memory id unique**
+**Memory graph valid**: Validity of the admitted Memory graph.
 
-✓ **goal id unique**
+- Premise **memory id unique**: Causa.MemoryIdUnique memories
+- Premise **goal id unique**: Causa.GoalIdUnique goals
+- Premise **head aligned**: Causa.MemoryHeadAligned memories heads
+- Premise **fork anchor aligned**: Causa.ForkAnchorAligned memories
+- Premise **pin targets exist**: Target existence for the graph's typed pins.
+- Premise **motivations valid**: ∀ (g : Causa.Goal), g ∈ goals → Causa.goal\_motivations\_valid memories g
+- Premise **guidance valid**: ∀ (m : Causa.Memory), m ∈ memories → Causa.perspective\_guidance\_valid memories goals m
+- Premise **origin kind**: ∀ (m : Causa.Memory), m ∈ memories → Causa.OriginKindValid memories m
+- Premise **memory goal ids disjoint**: Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
+- Premise **abstraction has origins**: The origin requirement for an Abstraction.
+- Premise **derived provenance**: The provenance requirement for derived Memory.
+- Premise **grounding support**: Stored support under `Proxiima.Edges.groundingFields`.
+- Premise **pin time strict**: The insertion order of stored pin targets.
 
-✓ **head aligned**
+**Retained memory graph valid**: Validity of the retained Memory graph after hard erasure.
 
-✓ **fork anchor aligned**
+- Premise **memory id unique**: Causa.MemoryIdUnique memories
+- Premise **goal id unique**: Causa.GoalIdUnique goals
+- Premise **erased pin id unique**: Causa.ErasedPinTargetIdUnique targets
+- Premise **head aligned**: Causa.MemoryHeadAligned memories heads
+- Premise **fork anchor aligned**: Causa.ForkAnchorAligned memories
+- Premise **pin targets exist**: ∀ (m : Causa.Memory), m ∈ memories → (∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.retainedOriginTargetExists memories targets id) ∧ (∀ (id : Causa.MemoryId), id ∈ Causa.memory\_refs m → Causa.retainedMemoryReferenceTargetExists memories targets id) ∧ (∀ (id : Causa.MemoryId), Causa.memory\_forked\_from m = some id → Causa.retainedMemoryReferenceTargetExists memories targets id) ∧ ∀ (id : Causa.GoalId), id ∈ Causa.memory\_goal\_refs m → Causa.retainedGoalReferenceTargetExists goals targets id
+- Premise **motivations valid**: ∀ (g : Causa.Goal), g ∈ goals → Causa.goal\_motivations\_retained\_valid memories goals targets g
+- Premise **guidance valid**: ∀ (m : Causa.Memory), m ∈ memories → Causa.perspective\_guidance\_retained\_valid memories goals targets m
+- Premise **origin kind**: ∀ (m : Causa.Memory), m ∈ memories → Causa.RetainedOriginKindValid memories targets m
+- Premise **memory goal ids disjoint**: Retained Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
+- Premise **erased memory disjoint**: Causa.ErasedTargetsDisjointMemories targets memories
+- Premise **erased goal disjoint**: Causa.ErasedTargetsDisjointGoals targets goals
+- Premise **abstraction has origins**: The origin requirement for a retained Abstraction.
+- Premise **derived provenance**: The provenance requirement for retained derived Memory.
+- Premise **pin time strict**: The insertion order of retained stored pin targets.
 
-✓ **pin targets exist**: Target existence for the graph's typed pins.
+**Retained committed store valid**: Validity of the retained Memory graph and its Goal pins.
 
-✓ **motivations valid**
+- Premise **graph**: Causa.RetainedMemoryGraphValid memories goals heads targets
+- Premise **assignments**: Causa.RetainedGoalAssignmentValid goals memories targets
+- Premise **evidence**: Causa.RetainedGoalEvidenceValid goals memories targets
+- Premise **terminal close**: Causa.RetainedGoalTerminalCloseFactValid goals memories targets
 
-✓ **guidance valid**
+✓ **grounding wf** (axioms: `propext`)
 
-✓ **origin kind**
+✓ **memory grounds in facts** (axioms: `propext`)
 
-✓ **memory goal ids disjoint**: Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
+✓ **perspective has provenance** (axioms: `propext`)
 
-✓ **abstraction has origins**: The origin requirement for an Abstraction.
-
-✓ **derived provenance**: The provenance requirement for derived Memory.
-
-✓ **grounding support**: Stored support under `Proxiima.Edges.groundingFields`.
-
-✓ **pin time strict**: The insertion order of stored pin targets.
-
-✓ **memory id unique**
-
-✓ **goal id unique**
-
-✓ **erased pin id unique**
-
-✓ **head aligned**
-
-✓ **fork anchor aligned**
-
-✓ **pin targets exist**
-
-✓ **motivations valid**
-
-✓ **guidance valid**
-
-✓ **origin kind**
-
-✓ **memory goal ids disjoint**: Retained Memory and Goal version IDs are disjoint, per `Proxiima.Identity.admissionIdAvailable`.
-
-✓ **erased memory disjoint**
-
-✓ **erased goal disjoint**
-
-✓ **abstraction has origins**: The origin requirement for a retained Abstraction.
-
-✓ **derived provenance**: The provenance requirement for retained derived Memory.
-
-✓ **pin time strict**: The insertion order of retained stored pin targets.
-
-✓ **graph**
-
-✓ **assignments**
-
-✓ **evidence**
-
-✓ **terminal close**
-
-✓ **grounding wf**
-
-✓ **memory grounds in facts**
-
-✓ **perspective has provenance**
-
-✓ **guidance does not ground**
+✓ **guidance does not ground** (axioms: `propext`)
 
 Causa — Schema evolution
 
-✓ **source memory coverage**: Coverage of source Memory admissions by the migration relation.
+**Schema migration witness**
 
-✓ **source goal coverage**
+- Premise **source memory coverage**: Coverage of source Memory admissions by the migration relation.
+- Premise **source goal coverage**: ∀ (old : Causa.Goal), old ∈ oldGoals → ∃ new, new ∈ newGoals ∧ goalMap old new
+- Premise **target memory declaration**: ∀ (new : Causa.Memory), new ∈ newMemories → ∃ old, old ∈ oldMemories ∧ memoryMap old new
+- Premise **target goal declaration**: ∀ (new : Causa.Goal), new ∈ newGoals → ∃ old, old ∈ oldGoals ∧ goalMap old new
+- Premise **mapped memory owner**: ∀ (old new : Causa.Memory), memoryMap old new → Causa.memory\_owner old = Causa.memory\_owner new
+- Premise **mapped goal owner**: ∀ (old new : Causa.Goal), goalMap old new → Causa.goal\_owner old = Causa.goal\_owner new
+- Premise **mapped memory pins**: ∀ (old new : Causa.Memory), memoryMap old new → ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins old ∨ id ∈ Causa.memory\_refs old ∨ Causa.memory\_forked\_from old = some id → (∃ oldTarget newTarget, oldTarget ∈ oldMemories ∧ newTarget ∈ newMemories ∧ Causa.memory\_t oldTarget = id ∧ memoryPinMap id (Causa.memory\_t newTarget) ∧ Causa.pinFrom new newTarget) ∨ ∃ e, e ∈ retainedTargets ∧ Causa.erased\_pin\_target\_t e = id
+- Premise **mapped goal pins**: ∀ (old new : Causa.Goal), goalMap old new → ∀ (id : Causa.Id), id ∈ Causa.goalDeclaredTargetIds old → (∃ newId, goalPinMap id newId ∧ newId ∈ Causa.goalDeclaredTargetIds new) ∨ ∃ e, e ∈ retainedTargets ∧ Causa.erased\_pin\_target\_t e = id
+- Premise **new memory id unique**: Causa.MemoryIdUnique newMemories
+- Premise **new goal id unique**: Causa.GoalIdUnique newGoals
+- Premise **retained target id unique**: Causa.ErasedPinTargetIdUnique retainedTargets
+- Premise **new head aligned**: Causa.MemoryHeadAligned newMemories newHeads
+- Premise **new fork anchor aligned**: Causa.ForkAnchorAligned newMemories
+- Premise **retained pin targets exist**: ∀ (m : Causa.Memory), m ∈ newMemories → (∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins m → Causa.retainedOriginTargetExists newMemories retainedTargets id) ∧ (∀ (id : Causa.MemoryId), id ∈ Causa.memory\_refs m → Causa.retainedMemoryReferenceTargetExists newMemories retainedTargets id) ∧ (∀ (id : Causa.MemoryId), Causa.memory\_forked\_from m = some id → Causa.retainedMemoryReferenceTargetExists newMemories retainedTargets id) ∧ ∀ (id : Causa.GoalId), id ∈ Causa.memory\_goal\_refs m → Causa.retainedGoalReferenceTargetExists newGoals retainedTargets id
+- Premise **retained motivations valid**: ∀ (g : Causa.Goal), g ∈ newGoals → Causa.goal\_motivations\_retained\_valid newMemories newGoals retainedTargets g
+- Premise **retained guidance valid**: ∀ (m : Causa.Memory), m ∈ newMemories → Causa.perspective\_guidance\_retained\_valid newMemories newGoals retainedTargets m
+- Premise **retained origin kind**: ∀ (m : Causa.Memory), m ∈ newMemories → Causa.RetainedOriginKindValid newMemories retainedTargets m
+- Premise **memory goal ids disjoint**: ∀ (m : Causa.Memory) (g : Causa.Goal), m ∈ newMemories → g ∈ newGoals → Causa.memory\_t m ≠ Causa.goal\_t g
+- Premise **erased memory disjoint**: Causa.ErasedTargetsDisjointMemories retainedTargets newMemories
+- Premise **erased goal disjoint**: Causa.ErasedTargetsDisjointGoals retainedTargets newGoals
+- Premise **abstraction has origins**: ∀ (m : Causa.Memory), m ∈ newMemories → Causa.memory\_kind m = Proxiima.Memory.Kind.Abstraction → Causa.memory\_origins m ≠ \[]
+- Premise **derived provenance**: ∀ (m : Causa.Memory), m ∈ newMemories → Causa.memory\_kind m ≠ Proxiima.Memory.Kind.Fact → Causa.memory\_origins m ≠ \[] ∨ Causa.memory\_refs m ≠ \[]
+- Premise **pin time strict**: ∀ (m target : Causa.Memory), m ∈ newMemories → target ∈ newMemories → Causa.pinFrom m target → Causa.memory\_tick target \< Causa.memory\_tick m
+- Premise **assignments valid**: Causa.RetainedGoalAssignmentValid newGoals newMemories retainedTargets
+- Premise **evidence valid**: Causa.RetainedGoalEvidenceValid newGoals newMemories retainedTargets
+- Premise **terminal close valid**: Causa.RetainedGoalTerminalCloseFactValid newGoals newMemories retainedTargets
 
-✓ **target memory declaration**
-
-✓ **target goal declaration**
-
-✓ **mapped memory owner**
-
-✓ **mapped goal owner**
-
-✓ **mapped memory pins**
-
-✓ **mapped goal pins**
-
-✓ **new memory id unique**
-
-✓ **new goal id unique**
-
-✓ **retained target id unique**
-
-✓ **new head aligned**
-
-✓ **new fork anchor aligned**
-
-✓ **retained pin targets exist**
-
-✓ **retained motivations valid**
-
-✓ **retained guidance valid**
-
-✓ **retained origin kind**
-
-✓ **memory goal ids disjoint**
-
-✓ **erased memory disjoint**
-
-✓ **erased goal disjoint**
-
-✓ **abstraction has origins**
-
-✓ **derived provenance**
-
-✓ **pin time strict**
-
-✓ **assignments valid**
-
-✓ **evidence valid**
-
-✓ **terminal close valid**
-
-✓ **schema migration validates retained store**
+✓ **schema migration validates retained store** (axioms: `propext`)
