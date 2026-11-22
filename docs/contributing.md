@@ -32,12 +32,7 @@ projection declares the key; stateless schemas use
 boundary: `with_sidecars(...).await` validates declared key columns against
 the real SQL schema and must be awaited and propagated during boot.
 
-Core SQL reads memories through `proxiima_core.live_memory` or
-`proxiima_core.memory_including_forgotten`, so each statement states whether it
-wants forgotten memories. The table itself is named only by writes, by a read
-that locks its rows (a view cannot be locked by the serving role), and by
-row-security policy text. `scripts/check-architecture-guardrails.py` refuses
-any other read.
+Core SQL reads follow [`Proxiima.DatabaseAuthority.MemorySqlRoute`](ledger.md#database-authority).
 
 Do not add a runtime spiice registry, raw spiice SQL against core tables,
 caller-supplied owner authorization, an edge table, generic JSON payload

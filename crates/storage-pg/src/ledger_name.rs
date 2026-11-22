@@ -40,7 +40,8 @@ pub fn parse_ledger_name(name: &str) -> Option<(String, String)> {
 /// At least one part.
 #[must_use]
 pub fn parse_name_parts(name: &str) -> Option<Vec<String>> {
-    const MAX_IDENTIFIER_BYTES: usize = 63;
+    const MAX_IDENTIFIER_BYTES: usize =
+        proxiima_core::ledger!(Proxiima.DatabaseAuthority.maxIdentifierBytes);
     let mut parts: Vec<String> = Vec::new();
     let mut chars = name.chars().peekable();
     loop {

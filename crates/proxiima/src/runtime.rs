@@ -264,6 +264,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
     /// refusals `resolve` itself raises, which precede storage whatever
     /// this function does. `run_refuses_an_unparseable_origin_before_storage`
     /// is what pins the ordering here, for both entry points at once.
+    // `Proxiima.DatabaseAuthority.PreconnectionCheck`
     async fn boot_common(self) -> Result<BootedRuntime, ProxiimaError> {
         let (config, mut parts) = self.resolve()?;
         let allowlist = if config.mcp.is_some() {

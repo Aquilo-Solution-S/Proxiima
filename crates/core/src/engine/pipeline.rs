@@ -287,6 +287,7 @@ impl Engine {
             Err(err)
         };
         let writes = !matches!(operation, AuthzOperation::Read { .. });
+        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
         if writes
             && authz.auth_path() == AuthPath::System
             && !authz.carries_system_authority(&self.system_authority_binding)

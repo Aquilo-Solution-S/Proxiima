@@ -49,6 +49,8 @@ use sqlx::{Encode, Type};
 
 use crate::StorageError;
 
+const MAX_IDENTIFIER_BYTES: usize = crate::ledger!(Proxiima.DatabaseAuthority.maxIdentifierBytes);
+
 /// A Postgres identifier that is safe to splice into SQL text: a column name,
 /// or a table name optionally qualified by one schema.
 ///
@@ -64,6 +66,7 @@ impl PgIdent {
     ///
     /// `StorageError::Internal` when `value` is not one or two identifier
     /// parts.
+    // `Proxiima.DatabaseAuthority.SqlIdentifierForm`
     pub fn table(value: &str) -> Result<Self, StorageError> {
         if is_qualified_table_ident(value) {
             Ok(Self(value.to_owned()))
@@ -119,8 +122,9 @@ impl PgIdent {
     /// `StorageError::Internal` when `value` is empty, longer than 63 bytes
     /// (Postgres truncates silently, which would name another object) or
     /// contains NUL.
+    // `Proxiima.DatabaseAuthority.SqlIdentifierForm`
     pub fn quoted(value: &str) -> Result<Self, StorageError> {
-        if value.is_empty() || value.len() > 63 || value.contains('\0') {
+        if value.is_empty() || value.len() > MAX_IDENTIFIER_BYTES || value.contains('\0') {
             return Err(StorageError::Internal(format!(
                 "invalid quoted identifier: {value:?}"
             )));
@@ -153,7 +157,7 @@ fn is_qualified_table_ident(value: &str) -> bool {
 
 fn is_ident_part(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 63
+        && value.len() <= MAX_IDENTIFIER_BYTES
         && value
             .chars()
             .next()
@@ -227,6 +231,7 @@ impl SqlText {
     ///
     /// `StorageError::Internal` for NaN or an infinity, which are not SQL
     /// numbers.
+    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_f32(&mut self, n: f32) -> Result<&mut Self, StorageError> {
         use std::fmt::Write as _;
         if !n.is_finite() {
@@ -261,6 +266,7 @@ impl SqlText {
     ///
     /// `StorageError::Internal` when the text holds NUL, which a literal
     /// cannot carry.
+    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_literal(&mut self, text: &str) -> Result<&mut Self, StorageError> {
         if text.contains('\0') {
             return Err(StorageError::Internal(format!(
@@ -286,6 +292,7 @@ impl SqlText {
     /// backslashes of the statement stay as written, so the literal reads as
     /// written under `standard_conforming_strings = on`, the server default
     /// since 9.1, which the store's functions already rely on.
+    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_sql_literal(&mut self, sql: &SqlText) -> &mut Self {
         self.0.push('\'');
         self.0.push_str(&sql.0.replace('\'', "''"));
@@ -312,6 +319,7 @@ impl SqlText {
     ///
     /// When a placeholder is empty.
     #[must_use]
+    // `Proxiima.DatabaseAuthority.SqlTemplateFill`
     pub fn fill(template: &'static str, parts: &[(&'static str, &SqlText)]) -> Self {
         assert!(
             parts.iter().all(|(placeholder, _)| !placeholder.is_empty()),
@@ -365,6 +373,7 @@ impl From<sqlx::SqlStr> for SqlText {
 }
 
 impl sqlx::SqlSafeStr for SqlText {
+    // `Proxiima.DatabaseAuthority.SqlComposition`
     fn into_sql_str(self) -> sqlx::SqlStr {
         // The only `AssertSqlSafe` for composed SQL: `SqlText` holds only
         // program literals, checked identifiers, numbers, UUIDs, hex digits,
@@ -418,6 +427,7 @@ impl SqlBuilder {
     }
 
     /// Append the next placeholder and bind `value` to it.
+    // `Proxiima.DatabaseAuthority.SqlComposition`
     pub fn push_bind<'t, T>(&mut self, value: T) -> &mut Self
     where
         T: Encode<'t, Postgres> + Type<Postgres>,
@@ -448,7 +458,7 @@ impl SqlBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{PgIdent, SqlBuilder, SqlText};
+    use super::{MAX_IDENTIFIER_BYTES, PgIdent, SqlBuilder, SqlText};
     use std::num::NonZeroU16;
 
     #[test]
@@ -596,14 +606,14 @@ mod tests {
 
     #[test]
     fn quoted_refuses_empty_nul_and_over_63_bytes() {
-        let longest = "a".repeat(63);
+        let longest = "a".repeat(MAX_IDENTIFIER_BYTES);
         assert_eq!(
             PgIdent::quoted(&longest).unwrap().as_str(),
             format!("\"{longest}\"")
         );
         // 64 bytes, and 32 two-byte characters = 64 bytes.
         for value in [
-            "a".repeat(64),
+            "a".repeat(MAX_IDENTIFIER_BYTES + 1),
             "é".repeat(32),
             String::new(),
             "a\0b".to_owned(),

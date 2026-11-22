@@ -1,25 +1,19 @@
 //! sqlx → `StorageError` mapping shared by every verb.
 //!
-//! Policy: reads and writes both classify through [`map_err`] — a
-//! serialization failure inside a read transaction is just as
-//! `Retryable` as one inside a write, whether or not the path in hand
-//! runs a retry loop. [`internal`] is for non-sqlx failures (row
-//! conversion, arithmetic) where no sqlx taxonomy applies. A core SQL
-//! refusal a caller can reach arrives as SQLSTATE `PX001` and becomes
-//! [`StorageError::Refused`].
+//! Non-SQLx failures such as row conversion and arithmetic use [`internal`].
 
 use proxiima_core::{StorageError, StorageRule};
 
 /// SQLSTATE of a storage rule a caller can run into; its CONSTRAINT field
 /// names the rule ([`StorageRule::parse`]). Core SQL raises nothing else a
 /// caller sees as a refusal.
-const RULE_SQLSTATE: &str = "PX001";
+const RULE_SQLSTATE: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.ruleSqlstate);
 
 /// SQLSTATE of a backstop only a core bug, direct SQL or an install-time
 /// diagnostic reaches. It carries no rule and maps to
 /// [`StorageError::Internal`] like any unrecognised code.
 #[cfg(test)]
-const INTERNAL_SQLSTATE: &str = "PX002";
+const INTERNAL_SQLSTATE: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.backstopSqlstate);
 
 /// `Some(Refused)` exactly when `code` is [`RULE_SQLSTATE`]; a missing
 /// CONSTRAINT becomes `Unknown("")`.
@@ -52,6 +46,7 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
 #[allow(clippy::needless_pass_by_value)]
 pub fn map_err(e: sqlx::Error) -> StorageError {
     use sqlx::Error;
+    // `Proxiima.DatabaseAuthority.SqlFailureRoute`
     if let Error::Database(db) = &e
         && let Some(refused) = refusal(db.code().as_deref(), db.constraint(), db.message())
     {
@@ -135,7 +130,9 @@ pub(crate) fn collision_exhausted() -> StorageError {
 /// timeout was added to prevent, because at least the wait eventually
 /// succeeded.
 fn is_retryable_sqlstate(code: Option<&str>) -> bool {
-    matches!(code, Some("40P01" | "40001" | "55P03"))
+    const TRANSIENT: &[&str] =
+        &proxiima_core::ledger!(Proxiima.DatabaseAuthority.transientSqlstates);
+    code.is_some_and(|code| TRANSIENT.contains(&code))
 }
 
 /// Whether a sqlx failure is a transient conflict whose transaction is safe

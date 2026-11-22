@@ -1,35 +1,6 @@
-//! Opt-in migrate step (`PROXIIMA_RUNTIME_GRANTS`, [`crate::RuntimeBuilder::runtime_grants`]):
-//! the platform role grants the runtime role its privileges — the runtime
-//! grant phase described in docs/operate.md.
+//! The opt-in grant phase for [`crate::StorageProxiima::migrate`].
 //!
-//! Runs once per [`crate::StorageProxiima::migrate`], after the migrations and the
-//! store number, on the platform (migration) pool, in one transaction:
-//!
-//! | # | Statement | Scope |
-//! |---|---|---|
-//! | 1 | `SELECT pg_advisory_xact_lock(RUNTIME_GRANTS_LOCK_KEY)` | serializes migrate steps running together (`pg_default_acl` "tuple concurrently updated") |
-//! | 2 | `GRANT USAGE ON SCHEMA s` | each composed schema that exists |
-//! | 3 | `REVOKE CREATE ON SCHEMA s FROM PUBLIC` / `FROM runtime` | " |
-//! | 4 | `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA s` | " |
-//! | 4b | `SELECT proxiima_core.restrict_view_grants()` | `proxiima_core` only: its views stay `SELECT`-only |
-//! | 5 | `GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA s` | " |
-//! | 6 | `ALTER DEFAULT PRIVILEGES IN SCHEMA s GRANT` (4) `ON TABLES` / (5) `ON SEQUENCES` | " — objects the platform role creates later |
-//! | 7 | `GRANT USAGE ON SCHEMA l` | a ledger's schema that is not composed (`public`), when runtime lacks `USAGE` |
-//! | 8 | `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON l.t`, then `GRANT SELECT ON l.t` | each existing migration ledger of this binary |
-//! | 9 | `SET LOCAL ROLE` isolated reader, `GRANT EXECUTE`, restore platform role | candidate and Goal-read functions in composed schemas |
-//!
-//! Never granted: `TRUNCATE`, `REFERENCES`, `TRIGGER`, `CREATE`, ownership,
-//! role membership; no DML on `public` beyond the ledgers' `SELECT` (host
-//! tables may live there). All statements are `GRANT` / `REVOKE` /
-//! `ALTER DEFAULT PRIVILEGES`, or the view restriction, which only revokes:
-//! idempotent. Every identifier is a quoted [`PgIdent`].
-//!
-//! Not issued: `GRANT SET ON PARAMETER app.proxiima_scope` — superuser-only,
-//! and unused by this release (the scope is bound transaction-locally).
-//!
-//! Runtime role = the `DATABASE_URL` user. Refused with
-//! [`ProxiimaError::Config`] before any SQL unless
-//! `PROXIIMA_PLATFORM_DATABASE_URL` is set and names a different user.
+//! The advisory lock serializes default-ACL updates from concurrent migrations.
 
 use std::str::FromStr;
 
@@ -41,9 +12,8 @@ use crate::ProxiimaError;
 use crate::runtime_config::cause_with;
 use proxiima_spiice::NamedMigrator;
 
-/// `pg_advisory_xact_lock` key owned by this step: ASCII `proxgrnt`, beside
-/// storage's `proxembm` / `proxretn` maintenance keys.
-const RUNTIME_GRANTS_LOCK_KEY: i64 = i64::from_be_bytes(*b"proxgrnt");
+const RUNTIME_GRANTS_LOCK_KEY: i64 =
+    proxiima_core::ledger!(Proxiima.DatabaseAuthority.runtimeGrantLockKey);
 
 /// The schema whose views are read-only for the runtime role.
 const CORE_SCHEMA: &str = "proxiima_core";
@@ -72,6 +42,7 @@ impl RuntimeGrants {
         schemas: Vec<String>,
         ledgers: Vec<String>,
     ) -> Result<Self, ProxiimaError> {
+        // `Proxiima.DatabaseAuthority.GrantRoleCheck`
         let runtime_role = url_user(database_url, "DATABASE_URL")?;
         let platform_role = url_user(platform_database_url, "PROXIIMA_PLATFORM_DATABASE_URL")?;
         if runtime_role == platform_role {
@@ -95,6 +66,7 @@ impl RuntimeGrants {
     /// [`ProxiimaError::Storage`] naming the statement class that failed. The
     /// transaction rolls back: nothing is granted.
     pub(crate) async fn apply(&self, platform: &PgPool) -> Result<(), ProxiimaError> {
+        // `Proxiima.DatabaseAuthority.grantPhaseOrder`
         let mut tx = platform
             .begin()
             .await
@@ -193,6 +165,7 @@ impl RuntimeGrants {
         .execute(&mut *connection)
         .await
         .map_err(fail)?;
+        // `Proxiima.DatabaseAuthority.scopedReaderGrantOrder`
         sqlx::raw_sql(
             "DO $grant$
              DECLARE
@@ -253,6 +226,7 @@ pub(crate) fn ledger_names(migrators: &[NamedMigrator]) -> Vec<String> {
 
 fn url_user(url: &str, variable: &str) -> Result<String, ProxiimaError> {
     // The parse error is not echoed: it could carry URL fragments.
+    // `Proxiima.DatabaseAuthority.ConnectionDiagnostic`
     PgConnectOptions::from_str(url)
         .map(|options| options.get_username().to_owned())
         .map_err(|_| ProxiimaError::Config(format!("{variable} is not a valid Postgres URL")))
@@ -312,9 +286,7 @@ fn quoted(name: &str) -> Result<PgIdent, ProxiimaError> {
     PgIdent::quoted(name).map_err(|error| ProxiimaError::Config(format!("runtime grants: {error}")))
 }
 
-/// The statements, in order, for existing `schemas` and `ledgers`. Ledgers
-/// are narrowed last, so a ledger inside a composed schema loses the DML its
-/// schema-wide grant just gave it.
+/// Apply read-only restrictions after blanket grants so a ledger in a composed schema loses the new DML grants.
 fn grant_statements(
     runtime_role: &str,
     schemas: &[String],
@@ -322,6 +294,7 @@ fn grant_statements(
 ) -> Result<Vec<GrantStatement>, ProxiimaError> {
     let runtime = quoted(runtime_role)?;
     let mut statements = Vec::new();
+    // `Proxiima.DatabaseAuthority.SchemaGrant`
     for name in schemas {
         let schema = quoted(name)?;
         let schema_statement = |class, template| {
@@ -353,6 +326,7 @@ fn grant_statements(
         ]);
         if name == CORE_SCHEMA {
             // The blanket grant above also covers core views, which are read-only.
+            // `Proxiima.DatabaseAuthority.ReadOnlyGrant`
             statements.push(GrantStatement::new(
                 "RESTRICT core view grants",
                 name,
@@ -377,6 +351,7 @@ fn grant_statements(
             ),
         ]);
     }
+    // `Proxiima.DatabaseAuthority.ReadOnlyGrant`
     let mut ledger_schemas: Vec<&String> = ledgers
         .iter()
         .filter(|ledger| !ledger.runtime_schema_usage && !schemas.contains(&ledger.schema))
@@ -485,8 +460,8 @@ mod tests {
                 assert!(sql.contains(&expected.as_str()), "missing {expected}");
             }
         }
+        // `Proxiima.DatabaseAuthority.SchemaGrant`
         for statement in &sql {
-            // Only REVOKEs may name the escalating privileges.
             if statement.starts_with("REVOKE") {
                 continue;
             }

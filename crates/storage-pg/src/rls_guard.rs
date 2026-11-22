@@ -173,6 +173,7 @@ fn predicate_is_nontrivial(predicate: Option<&str>) -> bool {
     })
 }
 
+// `Proxiima.DatabaseAuthority.OwnerPolicyCheck`
 async fn assert_policy_structure(
     conn: &mut PgConnection,
     relations: &[RelationRow],
@@ -325,6 +326,7 @@ impl RelationRow {
                 "{} is an unsupported foreign table",
                 self.name()
             ))),
+            // `Proxiima.DatabaseAuthority.CoreViewRule`
             "v" if !self.security_invoker => Err(refused(format!(
                 "{} must declare security_invoker=true",
                 self.name()
@@ -678,6 +680,7 @@ async fn definer_namespaces(
 /// capability has no runtime-role binding, so it refuses EXECUTE grants outside
 /// that authority and login roles that can assume search-path CREATE authority.
 /// The runtime guard also checks the actual effective role.
+// `Proxiima.DatabaseAuthority.ScopedReader`
 async fn assert_definers(
     conn: &mut PgConnection,
     schemas: &[String],
@@ -764,6 +767,7 @@ async fn assert_definers(
 /// role must own tables and views, while the runtime role must not. Safe views
 /// and definers are required before activation too; base-table policy checks
 /// apply only once the database has entered the owner-RLS epoch.
+// `Proxiima.DatabaseAuthority.DatabaseRole`
 pub(crate) async fn assert_platform_catalog(
     conn: &mut PgConnection,
     schemas: &[&str],
@@ -831,6 +835,7 @@ fn schema_inventory(schemas: &[&str]) -> Result<Vec<String>, StorageError> {
 /// [`assert_runtime_rls`] on one held connection. Every check runs on it, so
 /// a boot validates on one connection however many tables it inspects,
 /// instead of acquiring per statement and growing the pool.
+// `Proxiima.DatabaseAuthority.DatabaseRole`
 pub(crate) async fn assert_runtime_rls_on(
     conn: &mut PgConnection,
     schemas: &[&str],

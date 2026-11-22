@@ -184,6 +184,7 @@ impl PgPlatformScope {
         targets: crate::AuthorityTargets,
         subjects: &[proxiima_core::OwnerId],
     ) -> Result<crate::PgAuthoritySession<'session, 'connection>, StorageError> {
+        // `Proxiima.DatabaseAuthority.AuthoritySessionRule`
         crate::PgAuthoritySession::new(self, transaction, targets, subjects).await
     }
 
@@ -248,6 +249,7 @@ impl PgPlatformScope {
         // transaction, and a refusal drops the transaction (the caller rolls
         // the whole transaction back on any error), so checking the identity
         // and setting the scope need not be two round trips.
+        // `Proxiima.DatabaseAuthority.PlatformBindingCheck`
         let valid: bool = sqlx::query_scalar(
             "SELECT d.oid::bigint = $1 AND r.oid::bigint = $2
                     AND NOT r.rolsuper AND NOT r.rolbypassrls,

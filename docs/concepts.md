@@ -109,7 +109,7 @@ See [forwarding](host-integration.md#forwarded-owner-access).
 | Owner roles, personal membership, and capped nesting | [`Proxiima.OwnerAuthority`](ledger.md#owner-authority) and the [Causa proofs](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean) |
 | Verified identity and narrowing scope | [AuthzContext](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/authz.rs) and [OwnerScope](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/owner_scope.rs) |
 | Effective memberships and transaction isolation | [Nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs) and [manager race tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/group_manager_race_pg_tests.rs) |
-| Per-owner database isolation | [Owner RLS](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/policies.sql) and [multi-owner host tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/tests/multi_owner_e2e.rs) |
+| Per-owner database isolation | [`Proxiima.DatabaseAuthority`](ledger.md#database-authority) and [multi-owner host tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/tests/multi_owner_e2e.rs) |
 
 The Lean kernel states principles; it does not prove that Rust or SQL refines
 them. Runtime types, database policies, and executable tests enforce the

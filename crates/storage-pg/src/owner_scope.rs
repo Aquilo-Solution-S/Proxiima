@@ -56,10 +56,7 @@ pub(crate) async fn finish_transaction<T>(
 /// The transaction-local owner settings of `scope`, name and text value:
 /// the one list [`bind_owner_scope`] writes and [`live_memory_owners_as`]
 /// hands to `proxiima_core.live_memory_owners_as`.
-///
-/// Every role has settings: the memory settings hold the ceilings, `app.read_goal`
-/// the owners whose Goals the role reads and `app.work_goal` those whose Goals
-/// it works. No policy reads administration.
+// `Causa.Role.administration_independent_of_data_access` `Proxiima.OwnerAuthority.OwnerAccessRule`
 fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
     // The text form PostgreSQL gives `uuid[]::text`, which the RLS policies
     // cast back with `::uuid[]`.
@@ -179,6 +176,7 @@ pub(crate) async fn bind_goal_work_owner(
     Ok(())
 }
 
+// `Proxiima.DatabaseAuthority.OwnerTransactionScope`
 pub(crate) async fn bind_owner_scope(
     connection: &mut PgConnection,
     scope: &OwnerScope,

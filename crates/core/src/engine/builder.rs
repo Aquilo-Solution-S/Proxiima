@@ -15,6 +15,7 @@ impl Engine {
     /// storage; it is the only constructor, and [`Self::try_compose`] calls it.
     #[must_use]
     pub fn new(registry: SpiiceRegistryFrozen, storage: StoragePorts) -> Self {
+        // `Proxiima.DatabaseAuthority.EngineStorage`
         Self {
             registry,
             system_authority_binding: SystemAuthorityBinding::fresh(),
@@ -33,6 +34,7 @@ impl Engine {
     /// so they cannot extract this after boot.
     #[must_use]
     pub fn into_system_authority(self) -> (Self, SystemAuthority) {
+        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
         let authority = SystemAuthority::new(self.system_authority_binding.clone());
         (self, authority)
     }
@@ -43,6 +45,7 @@ impl Engine {
     #[doc(hidden)]
     #[must_use]
     pub fn into_runtime_authorities(self) -> (Self, SystemAuthority, DelegationRuntimeAuthority) {
+        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
         let system = SystemAuthority::new(self.system_authority_binding.clone());
         let delegation = DelegationRuntimeAuthority::new(self.delegation_runtime_binding.clone());
         (self, system, delegation)

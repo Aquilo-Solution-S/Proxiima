@@ -136,6 +136,7 @@ impl PgTuning {
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, StorageError> {
         let tuned = Self::resolve(lookup)?;
+        // `Proxiima.DatabaseAuthority.overlaySupplied`
         Ok((tuned != Self::default()).then_some(tuned))
     }
 

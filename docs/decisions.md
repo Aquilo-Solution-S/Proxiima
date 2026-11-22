@@ -31,18 +31,8 @@ keep honest code on the supported path and keep core free to change its
 tables; they do not contain a hostile crate. A host reviews a spiice it links
 as it reviews its own code.
 
-SQL privileges are coarse. The runtime role holds `SELECT`, `INSERT`,
-`UPDATE`, and `DELETE` on the core tables and on every composed schema, so
-table privileges separate no caller from another. Row security does. A table
-that serving SQL must not write is hardened on its own: an owner-write policy
-that admits no row, and a `SECURITY DEFINER` function owned by the platform
-role as its only writer.
-
-Tenant authorization is bound by core. An owner-scoped transaction carries
-the owners core resolved for the authenticated caller, and every owner policy
-reads them; request input never names them. Platform scope is a role: its
-policy is granted to the role that owns the relation, which the serving role
-is not.
+Database roles and tenant isolation follow [`Proxiima.DatabaseAuthority`](ledger.md#database-authority).
+Use scoped database functions for serving operations whose table policy denies direct owner writes.
 
 See [the SQL contract](host-integration.md#sql-contract) for what a spiice or
 host may name in its own SQL.
@@ -220,9 +210,5 @@ and destination write permission.
 
 ## PostgreSQL is the store
 
-The storage ports have one production implementation, the PostgreSQL backend,
-and an engine is always built over storage: `Engine::new` takes the registry
-and the `StoragePorts` together, so no engine can start without a store. The
-ports that refuse every call exist for tests only and are compiled only under
-`cfg(test)` or the `testkit` feature, which a production host does not enable.
-A second backend would be a new decision, not a flag on this one.
+Production engine construction over PostgreSQL follows [`Proxiima.DatabaseAuthority`](ledger.md#database-authority).
+A second backend would be a new design decision.

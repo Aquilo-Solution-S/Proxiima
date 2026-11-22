@@ -100,3 +100,56 @@ pub(in crate::engine) fn internal_storage_error(
 ) -> ProtocolError {
     ProtocolError::internal(format!("{context}: {err}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ErrorCode;
+
+    #[test]
+    fn storage_errors_match_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [String; 2],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> = serde_json::from_value(
+            vectors["Proxiima.DatabaseAuthority.storageErrorCategory"].clone(),
+        )
+        .expect("the ledger emits the storage error decision");
+
+        assert_eq!(rows.len(), 4);
+        for Vector {
+            input: [verb, outcome],
+            out,
+        } in rows
+        {
+            let errors = match outcome.as_str() {
+                "conflictOrConstraint" => vec![
+                    StorageError::Conflict("conflict".into()),
+                    StorageError::ConstraintViolation("constraint".into()),
+                ],
+                "exhaustedTransient" => vec![StorageError::Retryable("transient".into())],
+                _ => panic!("unknown storage outcome {outcome}"),
+            };
+            let expected = match out.as_str() {
+                "invalidArgument" => ErrorCode::InvalidArgument,
+                "internal" => ErrorCode::Internal,
+                _ => panic!("unknown protocol failure {out}"),
+            };
+            for error in errors {
+                let actual = match verb.as_str() {
+                    "read" => internal_storage_error("read", &error),
+                    "write" => map_write_storage_error(error, "write", "missing"),
+                    _ => panic!("unknown storage verb {verb}"),
+                };
+                assert_eq!(actual.code, expected, "{verb} {outcome}");
+            }
+        }
+    }
+}

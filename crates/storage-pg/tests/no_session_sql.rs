@@ -465,6 +465,7 @@ fn line_of(text: &str, offset: usize) -> usize {
 }
 
 #[test]
+// `Proxiima.DatabaseAuthority.PoolerCompatibility`
 fn serving_code_runs_no_session_scoped_sql() {
     let root = workspace_root();
     let mut files = Vec::new();

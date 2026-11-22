@@ -170,6 +170,7 @@ impl StoragePorts {
     #[cfg(any(test, feature = "testkit"))]
     #[doc(hidden)]
     #[must_use]
+    // `Proxiima.DatabaseAuthority.EngineStorage`
     pub fn rejecting_for_tests() -> Self {
         let rejecting = Arc::new(RejectingStorage);
         Self {
@@ -448,6 +449,7 @@ impl StoragePortsBuilder {
     /// Returns [`StoragePortsBuildError`] naming every required port handle that
     /// was not configured. `erase_authority` and `owner_drop_proof` are
     /// optional and never reported.
+    // `Proxiima.DatabaseAuthority.StoragePortRequirement`
     pub fn try_build(self) -> Result<StoragePorts, StoragePortsBuildError> {
         // One list of required ports; the macro expands the missing-name
         // collection, the all-at-once refutable binding (never panics, unlike

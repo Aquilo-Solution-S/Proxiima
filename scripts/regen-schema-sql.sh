@@ -44,6 +44,7 @@ SCRATCH_URL="${ADMIN_URL%/*}/${SCRATCH}"
 psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$SCRATCH\";"
 trap 'psql "$ADMIN_URL" -q -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE);" >/dev/null' EXIT
 
+# `Proxiima.DatabaseAuthority.connectionPurpose`
 PROXIIMA_STORE_NUMBER=0 cargo run -q -p proxiima-dev-migrate -- --database-url "$SCRATCH_URL"
 
 # Normalization: version banners, psql \restrict guards, and session SET

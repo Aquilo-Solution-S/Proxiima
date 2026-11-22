@@ -308,6 +308,7 @@ mod tests {
     /// Each binding type decodes the labels of its own SQL type, and the
     /// database refuses the other type's spelling of the same kind.
     #[tokio::test]
+    // `Proxiima.DatabaseAuthority.PostgresEnumBinding`
     async fn memory_kinds_bind_under_each_sql_types_own_labels()
     -> Result<(), Box<dyn std::error::Error>> {
         let (pg, db_name) = crate::test_fixtures::fresh_pg("proxiima_spg_kind_labels").await;

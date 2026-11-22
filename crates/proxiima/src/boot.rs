@@ -144,6 +144,7 @@ pub(crate) async fn connect_storage<A: SpiiceBundle>(
     parts: &StorageParts,
     registry: proxiima_core::SpiiceRegistryFrozen,
 ) -> Result<ValidatedStorage, ProxiimaError> {
+    // `Proxiima.DatabaseAuthority.servingAdmissionOrder`
     let pg_sidecars = compose_pg_sidecars::<A>(&registry)?;
     connect_schema(
         config,
@@ -188,6 +189,7 @@ pub(crate) async fn boot<A: SpiiceBundle>(
     config: &RuntimeConfig,
     parts: &RuntimeParts,
 ) -> Result<Booted, ProxiimaError> {
+    // `Proxiima.DatabaseAuthority.PreconnectionCheck`
     let embedding_router =
         embedding_router_for(parts.embed_client.clone(), parts.embedding_router.clone())?;
     let ValidatedStorage {
@@ -268,7 +270,6 @@ pub(crate) async fn boot<A: SpiiceBundle>(
     })
 }
 
-/// Serving authority is constructed only after the schema validated.
 async fn connect_serving_storage(
     config: &StorageConfig,
     registry: &proxiima_core::SpiiceRegistryFrozen,
@@ -277,6 +278,7 @@ async fn connect_serving_storage(
     let schema_names = composed_schema_names(registry);
     let schema_refs: Vec<&str> = schema_names.iter().map(String::as_str).collect();
     // `Proxiima.Configuration.storagePolicySource`
+    // `Proxiima.DatabaseAuthority.connectionPurpose`
     let platform_pool = config
         .pg_pool_config
         .connect_lazy(&config.platform_database_url)
@@ -386,13 +388,7 @@ fn vector_storage(parts: &StorageParts) -> VectorStorage {
 
 /// Connect the migration storage and run `step` on its schema.
 ///
-/// The migration pool connects to [`StorageConfig::migrations_url`]: the
-/// platform role, reached directly when the serving platform pool goes
-/// through a transaction-mode pooler. The migration run and the preflight
-/// hold a session advisory lock and session settings for the whole run.
-///
-/// The runtime grants run on the migration (platform) pool after migrating;
-/// a serving connect then asserts the runtime role under owner RLS.
+/// Migration and preflight hold a session advisory lock and session settings for the whole run.
 async fn connect_schema(
     config: &StorageConfig,
     migrators: Vec<NamedMigrator>,
@@ -401,6 +397,7 @@ async fn connect_schema(
     step: SchemaStep,
 ) -> Result<(), ProxiimaError> {
     // `Proxiima.Configuration.storagePolicySource`
+    // `Proxiima.DatabaseAuthority.connectionPurpose`
     let migration_pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         config.migrations_url(),
         config.pg_pool_config,
@@ -442,6 +439,7 @@ async fn migrate_schema(
     pg_sidecars: &PgSidecarRegistryFrozen,
     grants: Option<&RuntimeGrants>,
 ) -> Result<(), ProxiimaError> {
+    // `Proxiima.DatabaseAuthority.grantPhaseOrder`
     run_core_and_spiice_migrations_with_policy(
         migration_pg,
         migrators,

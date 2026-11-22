@@ -156,6 +156,17 @@ fn with_platform(builder: RuntimeBuilder) -> RuntimeBuilder {
 }
 
 #[test]
+fn declared_runtime_grants_default_matches_resolved_configuration() {
+    let (config, _) = with_platform(RuntimeBuilder::default()).resolve().unwrap();
+    let declared = crate::settings::PROXIIMA_RUNTIME_GRANTS
+        .default()
+        .unwrap()
+        .parse::<bool>()
+        .unwrap();
+    assert_eq!(config.storage.runtime_grants, declared);
+}
+
+#[test]
 fn migrations_use_the_platform_url_unless_a_migration_url_is_set() {
     let (config, _) = with_platform(RuntimeBuilder::default())
         .resolve()

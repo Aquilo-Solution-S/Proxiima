@@ -1259,6 +1259,7 @@ impl PgStorage {
         // existing surface catalog; no caller supplies a second inventory.
         let (schemas, persisted) = platform_scope.boot_catalog().await?;
         let schema_refs: Vec<_> = schemas.iter().map(String::as_str).collect();
+        // `Proxiima.DatabaseAuthority.servingAdmissionOrder`
         rls_guard::assert_runtime_rls_on(&mut conn, &schema_refs).await?;
         if matches!(vectors, vector_index::StoreVectors::Local) {
             ensure_pgvector_runtime_compatible_on(&mut conn, &tuning).await?;
@@ -1530,6 +1531,7 @@ impl PgStorage {
     /// optional ports storage does not implement (`owner_drop_proof`).
     #[must_use]
     pub fn storage_ports_builder(self: Arc<Self>) -> StoragePortsBuilder {
+        // `Proxiima.DatabaseAuthority.EngineStorage`
         StoragePorts::builder()
             .fact_ingest(self.clone())
             .memory_authoring(self.clone())

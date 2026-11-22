@@ -325,6 +325,8 @@ fn using_value<'a>(statement: &'a str, key: &str) -> Option<&'a str> {
 async fn every_core_raise_carries_a_refusal_code() {
     use proxiima_core::StorageRule;
 
+    const BACKSTOP: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.backstopSqlstate);
+    const RULE: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.ruleSqlstate);
     const CONTROL_FLOW: [(&str, &str); 2] = [
         ("cooled_forget_grounding", "40001"),
         ("live_memory_owners_as", "P7677"),
@@ -355,8 +357,8 @@ async fn every_core_raise_carries_a_refusal_code() {
                 let errcode = using_value(&statement, "ERRCODE");
                 let constraint = using_value(&statement, "CONSTRAINT");
                 let classified = match (errcode, constraint) {
-                    (Some("PX002"), None) => true,
-                    (Some("PX001"), Some(name)) => {
+                    (Some(BACKSTOP), None) => true,
+                    (Some(RULE), Some(name)) => {
                         let known = !matches!(StorageRule::parse(name), StorageRule::Unknown(_));
                         if known {
                             raised.insert(name.to_owned());
@@ -1275,7 +1277,7 @@ async fn memory_is_append_only_and_head_t_only() {
         .await
         .expect_err("kind must match head");
         let database = err.as_database_error().expect("database refusal");
-        assert_eq!(database.code().as_deref(), Some("PX002"), "got: {err}");
+        assert_eq!(database.code().as_deref(), Some(proxiima_core::ledger!(Proxiima.DatabaseAuthority.backstopSqlstate)), "got: {err}");
         assert!(database.message().contains("kind/owner"), "got: {err}");
         Ok(())
     }

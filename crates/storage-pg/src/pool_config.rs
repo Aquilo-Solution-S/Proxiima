@@ -14,11 +14,25 @@ use crate::settings::{
 /// default host opens at most ten backends. A store's work rarely needs more
 /// concurrent transactions than this; past the server's saturation point,
 /// more connections lower throughput rather than raise it.
-const DEFAULT_MAX_CONNECTIONS: u32 = 5;
-const DEFAULT_STATEMENT_TIMEOUT: Duration = Duration::from_mins(5);
-const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_mins(10);
-const DEFAULT_MAX_LIFETIME: Duration = Duration::from_mins(30);
+const DEFAULT_MAX_CONNECTIONS: u32 =
+    proxiima_core::ledger!(Proxiima.DatabaseAuthority.defaultPoolConnections);
+const DEFAULT_STATEMENT_TIMEOUT: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.DatabaseAuthority.defaultStatementTimeoutMs
+));
+const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.DatabaseAuthority.defaultAcquireTimeoutSecs
+));
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.DatabaseAuthority.defaultIdleTimeoutSecs
+));
+const DEFAULT_MAX_LIFETIME: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.DatabaseAuthority.defaultMaxLifetimeSecs
+));
+const MIN_POOL_CONNECTIONS: u32 =
+    proxiima_core::ledger!(Proxiima.DatabaseAuthority.minPoolConnections);
+const OMIT_STATEMENT_TIMEOUT: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.DatabaseAuthority.omitStatementTimeoutMs
+));
 
 /// Postgres pool and per-connection timeout policy.
 ///
@@ -72,6 +86,7 @@ impl PgPoolConfig {
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<Option<Self>, StorageError> {
         let (config, configured) = Self::resolve(lookup)?;
+        // `Proxiima.DatabaseAuthority.overlaySupplied`
         Ok(configured.then_some(config))
     }
 
@@ -81,7 +96,7 @@ impl PgPoolConfig {
     ///
     /// Returns [`StorageError::Unavailable`] when max connections is zero.
     pub fn validate(self) -> Result<Self, StorageError> {
-        if self.max_connections == 0 {
+        if self.max_connections < MIN_POOL_CONNECTIONS {
             return Err(StorageError::Unavailable(
                 "PROXIIMA_PG_MAX_CONNECTIONS=0 is not a usable pool size; a connection pool needs at least one connection"
                     .into(),
@@ -166,8 +181,9 @@ impl PgPoolConfig {
         // PgBouncer refuses startup parameters it does not know, so the
         // connection is refused before it starts. Binary results, which
         // prepared queries use, are unaffected either way.
+        // `Proxiima.DatabaseAuthority.PoolerCompatibility`
         options = options.extra_float_digits(None::<i8>);
-        if !self.statement_timeout.is_zero() {
+        if self.statement_timeout != OMIT_STATEMENT_TIMEOUT {
             options = options.options([(
                 "statement_timeout",
                 self.statement_timeout.as_millis().to_string(),
