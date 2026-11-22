@@ -4507,6 +4507,189 @@ stateDiagram-v2
 
 - fixture subject: A personal fixture acts as its own user; a Group fixture acts as a fresh admin of that Group.
 
+## Schema evolution
+
+**Declaration part**: The parts of a spiice's executable evolution declaration.
+
+- sourceAndTargetContracts
+- owningMigrationAnchor
+- stepDependencies
+- typedCodecs
+- transform
+- change
+- consumerAction
+
+**Schedule input**: The inputs checked before ordering the executable steps.
+
+- owningMigrationAnchors
+- explicitDependencies
+- crossSchemaProducers
+- earlierAnchorsInOwningLane
+
+**Catalog field**: The fields projected to consumers of an evolution target.
+
+- change
+- consumerAction
+
+**Conversion input**: The inputs of an owner-scoped conversion.
+
+- ownedSourceAdmissionsIncludingForgotten
+- earlierMappingsForOwner
+- earlierForeignMappingsForReferencedTargets
+
+**Mapping check**: The obligations of the declared source-to-target relation.
+
+- everySourceMapped
+- everyTargetDeclaredAndMapped
+- sameOwner
+- sameAdmissionKind
+- compatibleRetainedState
+
+**Pin carrier**: Whether the old admission carrying a pin is still present after cutover.
+
+- retained
+- removed
+
+**Goal pin role**: Goal fields carrying exact version targets during cutover.
+
+- assignment
+- dependency
+- evidence
+- motivation
+- closeFact
+- writeAct
+
+**Identity route**: How retained identities are routed after transformation.
+
+- retainFactAdmissionAndSeries
+- primaryForHistoricalReplay
+- everySuccessorForCaptureErase
+
+**Collaboration check**: The Goal collaboration obligations of successor admissions.
+
+- sameAuthorityOnEveryMergeContributor
+- sameAuthorityOnEachSplitSuccessor
+- compatibleGeneration
+
+**Source schema state**: The states of a source schema at ordinary write admission.
+
+- beforeCompletion
+- completed
+
+**Source fence**: The source lock sequence used before transformation.
+
+- admissionTables
+- sortedSourceSchemaKeys
+
+**Erase fence**: The fences acquired by erase where it serializes with evolution.
+
+- evolutionTables
+- ownerFence
+
+**Cutover stage**: The cutover order from anchored SQL through the remaining lane SQL.
+
+- runSqlThroughAnchor
+- transformOwnerInputs
+- checkpointStepConstraints
+- retireSourcesAndFinishClosure
+- runTrailingSql
+
+**Closure stage**: Final actions of the cutover transaction after all conversions.
+
+- rejectUnresolvedIncomingPins
+- validateTargetsAndGraph
+- enforceDeferredDataConstraints
+- removePermits
+
+**Rebuild part**: Which state a payload rewrite rebuilds or replaces.
+
+- projections
+- sketches
+- embeddingJobsForMappedSpaces
+- discardObsoleteVectorsAndClaims
+
+**Generated state phase**: Schema phases that handle generated Follows and search state.
+
+- migration
+- serving
+
+**Generated state work**: How a phase handles generated Follows and search state.
+
+- reconcile
+- validate
+
+**Retired drain step**: Steps in the boot-time inverse for a retired Fact.
+
+- inventoryRawAdmissionsByAscendingOwnerPages
+- commitEachOwnerPage
+- resumeFromRemainingAdmissions
+
+**Drop check**: The steps that prove a retired Fact's tables can be dropped.
+
+- takeWriterFence
+- proveNoAdmissionNamesSchemaOrSurfaces
+
+**Fork copy check**: The checks on a typed fork copy.
+
+- abstractionOrPerspective
+- explicitCopyPolicy
+- unpinnedSidecar
+- sourceUse
+- destinationWrite
+
+**declaration** = \[sourceAndTargetContracts, owningMigrationAnchor, stepDependencies, typedCodecs, transform, change, consumerAction]: Freeze binds the executable and the catalog to one evolution declaration.
+
+**schedule inputs** = \[owningMigrationAnchors, explicitDependencies, crossSchemaProducers, earlierAnchorsInOwningLane]: These inputs determine the acyclic schedule before writes.
+
+**catalog fields** = \[change, consumerAction]: A declared target projects both evolution fields.
+
+**conversion inputs** = \[ownedSourceAdmissionsIncludingForgotten, earlierMappingsForOwner, earlierForeignMappingsForReferencedTargets]: The transform receives one owner's historical admissions and only the earlier mappings it may inspect.
+
+**mapping checks** = \[everySourceMapped, everyTargetDeclaredAndMapped, sameOwner, sameAdmissionKind, compatibleRetainedState]: Every source and target participates in an owner-preserving relation, including splits and merges.
+
+**goal pin roles** = \[assignment, dependency, evidence, motivation, closeFact, writeAct]: The exact Goal pins checked at cutover, independent of the parent series handle.
+
+**identity routes** = \[retainFactAdmissionAndSeries, primaryForHistoricalReplay, everySuccessorForCaptureErase]: A Fact can retain its identity; replay follows the primary target and capture erase follows every successor.
+
+**collaboration checks** = \[sameAuthorityOnEveryMergeContributor, sameAuthorityOnEachSplitSuccessor, compatibleGeneration]: A cutover carries exact collaboration authority with its generation.
+
+**source fence order** = \[admissionTables, sortedSourceSchemaKeys]: Evolution locks the admission tables before the ordered source schema keys.
+
+**erase fence order** = \[evolutionTables, ownerFence]: Erase waits on the evolution tables before taking its owner fence.
+
+**cutover order** = \[runSqlThroughAnchor, transformOwnerInputs, checkpointStepConstraints, retireSourcesAndFinishClosure, runTrailingSql]: Trailing SQL follows closure and source retirement.
+
+**closure checks** = \[rejectUnresolvedIncomingPins, validateTargetsAndGraph, enforceDeferredDataConstraints, removePermits]: Final validation holds the conversion permits through deferred constraint checks.
+
+**rebuild parts** = \[projections, sketches, embeddingJobsForMappedSpaces, discardObsoleteVectorsAndClaims]: Generated payload state is rebuilt and embedding spaces follow the mapping without carrying old vectors or claims.
+
+**retired drain** = \[inventoryRawAdmissionsByAscendingOwnerPages, commitEachOwnerPage, resumeFromRemainingAdmissions]: Retired Fact drain uses raw admissions and resumes at committed page boundaries.
+
+**fenced drop checks** = \[takeWriterFence, proveNoAdmissionNamesSchemaOrSurfaces]: Destructive DDL checks that no admission names the retired schema or its tables while holding the writer fence.
+
+**fork copy checks** = \[abstractionOrPerspective, explicitCopyPolicy, unpinnedSidecar, sourceUse, destinationWrite]: Typed copies require an opted-in unpinned derived schema and ordinary admission.
+
+| pin carrier | resolve incoming pins |
+| --- | --- |
+| retained | yes |
+| removed | no |
+
+- resolve incoming pins: Every remaining carrier must resolve its pins when the source admissions are removed.
+
+| source schema state | source writable |
+| --- | --- |
+| beforeCompletion | yes |
+| completed | no |
+
+- source writable: Ordinary source writes stop when completion is recorded.
+
+| generated state phase | generated state work |
+| --- | --- |
+| migration | reconcile |
+| serving | validate |
+
+- generated state work: Migration reconciles generated state even with no pending SQL; serving validates it.
+
 ## Causa
 
 Causa — Audience
@@ -4841,16 +5024,19 @@ Causa — Provenance grounding
 
 Causa — Schema evolution
 
-**Schema migration witness**
+**Schema migration witness**: A declared conversion and the premises for retained store validity.
 
-- Premise **source memory coverage**: Coverage of source Memory admissions by the migration relation.
+- Premise **source memory coverage**: Every source Memory has a mapped target admission, independently of the erase witnesses.
 - Premise **source goal coverage**: ∀ (old : Causa.Goal), old ∈ oldGoals → ∃ new, new ∈ newGoals ∧ goalMap old new
 - Premise **target memory declaration**: ∀ (new : Causa.Memory), new ∈ newMemories → ∃ old, old ∈ oldMemories ∧ memoryMap old new
 - Premise **target goal declaration**: ∀ (new : Causa.Goal), new ∈ newGoals → ∃ old, old ∈ oldGoals ∧ goalMap old new
 - Premise **mapped memory owner**: ∀ (old new : Causa.Memory), memoryMap old new → Causa.memory\_owner old = Causa.memory\_owner new
 - Premise **mapped goal owner**: ∀ (old new : Causa.Goal), goalMap old new → Causa.goal\_owner old = Causa.goal\_owner new
-- Premise **mapped memory pins**: ∀ (old new : Causa.Memory), memoryMap old new → ∀ (id : Causa.MemoryId), id ∈ Causa.memory\_origins old ∨ id ∈ Causa.memory\_refs old ∨ Causa.memory\_forked\_from old = some id → (∃ oldTarget newTarget, oldTarget ∈ oldMemories ∧ newTarget ∈ newMemories ∧ Causa.memory\_t oldTarget = id ∧ memoryPinMap id (Causa.memory\_t newTarget) ∧ Causa.pinFrom new newTarget) ∨ ∃ e, e ∈ retainedTargets ∧ Causa.erased\_pin\_target\_t e = id
-- Premise **mapped goal pins**: ∀ (old new : Causa.Goal), goalMap old new → ∀ (id : Causa.Id), id ∈ Causa.goalDeclaredTargetIds old → (∃ newId, goalPinMap id newId ∧ newId ∈ Causa.goalDeclaredTargetIds new) ∨ ∃ e, e ∈ retainedTargets ∧ Causa.erased\_pin\_target\_t e = id
+- Premise **removed memory carrier**: Removed carriers have no remaining admission at the old identity.
+- Premise **removed goal carrier**: ∀ (old : Causa.Goal), old ∈ oldGoals → goalCarrier old = Proxiima.SchemaEvolution.PinCarrier.removed → ∀ (new : Causa.Goal), new ∈ newGoals → Causa.goal\_t old ≠ Causa.goal\_t new
+- Premise **mapped memory pins**: A retained carrier accounts for each old pin in its original field on a declared successor.
+- Premise **mapped goal pins**: ∀ (old : Causa.Goal), old ∈ oldGoals → Proxiima.SchemaEvolution.resolveIncomingPins (goalCarrier old) = true → ∀ (role : Proxiima.SchemaEvolution.GoalPinRole) (id : Causa.Id), id ∈ Causa.goalMigrationPins old role → ∃ new, new ∈ newGoals ∧ goalMap old new ∧ match role with \| Proxiima.SchemaEvolution.GoalPinRole.dependency =\> Causa.migrationPinResolved oldGoals newGoals Causa.goal\_t goalMap id (Causa.goalMigrationPins new role) \| Proxiima.SchemaEvolution.GoalPinRole.assignment =\> Causa.migrationPinResolved oldMemories newMemories Causa.memory\_t memoryMap id (Causa.goalMigrationPins new role) \| Proxiima.SchemaEvolution.GoalPinRole.evidence =\> Causa.migrationPinResolved oldMemories newMemories Causa.memory\_t memoryMap id (Causa.goalMigrationPins new role) \| Proxiima.SchemaEvolution.GoalPinRole.motivation =\> Causa.migrationPinResolved oldMemories newMemories Causa.memory\_t memoryMap id (Causa.goalMigrationPins new role) \| Proxiima.SchemaEvolution.GoalPinRole.closeFact =\> Causa.migrationPinResolved oldMemories newMemories Causa.memory\_t memoryMap id (Causa.goalMigrationPins new role) \| Proxiima.SchemaEvolution.GoalPinRole.writeAct =\> Causa.migrationPinResolved oldMemories newMemories Causa.memory\_t memoryMap id (Causa.goalMigrationPins new role)
+- Premise **retained read targets exist**: Read context resolves to a retained Memory target without adding grounding.
 - Premise **new memory id unique**: Causa.MemoryIdUnique newMemories
 - Premise **new goal id unique**: Causa.GoalIdUnique newGoals
 - Premise **retained target id unique**: Causa.ErasedPinTargetIdUnique retainedTargets
