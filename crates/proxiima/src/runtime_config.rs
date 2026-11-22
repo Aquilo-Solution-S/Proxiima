@@ -1259,12 +1259,7 @@ impl RuntimeBuilder {
                 self.object_purge_interval
                     .unwrap_or(crate::config::DEFAULT_OBJECT_PURGE_INTERVAL),
             )
-            .filter(|interval| {
-                *interval
-                    != Duration::from_secs(proxiima_core::ledger!(
-                        Proxiima.ObjectMaintenance.purgeDisabledSeconds
-                    ))
-            }),
+            .filter(|interval| !interval.is_zero()),
             outbox_consumers: self.outbox_consumers,
         };
         config.validate()?;

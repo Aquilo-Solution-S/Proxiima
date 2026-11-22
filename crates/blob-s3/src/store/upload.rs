@@ -798,7 +798,7 @@ impl CitedBlobStore {
         .fetch_one(&mut *platform_tx)
         .await
         .map_err(BlobError::Db)?;
-        // `Proxiima.ObjectMaintenance.lostStageClaims`.
+        // A surviving reference preserves the canonical bytes after a lost stage.
         if still_referenced {
             return Ok(());
         }

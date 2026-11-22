@@ -517,8 +517,8 @@ embedding maintenance passes (`maintain-embeddings`) hold their own lease the
 same way. A pending purge is outstanding work, not completed
 deletion. A failed delete backs its debt off so other debts can proceed.
 The delay doubles up to the configured ceiling, with the exponent capped
-at 40. See [`Causa.purgeRetryDelay`](ledger.md). The report gives `due`
-(selectable now), `deferred` (backing off) and `stuck` (failed repeatedly; each
+at 40. See [`Causa.purgeRetryDelay_saturates`](ledger.md#object-maintenance-retry-arithmetic).
+The report gives `due` (selectable now), `deferred` (backing off) and `stuck` (failed repeatedly; each
 is listed with its key, owner, attempt count and last error). Debt owed to another
 object store is left in place and listed by store, and the command exits
 non-zero until a process configured for that store drains it.

@@ -506,10 +506,15 @@ fn series_leg_sql(table: &str, leg: TransferLeg) -> Result<SqlText, StorageError
     }
 }
 
-/// Transfer cited objects under `Proxiima.ObjectMaintenance.citedObjectTransfer`.
+/// Transfer cited objects with the handle's references.
 ///
-/// Transfer remaps object metadata. The erase path owns refcounted byte
-/// deletion, so another owner can continue reading a shared object.
+/// 1. If the destination holds identical bytes, remap to its existing row.
+/// 2. If no other live series needs the bytes, move the blob and upload rows in place.
+/// 3. If another owner's live series shares the bytes, mount the source object with destination rows and remap.
+///
+/// The source's rows are never deleted here.
+/// Nothing in S3 is read, written or copied.
+/// The erase path owns refcounted byte deletion, so a shared object survives one owner's erase.
 async fn transfer_cited_blobs(
     tx: &mut Transaction<'_, Postgres>,
     surfaces: &OwnerSurfaces,
@@ -640,7 +645,8 @@ fn remap_sql(entry: &str) -> Result<SqlText, StorageError> {
     Ok(sql)
 }
 
-/// One cited blob, one of the three cases.
+/// One cited blob, one of the three cases in [`transfer_cited_blobs`].
+/// `Proxiima.ObjectMaintenance.citedObjectTransfer`.
 async fn transfer_one_cited_blob(
     tx: &mut Transaction<'_, Postgres>,
     leg: DedupeLeg,

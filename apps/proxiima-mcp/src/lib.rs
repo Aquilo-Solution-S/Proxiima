@@ -330,6 +330,7 @@ async fn run_maintain_blobs(
     })?;
     let built = maintenance_app(config.database_url, lookup)
         .into_app()
+        // Reconcile without a concurrent worker draining the debt it reports.
         .configure(|b| b.s3(s3).object_purge_interval(std::time::Duration::ZERO))
         .build()
         .await?;
@@ -618,6 +619,7 @@ async fn storage_maintenance_steps(
         for line in cold_purge_retry_report(&outcome, dry_run_suffix) {
             println!("{line}");
         }
+        // `Proxiima.ObjectMaintenance.commandSucceeded`.
         if outcome.foreign > 0 {
             // The drain left them in place; the operator still has to wire
             // the store they are owed to, so this pass is not a success.

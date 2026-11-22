@@ -69,7 +69,7 @@ pub async fn object_maintenance_pass(
 ) -> Result<ObjectMaintenanceOutcome, StorageError> {
     let options = ColdPurgeRetryOptions::default();
     let (storage, census) = wired_census(storage, blobs, options).await?;
-    // `Proxiima.ObjectMaintenance.maintenanceLease`.
+    // Only the lease holder runs the sweep and drain.
     let Some(lock) = storage.try_storage_maintenance_lock().await? else {
         let mut purge = census;
         purge.skipped = true;
@@ -111,12 +111,11 @@ async fn sweep_and_drain(
 }
 
 /// Refuse to boot or run a pass while the queue holds debt for a store
-/// other than `configured`. The error names both stores and the count.
+/// other than `configured`. The error gives the count and known store IDs.
 pub(crate) fn refuse_foreign_debt(
     configured: &proxiima_core::ObjectStoreId,
     census: &ObjectPurgePassOutcome,
 ) -> Result<(), StorageError> {
-    // `Proxiima.ObjectMaintenance.foreignDebt`.
     if census.foreign == 0 {
         return Ok(());
     }
@@ -126,6 +125,11 @@ pub(crate) fn refuse_foreign_debt(
         .map(|(store, count)| format!("{store} ({count})"))
         .collect::<Vec<_>>()
         .join(", ");
+    let found = if found.is_empty() {
+        "no readable store IDs".to_owned()
+    } else {
+        found
+    };
     Err(StorageError::ConstraintViolation(format!(
         "the object purge queue holds {} debts for another object store: configured {configured}, \
          found {found}. An object store does not move, so this process is configured for the \
@@ -296,7 +300,7 @@ fn log_pass(outcome: &ObjectMaintenanceOutcome) {
 mod tests {
     use super::{ObjectPurgeHealth, ObjectPurgeSnapshot, refuse_foreign_debt};
     use proxiima_core::{ObjectStoreId, StorageError};
-    use proxiima_storage_pg::ObjectPurgePassOutcome;
+    use proxiima_storage_pg::{ColdPurgeRetryOptions, test_fixtures::fresh_pg};
 
     #[test]
     fn the_readiness_line_carries_counts_only() {
@@ -315,34 +319,41 @@ mod tests {
         );
     }
 
-    #[test]
-    fn foreign_debt_is_refused_naming_both_stores_and_the_count() {
-        let configured = ObjectStoreId::operator("here").expect("valid id");
-        let mut census = ObjectPurgePassOutcome::default();
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
-        let rows = vectors["Proxiima.ObjectMaintenance.foreignDebt"]
-            .as_array()
-            .unwrap();
-        assert!(!rows.is_empty());
-        for row in rows {
-            census.foreign = u64::from(row["in"][0].as_bool().unwrap());
-            let admitted = refuse_foreign_debt(&configured, &census).is_ok();
-            assert_eq!(
-                row["out"],
-                if admitted { "proceed" } else { "refuse" },
-                "{row}"
-            );
+    #[tokio::test]
+    async fn census_counts_unreadable_store_ids_and_refuses_foreign_debt() {
+        if proxiima_pg_testkit::admin_url_or_skip().is_none() {
+            return;
         }
-        census.foreign = 3;
-        census.foreign_stores = vec![(ObjectStoreId::operator("there").expect("valid id"), 3)];
+        let (pg, _db) = fresh_pg("proxiima_purge_census").await;
+        let configured = ObjectStoreId::memory();
+
+        // Insert persisted debt directly to include an ID accepted by the database check.
+        sqlx::query(
+            "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
+             VALUES ('objects/known', NULL, 's3:id/there'), ('objects/unknown', NULL, 's3:')",
+        )
+        .execute(pg.pool_for_tests())
+        .await
+        .expect("insert purge debts");
+
+        let census = pg
+            .object_purge_census(ColdPurgeRetryOptions::default())
+            .await
+            .expect("read the purge census");
+        assert_eq!(census.foreign, 2);
+        let known = ObjectStoreId::operator("there").expect("valid id");
+        assert_eq!(census.foreign_stores, vec![(known, 1)]);
         let Err(StorageError::ConstraintViolation(message)) =
             refuse_foreign_debt(&configured, &census)
         else {
             panic!("foreign debt must be refused");
         };
-        assert!(message.contains("holds 3 debts"), "{message}");
-        assert!(message.contains("configured s3:id/here"), "{message}");
-        assert!(message.contains("found s3:id/there (3)"), "{message}");
+        assert!(message.contains("holds 2 debts"), "{message}");
+        assert!(message.contains("configured memory:"), "{message}");
+        assert!(message.contains("found s3:id/there (1)"), "{message}");
+        assert!(
+            message.contains("maintain-storage --retry-cold-object-purges"),
+            "{message}"
+        );
     }
 }

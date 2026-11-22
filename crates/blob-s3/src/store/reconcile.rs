@@ -114,7 +114,7 @@ impl CitedBlobStore {
         &self,
         authority: &SystemAuthority,
     ) -> Result<CitedBlobReconcileOutcome, StorageError> {
-        // `Proxiima.ObjectMaintenance.reconcileVisibility`.
+        // Only boot authority permits bucket-wide findings and locator samples.
         self.require_system_authority(authority, "global cited-blob reconciliation")?;
         // THE OBJECT SIDE FIRST, AND ENTIRELY. Holding the key set is what
         // lets the row side stream, and it is what removes any dependency
@@ -241,6 +241,7 @@ impl CitedBlobStore {
         authz: &AuthzContext,
         owner: OwnerId,
     ) -> Result<CitedBlobOwnerReconcileOutcome, StorageError> {
+        // Fact-read authority sees only its owner's live upload findings, with no storage coordinates.
         ensure_owner_access(authz, &owner).map_err(blob_error_to_storage)?;
 
         // Keys carry no owner any more, so there is no `objects/<hash>/`
@@ -382,8 +383,7 @@ impl CitedBlobStore {
         Ok(ended)
     }
 
-    /// `Proxiima.ObjectMaintenance.reconcileCanonical`, one transaction per key.
-    /// Acquire the owner fence before the key fence, then recheck the claim.
+    /// Recheck the claim in one transaction per key, taking the owner fence before the key fence.
     async fn owe_ended_objects(
         &self,
         objects: &mut BTreeSet<String>,

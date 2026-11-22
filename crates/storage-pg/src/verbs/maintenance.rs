@@ -31,7 +31,7 @@ pub const MAX_STUCK_PURGE_DEBTS: usize =
 pub const MAX_FOREIGN_PURGE_STORES: usize =
     proxiima_core::ledger!(Proxiima.ObjectMaintenance.foreignStoreSampleMax);
 
-/// The configured bounds used by `Causa.purgeRetryDelay`.
+/// The configured base and ceiling for purge retry delays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PurgeBackoff {
     pub(crate) base: Duration,
@@ -152,7 +152,7 @@ pub struct StuckPurgeDebt {
 ///
 /// `due`, `deferred` and `stuck` count the wired store's debts after the
 /// batch. Debts naming any other store are never selected, attempted or
-/// cleared; they are counted in `foreign` and named in `foreign_stores`.
+/// cleared. All count toward `foreign`; `foreign_stores` samples readable store IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ColdPurgeRetryOutcome {
@@ -253,7 +253,8 @@ pub(crate) async fn drain_due_purge_debt(
         if pass.batches >= max_batches {
             break;
         }
-        // `Proxiima.ObjectMaintenance.drainOrder`. Provider I/O runs outside the transaction.
+        // `Proxiima.ObjectMaintenance.drainOrder`.
+        // Each batch selects in due-time order and runs provider I/O outside the transaction.
         lease.renew().await?;
         let batch = retry_cold_object_purges(pool, platform, cold, options).await?;
         pass.batches += 1;
@@ -470,15 +471,14 @@ fn census_from_rows(
     foreign_stores: Vec<(String, i64)>,
 ) -> Result<PurgeQueueCensus, StorageError> {
     let [due, deferred, foreign, stuck_count] = counts;
-    let foreign_stores = foreign_stores
-        .into_iter()
-        .map(|(store, count)| {
-            let store = ObjectStoreId::parse(&store).map_err(|error| {
-                StorageError::Internal(format!("purge queue holds a malformed store id: {error}"))
-            })?;
-            Ok((store, int_to_u64(count, "foreign purge debts")?))
-        })
-        .collect::<Result<Vec<_>, StorageError>>()?;
+    let mut named_stores = Vec::with_capacity(foreign_stores.len());
+    for (store, count) in foreign_stores {
+        let count = int_to_u64(count, "foreign purge debts")?;
+        // The SQL total already counts debt whose store ID cannot be parsed.
+        if let Ok(store) = ObjectStoreId::parse(&store) {
+            named_stores.push((store, count));
+        }
+    }
     let stuck = stuck
         .into_iter()
         .map(|row| {
@@ -497,7 +497,7 @@ fn census_from_rows(
         foreign: int_to_u64(foreign, "foreign purge debts")?,
         stuck_count: int_to_u64(stuck_count, "stuck purge debts")?,
         stuck,
-        foreign_stores,
+        foreign_stores: named_stores,
     })
 }
 

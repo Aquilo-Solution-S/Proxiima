@@ -242,7 +242,7 @@ impl S3RuntimeConfig {
                 None,
                 "proxiima-s3-config",
             ));
-        // `Proxiima.ObjectMaintenance.endpointChoice`.
+        // Object I/O and upload signing use the configured endpoint or the AWS resolver.
         if let Some(endpoint_url) = endpoint_url {
             builder = builder.endpoint_url(endpoint_url);
         }

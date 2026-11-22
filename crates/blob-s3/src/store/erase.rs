@@ -64,6 +64,7 @@ async fn purge_versions(
             StorageError::Unavailable(format!("list object versions under {listing_prefix}: {e}"))
         })?;
         // `Proxiima.ObjectMaintenance.exactVersionDeletion`.
+        // Require truncated pages to advance, and acknowledge every requested version and delete marker for the exact key.
         if page.is_truncated() == Some(true) {
             // A key may span pages, so progress is the complete cursor pair.
             // Check before deleting: a broken cursor must not repeat a batch.

@@ -41,9 +41,6 @@ def purgeBackoffExponentMax : Nat := 40
 /-- Default worker cadence in seconds when an object store is configured. -/
 def purgeIntervalSeconds : Nat := 60
 
-/-- Interval in seconds that disables the worker. -/
-def purgeDisabledSeconds : Nat := 0
-
 /-- Expired uploads one runtime sweep batch can decide. -/
 def runtimeSweepBatch : Nat := 500
 
@@ -85,17 +82,6 @@ inductive PassStep where
 
 /-- When a pass does both, expired uploads are swept before due debt is drained. -/
 def maintenanceOrder : List PassStep := [.sweep, .drain]
-
-/-- Work selected by the shared storage maintenance lease. -/
-inductive LeasedWork where
-  | runPass
-  | skipPass
-  deriving DecidableEq
-
-/-- A holder runs the pass and a contender skips both jobs. -/
-def maintenanceLease : (acquired : Bool) → LeasedWork
-  | true => .runPass
-  | false => .skipPass
 
 /-- Which maintenance command action flags were selected. -/
 inductive StorageActions where
@@ -179,7 +165,7 @@ inductive VersionDeleteStep where
   | checkAcknowledgements
   deriving DecidableEq
 
-/-- Each version page must advance, target the exact key and acknowledge every requested version and delete marker. -/
+/-- Check the cursor, collect exact version IDs, delete those versions, then check acknowledgements. -/
 def exactVersionDeletion : List VersionDeleteStep :=
   [.checkCursor, .collectExactVersionIds, .deleteVersions, .checkAcknowledgements]
 
@@ -199,34 +185,12 @@ inductive CanonicalFinding where
   | retained
   deriving DecidableEq
 
-/-- Only a key implied solely by an ended upload acquires new debt, after a fenced recheck. -/
+/-- Only a key implied solely by an ended upload acquires new debt. -/
 def reconcileCanonical : CanonicalClaim → CanonicalFinding
   | .existingDebt => .owed
   | .endedOnly => .recordDebt
   | .unclaimed => .orphan
   | .live => .retained
-
-/-- Whether an endpoint was provided by the host. -/
-inductive EndpointChoice where
-  | configured
-  | defaultResolver
-  deriving DecidableEq
-
-/-- Object I/O and upload signing choose the configured endpoint or the AWS resolver. -/
-def endpointChoice : (configured : Bool) → EndpointChoice
-  | true => .configured
-  | false => .defaultResolver
-
-/-- Outcomes of comparing stored debt with the wired store. -/
-inductive DebtDisposition where
-  | attempt
-  | retain
-  deriving DecidableEq
-
-/-- Provider deletion is authorized only by debt for the exact wired store. -/
-def debtStoreMatch : (sameStore : Bool) → DebtDisposition
-  | true => .attempt
-  | false => .retain
 
 /-- Steps taken by a leased debt drain. -/
 inductive DrainStep where
@@ -236,7 +200,7 @@ inductive DrainStep where
   | reportCounts
   deriving DecidableEq
 
-/-- Batches renew the lease before trying due rows of the wired store in due-time order. -/
+/-- Renew the lease, select due rows of the wired store, try the batch, then report counts. -/
 def drainOrder : List DrainStep := [.renewLease, .selectDueForStore, .tryBatch, .reportCounts]
 
 /-- Whether an upload row claims a listed object of each key class. -/
@@ -254,23 +218,6 @@ def claimsKey : ClaimPhase → UploadKey → Bool
   | .expiredPending, .transfer | .completed, .transfer
   | .ended, .canonical | .ended, .transfer => false
 
-/-- Reconciliation source visibility. -/
-inductive ReconcileScope where
-  | global
-  | owner
-  deriving DecidableEq
-
-/-- Which observations can be returned from the chosen reconciliation scope. -/
-inductive ReconcileObservations where
-  | bucketAndRows
-  | ownLiveRows
-  deriving DecidableEq
-
-/-- Boot authority permits bucket-wide findings and locator samples, while Fact-read authority sees its owner's live upload findings without coordinates. -/
-def reconcileVisibility : ReconcileScope → ReconcileObservations
-  | .global => .bucketAndRows
-  | .owner => .ownLiveRows
-
 /-- The outcome of consuming the S3 settings block. -/
 inductive S3Admission where
   | disabled
@@ -285,17 +232,6 @@ def optionalS3 : (hostPolicyValid : Bool) → (bucketSet : Bool) → (companions
   | true, false, false | true, false, true => .disabled
   | true, true, true => .configured
 
-/-- The outcome of rechecking claims after a stage loses the locator write. -/
-inductive LostStageDisposition where
-  | preserveBytes
-  | recordDebt
-  deriving DecidableEq
-
-/-- When the owner row disappears during a stage, a surviving reference preserves the canonical bytes. -/
-def lostStageClaims : (stillReferenced : Bool) → LostStageDisposition
-  | true => .preserveBytes
-  | false => .recordDebt
-
 /-- The finding made when comparing the ordinary read winner with this store. -/
 inductive LocatorFinding where
   | foreign
@@ -309,17 +245,6 @@ def reconcileLocator : (localLocator : Bool) → (present : Bool) → LocatorFin
   | true, true => .present
   | true, false => .missing
 
-/-- Whether boot and the runtime pass can proceed with the current purge census. -/
-inductive CensusAdmission where
-  | proceed
-  | refuse
-  deriving DecidableEq
-
-/-- A queue containing any foreign debt refuses object-store boot or an in-process pass. -/
-def foreignDebt : (hasForeignDebt : Bool) → CensusAdmission
-  | false => .proceed
-  | true => .refuse
-
 /-- The state of one upload at the expiry decision. -/
 inductive ExpiryState where
   | pendingUnstaged
@@ -332,17 +257,6 @@ def mayExpire : ExpiryState → (pastTtl : Bool) → Bool
   | .pendingUnstaged, true => true
   | .pendingUnstaged, false | .pendingStaged, false | .pendingStaged, true
   | .terminal, false | .terminal, true => false
-
-/-- How to render a provider diagnostic character. -/
-inductive DiagnosticCharacter where
-  | preserve
-  | space
-  deriving DecidableEq
-
-/-- Purge diagnostics preserve printable content and replace control characters with spaces. -/
-def purgeDiagnosticCharacter : (control : Bool) → DiagnosticCharacter
-  | true => .space
-  | false => .preserve
 
 /-- Transfer's disposition of the cited object's metadata. -/
 inductive CitedObjectTransfer where
@@ -415,12 +329,13 @@ def endpointAdmitted : EndpointTransport → Bool
 inductive CommandCompletion where
   | completed
   | leaseContended
+  | foreignDebtLeft
   | failed
   deriving DecidableEq
 
-/-- Findings on a completed pass and contention for a lease preserve a successful exit. -/
+/-- Reconciliation findings and lease contention preserve a successful exit, while a drain that leaves foreign debt fails. -/
 def commandSucceeded : CommandCompletion → Bool
   | .completed | .leaseContended => true
-  | .failed => false
+  | .foreignDebtLeft | .failed => false
 
 end Proxiima.ObjectMaintenance

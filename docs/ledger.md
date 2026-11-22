@@ -2469,11 +2469,6 @@ stateDiagram-v2
 - sweep
 - drain
 
-**Leased work**: Work selected by the shared storage maintenance lease.
-
-- runPass
-- skipPass
-
 **Storage actions**: Which maintenance command action flags were selected.
 
 - none
@@ -2537,16 +2532,6 @@ stateDiagram-v2
 - orphan
 - retained
 
-**Endpoint choice**: Whether an endpoint was provided by the host.
-
-- configured
-- defaultResolver
-
-**Debt disposition**: Outcomes of comparing stored debt with the wired store.
-
-- attempt
-- retain
-
 **Drain step**: Steps taken by a leased debt drain.
 
 - renewLease
@@ -2561,26 +2546,11 @@ stateDiagram-v2
 - completed
 - ended
 
-**Reconcile scope**: Reconciliation source visibility.
-
-- global
-- owner
-
-**Reconcile observations**: Which observations can be returned from the chosen reconciliation scope.
-
-- bucketAndRows
-- ownLiveRows
-
 **S3 admission**: The outcome of consuming the S3 settings block.
 
 - disabled
 - configured
 - refuse
-
-**Lost stage disposition**: The outcome of rechecking claims after a stage loses the locator write.
-
-- preserveBytes
-- recordDebt
 
 **Locator finding**: The finding made when comparing the ordinary read winner with this store.
 
@@ -2588,21 +2558,11 @@ stateDiagram-v2
 - present
 - missing
 
-**Census admission**: Whether boot and the runtime pass can proceed with the current purge census.
-
-- proceed
-- refuse
-
 **Expiry state**: The state of one upload at the expiry decision.
 
 - pendingUnstaged
 - pendingStaged
 - terminal
-
-**Diagnostic character**: How to render a provider diagnostic character.
-
-- preserve
-- space
 
 **Cited object transfer**: Transfer's disposition of the cited object's metadata.
 
@@ -2640,6 +2600,7 @@ stateDiagram-v2
 
 - completed
 - leaseContended
+- foreignDebtLeft
 - failed
 
 **store id max bytes** = 512: Maximum bytes in a stored object-store identity.
@@ -2667,8 +2628,6 @@ stateDiagram-v2
 **purge backoff exponent max** = 40: Maximum exponent applied to the initial delay.
 
 **purge interval seconds** = 60: Default worker cadence in seconds when an object store is configured.
-
-**purge disabled seconds** = 0: Interval in seconds that disables the worker.
 
 **runtime sweep batch** = 500: Expired uploads one runtime sweep batch can decide.
 
@@ -2698,27 +2657,15 @@ stateDiagram-v2
 
 **terminal upload debt** = \[transfer, canonical]: Abort and expiry owe both implied keys in the status transaction.
 
-**exact version deletion** = \[checkCursor, collectExactVersionIds, deleteVersions, checkAcknowledgements]: Each version page must advance, target the exact key and acknowledge every requested version and delete marker.
+**exact version deletion** = \[checkCursor, collectExactVersionIds, deleteVersions, checkAcknowledgements]: Check the cursor, collect exact version IDs, delete those versions, then check acknowledgements.
 
-**drain order** = \[renewLease, selectDueForStore, tryBatch, reportCounts]: Batches renew the lease before trying due rows of the wired store in due-time order.
+**drain order** = \[renewLease, selectDueForStore, tryBatch, reportCounts]: Renew the lease, select due rows of the wired store, try the batch, then report counts.
 
 **worker cycle** = \[checkpoint, pass, wait]: The worker starts with a checkpoint and pass, then waits between passes.
 
 **missing sample order** = \[completionNewestFirst, uploadIdDescending]: Missing samples are newest first, breaking completion ties by descending upload identity.
 
 **secret debug marker** = "\[REDACTED]": Text substituted for the private S3 secret in debug output.
-
-| bool | maintenance lease | endpoint choice | debt store match | lost stage claims | foreign debt | purge diagnostic character |
-| --- | --- | --- | --- | --- | --- | --- |
-| yes | runPass | configured | attempt | preserveBytes | refuse | space |
-| no | skipPass | defaultResolver | retain | recordDebt | proceed | preserve |
-
-- maintenance lease: A holder runs the pass and a contender skips both jobs.
-- endpoint choice: Object I/O and upload signing choose the configured endpoint or the AWS resolver.
-- debt store match: Provider deletion is authorized only by debt for the exact wired store.
-- lost stage claims: When the owner row disappears during a stage, a surviving reference preserves the canonical bytes.
-- foreign debt: A queue containing any foreign debt refuses object-store boot or an in-process pass.
-- purge diagnostic character: Purge diagnostics preserve printable content and replace control characters with spaces.
 
 **storage actions**: The command requires an action and forbids a dry run of the expiry sweep.
 
@@ -2764,7 +2711,7 @@ stateDiagram-v2
 | unclaimed | orphan |
 | live | retained |
 
-- reconcile canonical: Only a key implied solely by an ended upload acquires new debt, after a fenced recheck.
+- reconcile canonical: Only a key implied solely by an ended upload acquires new debt.
 
 | claim phase | upload key | claims key |
 | --- | --- | --- |
@@ -2778,13 +2725,6 @@ stateDiagram-v2
 | ended | canonical | no |
 
 - claims key: Pending and completed rows claim canonical objects, and only in-flight rows claim transfer objects.
-
-| reconcile scope | reconcile visibility |
-| --- | --- |
-| global | bucketAndRows |
-| owner | ownLiveRows |
-
-- reconcile visibility: Boot authority permits bucket-wide findings and locator samples, while Fact-read authority sees its owner's live upload findings without coordinates.
 
 | bool | bool | bool | optional s3 |
 | --- | --- | --- | --- |
@@ -2844,9 +2784,10 @@ stateDiagram-v2
 | --- | --- |
 | completed | yes |
 | leaseContended | yes |
+| foreignDebtLeft | no |
 | failed | no |
 
-- command succeeded: Findings on a completed pass and contention for a lease preserve a successful exit.
+- command succeeded: Reconciliation findings and lease contention preserve a successful exit, while a drain that leaves foreign debt fails.
 
 ## Owner authority
 

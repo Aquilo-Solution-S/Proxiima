@@ -23,7 +23,8 @@ variable is ignored.
 
 When S3 is configured, set `PROXIIMA_OBJECT_PURGE_INTERVAL_SECS` at or below
 `PROXIIMA_S3_UPLOAD_TTL_SECONDS`. An interval of `0` disables scheduled object
-maintenance. See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaintenance).
+maintenance. With the default interval of 60 seconds, a shorter upload TTL
+causes startup to fail. See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaintenance).
 
 <!-- settings:begin -->
 

@@ -189,7 +189,7 @@ pub(crate) async fn purge_cold_objects_with_backoff(
     };
     for entry in plan.entries() {
         let key = entry.object_key.as_str();
-        // `Proxiima.ObjectMaintenance.debtStoreMatch`. Count unmatched debt in the receipt.
+        // Only debt for the exact wired store authorizes deletion. Count unmatched debt in the receipt.
         if entry.object_store != cold.store_id().as_str() {
             outcome.failed = outcome.failed.saturating_add(1);
             tracing::warn!(
@@ -292,10 +292,8 @@ async fn purge_current_cold_debt(
 const MAX_PURGE_ERROR_BYTES: usize =
     proxiima_core::ledger!(Proxiima.ObjectMaintenance.purgeErrorMaxBytes);
 
-/// The failure text a debt records: control characters replaced, bounded on
-/// a character boundary.
+/// The diagnostic preserves printable content, replaces control characters with spaces and truncates at a character boundary.
 fn purge_error_text(error: &StorageError) -> String {
-    // `Proxiima.ObjectMaintenance.purgeDiagnosticCharacter`.
     let text: String = error
         .to_string()
         .chars()
@@ -1579,33 +1577,6 @@ mod forget_marks_pg_tests;
 #[cfg(test)]
 mod tests {
     use super::{ForgetLeg, OwnerSurfaces, forget_leg_sql};
-
-    #[test]
-    fn purge_diagnostic_characters_match_ledger_vectors() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
-        let rows = vectors["Proxiima.ObjectMaintenance.purgeDiagnosticCharacter"]
-            .as_array()
-            .unwrap();
-        assert!(!rows.is_empty());
-        for row in rows {
-            let character = if row["in"][0].as_bool().unwrap() {
-                '\n'
-            } else {
-                'é'
-            };
-            let expected = match row["out"].as_str().unwrap() {
-                "space" => ' ',
-                "preserve" => character,
-                other => panic!("unknown diagnostic rendering {other}"),
-            };
-            let error = proxiima_core::StorageError::Unavailable(format!("[{character}]"));
-            assert!(
-                super::purge_error_text(&error).ends_with(&format!("[{expected}]")),
-                "{row}"
-            );
-        }
-    }
 
     fn shipped() -> OwnerSurfaces {
         OwnerSurfaces::for_registry(

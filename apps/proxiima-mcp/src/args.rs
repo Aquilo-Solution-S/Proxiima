@@ -146,7 +146,7 @@ Optional:
 
 // The action declarations generate both flag recognition and static help.
 macro_rules! storage_actions {
-    ($header:literal, $options:literal; $($action:ident = $flag:literal => $help:literal),+ $(,)?) => {
+    ($header:literal; $($action:ident = $flag:literal => $help:literal),+ $(,)?; $($options:expr),+ $(,)?) => {
         enum StorageAction { $($action),+ }
 
         impl StorageAction {
@@ -165,7 +165,7 @@ macro_rules! storage_actions {
         }
 
         pub const STORAGE_MAINTENANCE_USAGE: &str =
-            concat!($header, $("  ", $flag, $help, "\n",)+ $options);
+            concat!($header, $("  ", $flag, $help, "\n",)+ $($options),+);
     };
 }
 
@@ -181,22 +181,15 @@ same sweep and drain in-process under the same lease
 no server, to name stuck debt, or to name and drain debt owed to another
 store, which a server refuses to start over.
 
-The sweep records purge debt for expired uploads. The drain finishes
-destruction already owed to the object store. Enforce retention promises
-and holds before calling erase.
+Neither action is a promise to a user. The sweep records purge debt for
+expired uploads. The drain finishes destruction a committed owner erase
+already owes the object store. What a host promises about retention or
+holds is the host's to enforce before it calls erase.
 
 At least one action flag is required — there are deliberately no
 destruction defaults.
 
 Actions (at least one):
-",
-    "
-Optional:
-  --database-url <URL>     Postgres URL (defaults to DATABASE_URL or proxiima_dev)
-  --batch-size <N>         Rows per transaction (default 1000)
-  --dry-run                Report what would be purged without
-                           changing anything
-  -h, --help               Print this message
 ";
     Retry = "--retry-cold-object-purges" => "
                            Retry a bounded batch of exact object-store keys
@@ -206,7 +199,17 @@ Optional:
                            object store",
     Sweep = "--sweep-expired-uploads" => "  Expire uploads whose TTL passed before they were
                            staged, owing both of their keys. Requires the
-                           PROXIIMA_S3_* block; not with --dry-run",
+                           PROXIIMA_S3_* block; not with --dry-run";
+    "
+Optional:
+  --database-url <URL>     Postgres URL (defaults to DATABASE_URL or proxiima_dev)
+  --batch-size <N>         Rows per transaction (default ",
+    proxiima_core::ledger!(Proxiima.ObjectMaintenance.cliBatchDefault),
+    ")
+  --dry-run                Report what would be purged without
+                           changing anything
+  -h, --help               Print this message
+",
 }
 
 #[derive(Clone)]

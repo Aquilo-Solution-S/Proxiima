@@ -373,10 +373,6 @@ macro_rules! ledger {
     (Proxiima.ObjectMaintenance.purgeIntervalSeconds) => {
         60
     };
-    // Interval in seconds that disables the worker.
-    (Proxiima.ObjectMaintenance.purgeDisabledSeconds) => {
-        0
-    };
     // Expired uploads one runtime sweep batch can decide.
     (Proxiima.ObjectMaintenance.runtimeSweepBatch) => {
         500
