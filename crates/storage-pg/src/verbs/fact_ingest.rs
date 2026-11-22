@@ -171,7 +171,6 @@ pub(crate) async fn ingest_authorized_fact_atomic(
     embedding_spaces: &[proxiima_core::EmbeddingSpace],
     store_number: u16,
 ) -> Result<FactIngestOutcome, StorageError> {
-    // Same retry boundary as `Proxiima.Goals.retryTransaction`.
     with_bounded_retry(move || async move {
         let mut tx = crate::owner_scope::begin_owner_transaction(
             pool,

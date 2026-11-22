@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Storage checks the live kind of local Goal evidence inside the write transaction.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use std::sync::Arc;

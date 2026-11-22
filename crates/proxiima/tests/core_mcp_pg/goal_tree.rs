@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Goal closure and child ordering through MCP.
 
 use super::goal_evidence_kinds::{Env, handle_of};
 

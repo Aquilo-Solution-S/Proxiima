@@ -411,7 +411,6 @@ impl MigrationPlan {
             additional.iter().map(|id| id.into_inner()).collect(),
         )
     }
-    /// `Proxiima.Goals.requestReplay` survives the revision mapping.
     ///
     /// # Errors
     ///

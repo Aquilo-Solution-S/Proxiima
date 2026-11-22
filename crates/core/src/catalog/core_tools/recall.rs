@@ -323,7 +323,7 @@ async fn mark_perspective_heads(
     Ok(())
 }
 
-/// `Proxiima.Goals.recallActiveGoal`. The page uses one query and one sketch load.
+/// Collect Goals assigned to the packet’s head Perspectives in one query and one sketch load.
 async fn collect_assigned_goals(
     ctx: &ToolCtx,
     engine: &crate::Engine,
@@ -337,6 +337,7 @@ async fn collect_assigned_goals(
     }
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
+    // `Proxiima.Goals.recallActiveGoal`.
     req.goal_states.insert(GoalState::Active);
     req.motivated_by = GoalMotivationFilter::MotivatedBy(perspectives);
     req.include_payloads = false;
@@ -354,7 +355,6 @@ async fn collect_assigned_goals(
     Ok(())
 }
 
-/// `Proxiima.Goals.recallActiveGoal`.
 async fn collect_unassigned_goals(
     ctx: &ToolCtx,
     engine: &crate::Engine,
@@ -369,6 +369,7 @@ async fn collect_unassigned_goals(
         .ok_or_else(|| ToolError::NotAuthorized("memory space read".into()))?;
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
+    // `Proxiima.Goals.recallActiveGoal`.
     req.goal_states.insert(GoalState::Active);
     req.motivated_by = GoalMotivationFilter::Unmotivated;
     req.include_payloads = false;

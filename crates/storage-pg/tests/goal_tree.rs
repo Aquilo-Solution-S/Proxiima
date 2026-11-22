@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Decomposed chains share the parent lifecycle locks and close from the leaves up.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use std::sync::Arc;
@@ -619,7 +619,7 @@ async fn closed_children_or_none_admit_the_parent() {
 }
 
 /// G4: a plain topology dependency is not a child.
-// `Proxiima.Goals.parentRevision`.
+// `Proxiima.Goals.blocksClose`.
 #[tokio::test]
 async fn a_plain_dependency_is_not_a_child() {
     let tree = Tree::new().await.expect("fixture");

@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! A Goal replay does not mint another Goal version or lifecycle Fact.
 #![allow(
     clippy::doc_markdown,
     clippy::too_many_arguments,

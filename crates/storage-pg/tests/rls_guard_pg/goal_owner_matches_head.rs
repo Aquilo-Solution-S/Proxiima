@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! A Goal series keeps its owner even when the caller can write for another owner.
 
 use proxiima_core::{Credentials, GroupId, OwnerId, OwnerRoles, Role, UserId};
 use proxiima_storage_pg::begin_owner_transaction;

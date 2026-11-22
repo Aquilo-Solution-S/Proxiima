@@ -462,7 +462,7 @@ async fn concurrent_successors_classify_stale_head_before_persisting() {
     result.expect("concurrent Goal successors must serialize on the prior head");
 }
 
-// `Proxiima.Goals.reserveChangeFact`.
+// `Proxiima.Goals.admissionOrder`.
 #[tokio::test]
 async fn low_level_write_act_is_reserved_until_union_lock_release() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -543,7 +543,7 @@ async fn low_level_write_act_is_reserved_until_union_lock_release() {
     result.expect("low-level write-act reservation test failed");
 }
 
-// `Proxiima.Goals.closeFactPresence`.
+// `Proxiima.Goals.admissionOrder`.
 #[tokio::test]
 async fn terminal_close_fact_is_reserved_until_union_lock_release() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

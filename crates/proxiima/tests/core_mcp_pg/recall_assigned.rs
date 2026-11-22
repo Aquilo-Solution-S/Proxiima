@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Recall collects Goals motivated by the recalled Perspective heads.
 
 use super::goal_evidence_kinds::{Env, handle_of};
 use serde_json::json;

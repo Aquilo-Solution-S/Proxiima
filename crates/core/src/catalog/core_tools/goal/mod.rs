@@ -660,7 +660,7 @@ pub struct GoalTransitionArgs {
 }
 
 impl GoalTransitionArgs {
-    /// `Proxiima.Goals.changeFields`.
+    /// Parse transition and pending together so only a pause carries a disposition.
     fn transition_kind(&self) -> Result<GoalTransitionKind, ToolError> {
         match (&self.transition, self.pending) {
             (GoalTransition::Pause, Some(pending)) => Ok(GoalTransitionKind::Pause { pending }),
@@ -678,7 +678,6 @@ impl GoalTransitionArgs {
     }
 }
 
-/// `Proxiima.Goals.editSpaceMatches`.
 async fn existing_goal_owner(
     ctx: &ToolCtx,
     prior: crate::GoalId,
@@ -707,6 +706,7 @@ async fn existing_goal_owner(
         .into_iter()
         .next()
         .ok_or_else(|| ToolError::NotFound("Goal not found".into()))?;
+    // `Proxiima.Goals.editSpaceMatches`.
     if selected.is_some_and(|space| space.owner != row.owner) {
         return Err(ToolError::NotFound("Goal not found".into()));
     }
@@ -808,7 +808,6 @@ pub struct GoalModifyArgs {
     pub idempotency_key: Option<String>,
 }
 
-/// `Proxiima.Goals.editPins`.
 async fn goal_modify(ctx: ToolCtx, args: GoalModifyArgs) -> Result<GoalWriteOutput, ToolError> {
     let prior = ctx.resolve_goal(&args.goal)?;
     let owner = existing_goal_owner(&ctx, prior, args.space.as_deref()).await?;
@@ -884,7 +883,7 @@ async fn goal_decompose(
     ctx: ToolCtx,
     args: GoalDecomposeArgs,
 ) -> Result<GoalDecomposeOutput, ToolError> {
-    // `Proxiima.Goals.decomposeRootKeyMax`.
+    // Check the child-derived root bound first so an overlong key fails before resolution or child construction.
     let root_key = IdempotencyKey::new_bounded(
         args.idempotency_key,
         DECOMPOSE_ROOT_KEY_MAX,
@@ -999,7 +998,7 @@ pub(crate) fn encode_goal_payload(
     })
 }
 
-/// `Proxiima.Goals.evidenceAdmission`. Input IDs are bare UUIDs.
+/// Resolve bare UUIDs, reading other-store evidence at its source as the caller.
 pub(crate) async fn resolve_goal_evidence_handles(
     ctx: &ToolCtx,
     evidence: &[String],
@@ -1031,7 +1030,6 @@ pub(crate) async fn resolve_goal_evidence_handles(
         .collect())
 }
 
-/// `Causa.goal_motivations_valid`.
 fn resolve_goal_motivations(
     ctx: &ToolCtx,
     handles: &[String],
@@ -1042,7 +1040,8 @@ fn resolve_goal_motivations(
         .collect::<Result<Vec<_>, _>>()
 }
 
-/// `Proxiima.Goals.operatorAuthorship`.
+/// Model-facing Goal authorship records only the operator category. Writer
+/// attribution is stored separately from authorship and replay identity.
 pub(crate) const OPERATOR_AUTHORSHIP: GoalAuthorship =
     GoalAuthorship::System(SystemOrigin::Operator);
 
@@ -1156,7 +1155,6 @@ mod tests {
         );
     }
 
-    // `Proxiima.Goals.evidenceAdmission`.
     #[tokio::test]
     async fn goal_evidence_rejects_prefixed_ids_before_storage() {
         let ctx = test_ctx();

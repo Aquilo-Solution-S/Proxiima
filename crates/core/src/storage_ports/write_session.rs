@@ -233,7 +233,7 @@ pub trait WriteSession: Send {
         memory_id: MemoryId,
     ) -> Result<(), StorageError>;
 
-    /// `Proxiima.Goals.requestReplay`. The probe sees writes earlier in this session.
+    /// Probe replay before Engine target admission, including Goal writes earlier in this session.
     async fn resolve_goal_replay(
         &mut self,
         req: GoalReplayRequest<'_, '_>,

@@ -17,8 +17,6 @@ use crate::PgStorage;
 use crate::error::with_bounded_retry;
 use proxiima_core::goal_collaboration::GoalEditPermit;
 
-// `Proxiima.Goals.retryTransaction`.
-
 pub(crate) async fn create_goal_atomic(
     storage: &PgStorage,
     req: &CreateGoalAtomicRequest<'_>,
@@ -222,14 +220,14 @@ pub(crate) async fn transition_goal_atomic_in_pool(
         Some(req.prior_goal_id),
         GoalChange::from(req.transition),
         req.context,
-        // `Proxiima.Goals.promptRevision`.
         RowColumns {
             store_number,
             writer,
+            // `Proxiima.Goals.promptRevision`.
             text: prior.text.as_deref(),
             write_act_t: None,
         },
-        // `Proxiima.Goals.blocksClose`.
+        // Decompose takes the same parent lifecycle lock through the child dependency.
         if req.transition == proxiima_core::verbs::goal_write::GoalTransitionKind::Abandon {
             PostLockGuard::NoOpenChildren
         } else {
@@ -318,10 +316,10 @@ pub(crate) async fn achieve_goal_atomic_in_pool(
         Some(req.prior_goal_id),
         GoalChange::Achieve,
         req.context,
-        // `Proxiima.Goals.promptRevision`.
         RowColumns {
             store_number,
             writer,
+            // `Proxiima.Goals.promptRevision`.
             text: prior.text.as_deref(),
             write_act_t: None,
         },
@@ -387,6 +385,7 @@ async fn prepare_modified_goal(
     ),
     StorageError,
 > {
+    // `Proxiima.Goals.editPins`.
     let evidence = match &req.evidence {
         Some(evidence) => validate_evidence_in_owner(tx, &req.owner, evidence).await?,
         None => carried_evidence(tx, &req.owner, req.prior_goal_id, store_number).await?,
@@ -573,13 +572,13 @@ pub(crate) async fn decompose_goal_atomic_in_pool(
         return Ok(replay);
     }
 
-    // `Proxiima.Goals.admissionOrder`.
+    // One union lock makes crossed child target sets wait in the same sorted order.
     let lock_items: Vec<&super::GoalWritePreparation> = prepared_children
         .iter()
         .map(|(child, _, _)| &child.preparation)
         .collect();
     lock_prepared_goal_writes(&mut tx, &lock_items).await?;
-    // `Proxiima.Goals.parentRevision`.
+    // Recheck the parent after locking so an intervening transition aborts before the first child write.
     validate_active_head(&mut tx, &req.owner, req.parent_goal_id).await?;
 
     let mut children = Vec::with_capacity(prepared_children.len());

@@ -1722,7 +1722,7 @@ const GOAL_WORK_ONLY: &str =
     "a Goal work unit writes only its Goal work commands and the Facts they declare";
 
 impl GoalWorkUnitOfWork<'_> {
-    /// `Proxiima.Goals.not_core_execution`. Apply the host command, then write the
+    /// Apply one [`GoalWorkCommand`] on this unit's Goal, then write the
     /// Facts it declares (`facts`, each on the Goal's owner) when the
     /// command was [`HostStateOutcome::Permitted`]. Each write is admitted
     /// by the Goal work gate on the owner, never by the Fact write ceiling,

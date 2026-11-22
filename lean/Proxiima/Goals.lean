@@ -33,7 +33,7 @@ inductive Event where
   | set
   | decompose
   | modify
-  | pause
+  | pause (pending : PendingWork)
   | resume
   | achieve
   | abandon
@@ -52,20 +52,20 @@ def lifecycle : GoalState → Event → Except LifecycleRefusal GoalState
   | .Active, .set => .error .wrongState
   | .Active, .decompose => .ok birthState
   | .Active, .modify => .ok .Active
-  | .Active, .pause => .ok .Paused
+  | .Active, (.pause _) => .ok .Paused
   | .Active, .resume => .error .wrongState
   | .Active, .achieve => .ok .Achieved
   | .Active, .abandon => .ok .Abandoned
   | .Paused, .set => .error .wrongState
   | .Paused, .decompose => .error .wrongState
   | .Paused, .modify => .error .wrongState
-  | .Paused, .pause => .error .wrongState
+  | .Paused, (.pause _) => .error .wrongState
   | .Paused, .resume => .ok .Active
   | .Paused, .achieve => .error .wrongState
   | .Paused, .abandon => .ok .Abandoned
-  | .Achieved, .set | .Achieved, .decompose | .Achieved, .modify | .Achieved, .pause
+  | .Achieved, .set | .Achieved, .decompose | .Achieved, .modify | .Achieved, (.pause _)
   | .Achieved, .resume | .Achieved, .achieve | .Achieved, .abandon => .error .wrongState
-  | .Abandoned, .set | .Abandoned, .decompose | .Abandoned, .modify | .Abandoned, .pause
+  | .Abandoned, .set | .Abandoned, .decompose | .Abandoned, .modify | .Abandoned, (.pause _)
   | .Abandoned, .resume | .Abandoned, .achieve | .Abandoned, .abandon => .error .wrongState
 
 /-- Allowed predecessors and successors on the plain write path. -/
@@ -88,22 +88,10 @@ def stateLabel : GoalState → String
   | .Achieved => "Achieved"
   | .Abandoned => "Abandoned"
 
-/-- Who owns execution and the interpretation of a pause disposition. -/
-inductive Execution where
-  | host
-  | core
-  deriving DecidableEq
-
-/-- Execution belongs to the host. -/
-def execution : Execution := .host
-
-/-- Core scheduling would assign Goal effects to the persistence layer. -/
-theorem not_core_execution : execution ≠ .core := by decide
-
 /-- Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike. -/
 def blocksClose (child : GoalState) : Bool := child.isOpen
 
-/-- A parent whose sub-goals were all abandoned could only be abandoned, though its work may be done without them. -/
+/-- An abandoned child leaves the parent free to close. -/
 theorem not_achieve_needs_an_achieved_child : blocksClose .Abandoned = false := by decide
 
 /-- Whether close-Fact presence agrees exactly with terminal state. -/
@@ -146,12 +134,12 @@ def editPins : PinEdit → RevisionField
 /-- Declaring writes supply a prompt and lifecycle changes carry the stored prompt byte for byte. -/
 def promptRevision : Event → RevisionField
   | .set | .decompose | .modify => .replace
-  | .pause | .resume | .achieve | .abandon => .carry
+  | (.pause _) | .resume | .achieve | .abandon => .carry
 
 /-- A child keeps the parent series chosen at birth alongside its exact parent dependency under `Causa.GoalStep`. -/
 def parentRevision : Event → RevisionField
   | .set | .decompose => .replace
-  | .modify | .pause | .resume | .achieve | .abandon => .carry
+  | .modify | (.pause _) | .resume | .achieve | .abandon => .carry
 
 /-- Source classes considered when admitting Goal evidence. -/
 inductive EvidenceSource where
@@ -173,7 +161,7 @@ def evidenceAdmission : EvidenceSource → EvidenceCheck
 /-- Which Goal operations can supply an evidence statement, always optional. -/
 def mayDeclareEvidence : Event → Bool
   | .set | .decompose | .modify | .achieve => true
-  | .pause | .resume | .abandon => false
+  | (.pause _) | .resume | .abandon => false
 
 /-- Goal evidence is read from the exact declaration whose pins are projected by `Causa.goalDeclaredTargetIds`. -/
 def evidenceDeclaration : String := "goal.evidence_t"
@@ -274,17 +262,31 @@ def predecessorArbitration : HeadComparison → CommitDecision
   | .namedStale => .conflict
   | .unnamedDrift => .retry
 
-/-- Transient transaction refusals on the pool-scoped idempotent write path. -/
-inductive TransactionRefusal where
-  | serialization
-  | deadlock
+/-- Outcomes classified by the pool-scoped storage retry loop. Retryable includes SQLSTATE 40001, 40P01 and 55P03 and application conflicts such as head or authority footprint drift. -/
+inductive TransactionOutcome where
+  | retryable
+  | memoryIdCollision
   | other
   deriving DecidableEq
 
-/-- Whether to retry the complete pool-scoped Goal transaction. -/
-def retryTransaction : TransactionRefusal → Bool
-  | .serialization | .deadlock => true
-  | .other => false
+/-- Whether the applicable retry budget is still available. -/
+inductive RetryBudget where
+  | available
+  | exhausted
+  deriving DecidableEq
+
+/-- What the retry loop does with the outcome of one transaction attempt. -/
+inductive RetryAction where
+  | retry
+  | returnOutcome
+  | refuseCollision
+  deriving DecidableEq
+
+/-- Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation. -/
+def retryTransaction : TransactionOutcome → RetryBudget → RetryAction
+  | .retryable, .available | .memoryIdCollision, .available => .retry
+  | .memoryIdCollision, .exhausted => .refuseCollision
+  | .retryable, .exhausted | .other, _ => .returnOutcome
 
 /-- The steps of Goal revision persistence, from owner fencing to target revalidation. -/
 inductive AdmissionStep where
@@ -341,19 +343,26 @@ inductive ChangeFields where
 def changeFields : Event → ChangeFields
   | .set | .modify | .resume | .achieve | .abandon => .plain
   | .decompose => .parent
-  | .pause => .pending
+  | (.pause _) => .pending
 
-/-- The Goal's prompt and title are trimmed, nonblank and within their character bounds at admission. -/
-def displayAdmitted : (nonblank : Bool) → (withinBound : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
+/-- The title or prompt’s length after trimming surrounding Unicode White_Space. -/
+inductive TrimmedDisplayLength where
+  | blank
+  | withinBound
+  | oversized
+  deriving DecidableEq
+
+/-- The Rust input boundary uses str::trim, counts the remaining Unicode scalar values and admits a title or prompt with length from one through its field limit. -/
+def displayAdmitted : TrimmedDisplayLength → Bool
+  | .withinBound => true
+  | .blank | .oversized => false
 
 /-- An edit uses the named Goal's owner and an explicit space can only narrow that selection. -/
 def editSpaceMatches : (explicitSpace : Bool) → (sameOwner : Bool) → Bool
   | false, false | false, true | true, true => true
   | true, false => false
 
-/-- A state filter is a union of case-insensitive labels, and binds its canonical set into the cursor. -/
+/-- Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter. -/
 def stateFilter : (filterOmitted : Bool) → (inCanonicalSet : Bool) → Bool
   | true, false | true, true | false, true => true
   | false, false => false
@@ -370,7 +379,7 @@ def readEvidence : (goalVisible : Bool) → Bool
 
 /-- Earlier assignment belongs only to the historical version that declared it. -/
 def reusesAssignment : Event → Bool
-  | .set | .decompose | .modify | .pause | .resume | .achieve | .abandon => false
+  | .set | .decompose | .modify | (.pause _) | .resume | .achieve | .abandon => false
 
 /-- Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head. -/
 def recallActiveGoal : (hasMotivation : Bool) → (perspectiveMatches : Bool) → Bool

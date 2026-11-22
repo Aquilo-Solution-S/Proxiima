@@ -159,7 +159,7 @@ impl Engine {
         })
     }
 
-    /// `Proxiima.Goals.birthState`.
+    /// Create an Active Goal from a typed payload.
     ///
     /// # Errors
     ///
@@ -182,7 +182,7 @@ impl Engine {
             .await
     }
 
-    /// `Proxiima.Goals.birthState`.
+    /// Create an Active Goal from a dynamic protocol payload.
     ///
     /// # Errors
     ///
@@ -245,7 +245,7 @@ impl Engine {
             .map_err(map_goal_storage_error)
     }
 
-    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.blocksClose`.
+    /// Pause, resume, or abandon a Goal. Abandon applies to this series alone.
     ///
     /// # Errors
     ///
@@ -286,7 +286,7 @@ impl Engine {
         transition_goal_authorized(&self.storage().goal_command, &atomic, permit.permit()).await
     }
 
-    /// `Proxiima.Goals.blocksClose` and `Proxiima.Goals.mayDeclareEvidence`.
+    /// Mark an Active Goal achieved with optional evidence.
     ///
     /// # Errors
     ///
@@ -294,7 +294,7 @@ impl Engine {
     /// Owner nor holds a grant on this Goal that works it;
     /// `InvalidArgument` (field `goal`) when a child is
     /// still open (`goal has open children: <handle>, ...`, naming each open
-    /// child's current head) or every child is Abandoned; `InvalidArgument`
+    /// child's current head); `InvalidArgument`
     /// or `NotFound` for rejected references; or `Internal` for storage
     /// failures.
     pub async fn mark_goal_achieved(
@@ -335,7 +335,7 @@ impl Engine {
             .map_err(|err| map_goal_edit_storage_error(permit.permit(), err))
     }
 
-    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.editPins`.
+    /// Replace the content of an Active Goal.
     ///
     /// # Errors
     ///
@@ -417,7 +417,7 @@ impl Engine {
             .map_err(|err| map_goal_edit_storage_error(permit.permit(), err))
     }
 
-    /// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.parentRevision`.
+    /// Create Active child Goals under the named parent.
     ///
     /// # Errors
     ///
@@ -471,7 +471,7 @@ impl Engine {
             .map_err(map_goal_storage_error)
     }
 
-    /// `Proxiima.Goals.publishChangeFact`.
+    /// Prepare a publication stamp for a listenable Goal change.
     ///
     /// The stamp binds what [`Self::resolve_publication`] binds for any other
     /// listenable Fact: the configured source, the token-certified model id
@@ -643,7 +643,7 @@ impl Engine {
         Ok(())
     }
 
-    /// `Proxiima.Goals.evidenceAdmission`.
+    /// Local evidence needs caller read authority. Storage rechecks its live kind in the transaction.
     async fn validate_goal_evidence_authorized<'a>(
         &self,
         authz: &AuthzContext,
@@ -783,7 +783,6 @@ mod tests {
         )
     }
 
-    // `Proxiima.Goals.blocksClose`.
     #[test]
     fn goal_tree_refusals_map_to_invalid_argument() {
         let a = GoalId::new(uuid::Uuid::from_u128(0x0001));

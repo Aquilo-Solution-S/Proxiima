@@ -199,7 +199,8 @@ pub(crate) async fn prepare_memory_admission_with_extra_targets(
     .await
 }
 
-/// `Proxiima.Goals.reserveChangeFact` and `Proxiima.Goals.admissionOrder`.
+/// Insert a lifecycle Fact at an identity already held in the Goal’s lock union.
+/// The caller supplies sidecar tables only for the typed Fact it will write.
 /// The return time is absent for a replay.
 pub(crate) async fn ingest_unpinned_fact_at(
     tx: &mut Transaction<'_, Postgres>,
@@ -239,7 +240,7 @@ pub(crate) async fn ingest_unpinned_fact_at(
         PreparedMemoryAdmission::Replay(outcome) => return Ok((outcome, None)),
     };
     let occurred_at = prepared.occurred_at;
-    // `Proxiima.Goals.admissionOrder`.
+    // Reacquiring a Memory handle here would invert the lock order after the Goal lifecycle locks.
     let outcome =
         materialize_prepared_memory_admission_after_locks(tx, prepared, draft.blob_id, None)
             .await?;
@@ -950,7 +951,7 @@ pub(crate) async fn materialize_prepared_memory_admission(
     materialize_prepared_memory_admission_after_locks(tx, prepared, blob_id, content_id).await
 }
 
-/// `Proxiima.Goals.admissionOrder`. The caller owns locking; materialization still validates the head.
+/// Materialize under the caller’s lock union and still validate the head here.
 pub(crate) async fn materialize_prepared_memory_admission_after_locks(
     tx: &mut Transaction<'_, Postgres>,
     mut prepared: Box<PreparedMemoryAdmissionNew>,

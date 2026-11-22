@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Unmotivated Active Goals remain recallable in their selected memory space.
 
 use super::goal_evidence_kinds::handle_of;
 use super::*;

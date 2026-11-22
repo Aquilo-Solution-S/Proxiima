@@ -15,7 +15,7 @@ pub(super) struct LifecycleWrite<'a> {
     pub(super) evidence: &'a [EvidenceTarget],
 }
 
-/// `Proxiima.Goals.evidenceDeclaration`.
+/// Finish each Goal write by indexing its declared references.
 pub(super) async fn lifecycle_outcome(
     tx: &mut Transaction<'_, Postgres>,
     write: LifecycleWrite<'_>,

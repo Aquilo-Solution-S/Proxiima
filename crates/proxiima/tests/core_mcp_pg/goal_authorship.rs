@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Direct MCP Goal writes record the operator authorship category.
 
 use proxiima_core::GoalId;
 use proxiima_storage_pg::test_fixtures::goal_authorship_category;

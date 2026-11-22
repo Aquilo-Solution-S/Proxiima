@@ -1,4 +1,4 @@
-//! `Proxiima.Goals.clockSource` and `Proxiima.Goals.promptRevision`
+//! Prompt and timestamp projections exercised through the Goal write and read paths.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -752,7 +752,7 @@ async fn stored_text(pg: &PgStorage, id: GoalId) -> TestResult<Option<String>> {
     )
 }
 
-// `Proxiima.Goals.promptRevision`.
+// `Proxiima.Goals.requestReplay`.
 goal_test!(
     a_transition_recorded_before_the_change_still_replays,
     |h| async {
@@ -973,7 +973,6 @@ async fn goal_count(pg: &PgStorage) -> TestResult<i64> {
     )
 }
 
-// `Proxiima.Goals.promptRevision`.
 goal_test!(the_database_refuses_a_blank_text, |h| async {
     // The verb stores the text it is given, so the CHECK is what refuses a
     // text of ASCII whitespace only, and the write leaves no row behind.
@@ -993,7 +992,6 @@ goal_test!(the_database_refuses_a_blank_text, |h| async {
     Ok(())
 });
 
-// `Proxiima.Goals.promptRevision`.
 goal_test!(
     export_carries_the_text_and_erase_takes_it_with_the_row,
     |h| async {

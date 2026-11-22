@@ -4,7 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-/// One episode token. Goal pins keep `Proxiima.Goals.replayIdentity`.
+/// Protocol write-act Fact: one episode token. Members pin this `t`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriteActV1 {
     pub episode_id: uuid::Uuid,

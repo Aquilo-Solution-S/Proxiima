@@ -263,7 +263,6 @@ async fn surroundings(
         u32::try_from(crate::storage_ports::other_stores::MAX_LINEAGE_REMOTE_ORIGINS)
             .expect("the remote origin budget fits a page limit");
     let limit = super::resolve_page_limit(Some(args.limit))?.min(remote_limit);
-    // `Proxiima.Goals.readRevision`.
     let goal = super::goal_reads::get_goal(ctx.clone(), &args.goal).await?;
     let root = EntityRef::Goal(ctx.resolve_goal(&goal.goal)?);
     let root_id = endpoint_id(root);

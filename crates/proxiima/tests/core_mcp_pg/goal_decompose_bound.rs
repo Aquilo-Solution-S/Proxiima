@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! The largest root key fits every child key at the maximum child count.
 
 use super::goal_evidence_kinds::{Env, handle_of};
 

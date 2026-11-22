@@ -23,7 +23,7 @@ pub struct GoalWriteCommand {
     pub handle: Option<Uuid>,
     pub schema_id: String,
     pub title: String,
-    /// `Proxiima.Goals.promptRevision`.
+    /// Prompt text as stored for this version. `None` means it was never recorded.
     pub text: Option<String>,
     pub state: GoalState,
     pub request_id: String,
@@ -34,7 +34,7 @@ pub struct GoalWriteCommand {
     pub mint_write_act: bool,
     /// Attach an already-minted write-act when `mint_write_act` is false.
     pub write_act_t: Option<Uuid>,
-    /// `Proxiima.Goals.parentRevision`.
+    /// Parent series handle initially set by decompose.
     pub parent_handle: Option<Uuid>,
 }
 
@@ -46,14 +46,14 @@ pub struct GoalWriteOutcome {
     pub replay: bool,
 }
 
-/// `Proxiima.Goals.reserveChangeFact`. Reservation mints IDs without writing rows.
+/// A reserved lifecycle Fact identity. Its row is written only under the complete lock union.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReservedFactIdentity {
     pub(crate) handle: Uuid,
     pub(crate) t: Uuid,
 }
 
-/// `Proxiima.Goals.admissionOrder`.
+/// A Goal write prepared before acquiring the lifecycle lock union.
 #[derive(Debug)]
 pub(crate) struct PreparedGoalWrite {
     fresh_handle: bool,
@@ -62,17 +62,17 @@ pub(crate) struct PreparedGoalWrite {
     writer: proxiima_core::WriterAttribution,
     handle: Uuid,
     t: Uuid,
-    /// `Proxiima.Goals.predecessorArbitration`.
+    /// The predecessor named by the successor request, even if it was already stale.
     expected_prior_t: Option<Uuid>,
-    /// `Proxiima.Goals.predecessorArbitration`.
+    /// The head seen during preparation, re-read under `FOR UPDATE` after the lifecycle lock.
     expected_head_t: Option<Uuid>,
     command: GoalWriteCommand,
     targets: Vec<Uuid>,
-    /// `Proxiima.Goals.evidenceAdmission`.
+    /// The store this write mints into. Other store numbers identify evidence read at its source.
     store_number: u16,
     write_act_identity: Option<ReservedFactIdentity>,
     close_fact_identity: Option<ReservedFactIdentity>,
-    /// `Proxiima.Goals.reserveChangeFact`.
+    /// Joins the lock union. The `GoalChangeFact` owns the identity used for persistence.
     change_fact_identity: Option<ReservedFactIdentity>,
 }
 
@@ -119,7 +119,8 @@ pub(crate) struct GoalRequestRow {
     pub write_act_t: Option<Uuid>,
 }
 
-/// `Proxiima.Goals.requestReplay`.
+/// Look up the canonical request row, with a fallback to the admitted Goal
+/// when its replay declaration is absent.
 pub(crate) async fn load_goal_by_request_id(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -217,7 +218,8 @@ pub async fn write_goal(
     }
 }
 
-/// `Proxiima.Goals.requestReplay`.
+/// Prepare a low-level write after command replay comparison. A request row
+/// short-circuits before owner creation, UUID minting, or head mutation.
 pub(crate) async fn prepare_goal_write(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -387,7 +389,7 @@ impl<'a> GoalChangeFact<'a> {
     }
 }
 
-/// `Proxiima.Goals.admissionOrder`.
+/// Join the change Fact reservation to the write’s lock union.
 pub(crate) fn attach_goal_change_fact_reservation(
     preparation: GoalWritePreparation,
     change_fact: Option<&GoalChangeFact<'_>>,
@@ -404,7 +406,8 @@ pub(crate) fn attach_goal_change_fact_reservation(
     }
 }
 
-/// `Proxiima.Goals.publishChangeFact`.
+/// Compose the change Fact here because storage minted the Goal version and
+/// series identities and holds the series lock.
 pub(crate) async fn persist_goal_change_fact(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -459,6 +462,7 @@ pub(crate) async fn persist_goal_change_fact(
         request: None,
     };
     let tables = sidecars.tables_for_payloads(std::slice::from_ref(&payload))?;
+    // `Proxiima.Goals.reserveChangeFact`.
     let (outcome, occurred_at) = ingest_unpinned_fact_at(
         tx,
         &prepared.owner,
@@ -559,7 +563,7 @@ async fn persist_goal_lifecycle_rows(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedGoalWrite,
 ) -> Result<(), StorageError> {
-    // `Proxiima.Goals.reserveChangeFact`.
+    // Write-act and close Facts use the identities already held in the lock union.
     if let Some(identity) = prepared.write_act_identity {
         ingest_write_act_at(tx, &prepared.owner, prepared.writer, identity).await?;
     }
@@ -645,11 +649,12 @@ fn goal_head_conflict(
     }
 }
 
-/// `Causa.GoalPins`, `Proxiima.Goals.closeFactPresence` and `Proxiima.Goals.reusesAssignment`.
+/// Append a Goal revision without copying historical assignment.
 async fn insert_goal_revision(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedGoalWrite,
 ) -> Result<(), StorageError> {
+    // `Proxiima.Goals.reusesAssignment`.
     sqlx::query(
         "INSERT INTO proxiima_core.goal
             (handle, t, owner_id, title, text, state, request_id, close_fact_t,
@@ -699,7 +704,7 @@ async fn validate_goal_targets_live(
     reserved_lifecycle: &[Option<Uuid>; 2],
     store_number: u16,
 ) -> Result<(), StorageError> {
-    // `Causa.goal_motivations_valid` and `Proxiima.Goals.evidenceAdmission`.
+    // A successor readmits local targets under lock. An older Goal may retain historical pins.
     for motivation in &draft.motivated_by {
         ensure_live_memory_kind(
             tx,
@@ -722,6 +727,7 @@ async fn validate_goal_targets_live(
             ));
         }
     }
+    // `Proxiima.Goals.evidenceAdmission`.
     for evidence in draft
         .evidence_t
         .iter()

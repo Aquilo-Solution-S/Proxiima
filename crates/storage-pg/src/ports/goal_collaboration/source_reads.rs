@@ -16,7 +16,8 @@ struct Source {
     route: Option<(GoalHandle, OwnerId)>,
 }
 
-/// `Proxiima.Goals.sourceAdmission`.
+/// Discovery selects the footprint. Revalidate the read after locking all owners
+/// and Goals in the transaction that writes the row.
 pub(crate) struct SourceReads {
     sources: Vec<Source>,
 }
@@ -98,7 +99,8 @@ impl SourceReads {
             .flatten()
     }
 
-    /// `Proxiima.Goals.sourceAdmission`. Grant, publication and binding commands share this head lock.
+    /// Lock all Goal heads in order, including the destination. Grant, publication
+    /// and binding commands take the same head locks.
     pub(crate) async fn lock_goals(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -120,6 +122,7 @@ impl SourceReads {
         roles: &OwnerRoles,
         endpoints: &[EdgeEndpoint],
     ) -> Result<(), StorageError> {
+        // `Proxiima.Goals.sourceAdmission`.
         let current = Self::discover(storage, tx, scope, endpoints).await?;
         if self.sources != current.sources {
             return Err(StorageError::Retryable(
@@ -158,7 +161,7 @@ impl SourceReads {
     }
 }
 
-/// `Proxiima.Goals.sourceAdmission` after owner fencing.
+/// Acquire the complete Goal footprint in stable order after the owner fences.
 pub(crate) async fn lock_goal_footprint(
     tx: &mut Transaction<'_, Postgres>,
     mut goals: Vec<(GoalHandle, OwnerId)>,

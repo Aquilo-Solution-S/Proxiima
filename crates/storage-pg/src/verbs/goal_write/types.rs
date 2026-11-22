@@ -25,7 +25,8 @@ pub(super) struct EvidenceTarget {
     pub(super) memory_id: MemoryId,
 }
 
-/// `Proxiima.Goals.promptRevision`.
+/// The row columns outside the draft. Lifecycle writes pass the prior
+/// version’s text as stored, including an unknown prompt.
 /// Historical rows can lack a stored prompt.
 #[derive(Clone, Copy)]
 pub(super) struct RowColumns<'a> {

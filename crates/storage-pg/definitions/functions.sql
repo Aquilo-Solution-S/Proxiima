@@ -1082,12 +1082,13 @@ BEGIN
 END;
 $function$;
 
+-- `Proxiima.Goals.parentRevision`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_parent_fixed()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
 BEGIN
-    -- `Proxiima.Goals.parentRevision`.
+    -- #514: a series keeps the parent it was decomposed under.
     IF EXISTS (
         SELECT 1
           FROM proxiima_core.goal prior
@@ -1109,7 +1110,7 @@ BEGIN
 END;
 $function$;
 
--- `Causa.GoalPins`, `Causa.RetainedGoalTerminalCloseFactValid`, and `Proxiima.Goals.evidenceAdmission`.
+-- `Causa.goal_motivations_valid`. The trigger also checks declared pins against erasure.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_pin_target_checks()
  RETURNS trigger
  LANGUAGE plpgsql

@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Typed Goal write requests. PostgreSQL implements their persistence.
 
 use crate::ProtocolError;
 use crate::publication::PublicationStamp;
@@ -37,7 +37,7 @@ pub enum GoalState {
 }
 
 impl GoalState {
-    /// `Proxiima.Goals.stateLabel`.
+    /// Title Case label returned by Goal reads.
     #[must_use]
     pub const fn list_label(self) -> &'static str {
         match self {
@@ -48,7 +48,7 @@ impl GoalState {
         }
     }
 
-    /// `Proxiima.Goals.stateFilter`.
+    /// Lowercase state label accepted by the filter parser.
     #[must_use]
     pub const fn filter_label(self) -> &'static str {
         match self {
@@ -59,7 +59,7 @@ impl GoalState {
         }
     }
 
-    /// `Proxiima.Goals.stateFilter`.
+    /// Parse one case-insensitive filter member. Unknown labels are refused.
     #[must_use]
     pub fn from_filter_label(raw: &str) -> Option<Self> {
         match raw.to_ascii_lowercase().as_str() {
@@ -71,7 +71,7 @@ impl GoalState {
         }
     }
 
-    /// `Proxiima.Goals.mayTransitionTo`.
+    /// Check a plain transition. Achievement uses the dedicated achieve verb.
     #[must_use]
     pub const fn may_transition_to(self, next: Self) -> bool {
         matches!(
@@ -81,7 +81,7 @@ impl GoalState {
         )
     }
 
-    /// `Proxiima.Goals.lifecycle`. Storage applies `Proxiima.Goals.blocksClose` under its lifecycle lock.
+    /// `Proxiima.Goals.lifecycle`. This checks only the Goal state. Storage checks child closure after locking.
     #[must_use]
     pub const fn may_achieve(self) -> bool {
         matches!(self, Self::Active)
@@ -118,7 +118,9 @@ impl std::str::FromStr for GoalState {
     }
 }
 
-/// `Proxiima.Goals.lifecycle` and `Proxiima.Goals.PendingWork`.
+/// A plain lifecycle transition. Pause alone carries a queued-work disposition.
+///
+/// Achievement has a dedicated write that may carry evidence.
 ///
 /// ```compile_fail
 /// use proxiima_core::PendingWork;
@@ -243,7 +245,7 @@ impl GoalDraft {
 pub struct GoalWriteOutcome {
     pub goal_id: GoalId,
     pub goal_handle: crate::goal_collaboration::GoalHandle,
-    /// Count of derived `Causa.GoalPins` reference rows.
+    /// Number of reference index rows derived from the declared topology.
     pub edge_count: usize,
     /// True when the same `(owner, request_id)` existed and the
     /// body matched — see docs/protocol.md
@@ -252,8 +254,13 @@ pub struct GoalWriteOutcome {
 
 pub use crate::verbs::idempotency::IdempotencyKey;
 
-/// `Proxiima.Goals.evidenceAdmission`.
-/// The other-store variant requires the read witness issued by that service.
+/// A memory a Goal rests on: held by this store, or by another registered
+/// store the caller was shown (`remote`).
+///
+/// A remote reference exists only with the [`ReadOrigin`] the other-stores
+/// service issued for it, so a Goal cannot name a foreign memory its writer
+/// could not read. The witness is not serialized: a deserialized reference is
+/// local, and a foreign id on it is refused where the Goal is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GoalEvidenceRef {
     memory_id: MemoryId,
@@ -328,8 +335,7 @@ impl GoalDependencyRef {
     }
 }
 
-/// `Causa.GoalPins`.
-/// `Proxiima.Goals.evidenceDeclaration`.
+/// The exact motivating Perspectives, dependency Goals and evidence a Goal declares.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct GoalTopologyWrite {
     motivated_by: Vec<GoalMotivationRef>,
@@ -356,7 +362,7 @@ impl<'de> serde::Deserialize<'de> for GoalTopologyWrite {
 }
 
 impl GoalTopologyWrite {
-    /// `Causa.GoalPins`.
+    /// Declare optional motivation, dependencies and evidence.
     ///
     /// # Errors
     ///
@@ -424,7 +430,7 @@ pub struct GoalPayloadWrite {
 }
 
 impl GoalPayloadWrite {
-    /// `Proxiima.Goals.displayAdmitted`.
+    /// Encode a typed Goal payload with admitted display text.
     ///
     /// # Errors
     ///
@@ -495,7 +501,7 @@ impl<P> GoalCreateRequest<P> {
     /// for the signed-in owner. Use [`Self::with_authorship`] for
     /// system-originated goals.
     ///
-    /// `Causa.goal_motivations_valid`.
+    /// Optional motivations name exact Perspective versions.
     ///
     /// # Panics
     ///
@@ -549,7 +555,7 @@ impl<P> GoalCreateRequest<P> {
 pub struct GoalAtomicContext<'a> {
     pub registry: &'a crate::SpiiceRegistryFrozen,
     pub author_self_perspective_id: Option<MemoryId>,
-    /// `Proxiima.Goals.publishChangeFact`.
+    /// The stamp used to capture the change Fact when its schema is listenable.
     pub publication: Option<PublicationStamp<'a>>,
 }
 
@@ -557,7 +563,8 @@ pub struct GoalAtomicContext<'a> {
 pub struct CreateGoalAtomicRequest<'a> {
     pub draft: GoalDraft,
     pub context: GoalAtomicContext<'a>,
-    /// `Proxiima.Goals.replayIdentity`. A bound episode fails if a replay would replace its write-act pin.
+    /// A fresh episode Goal pins this write-act Fact. A replay keeps the original
+    /// pin and the episode refuses a replay that would replace it.
     pub write_act_t: Option<MemoryId>,
 }
 
@@ -610,7 +617,7 @@ pub struct DecomposeGoalAtomicRequest<'a> {
     pub children: Vec<ChildGoalDraft>,
 }
 
-/// `Proxiima.Goals.requestReplay`.
+/// A normalized command for probing replay before re-admitting mutable targets.
 #[derive(Debug, Clone, Copy)]
 pub enum GoalReplayRequest<'request, 'context> {
     Create(&'request CreateGoalAtomicRequest<'context>),
@@ -728,6 +735,32 @@ mod goal_state_matrix_tests {
 
     // `Proxiima.Goals.stateLabel`.
     #[test]
+    fn state_labels_match_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            states: [GoalState; 1],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Goals.stateLabel"].clone())
+                .expect("the ledger emits all state labels");
+        let states: std::collections::BTreeSet<_> = rows.iter().map(|row| row.states[0]).collect();
+        assert_eq!(states, ALL.into_iter().collect());
+        for Vector {
+            states: [state],
+            out,
+        } in rows
+        {
+            assert_eq!(state.list_label(), out);
+        }
+    }
+
+    #[test]
     fn filter_and_list_labels_stay_paired() {
         for state in ALL {
             assert_eq!(
@@ -737,6 +770,69 @@ mod goal_state_matrix_tests {
             assert_eq!(state.filter_label().parse::<GoalState>().ok(), Some(state));
             assert_eq!(state.list_label().parse::<GoalState>().ok(), Some(state));
             assert_eq!(state.to_string(), state.list_label());
+        }
+    }
+}
+
+#[cfg(test)]
+mod goal_display_tests {
+    use super::{
+        GoalWriteBuildError, MAX_GOAL_TEXT_CHARS, MAX_GOAL_TITLE_CHARS,
+        normalize_goal_display_field,
+    };
+
+    // `Proxiima.Goals.displayAdmitted`.
+    #[test]
+    fn display_admission_matches_ledger_vectors() {
+        #[derive(Debug, serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Length {
+            Blank,
+            WithinBound,
+            Oversized,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            lengths: [Length; 1],
+            out: bool,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Goals.displayAdmitted"].clone())
+                .expect("the ledger emits all trimmed length choices");
+        assert_eq!(rows.len(), 3);
+
+        let fields = [
+            (
+                MAX_GOAL_TITLE_CHARS,
+                GoalWriteBuildError::InvalidTitle as fn(_) -> _,
+            ),
+            (MAX_GOAL_TEXT_CHARS, GoalWriteBuildError::InvalidText),
+        ];
+        for Vector {
+            lengths: [length],
+            out,
+        } in rows
+        {
+            for (max, wrap) in fields {
+                let count = match length {
+                    Length::Blank => 0,
+                    Length::WithinBound => max,
+                    Length::Oversized => max + 1,
+                };
+                let text = "é".repeat(count);
+                let input = format!("\u{2003}{text}\u{a0}");
+                let result = normalize_goal_display_field(&input, max, wrap);
+                assert_eq!(result.is_ok(), out, "{length:?}, bound {max}");
+                if let Ok(normalized) = result {
+                    assert_eq!(normalized, text);
+                }
+            }
         }
     }
 }

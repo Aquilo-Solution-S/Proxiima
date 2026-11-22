@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Goal series selectors, mutation-safe paging, and Fact reference filters.
 #![allow(clippy::missing_errors_doc, clippy::too_many_lines)]
 
 use proxiima_core::read_models::MemorySchemaSpec;
@@ -427,7 +427,6 @@ async fn goal_reference_filters_preserve_kind_and_owner_nondisclosure_under_rls(
 
 /// A goal page is the newest series across every readable owner, in pages that
 /// neither repeat nor skip a series, and never shows an owner the reader lacks.
-// `Proxiima.Goals.stateFilter`.
 #[tokio::test]
 async fn goal_pages_merge_the_heads_of_every_readable_owner() -> Result<(), TestError> {
     let (pg, _db) = fresh_pg("proxiima_goal_owner_merge").await;

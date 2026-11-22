@@ -670,7 +670,7 @@ async fn resolve_stance_subject(
     interpret::resolve_subject(ctx, handle).await
 }
 
-/// `Proxiima.Goals.evidenceAdmission`. Earlier episode slots already carry their kind.
+/// Earlier slots already carry their kind. Storage checks that the target is still live.
 async fn resolve_goal_evidence(
     ctx: &ToolCtx,
     slots: &EpisodeSlots,

@@ -55,7 +55,9 @@ async fn evidence_target(
     }
 }
 
-/// `Proxiima.Goals.editPins` and `Proxiima.Goals.evidenceDeclaration`.
+/// Carry evidence in its prior order, rechecking local targets and retaining
+/// remote ones already read at declaration.
+/// Read from the Goal row so a missing Memory cannot shorten the statement.
 pub(super) async fn carried_evidence(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

@@ -122,7 +122,7 @@ pub(super) fn validate_goal_transition(
     }
 }
 
-/// `Proxiima.Goals.lifecycle`. The write checks `Proxiima.Goals.blocksClose` after locking.
+/// Validate the head state here. The write checks the children after locking.
 pub(super) fn validate_goal_achievement(prior: GoalState) -> Result<(), StorageError> {
     if prior.may_achieve() {
         Ok(())
@@ -134,7 +134,7 @@ pub(super) fn validate_goal_achievement(prior: GoalState) -> Result<(), StorageE
     }
 }
 
-/// `Proxiima.Goals.evidenceDeclaration` and `Proxiima.Goals.editPins`.
+/// Keep the evidence in the successor declaration so the reference index is rebuildable.
 fn evidence_refs(evidence: &[EvidenceTarget]) -> Vec<proxiima_core::GoalEvidenceRef> {
     evidence
         .iter()

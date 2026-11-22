@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Goal evidence admits Facts and Abstractions through every MCP Goal write.
 
 use proxiima::testkit::SplitRoleDb;
 use proxiima::{BuiltProxiima, CoreMcpError, CoreMcpTools, Proxiima};

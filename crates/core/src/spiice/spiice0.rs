@@ -91,7 +91,8 @@ const CORE_PROJECTION: ProjectionSpec = ProjectionSpec {
     rank_source: RankSource::Projection,
 };
 
-/// `Proxiima.Goals.transferGoal`.
+/// `Proxiima.Goals.transferGoal`. The refusal is held in three places, with the
+/// DDL leg in the trigger that freezes `goal_head.owner_id`.
 const GOAL_NOT_TRANSFERABLE: TransferRule = TransferRule::NotTransferable {
     why: "a goal series cannot change owner: goal intent remains with its owner, \
           hard-context memory set and tool grants are the receiving owner's \
@@ -158,7 +159,7 @@ const WRITE_ACT_V1: SchemaContract = SchemaContract {
     natural_key_columns: crate::NaturalKeyDeclaration::EMPTY,
 };
 
-/// `Proxiima.Goals.publishChangeFact`.
+/// A protocol lifecycle Fact keyed on `memory.t`, without search, embedding, or transfer.
 const GOAL_CHANGE_V1: SchemaContract = SchemaContract {
     id: SchemaRef::new(SPIICE_ID, "goal-change", 1),
     kind: PayloadKind::Fact,

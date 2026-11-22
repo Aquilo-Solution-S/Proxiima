@@ -167,8 +167,9 @@ pub(crate) const MAX_STORAGE_ATTEMPTS: usize = 3;
 
 /// Re-run `op` (a full begin→body→commit transaction) up to
 /// [`MAX_STORAGE_ATTEMPTS`] times while it fails with
-/// [`StorageError::Retryable`]. Any other outcome (including a `Retryable`
-/// on the final attempt) is returned as-is.
+/// [`StorageError::Retryable`]. A memory ID collision gets one independent retry,
+/// even on the last transient attempt. A second collision is a constraint
+/// violation. Other outcomes, including a final `Retryable`, are returned as-is.
 ///
 /// `op` must be self-contained: it opens its own transaction each call, so a
 /// rolled-back deadlocked attempt leaves no partial state behind.
@@ -180,6 +181,7 @@ where
     let mut attempt = 1;
     let mut retried_collision = false;
     loop {
+        // `Proxiima.Goals.retryTransaction`.
         match op().await {
             Err(StorageError::MemoryIdCollision) if !retried_collision => {
                 retried_collision = true;

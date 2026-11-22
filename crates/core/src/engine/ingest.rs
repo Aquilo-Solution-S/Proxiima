@@ -724,12 +724,12 @@ impl Engine {
         )))
     }
 
-    /// `Proxiima.Goals.reserveChangeFact`.
     fn fact_schema_info(
         &self,
         schema_id: &crate::SchemaId,
         schema_version: SchemaVersion,
     ) -> Result<&SchemaInfo, ProtocolError> {
+        // `Proxiima.Goals.reserveChangeFact`.
         if schema_id.as_str() == <crate::GoalChangeV1 as crate::FactPayload>::SCHEMA_ID {
             return Err(ProtocolError::invalid_argument(
                 "schema_id",

@@ -1,6 +1,6 @@
 use super::{EvidenceTarget, GoalId, MemoryId, OwnerId, Postgres, StorageError, Transaction};
 
-/// `Proxiima.Goals.evidenceDeclaration`.
+/// Derive the reference index from `Causa.GoalPins` and the Goal’s declared topology.
 pub(super) async fn assert_goal_topology_references(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

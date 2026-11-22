@@ -154,7 +154,12 @@ pub(crate) async fn live_memory_owners_as(
     .map_err(map_err)
 }
 
-/// `Causa.goal_work_write_admitted`. Bind `app.work_goal` for this transaction.
+/// Name `owner` as the one owner whose Goal this transaction works, in
+/// `app.work_goal`, for every later statement of the Goal work unit:
+/// `scope` must work `owner`'s Goals ([`OwnerScope::goal_working_owners`]),
+/// or it names none. Under platform scope the platform policy already
+/// admits every row, so the setting widens nothing; an owner transaction's
+/// Goal writes narrow to `owner`.
 pub(crate) async fn bind_goal_work_owner(
     connection: &mut PgConnection,
     scope: &OwnerScope,

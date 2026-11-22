@@ -81,7 +81,8 @@ pub enum StorageError {
     /// message, so the engine maps it without parsing a string.
     #[error("publication refused: {0}")]
     PublicationRefused(#[from] crate::publication::PublicationError),
-    /// `Proxiima.Goals.blocksClose`.
+    /// Abandon or achieve met open children. `open` carries their current version
+    /// IDs in child series handle order.
     #[error("goal has open children: {}", join_goal_ids(open))]
     GoalChildrenOpen { open: Vec<crate::GoalId> },
     /// A write replayed an admission its request key already names, but

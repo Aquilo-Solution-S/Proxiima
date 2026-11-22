@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 fn authorship_declaration(authorship: &GoalAuthorship) -> &'static str {
-    // `Proxiima.Goals.replayIdentity`.
     match authorship {
         GoalAuthorship::User => "user",
         GoalAuthorship::System(SystemOrigin::Operator) => {
@@ -533,7 +532,7 @@ fn draft_declaration(draft: &GoalDraft) -> Result<ReplayDraft, StorageError> {
 pub(super) fn create_replay_declaration(
     req: &CreateGoalAtomicRequest<'_>,
 ) -> Result<ReplayDeclaration, StorageError> {
-    // `Proxiima.Goals.replayIdentity`.
+    // `Proxiima.Goals.replayIdentity`. Session Self and write-act binding stay outside the body.
     Ok(replay_declaration(ReplayCommand::Create(CreateBody {
         draft: draft_declaration(&req.draft)?,
     })))

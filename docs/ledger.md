@@ -28,11 +28,6 @@
 
 - wrong state
 
-**Execution**: Who owns execution and the interpretation of a pause disposition.
-
-- host
-- core
-
 **Pin edit**: Whether an edit omits its pin list or supplies its replacement, including an empty list.
 
 - omitted
@@ -104,11 +99,22 @@
 - conflict
 - retry
 
-**Transaction refusal**: Transient transaction refusals on the pool-scoped idempotent write path.
+**Transaction outcome**: Outcomes classified by the pool-scoped storage retry loop. Retryable includes SQLSTATE 40001, 40P01 and 55P03 and application conflicts such as head or authority footprint drift.
 
-- serialization
-- deadlock
+- retryable
+- memory id collision
 - other
+
+**Retry budget**: Whether the applicable retry budget is still available.
+
+- available
+- exhausted
+
+**Retry action**: What the retry loop does with the outcome of one transaction attempt.
+
+- retry
+- return outcome
+- refuse collision
 
 **Admission step**: The steps of Goal revision persistence, from owner fencing to target revalidation.
 
@@ -136,6 +142,12 @@
 - parent
 - pending
 
+**Trimmed display length**: The title or prompt’s length after trimming surrounding Unicode White_Space.
+
+- blank
+- within bound
+- oversized
+
 **Goal clock**: The two clocks projected by a Goal version read.
 
 - set at
@@ -147,8 +159,6 @@
 - selected version
 
 **birth state** = active: Set and decomposition start each new series here.
-
-**execution** = host: Execution belongs to the host.
 
 **title max** = 240: The largest trimmed Goal title in characters.
 
@@ -188,7 +198,8 @@
 stateDiagram-v2
   active --> active : decompose
   active --> active : modify
-  active --> paused : pause
+  active --> paused : pause (keep)
+  active --> paused : pause (discard)
   active --> achieved : achieve
   active --> abandoned : abandon
   paused --> active : resume
@@ -202,19 +213,22 @@ stateDiagram-v2
 | paused | set | refused: wrong state |
 | paused | decompose | refused: wrong state |
 | paused | modify | refused: wrong state |
-| paused | pause | refused: wrong state |
+| paused | pause (keep) | refused: wrong state |
+| paused | pause (discard) | refused: wrong state |
 | paused | achieve | refused: wrong state |
 | achieved | set | refused: wrong state |
 | achieved | decompose | refused: wrong state |
 | achieved | modify | refused: wrong state |
-| achieved | pause | refused: wrong state |
+| achieved | pause (keep) | refused: wrong state |
+| achieved | pause (discard) | refused: wrong state |
 | achieved | resume | refused: wrong state |
 | achieved | achieve | refused: wrong state |
 | achieved | abandon | refused: wrong state |
 | abandoned | set | refused: wrong state |
 | abandoned | decompose | refused: wrong state |
 | abandoned | modify | refused: wrong state |
-| abandoned | pause | refused: wrong state |
+| abandoned | pause (keep) | refused: wrong state |
+| abandoned | pause (discard) | refused: wrong state |
 | abandoned | resume | refused: wrong state |
 | abandoned | achieve | refused: wrong state |
 | abandoned | abandon | refused: wrong state |
@@ -265,7 +279,8 @@ stateDiagram-v2
 | set | replace | replace | yes | plain | no |
 | decompose | replace | replace | yes | parent | no |
 | modify | replace | carry | yes | plain | no |
-| pause | carry | carry | no | pending | no |
+| pause (keep) | carry | carry | no | pending | no |
+| pause (discard) | carry | carry | no | pending | no |
 | resume | carry | carry | no | plain | no |
 | achieve | carry | carry | yes | plain | no |
 | abandon | carry | carry | no | plain | no |
@@ -327,26 +342,28 @@ stateDiagram-v2
 
 - predecessor arbitration: A stale named predecessor conflicts and unnamed prediction drift retries the complete transaction.
 
-| transaction refusal | retry transaction |
-| --- | --- |
-| serialization | yes |
-| deadlock | yes |
-| other | no |
+| transaction outcome | retry budget | retry transaction |
+| --- | --- | --- |
+| retryable | available | retry |
+| retryable | exhausted | return outcome |
+| memory id collision | available | retry |
+| memory id collision | exhausted | refuse collision |
+| other | available | return outcome |
+| other | exhausted | return outcome |
 
-- retry transaction: Whether to retry the complete pool-scoped Goal transaction.
+- retry transaction: Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation.
 
-| bool | bool | source admission | publish change fact | display admitted | edit space matches | state filter | fact goal filter | recall active goal |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| yes | yes | yes | publish | yes | yes | yes | yes | yes |
-| yes | no | no | missing stamp | no | no | yes | no | no |
-| no | yes | no | skip | no | yes | yes | no | yes |
-| no | no | no | skip | no | yes | no | no | yes |
+| bool | bool | source admission | publish change fact | edit space matches | state filter | fact goal filter | recall active goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| yes | yes | yes | publish | yes | yes | yes | yes |
+| yes | no | no | missing stamp | no | yes | no | no |
+| no | yes | no | skip | yes | yes | no | yes |
+| no | no | no | skip | yes | no | no | yes |
 
 - source admission: A Goal write requires each discovered source to pass a read revalidated under the writing transaction's owner and Goal route locks.
 - publish change fact: A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction.
-- display admitted: The Goal's prompt and title are trimmed, nonblank and within their character bounds at admission.
 - edit space matches: An edit uses the named Goal's owner and an explicit space can only narrow that selection.
-- state filter: A state filter is a union of case-insensitive labels, and binds its canonical set into the cursor.
+- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
 - fact goal filter: Fact Goal filters match references to any readable revision of a selected series before page limiting.
 - recall active goal: Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head.
 
@@ -356,6 +373,14 @@ stateDiagram-v2
 | ordinary fact | no |
 
 - reserve change fact: A Goal-change Fact uses its reserved identity under the pre-held lock union, with no declared scope or read set.
+
+| trimmed display length | display admitted |
+| --- | --- |
+| blank | no |
+| within bound | yes |
+| oversized | no |
+
+- display admitted: The Rust input boundary uses str::trim, counts the remaining Unicode scalar values and admits a title or prompt with length from one through its field limit.
 
 | bool | read evidence |
 | --- | --- |
@@ -371,9 +396,7 @@ stateDiagram-v2
 
 - clock source: A Goal reports its series birth and the selected version's own write time.
 
-✗ **core execution**, rejected: Core scheduling would assign Goal effects to the persistence layer.
-
-✗ **achieve needs an achieved child**, rejected: A parent whose sub-goals were all abandoned could only be abandoned, though its work may be done without them.
+✗ **achieve needs an achieved child**, rejected: An abandoned child leaves the parent free to close.
 
 Causa — Audience
 
@@ -417,73 +440,73 @@ Causa — Authorization
 
 ✓ **forwarding role capped**: A forwarded role is bounded by `Causa.Role.forwardingCap`.
 
-✓ **forwarding role no management**: 
+✓ **forwarding role no management**
 
-✓ **forwarding role no administration**: 
+✓ **forwarding role no administration**
 
-✓ **forwarding role no goal work**: 
+✓ **forwarding role no goal work**
 
 Causa — Citations
 
-✓ **inst immutable blob**: 
+✓ **inst immutable blob**
 
-✓ **inst append only blob**: 
+✓ **inst append only blob**
 
-✓ **citation owner match**: 
+✓ **citation owner match**
 
 Causa — Compliance
 
-✓ **authorized**: 
+✓ **authorized**
 
-✓ **own schema**: 
+✓ **own schema**
 
 ✓ **in owner**: Ownership of every stored version in the erase selection.
 
-✓ **pin render live not forgotten**: 
+✓ **pin render live not forgotten**
 
-✓ **target in memories**: 
+✓ **target in memories**
 
-✓ **memory ids unique**: 
+✓ **memory ids unique**
 
-✓ **witness ids unique**: 
+✓ **witness ids unique**
 
-✓ **witness memory disjoint**: 
+✓ **witness memory disjoint**
 
-✓ **witness goal disjoint**: 
+✓ **witness goal disjoint**
 
-✓ **target witness compatible**: 
+✓ **target witness compatible**
 
-✓ **target not goal**: 
+✓ **target not goal**
 
-✓ **memories eq**: 
+✓ **memories eq**
 
-✓ **targets eq**: 
+✓ **targets eq**
 
-✓ **hard erase memory records kind**: 
+✓ **hard erase memory records kind**
 
-✓ **hard erase memory result well formed**: 
+✓ **hard erase memory result well formed**
 
-✓ **target in goals**: 
+✓ **target in goals**
 
-✓ **witness ids unique**: 
+✓ **witness ids unique**
 
-✓ **witness memory disjoint**: 
+✓ **witness memory disjoint**
 
-✓ **witness goal disjoint**: 
+✓ **witness goal disjoint**
 
-✓ **target witness compatible**: 
+✓ **target witness compatible**
 
-✓ **target not memory**: 
+✓ **target not memory**
 
-✓ **memories eq**: 
+✓ **memories eq**
 
-✓ **goals eq**: 
+✓ **goals eq**
 
-✓ **targets eq**: 
+✓ **targets eq**
 
-✓ **hard erase goal records kind**: 
+✓ **hard erase goal records kind**
 
-✓ **hard erase goal result well formed**: 
+✓ **hard erase goal result well formed**
 
 Causa — Goal collaboration authority
 
@@ -491,7 +514,7 @@ Causa — Goal collaboration authority
 
 ✓ **goal route is flattened**: Goal audience resolution agrees with `Causa.flattened` for grants in force.
 
-✓ **goal work write implies read**: 
+✓ **goal work write implies read**
 
 Causa — Pins
 
@@ -501,47 +524,47 @@ Causa — Goals
 
 ✓ **terminal close fact**: `Proxiima.Goals.closeFactPresence`.
 
-✓ **text nonblank**: 
+✓ **text nonblank**
 
-✓ **inst append only goal**: 
+✓ **inst append only goal**
 
-✓ **no open under closed**: 
+✓ **no open under closed**
 
-✓ **parents exist**: 
+✓ **parents exist**
 
-✓ **parent older**: 
+✓ **parent older**
 
-✓ **born below clock**: 
+✓ **born below clock**
 
-✓ **fresh**: 
+✓ **fresh**
 
-✓ **state x**: 
+✓ **state x**
 
-✓ **parent x**: 
+✓ **parent x**
 
-✓ **born x**: 
+✓ **born x**
 
-✓ **clock**: 
+✓ **clock**
 
-✓ **state eq**: 
+✓ **state eq**
 
-✓ **parent eq**: 
+✓ **parent eq**
 
-✓ **born eq**: 
+✓ **born eq**
 
-✓ **state old**: 
+✓ **state old**
 
-✓ **state x**: 
+✓ **state x**
 
-✓ **state eq**: 
+✓ **state eq**
 
-✓ **parent**: 
+✓ **parent**
 
-✓ **born**: 
+✓ **born**
 
-✓ **clock**: 
+✓ **clock**
 
-✓ **relabel is some**: 
+✓ **relabel is some**
 
 ✓ **relabel keeps shape**: The forest shape conditions preserved by relabeling.
 
@@ -551,29 +574,29 @@ Causa — Goals
 
 ✓ **birth preserves**: Preservation of forest validity by creating a root or a child of an Active series.
 
-✓ **set preserves**: 
+✓ **set preserves**
 
-✓ **decompose preserves**: 
+✓ **decompose preserves**
 
-✓ **pause preserves**: 
+✓ **pause preserves**
 
-✓ **resume preserves**: 
+✓ **resume preserves**
 
-✓ **modify preserves**: 
+✓ **modify preserves**
 
-✓ **achieve preserves**: 
+✓ **achieve preserves**
 
-✓ **abandon preserves**: 
+✓ **abandon preserves**
 
-✓ **goal step preserves inv**: 
+✓ **goal step preserves inv**
 
-✓ **empty forest inv**: 
+✓ **empty forest inv**
 
-✓ **reachable inv**: 
+✓ **reachable inv**
 
 ✓ **closed ancestor closes descendant**: Closure of all descendants of a closed Goal.
 
-✓ **descends born lt**: 
+✓ **descends born lt**
 
 ✓ **goal tree acyclic**: Acyclicity of the Goal tree.
 
@@ -583,11 +606,11 @@ Causa — Identity
 
 Causa — Memory
 
-✓ **erased pin target ext**: 
+✓ **erased pin target ext**
 
-✓ **inst append only content**: 
+✓ **inst append only content**
 
-✓ **inst immutable content**: 
+✓ **inst immutable content**
 
 ✓ **guided by only perspective**: Restriction of Goal guidance to Perspectives.
 
@@ -597,41 +620,41 @@ Causa — Memory
 
 ✓ **blob fa only**: The kinds eligible to cite a blob.
 
-✓ **inst append only memory**: 
+✓ **inst append only memory**
 
 ✓ **forget in keeps row**: Preservation of the admission's identity, kind and owner through forgetting.
 
 ✓ **pin kind is forget in**: Preservation of target kind across forgetting.
 
-✓ **fact empty**: 
+✓ **fact empty**
 
-✓ **abs fact or abs**: 
+✓ **abs fact or abs**
 
-✓ **persp abs or empty**: 
+✓ **persp abs or empty**
 
-✓ **fact empty**: 
+✓ **fact empty**
 
-✓ **abs fact or abs**: 
+✓ **abs fact or abs**
 
-✓ **persp abs or empty**: 
+✓ **persp abs or empty**
 
 Causa — Operators
 
-✓ **inputs shape**: 
+✓ **inputs shape**
 
-✓ **output memories shape**: 
+✓ **output memories shape**
 
-✓ **output goals shape**: 
+✓ **output goals shape**
 
-✓ **memory inputs**: 
+✓ **memory inputs**
 
-✓ **goal inputs**: 
+✓ **goal inputs**
 
-✓ **operator memory output not fact**: 
+✓ **operator memory output not fact**
 
 Causa — Owner
 
-✓ **write le read**: 
+✓ **write le read**
 
 ✓ **works goals reads goals**: Goal work includes Goal read access.
 
@@ -639,15 +662,15 @@ Causa — Owner
 
 ✓ **meet comm**: Commutativity of the Goal capability meet.
 
-✓ **meet assoc**: 
+✓ **meet assoc**
 
-✓ **meet join distrib**: 
+✓ **meet join distrib**
 
 ✓ **ext**: Role equality determined by capability fields.
 
-✓ **meet comm**: 
+✓ **meet comm**
 
-✓ **meet assoc**: 
+✓ **meet assoc**
 
 ✓ **meet join distrib**: Distributivity of a role cap over a membership join.
 
@@ -673,21 +696,21 @@ Causa — Principles
 
 Causa — Provenance grounding
 
-✓ **memory id unique**: 
+✓ **memory id unique**
 
-✓ **goal id unique**: 
+✓ **goal id unique**
 
-✓ **head aligned**: 
+✓ **head aligned**
 
-✓ **fork anchor aligned**: 
+✓ **fork anchor aligned**
 
 ✓ **pin targets exist**: Target existence for the graph's typed pins.
 
-✓ **motivations valid**: 
+✓ **motivations valid**
 
-✓ **guidance valid**: 
+✓ **guidance valid**
 
-✓ **origin kind**: 
+✓ **origin kind**
 
 ✓ **memory goal ids disjoint**: Disjointness of Memory and Goal version identities.
 
@@ -699,29 +722,29 @@ Causa — Provenance grounding
 
 ✓ **pin time strict**: The insertion order of stored pin targets.
 
-✓ **memory id unique**: 
+✓ **memory id unique**
 
-✓ **goal id unique**: 
+✓ **goal id unique**
 
-✓ **erased pin id unique**: 
+✓ **erased pin id unique**
 
-✓ **head aligned**: 
+✓ **head aligned**
 
-✓ **fork anchor aligned**: 
+✓ **fork anchor aligned**
 
-✓ **pin targets exist**: 
+✓ **pin targets exist**
 
-✓ **motivations valid**: 
+✓ **motivations valid**
 
-✓ **guidance valid**: 
+✓ **guidance valid**
 
-✓ **origin kind**: 
+✓ **origin kind**
 
 ✓ **memory goal ids disjoint**: Disjointness of retained Memory and Goal version identities.
 
-✓ **erased memory disjoint**: 
+✓ **erased memory disjoint**
 
-✓ **erased goal disjoint**: 
+✓ **erased goal disjoint**
 
 ✓ **abstraction has origins**: The origin requirement for a retained Abstraction.
 
@@ -729,74 +752,74 @@ Causa — Provenance grounding
 
 ✓ **pin time strict**: The insertion order of retained stored pin targets.
 
-✓ **graph**: 
+✓ **graph**
 
-✓ **assignments**: 
+✓ **assignments**
 
-✓ **evidence**: 
+✓ **evidence**
 
-✓ **terminal close**: 
+✓ **terminal close**
 
-✓ **grounding wf**: 
+✓ **grounding wf**
 
-✓ **memory grounds in facts**: 
+✓ **memory grounds in facts**
 
-✓ **perspective has provenance**: 
+✓ **perspective has provenance**
 
-✓ **guidance does not ground**: 
+✓ **guidance does not ground**
 
 Causa — Schema evolution
 
 ✓ **source memory coverage**: Coverage of source Memory admissions by the migration relation.
 
-✓ **source goal coverage**: 
+✓ **source goal coverage**
 
-✓ **target memory declaration**: 
+✓ **target memory declaration**
 
-✓ **target goal declaration**: 
+✓ **target goal declaration**
 
-✓ **mapped memory owner**: 
+✓ **mapped memory owner**
 
-✓ **mapped goal owner**: 
+✓ **mapped goal owner**
 
-✓ **mapped memory pins**: 
+✓ **mapped memory pins**
 
-✓ **mapped goal pins**: 
+✓ **mapped goal pins**
 
-✓ **new memory id unique**: 
+✓ **new memory id unique**
 
-✓ **new goal id unique**: 
+✓ **new goal id unique**
 
-✓ **retained target id unique**: 
+✓ **retained target id unique**
 
-✓ **new head aligned**: 
+✓ **new head aligned**
 
-✓ **new fork anchor aligned**: 
+✓ **new fork anchor aligned**
 
-✓ **retained pin targets exist**: 
+✓ **retained pin targets exist**
 
-✓ **retained motivations valid**: 
+✓ **retained motivations valid**
 
-✓ **retained guidance valid**: 
+✓ **retained guidance valid**
 
-✓ **retained origin kind**: 
+✓ **retained origin kind**
 
-✓ **memory goal ids disjoint**: 
+✓ **memory goal ids disjoint**
 
-✓ **erased memory disjoint**: 
+✓ **erased memory disjoint**
 
-✓ **erased goal disjoint**: 
+✓ **erased goal disjoint**
 
-✓ **abstraction has origins**: 
+✓ **abstraction has origins**
 
-✓ **derived provenance**: 
+✓ **derived provenance**
 
-✓ **pin time strict**: 
+✓ **pin time strict**
 
-✓ **assignments valid**: 
+✓ **assignments valid**
 
-✓ **evidence valid**: 
+✓ **evidence valid**
 
-✓ **terminal close valid**: 
+✓ **terminal close valid**
 
-✓ **schema migration validates retained store**: 
+✓ **schema migration validates retained store**

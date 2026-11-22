@@ -1,4 +1,4 @@
-//! `Proxiima.Goals`
+//! Goal motivation and Perspective guidance preserve their declared exact versions.
 
 #[path = "fixtures/example_engine.rs"]
 #[allow(dead_code, reason = "each suite uses part of the shared fixture")]

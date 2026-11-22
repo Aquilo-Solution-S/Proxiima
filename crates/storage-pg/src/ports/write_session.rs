@@ -561,7 +561,7 @@ impl WriteSession for PgWriteSession {
         })
     }
 
-    /// `Proxiima.Goals.requestReplay`.
+    /// Check the permit before probing replay on this session’s transaction.
     async fn resolve_goal_replay(
         &mut self,
         req: GoalReplayRequest<'_, '_>,

@@ -140,6 +140,7 @@ fn t_timestamp_sql(t: &'static str) -> SqlText {
 /// The columns of a goal row, as [`GoalRowDb`] reads them. `g` is the goal
 /// version and `h` its series head.
 fn goal_columns() -> SqlText {
+    // `Proxiima.Goals.clockSource`.
     // `created_at` is this version's time (`changed_at`); `set_at` is
     // the time of the series' first version, the
     // least `t` among its rows. Both come from the same `t` derivation.
@@ -386,6 +387,7 @@ fn goal_filters(req: &QueryRequest, visible_motivations: Option<&[uuid::Uuid]>) 
     if let Some(schema) = &req.schema_id {
         filters.push(GoalFilter::Schema(schema.as_str().to_owned()));
     }
+    // `Proxiima.Goals.stateFilter`.
     if !req.goal_states.is_empty() {
         filters.push(GoalFilter::States(
             req.goal_states.iter().copied().collect(),

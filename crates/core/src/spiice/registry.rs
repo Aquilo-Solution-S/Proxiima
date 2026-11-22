@@ -71,7 +71,8 @@ impl SpiiceRegistry {
         Self::default()
     }
 
-    /// `Proxiima.Goals.publishChangeFact`. The composition root calls this before freezing the registry.
+    /// Make Goal change Facts listenable. The composition root calls this before
+    /// freezing the registry because outbox consumers are a runtime choice.
     #[doc(hidden)]
     pub fn publish_goal_changes(&mut self) {
         let goal_change = crate::GoalChangeV1::schema_id();

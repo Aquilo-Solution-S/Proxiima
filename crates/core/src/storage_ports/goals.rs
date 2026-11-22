@@ -12,7 +12,12 @@ use crate::verbs::goal_write::{
 
 #[async_trait::async_trait]
 pub trait GoalWritePort: Send + Sync {
-    /// `Proxiima.Goals.requestReplay`.
+    /// Resolve an exact stored command before callers renew admission of its
+    /// mutable assignment, evidence, or prior-head targets.
+    ///
+    /// Owner write authority is still mandatory. `None` means the request id
+    /// is fresh; a reused id with a changed declaration is an error rather
+    /// than `None`.
     async fn resolve_goal_replay(
         &self,
         req: GoalReplayRequest<'_, '_>,
@@ -60,7 +65,11 @@ pub trait GoalReadPort: Send + Sync {
         limit: usize,
     ) -> Result<Vec<ActiveGoalSummary>, StorageError>;
 
-    /// `Proxiima.Goals.readEvidence`.
+    /// Load the exact evidence vector from one owner-scoped Goal row.
+    ///
+    /// `None` deliberately means either absent or owned by another owner. The
+    /// caller must preserve that collapse instead of joining through visible
+    /// Memory rows and shortening the stored vector.
     async fn load_goal_evidence(
         &self,
         owner_scope: Option<&OwnerScope>,

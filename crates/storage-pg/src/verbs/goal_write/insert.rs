@@ -17,7 +17,7 @@ pub(super) struct PreparedGoalInsert<'a> {
     pub(super) context: GoalAtomicContext<'a>,
     pub(super) expected_prior: Option<GoalId>,
     pub(super) preparation: GoalWritePreparation,
-    /// `Proxiima.Goals.publishChangeFact`.
+    /// The change Fact for a fresh write whose registry makes it listenable.
     pub(super) change_fact: Option<GoalChangeFact<'a>>,
 }
 
@@ -26,7 +26,7 @@ pub(super) struct PreparedGoalInsert<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PostLockGuard {
     None,
-    /// `Proxiima.Goals.blocksClose`, for achieving and abandoning alike.
+    /// Both closing actions recheck the children under the parent lifecycle lock.
     NoOpenChildren,
 }
 
@@ -56,7 +56,7 @@ pub(super) async fn insert_or_replay_goal(
             .await?;
             if let GoalWritePreparation::New(prepared_write) = &prepared.preparation {
                 lock_prepared_goal_write(&mut attempt, prepared_write).await?;
-                // `Proxiima.Goals.requestReplay`.
+                // A replay bypasses the guard on the current children.
                 match guard {
                     PostLockGuard::None => {}
                     PostLockGuard::NoOpenChildren => {
@@ -152,7 +152,8 @@ pub(super) async fn prepare_goal_insert<'a>(
     let store_number = columns.store_number;
     let owner = draft.owner();
 
-    // `Proxiima.Goals.requestReplay`.
+    // Serialize on the request key so a concurrent retry sees the first write's
+    // replay record before it looks up mutable targets.
     lock_goal_request(tx, &owner, &draft.request_id).await?;
     if let Some(existing) = load_goal_by_request_id(tx, &owner, &draft.request_id).await? {
         return Ok(PreparedGoalInsert {
@@ -220,6 +221,7 @@ pub(super) async fn prepare_goal_insert<'a>(
         store_number,
     )
     .await?;
+    // `Proxiima.Goals.closeFactPresence`.
     let close_fact = match &preparation {
         GoalWritePreparation::New(_)
             if matches!(draft.state, GoalState::Achieved | GoalState::Abandoned) =>
