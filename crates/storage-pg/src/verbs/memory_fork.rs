@@ -189,6 +189,7 @@ async fn authorize_fork(
     })
 }
 
+// `Causa.fork_admitted`.
 async fn admit_fork(
     storage: &PgStorage,
     tx: &mut Transaction<'_, Postgres>,
@@ -227,7 +228,6 @@ async fn admit_fork(
             reads: permit.reads(),
         },
         super::memory_timeseries::PreparationOptions {
-            // `Causa.fork_admitted`.
             identity: Some((identity, identity)),
             extra_targets: &[request.source.into_inner()],
             guided_by: &[],
@@ -455,6 +455,7 @@ async fn check_destination(
     let role = match permit.destination() {
         ForkDestinationPermit::Owner(write) => current_role(permit.scope(), roles, *write.owner()),
         ForkDestinationPermit::WorkingGoal(command) => {
+            // `Proxiima.GoalCollaboration.boundWorkStateAdmitted`.
             let row = sqlx::query("SELECT gh.authority_generation FROM proxiima_core.goal_head gh JOIN proxiima_core.goal g ON g.t=gh.t AND g.handle=gh.handle WHERE gh.handle=$1 AND gh.owner_id=$2 AND g.state='Active'")
                 .bind(command.goal().into_inner()).bind(command.controller().into_inner()).fetch_optional(&mut **tx).await.map_err(map_err)?.ok_or(StorageError::NotFound)?;
             current_goal_role(tx, command, roles, row.get("authority_generation")).await?

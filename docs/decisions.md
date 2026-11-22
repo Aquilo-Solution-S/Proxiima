@@ -184,9 +184,9 @@ and cannot restrict existing owner membership. Completion is separate from
 revocation and erasure. Source-owner/controller changes must invalidate prior
 authorizations without A-to-B-to-A resurrection.
 
-The [collaboration model](concepts.md#goal-collaboration) owns the explanation
-and examples. Its permission contract is stated in the kernel and enforced
-by the runtime's typed command permits and owner-scoped storage paths.
+The [Goal collaboration ledger](ledger.md#goal-collaboration) states the
+permission contract enforced by the runtime's typed command permits and
+owner-scoped storage paths.
 
 Publication consent covers the Goal’s managed audience, including future
 invitees. Existing Roles on the Goal's owning Group apply automatically,

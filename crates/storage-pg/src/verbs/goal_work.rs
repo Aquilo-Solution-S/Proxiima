@@ -322,6 +322,7 @@ async fn admit_goal_work(
 }
 
 /// Admit one A/P version with the scoped permit of `Causa.goal_work_write_admitted`.
+/// The permit is a distinct capability: no owner-write permit is created.
 pub(crate) async fn author_work_memory(
     storage: &PgStorage,
     req: &AuthorDerivedRequest<'_>,

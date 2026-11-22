@@ -27,7 +27,7 @@ def audienceReadTarget : Relationship → Option AudienceReadTarget
   | .publication => some .admission
   | .workBinding => some .series
 
-/-- The role a Goal audience grant may store cannot carry owner administration. -/
+/-- Why an audience grant's role is refused. -/
 inductive GrantRefusal where
   | ownerAdministration
   deriving DecidableEq
@@ -55,7 +55,7 @@ def grantSubjectAdmitted : GrantSubjectKind → (manages : Bool) → Bool
   | .person, true | .person, false | .group, false => true
   | .group, true => false
 
-/-- Whether an unexpired grant belongs to the current Goal controller epoch. -/
+/-- A grant is in force while it is unexpired and of the current Goal controller epoch. -/
 def grantInForce : (currentEpoch unexpired : Bool) → Bool
   | true, true => true
   | true, false | false, true | false, false => false
@@ -96,12 +96,12 @@ inductive PublicationUse where
   | Fork
   deriving DecidableEq
 
-/-- A publication permits reads in either case and grants fork consent only with fork use. -/
+/-- A publication grants fork consent only with fork use. -/
 def publicationForkAllowed : PublicationUse → Bool
   | .Read => false
   | .Fork => true
 
-/-- The destination path of a fork relative to the source owner. -/
+/-- The destination path of a fork. -/
 inductive ForkDestination where
   | sameOwner
   | differentOwner

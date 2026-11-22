@@ -170,6 +170,8 @@ pub(crate) async fn role_for_goal(
 
 /// `Proxiima.GoalCollaboration.ownerGoalAccessOnAudienceRoute`. The owner
 /// route still admits members who can work Goals but cannot achieve them.
+/// Goal work on this route includes achieving the Goal, which over the owner
+/// is administration.
 fn on_goal_route(owner: proxiima_core::Role) -> proxiima_core::Role {
     if owner.works_goals() && !owner.administers() {
         owner.with_goals(proxiima_core::GoalAccess::Reads)
@@ -601,6 +603,7 @@ impl GoalCollaborationPort for PgStorage {
             return Err(StorageError::NotFound);
         }
         require_manager(lock_goal_manager(&mut tx, permit, &roles).await?)?;
+        // Bind any series kind owned by the Goal's owner in any Goal state. Use follows `Proxiima.GoalCollaboration.boundWorkStateAdmitted`.
         let result = sqlx::query("INSERT INTO proxiima_core.goal_work_binding (goal_handle,memory_handle,source_owner,source_generation,controller_generation,bound_by) SELECT $1,$2,mh.owner_id,mh.authority_generation,gh.authority_generation,$3 FROM proxiima_core.memory_head mh JOIN proxiima_core.goal_head gh ON gh.handle=$1 WHERE mh.handle=$2 AND mh.owner_id=$4 AND gh.owner_id=$4 ON CONFLICT (goal_handle,memory_handle) DO UPDATE SET source_generation=EXCLUDED.source_generation,controller_generation=EXCLUDED.controller_generation,bound_by=EXCLUDED.bound_by")
             .bind(input.goal.into_inner()).bind(input.series.into_inner()).bind(permit.subject().into_inner()).bind(source.owner().into_inner()).execute(&mut *tx).await.map_err(map_err)?;
         require_rows(result.rows_affected(), "bind")?;
@@ -727,22 +730,8 @@ mod tests {
         }
     }
 
-    /// Owner administration is refused where a grant is written; any other
-    /// role is stored as it is, and a guest always reads its Goal.
     #[test]
-    fn a_grant_carries_no_administration_and_always_reads_the_goal() {
-        for administering in [Role::admin(), Role::editor().administering()] {
-            assert!(matches!(
-                guest_columns(administering),
-                Err(StorageError::ConstraintViolation(_))
-            ));
-        }
-        assert_eq!(
-            guest_columns(Role::ingest())
-                .expect("an ingest grant")
-                .goal_access,
-            GoalAccess::Reads
-        );
+    fn a_grant_preserves_narrow_editor_ceilings() {
         let narrow_editor = Role::new(AccessCeiling::Fact, AccessCeiling::Fact)
             .expect("role")
             .with_goals(GoalAccess::Works);

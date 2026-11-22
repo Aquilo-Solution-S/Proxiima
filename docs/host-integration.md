@@ -28,8 +28,10 @@ readable and belong to the declaring version's owner.
 ## Goal collaboration
 
 The [conceptual model](concepts.md#goal-collaboration) distinguishes context,
-exact publication, and series work. `Engine` exposes audience grants,
-publication, work bindings, and `fork_memory` through typed command ports.
+exact publication, and series work. See the
+[Goal collaboration ledger](ledger.md#goal-collaboration).
+`Engine` exposes audience grants, publication, work bindings, and
+`fork_memory` through typed command ports.
 Collaboration commands require an ordinary verified caller; restricted owner
 forwarding and background delegation do not acquire unrelated Goal rights.
 

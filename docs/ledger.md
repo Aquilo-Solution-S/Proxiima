@@ -1160,7 +1160,7 @@ stateDiagram-v2
 - admission
 - series
 
-**Grant refusal**: The role a Goal audience grant may store cannot carry owner administration.
+**Grant refusal**: Why an audience grant's role is refused.
 
 - ownerAdministration
 
@@ -1184,7 +1184,7 @@ stateDiagram-v2
 - Read
 - Fork
 
-**Fork destination**: The destination path of a fork relative to the source owner.
+**Fork destination**: The destination path of a fork.
 
 - sameOwner
 - differentOwner
@@ -1226,7 +1226,7 @@ stateDiagram-v2
 | no | yes | no | no |
 | no | no | no | no |
 
-- grant in force: Whether an unexpired grant belongs to the current Goal controller epoch.
+- grant in force: A grant is in force while it is unexpired and of the current Goal controller epoch.
 - prefer owner head: A newer independently readable owner head takes precedence over the latest audience-visible version.
 
 | consent change | bool | bool | sharing consent admitted |
@@ -1260,7 +1260,7 @@ stateDiagram-v2
 | Read | no |
 | Fork | yes |
 
-- publication fork allowed: A publication permits reads in either case and grants fork consent only with fork use.
+- publication fork allowed: A publication grants fork consent only with fork use.
 
 | fork destination | bool | fork needs publication |
 | --- | --- | --- |

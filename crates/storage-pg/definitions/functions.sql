@@ -3355,6 +3355,7 @@ REVOKE ALL ON FUNCTION proxiima_core.goal_grants_held() FROM PUBLIC;
 -- `Proxiima.GoalCollaboration.audienceReadTarget` and `Proxiima.GoalCollaboration.boundWorkStateAdmitted`.
 -- `Causa.goal_publication_read_admitted` and `Causa.goal_work_read_admitted`.
 -- The projection starts with the subject index.
+-- The result contains no unpublished current-head identity or ancestor payload.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_memory_read_routes()
 RETURNS TABLE(memory_t uuid, memory_handle uuid, owner_id uuid, goal_handle uuid, controller_owner uuid)
 LANGUAGE sql STABLE SECURITY DEFINER

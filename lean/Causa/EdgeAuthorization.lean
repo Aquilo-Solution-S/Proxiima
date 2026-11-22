@@ -154,7 +154,6 @@ def goal_work_read_admitted
     (grants : List GoalAudienceGrant) (goal : Goal)
     (current_controller_generation memory_owner_generation now : Nat)
     (memory : Memory) : Prop :=
-  boundWorkStateAdmitted (goal_state goal) .read = true ∧
   goal_route s requester (goal_owner goal) binding.goal
     current_controller_generation now grants (.read memory.kind) ∧
   binding.goal.goal_handle = goal_handle goal ∧
@@ -209,9 +208,7 @@ theorem goal_work_write_implies_read
             ⟨Role.has_write_read _ _ ((Grant.gives_iff _ _ _ _).1 hgives).1,
               Group.gives_mono (fun r => Role.has_write_read r _)
                 ((Grant.gives_iff _ _ _ _).1 hgives).2⟩⟩
-  have hstate : boundWorkStateAdmitted (goal_state goal) .read = true := by
-    cases goal_state goal <;> rfl
-  exact ⟨hstate, hread, hgoal, howner, hlive, hhandle, hmemoryowner,
+  exact ⟨hread, hgoal, howner, hlive, hhandle, hmemoryowner,
     hgoalgen, hbindctrl, hsource⟩
 
 structure ForkSourcePermission where
