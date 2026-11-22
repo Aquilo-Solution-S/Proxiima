@@ -53,7 +53,18 @@ updates:
     commit-message:
       prefix: "chore(docs)"
 
-  # Container base image (Dockerfile at the repo root).
+  # The Rust compiler: rust-toolchain.toml is its one pin, and the image
+  # builds with it. A bump runs every CI lane.
+  - package-ecosystem: rust-toolchain
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Container base images (Dockerfile at the repo root). The builder's tag
+  # names no Rust version; its compiler comes from rust-toolchain.toml.
   - package-ecosystem: docker
     directory: "/"
     schedule:
