@@ -1,18 +1,24 @@
 name = "proxiima"
-defaultTargets = ["Causa", "ledger"]
+defaultTargets = ["Causa", "Proxiima", "ledger"]
 
 [leanOptions]
 warningAsError = true
 
 [[require]]
 name = "teslavalve"
-path = "../../../../../tesla-valve-worktrees/ledger/lean"
+git = "https://github.com/Aquilo-Solution-S/tesla-valve.git"
+rev = "43baa7a75543870c069352b251541e4e37298915"
+subDir = "lean"
 
 [[lean_lib]]
 name = "Causa"
 
+[[lean_lib]]
+name = "Proxiima"
+globs = ["Proxiima.+"]
+
 [[lean_exe]]
 name = "ledger"
 root = "Main"
-needs = ["Causa"]
+needs = ["Causa", "Proxiima"]
 supportInterpreter = true

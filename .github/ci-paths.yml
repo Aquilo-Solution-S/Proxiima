@@ -24,8 +24,6 @@ docs:
   - '**/*.rs'
   - '**/*.sh'
   - '**/*.yml'
-lean:
-  - 'lean/**'
 dependencies:
   - '**/Cargo.toml'
   - 'Cargo.lock'

@@ -27,6 +27,7 @@ pub mod error;
 pub mod goal;
 pub mod goal_collaboration;
 pub mod ids;
+mod ledger;
 pub mod lexical_language;
 pub mod memory;
 mod memory_uuid;

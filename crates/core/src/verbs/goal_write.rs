@@ -200,8 +200,8 @@ pub enum GoalAuthorship {
     External,
 }
 
-pub const MAX_GOAL_TITLE_CHARS: usize = 240;
-pub const MAX_GOAL_TEXT_CHARS: usize = 20_000;
+pub const MAX_GOAL_TITLE_CHARS: usize = crate::ledger!(Proxiima.Goals.titleMax);
+pub const MAX_GOAL_TEXT_CHARS: usize = crate::ledger!(Proxiima.Goals.textMax);
 
 /// Why a typed goal payload could not be built.
 ///
@@ -745,41 +745,30 @@ mod goal_state_matrix_tests {
         GoalState::Abandoned,
     ];
 
+    // `Proxiima.Goals.mayTransitionTo`
     #[test]
-    fn active_may_move_to_active_paused_abandoned_only() {
-        assert!(GoalState::Active.may_transition_to(GoalState::Active));
-        assert!(GoalState::Active.may_transition_to(GoalState::Paused));
-        assert!(GoalState::Active.may_transition_to(GoalState::Abandoned));
-        assert!(!GoalState::Active.may_transition_to(GoalState::Achieved));
-    }
-
-    #[test]
-    fn paused_may_resume_or_abandon_only() {
-        assert!(GoalState::Paused.may_transition_to(GoalState::Active));
-        assert!(!GoalState::Paused.may_transition_to(GoalState::Paused));
-        assert!(GoalState::Paused.may_transition_to(GoalState::Abandoned));
-        assert!(!GoalState::Paused.may_transition_to(GoalState::Achieved));
-    }
-
-    #[test]
-    fn closed_states_admit_no_transition() {
-        for prior in [GoalState::Achieved, GoalState::Abandoned] {
-            for next in ALL {
-                assert!(
-                    !prior.may_transition_to(next),
-                    "{prior:?} -> {next:?} must be rejected: {prior:?} is terminal"
-                );
-            }
+    fn plain_transitions_match_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            states: [GoalState; 2],
+            out: bool,
         }
-    }
 
-    #[test]
-    fn achieved_is_never_a_legal_transition_target() {
-        for prior in ALL {
-            assert!(
-                !prior.may_transition_to(GoalState::Achieved),
-                "{prior:?} -> Achieved must be rejected as a plain transition"
-            );
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Goals.mayTransitionTo"].clone())
+                .expect("the ledger emits the plain transition matrix");
+        let cases: std::collections::BTreeSet<_> = rows.iter().map(|row| row.states).collect();
+        assert_eq!(cases.len(), ALL.len() * ALL.len());
+        for Vector {
+            states: [prior, next],
+            out,
+        } in rows
+        {
+            assert_eq!(prior.may_transition_to(next), out, "{prior} → {next}");
         }
     }
 

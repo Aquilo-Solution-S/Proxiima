@@ -6,8 +6,8 @@ use super::goal_evidence_kinds::{Env, handle_of};
 
 /// The longest root key `core_goal decompose` documents, and the most
 /// children it takes.
-const ROOT_KEY_MAX: usize = 162;
-const MAX_CHILDREN: usize = 50;
+const ROOT_KEY_MAX: usize = proxiima_core::ledger!(Proxiima.Goals.decomposeRootKeyMax);
+const MAX_CHILDREN: usize = proxiima_core::ledger!(Proxiima.Goals.decomposeChildMax);
 
 #[tokio::test]
 async fn decompose_root_key_at_bound_with_max_children_is_accepted() {

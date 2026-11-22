@@ -8,7 +8,8 @@ use crate::engine::{
 use crate::protocol::{action as protocol_action, tool as protocol_tool};
 use crate::verbs::goal_write::{
     ChildGoalDraft, GoalAuthorship, GoalEvidenceRef, GoalMotivationRef, GoalPayloadWrite,
-    GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome, IdempotencyKey, SystemOrigin,
+    GoalTopologyWrite, GoalTransitionKind, GoalWriteOutcome, IdempotencyKey, MAX_GOAL_TEXT_CHARS,
+    MAX_GOAL_TITLE_CHARS, SystemOrigin,
 };
 use crate::verbs::schema::PayloadKind;
 use crate::{GoalHandle, PendingWork, SchemaId, SchemaVersion};
@@ -16,24 +17,21 @@ use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-const MAX_CHILD_GOALS: usize = 50;
-/// Prefix of every decompose child key, `"goal_decompose:{root}:{index}"`.
-const DECOMPOSE_CHILD_PREFIX: &str = "goal_decompose";
-/// The longest decompose root key whose every child key still fits
-/// [`IdempotencyKey::MAX_CHARS`]: the prefix, two separators and the widest
-/// child index come off the common bound (180 - (14 + 2 + 2) = 162).
-const DECOMPOSE_ROOT_KEY_MAX: usize = IdempotencyKey::MAX_CHARS
-    - (DECOMPOSE_CHILD_PREFIX.len() + 2 + decimal_digits(MAX_CHILD_GOALS - 1));
+const MAX_CHILD_GOALS: usize = crate::ledger!(Proxiima.Goals.decomposeChildMax);
+const DECOMPOSE_CHILD_PREFIX: &str = crate::ledger!(Proxiima.Goals.decomposeChildPrefix);
+const DECOMPOSE_ROOT_KEY_MAX: usize = crate::ledger!(Proxiima.Goals.decomposeRootKeyMax);
 
-/// How many decimal digits `n` prints with.
-const fn decimal_digits(mut n: usize) -> usize {
-    let mut digits = 1;
-    while n >= 10 {
-        n /= 10;
-        digits += 1;
-    }
-    digits
-}
+const _: () = {
+    let index_digits = match (MAX_CHILD_GOALS - 1).checked_ilog10() {
+        Some(exponent) => exponent as usize + 1,
+        None => 1,
+    };
+    assert!(
+        DECOMPOSE_ROOT_KEY_MAX
+            == IdempotencyKey::MAX_CHARS - (DECOMPOSE_CHILD_PREFIX.len() + 2 + index_digits)
+    );
+};
+
 const CORE_GOAL_PRODUCES_SCHEMA_IDS: &[&str] = &[];
 pub const CORE_GOAL_ACTIONS: &[CoreActionMeta] = &[
     CoreActionMeta {
@@ -159,11 +157,14 @@ pub struct GoalPayloadArgs {
     pub schema_id: String,
     #[schemars(description = "Version of `schema_id`. Omit for 1.")]
     pub schema_version: Option<u32>,
-    #[schemars(length(max = 240), description = "Goal title, 1-240 trimmed chars.")]
+    #[schemars(
+        length(max = MAX_GOAL_TITLE_CHARS),
+        description = format!("Goal title, 1-{MAX_GOAL_TITLE_CHARS} trimmed chars.")
+    )]
     pub title: String,
     #[schemars(
-        length(max = 20000),
-        description = "Goal prose, 1-20000 trimmed chars."
+        length(max = MAX_GOAL_TEXT_CHARS),
+        description = format!("Goal prose, 1-{MAX_GOAL_TEXT_CHARS} trimmed chars.")
     )]
     pub text: String,
     #[serde(default = "default_empty_object")]
@@ -849,8 +850,8 @@ pub struct GoalDecomposeArgs {
     #[schemars(description = "Parent Goal's current head handle.")]
     pub parent_goal: String,
     #[schemars(
-        length(min = 1, max = 50),
-        description = "1-50 child Goals; each starts Active. Parents close only after children close; achieving also needs one Achieved child."
+        length(min = 1, max = MAX_CHILD_GOALS),
+        description = format!("1-{MAX_CHILD_GOALS} child Goals; each starts Active. Parents close only after children close; achieving also needs one Achieved child.")
     )]
     pub children: Vec<ChildGoalInput>,
     #[serde(default)]
@@ -860,7 +861,7 @@ pub struct GoalDecomposeArgs {
     #[schemars(description = "Optional space key; omit for the session default.")]
     pub space: Option<String>,
     #[schemars(
-        description = "Idempotency key, at most 162 chars; each child key derives from it."
+        description = format!("Idempotency key, at most {DECOMPOSE_ROOT_KEY_MAX} chars; each child key derives from it.")
     )]
     pub idempotency_key: String,
 }
@@ -956,8 +957,8 @@ pub(crate) fn encode_goal_payload(
     ctx: &ToolCtx,
     args: GoalPayloadArgs,
 ) -> Result<GoalPayloadWrite, ToolError> {
-    let title = validate_trimmed_len("goal title", &args.title, 240)?;
-    let text = validate_trimmed_len("goal text", &args.text, 20_000)?;
+    let title = validate_trimmed_len("goal title", &args.title, MAX_GOAL_TITLE_CHARS)?;
+    let text = validate_trimmed_len("goal text", &args.text, MAX_GOAL_TEXT_CHARS)?;
     let schema_id = SchemaId::new(args.schema_id);
     let schema_version = SchemaVersion::new(args.schema_version.unwrap_or(1));
     let schema = ctx
@@ -1123,27 +1124,33 @@ mod tests {
     async fn decompose_root_key_one_over_bound_is_refused_before_children() {
         let ctx = test_ctx();
         let target = MemoryId::new(uuid::Uuid::now_v7());
-        for (children, bad_first) in [(50, true), (50, false), (1, true), (1, false)] {
+        for (children, bad_first) in [
+            (MAX_CHILD_GOALS, true),
+            (MAX_CHILD_GOALS, false),
+            (1, true),
+            (1, false),
+        ] {
             let err = goal_decompose(
                 ctx.clone(),
-                decompose_args("k".repeat(163), children, bad_first, target),
+                decompose_args(
+                    "k".repeat(DECOMPOSE_ROOT_KEY_MAX + 1),
+                    children,
+                    bad_first,
+                    target,
+                ),
             )
             .await
             .expect_err("an over-long root key is refused");
             assert!(
                 matches!(err, ToolError::InvalidInput(ref message)
-                    if message.starts_with("idempotency_key must be at most 162 chars")),
+                    if message.starts_with(&format!("idempotency_key must be at most {DECOMPOSE_ROOT_KEY_MAX} chars"))),
                 "{children} children, bad first evidence {bad_first}: {err:?}"
             );
         }
     }
 
     #[test]
-    fn decompose_root_bound_is_derived() {
-        assert_eq!(DECOMPOSE_ROOT_KEY_MAX, 162);
-        assert_eq!(decimal_digits(0), 1);
-        assert_eq!(decimal_digits(49), 2);
-        assert_eq!(decimal_digits(100), 3);
+    fn decompose_root_bound_is_advertised() {
         let schema = serde_json::to_value(schemars::schema_for!(GoalDecomposeArgs))
             .expect("schema serializes");
         let description = schema["properties"]["idempotency_key"]["description"]

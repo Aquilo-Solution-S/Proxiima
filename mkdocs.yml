@@ -29,6 +29,7 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Concepts: concepts.md
+  - Ledger: ledger.md
   - Decisions: decisions.md
   - Get started: get-started.md
   - Agents: agents.md

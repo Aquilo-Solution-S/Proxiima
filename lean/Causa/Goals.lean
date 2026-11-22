@@ -3,22 +3,12 @@ import Causa.Owner
 import Causa.Identity
 import Causa.Memory
 
+import Proxiima.Goals
 /-! Causa — Goals -/
 
 namespace Causa
 
-inductive GoalState where
-  | Active
-  | Paused
-  | Achieved
-  | Abandoned
-  deriving DecidableEq, Repr
-
-def GoalState.terminal : GoalState → Bool
-  | .Active => false
-  | .Paused => false
-  | .Achieved => true
-  | .Abandoned => true
+open Proxiima.Goals (GoalState)
 
 /-- Whitespace trimmed by the stored Goal text constraint. -/
 def goalTextBlankChar (c : Char) : Bool :=
@@ -123,11 +113,6 @@ def GoalIdUnique (goals : Set Goal) : Prop :=
     g1 = g2
 
 instance : AppendOnly Goal := ⟨⟩
-
-/-- Classification of a Goal state as open. -/
-def GoalState.isOpen : GoalState → Bool
-  | .Active | .Paused => true
-  | .Achieved | .Abandoned => false
 
 /-- The Goal tree at one moment. -/
 structure GoalForest where

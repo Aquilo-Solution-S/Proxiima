@@ -40,7 +40,6 @@ jobs:
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       docs: ${{ steps.paths.outputs.docs }}
-      lean: ${{ steps.paths.outputs.lean }}
       dependencies: ${{ steps.paths.outputs.dependencies }}
       image: ${{ steps.paths.outputs.image }}
       release: ${{ steps.paths.outputs.release }}
@@ -146,7 +145,6 @@ jobs:
           python3 scripts/check-schema-ids.py
           python3 scripts/check-migrations.py
       - name: set up Lean/Lake
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.lean == 'true' }}
         # leanprover/lean-action@v1
         uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee
         with:
@@ -154,11 +152,14 @@ jobs:
           build: false
           test: false
       - name: lean ledger
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.lean == 'true' }}
         run: |
           cd lean
           lake build
           lake exe ledger check
+          lake exe ledger emit rust > ../crates/core/src/ledger.rs
+          lake exe ledger emit vectors > ../crates/core/tests/ledger_vectors.json
+          lake exe ledger view > ../docs/ledger.md
+          git diff --exit-code -- ../crates/core/src/ledger.rs ../crates/core/tests/ledger_vectors.json ../docs/ledger.md
 
   deny:
     name: cargo-deny (advisories + licenses + bans + sources)

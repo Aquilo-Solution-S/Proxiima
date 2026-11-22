@@ -16,7 +16,9 @@ fn authorship_declaration(authorship: &GoalAuthorship) -> &'static str {
     // session into an idempotency conflict.
     match authorship {
         GoalAuthorship::User => "user",
-        GoalAuthorship::System(SystemOrigin::Operator) => "system_operator",
+        GoalAuthorship::System(SystemOrigin::Operator) => {
+            proxiima_core::ledger!(Proxiima.Goals.operatorAuthorship)
+        }
         GoalAuthorship::System(SystemOrigin::Tool) => "system_tool",
         GoalAuthorship::External => "external",
     }
