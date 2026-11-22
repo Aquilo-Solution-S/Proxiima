@@ -111,6 +111,13 @@ impl ScopeGrant {
             .map_or_else(Vec::new, |roles| roles.writable_owners(kind))
     }
 
+    pub(crate) fn roles_include(&self, required: &Self) -> bool {
+        required.live().is_none_or(|required| {
+            self.live()
+                .is_some_and(|held| held.all_roles_dominate(required))
+        })
+    }
+
     pub(crate) fn goal_reading_owners(&self) -> Vec<OwnerId> {
         self.live()
             .map_or_else(Vec::new, OwnerRoles::goal_reading_owners)

@@ -104,21 +104,12 @@ fn narrowed_by_host(
     shaped: AuthzContext,
     token_expires_at: std::time::SystemTime,
 ) -> Result<AuthzContext, AuthError> {
-    let rights_widened = proxiima_core::MemoryKind::ALL.into_iter().any(|kind| {
-        shaped.readable_owners(kind).iter().any(|owner| {
-            !resolved.may_read(owner, kind)
-                || (shaped.may_manage(owner) && !resolved.may_manage(owner))
-        }) || shaped
-            .writable_owners(kind)
-            .iter()
-            .any(|owner| !resolved.may_write(owner, kind))
-    });
     if shaped.auth_path() != AuthPath::HostBearer
         || shaped.subject() != resolved.subject()
         || shaped.writer() != resolved.writer()
         || shaped.trusted_model_id() != resolved.trusted_model_id()
         || shaped.verified_forwarded_owner() != resolved.verified_forwarded_owner()
-        || rights_widened
+        || !resolved.owner_roles_include(&shaped)
     {
         tracing::warn!("oidc binding set: host role shape widened the resolved context; refused");
         return Err(AuthError::InvalidCredentials);
@@ -210,7 +201,6 @@ async fn context_for_verified_token(
 pub struct OidcBinding {
     route: OidcBindingRoute,
     pub(crate) validator: OidcTokenValidator,
-    allowed_subjects: Option<HashSet<String>>,
     subject_map: OidcSubjectMap,
     owner_access: Arc<dyn OwnerAccessPort>,
     role_shape: OidcRoleShape,
@@ -252,7 +242,7 @@ impl OidcBinding {
     ///
     /// Returns an OIDC config error when the issuer/JWKS URL is invalid.
     pub fn with_role_shape(
-        mut config: OidcAuthConfig,
+        config: OidcAuthConfig,
         keys: Arc<dyn KeyResolver>,
         subject_map: OidcSubjectMap,
         owner_access: Arc<dyn OwnerAccessPort>,
@@ -262,12 +252,10 @@ impl OidcBinding {
             issuer: config.issuer.clone(),
             audience: config.audience.clone(),
         };
-        let allowed_subjects = std::mem::take(&mut config.allowed_subjects);
         let validator = OidcTokenValidator::new(config, keys)?;
         Ok(Self {
             route,
             validator,
-            allowed_subjects,
             subject_map,
             owner_access,
             role_shape,
@@ -302,12 +290,7 @@ impl OidcBinding {
         token: ValidatedOidcToken<OidcClaimMap>,
     ) -> Result<AuthzContext, AuthError> {
         let claims = &token.claims;
-        if let Some(allow) = &self.allowed_subjects
-            && !allow.contains(&claims.subject)
-        {
-            return Err(AuthError::InvalidCredentials);
-        }
-
+        self.validator.check_subject(claims)?;
         let Some(binding) = self
             .subject_map
             .resolve_binding(&claims.issuer, &claims.subject)
@@ -424,7 +407,7 @@ impl Authenticator for OidcBindingSet {
                 .is_none_or(|claimed| claimed.selects(binding))
         });
         for binding in candidates {
-            match binding.validator.validate_with::<OidcClaimMap>(token).await {
+            match binding.validator.verify_with::<OidcClaimMap>(token).await {
                 Ok(validated) => matches.push((binding, validated)),
                 Err(reason) => tracing::debug!(
                     iss = %binding.route.issuer,

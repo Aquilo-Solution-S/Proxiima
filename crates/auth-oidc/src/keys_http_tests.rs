@@ -16,7 +16,6 @@ use crate::config::{OidcConfigError, validate_https_url};
 use super::{
     DEFAULT_HTTP_REQUEST_TIMEOUT, FetchedKeys, HttpJwksResolver, JWKS_MAX_AGE, JWKS_TRUST_BOUND,
     JwksState, KeyError, KeyResolver, MAX_HTTP_REQUEST_TIMEOUT, MAX_RESPONSE_BYTES,
-    build_http_client,
 };
 
 // Static 2048-bit RSA public key as JWK n/e (base64url). Baked so this
@@ -59,7 +58,6 @@ fn explicit_request_timeout_rejects_zero_and_out_of_range_values() {
 
 #[test]
 fn constructors_reject_issuer_query_or_fragment_components() {
-    let http = reqwest::Client::new();
     for base in [
         "https://issuer.example/tenant",
         "http://127.0.0.1:4180/tenant",
@@ -74,10 +72,10 @@ fn constructors_reject_issuer_query_or_fragment_components() {
                         jwks_uri.clone(),
                         DEFAULT_HTTP_REQUEST_TIMEOUT,
                     ),
-                    HttpJwksResolver::with_http_client(
+                    HttpJwksResolver::with_http_client_builder(
                         issuer.clone(),
                         jwks_uri.clone(),
-                        http.clone(),
+                        reqwest::Client::builder(),
                         DEFAULT_HTTP_REQUEST_TIMEOUT,
                     ),
                 ] {
@@ -437,17 +435,13 @@ async fn plaintext_nonloopback_redirect_is_rejected_before_request() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("mock idp server");
     });
-    let http = build_http_client(
-        &issuer,
-        reqwest::Client::builder()
-            .no_proxy()
-            .resolve("redirect.example", addr),
-    );
     for jwks_uri in [None, Some(format!("{issuer}/keys"))] {
-        let resolver = HttpJwksResolver::with_http_client(
+        let resolver = HttpJwksResolver::with_http_client_builder(
             issuer.clone(),
             jwks_uri,
-            http.clone(),
+            reqwest::Client::builder()
+                .no_proxy()
+                .resolve("redirect.example", addr),
             DEFAULT_HTTP_REQUEST_TIMEOUT,
         )
         .expect("loopback issuer");

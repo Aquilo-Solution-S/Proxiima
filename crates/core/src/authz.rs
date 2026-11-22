@@ -985,6 +985,14 @@ impl AuthzContext {
         self.owner_scope.grant().may_manage(owner)
     }
 
+    /// Whether the live owner roles cover all the supplied context's live owner roles.
+    #[must_use]
+    pub fn owner_roles_include(&self, other: &Self) -> bool {
+        self.owner_scope
+            .grant()
+            .roles_include(other.owner_scope.grant())
+    }
+
     /// Server-resolved role for one owner, if the authenticated subject has
     /// one. Durable delegation records this role only as an upper bound and
     /// resolves it again at every redemption.
@@ -1406,64 +1414,28 @@ impl Default for RevalidationConfig {
 
 struct RevalidatedStream<I> {
     inner: Pin<Box<dyn Stream<Item = I> + Send>>,
-    expires_at: Option<Pin<Box<Sleep>>>,
-    max_lifetime: Pin<Box<Sleep>>,
-    closing: bool,
+    deadline: Pin<Box<Sleep>>,
     closed: bool,
-}
-
-impl<I> RevalidatedStream<I> {
-    fn observe_termination(&mut self, cx: &mut Context<'_>) -> bool {
-        if self.max_lifetime.as_mut().poll(cx).is_ready() {
-            return true;
-        }
-
-        self.expires_at
-            .as_mut()
-            .is_some_and(|expires_at| expires_at.as_mut().poll(cx).is_ready())
-    }
-
-    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<I>> {
-        self.inner.as_mut().poll_next(cx)
-    }
 }
 
 impl<I> Stream for RevalidatedStream<I> {
     type Item = I;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.closed {
+        if self.closed
+            || self.deadline.as_mut().poll(cx).is_ready()
+            || Instant::now() >= self.deadline.deadline()
+        {
+            self.closed = true;
             return Poll::Ready(None);
         }
-
-        if self.closing {
-            return match self.poll_inner(cx) {
-                Poll::Ready(Some(item)) => Poll::Ready(Some(item)),
-                Poll::Ready(None) | Poll::Pending => {
-                    self.closed = true;
-                    Poll::Ready(None)
-                }
-            };
+        let result = self.inner.as_mut().poll_next(cx);
+        if result.is_ready() && Instant::now() >= self.deadline.deadline() {
+            self.closed = true;
+            return Poll::Ready(None);
         }
-
-        match self.poll_inner(cx) {
-            Poll::Ready(Some(item)) => {
-                self.closing = self.observe_termination(cx);
-                Poll::Ready(Some(item))
-            }
-            Poll::Ready(None) => {
-                self.closed = true;
-                Poll::Ready(None)
-            }
-            Poll::Pending => {
-                if self.observe_termination(cx) {
-                    self.closed = true;
-                    Poll::Ready(None)
-                } else {
-                    Poll::Pending
-                }
-            }
-        }
+        self.closed = matches!(result, Poll::Ready(None));
+        result
     }
 }
 
@@ -1478,23 +1450,17 @@ where
     S: Stream + Send + 'static,
     S::Item: Send + 'static,
 {
-    let expires_at = expires_at.map(system_time_sleep);
-    let max_lifetime = Box::pin(tokio::time::sleep(config.max_stream_lifetime));
-
+    let remaining = expires_at.map_or(config.max_stream_lifetime, |expiry| {
+        expiry
+            .duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO)
+            .min(config.max_stream_lifetime)
+    });
     Box::pin(RevalidatedStream {
         inner: Box::pin(stream),
-        expires_at,
-        max_lifetime,
-        closing: false,
+        deadline: Box::pin(tokio::time::sleep(remaining)),
         closed: false,
     })
-}
-
-fn system_time_sleep(deadline: SystemTime) -> Pin<Box<Sleep>> {
-    let until_deadline = deadline
-        .duration_since(SystemTime::now())
-        .unwrap_or(Duration::ZERO);
-    Box::pin(tokio::time::sleep_until(Instant::now() + until_deadline))
 }
 
 #[cfg(test)]

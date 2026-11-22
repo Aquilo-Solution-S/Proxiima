@@ -358,6 +358,14 @@ async fn validate_with_reads_custom_claims_and_names_the_refusal() {
         .await
         .expect("valid token");
     assert_eq!(validated.claims.subject, "owner-sub");
+    let mut restricted = config(OWNER_AUD);
+    restricted.allowed_subjects = Some(["another-subject".into()].into());
+    let restricted =
+        OidcTokenValidator::new(restricted, resolver(keys.decoding.clone())).expect("validator");
+    assert_eq!(
+        restricted.validate_with::<TenantClaims>(&good).await,
+        Err(crate::OidcRejection::UnauthorizedSubject)
+    );
     assert_eq!(
         validated.custom,
         TenantClaims {

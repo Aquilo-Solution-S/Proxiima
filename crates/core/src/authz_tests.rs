@@ -1374,22 +1374,22 @@ async fn none_expiry_runs_until_max_lifetime() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn queued_items_before_termination_are_delivered() {
+async fn stream_stops_at_the_earliest_deadline_with_a_ready_source() {
     let config = RevalidationConfig {
         max_stream_lifetime: Duration::from_secs(10),
     };
-    let (sender, receiver) = mpsc::unbounded_channel();
-    let mut stream = revalidate_stream(receiver_stream(receiver), None, config);
+    for (expiry, cutoff) in [(None, 10), (Some(2), 2), (Some(20), 10)] {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let expiry = expiry.map(|secs| SystemTime::now() + Duration::from_secs(secs));
+        let mut stream = revalidate_stream(receiver_stream(receiver), expiry, config);
 
-    sender.send(1).expect("receiver is alive");
-    sender.send(2).expect("receiver is alive");
-    sender.send(3).expect("receiver is alive");
-    time::advance(Duration::from_secs(10)).await;
-
-    assert_eq!(stream.next().await, Some(1));
-    assert_eq!(stream.next().await, Some(2));
-    assert_eq!(stream.next().await, Some(3));
-    assert_eq!(stream.next().await, None);
+        sender.send(1).expect("receiver is alive");
+        sender.send(2).expect("receiver is alive");
+        assert_eq!(stream.next().await, Some(1));
+        time::advance(Duration::from_secs(cutoff)).await;
+        assert_eq!(stream.next().await, None);
+        assert_eq!(stream.next().await, None);
+    }
 }
 
 #[test]

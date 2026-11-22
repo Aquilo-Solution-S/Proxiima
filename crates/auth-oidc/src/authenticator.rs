@@ -15,6 +15,7 @@
 //! forwarder instead carries its verified owner and writer claims without a
 //! role until request owner agreement is checked at the edge.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -130,6 +131,8 @@ pub enum OidcRejection {
     InvalidClaim(String),
     #[error("token expiry is out of range")]
     ExpiryOutOfRange,
+    #[error("token subject is not allowed")]
+    UnauthorizedSubject,
     #[error("token claims do not match the host's claim type: {0}")]
     CustomClaims(String),
     /// The `typ` header names something other than an access token, or the
@@ -180,6 +183,7 @@ pub struct OidcTokenValidator {
     issuer: String,
     audience: String,
     leeway_secs: u64,
+    allowed_subjects: Option<HashSet<String>>,
     keys: Arc<dyn KeyResolver>,
     authorized_party: Option<AuthorizedPartyPolicy>,
     require_access_token_typ: bool,
@@ -209,6 +213,7 @@ impl OidcTokenValidator {
             issuer: config.issuer,
             audience: config.audience,
             leeway_secs: config.leeway_secs,
+            allowed_subjects: config.allowed_subjects,
             keys,
             authorized_party: None,
             require_access_token_typ: false,
@@ -238,7 +243,7 @@ impl OidcTokenValidator {
     /// # Errors
     ///
     /// `AuthError::InvalidCredentials` for any malformed, unsigned,
-    /// wrong-issuer, wrong-audience, or expired token, or an unresolvable
+    /// wrong-issuer, wrong-audience, or expired token, a disallowed subject, or an unresolvable
     /// key id. [`Self::validate_with`] says which.
     pub async fn validate(&self, token: &str) -> Result<ValidatedOidcClaims, AuthError> {
         self.validate_with::<serde::de::IgnoredAny>(token)
@@ -260,6 +265,16 @@ impl OidcTokenValidator {
     /// [`OidcRejection::CustomClaims`] when the verified claims do not
     /// deserialize as `C`.
     pub async fn validate_with<C: DeserializeOwned>(
+        &self,
+        token: &str,
+    ) -> Result<ValidatedOidcToken<C>, OidcRejection> {
+        let token = self.verify_with(token).await?;
+        self.check_subject(&token.claims)?;
+        Ok(token)
+    }
+
+    // Binding sets count cryptographically verified routes before applying subject policy.
+    pub(crate) async fn verify_with<C: DeserializeOwned>(
         &self,
         token: &str,
     ) -> Result<ValidatedOidcToken<C>, OidcRejection> {
@@ -324,6 +339,17 @@ impl OidcTokenValidator {
             custom,
         })
     }
+
+    pub(crate) fn check_subject(&self, claims: &ValidatedOidcClaims) -> Result<(), OidcRejection> {
+        if self
+            .allowed_subjects
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(&claims.subject))
+        {
+            return Err(OidcRejection::UnauthorizedSubject);
+        }
+        Ok(())
+    }
 }
 
 /// Validates Zitadel/OIDC bearer JWTs and shapes an [`AuthzContext`]: one
@@ -384,7 +410,7 @@ impl OidcAuthenticator {
 impl Authenticator for OidcAuthenticator {
     async fn authenticate(&self, creds: &Credentials) -> Result<AuthzContext, AuthError> {
         let Credentials::Bearer(token) = creds;
-        let token = self.binding.validator.validate_with(token).await?;
+        let token = self.binding.validator.verify_with(token).await?;
         self.binding.authz_for_token(token).await
     }
 }

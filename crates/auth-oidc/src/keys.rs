@@ -386,27 +386,26 @@ impl HttpJwksResolver {
         jwks_uri: Option<String>,
         request_timeout: Duration,
     ) -> Result<Self, OidcConfigError> {
-        let http = build_http_client(&issuer, reqwest::Client::builder());
-        Self::with_http_client(issuer, jwks_uri, http, request_timeout)
+        Self::with_http_client_builder(
+            issuer,
+            jwks_uri,
+            reqwest::Client::builder(),
+            request_timeout,
+        )
     }
 
-    /// Construct a resolver with an injected HTTP client and an explicit
-    /// complete-request timeout. The timeout is applied to each request, so a
-    /// client with a weaker or absent default cannot make discovery or JWKS
-    /// body reads unbounded.
+    /// Construct a resolver with a customized HTTP client and a complete-request timeout.
     ///
-    /// The host owns the injected client's redirect policy. It must disable
-    /// redirects or validate every target against the issuer's HTTPS/loopback
-    /// policy before following it. Unlike the default constructors, this
-    /// method cannot replace the policy on an already-built client.
+    /// The resolver installs its issuer-aware redirect policy on the builder.
     ///
     /// # Errors
     ///
-    /// Returns the same URL and timeout errors as [`Self::with_request_timeout`].
-    pub fn with_http_client(
+    /// Returns the same URL and timeout errors as [`Self::with_request_timeout`],
+    /// or [`OidcConfigError::HttpClientBuild`] if the client cannot be built.
+    pub fn with_http_client_builder(
         issuer: String,
         jwks_uri: Option<String>,
-        http: reqwest::Client,
+        builder: reqwest::ClientBuilder,
         request_timeout: Duration,
     ) -> Result<Self, OidcConfigError> {
         validate_issuer_url(&issuer)?;
@@ -414,6 +413,7 @@ impl HttpJwksResolver {
             validate_jwks_url("jwks_uri", uri, &issuer)?;
         }
         validate_request_timeout(request_timeout)?;
+        let http = build_http_client(&issuer, builder)?;
         Ok(Self {
             issuer,
             jwks_uri,
@@ -591,7 +591,10 @@ impl HttpJwksResolver {
     }
 }
 
-fn build_http_client(issuer: &str, builder: reqwest::ClientBuilder) -> reqwest::Client {
+fn build_http_client(
+    issuer: &str,
+    builder: reqwest::ClientBuilder,
+) -> Result<reqwest::Client, OidcConfigError> {
     let issuer = issuer.to_owned();
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         if let Err(error) = validate_jwks_url("redirect target", attempt.url().as_str(), &issuer) {
@@ -602,7 +605,7 @@ fn build_http_client(issuer: &str, builder: reqwest::ClientBuilder) -> reqwest::
     builder
         .redirect(policy)
         .build()
-        .expect("initialize OIDC HTTP client")
+        .map_err(|_| OidcConfigError::HttpClientBuild)
 }
 
 fn validate_request_timeout(request_timeout: Duration) -> Result<(), OidcConfigError> {

@@ -15,6 +15,8 @@ pub enum OidcConfigError {
     BlankField { field: &'static str },
     #[error("{field} must use https: {value}")]
     InsecureUrl { field: &'static str, value: String },
+    #[error("cannot initialize the OIDC HTTP client")]
+    HttpClientBuild,
     #[error("{field} must be greater than zero and at most {max_seconds} seconds")]
     InvalidTimeout {
         field: &'static str,
@@ -127,7 +129,7 @@ pub fn validate_jwks_url(
 /// what keeps a bearer off the wire in transit.
 ///
 /// This is a transport check on the endpoint, not a trust decision about the
-/// issuer: tokens are still verified by RS256 signature against the JWKS this
+/// issuer: tokens still verify using `Proxiima.Authentication.signatureAlgorithms` against the JWKS this
 /// URL serves, and `(iss, sub)` is still mapped through an explicit subject
 /// map before it becomes an identity.
 ///
