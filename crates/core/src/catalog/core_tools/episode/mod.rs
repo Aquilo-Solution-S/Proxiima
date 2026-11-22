@@ -2,6 +2,7 @@
 
 mod bind;
 
+use super::memory::{AUTHORING_BODY_MAX, AUTHORING_TITLE_MAX};
 use crate::catalog::{Replay, ToolEffect};
 use futures::future::BoxFuture;
 use schemars::JsonSchema;
@@ -22,14 +23,15 @@ use crate::MemoryKind;
 use crate::catalog::validate_trimmed_len;
 use crate::engine::GoalCreatePayloadWriteRequest;
 use crate::error::ErrorCode;
+use crate::memory::payloads::interpretation::CONFIDENCE_MAX;
 use crate::memory::payloads::write_act::WriteActV1;
 use crate::protocol::tool as protocol_tool;
 use crate::verbs::goal_write::{
     GoalEvidenceRef, GoalMotivationRef, GoalTopologyWrite, IdempotencyKey,
 };
 use crate::{
-    DerivationIdentity, DerivedMemory, FactWrite, InterpretationV1, MemoryId, SeriesHandle,
-    UnitOfWork,
+    DerivationIdentity, DerivedMemory, FactWrite, InterpretationConfidence, InterpretationV1,
+    MemoryId, SeriesHandle, UnitOfWork,
 };
 use crate::{Tool, ToolCtx, ToolError};
 
@@ -45,9 +47,9 @@ pub struct EpisodeCommitTool;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EpisodeRememberItem {
-    #[schemars(length(max = 240), description = "Fact title, 1 to 240 chars.")]
+    #[schemars(length(max = AUTHORING_TITLE_MAX), description = "Fact title, 1 to 240 chars.")]
     pub title: String,
-    #[schemars(length(max = 20000), description = "Fact body, 1 to 20000 chars.")]
+    #[schemars(length(max = AUTHORING_BODY_MAX), description = "Fact body, 1 to 20000 chars.")]
     pub body: String,
     #[serde(default)]
     #[schemars(description = "Search tags, at most 16, 1 to 48 chars each; stored lowercase.")]
@@ -66,10 +68,10 @@ pub struct EpisodeRememberItem {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EpisodeDeriveItem {
-    #[schemars(length(max = 240), description = "Abstraction title, 1 to 240 chars.")]
+    #[schemars(length(max = AUTHORING_TITLE_MAX), description = "Abstraction title, 1 to 240 chars.")]
     pub title: String,
     #[schemars(
-        length(max = 20000),
+        length(max = AUTHORING_BODY_MAX),
         description = "Abstraction body, 1 to 20000 chars."
     )]
     pub body: String,
@@ -103,12 +105,12 @@ pub struct EpisodeDeriveItem {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EpisodeStanceItem {
     #[schemars(
-        length(max = 1000),
+        length(max = MAX_CLAIM_CHARS),
         description = "Claim about the subjects, 1 to 1000 chars."
     )]
     pub claim: String,
     #[serde(default = "default_confidence")]
-    #[schemars(range(max = 100), description = "Confidence 0..=100. Defaults to 80.")]
+    #[schemars(range(max = CONFIDENCE_MAX), description = "Confidence 0..=100. Defaults to 80.")]
     pub confidence: u8,
     #[schemars(
         description = "1 to 64 memories the claim is about: memory UUIDs, or this call's `remember:N`, `derive` or an earlier `stance:N` (0-based)."
@@ -490,9 +492,9 @@ impl EpisodeWrite<'_> {
         let act_id = self.act_id;
         for (idx, item) in items.iter().enumerate() {
             let claim = validate_trimmed_len("claim", &item.claim, MAX_CLAIM_CHARS)?.to_string();
-            if item.confidence > 100 {
-                return Err(ToolError::InvalidInput("confidence must be 0..=100".into()));
-            }
+            let confidence = InterpretationConfidence::try_from(i16::from(item.confidence))
+                .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
+            // `Proxiima.Memory.admitsSubjectResolution`.
             if item.subjects.is_empty() {
                 return Err(ToolError::InvalidInput(
                     "an interpretation must be about at least one memory".into(),
@@ -504,35 +506,26 @@ impl EpisodeWrite<'_> {
                 )));
             }
             let model_id = ctx.operator_label(item.model_id.as_deref())?;
-            let (subject_memory_ids, subject_kinds): (Vec<uuid::Uuid>, Vec<_>) = dedup_resolved(
+            let subjects = dedup_resolved(
                 &item.subjects,
                 MAX_SUBJECTS,
                 "subjects",
                 "an interpretation must be about at least one memory",
                 |handle| Box::pin(resolve_stance_subject(ctx, &self.slots, handle)),
             )
-            .await?
-            .into_iter()
-            .map(|(memory_id, kind)| (memory_id.into_inner(), kind))
-            .unzip();
+            .await?;
             let memory_id = MemoryId::new(interpretation_memory_id(
                 owner.into_inner(),
                 &model_id,
                 &claim,
-                item.confidence,
-                &subject_memory_ids,
+                confidence,
+                &subjects,
             ));
-            reject_self_subject(memory_id, &subject_memory_ids)?;
-            let subject_refs = subject_memory_ids
-                .iter()
-                .copied()
-                .map(MemoryId::new)
-                .collect::<Vec<_>>();
+            reject_self_subject(memory_id, &subjects)?;
             let payload = InterpretationV1 {
                 claim: claim.clone(),
-                confidence: item.confidence,
-                subject_memory_ids,
-                subject_kinds,
+                confidence,
+                subjects,
                 model_id: model_id.clone(),
                 client_name: ctx.caller().client_name.clone(),
                 client_version: ctx.caller().client_version.clone(),
@@ -548,7 +541,7 @@ impl EpisodeWrite<'_> {
                         claim,
                         payload,
                     )
-                    .refs(subject_refs.into_iter().chain(extra_refs))
+                    .refs(extra_refs)
                     .lexical_language(crate::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT),
                 )
                 .await

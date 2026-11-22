@@ -92,6 +92,7 @@ impl ToolError {
                 crate::StorageError::Retryable(_)
                 | crate::StorageError::Unavailable(_)
                 | crate::StorageError::Internal(_)
+                | crate::StorageError::InvalidStoredInterpretation { .. }
                 | crate::StorageError::MemoryIdCollision
                 | crate::StorageError::SchemaResetRequired { .. }
                 | crate::StorageError::MigrationRequired { .. } => ToolErrorKind::Internal,

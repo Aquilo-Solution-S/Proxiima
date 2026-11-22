@@ -32,9 +32,8 @@ fn auth(user: UserId) -> AuthzContext {
 fn perspective(text: &str, fact: MemoryId, note: MemoryId) -> InterpretationV1 {
     InterpretationV1 {
         claim: text.to_owned(),
-        confidence: 90,
-        subject_memory_ids: vec![fact.into_inner(), note.into_inner()],
-        subject_kinds: vec![MemoryKind::Fact, MemoryKind::Fact],
+        confidence: 90.try_into().unwrap(),
+        subjects: vec![(fact, MemoryKind::Fact), (note, MemoryKind::Fact)],
         model_id: "test".into(),
         client_name: "test".into(),
         client_version: "1".into(),

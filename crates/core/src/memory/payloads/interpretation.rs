@@ -1,32 +1,159 @@
 use crate::{
-    DurablePayloadBuilder, EntityKind, KeyField, MemoryId, MemoryKind, PayloadDisplay,
-    PayloadProjection, PayloadReference, PerspectivePayload,
+    DurablePayloadBuilder, KeyField, MemoryId, MemoryKind, PayloadDisplay, PayloadProjection,
+    PayloadReference, PerspectivePayload,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub(crate) const CONFIDENCE_MAX: u8 = crate::ledger!(Proxiima.Memory.confidenceMax);
+pub(crate) const CONFIDENCE_DEFAULT: u8 = crate::ledger!(Proxiima.Memory.confidenceDefault);
+
+/// An interpretation score on the inclusive 0..=100 scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "i16")]
+pub struct InterpretationConfidence(u8);
+
+/// The supplied interpretation score lies outside the scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("confidence must be 0..={CONFIDENCE_MAX}")]
+pub struct InvalidInterpretationConfidence;
+
+impl TryFrom<i16> for InterpretationConfidence {
+    type Error = InvalidInterpretationConfidence;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        let value = u8::try_from(value).map_err(|_| InvalidInterpretationConfidence)?;
+        if value <= CONFIDENCE_MAX {
+            Ok(Self(value))
+        } else {
+            Err(InvalidInterpretationConfidence)
+        }
+    }
+}
+
+impl InterpretationConfidence {
+    /// The numeric confidence stored by the sidecar.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// The two persisted subject columns have different lengths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("interpretation subject arrays have different lengths ({ids} ids, {kinds} kinds)")]
+pub struct MisalignedInterpretationSubjects {
+    ids: usize,
+    kinds: usize,
+}
+
+/// An agent's claim about existing nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterpretationV1 {
+    /// The claim being made about the subjects.
+    pub claim: String,
+    /// How strongly the author holds the claim, 0..=100.
+    pub confidence: InterpretationConfidence,
+    /// Each subject's exact Memory version and the layer of that version.
+    pub subjects: Vec<(MemoryId, MemoryKind)>,
+    pub model_id: String,
+    pub client_name: String,
+    pub client_version: String,
+}
 
 /// An agent's claim about existing nodes.
 ///
 /// A claim with a reason and a confidence is a judgment — a Perspective
 /// (docs/concepts.md). Subjects are schema-declared reference fields;
 /// index rows are re-derivable from this payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct InterpretationV1 {
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename = "InterpretationV1")]
+struct InterpretationWire<Text> {
     /// The claim being made about the subjects.
-    pub claim: String,
+    claim: Text,
     /// How strongly the author holds the claim, 0..=100.
-    pub confidence: u8,
+    #[schemars(with = "u8")]
+    confidence: InterpretationConfidence,
     /// Memories the claim is about. Each becomes a `Reference` index
     /// entry sourced at this Perspective.
-    pub subject_memory_ids: Vec<uuid::Uuid>,
+    subject_memory_ids: Vec<uuid::Uuid>,
     /// Entity kind of each subject, positionally aligned with
     /// `subject_memory_ids`. Carried because a reference declaration
     /// needs its target's kind and this payload is the only place the
     /// resolved kinds survive re-derivation.
-    pub subject_kinds: Vec<MemoryKind>,
-    pub model_id: String,
-    pub client_name: String,
-    pub client_version: String,
+    subject_kinds: Vec<MemoryKind>,
+    model_id: Text,
+    client_name: Text,
+    client_version: Text,
+}
+
+impl InterpretationV1 {
+    /// Decode the persisted subject columns into exact version and kind pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a subject ID or kind has no corresponding entry.
+    pub fn subjects_from_columns(
+        ids: Vec<uuid::Uuid>,
+        kinds: Vec<MemoryKind>,
+    ) -> Result<Vec<(MemoryId, MemoryKind)>, MisalignedInterpretationSubjects> {
+        // `Proxiima.Memory.InterpretationSubject`.
+        if ids.len() != kinds.len() {
+            return Err(MisalignedInterpretationSubjects {
+                ids: ids.len(),
+                kinds: kinds.len(),
+            });
+        }
+        Ok(ids.into_iter().map(MemoryId::new).zip(kinds).collect())
+    }
+
+    fn wire(&self) -> InterpretationWire<&str> {
+        let (subject_memory_ids, subject_kinds) = self
+            .subjects
+            .iter()
+            .map(|&(id, kind)| (id.into_inner(), kind))
+            .unzip();
+        InterpretationWire {
+            claim: self.claim.as_str(),
+            confidence: self.confidence,
+            subject_memory_ids,
+            subject_kinds,
+            model_id: self.model_id.as_str(),
+            client_name: self.client_name.as_str(),
+            client_version: self.client_version.as_str(),
+        }
+    }
+}
+
+impl Serialize for InterpretationV1 {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.wire().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for InterpretationV1 {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = InterpretationWire::<String>::deserialize(deserializer)?;
+        Ok(Self {
+            claim: wire.claim,
+            confidence: wire.confidence,
+            subjects: Self::subjects_from_columns(wire.subject_memory_ids, wire.subject_kinds)
+                .map_err(serde::de::Error::custom)?,
+            model_id: wire.model_id,
+            client_name: wire.client_name,
+            client_version: wire.client_version,
+        })
+    }
+}
+
+impl JsonSchema for InterpretationV1 {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        InterpretationWire::<String>::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        InterpretationWire::<String>::json_schema(generator)
+    }
 }
 
 impl PerspectivePayload for InterpretationV1 {
@@ -37,21 +164,11 @@ impl PerspectivePayload for InterpretationV1 {
         "proxiima_core.interpretation_v1"
     }
 
-    /// The subjects, as schema-declared reference fields. A subject
-    /// whose kind is missing from `subject_kinds` is skipped rather than
-    /// guessed: an index row with the wrong endpoint kind would be a
-    /// wrong answer, and a missing one is a visible absence.
     fn references(&self) -> Vec<PayloadReference> {
-        self.subject_memory_ids
+        // `Proxiima.Memory.InterpretationSubject`.
+        self.subjects
             .iter()
-            .zip(self.subject_kinds.iter())
-            .map(|(memory_id, kind)| {
-                PayloadReference::memory(
-                    "subject_memory_ids",
-                    EntityKind::from(*kind),
-                    MemoryId::new(*memory_id),
-                )
-            })
+            .map(|&(id, kind)| PayloadReference::memory("subject_memory_ids", kind.into(), id))
             .collect()
     }
 
@@ -73,76 +190,90 @@ impl PayloadProjection for InterpretationV1 {
         }
     }
     fn durable(&self) -> Result<crate::DurablePayload, String> {
-        let subject_kinds = self
-            .subject_kinds
-            .iter()
-            .map(|kind| kind.entity_kind().as_str())
-            .collect::<Vec<_>>();
+        let wire = self.wire();
         let mut fields = DurablePayloadBuilder::new();
         fields
-            .field("claim", &self.claim)?
-            .field("confidence", &self.confidence)?
-            .field("subject_memory_ids", &self.subject_memory_ids)?
-            .field("subject_kinds", &subject_kinds)?
-            .field("model_id", &self.model_id)?
-            .field("client_name", &self.client_name)?
-            .field("client_version", &self.client_version)?;
+            .field("claim", &wire.claim)?
+            .field("confidence", &wire.confidence)?
+            .field("subject_memory_ids", &wire.subject_memory_ids)?
+            .field("subject_kinds", &wire.subject_kinds)?
+            .field("model_id", &wire.model_id)?
+            .field("client_name", &wire.client_name)?
+            .field("client_version", &wire.client_version)?;
         Ok(fields.finish())
     }
 }
 
 #[cfg(test)]
-mod projection_tests {
+mod tests {
     use super::*;
-    #[test]
-    fn durable_matches_current_wire_encoding() {
-        let value = InterpretationV1 {
-            claim: "claim".into(),
-            confidence: 80,
-            subject_memory_ids: vec![uuid::Uuid::nil(); 3],
-            subject_kinds: vec![
-                MemoryKind::Fact,
-                MemoryKind::Abstraction,
-                MemoryKind::Perspective,
-            ],
+    use crate::{EntityKind, ReferenceBinding};
+
+    fn fixture() -> InterpretationV1 {
+        InterpretationV1 {
+            claim: "the outage followed the deploy".into(),
+            confidence: 80.try_into().unwrap(),
+            subjects: MemoryKind::ALL
+                .into_iter()
+                .map(|kind| (MemoryId::new(uuid::Uuid::now_v7()), kind))
+                .collect(),
             model_id: "model".into(),
             client_name: "client".into(),
             client_version: "1".into(),
-        };
+        }
+    }
+
+    #[test]
+    fn durable_matches_current_wire_encoding() {
+        let value = fixture();
+        let wire = serde_json::to_value(&value).expect("wire");
         assert_eq!(
             value.durable().expect("durable").canonical_bytes(),
-            crate::canonical_json_bytes(&serde_json::to_value(&value).expect("wire"))
+            crate::canonical_json_bytes(&wire)
+        );
+        assert_eq!(wire["confidence"], 80);
+        assert_eq!(
+            wire["subject_memory_ids"],
+            serde_json::json!(value.subjects.iter().map(|(id, _)| id).collect::<Vec<_>>())
+        );
+        assert_eq!(wire["subject_kinds"], serde_json::json!(MemoryKind::ALL));
+        assert_eq!(
+            serde_json::from_value::<InterpretationV1>(wire).unwrap(),
+            value
         );
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::InterpretationV1;
-    use crate::{EntityKind, MemoryKind, PerspectivePayload, ReferenceBinding};
+    #[test]
+    fn invalid_confidence_and_misaligned_columns_refuse_decode() {
+        let value = fixture();
+        let wire = serde_json::to_value(&value).expect("wire");
+        for score in [-1, 101] {
+            assert!(InterpretationConfidence::try_from(score).is_err());
+            let mut invalid = wire.clone();
+            invalid["confidence"] = score.into();
+            assert!(serde_json::from_value::<InterpretationV1>(invalid).is_err());
+        }
+        for field in ["subject_memory_ids", "subject_kinds"] {
+            let mut invalid = wire.clone();
+            invalid[field] = serde_json::json!([]);
+            let error = serde_json::from_value::<InterpretationV1>(invalid).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("subject arrays have different lengths")
+            );
+        }
+    }
 
     #[test]
     fn subjects_become_pinned_reference_declarations() {
-        let subject = uuid::Uuid::now_v7();
-        let payload = InterpretationV1 {
-            claim: "the outage followed the deploy".into(),
-            confidence: 80,
-            subject_memory_ids: vec![subject],
-            subject_kinds: vec![MemoryKind::Fact],
-            model_id: "test-model".into(),
-            client_name: "test".into(),
-            client_version: "1".into(),
-        };
+        let payload = fixture();
         let references = payload.references();
-        assert_eq!(references.len(), 1);
-        assert_eq!(references[0].binding, ReferenceBinding::Pin);
-        assert_eq!(references[0].target.kind, EntityKind::Fact);
-        assert_eq!(
-            references[0]
-                .target
-                .memory_id()
-                .map(crate::MemoryId::into_inner),
-            Some(subject)
-        );
+        assert_eq!(references.len(), payload.subjects.len());
+        for (reference, &(id, kind)) in references.iter().zip(&payload.subjects) {
+            assert_eq!(reference.binding, ReferenceBinding::Pin);
+            assert_eq!(reference.target.kind, EntityKind::from(kind));
+            assert_eq!(reference.target.memory_id(), Some(id));
+        }
     }
 }

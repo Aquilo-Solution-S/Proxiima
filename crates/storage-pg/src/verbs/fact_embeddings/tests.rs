@@ -2263,9 +2263,8 @@ mod pg_tests {
             "a grounded claim",
             proxiima_core::InterpretationV1 {
                 claim: "a grounded claim".into(),
-                confidence: 80,
-                subject_memory_ids: vec![subject.into_inner()],
-                subject_kinds: vec![proxiima_core::MemoryKind::Abstraction],
+                confidence: 80.try_into().unwrap(),
+                subjects: vec![(subject, proxiima_core::MemoryKind::Abstraction)],
                 model_id: "test".into(),
                 client_name: "test".into(),
                 client_version: "1".into(),

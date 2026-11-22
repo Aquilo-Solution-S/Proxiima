@@ -282,9 +282,8 @@ fn guided_interpretation_keeps_exact_goal_versions_and_deduplicates() {
         "claim",
         InterpretationV1 {
             claim: "claim".into(),
-            confidence: 80,
-            subject_memory_ids: vec![uuid::Uuid::now_v7()],
-            subject_kinds: vec![MemoryKind::Fact],
+            confidence: 80.try_into().unwrap(),
+            subjects: vec![(crate::MemoryId::new(uuid::Uuid::now_v7()), MemoryKind::Fact)],
             model_id: "fixture".into(),
             client_name: "fixture".into(),
             client_version: "1".into(),

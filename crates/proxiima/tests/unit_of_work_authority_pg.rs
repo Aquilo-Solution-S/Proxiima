@@ -516,9 +516,8 @@ async fn goal_and_host_authority_decision_commit_and_roll_back_together() -> Tes
                 "authority assignment",
                 InterpretationV1 {
                     claim: "assignment".into(),
-                    confidence: 90,
-                    subject_memory_ids: vec![fact.memory_id.into_inner()],
-                    subject_kinds: vec![MemoryKind::Fact],
+                    confidence: 90.try_into().unwrap(),
+                    subjects: vec![(fact.memory_id, MemoryKind::Fact)],
                     model_id: "test".into(),
                     client_name: "test".into(),
                     client_version: "1".into(),

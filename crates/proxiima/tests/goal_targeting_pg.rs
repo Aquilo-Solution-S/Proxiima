@@ -205,9 +205,8 @@ async fn goal_perspective_feedback_keeps_declared_exact_version_context() {
 fn interpretation(claim: &str, evidence: MemoryId) -> InterpretationV1 {
     InterpretationV1 {
         claim: claim.to_owned(),
-        confidence: 90,
-        subject_memory_ids: vec![evidence.into_inner()],
-        subject_kinds: vec![MemoryKind::Fact],
+        confidence: 90.try_into().unwrap(),
+        subjects: vec![(evidence, MemoryKind::Fact)],
         model_id: "test".to_owned(),
         client_name: "test".to_owned(),
         client_version: "1".to_owned(),

@@ -1,26 +1,25 @@
 //! `core_interpret` — author an interpretation Perspective.
-//!
-//! A claim with a reason and a confidence is a judgment (docs/concepts.md
-//! §The Model). Connections to the subjects are index rows derived from
-//! the Perspective payload — nobody writes them except by writing the node.
 
 use crate::catalog::validate_trimmed_len;
 use crate::catalog::{Replay, ToolEffect};
+use crate::memory::payloads::interpretation::{CONFIDENCE_DEFAULT, CONFIDENCE_MAX};
 use crate::protocol::tool as protocol_tool;
-use crate::{DerivedMemory, InterpretationV1, MemoryId, MemoryKind, SeriesHandle};
+use crate::{
+    DerivedMemory, InterpretationConfidence, InterpretationV1, MemoryId, MemoryKind, SeriesHandle,
+};
 use crate::{Tool, ToolCtx, ToolError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub(crate) const MAX_CLAIM_CHARS: usize = 1000;
-pub(crate) const MAX_SUBJECTS: usize = 64;
+pub(crate) const MAX_CLAIM_CHARS: usize = crate::ledger!(Proxiima.Memory.claimMax);
+pub(crate) const MAX_SUBJECTS: usize = crate::ledger!(Proxiima.Memory.subjectMax);
 
 const INTERPRET_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x1b, 0x6a, 0x4c, 0x9e, 0x2d, 0x77, 0x4f, 0x0b, 0xa5, 0x31, 0x8e, 0x24, 0x6c, 0x0d, 0x91, 0xf3,
 ]);
 
 pub(crate) fn default_confidence() -> u8 {
-    80
+    CONFIDENCE_DEFAULT
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -31,10 +30,10 @@ pub struct InterpretArgs {
     )]
     pub claim: String,
     #[serde(default = "default_confidence")]
-    #[schemars(range(max = 100), description = "Confidence in the claim.")]
+    #[schemars(range(max = CONFIDENCE_MAX), description = "Confidence in the claim.")]
     pub confidence: u8,
     #[schemars(
-        length(max = 64),
+        length(max = MAX_SUBJECTS),
         description = "At least one memory the claim is about, of any layer: memory UUIDs."
     )]
     pub subjects: Vec<String>,
@@ -87,8 +86,6 @@ impl Tool for InterpretTool {
     const DESCRIPTION: &'static str = "Author a Perspective that interprets memories of any \
          layer: a claim with a confidence that points at its subjects rather than being made from \
          them. For a stance made from Abstractions, use core_derive kind=Perspective.";
-    // Idempotent by content: the interpretation's memory id is folded from
-    // the claim, so re-asserting it lands on one memory.
     const EFFECT: Option<ToolEffect> = Some(ToolEffect::Additive(Replay::Idempotent));
     type Args = InterpretArgs;
     type Output = InterpretOutput;
@@ -103,12 +100,11 @@ impl Tool for InterpretTool {
                 prepared.memory_id.into_inner(),
                 &prepared.external,
             ));
-            reject_self_subject(memory_id, &prepared.subject_memory_ids)?;
+            reject_self_subject(memory_id, &prepared.subjects)?;
             let payload = InterpretationV1 {
                 claim: prepared.claim.clone(),
                 confidence: prepared.confidence,
-                subject_memory_ids: prepared.subject_memory_ids,
-                subject_kinds: prepared.subject_kinds,
+                subjects: prepared.subjects,
                 model_id: prepared.model_id.clone(),
                 client_name: ctx.caller().client_name.clone(),
                 client_version: ctx.caller().client_version.clone(),
@@ -144,13 +140,12 @@ impl Tool for InterpretTool {
 
 struct PreparedInterpretation {
     claim: String,
-    confidence: u8,
+    confidence: InterpretationConfidence,
     model_id: String,
     guided_by: Vec<crate::GoalId>,
     destination: crate::MemoryDestination,
     memory_id: MemoryId,
-    subject_memory_ids: Vec<uuid::Uuid>,
-    subject_kinds: Vec<MemoryKind>,
+    subjects: Vec<(MemoryId, MemoryKind)>,
     read_subjects: Vec<crate::storage_ports::other_stores::ReadOrigin>,
     external: Vec<uuid::Uuid>,
     supersedes: Option<MemoryId>,
@@ -161,9 +156,8 @@ async fn prepare_interpretation(
     args: InterpretArgs,
 ) -> Result<PreparedInterpretation, ToolError> {
     let claim = validate_trimmed_len("claim", &args.claim, MAX_CLAIM_CHARS)?.to_string();
-    if args.confidence > 100 {
-        return Err(ToolError::InvalidInput("confidence must be 0..=100".into()));
-    }
+    let confidence = InterpretationConfidence::try_from(i16::from(args.confidence))
+        .map_err(|err| ToolError::InvalidInput(err.to_string()))?;
     if args.subjects.is_empty() {
         return Err(ToolError::InvalidInput(
             "an interpretation must be about at least one memory".into(),
@@ -217,6 +211,7 @@ async fn prepare_interpretation(
             }
         }
     }
+    // `Proxiima.Memory.admitsSubjectResolution`.
     if local_subjects.is_empty() {
         return Err(ToolError::InvalidInput("subjects must include at least one memory of this store; memories of other stores only join local ones".into()));
     }
@@ -224,10 +219,6 @@ async fn prepare_interpretation(
         .iter()
         .map(crate::storage_ports::other_stores::ReadOrigin::handle)
         .collect::<Vec<_>>();
-    let (subject_memory_ids, subject_kinds): (Vec<uuid::Uuid>, Vec<_>) = local_subjects
-        .into_iter()
-        .map(|(id, kind)| (id.into_inner(), kind))
-        .unzip();
     let planning_namespace = match destination {
         crate::MemoryDestination::Owner(owner) => owner.into_inner(),
         crate::MemoryDestination::WorkingGoal(goal) => {
@@ -238,18 +229,17 @@ async fn prepare_interpretation(
         planning_namespace,
         &model_id,
         &claim,
-        args.confidence,
-        &subject_memory_ids,
+        confidence,
+        &local_subjects,
     ));
     Ok(PreparedInterpretation {
         claim,
-        confidence: args.confidence,
+        confidence,
         model_id,
         guided_by,
         destination,
         memory_id,
-        subject_memory_ids,
-        subject_kinds,
+        subjects: local_subjects,
         read_subjects,
         external,
         supersedes,
@@ -266,18 +256,12 @@ fn resolve_guided_goals(
         .collect()
 }
 
-/// A node cannot be about itself: the reference would be a self-loop,
-/// which is not a connection between two things.
-///
-/// Defensive by construction — the interpretation's id folds its own
-/// subject list, so naming itself changes the id it was named for — and
-/// kept anyway, because "unreachable" is a property of today's id
-/// derivation rather than of the rule.
+/// `Proxiima.Memory.admitsSubject`. Keep the guard independent of how the handle is derived.
 pub(crate) fn reject_self_subject(
     memory_id: MemoryId,
-    subjects: &[uuid::Uuid],
+    subjects: &[(MemoryId, MemoryKind)],
 ) -> Result<(), ToolError> {
-    if subjects.contains(&memory_id.into_inner()) {
+    if subjects.iter().any(|&(id, _)| id == memory_id) {
         return Err(ToolError::InvalidInput(
             "an interpretation cannot take itself as a subject".into(),
         ));
@@ -292,12 +276,7 @@ pub(crate) async fn resolve_subject(
     ctx.resolve_memory_with_kind(handle).await
 }
 
-/// Deterministic id folded from owner, model, claim, confidence and
-/// subjects: re-asserting the same interpretation is one memory, not a
-/// growing pile of identical judgments.
-/// Fold other-store subjects into an interpretation's id, so the same
-/// claim about different remote memories is a different memory. With none
-/// the id is the one [`interpretation_memory_id`] always minted.
+/// `Proxiima.Memory.interpretationKey`. With no remote subjects the local handle is unchanged.
 pub(crate) fn fold_external_subjects(id: uuid::Uuid, external: &[uuid::Uuid]) -> uuid::Uuid {
     if external.is_empty() {
         return id;
@@ -312,12 +291,13 @@ pub(crate) fn fold_external_subjects(id: uuid::Uuid, external: &[uuid::Uuid]) ->
     uuid::Uuid::new_v5(&INTERPRET_NAMESPACE, &buf)
 }
 
+// `Proxiima.Memory.interpretationKey`.
 pub(crate) fn interpretation_memory_id(
     planning_namespace: uuid::Uuid,
     model_id: &str,
     claim: &str,
-    confidence: u8,
-    subjects: &[uuid::Uuid],
+    confidence: InterpretationConfidence,
+    subjects: &[(MemoryId, MemoryKind)],
 ) -> uuid::Uuid {
     let mut buf = Vec::with_capacity(96 + claim.len() + subjects.len() * 16);
     buf.extend_from_slice(planning_namespace.as_bytes());
@@ -326,10 +306,10 @@ pub(crate) fn interpretation_memory_id(
     buf.push(0);
     buf.extend_from_slice(claim.as_bytes());
     buf.push(0);
-    buf.push(confidence);
-    for subject in subjects {
+    buf.push(confidence.get());
+    for (subject, _) in subjects {
         buf.push(0);
-        buf.extend_from_slice(subject.as_bytes());
+        buf.extend_from_slice(subject.into_inner().as_bytes());
     }
     uuid::Uuid::new_v5(&INTERPRET_NAMESPACE, &buf)
 }
@@ -337,7 +317,7 @@ pub(crate) fn interpretation_memory_id(
 #[cfg(test)]
 mod tests {
     use super::{InterpretArgs, InterpretTool, default_confidence, reject_self_subject};
-    use crate::{AuthPath, AuthzContext, OwnerId, SpiiceRegistry, UserId};
+    use crate::{AuthPath, AuthzContext, MemoryId, MemoryKind, OwnerId, SpiiceRegistry, UserId};
     use crate::{Tool, ToolCtx, ToolError};
     use std::sync::Arc;
 
@@ -393,21 +373,43 @@ mod tests {
         }
     }
 
-    /// An interpretation that took itself as a subject would ask for an
-    /// index row from a node to itself, which is not a connection between
-    /// two things.
     #[test]
-    fn an_interpretation_cannot_take_itself_as_a_subject() {
-        let memory_id = crate::MemoryId::new(uuid::Uuid::now_v7());
-        let other = uuid::Uuid::now_v7();
-        reject_self_subject(memory_id, &[other]).expect("a distinct subject is fine");
-        let err = reject_self_subject(memory_id, &[other, memory_id.into_inner()])
-            .expect_err("a self-subject must be refused");
-        assert!(
-            matches!(&err, ToolError::InvalidInput(message)
-                if message.contains("cannot take itself")),
-            "unexpected error: {err:?}"
-        );
+    fn subject_admission_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum SubjectIdentity {
+            Distinct,
+            #[serde(rename = "self")]
+            Same,
+        }
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            identity: [SubjectIdentity; 1],
+            out: bool,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Memory.admitsSubject"].clone()).unwrap();
+        assert_eq!(rows.len(), 2);
+        let source = MemoryId::new(uuid::Uuid::now_v7());
+        let other = (MemoryId::new(uuid::Uuid::now_v7()), MemoryKind::Fact);
+        for row in rows {
+            let subject = match row.identity[0] {
+                SubjectIdentity::Distinct => other,
+                SubjectIdentity::Same => (source, MemoryKind::Perspective),
+            };
+            let result = reject_self_subject(source, &[other, subject]);
+            assert_eq!(result.is_ok(), row.out);
+            if let Err(err) = result {
+                assert!(
+                    matches!(&err, ToolError::InvalidInput(message)
+                    if message.contains("cannot take itself")),
+                    "unexpected error: {err:?}"
+                );
+            }
+        }
     }
 
     #[tokio::test]

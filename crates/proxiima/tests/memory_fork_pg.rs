@@ -32,9 +32,8 @@ fn direct(subject: UserId) -> AuthzContext {
 fn interpretation(fact: MemoryId, claim: &str) -> InterpretationV1 {
     InterpretationV1 {
         claim: claim.into(),
-        confidence: 90,
-        subject_memory_ids: vec![fact.into_inner()],
-        subject_kinds: vec![MemoryKind::Fact],
+        confidence: 90.try_into().unwrap(),
+        subjects: vec![(fact, MemoryKind::Fact)],
         model_id: "fork-test".into(),
         client_name: "fork-test".into(),
         client_version: "1".into(),
@@ -397,9 +396,8 @@ async fn typed_perspective_fork_is_a_new_series_and_replays_by_key() {
             "source perspective",
             InterpretationV1 {
                 claim: "source".into(),
-                confidence: 90,
-                subject_memory_ids: vec![fact.into_inner()],
-                subject_kinds: vec![MemoryKind::Fact],
+                confidence: 90.try_into().unwrap(),
+                subjects: vec![(fact, MemoryKind::Fact)],
                 model_id: "test".into(),
                 client_name: "test".into(),
                 client_version: "1".into(),

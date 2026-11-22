@@ -5,8 +5,9 @@
 
 use proxiima_core::verbs::schema::PayloadKind;
 use proxiima_core::{
-    DurablePayload, DurablePayloadBuilder, FactPayload, KeyField, MemoryId, OwnerId,
-    PayloadDisplay, PayloadKeyBuilder, PayloadProjection, StorageError, UserId,
+    DurablePayload, DurablePayloadBuilder, FactPayload, InterpretationV1, KeyField, MemoryId,
+    MemoryKind, OwnerId, PayloadDisplay, PayloadKeyBuilder, PayloadProjection, PerspectivePayload,
+    StorageError, StoredInterpretationError, UserId,
 };
 use proxiima_pg_testkit::{db_url, drop_db, unique_db_name};
 use sqlx::PgPool;
@@ -14,11 +15,11 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::{
-    PgMemoryPayload, PgMemorySidecar, PgSidecarFuture, PgSidecarReadCtx, SidecarInsertPermit,
-    SidecarOwnerMode, insert_memory_sidecar_row,
+    PgMemoryPayload, PgMemorySidecar, PgSidecarFuture, PgSidecarKey, PgSidecarReadCtx,
+    SidecarInsertPermit, SidecarOwnerMode, insert_memory_sidecar_row,
 };
 use crate::PgStorage;
-use crate::test_fixtures::{TestMemory, create_core_db};
+use crate::test_fixtures::{TestMemory, create_core_db, create_interpretation};
 
 const TABLES: &str = "
 CREATE TABLE public.optional_kinds_v1 (
@@ -110,6 +111,134 @@ fn envelope(table: &'static str) -> Envelope {
         body: serde_json::json!({"kind": "reading", "value": 3}),
         table,
     }
+}
+
+#[tokio::test]
+async fn interpretation_sql_check_agrees_with_ledger_confidence_bounds() {
+    const MAX: i16 = proxiima_core::ledger!(Proxiima.Memory.confidenceMax);
+    with_store("proxiima_interpretation_confidence", async |_, admin, _| {
+        let mut connection = admin.acquire().await?;
+        // Copy the installed CHECK without the parent-row triggers or foreign key.
+        sqlx::query(
+            "CREATE TEMP TABLE confidence_check
+             (LIKE proxiima_core.interpretation_v1 INCLUDING DEFAULTS INCLUDING CONSTRAINTS)",
+        )
+        .execute(&mut *connection)
+        .await?;
+        for score in [-1, 0, MAX, MAX + 1] {
+            let result = sqlx::query(
+                "INSERT INTO confidence_check (t, claim, confidence, model_id, client_name, client_version)
+                 VALUES ($1, 'claim', $2, 'model', 'client', '1')",
+            )
+            .bind(Uuid::now_v7())
+            .bind(score)
+            .execute(&mut *connection)
+            .await;
+            if (0..=MAX).contains(&score) {
+                result?;
+            } else {
+                let error = result.expect_err("out-of-range confidence must refuse");
+                assert_eq!(
+                    error.as_database_error().and_then(|error| error.constraint()),
+                    Some("interpretation_v1_confidence_chk")
+                );
+            }
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn legacy_interpretations_refuse_batch_decode_with_the_row_and_reason() {
+    with_store("proxiima_legacy_interpretation", async |pg, admin, owner| {
+        let subject = TestMemory::fact().create(pg, owner).await?.memory_id;
+        let score = create_interpretation(
+            pg,
+            owner,
+            InterpretationV1 {
+                claim: "legacy score".into(),
+                confidence: 80.try_into()?,
+                subjects: vec![(subject, MemoryKind::Fact)],
+                model_id: "fixture".into(),
+                client_name: "fixture".into(),
+                client_version: "1".into(),
+            },
+        )
+        .await?;
+        let subjects = create_interpretation(
+            pg,
+            owner,
+            InterpretationV1 {
+                claim: "legacy subjects".into(),
+                confidence: 80.try_into()?,
+                subjects: vec![(subject, MemoryKind::Fact)],
+                model_id: "fixture".into(),
+                client_name: "fixture".into(),
+                client_version: "1".into(),
+            },
+        )
+        .await?;
+
+        let mut tx = admin.begin().await?;
+        // Seed data the previous release could have admitted before this decoder and CHECK.
+        sqlx::raw_sql(
+            "ALTER TABLE proxiima_core.interpretation_v1
+                DROP CONSTRAINT interpretation_v1_confidence_chk,
+                DISABLE TRIGGER interpretation_v1_append_only",
+        )
+        .execute(tx.as_mut())
+        .await?;
+        sqlx::query("UPDATE proxiima_core.interpretation_v1 SET confidence = 101 WHERE t = $1")
+            .bind(score.into_inner())
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query("UPDATE proxiima_core.interpretation_v1 SET subject_kinds = '{}' WHERE t = $1")
+            .bind(subjects.into_inner())
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::raw_sql(include_str!("../../migrations/0072_interpretation_confidence.sql"))
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query(
+            "ALTER TABLE proxiima_core.interpretation_v1 ENABLE TRIGGER interpretation_v1_append_only",
+        )
+        .execute(tx.as_mut())
+        .await?;
+        tx.commit().await?;
+
+        let key = PgSidecarKey::new(
+            PayloadKind::Perspective,
+            InterpretationV1::schema_id(),
+            proxiima_core::SchemaVersion::new(InterpretationV1::SCHEMA_VERSION),
+        );
+        let invalid_score = pg
+            .sidecars()
+            .load_memory_payloads_batch(admin.into(), &key, &[score])
+            .await
+            .expect_err("legacy score must refuse");
+        assert!(
+            matches!(invalid_score, StorageError::InvalidStoredInterpretation {
+                memory,
+                reason: StoredInterpretationError::Confidence { value: 101 },
+            } if memory == score),
+            "{invalid_score:?}"
+        );
+        let invalid_subjects = pg
+            .sidecars()
+            .load_memory_payloads_batch(admin.into(), &key, &[subjects])
+            .await
+            .expect_err("legacy subject columns must refuse");
+        assert!(
+            matches!(invalid_subjects, StorageError::InvalidStoredInterpretation {
+                memory,
+                reason: StoredInterpretationError::Subjects(_),
+            } if memory == subjects),
+            "{invalid_subjects:?}"
+        );
+        Ok(())
+    })
+    .await;
 }
 
 /// A migrated store with the two test tables, an administrator pool to

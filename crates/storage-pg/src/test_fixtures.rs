@@ -102,8 +102,9 @@ pub async fn ensure_core_template(vectors: VectorStorage) -> Result<String, sqlx
 
 /// Turn a store freshly installed from this tree into one at the previous
 /// head, the shape [`crate::run_core_migrations`] adopts: the column the
-/// baseline dropped and the type a later migration dropped are back, and the
-/// core ledger is exactly the previous head's, with its pgvector row when
+/// baseline dropped and the type a later migration dropped are back, the
+/// new confidence constraint is absent, and the ledger is the previous
+/// head's, with its pgvector row when
 /// `vectors` is [`VectorStorage::Local`]. `pool` connects as the store's
 /// migration role.
 ///
@@ -124,6 +125,12 @@ pub async fn stage_previous_head(
     sqlx::query(
         "CREATE TYPE proxiima_core.access_ceiling AS ENUM
              ('none', 'fact', 'abstraction', 'perspective', 'goal')",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE proxiima_core.interpretation_v1
+             DROP CONSTRAINT interpretation_v1_confidence_chk",
     )
     .execute(&mut *transaction)
     .await?;
@@ -620,6 +627,35 @@ impl TestMemory {
         let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
         pg.ingest_fact_atomic(&permit, &self.command, None).await
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn create_interpretation(
+    pg: &PgStorage,
+    owner: OwnerId,
+    payload: proxiima_core::InterpretationV1,
+) -> Result<MemoryId, StorageError> {
+    use proxiima_core::PerspectivePayload as _;
+    use proxiima_core::verbs::fact_ingest::{AuthorizedFactWrite, AuthorizedNodeLinks};
+    let mut command = TestMemory::fact().kind(MemoryKind::Perspective).command;
+    command.schema_id = proxiima_core::InterpretationV1::schema_id();
+    command.schema_version = SchemaVersion::new(proxiima_core::InterpretationV1::SCHEMA_VERSION);
+    command.lexical_language =
+        Some(proxiima_core::lexical_language::LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT.to_owned());
+    let references = payload
+        .references()
+        .into_iter()
+        .map(|reference| reference.target)
+        .collect();
+    let authorized = AuthorizedFactWrite::new_with_links_for_tests(
+        OwnerWritePermit::new_for_tests(owner, MemoryKind::Perspective),
+        command,
+        None,
+        Vec::new(),
+        AuthorizedNodeLinks::new_for_tests(Vec::new(), references),
+    )
+    .with_sidecar_payloads_for_tests(vec![proxiima_core::SidecarPayload::perspective(payload)]);
+    Ok(pg.ingest_authorized_fact(&authorized, &[]).await?.memory_id)
 }
 
 /// Stable writer for synthetic storage rows with no authenticated request.

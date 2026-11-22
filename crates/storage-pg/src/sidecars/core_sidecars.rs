@@ -3,6 +3,7 @@ use super::{
     PgSidecarFuture, PgSidecarReadCtx, PgSidecarRegistry, PgSidecarRegistryFrozen, Postgres,
     SidecarInsertPermit, SidecarPayload, StorageError, Transaction,
 };
+use proxiima_core::StoredInterpretationError;
 use proxiima_core::verbs::schema::PayloadKind;
 
 fn parse_utterance_speaker(value: &str) -> Result<proxiima_core::Speaker, StorageError> {
@@ -128,11 +129,7 @@ impl PgGoalSidecar for proxiima_core::TaskGoalV1 {
 
 /// The interpretation Perspective.
 ///
-/// Hand-written rather than `pg_sidecar!`-generated: the payload carries a
-/// `u8` confidence and a positionally aligned enum array, and neither is a
-/// column shape the macro spells. The subjects are payload fields, so the
-/// reference rows that connect an interpretation to what it interprets are
-/// re-derivable from this row alone.
+/// The sidecar macro does not map a bounded smallint or parallel columns to typed pairs.
 #[derive(Debug, sqlx::FromRow)]
 struct InterpretationPayloadRow {
     t: uuid::Uuid,
@@ -153,6 +150,16 @@ impl PgMemorySidecar for proxiima_core::InterpretationV1 {
         _permit: SidecarInsertPermit,
     ) -> PgSidecarFuture<'t> {
         Box::pin(async move {
+            let (subject_memory_ids, subject_kinds): (Vec<_>, Vec<_>) = self
+                .subjects
+                .iter()
+                .map(|&(id, kind)| {
+                    (
+                        id.into_inner(),
+                        crate::pg_enums::PgInterpretationSubjectKind::from(kind),
+                    )
+                })
+                .unzip();
             sqlx::query(
                 "INSERT INTO proxiima_core.interpretation_v1
                     (t, claim, confidence, subject_memory_ids, subject_kinds,
@@ -161,15 +168,9 @@ impl PgMemorySidecar for proxiima_core::InterpretationV1 {
             )
             .bind(memory_id.into_inner())
             .bind(&self.claim)
-            .bind(i16::from(self.confidence))
-            .bind(&self.subject_memory_ids)
-            .bind(
-                self.subject_kinds
-                    .iter()
-                    .copied()
-                    .map(crate::pg_enums::PgInterpretationSubjectKind::from)
-                    .collect::<Vec<_>>(),
-            )
+            .bind(i16::from(self.confidence.get()))
+            .bind(subject_memory_ids)
+            .bind(subject_kinds)
             .bind(&self.model_id)
             .bind(&self.client_name)
             .bind(&self.client_version)
@@ -206,23 +207,31 @@ impl PgMemoryPayload for proxiima_core::InterpretationV1 {
                 .await?;
             rows.into_iter()
                 .map(|row| {
-                    let confidence = u8::try_from(row.confidence).map_err(|_| {
-                        StorageError::Internal(format!(
-                            "interpretation_v1 confidence {} out of range for memory {}",
-                            row.confidence, row.t
-                        ))
+                    let memory = MemoryId::new(row.t);
+                    let invalid =
+                        |reason| StorageError::InvalidStoredInterpretation { memory, reason };
+                    let confidence = proxiima_core::InterpretationConfidence::try_from(
+                        row.confidence,
+                    )
+                    .map_err(|_| {
+                        invalid(StoredInterpretationError::Confidence {
+                            value: row.confidence,
+                        })
                     })?;
+                    let subjects = proxiima_core::InterpretationV1::subjects_from_columns(
+                        row.subject_memory_ids,
+                        row.subject_kinds
+                            .into_iter()
+                            .map(proxiima_core::MemoryKind::from)
+                            .collect(),
+                    )
+                    .map_err(|err| invalid(err.into()))?;
                     Ok((
-                        MemoryId::new(row.t),
+                        memory,
                         SidecarPayload::perspective(proxiima_core::InterpretationV1 {
                             claim: row.claim,
                             confidence,
-                            subject_memory_ids: row.subject_memory_ids,
-                            subject_kinds: row
-                                .subject_kinds
-                                .into_iter()
-                                .map(proxiima_core::MemoryKind::from)
-                                .collect(),
+                            subjects,
                             model_id: row.model_id,
                             client_name: row.client_name,
                             client_version: row.client_version,

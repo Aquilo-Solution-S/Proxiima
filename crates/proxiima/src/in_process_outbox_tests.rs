@@ -507,9 +507,8 @@ async fn set_and_pause(world: &World, pending: PendingWork) -> (GoalId, GoalId) 
         "assignment",
         InterpretationV1 {
             claim: "claim".into(),
-            confidence: 80,
-            subject_memory_ids: vec![fact],
-            subject_kinds: vec![MemoryKind::Fact],
+            confidence: 80.try_into().unwrap(),
+            subjects: vec![(proxiima_core::MemoryId::new(fact), MemoryKind::Fact)],
             model_id: "test".into(),
             client_name: "test".into(),
             client_version: "1".into(),

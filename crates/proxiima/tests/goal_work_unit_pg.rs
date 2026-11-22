@@ -294,9 +294,8 @@ async fn a_member_who_works_goals_commits_declared_goal_work_and_writes_nothing_
                 "viewer perspective",
                 InterpretationV1 {
                     claim: "armed".into(),
-                    confidence: 90,
-                    subject_memory_ids: vec![fact.memory_id.into_inner()],
-                    subject_kinds: vec![MemoryKind::Fact],
+                    confidence: 90.try_into().unwrap(),
+                    subjects: vec![(fact.memory_id, MemoryKind::Fact)],
                     model_id: "test".into(),
                     client_name: "test".into(),
                     client_version: "1".into(),

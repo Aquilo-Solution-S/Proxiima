@@ -226,6 +226,7 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
         StorageError::Retryable(_)
         | StorageError::Unavailable(_)
         | StorageError::Internal(_)
+        | StorageError::InvalidStoredInterpretation { .. }
         | StorageError::MemoryIdCollision
         | StorageError::SchemaResetRequired { .. }
         | StorageError::MigrationRequired { .. } => (

@@ -11,7 +11,10 @@ pub use agent_note::AgentNoteV1;
 pub use goal_change::{
     GoalChange, GoalChangeColumnsError, GoalChangeKind, GoalChangeV1, PendingWork,
 };
-pub use interpretation::InterpretationV1;
+pub use interpretation::{
+    InterpretationConfidence, InterpretationV1, InvalidInterpretationConfidence,
+    MisalignedInterpretationSubjects,
+};
 pub use upload::UploadV1;
 pub use utterance::{Speaker, UtteranceV1};
 pub use write_act::WriteActV1;

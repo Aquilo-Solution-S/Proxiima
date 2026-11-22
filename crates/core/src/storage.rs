@@ -98,8 +98,26 @@ pub enum StorageError {
     /// "unreadable" and "nonexistent", so the refusal discloses neither.
     #[error("read memory {} is not readable in the named space", memory.into_inner())]
     UnreadableRead { memory: MemoryId },
+    /// A stored interpretation cannot be decoded as this release's payload.
+    #[error("cannot decode stored interpretation {}: {reason}", memory.into_inner())]
+    InvalidStoredInterpretation {
+        memory: MemoryId,
+        #[source]
+        reason: StoredInterpretationError,
+    },
     #[error("internal storage error: {0}")]
     Internal(String),
+}
+
+/// Why a stored interpretation could not be decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum StoredInterpretationError {
+    /// A stored confidence lies outside the admitted score scale.
+    #[error("confidence {value} out of range")]
+    Confidence { value: i16 },
+    /// The stored subject IDs and kinds cannot be paired.
+    #[error(transparent)]
+    Subjects(#[from] crate::MisalignedInterpretationSubjects),
 }
 
 /// The core storage rules a caller can run into at runtime. SQL raises each

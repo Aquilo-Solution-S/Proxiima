@@ -84,6 +84,9 @@ pub(crate) fn map_write_storage_error(
         | StorageError::Internal(message) => ProtocolError::internal(message),
         StorageError::SchemaResetRequired { details }
         | StorageError::MigrationRequired { details } => ProtocolError::internal(details),
+        StorageError::InvalidStoredInterpretation { .. } => {
+            ProtocolError::internal(err.to_string())
+        }
         StorageError::MemoryIdCollision => ProtocolError::internal("memory UUID collision"),
     }
 }
