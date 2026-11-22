@@ -588,31 +588,64 @@ fn ledger_placement_matches_ledger_vectors() {
     }
 }
 
-#[tokio::test]
-async fn catalog_retry_matches_ledger_vectors() {
-    let db = proxiima_pg_testkit::SplitRoleDb::create("migration_retry_vectors", &[])
-        .await
-        .expect("owned PG required");
-    let pool = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct CatalogError {
+    message: &'static str,
+    code: &'static str,
+    table: Option<&'static str>,
+}
+
+impl sqlx::error::DatabaseError for CatalogError {
+    fn message(&self) -> &str {
+        self.message
+    }
+
+    fn code(&self) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(self.code))
+    }
+
+    fn table(&self) -> Option<&str> {
+        self.table
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
+#[test]
+fn catalog_retry_matches_ledger_vectors() {
     for row in migration_vectors("Proxiima.Migrations.retryCatalog") {
-        let statement = match row["in"][0].as_str().unwrap() {
-            "concurrentTupleChange" => {
-                "DO $$ BEGIN RAISE EXCEPTION 'tuple concurrently updated'; END $$"
-            }
-            "uniqueViolationOnRoleCatalog" => {
-                "DO $$ BEGIN RAISE unique_violation USING TABLE = 'pg_authid'; END $$"
-            }
-            "other" => "DO $$ BEGIN RAISE unique_violation USING TABLE = 'ordinary'; END $$",
+        let (message, code, table) = match row["in"][0].as_str().unwrap() {
+            "concurrentTupleChange" => ("tuple concurrently updated", "P0001", None),
+            "uniqueViolationOnRoleCatalog" => ("unique violation", "23505", Some("pg_authid")),
+            "other" => ("unique violation", "23505", Some("ordinary")),
             value => panic!("unknown catalog failure {value}"),
         };
-        let failure = sqlx::query(statement).execute(&pool).await.unwrap_err();
+        let failure = sqlx::Error::Database(Box::new(CatalogError {
+            message,
+            code,
+            table,
+        }));
         assert_eq!(
             row["out"],
             super::is_shared_catalog_contention(&MigrateError::Execute(failure)),
             "{row}"
         );
     }
-    pool.close().await;
 }
 
 #[test]

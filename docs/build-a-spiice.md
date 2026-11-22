@@ -293,8 +293,10 @@ projection row goes with its memory), the owner and the lexical language
 (both `no_action`). See [`Proxiima.Migrations`](ledger.md#migrations) for candidate
 installation and preflight. The registry supplies schema sets, score bands,
 and authorization SQL. Use `proxiima_spiice::search_candidate_artifacts(contract)`
-to inspect generated functions. Test the effective catalog after migration
-replay, where the functions and their dependencies are available.
+to inspect generated functions. Do not copy generated candidate bodies into a
+new migration; released function migrations stay unchanged. Test the effective
+catalog after migration replay, where the functions and their dependencies are
+available.
 
 Automatic Fact writes bind natural keys by the registered sidecar's SQL column
 types. UUID-shaped text remains text; UUID columns bind UUIDs. Selection runs

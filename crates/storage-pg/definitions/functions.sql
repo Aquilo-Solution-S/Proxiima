@@ -505,7 +505,7 @@ BEGIN
 END
 $function$;
 
--- `Proxiima.Migrations.retirementChecks`
+-- `Proxiima.Migrations.RetirementCheck`
 CREATE OR REPLACE FUNCTION proxiima_core.assert_fact_schema_drained(
     retired_schema_id text, retiring_tables text[]
 ) RETURNS void

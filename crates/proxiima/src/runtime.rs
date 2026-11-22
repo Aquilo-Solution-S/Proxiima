@@ -427,7 +427,6 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
     /// database off the current baseline, and storage errors for a failed
     /// connection, migration, store number or grant.
     pub async fn migrate(&self) -> Result<(), ProxiimaError> {
-        // `Proxiima.Migrations.schemaWork`
         let (config, parts) = self.resolve()?;
         crate::boot::migrate::<A>(&config, &parts).await
     }

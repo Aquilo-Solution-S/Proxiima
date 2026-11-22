@@ -369,13 +369,7 @@
   {"out": "publicIdDerivedLedger", "in": ["spiiceDefault"]},
   {"out": "configuredLedger", "in": ["explicitlyConfigured"]}],
  "Proxiima.Migrations.installsPgvector":
- [{"out": true, "in": ["local", true]},
-  {"out": true, "in": ["local", false]},
-  {"out": false, "in": ["hostIndex", true]},
-  {"out": true, "in": ["hostIndex", false]}],
- "Proxiima.Migrations.inspectionDestinationAdmitted":
- [{"out": true, "in": ["ignoredFileInCheckout"]},
-  {"out": false, "in": ["other"]}],
+ [{"out": true, "in": ["local"]}, {"out": false, "in": ["hostIndex"]}],
  "Proxiima.Migrations.definitionWork":
  [{"out": "reinstall", "in": ["missingOrChangedChecksum", "reject"]},
   {"out": "reinstall", "in": ["missingOrChangedChecksum", "allow"]},
@@ -390,6 +384,11 @@
   {"out": "continueFromBaseline", "in": ["baselineWithoutEarlierRows"]},
   {"out": "adoptInMigrationTransaction", "in": ["exactPreviousHead"]},
   {"out": "requireReset", "in": ["unreconciled"]}],
+ "Proxiima.Migrations.appliesCoreMigration":
+ [{"out": true, "in": ["local", true]},
+  {"out": true, "in": ["local", false]},
+  {"out": false, "in": ["hostIndex", true]},
+  {"out": true, "in": ["hostIndex", false]}],
  "Proxiima.Memory.versionAction":
  [{"out": "appendVersion", "in": ["observationOrRevision"]},
   {"out": "updateLifecycle", "in": ["forgetOrRestore"]},

@@ -406,6 +406,7 @@ async fn connect_schema(
     .await
     .map_err(storage_error)?
     .with_vector_storage(vectors);
+    // `Proxiima.Migrations.schemaWork`
     let stepped = match step {
         SchemaStep::Migrate { grants } => {
             migrate_schema(

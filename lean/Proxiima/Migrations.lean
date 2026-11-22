@@ -33,7 +33,7 @@ inductive PreflightCheck where
   | schemaEvolutions
   deriving DecidableEq
 
-/-- Schema readiness checks under one locked snapshot. -/
+/-- Schema readiness checks. -/
 def preflightChecks : List PreflightCheck :=
   [.ledgerIntegrity, .coreBaselineAndDefinitions, .allNonCoreMigrationsApplied,
    .sidecarOwnerRls, .candidateDefinitions, .schemaEvolutions]
@@ -85,9 +85,6 @@ inductive LedgerIntegrityCheck where
   | ledgerAssignment
   deriving DecidableEq
 
-/-- Allowing extra recorded versions does not waive ledger integrity. -/
-def ledgerIntegrity : List LedgerIntegrityCheck := [.successfulRows, .shippedChecksums, .ledgerAssignment]
-
 /-- The private lane's relationship to unknown history when work is pending. -/
 inductive PrivateLaneHistory where
   | pendingRootBesideUnknown
@@ -122,7 +119,7 @@ inductive DefinitionWork where
   | refuse
   deriving DecidableEq
 
-/-- Newer definitions stay in place only under Allow, and an absent or changed checksum calls for transactional reinstallation. -/
+/-- Newer definitions stay in place only under Allow, and an absent or changed checksum calls for reinstallation. -/
 def definitionWork : DefinitionRecord → MissingVersionPolicy → DefinitionWork
   | .missingOrChangedChecksum, .reject | .missingOrChangedChecksum, .allow => .reinstall
   | .matchingChecksum, .reject | .matchingChecksum, .allow | .newerRelease, .allow => .keep
@@ -134,8 +131,13 @@ inductive VectorLane where
   | hostIndex
   deriving DecidableEq
 
-/-- Only the local vector lane installs the pgvector migration and vector candidate functions. -/
-def installsPgvector : VectorLane → (pgvectorOnly : Bool) → Bool
+/-- Only the local vector lane installs the pgvector migration. -/
+def installsPgvector : VectorLane → Bool
+  | .local => true
+  | .hostIndex => false
+
+/-- Whether the lane applies a core migration given its pgvector requirement. -/
+def appliesCoreMigration : VectorLane → (pgvectorOnly : Bool) → Bool
   | .local, true | .local, false | .hostIndex, false => true
   | .hostIndex, true => false
 
@@ -155,10 +157,6 @@ inductive SourceConflict where
   | duplicateUpVersionAcrossComposition
   | duplicateResolvedPrivateLedger
   deriving DecidableEq
-
-/-- Versions are unique across the composition, and sharing a resolved ledger is allowed only for core's ledger. -/
-def sourceConflicts : List SourceConflict :=
-  [.duplicateUpVersionAcrossComposition, .duplicateResolvedPrivateLedger]
 
 /-- Placement of migration ledgers. -/
 inductive LedgerSelection where
@@ -191,11 +189,6 @@ inductive IdentifierRule where
   | unqualifiedLedgerResolvesToPublic
   deriving DecidableEq
 
-/-- Compare ledger names by their resolved PostgreSQL parts. -/
-def ledgerIdentifier : List IdentifierRule :=
-  [.quotedPartsPreserveCaseAndUnescapeQuotes, .unquotedPartsFoldAscii,
-   .truncateOnCharacterBoundary, .unqualifiedLedgerResolvesToPublic]
-
 /-- Migration work that shares the same advisory lock. -/
 inductive LockHolder where
   | fullRunSession
@@ -203,10 +196,6 @@ inductive LockHolder where
   | preflightSnapshotSession
   | sourceTransaction
   deriving DecidableEq
-
-/-- The full run, both read snapshots and source transactions serialize on the same key. -/
-def lockHolders : List LockHolder :=
-  [.fullRunSession, .planSnapshotSession, .preflightSnapshotSession, .sourceTransaction]
 
 /-- The advisory lock key shared by migration sessions and source transactions. -/
 def lockKey : Nat := 0x70726f786d696772
@@ -220,7 +209,7 @@ inductive SessionDisposal where
   | closeAndReleaseSessionState
   deriving DecidableEq
 
-/-- Mark the connection for close before it can retain session state, including a lock wait. -/
+/-- Mark the connection for close before it can retain session state. -/
 def sessionDisposal : List SessionDisposal := [.markCloseOnDropBeforeChangingState, .closeAndReleaseSessionState]
 
 /-- The transaction boundaries of source migration and final schema installation. -/
@@ -247,7 +236,7 @@ inductive LedgerProtection where
   | refuseResidualWriteGrants
   deriving DecidableEq
 
-/-- Private ledgers are prepared under the migration lock with writes confined to their owner. -/
+/-- Private ledgers are prepared with writes confined to their owner. -/
 def ledgerProtection : List LedgerProtection :=
   [.createFromCoreTrackingShape, .revokeNonOwnerWrites, .refuseResidualWriteGrants]
 
@@ -282,17 +271,6 @@ def inspectionSteps : List InspectionStep :=
   [.createDisposableDatabase, .replayEmbeddedSources, .dumpSeparatedSchemasWithoutLedgers,
    .normalizeDumpPreamble, .dropDisposableDatabaseOnExit]
 
-/-- Destinations considered before writing a schema inspection dump. -/
-inductive InspectionDestination where
-  | ignoredFileInCheckout
-  | other
-  deriving DecidableEq
-
-/-- Only ignored output files in the checkout may receive schema dumps. -/
-def inspectionDestinationAdmitted : InspectionDestination → Bool
-  | .ignoredFileInCheckout => true
-  | .other => false
-
 /-- Sources in order for the development CLI's database URL. -/
 inductive DevDatabaseSource where
   | databaseUrlFlag
@@ -320,14 +298,14 @@ def resetChecks : List ResetCheck :=
 inductive ResetWork where
   | dropProxiimaSchemas
   | dropCompiledSpiiceLedgers
-  | deleteAttributableSharedVersions
   | deleteUnattributedAndDependentRowsOnOptIn
+  | deleteAttributableSharedVersions
   deriving DecidableEq
 
-/-- The development reset commits schema drops and their ledger changes together. -/
+/-- The reset drops schemas and compiled ledgers, then clears opted-in dependent rows before attributable shared versions. -/
 def resetCommit : List ResetWork :=
-  [.dropProxiimaSchemas, .dropCompiledSpiiceLedgers, .deleteAttributableSharedVersions,
-   .deleteUnattributedAndDependentRowsOnOptIn]
+  [.dropProxiimaSchemas, .dropCompiledSpiiceLedgers, .deleteUnattributedAndDependentRowsOnOptIn,
+   .deleteAttributableSharedVersions]
 
 /-- Database and registry requirements of a retired Fact schema. -/
 inductive RetirementCheck where
@@ -335,9 +313,6 @@ inductive RetirementCheck where
   | unrestorable
   | drainBeforeDestructiveDdl
   deriving DecidableEq
-
-/-- Retired Facts keep their erase inverse, and destructive DDL requires the retired storage to be drained. -/
-def retirementChecks : List RetirementCheck := [.inactiveSchemaWithByKeyInverse, .unrestorable, .drainBeforeDestructiveDdl]
 
 /-- Decisions on preflight failures requiring operator action. -/
 inductive ReadinessFailure where

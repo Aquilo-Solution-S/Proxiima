@@ -161,7 +161,7 @@ impl VectorStorage {
     /// file name starts `pgvector` belongs to [`Self::Local`] alone.
     #[must_use]
     pub fn applies(self, migration: &sqlx::migrate::Migration) -> bool {
-        // `Proxiima.Migrations.installsPgvector`
+        // `Proxiima.Migrations.appliesCoreMigration`
         match self {
             Self::Local => true,
             Self::HostIndex => !migration.description.starts_with("pgvector"),
@@ -301,7 +301,8 @@ impl CoreSchemaState {
 ///
 /// # Errors
 ///
-/// Refuses unsupported ledgers, changed migration checksums and newer releases.
+/// Refuses unsupported ledgers, changed migration checksums and, under
+/// `Reject`, newer releases.
 pub async fn pending_core_schema(
     connection: &mut PgConnection,
     policy: MissingMigrationPolicy,
@@ -416,8 +417,8 @@ pub async fn ensure_core_ledger_compatible_on_connection_with_policy(
 ///
 /// # Errors
 ///
-/// Refuses incompatible ledgers, missing migrations or definitions, and newer
-/// releases without issuing migration DDL.
+/// Refuses incompatible ledgers, missing migrations or definitions and, under
+/// `Reject`, newer releases. Issues no migration DDL.
 #[cfg(any(test, feature = "testkit"))]
 pub async fn ensure_core_schema_current(
     pool: &PgPool,

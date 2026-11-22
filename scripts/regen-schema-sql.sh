@@ -34,7 +34,6 @@ fi
 ADMIN_URL="${PROXIIMA_SCHEMA_PG_URL:-${PROXIIMA_TEST_PG_URL:-postgres://proxiima:proxiima@localhost:5432/proxiima}}"
 PG_DUMP="${PROXIIMA_PG_DUMP:-pg_dump}"
 OUT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$1")"
-# `Proxiima.Migrations.inspectionDestinationAdmitted`
 for file in schema.core.sql schema.example.sql; do
   if [ -L "$OUT_DIR/$file" ] || ! git check-ignore -q -- "$OUT_DIR/$file" 2>/dev/null; then
     echo "schema dump destination must be an ignored file in this checkout: $OUT_DIR/$file" >&2

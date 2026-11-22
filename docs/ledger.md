@@ -2205,11 +2205,6 @@ stateDiagram-v2
 - normalizeDumpPreamble
 - dropDisposableDatabaseOnExit
 
-**Inspection destination**: Destinations considered before writing a schema inspection dump.
-
-- ignoredFileInCheckout
-- other
-
 **Dev database source**: Sources in order for the development CLI's database URL.
 
 - databaseUrlFlag
@@ -2227,8 +2222,8 @@ stateDiagram-v2
 
 - dropProxiimaSchemas
 - dropCompiledSpiiceLedgers
-- deleteAttributableSharedVersions
 - deleteUnattributedAndDependentRowsOnOptIn
+- deleteAttributableSharedVersions
 
 **Retirement check**: Database and registry requirements of a retired Fact schema.
 
@@ -2253,29 +2248,21 @@ stateDiagram-v2
 - uniqueViolationOnRoleCatalog
 - other
 
-**preflight checks** = \[ledgerIntegrity, coreBaselineAndDefinitions, allNonCoreMigrationsApplied, sidecarOwnerRls, candidateDefinitions, schemaEvolutions]: Schema readiness checks under one locked snapshot.
+**preflight checks** = \[ledgerIntegrity, coreBaselineAndDefinitions, allNonCoreMigrationsApplied, sidecarOwnerRls, candidateDefinitions, schemaEvolutions]: Schema readiness checks.
 
 **core version ceiling** = 9999: The largest sequential version attributable to the core lane.
 
 **missing version default** = "reject": The declared environment default for missing recorded versions.
 
-**ledger integrity** = \[successfulRows, shippedChecksums, ledgerAssignment]: Allowing extra recorded versions does not waive ledger integrity.
-
 **source order** = \[coreFirst, linkedSourcesInCompositionOrder, upMigrationsInMigratorOrder]: Core precedes linked sources and each source applies only up migrations in migrator order.
 
-**source conflicts** = \[duplicateUpVersionAcrossComposition, duplicateResolvedPrivateLedger]: Versions are unique across the composition, and sharing a resolved ledger is allowed only for core's ledger.
-
 **max ledger id bytes** = 40: Maximum byte length of a spiice id in a derived ledger name.
-
-**ledger identifier** = \[quotedPartsPreserveCaseAndUnescapeQuotes, unquotedPartsFoldAscii, truncateOnCharacterBoundary, unqualifiedLedgerResolvesToPublic]: Compare ledger names by their resolved PostgreSQL parts.
-
-**lock holders** = \[fullRunSession, planSnapshotSession, preflightSnapshotSession, sourceTransaction]: The full run, both read snapshots and source transactions serialize on the same key.
 
 **lock key** = 8102661242615326578: The advisory lock key shared by migration sessions and source transactions.
 
 **lock wait millis** = 5000: The default wait for migration locks in milliseconds.
 
-**session disposal** = \[markCloseOnDropBeforeChangingState, closeAndReleaseSessionState]: Mark the connection for close before it can retain session state, including a lock wait.
+**session disposal** = \[markCloseOnDropBeforeChangingState, closeAndReleaseSessionState]: Mark the connection for close before it can retain session state.
 
 **migration transactions** = \[requireTransactionalSource, sourceSqlAndLedger, finalCandidateDefinitionsAndPolicies]: Refuse nontransactional source work, and commit the final catalog installation with its policies.
 
@@ -2283,7 +2270,7 @@ stateDiagram-v2
 
 **catalog retry delay millis** = 100: The per-attempt multiplier of the shared-catalog retry delay, in milliseconds.
 
-**ledger protection** = \[createFromCoreTrackingShape, revokeNonOwnerWrites, refuseResidualWriteGrants]: Private ledgers are prepared under the migration lock with writes confined to their owner.
+**ledger protection** = \[createFromCoreTrackingShape, revokeNonOwnerWrites, refuseResidualWriteGrants]: Private ledgers are prepared with writes confined to their owner.
 
 **history checks** = \[preserveReleasedBlobsInActiveLanes, retireOnlyEmptySpiiceLanes, requireVersionedSqlFilenames, newVersionsAboveReleasedLaneHead, distinctVersionsWithinLane, excludeMutableDefinitions, pendingEpochOnlyForNextRelease]: Released migration history, filenames and numbering are checked per lane.
 
@@ -2293,9 +2280,7 @@ stateDiagram-v2
 
 **reset checks** = \[exactConfirmation, localConnection, unprotectedDatabase, censusForeignDependents, deletePermissionForDependentLedgersOnOptIn]: The development reset inspects dependencies and requires opt-in before clearing other lanes.
 
-**reset commit** = \[dropProxiimaSchemas, dropCompiledSpiiceLedgers, deleteAttributableSharedVersions, deleteUnattributedAndDependentRowsOnOptIn]: The development reset commits schema drops and their ledger changes together.
-
-**retirement checks** = \[inactiveSchemaWithByKeyInverse, unrestorable, drainBeforeDestructiveDdl]: Retired Facts keep their erase inverse, and destructive DDL requires the retired storage to be drained.
+**reset commit** = \[dropProxiimaSchemas, dropCompiledSpiiceLedgers, deleteUnattributedAndDependentRowsOnOptIn, deleteAttributableSharedVersions]: The reset drops schemas and compiled ledgers, then clears opted-in dependent rows before attributable shared versions.
 
 | schema entry | schema work |
 | --- | --- |
@@ -2343,16 +2328,23 @@ stateDiagram-v2
 | malformedRelease | reject | refuse |
 | malformedRelease | allow | refuse |
 
-- definition work: Newer definitions stay in place only under Allow, and an absent or changed checksum calls for transactional reinstallation.
+- definition work: Newer definitions stay in place only under Allow, and an absent or changed checksum calls for reinstallation.
 
-| vector lane | bool | installs pgvector |
+| vector lane | installs pgvector |
+| --- | --- |
+| local | yes |
+| hostIndex | no |
+
+- installs pgvector: Only the local vector lane installs the pgvector migration.
+
+| vector lane | bool | applies core migration |
 | --- | --- | --- |
 | local | yes | yes |
 | local | no | yes |
 | hostIndex | yes | no |
 | hostIndex | no | yes |
 
-- installs pgvector: Only the local vector lane installs the pgvector migration and vector candidate functions.
+- applies core migration: Whether the lane applies a core migration given its pgvector requirement.
 
 | ledger selection | ledger placement |
 | --- | --- |
@@ -2361,13 +2353,6 @@ stateDiagram-v2
 | explicitlyConfigured | configuredLedger |
 
 - ledger placement: Spiices derive a durable public ledger unless they configure their own.
-
-| inspection destination | inspection destination admitted |
-| --- | --- |
-| ignoredFileInCheckout | yes |
-| other | no |
-
-- inspection destination admitted: Only ignored output files in the checkout may receive schema dumps.
 
 | readiness failure | readiness refusal |
 | --- | --- |

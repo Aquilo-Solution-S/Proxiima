@@ -1,7 +1,8 @@
 //! Bootstrap a blank Postgres with the substrate schema and every in-repo
 //! spiice sidecar, in the same order a composite host boots them.
 //!
-//! Delegates to [`proxiima::StorageProxiima::migrate`]; see `Proxiima.Migrations.sourceOrder`.
+//! `sqlx migrate run` records every source in one `_sqlx_migrations` table.
+//! This binary delegates to [`proxiima::StorageProxiima::migrate`]; see `Proxiima.Migrations.sourceOrder`.
 //!
 //! Usage:
 //!
@@ -449,16 +450,14 @@ async fn reset_local_dev_database_confirmed(
     census_foreign_dependents(&mut tx, dependent_lanes).await?;
     let mut report = Vec::new();
 
-    // A schema this binary's compiled spiices did not create is reported and then dropped with
-    // the rest, not refused: the core ledger preflight counts every `proxiima_*` schema as
-    // Proxiima's, so a reset that refused one would leave boot demanding a reset it cannot get.
-    // The report names it before it goes.
+    // Drop unowned schemas with the rest because core preflight counts every `proxiima_*`
+    // schema as Proxiima's. Report those drops after the commit.
     let unowned_schemas = unowned_proxiima_schemas(&mut *tx, &compiled_schema_names()?).await?;
     if !unowned_schemas.is_empty() {
-        eprintln!(
+        report.push(format!(
             "dropping schemas no compiled spiice of this binary owns: {}",
             unowned_schemas.join(", ")
-        );
+        ));
     }
 
     // Include old shared-ledger rows for spiices that now use a private ledger.
@@ -486,7 +485,7 @@ async fn reset_local_dev_database_confirmed(
     ))
     .fetch_all(&mut *tx)
     .await?;
-    eprintln!("resetting schemas: {}", schemas.join(", "));
+    report.push(format!("resetting schemas: {}", schemas.join(", ")));
     // The loop is inside the database rather than in Rust so the schema
     // name never becomes a Rust format argument: `format('%I')` is
     // PostgreSQL's own identifier quoting, and this stays one fixed string
@@ -507,13 +506,13 @@ async fn reset_local_dev_database_confirmed(
     .execute(&mut *tx)
     .await?;
     for table in spiice_ledger_tables {
-        eprintln!("dropping spiice ledger table: {table}");
+        report.push(format!("dropping spiice ledger table: {table}"));
         let mut drop = proxiima_core::SqlText::new("DROP TABLE IF EXISTS ");
         drop.push_ident(&proxiima_core::PgIdent::table(&table)?);
         sqlx::query(drop).execute(&mut *tx).await?;
     }
     if dependent_lanes == DependentLanes::Reset {
-        report = delete_dependent_lane_rows(&mut tx, &spiice_versions).await?;
+        report.extend(delete_dependent_lane_rows(&mut tx, &spiice_versions).await?);
     }
     let migration_table_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")

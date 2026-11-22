@@ -505,6 +505,7 @@ pub async fn preflight_without_migrations_with_policy<P: MigrationStorage>(
         .await
         .map_err(execute_error)?;
     let mut snapshot = lock.begin_snapshot().await.map_err(execute_error)?;
+    // Read all preflight checks under one locked snapshot.
     // `Proxiima.Migrations.preflightChecks`
     let result = async {
         validate_ledgers(
@@ -761,7 +762,8 @@ async fn plan_under_lock(
     Ok(plan)
 }
 
-/// A held migration session lock.
+/// A migration lock held on one session, from ledger validation through the
+/// run's commits or the plan's snapshot.
 ///
 /// Held until [`Self::release`] or until the connection closes. The
 /// snapshot can only begin on a held lock: a lock taken inside a `REPEATABLE
@@ -772,7 +774,7 @@ struct SessionLock<'c> {
 
 impl<'c> SessionLock<'c> {
     async fn acquire(conn: &'c mut PgConnection) -> Result<Self, sqlx::Error> {
-        // `Proxiima.Migrations.lockHolders`
+        // `Proxiima.Migrations.LockHolder`
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(MIGRATION_LOCK_KEY)
             .execute(&mut *conn)
@@ -1433,6 +1435,8 @@ async fn prepare_ledger(
         err,
     };
     let mut tx = conn.begin().await.map_err(map_err)?;
+    // Prepare the ledger under the same lock as the run and read snapshots.
+    // `Proxiima.Migrations.LockHolder`
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(tx.as_mut())
@@ -1760,7 +1764,8 @@ async fn validate_ledgers(
     ensure_core_ledger_compatible_on_connection_with_policy(conn, MissingMigrationPolicy::Allow)
         .await
         .map_err(MigrationError::CorePreflight)?;
-    // `Proxiima.Migrations.ledgerIntegrity`
+    // These integrity checks apply under either missing-version policy.
+    // `Proxiima.Migrations.LedgerIntegrityCheck`
     let assignments: BTreeMap<i64, &NamedMigrator> = sources
         .iter()
         .flat_map(|&source| {
@@ -1920,7 +1925,7 @@ pub(crate) fn check_lineup(sources: &[NamedMigrator]) -> Result<(), MigrationErr
 /// The refusals that need no database, for core followed by the host's
 /// sources: a run raises them before it connects, a plan likewise.
 fn validate_sources(sources: &[&NamedMigrator]) -> Result<(), MigrationError> {
-    // `Proxiima.Migrations.sourceConflicts`
+    // `Proxiima.Migrations.SourceConflict`
     reject_duplicate_versions(sources)?;
     reject_shared_spiice_ledgers(sources)
 }

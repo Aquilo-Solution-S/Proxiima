@@ -22,7 +22,7 @@ fn vector_lane_selection_matches_ledger_vectors() {
 
     let vectors: serde_json::Value =
         serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
-    for row in vectors["Proxiima.Migrations.installsPgvector"]
+    for row in vectors["Proxiima.Migrations.appliesCoreMigration"]
         .as_array()
         .unwrap()
     {
