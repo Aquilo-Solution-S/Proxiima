@@ -1,0 +1,18 @@
+name = "proxiima"
+defaultTargets = ["Causa", "ledger"]
+
+[leanOptions]
+warningAsError = true
+
+[[require]]
+name = "teslavalve"
+path = "../../../../../tesla-valve-worktrees/ledger/lean"
+
+[[lean_lib]]
+name = "Causa"
+
+[[lean_exe]]
+name = "ledger"
+root = "Main"
+needs = ["Causa"]
+supportInterpreter = true

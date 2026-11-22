@@ -52,7 +52,7 @@ change with the host build, so this page does not copy their schemas.
 - Do not infer authorization from an owner string, organization, Self, or a
   caller-provided role; the host resolves `OwnerRef`.
 - Do not work around the
-  [principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean);
+  [principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean);
   each names what upholds it at runtime.
 - Do not copy the runtime catalog, settings table, defaults, or database schema
   into an agent prompt. Link to the live catalog, [Configuration](configuration.md),

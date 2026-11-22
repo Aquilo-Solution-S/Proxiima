@@ -1,8 +1,0 @@
-name = "causa"
-defaultTargets = ["Causa"]
-
-[leanOptions]
-warningAsError = true
-
-[[lean_lib]]
-name = "Causa"

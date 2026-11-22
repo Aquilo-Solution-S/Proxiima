@@ -78,6 +78,6 @@ code, tests, and prose into agreement. Migrations own table shape; rustdoc
 owns types, defaults, and limits; each crate's `settings!` block owns its
 settings, which [Configuration](configuration.md) renders.
 
-The [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean)
+The [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean)
 state the domainless rules. This site presents their current concepts and
 decisions; Rust code and tests define runtime behavior.

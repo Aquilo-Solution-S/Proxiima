@@ -944,7 +944,7 @@ impl AuthzContext {
 
     /// Whether the subject sets, modifies and transitions `owner`'s Goals:
     /// its role [works Goals](crate::Role::works_goals)
-    /// (`request_may_work_goals` in `docs/lean/Causa/Authorization.lean`).
+    /// (`request_may_work_goals` in `lean/Causa/Authorization.lean`).
     /// A forwarded role is capped below Goal work. A delegated or system
     /// request is no membership request: it works Goals only where it also
     /// [administers](crate::Role::administers).

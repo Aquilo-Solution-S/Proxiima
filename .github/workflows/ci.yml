@@ -150,17 +150,15 @@ jobs:
         # leanprover/lean-action@v1
         uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee
         with:
-          lake-package-directory: docs/lean
+          lake-package-directory: lean
           build: false
           test: false
-      - name: lean kernel
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.lean == 'true' }}
-        run: cd docs/lean && lake build
-      - name: lean axiom pin
+      - name: lean ledger
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.lean == 'true' }}
         run: |
-          python3 scripts/check-lean-axioms.py --self-test
-          python3 scripts/check-lean-axioms.py
+          cd lean
+          lake build
+          lake exe ledger check
 
   deny:
     name: cargo-deny (advisories + licenses + bans + sources)

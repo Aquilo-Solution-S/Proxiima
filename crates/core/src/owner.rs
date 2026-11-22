@@ -1,6 +1,6 @@
 //! Owner scoping primitive.
 //!
-//! Runtime mirror of the Lean `OwnerId` boundary (`docs/lean/Causa/Identity.lean`):
+//! Runtime mirror of the Lean `OwnerId` boundary (`lean/Causa/Identity.lean`):
 //! a row carries one stable owner id; the host resolves that id into roles
 //! before authorization. A resolved owner is always a group, and a user is the
 //! personal group whose only member is that user, so a user's id is its own

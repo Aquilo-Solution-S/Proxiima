@@ -57,7 +57,7 @@ own group.
 A role has five fields. The role representation and its constructors are in
 [`Role`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/access.rs);
 the kernel states it in
-[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean).
+[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean).
 
 | Field | Values | Governs |
 |---|---|---|
@@ -135,7 +135,7 @@ subject is a person or a group. A member of an invited group holds the grant's
 role capped by their own role in that group. Removing a person from the group
 ends what the grant gave them at once, and the grant itself is untouched. A
 grant to a group carries no audience management. Kernel:
-[Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Audience.lean).
+[Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Audience.lean).
 A grant adds access; it never takes away access the owner already gives. Goal
 routes read live grants and live group roles, so removing a person from the
 group, revoking the grant, or the grant's expiry ends the route at the next
@@ -284,7 +284,7 @@ See [forwarding](host-integration.md#forwarded-owner-access).
 
 | Boundary | Evidence |
 |---|---|
-| One owner, role fields, personal membership, capped nesting | [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean), [Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Audience.lean), and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Authorization.lean) |
+| One owner, role fields, personal membership, capped nesting | [Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean), [Audience](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Audience.lean), and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Authorization.lean) |
 | Verified identity and narrowing scope | [AuthzContext](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/authz.rs) and [OwnerScope](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/core/src/owner_scope.rs) |
 | Effective memberships and transaction isolation | [Nested-group tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/tests/nested_groups.rs) and [manager race tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/src/access/group_manager_race_pg_tests.rs) |
 | Per-owner database isolation | [Owner RLS](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/storage-pg/definitions/policies.sql) and [multi-owner host tests](https://github.com/Aquilo-Solution-S/proxiima/blob/main/apps/proxiima-mcp/tests/multi_owner_e2e.rs) |
@@ -339,7 +339,7 @@ can inform the decision to set a Goal, as the
 [Spinning Wheel](index.md#the-spinning-wheel) illustrates. That conceptual
 flow is not a persisted Perspective-to-Goal derivation rule.
 
-The [operator vocabulary](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Operators.lean)
+The [operator vocabulary](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Operators.lean)
 also names `AtoGoal`: its Abstraction inputs are recorded as Goal evidence,
 using references rather than memory-origin pins. There is no corresponding
 `PtoGoal` operator. Ordinary Goal creation can have no evidence at all; when
@@ -601,7 +601,7 @@ chain.
 
 The Lean kernel states these principles. Code and tests establish runtime
 behavior; they are not inferred from prose. Start with
-[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean),
-[Memory.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Memory.lean),
-[Edges.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Edges.lean),
-and [Goals.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Goals.lean).
+[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean),
+[Memory.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Memory.lean),
+[Edges.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Edges.lean),
+and [Goals.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Goals.lean).

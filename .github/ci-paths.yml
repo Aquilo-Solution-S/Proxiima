@@ -25,8 +25,7 @@ docs:
   - '**/*.sh'
   - '**/*.yml'
 lean:
-  - 'docs/lean/**'
-  - 'scripts/check-lean-axioms.py'
+  - 'lean/**'
 dependencies:
   - '**/Cargo.toml'
   - 'Cargo.lock'

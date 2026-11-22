@@ -41,7 +41,7 @@ head of its series again unless a newer live version is. Restoring a live
 memory changes nothing. Neither forget nor restore touches an object store.
 
 The kernel states `wipeable` and owner-scope principles in
-[`Compliance.lean`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Compliance.lean).
+[`Compliance.lean`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Compliance.lean).
 Rust operations and integration tests define the executable lifecycle behavior.
 
 ## Host authority

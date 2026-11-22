@@ -1,7 +1,7 @@
 # Contributing
 
 Proxiima has two authorities: the Lean kernel under
-[`docs/lean/Causa`](https://github.com/Aquilo-Solution-S/proxiima/tree/main/docs/lean/Causa)
+[`lean/Causa`](https://github.com/Aquilo-Solution-S/proxiima/tree/main/lean/Causa)
 defines domainless invariants; Rust code, SQL, tests, and the live MCP/REST
 catalog implement and expose them. A prose page explains a contract but does
 not amend the kernel. If the implementation and kernel disagree, stop and
@@ -128,8 +128,7 @@ cargo clippy --workspace --all-targets --locked
 cargo nextest run --workspace --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
 cargo test --doc --workspace --all-features --locked
-cd docs/lean && lake build
-cd ../..
+(cd lean && lake build && lake exe ledger check)
 python3 scripts/check-migrations.py --self-test
 python3 scripts/check-migrations.py
 python3 scripts/check-doc-links.py
@@ -141,8 +140,6 @@ python3 scripts/check-architecture-guardrails.py --self-test
 python3 scripts/check-architecture-guardrails.py
 python3 scripts/check-schema-ids.py --self-test
 python3 scripts/check-schema-ids.py
-python3 scripts/check-lean-axioms.py --self-test
-python3 scripts/check-lean-axioms.py
 python3 -m pip install -r requirements-docs.txt
 python3 -m mkdocs build --strict
 ```

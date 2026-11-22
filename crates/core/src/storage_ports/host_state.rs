@@ -111,7 +111,7 @@ pub trait HostStateCommand: Send + 'static {
 /// ([`Role::works_goals`](crate::Role::works_goals)): a viewer member of the
 /// Goal's owner commits it, and writes no other Fact, Perspective or host
 /// state of that owner (`request_may_write_goal_work` in
-/// `docs/lean/Causa/Authorization.lean`).
+/// `lean/Causa/Authorization.lean`).
 pub trait GoalWorkCommand: HostStateCommand {
     /// The one Fact payload this command declares for its Goal.
     type Fact: crate::FactPayload + Clone;

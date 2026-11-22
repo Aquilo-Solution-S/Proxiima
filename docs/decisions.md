@@ -11,7 +11,7 @@ behavior. A principle change starts in the kernel, then code and tests follow.
 This keeps the kernel meaningful without treating it as an executable claim
 about every implementation detail.
 
-Source: [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean).
+Source: [Lean principles](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean).
 
 ## One owner per fact
 
@@ -74,10 +74,10 @@ edited. Organization structure and billing belong to the host.
 
 The [identity and ownership map](concepts.md#identity-and-ownership) explains
 the model. The principles are in
-[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Principles.lean),
+[Principles.lean](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Principles.lean),
 with supporting definitions in
-[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Owner.lean)
-and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Authorization.lean);
+[Owner](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Owner.lean)
+and [Authorization](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Authorization.lean);
 runtime owner resolution and command ports enforce the implementation.
 
 ### Nesting composes access toward the parent
@@ -132,8 +132,8 @@ nothing, whichever check asks.
 
 Authority mode: `existing-kernel-no-change`. The existing kernel owns read
 authority through
-[`request_may_read`](lean/Causa/Authorization.lean) and exact Goal-publication
-routes through [`goal_publication_read_admitted`](lean/Causa/EdgeAuthorization.lean).
+[`request_may_read`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Authorization.lean) and exact Goal-publication
+routes through [`goal_publication_read_admitted`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/EdgeAuthorization.lean).
 HTTP admission, caching, and transfer lifetime remain runtime contracts.
 
 Each external download request enters Proxiima's existing authorization path
@@ -207,8 +207,8 @@ motivation evidence. New causal targets share the source's owner; existing
 F/A/P grounding and Fact/Abstraction evidence rules remain separate.
 
 The version fields and valid-store predicates are stated in
-[Goals](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Goals.lean)
-and [Provenance](https://github.com/Aquilo-Solution-S/proxiima/blob/main/docs/lean/Causa/Provenance.lean).
+[Goals](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Goals.lean)
+and [Provenance](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/Provenance.lean).
 Runtime constructors, source-owned pin projections, and database admission
 enforce the implementation. Former singular assignments stay on their
 original versions as historical data; they are not converted into assertions
@@ -239,7 +239,7 @@ authorized erase of a replacement removes the associated capture, including
 captures retained at a previous owner. This relation grants no read or write
 authority and is not an ordinary-read alias.
 
-The contract is [SchemaEvolution](lean/Causa/SchemaEvolution.lean). Replay
+The contract is [SchemaEvolution](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/SchemaEvolution.lean). Replay
 keys, catalog registration, migration execution, and recovery remain runtime
 contracts and executable tests because they are not kernel fields.
 

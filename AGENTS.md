@@ -5,11 +5,11 @@ concepts and integration; avoid a second invariant or configuration ledger.
 
 ## Scope and authority
 
-- The Lean kernel in `docs/lean/Causa/` states the principles in
+- The Lean kernel in `lean/Causa/` states the principles in
   `Principles.lean`; its other files are supporting definitions and lemmas.
   Rust code and tests define runtime behavior. Change a principle in Lean
-  first; `lake build` and `scripts/check-lean-axioms.py` check the kernel, not
-  a Rust refinement proof.
+  first; `lake build` and `lake exe ledger check`, in `lean/`, check the kernel,
+  not a Rust refinement proof.
 - Types/defaults/limits: rustdoc. Tables: migrations; core functions, triggers,
   policies and views: `crates/storage-pg/definitions/`. Settings: each
   crate's `settings!` block, read only through `Setting::read`;
@@ -80,7 +80,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 ## Boundaries checked by code and review
 
 The principles are in
-[`Principles.lean`](docs/lean/Causa/Principles.lean); each names its runtime
+[`Principles.lean`](lean/Causa/Principles.lean); each names its runtime
 enforcer there. This table holds the engineering boundaries.
 
 | Boundary | Enforcer |

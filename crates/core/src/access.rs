@@ -79,7 +79,7 @@ impl AccessCeiling {
     }
 
     /// The lowest ceiling that covers `kind`: a memory kind's place on the
-    /// access ladder (`AccessKind.rank` in `docs/lean/Causa/Owner.lean`). A
+    /// access ladder (`AccessKind.rank` in `lean/Causa/Owner.lean`). A
     /// Goal is intent, not memory, and is not on this ladder: what a role
     /// may do with Goals is [`Role::goals`].
     #[must_use]
@@ -110,7 +110,7 @@ impl AccessCeiling {
 
 /// What a role may do with the owner's Goals: nothing, read them, or work
 /// them (set, modify, transition). Its own chain beside the memory ladder
-/// (`GoalAccess` in `docs/lean/Causa/Owner.lean`).
+/// (`GoalAccess` in `lean/Causa/Owner.lean`).
 #[derive(
     Debug,
     Clone,
@@ -168,7 +168,7 @@ pub enum AccessError {
 /// Two ceilings over the memory ladder and three capabilities: what the role
 /// may do with the owner's Goals, whether it administers the owner, whether
 /// it manages the group. No capability follows from a ceiling (`Role` in
-/// `docs/lean/Causa/Owner.lean`).
+/// `lean/Causa/Owner.lean`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, schemars::JsonSchema)]
 pub struct Role {
     read: AccessCeiling,
@@ -283,7 +283,7 @@ impl Role {
 
     /// What no forwarded request exceeds: it reads Goals at most, and neither
     /// administers nor manages (`Role.forwardingCap` in
-    /// `docs/lean/Causa/Authorization.lean`).
+    /// `lean/Causa/Authorization.lean`).
     const fn forwarding_cap() -> Self {
         Self {
             read: AccessCeiling::Perspective,
@@ -389,7 +389,7 @@ impl Role {
     /// and Goal access, and each capability when either has it.
     ///
     /// A member who holds two relations in one group holds both, so their role
-    /// for that group is the join (`Role.join` in `docs/lean/Causa/Owner.lean`).
+    /// for that group is the join (`Role.join` in `lean/Causa/Owner.lean`).
     /// `write <= read` holds because each input satisfies it and max is
     /// monotone.
     #[must_use]
@@ -886,7 +886,7 @@ mod tests {
         );
     }
 
-    /// `join` mirrors `Role.join` in `docs/lean/Causa/Owner.lean`: the
+    /// `join` mirrors `Role.join` in `lean/Causa/Owner.lean`: the
     /// stronger ceiling per capability, manage when either manages.
     #[test]
     fn join_is_the_stronger_capability_of_each() {
