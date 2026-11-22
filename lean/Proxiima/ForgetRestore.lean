@@ -2,18 +2,7 @@
 
 namespace Proxiima.ForgetRestore
 
-/-- The lifecycle operations that change an admission's mark. -/
-inductive MarkChange where
-  | forget
-  | restore
-  deriving DecidableEq
-
-/-- The forgotten flag written by an admitted lifecycle operation. -/
-def markAfter : MarkChange → Bool
-  | .forget => true
-  | .restore => false
-
-/-- The stored parts preserved by forgetting, with exact pins preserved under `Causa.principle_5_no_transition_retargets_a_pin`. -/
+/-- The parts retained when a Memory is forgotten. -/
 inductive RetainedPart where
   | admission
   | stampedSidecars
@@ -27,15 +16,10 @@ inductive RetainedPart where
 def retainedOnForget : List RetainedPart :=
   [.admission, .stampedSidecars, .sketch, .requestReceipt, .externalOrigins, .citedObjects]
 
-/-- Visibility within authorized owner scope, including sidecars and external origins reached through the admission. -/
+/-- Whether a Memory is visible in the selected owner scope given its forgotten mark. -/
 def visibleInScope : (lifecycle forgotten : Bool) → Bool
   | true, true | true, false | false, false => true
   | false, true => false
-
-/-- Lifecycle writes require the selected owner and a Memory kind within the permit's write ceiling. -/
-def mutationReach : (selectedOwner withinWriteLimit : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
 
 /-- Restore refuses a retired Fact schema. -/
 inductive RestoreRefusal where
@@ -58,12 +42,12 @@ def restoreAdmission : (retired forgotten : Bool) → Except RestoreRefusal Rest
 inductive RestoreStep where
   | clearMark
   | rebuildStampedProjectionsInStoredLanguage
-  /-- Only for embeddable schemas and the spaces in the owner's current route. -/
+  /-- Queue embedding work for routed spaces. -/
   | enqueueRoutedEmbeddings
   | repairHead
   deriving DecidableEq
 
-/-- Restore rebuilds derived state under the same transaction without republishing cancelled deliveries. -/
+/-- The mark, projection, embedding and head steps of restoring a forgotten admission. -/
 def restoreSteps : List RestoreStep :=
   [.clearMark, .rebuildStampedProjectionsInStoredLanguage, .enqueueRoutedEmbeddings, .repairHead]
 
@@ -86,7 +70,7 @@ inductive FootprintStep where
   | revalidateFootprint
   deriving DecidableEq
 
-/-- Lock both live and forgotten origin and reference dependers and retry on footprint growth. -/
+/-- The handle locks, version locks and revalidation of the dependent footprint. -/
 def footprintOrder : List FootprintStep :=
   [.lockSourceAndNonFactDependerHandles, .lockSourceAndNonFactDependerVersions, .revalidateFootprint]
 
@@ -117,22 +101,12 @@ inductive SurfaceLeg where
   | unreachable
   deriving DecidableEq
 
-/-- Retained surfaces require a reachable key or matching Memory cascade; deletes prefer cascade evidence to a generated statement. -/
+/-- Retained surfaces require a reachable key or matching Memory cascade. A declared delete with cascade evidence is classified as cascaded, with no generated delete. -/
 def classifySurface : SurfaceRule → SurfaceLeg
   | .keep => .kept
   | .retain true | .retainCascadedDetail true => .marked
   | .retain false | .retainCascadedDetail false | .delete false false => .unreachable
   | .delete true true | .delete true false => .cascaded
   | .delete false true => .deleted
-
-/-- Whether a resolved leg emits a generated delete. -/
-def generatesDelete : SurfaceLeg → Bool
-  | .deleted => true
-  | .kept | .marked | .cascaded | .unreachable => false
-
-/-- Whether a declared surface has a leg the registry can freeze. -/
-def reachableLeg : SurfaceLeg → Bool
-  | .kept | .marked | .cascaded | .deleted => true
-  | .unreachable => false
 
 end Proxiima.ForgetRestore

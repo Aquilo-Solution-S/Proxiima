@@ -747,25 +747,6 @@
   {"out": "newestLive", "in": [true, false]},
   {"out": "newestForgotten", "in": [false, true]},
   {"out": null, "in": [false, false]}],
- "Proxiima.ForgetRestore.reachableLeg":
- [{"out": true, "in": ["kept"]},
-  {"out": true, "in": ["marked"]},
-  {"out": true, "in": ["cascaded"]},
-  {"out": true, "in": ["deleted"]},
-  {"out": false, "in": ["unreachable"]}],
- "Proxiima.ForgetRestore.mutationReach":
- [{"out": true, "in": [true, true]},
-  {"out": false, "in": [true, false]},
-  {"out": false, "in": [false, true]},
-  {"out": false, "in": [false, false]}],
- "Proxiima.ForgetRestore.markAfter":
- [{"out": true, "in": ["forget"]}, {"out": false, "in": ["restore"]}],
- "Proxiima.ForgetRestore.generatesDelete":
- [{"out": false, "in": ["kept"]},
-  {"out": false, "in": ["marked"]},
-  {"out": false, "in": ["cascaded"]},
-  {"out": true, "in": ["deleted"]},
-  {"out": false, "in": ["unreachable"]}],
  "Proxiima.ForgetRestore.classifySurface":
  [{"out": "kept", "in": ["keep"]},
   {"out": "marked", "in": [{"retain": [true]}]},

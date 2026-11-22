@@ -176,18 +176,20 @@ def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) :
     memory_head_handle h = memory_handle m ∧
     memory_head_t h = memory_t m
 
-/-- Applying `Proxiima.ForgetRestore.markAfter` to the Memory row. -/
+/-- Setting the forgotten mark on the Memory row. -/
 def Memory.forget (m : Memory) : Memory :=
-  { m with forgotten := Proxiima.ForgetRestore.markAfter .forget }
+  { m with forgotten := true }
 
 /-- Clearing the mark of an admitted restore. -/
 def Memory.restore (m : Memory) : Memory :=
-  { m with forgotten := Proxiima.ForgetRestore.markAfter .restore }
+  { m with forgotten := false }
 
 /-- Forget followed by an admitted restore recovers the original live Memory row. -/
-theorem restore_forget (m : Memory) (live : m.forgotten = false) : m.forget.restore = m := by
+theorem restore_forget (m : Memory) (live : m.forgotten = false) (retired : Bool)
+    (_admitted : Proxiima.ForgetRestore.restoreAdmission retired m.forget.forgotten = .ok .rebuild) :
+    m.forget.restore = m := by
   cases m
-  simp_all [Memory.forget, Memory.restore, Proxiima.ForgetRestore.markAfter]
+  simp_all [Memory.forget, Memory.restore]
 
 /-- The Memory store after forgetting one admission. -/
 def forgetIn (memories : Set Memory) (id : MemoryId) : Set Memory :=

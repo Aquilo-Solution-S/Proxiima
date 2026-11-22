@@ -153,13 +153,13 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// `Proxiima.ForgetRestore.reachableLeg`.
     pub(super) fn validate_forget_legs(
         contract: &crate::spiice::contract::SpiiceContract,
     ) -> Result<(), SpiiceRegistryError> {
         use crate::spiice::contract::ForgetLeg;
 
         for surface in contract.all_surfaces() {
+            // Freeze refuses `Unreachable` from `Proxiima.ForgetRestore.classifySurface`.
             if ForgetLeg::derive(&surface) == ForgetLeg::Unreachable {
                 return Err(SpiiceRegistryError::UnforgettableSurface {
                     spiice_id: contract.spiice_id,

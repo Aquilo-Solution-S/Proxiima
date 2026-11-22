@@ -487,6 +487,7 @@ async fn lock_forget_footprint_tx(
     .fetch_all(tx.as_mut())
     .await
     .map_err(map_err)?;
+    // Recheck that every depender handle is locked before taking version locks.
     // The SQL result is sorted; prepending the source made `handles` unsorted.
     // Search its ordered tail to avoid a linear scan for every depender.
     let handle_was_locked =
@@ -703,6 +704,7 @@ fn forget_leg_sql(table: &str, key_column: &str) -> Result<SqlText, StorageError
 }
 
 /// `Proxiima.ForgetRestore.repairHead`.
+/// The `memory.handle` FK keeps the head on the newest forgotten version when none are live.
 /// The caller must hold the complete advisory lock for this handle.
 pub(crate) async fn sync_memory_head(
     tx: &mut Transaction<'_, Postgres>,
@@ -819,11 +821,12 @@ async fn forget_in_lifecycle(
         .await
         .map_err(map_err)?
         .ok_or(StorageError::NotFound)?;
-    // `Proxiima.ForgetRestore.mutationReach`. Recheck the series after taking its locks.
+    // Recheck the series after taking its locks.
+    // Absent, foreign or above-ceiling rows answer `NotFound` (`Proxiima.OwnerAuthority.covers`).
     if locked_handle != handle || kinds.is_some_and(|kinds| !kinds.contains(&kind)) {
         return Err(StorageError::NotFound);
     }
-    // `Proxiima.ForgetRestore.markAfter` and `Proxiima.ForgetRestore.retainedOnForget`.
+    // `Proxiima.ForgetRestore.retainedOnForget`.
     sqlx::query(
         "UPDATE proxiima_core.memory
             SET forgotten_at = now()
@@ -891,13 +894,13 @@ async fn restore_in_lifecycle(
             .map_err(map_err)?;
     let (locked_handle, kind, schema_id, sidecar_tables, language, forgotten) =
         row.ok_or(StorageError::NotFound)?;
-    // `Proxiima.ForgetRestore.mutationReach`.
+    // Absent, foreign or above-ceiling rows answer `NotFound` (`Proxiima.OwnerAuthority.covers`).
     if locked_handle != handle || !reach.kinds.contains(&kind) {
         return Err(StorageError::NotFound);
     }
     // `Proxiima.ForgetRestore.restoreAdmission`.
     sidecars.ensure_schema_restorable(&schema_id)?;
-    // `Proxiima.ForgetRestore.restoreSteps` and `Proxiima.ForgetRestore.markAfter`.
+    // `Proxiima.ForgetRestore.restoreSteps`.
     if forgotten {
         sqlx::query(
             "UPDATE proxiima_core.memory
@@ -920,6 +923,7 @@ async fn restore_in_lifecycle(
                 )
                 .await?;
         }
+        // Enqueue only for embeddable schemas in the owner's current write route.
         if !embeddings.spaces.is_empty() && !embeddings.non_embeddable_schemas.contains(&schema_id)
         {
             crate::verbs::fact_embeddings::enqueue_embedding_jobs_in_tx(

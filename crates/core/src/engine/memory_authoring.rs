@@ -699,7 +699,6 @@ impl Engine {
         A: EngineAuthority + ?Sized,
     {
         let write_permit = self.authorize_write_limit(authority, &owner).await?;
-        // `Proxiima.ForgetRestore.restoreSteps`.
         let embedding_spaces = self.write_route(&owner).await?.write_spaces();
         self.storage()
             .memory_authoring
@@ -1224,7 +1223,7 @@ impl Engine {
             .iter()
             .map(|memory_id| {
                 // `Proxiima.Edges.pinAdmissionWitness`.
-                // Home resolution sees both states, and this owner read conceals forgotten targets.
+                // A forgotten id is refused exactly as an absent one, with no existence hint and no retry invitation.
                 by_id.get(memory_id).copied().ok_or_else(|| {
                     ProtocolError::forbidden(super::pipeline::ENTRY_NOT_FOUND_MESSAGE)
                 })

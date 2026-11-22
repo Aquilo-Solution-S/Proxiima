@@ -1219,8 +1219,8 @@ pub enum ForgetLeg {
     /// Deleted for the forgotten `t` and not preserved: derived state a
     /// restore recomputes, or a queue entry with nothing to restore.
     Deleted { key_column: &'static str },
-    /// Deleted with the memory by a constraint that already proves it.
-    /// Restore does not rebuild this derived relation.
+    /// Records the declared cascade. Forget keeps the Memory and its stamped
+    /// sidecars, so this leg runs no delete. Search projections are deleted separately.
     Cascaded { via: DbConstraint },
     /// Untouched, with the reason stated.
     Kept { why: &'static str },
@@ -1262,13 +1262,6 @@ impl ForgetLeg {
                 _ => Self::Unreachable,
             },
         }
-    }
-
-    /// Whether the forget runs a statement built from this declaration.
-    /// `Marked` is false: a forget leaves that surface in place.
-    #[must_use]
-    pub const fn is_generated(&self) -> bool {
-        matches!(self, Self::Deleted { .. })
     }
 }
 
@@ -2070,9 +2063,6 @@ mod tests {
         let classifications: Vec<Vector> =
             serde_json::from_value(vectors["Proxiima.ForgetRestore.classifySurface"].clone())
                 .expect("the ledger emits forget leg classifications");
-        let delete_rows = vectors["Proxiima.ForgetRestore.generatesDelete"]
-            .as_array()
-            .expect("the ledger emits generated-delete decisions");
         assert!(!classifications.is_empty());
         for vector in classifications {
             let mut surface = detail_surface();
@@ -2109,12 +2099,6 @@ mod tests {
                 ForgetLeg::Unreachable => "unreachable",
             };
             assert_eq!(classification, vector.out, "{surface:?}");
-            let generated = delete_rows
-                .iter()
-                .find(|row| row["in"][0] == classification)
-                .and_then(|row| row["out"].as_bool())
-                .expect("a generated-delete decision for every forget leg");
-            assert_eq!(leg.is_generated(), generated, "{surface:?}");
         }
     }
 

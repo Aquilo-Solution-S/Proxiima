@@ -364,7 +364,7 @@ impl OwnerSurfaces {
     /// heads underneath it and leaving the head it then writes behind.
     #[must_use]
     pub fn generated_forget_legs(&self) -> Vec<(&'static str, &'static str)> {
-        // `Proxiima.ForgetRestore.generatesDelete` and `Proxiima.ForgetRestore.derivedDeleteOrder`.
+        // `Proxiima.ForgetRestore.derivedDeleteOrder`.
         let mut legs: Vec<(&'static str, &'static str)> = self
             .surfaces
             .iter()

@@ -1,4 +1,4 @@
-//! Transaction lifetime of `Proxiima.ForgetRestore.visibleInScope`.
+//! Lifecycle scope is for forget, restore, erase, transfer, export and replay, and the type is crate-private so no host or spiice can construct it.
 //!
 //! Only this module sets lifecycle scope, and its callers finish it even on logical refusal.
 

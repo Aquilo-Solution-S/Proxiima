@@ -1128,12 +1128,7 @@ stateDiagram-v2
 
 ## Forget and restore
 
-**Mark change**: The lifecycle operations that change an admission's mark.
-
-- forget
-- restore
-
-**Retained part**: The stored parts preserved by forgetting, with exact pins preserved under `Causa.principle_5_no_transition_retargets_a_pin`.
+**Retained part**: The parts retained when a Memory is forgotten.
 
 - admission
 - stampedSidecars
@@ -1155,7 +1150,7 @@ stateDiagram-v2
 
 - clearMark
 - rebuildStampedProjectionsInStoredLanguage
-- enqueueRoutedEmbeddings: Only for embeddable schemas and the spaces in the owner's current route.
+- enqueueRoutedEmbeddings: Queue embedding work for routed spaces.
 - repairHead
 
 **Head choice**: Which surviving version is the head after a lifecycle change.
@@ -1192,28 +1187,20 @@ stateDiagram-v2
 
 **retained on forget** = \[admission, stampedSidecars, sketch, requestReceipt, externalOrigins, citedObjects]: Forget leaves the original admission and the data needed to restore or replay it in place.
 
-**restore steps** = \[clearMark, rebuildStampedProjectionsInStoredLanguage, enqueueRoutedEmbeddings, repairHead]: Restore rebuilds derived state under the same transaction without republishing cancelled deliveries.
+**restore steps** = \[clearMark, rebuildStampedProjectionsInStoredLanguage, enqueueRoutedEmbeddings, repairHead]: The mark, projection, embedding and head steps of restoring a forgotten admission.
 
-**footprint order** = \[lockSourceAndNonFactDependerHandles, lockSourceAndNonFactDependerVersions, revalidateFootprint]: Lock both live and forgotten origin and reference dependers and retry on footprint growth.
+**footprint order** = \[lockSourceAndNonFactDependerHandles, lockSourceAndNonFactDependerVersions, revalidateFootprint]: The handle locks, version locks and revalidation of the dependent footprint.
 
 **derived delete order** = \[searchProjections, embeddingJobs, otherGeneratedLegs]: Forget deletes linked search projections and takes embedding jobs before the other generated deletes.
 
-| mark change | mark after |
-| --- | --- |
-| forget | yes |
-| restore | no |
+| bool | bool | visible in scope | restore admission | repair head |
+| --- | --- | --- | --- | --- |
+| yes | yes | yes | refused: retiredSchema | newestLive |
+| yes | no | yes | refused: retiredSchema | newestLive |
+| no | yes | no | rebuild | newestForgotten |
+| no | no | yes | unchanged | — |
 
-- mark after: The forgotten flag written by an admitted lifecycle operation.
-
-| bool | bool | visible in scope | mutation reach | restore admission | repair head |
-| --- | --- | --- | --- | --- | --- |
-| yes | yes | yes | yes | refused: retiredSchema | newestLive |
-| yes | no | yes | no | refused: retiredSchema | newestLive |
-| no | yes | no | no | rebuild | newestForgotten |
-| no | no | yes | no | unchanged | — |
-
-- visible in scope: Visibility within authorized owner scope, including sidecars and external origins reached through the admission.
-- mutation reach: Lifecycle writes require the selected owner and a Memory kind within the permit's write ceiling.
+- visible in scope: Whether a Memory is visible in the selected owner scope given its forgotten mark.
 - restore admission: Schema retirement refuses restore before the live-row no-op or the forgotten-row rebuild.
 - repair head: Prefer the newest live head, keep a forgotten head while only forgotten versions remain, and remove an empty series head.
 
@@ -1229,18 +1216,7 @@ stateDiagram-v2
 | delete (no, yes) | deleted |
 | delete (no, no) | unreachable |
 
-- classify surface: Retained surfaces require a reachable key or matching Memory cascade; deletes prefer cascade evidence to a generated statement.
-
-| surface leg | generates delete | reachable leg |
-| --- | --- | --- |
-| kept | no | yes |
-| marked | no | yes |
-| cascaded | no | yes |
-| deleted | yes | yes |
-| unreachable | no | no |
-
-- generates delete: Whether a resolved leg emits a generated delete.
-- reachable leg: Whether a declared surface has a leg the registry can freeze.
+- classify surface: Retained surfaces require a reachable key or matching Memory cascade. A declared delete with cascade evidence is classified as cascaded, with no generated delete.
 
 ## Goal collaboration
 

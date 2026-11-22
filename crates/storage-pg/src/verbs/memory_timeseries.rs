@@ -631,8 +631,8 @@ async fn load_ingest_replay(
     else {
         return Ok(None);
     };
-    // `Proxiima.ForgetRestore.retainedOnForget`. Replay returns the stored version
-    // and its forgotten flag without writing a new version or clearing the mark.
+    // Replay returns the stored version and its forgotten flag without
+    // writing a new version or clearing the mark.
     // Missing refs refuse replay because an empty default could bless a changed declaration.
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let replay_row: Result<Option<ReplayRow>, StorageError> = sqlx::query_as(
