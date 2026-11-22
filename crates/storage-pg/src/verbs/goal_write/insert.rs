@@ -27,10 +27,9 @@ pub(super) struct PreparedGoalInsert<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PostLockGuard {
     None,
-    /// Achieve (#514): the series' decompose children are closed, and at
-    /// least one is Achieved.
+    /// `Proxiima.Goals.closeGuard` for achievement.
     ChildrenClosed,
-    /// Abandon: no decompose child of the series is Active or Paused.
+    /// `Proxiima.Goals.closeGuard` for abandonment.
     NoOpenChildren,
 }
 

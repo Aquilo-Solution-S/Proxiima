@@ -1,23 +1,15 @@
-//! #514: a goal is a plain tree, and an open goal (Active or Paused) never
-//! sits under a closed one (Achieved or Abandoned). Achieve and abandon check
-//! it after the write's lifecycle lock: no child head may be open, and
-//! achieve also needs at least one Achieved child.
+//! `Proxiima.Goals.closeGuard`
 
 use super::{GoalId, GoalState, OwnerId, Postgres, StorageError, Transaction, map_err};
 
-/// Which children rule a closing write checks.
+/// `Proxiima.Goals.Close`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChildRule {
-    /// Abandon: no child head is Active or Paused.
     NoneOpen,
-    /// Achieve: no child head is open, and at least one is Achieved.
     ClosedWithAchieved,
 }
 
-/// Refuse closing the series `parent_handle` while its decompose children
-/// break `rule`. Runs after the write's lifecycle lock (the parent head
-/// `t`, which a decompose child also locks through its `dependency_t`), so
-/// a child that a racing decompose committed first is seen here.
+/// `Proxiima.Goals.closeGuard`. The shared lock orders child creation against this read.
 pub(super) async fn ensure_goal_children_closed(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -57,8 +49,7 @@ pub(super) fn open_children(rows: &[(uuid::Uuid, GoalState)]) -> Result<(), Stor
     }
 }
 
-/// The rule over each child's current head: none open, and when there are
-/// children, at least one Achieved.
+/// `Proxiima.Goals.closeGuard`.
 pub(super) fn children_verdict(rows: &[(uuid::Uuid, GoalState)]) -> Result<(), StorageError> {
     if rows.is_empty() {
         return Ok(());
@@ -78,7 +69,7 @@ mod tests {
         uuid::Uuid::from_u128(n)
     }
 
-    /// G7: the verdict table.
+    // `Proxiima.Goals.closeGuard`
     #[test]
     fn children_verdict_table() {
         use GoalState::{Abandoned, Achieved, Active, Paused};
@@ -112,8 +103,7 @@ mod tests {
         );
     }
 
-    /// G7': the abandon rule. It passes wherever no child is open, including
-    /// all-Abandoned, where the achieve rule refuses.
+    // `Proxiima.Goals.closeGuard`
     #[test]
     fn open_children_table() {
         use GoalState::{Abandoned, Achieved, Active, Paused};

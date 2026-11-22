@@ -1,9 +1,10 @@
+import Lean
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Causa.Memory
-
 import Proxiima.Goals
+
 /-! Causa — Goals -/
 
 namespace Causa
@@ -18,6 +19,15 @@ def goalTextBlankChar (c : Char) : Bool :=
 def GoalTextNonblank (s : Text) : Prop :=
   s.toByteArray.data.any (fun b => !goalTextBlankChar (Char.ofNat b.toNat)) = true
 
+/-- The exact version pins declared by a Goal, distinct from its parent series. -/
+structure GoalPins where
+  assignment_t  : Option MemoryId
+  dependency_t  : List GoalId
+  evidence_t    : List MemoryId
+  motivated_by  : List MemoryId
+  close_fact_t  : Option MemoryId
+  write_act_t   : Option MemoryId
+
 structure Goal where
   handle        : Handle
   t             : GoalId
@@ -27,18 +37,12 @@ structure Goal where
   text          : Option Text
   state         : GoalState
   request_id    : Text
-  close_fact_t  : Option MemoryId
-  assignment_t  : Option MemoryId
-  dependency_t  : List GoalId
-  evidence_t    : List MemoryId
-  /-- Exact Perspective versions that motivated this Goal version. -/
-  motivated_by  : List MemoryId
-  write_act_t   : Option MemoryId
-  /-- The parent series selected at decomposition. -/
+  pins          : GoalPins
   parent_handle : Option Handle
   tick          : Instant
+  /-- `Proxiima.Goals.closeFactPresence`. -/
   terminal_close_fact :
-    state.terminal = true → close_fact_t.isSome = true
+    state.terminal = true ↔ pins.close_fact_t.isSome = true
   text_nonblank :
     ∀ s, text = some s → GoalTextNonblank s
 
@@ -47,12 +51,12 @@ def goal_t : Goal → GoalId := Goal.t
 def goal_id : Goal → GoalId := Goal.t
 def goal_owner : Goal → Owner := Goal.owner
 def goal_state : Goal → GoalState := Goal.state
-def goal_close_fact_t : Goal → Option MemoryId := Goal.close_fact_t
-def goal_assignment : Goal → Option MemoryId := Goal.assignment_t
-def goal_dependencies : Goal → List GoalId := Goal.dependency_t
-def goal_evidence : Goal → List MemoryId := Goal.evidence_t
-def goal_motivated_by : Goal → List MemoryId := Goal.motivated_by
-def goal_write_act_t : Goal → Option MemoryId := Goal.write_act_t
+def goal_close_fact_t : Goal → Option MemoryId := fun g => g.pins.close_fact_t
+def goal_assignment : Goal → Option MemoryId := fun g => g.pins.assignment_t
+def goal_dependencies : Goal → List GoalId := fun g => g.pins.dependency_t
+def goal_evidence : Goal → List MemoryId := fun g => g.pins.evidence_t
+def goal_motivated_by : Goal → List MemoryId := fun g => g.pins.motivated_by
+def goal_write_act_t : Goal → Option MemoryId := fun g => g.pins.write_act_t
 
 def goal_motivations_valid
     (memories : Set Memory) (goal : Goal) : Prop :=
@@ -99,11 +103,21 @@ def ErasedTargetsDisjointGoals
   ∀ e : ErasedPinTarget, e ∈ targets →
     ∀ g : Goal, g ∈ goals → erased_pin_target_t e ≠ goal_t g
 
-/-- Identity targets of Goal-declared pins. -/
+open Lean Elab Term Meta in
+/-- Generate the exact target projection from every field of `Causa.GoalPins`. -/
+elab "goal_pin_targets" pins:term : term => do
+  let pins ← elabTermEnsuringType pins (mkConst ``GoalPins)
+  let mut targets ← mkListLit (mkConst ``Id) []
+  for field in (getStructureFields (← getEnv) ``GoalPins).toList.reverse do
+    let value ← mkAppM (``GoalPins ++ field) #[pins]
+    let type ← inferType value
+    let ids ← if type.isAppOf ``Option then mkAppM ``Option.toList #[value] else pure value
+    targets ← mkAppM ``List.append #[ids, targets]
+  return targets
+
+/-- The version identities contained in the Goal's declared pins. -/
 def goalDeclaredTargetIds (g : Goal) : List Id :=
-  (goal_assignment g).toList ++ goal_dependencies g ++ goal_evidence g ++
-    goal_motivated_by g ++
-    (goal_close_fact_t g).toList ++ (goal_write_act_t g).toList
+  goal_pin_targets g.pins
 
 def GoalIdUnique (goals : Set Goal) : Prop :=
   ∀ g1 g2 : Goal,
@@ -154,6 +168,12 @@ def NoOpenChild (F : GoalForest) (x : Handle) : Prop :=
   ∀ (c : Handle) (s : GoalState), F.parent c = some x → F.state c = some s →
     s.isOpen = false
 
+/-- An achievable series has no open child and either has no children or has an achieved child. -/
+def AchievableChildren (F : GoalForest) (x : Handle) : Prop :=
+  NoOpenChild F x ∧
+    ((∀ c, ¬ forestChildOf F c x) ∨
+      ∃ c, F.parent c = some x ∧ F.state c = some .Achieved)
+
 /-- Creation of a Goal series. -/
 structure ForestBirth (F F' : GoalForest) (x : Handle) (parent : Option Handle) : Prop where
   fresh     : F.state x = none
@@ -187,7 +207,7 @@ inductive GoalStep : GoalForest → GoalForest → Prop where
   | modify {F F' : GoalForest} (x : Handle) :
       ForestRelabel F F' x .Active .Active → GoalStep F F'
   | achieve {F F' : GoalForest} (x : Handle) :
-      NoOpenChild F x → ForestRelabel F F' x .Active .Achieved → GoalStep F F'
+      AchievableChildren F x → ForestRelabel F F' x .Active .Achieved → GoalStep F F'
   | abandon {F F' : GoalForest} (x : Handle) {old : GoalState} :
       old.isOpen = true → NoOpenChild F x → ForestRelabel F F' x old .Abandoned →
       GoalStep F F'
@@ -384,7 +404,7 @@ theorem goalStep_preserves_inv :
   | pause _ r => exact pause_preserves inv r
   | resume _ r => exact resume_preserves inv r
   | modify _ r => exact modify_preserves inv r
-  | achieve _ hchild r => exact achieve_preserves inv hchild r
+  | achieve _ hchild r => exact achieve_preserves inv hchild.1 r
   | abandon _ _ hchild r => exact abandon_preserves inv hchild r
 
 def emptyForest : GoalForest where

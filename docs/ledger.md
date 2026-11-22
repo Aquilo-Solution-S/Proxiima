@@ -526,7 +526,7 @@ Causa — Pins
 
 Causa — Goals
 
-✓ **terminal close fact**: 
+✓ **terminal close fact**: `Proxiima.Goals.closeFactPresence`.
 
 ✓ **text nonblank**: 
 
