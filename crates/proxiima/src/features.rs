@@ -1,4 +1,5 @@
 //! Runtime feature startup and control. Config resolution precedes storage access.
+//! A half-configured feature never reaches this module: resolve refuses it. Features are decided once per boot, in `build()` and `run()` alike.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -408,8 +409,8 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         inputs.services.clone(),
     );
     let mut workers = Workers::default();
-    // `Proxiima.Operations.featureRequirements`
     let spiice_workers = A::spawn_workers(&worker_ctx);
+    // `Proxiima.Operations.featureRequirements`
     let workers_decision = if spiice_workers.is_empty() {
         FeatureDecision::off(
             Feature::SpiiceWorkers,
@@ -426,6 +427,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
         workers.adopt(worker, inputs.cancel.clone(), WORKER_SHUTDOWN_GRACE);
     }
 
+    // `Proxiima.Operations.featureRequirements`
     let (embedding, embedding_decision) = if inputs.engine.embedding_router().is_some() {
         let (gate, worker) = QuiesceGate::new();
         workers.spawn(
@@ -452,7 +454,7 @@ pub(crate) fn start<A: SpiiceBundle>(mcp: FeatureDecision, inputs: &FeatureInput
 
     let (publisher, publisher_decision, prune_decision) = start_publisher(inputs, &mut workers);
     let (object_purge, object_purge_decision) = start_object_purge(inputs, &mut workers);
-    // `Proxiima.Operations.meterLifecycle`
+    // A provider set later does not reach a meter taken earlier.
     let metrics = Metrics::new(
         &opentelemetry::global::meter("proxiima"),
         inputs.metrics.purge_health.clone(),
@@ -499,6 +501,7 @@ fn start_object_purge(
     inputs: &FeatureInputs<'_>,
     workers: &mut Workers,
 ) -> (Option<QuiesceGate>, FeatureDecision) {
+    // `Proxiima.Operations.featureRequirements`
     let Some(objects) = &inputs.objects else {
         return (
             None,
@@ -555,6 +558,7 @@ fn start_publisher(
 ) -> (Option<Vec<QuiesceGate>>, FeatureDecision, FeatureDecision) {
     let horizon = inputs.config.published_retention;
     let consumers = &inputs.config.outbox_consumers;
+    // `Proxiima.Operations.featureRequirements`
     if consumers.is_empty() {
         let prune = match horizon {
             Some(_) => "the outbox publisher is off, so no delivered record exists to prune",
@@ -572,6 +576,7 @@ fn start_publisher(
             FeatureDecision::off(Feature::PublishedRecordPrune, prune),
         );
     }
+    // `Proxiima.Operations.featureRequirements`
     let prune = match horizon {
         Some(older_than) => {
             let retention = PublicationRetention {

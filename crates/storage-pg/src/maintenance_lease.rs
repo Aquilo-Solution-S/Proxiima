@@ -23,9 +23,7 @@ use uuid::Uuid;
 use crate::PgPlatformScope;
 use crate::error::map_err;
 
-/// How long a lease outlives its last renewal. A pass renews every third of
-/// it, so a holder must miss two renewals in a row before another process
-/// can take the lease.
+/// How long a lease outlives its last renewal.
 pub(crate) const MAINTENANCE_LEASE_TTL: Duration = Duration::from_secs(proxiima_core::ledger!(
     Proxiima.Operations.maintenanceLeaseSeconds
 ));

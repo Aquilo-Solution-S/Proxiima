@@ -988,7 +988,7 @@ impl std::fmt::Debug for PgStorage {
 }
 
 /// A held embedding-maintenance lease: no other embedding maintenance pass
-/// runs on this database while it is held.
+/// starts on this database while its lease is live.
 ///
 /// The lease is a row of `proxiima_core.maintenance_lease`, renewed in the
 /// background while the guard lives. [`Self::release`] deletes it; dropping
@@ -1030,9 +1030,9 @@ impl std::fmt::Debug for EmbeddingMaintenanceLock {
 
 /// A held storage-maintenance lease: no other storage maintenance pass (the
 /// object-purge drain and upload sweep, in process or from
-/// `proxiima-mcp maintain-storage`) runs on this database while it is held.
+/// `proxiima-mcp maintain-storage`) starts on this database while its lease is live.
 /// Same lease design as [`EmbeddingMaintenanceLock`], under its own name, so
-/// the two families may run concurrently but never overlap themselves.
+/// the two families may run concurrently.
 pub struct StorageMaintenanceLock {
     lease: maintenance_lease::MaintenanceLease,
 }

@@ -17,20 +17,32 @@ use std::sync::LazyLock;
 
 use tokio::sync::watch;
 
-/// The process's one signal; [`Writes`] instances other than this one exist
-/// only in tests, so a test never sees another test's writes.
+/// The process-wide signal.
 static WRITES: LazyLock<Writes> = LazyLock::new(Writes::new);
 
-/// Run a storage adapter's commit, waking the drains only on success.
+#[cfg(feature = "testkit")]
+tokio::task_local! {
+    static TEST_WRITES: Writes;
+}
+
+/// Run a future and wake the drains whenever it returns `Ok`.
+///
+/// Pass the real commit future so the data is visible when a drain wakes.
 ///
 /// # Errors
 ///
 /// Returns the error produced by the commit future.
 pub async fn commit_and_wake<T, E>(commit: impl Future<Output = Result<T, E>>) -> Result<T, E> {
+    #[cfg(feature = "testkit")]
+    if let Ok(writes) = TEST_WRITES.try_with(Clone::clone) {
+        return writes.after_commit(commit).await;
+    }
+
     WRITES.after_commit(commit).await
 }
 
 /// A write-committed signal: an epoch every commit bumps.
+#[derive(Clone)]
 struct Writes(watch::Sender<u64>);
 
 impl Writes {
@@ -46,7 +58,7 @@ impl Writes {
     }
 
     fn committed(&self) {
-        // `Proxiima.Operations.bumpsWakeEpoch`
+        // A local commit bumps the shared data-free epoch. Drains discover other commits by polling.
         self.0.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
     }
 
@@ -67,7 +79,19 @@ impl WriteWake {
     /// Subscribe. Writes committed before this call do not wake it.
     #[must_use]
     pub fn subscribe() -> Self {
+        #[cfg(feature = "testkit")]
+        if let Ok(wake) = TEST_WRITES.try_with(Writes::subscribe) {
+            return wake;
+        }
+
         WRITES.subscribe()
+    }
+
+    /// Route subscriptions and commits in this future to a private channel.
+    /// Subscribe before spawning a drain because spawned tasks have their own task locals.
+    #[cfg(feature = "testkit")]
+    pub async fn with_private_channel_for_tests<T>(test: impl Future<Output = T>) -> T {
+        TEST_WRITES.scope(Writes::new(), test).await
     }
 
     /// A private signal for a test drain, independent of concurrent database writes.

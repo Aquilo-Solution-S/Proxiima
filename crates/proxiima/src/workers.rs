@@ -121,6 +121,7 @@ pub(crate) async fn run(
         // `Proxiima.Operations.passWait`
         let wait = match outcome {
             Pass::Worked => {
+                // After progress both waits fall back to the floor.
                 idle_wait = backoff.floor;
                 failed_wait = backoff.floor;
                 continue;
@@ -230,12 +231,13 @@ impl Workers {
         grace: Duration,
     ) {
         let SpiiceWorker { name, handle } = worker;
+        // Abort a contributed worker if the runtime drops its task or the cancellation grace expires.
         let mut handle = AbortOnDropHandle::new(handle);
         self.spawn(name, None, async move {
-            // `Proxiima.Operations.contributedWorkerShutdown`
             let joined = tokio::select! {
                 result = &mut handle => result,
                 () = cancel.cancelled() => {
+                    // `Proxiima.Operations.workerShutdownGraceSeconds`
                     let Ok(result) = tokio::time::timeout(grace, &mut handle).await else {
                         tracing::warn!(worker = name, "worker exceeded shutdown grace; aborting");
                         return;

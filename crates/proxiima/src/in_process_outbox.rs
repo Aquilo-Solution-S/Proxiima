@@ -485,7 +485,7 @@ pub(crate) fn spawn_for_tests(
     cancel: CancellationToken,
 ) -> (QuiesceGate, tokio::task::JoinHandle<()>) {
     let (gate, worker) = QuiesceGate::new();
-    let task = tokio::spawn(async move { drain.run(cancel, worker).await });
+    let task = tokio::spawn(drain.run_with_wake(cancel, worker, WriteWake::subscribe()));
     (gate, task)
 }
 

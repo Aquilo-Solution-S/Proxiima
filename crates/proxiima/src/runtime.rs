@@ -156,6 +156,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
             owner_access,
         } = Box::pin(self.boot_common()).await?;
 
+        // `Proxiima.Operations.featureRequirements`
         let (service, mcp_edge, mcp) = match (config.mcp, allowlist) {
             (Some(mcp), Some(allowlist)) => {
                 let edge =
@@ -200,7 +201,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
             owner_access,
         } = Box::pin(self.boot_common()).await?;
 
-        // `Proxiima.Operations.bindsListener`
+        // `Proxiima.Operations.featureRequirements` and `Proxiima.Operations.bindsListener`
         let (mcp_addr, server, mcp) = if let (Some(mcp), Some(allowlist)) = (config.mcp, allowlist)
         {
             if !config.expose_network {

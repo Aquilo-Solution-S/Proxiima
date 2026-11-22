@@ -16,6 +16,7 @@ use proxiima_core::storage_ports::publication::{
     AckOutcome, ClaimToken, ClaimedPublication, ConsumerName, PublicationOutboxPort, PublisherId,
     ReleaseOutcome,
 };
+use proxiima_core::write_wake::WriteWake;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -1060,7 +1061,7 @@ async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
     let Some(world) = World::new(None).await else {
         return;
     };
-    let outcome = AssertUnwindSafe(async {
+    let outcome = AssertUnwindSafe(WriteWake::with_private_channel_for_tests(async {
         let settings = Settings {
             poll_interval: Duration::from_hours(1),
             idle_poll_max: Duration::from_hours(1),
@@ -1089,7 +1090,7 @@ async fn a_committed_fact_wakes_a_drain_whose_fallback_is_an_hour() {
         assert_eq!(intake.kept(), 1);
         cancel.cancel();
         task.await.expect("drain joins");
-    })
+    }))
     .catch_unwind()
     .await;
     world.finish(outcome).await;
@@ -1102,13 +1103,13 @@ async fn goal_writes_wake_the_drains() {
     let Some(world) = World::new(None).await else {
         return;
     };
-    let outcome = AssertUnwindSafe(async {
-        let mut writes = proxiima_core::write_wake::WriteWake::subscribe();
+    let outcome = AssertUnwindSafe(WriteWake::with_private_channel_for_tests(async {
+        let mut writes = WriteWake::subscribe();
         let _ = set_and_pause(&world, PendingWork::Discard).await;
         tokio::time::timeout(Duration::from_millis(100), writes.changed())
             .await
             .expect("a goal write committed and signalled");
-    })
+    }))
     .catch_unwind()
     .await;
     world.finish(outcome).await;

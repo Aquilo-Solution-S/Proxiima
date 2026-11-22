@@ -332,7 +332,8 @@ refusal. The request deadline covers the provider call.
 `proxiima::serve` and `RunningProxiima::until_shutdown_signal` drain on
 SIGTERM/SIGINT: readiness fails, listeners stop accepting, requests and streams
 finish, then workers join. The runtime requests abort if a contributed worker
-exceeds the shutdown grace in [`Proxiima.Operations`](ledger.md#operations).
+exceeds the shutdown grace (5 s by default, see
+[`Proxiima.Operations`](ledger.md#operations)) or the runtime is dropped.
 Set the orchestrator's grace above the longest allowed request. The earlier of token expiry and the configured maximum
 stream lifetime starts the final drain for authenticated streams. The wrapper
 delivers at most 16 ready frames, including one returned by a poll that
@@ -508,10 +509,11 @@ what the previous process left owed. Scans and reports stay commands
 (`maintain-blobs`, `maintain-embeddings`). `proxiima-mcp maintain-storage` runs
 the same sweep (`--sweep-expired-uploads`) and drain
 (`--retry-cold-object-purges`) for a host that runs no server, to list stuck
-debt by key, or to name and drain another store's debt. Every pass, in-process or not, takes one storage
-maintenance lease (a row of `proxiima_core.maintenance_lease`), so passes on one database never overlap; a pass that
-finds the lease held skips. The holder renews the lease while it runs and
-before each batch, and deletes it when done. A pass whose lease expired
+debt by key, or to name and drain another store's debt. Every pass, in-process
+or not, takes one storage maintenance lease (a row of
+`proxiima_core.maintenance_lease`), so no other pass starts on that database
+while its lease is live. A pass that finds the lease held skips. The holder
+renews the lease while it runs and before each batch, and deletes it when done. A pass whose lease expired
 (it could not renew for a minute) stops at its next batch. A holder that
 crashed blocks other passes until its lease expires, at most a minute. The
 embedding maintenance passes (`maintain-embeddings`) hold their own lease the

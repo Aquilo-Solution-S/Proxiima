@@ -828,7 +828,7 @@ fn resolve_served_surface(
     let deny = parse_tool_id_csv(deny_raw, &PROXIIMA_TOOL_DENY)?;
     reject_unknown_tool_ids(&allow, registered_ids, &PROXIIMA_TOOL_ALLOW)?;
     reject_unknown_tool_ids(&deny, registered_ids, &PROXIIMA_TOOL_DENY)?;
-    // `Proxiima.Operations.servedRead`
+    // PROXIIMA_TOOL_DENY refuses any mandatory served read.
     reject_served_read_denials(&deny, &registered.served_reads)?;
 
     if profile == ToolProfile::Full && allow.is_empty() && deny.is_empty() {

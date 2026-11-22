@@ -12,16 +12,6 @@ def wakeAfterCommit : CommitOutcome → Bool
   | .committed => true
   | .failed | .pending => false
 
-/-- Where a drain looks for work after a commit. -/
-inductive CommitOrigin where
-  | localProcess | otherProcess
-  deriving DecidableEq
-
-/-- A local commit bumps a shared data-free epoch while discovery of other commits relies on polling. -/
-def bumpsWakeEpoch : CommitOrigin → Bool
-  | .localProcess => true
-  | .otherProcess => false
-
 /-- The statuses of a claim gate. -/
 inductive GateStatus where
   | running | quiescing | quiescent | stopped
@@ -79,7 +69,7 @@ inductive PassWait where
   | immediate | idleBackoff | failureBackoff
   deriving DecidableEq
 
-/-- Progress retries immediately, while idle and failed passes back off independently. -/
+/-- Progress retries immediately, while idle and failed passes back off. -/
 def passWait : Pass → PassWait
   | .worked => .immediate
   | .idle => .idleBackoff
@@ -150,7 +140,7 @@ inductive StartRequirement where
   | bindAddress | linkedWorker | embeddingRouter | outboxConsumer | retention | objectStore | positivePurgeInterval
   deriving DecidableEq
 
-/-- Start a feature when every one of its requirements is present. -/
+/-- The inputs each runtime feature requires to start. -/
 def featureRequirements : Feature → List StartRequirement
   | .mcp => [.bindAddress]
   | .spiiceWorkers => [.linkedWorker]
@@ -221,28 +211,8 @@ inductive ShutdownStep where
 /-- Cancellation propagates to child workers and listener before explicit shutdown finishes joining workers. -/
 def shutdownOrder : List ShutdownStep := [.cancel, .drainListener, .joinWorkers]
 
-/-- The possible outcomes when a contributed worker is asked to stop. -/
-inductive ContributedWorkerExit where
-  | joined | graceElapsed
-  deriving DecidableEq
-
-/-- Abort a contributed task when its join exceeds the cancellation grace. -/
-def contributedWorkerShutdown : ContributedWorkerExit → Bool
-  | .joined => false
-  | .graceElapsed => true
-
 /-- Seconds a contributed worker has to finish after runtime cancellation. -/
 def workerShutdownGraceSeconds : Nat := 5
-
-/-- The components that use the metrics API or install its implementation. -/
-inductive MetricComponent where
-  | library | servingHost
-  deriving DecidableEq
-
-/-- Only the serving host installs the metrics SDK and exporter. -/
-def installsMetricSdk : MetricComponent → Bool
-  | .servingHost => true
-  | .library => false
 
 /-- Stages of the stock host's metric provider lifetime. -/
 inductive MeterStep where
@@ -273,12 +243,12 @@ inductive SampleOutcome where
   | success | failure | shutdown
   deriving DecidableEq
 
-/-- A successful metrics read stores the new sample, failure clears it and shutdown cancels the read. -/
+/-- The action taken on the in-flight metric read. -/
 inductive SampleAction where
   | store | clear | cancelRead
   deriving DecidableEq
 
-/-- The action taken on the in-flight metric read. -/
+/-- A successful metrics read stores the new sample, failure clears it and shutdown cancels the read. -/
 def finishSample : SampleOutcome → SampleAction
   | .success => .store
   | .failure => .clear
@@ -289,7 +259,7 @@ inductive ToolProfile where
   | memory | full
   deriving DecidableEq
 
-/-- Mandatory served reads take precedence over a stock profile's selection. -/
+/-- A declared read or a selected key is served. -/
 def servedRead : (mandatory : Bool) → (selected : Bool) → Bool
   | true, true | true, false | false, true => true
   | false, false => false

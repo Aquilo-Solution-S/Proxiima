@@ -184,6 +184,7 @@ impl ServedSurface {
     /// name receives no automatic read admission.
     #[must_use]
     pub fn admits(&self, key: &ScopeKey, declared: KeyDeclaration) -> bool {
+        // `Proxiima.Operations.servedRead`
         declared.is_read()
             || match self {
                 Self::All => true,

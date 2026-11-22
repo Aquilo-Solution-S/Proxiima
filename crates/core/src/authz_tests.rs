@@ -9,6 +9,34 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::time;
 
+#[test]
+fn served_surface_admission_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+    let read_key = key("read_key");
+    for row in vectors["Proxiima.Operations.servedRead"]
+        .as_array()
+        .unwrap()
+    {
+        let declaration = KeyDeclaration::shared(
+            row["in"][0]
+                .as_bool()
+                .unwrap()
+                .then_some(ToolEffect::ReadOnly),
+        );
+        let surface = if row["in"][1].as_bool().unwrap() {
+            ServedSurface::Palette(vec![read_key.clone()])
+        } else {
+            ServedSurface::Palette(Vec::new())
+        };
+        assert_eq!(
+            surface.admits(&read_key, declaration),
+            row["out"].as_bool().unwrap(),
+            "{row}"
+        );
+    }
+}
+
 fn forwarded_writer() -> WriterAttribution {
     WriterAttribution {
         by: uuid::Uuid::from_u128(101),

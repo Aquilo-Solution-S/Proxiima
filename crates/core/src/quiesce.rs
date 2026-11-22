@@ -168,6 +168,7 @@ impl QuiesceGate {
     /// [`FeatureControlError::Stopped`] when the worker task has ended.
     pub fn resume(&self) -> Result<(), FeatureControlError> {
         let mut outcome = Ok(());
+        // `Proxiima.Operations.gateTransition`
         self.state.send_if_modified(|state| match state.status {
             FeatureStatus::Stopped => {
                 outcome = Err(FeatureControlError::Stopped);
@@ -214,6 +215,7 @@ impl GateWorker {
             match status {
                 FeatureStatus::Running => return Checkpoint::Proceed,
                 FeatureStatus::Quiescing => {
+                    // `Proxiima.Operations.gateTransition`
                     self.state.send_if_modified(|state| {
                         let parks = state.status == FeatureStatus::Quiescing;
                         if parks {
@@ -240,6 +242,7 @@ fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
 
 impl Drop for GateWorker {
     fn drop(&mut self) {
+        // `Proxiima.Operations.gateTransition`
         self.state
             .send_modify(|state| state.status = FeatureStatus::Stopped);
     }
