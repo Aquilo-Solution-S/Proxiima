@@ -48,17 +48,6 @@
 - ownerTransaction
 - callerReadAtSource
 
-**Read goal**: Which Goal identity a read surface selects.
-
-- read
-- list
-- declaredReference
-
-**Read revision**: The revision selected by an authorized read.
-
-- readableHead
-- exact
-
 **Request match**: The durable request comparison made under the owner and request key.
 
 - fresh
@@ -280,14 +269,6 @@ stateDiagram-v2
 
 - evidence admission: Exact live Facts and Abstractions are eligible as Goal evidence under `Causa.RetainedGoalEvidenceValid`.
 
-| read goal | read revision |
-| --- | --- |
-| read | readableHead |
-| list | readableHead |
-| declaredReference | exact |
-
-- read revision: Goal reads and lists select readable heads while declared references keep their exact revision.
-
 | request match | request replay |
 | --- | --- |
 | fresh | freshAdmission |
@@ -370,6 +351,261 @@ stateDiagram-v2
 - clock source: A Goal reports its series birth and the selected version's own write time.
 
 ✗ **achieve needs an achieved child**, rejected: An abandoned child leaves the parent free to close.
+
+## Identity
+
+**Series and version**: A series keeps its handle as later admissions append with immutable, time-ordered IDs.
+
+- handle
+- t
+
+**Memory kind**: A Memory admission's layer.
+
+- Fact
+- Abstraction
+- Perspective
+
+**Embeddable entity**: An embedding uses a Memory ID with its layer, or a Goal ID.
+
+- memory
+- goal
+
+**Read target**: Which identity a read names.
+
+- series
+- version
+
+**Read revision**: The revision selected by an authorized read.
+
+- readableHead
+- exact
+
+**Series kind**: The kind of series whose versions align with its head.
+
+- memory
+- goal
+
+**Head field**: The catalog fields shared by all versions of a series.
+
+- handle
+- owner
+- kind
+- schema
+
+**Schema record**: Records whose stored schema selects the typed shape.
+
+- memoryVersion
+- goalVersion
+- blob
+
+**Schema authority**: The source of a record's schema tag.
+
+- memoryCatalog
+- goalCatalog
+- blob
+
+**Writer attribution**: An admission stores the attested writer separately from its owner and credential subject.
+
+- by: The attested principal UUID.
+- via: An attested caller UUID or null for a direct write, always present on serialized reads.
+
+**Writer event**: Events that capture or retain writer attribution.
+
+- admission
+- revision
+- replay
+- transfer
+- forget
+- restore
+
+**Writer source**: Whether an event takes its writer from the request or the version.
+
+- attested
+- stored
+
+**Owner scoped content**: Owner, schema and hash key immutable Content inserted or reused under admission-scoped visibility. Admissions can share Content while retaining distinct admission identities.
+
+- owner
+- schema
+- hash
+
+**Content reference**: Which admissions still name a Content row.
+
+- live
+- forgottenOnly
+- absent
+
+**Receipt field**: The ordered components of a Fact receipt digest.
+
+- source
+- owner
+- payload
+
+**Json collection**: JSON values whose order is relevant to canonical payload bytes.
+
+- object
+- array
+
+**Mint clock**: The clock relative to the greater of the last mint and the supplied revision floor.
+
+- aheadOrUnbound
+- atOrBehind
+
+**Counter space**: Whether another counter fits in the chosen logical millisecond.
+
+- available
+- exhausted
+
+**Mint step**: Where the shared generator mints the next admission.
+
+- reseedAtClock
+- incrementCounter
+- reseedNextMillisecond
+
+**Mint range**: Range of the clock or the logical millisecond selected for admission.
+
+- fits
+- overflow
+
+**Mint refusal**: A mint that exceeds the timestamp range leaves the generator unchanged.
+
+- timestampOverflow
+
+**Store number state**: The persisted store number relative to the configured number.
+
+- absent
+- matching
+- different
+
+**Store number event**: Operations that open a numbered store.
+
+- migrate
+- validate
+
+**Store number action**: The result of applying the configured number.
+
+- persist
+- useExisting
+- requireMigration
+- refuseMismatch
+
+**Object store source**: Whether S3 store identity comes from the operator or the configured target.
+
+- operator
+- endpointAndBucket
+
+**receipt fields** = [source, owner, payload]: A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes.
+
+**uuid timestamp bits** = 48: Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
+
+**uuid counter bits** = 12: Counter width in the time-ordered UUIDv8 layout.
+
+**store number min** = 0: Smallest host-assigned store number in an admission UUID.
+
+**store number max** = 65535: Largest 16-bit host-assigned store number in an admission UUID.
+
+**store number mutable** = no: Direct mutation or deletion of a persisted store number is refused.
+
+| read target | read revision |
+| --- | --- |
+| series | readableHead |
+| version | exact |
+
+- read revision: A series read selects the newest readable revision and a version read or pin keeps its exact admission.
+
+| bool | bool | bool | admission id available |
+| --- | --- | --- | --- |
+| yes | yes | yes | no |
+| yes | yes | no | no |
+| yes | no | yes | no |
+| yes | no | no | no |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | yes |
+
+- admission id available: An admission ID is available only when absent from both spines and the retained erase witnesses.
+
+| series kind | series contract |
+| --- | --- |
+| memory | \[handle, owner, schema, kind] |
+| goal | \[handle, owner, schema] |
+
+- series contract: Versions align with their series head via `goal_schema_head_alignment` for Goals. Memory accepts intermediate images allowed by `schema_evolution_intermediate_memory_image_permits`.
+
+| schema record | schema authority |
+| --- | --- |
+| memoryVersion | memoryCatalog |
+| goalVersion | goalCatalog |
+| blob | blob |
+
+- schema authority: Memory validates its version's schema against the catalog, Goal stamps or validates it there, and Blob carries its own schema.
+
+| writer event | version writer |
+| --- | --- |
+| admission | attested |
+| revision | attested |
+| replay | stored |
+| transfer | stored |
+| forget | stored |
+| restore | stored |
+
+- version writer: Each new version captures its own writer, and replay, transfer, forget and restore keep stored authorship.
+
+| content reference | collect content |
+| --- | --- |
+| live | no |
+| forgottenOnly | no |
+| absent | yes |
+
+- collect content: Collect Content only once no live or forgotten admission names it.
+
+| json collection | sort json keys |
+| --- | --- |
+| object | yes |
+| array | no |
+
+- sort json keys: Canonical JSON sorts object keys recursively and preserves array order.
+
+| mint clock | counter space | mint range | monotonic mint |
+| --- | --- | --- | --- |
+| aheadOrUnbound | available | fits | reseedAtClock |
+| aheadOrUnbound | available | overflow | refused: timestampOverflow |
+| aheadOrUnbound | exhausted | fits | reseedAtClock |
+| aheadOrUnbound | exhausted | overflow | refused: timestampOverflow |
+| atOrBehind | available | fits | incrementCounter |
+| atOrBehind | available | overflow | refused: timestampOverflow |
+| atOrBehind | exhausted | fits | reseedNextMillisecond |
+| atOrBehind | exhausted | overflow | refused: timestampOverflow |
+
+- monotonic mint: A mint advances past the revision floor and the last mint, even when the clock stalls.
+
+| store number state | store number event | store number lifecycle |
+| --- | --- | --- |
+| absent | migrate | persist |
+| absent | validate | requireMigration |
+| matching | migrate | useExisting |
+| matching | validate | useExisting |
+| different | migrate | refuseMismatch |
+| different | validate | refuseMismatch |
+
+- store number lifecycle: The first migration persists the number and subsequent migrations, serving and maintenance require agreement.
+
+| bool | bool | publication counter update |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- publication counter update: Publication counters retain their series handle and never regress.
+
+| bool | object store source |
+| --- | --- |
+| yes | operator |
+| no | endpointAndBucket |
+
+- object store source: An explicit validated identity takes precedence over derivation from endpoint and bucket.
 
 ## Causa
 

@@ -98,10 +98,6 @@
   {"out": false, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": true, "in": [false, false]}],
- "Proxiima.Goals.readRevision":
- [{"out": "readableHead", "in": ["read"]},
-  {"out": "readableHead", "in": ["list"]},
-  {"out": "exact", "in": ["declaredReference"]}],
  "Proxiima.Goals.publishChangeFact":
  [{"out": "publish", "in": [true, true]},
   {"out": "missingStamp", "in": [true, false]},
