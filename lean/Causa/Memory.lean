@@ -2,6 +2,7 @@ import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Proxiima.Memory
+import Proxiima.ForgetRestore
 
 /-! Causa — Memory -/
 
@@ -175,8 +176,18 @@ def memoryIsHead (memories : Set Memory) (heads : Set MemoryHead) (m : Memory) :
     memory_head_handle h = memory_handle m ∧
     memory_head_t h = memory_t m
 
-/-- Forgetting one Memory admission. -/
-def Memory.forget (m : Memory) : Memory := { m with forgotten := true }
+/-- Applying `Proxiima.ForgetRestore.markAfter` to the Memory row. -/
+def Memory.forget (m : Memory) : Memory :=
+  { m with forgotten := Proxiima.ForgetRestore.markAfter .forget }
+
+/-- Clearing the mark of an admitted restore. -/
+def Memory.restore (m : Memory) : Memory :=
+  { m with forgotten := Proxiima.ForgetRestore.markAfter .restore }
+
+/-- Forget followed by an admitted restore recovers the original live Memory row. -/
+theorem restore_forget (m : Memory) (live : m.forgotten = false) : m.forget.restore = m := by
+  cases m
+  simp_all [Memory.forget, Memory.restore, Proxiima.ForgetRestore.markAfter]
 
 /-- The Memory store after forgetting one admission. -/
 def forgetIn (memories : Set Memory) (id : MemoryId) : Set Memory :=

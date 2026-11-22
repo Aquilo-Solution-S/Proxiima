@@ -732,6 +732,50 @@
  [{"out": null, "in": ["context"]},
   {"out": "admission", "in": ["publication"]},
   {"out": "series", "in": ["workBinding"]}],
+ "Proxiima.ForgetRestore.visibleInScope":
+ [{"out": true, "in": [true, true]},
+  {"out": true, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": true, "in": [false, false]}],
+ "Proxiima.ForgetRestore.restoreAdmission":
+ [{"out": {"error": "retiredSchema"}, "in": [true, true]},
+  {"out": {"error": "retiredSchema"}, "in": [true, false]},
+  {"out": {"ok": "rebuild"}, "in": [false, true]},
+  {"out": {"ok": "unchanged"}, "in": [false, false]}],
+ "Proxiima.ForgetRestore.repairHead":
+ [{"out": "newestLive", "in": [true, true]},
+  {"out": "newestLive", "in": [true, false]},
+  {"out": "newestForgotten", "in": [false, true]},
+  {"out": null, "in": [false, false]}],
+ "Proxiima.ForgetRestore.reachableLeg":
+ [{"out": true, "in": ["kept"]},
+  {"out": true, "in": ["marked"]},
+  {"out": true, "in": ["cascaded"]},
+  {"out": true, "in": ["deleted"]},
+  {"out": false, "in": ["unreachable"]}],
+ "Proxiima.ForgetRestore.mutationReach":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.ForgetRestore.markAfter":
+ [{"out": true, "in": ["forget"]}, {"out": false, "in": ["restore"]}],
+ "Proxiima.ForgetRestore.generatesDelete":
+ [{"out": false, "in": ["kept"]},
+  {"out": false, "in": ["marked"]},
+  {"out": false, "in": ["cascaded"]},
+  {"out": true, "in": ["deleted"]},
+  {"out": false, "in": ["unreachable"]}],
+ "Proxiima.ForgetRestore.classifySurface":
+ [{"out": "kept", "in": ["keep"]},
+  {"out": "marked", "in": [{"retain": [true]}]},
+  {"out": "unreachable", "in": [{"retain": [false]}]},
+  {"out": "marked", "in": [{"retainCascadedDetail": [true]}]},
+  {"out": "unreachable", "in": [{"retainCascadedDetail": [false]}]},
+  {"out": "cascaded", "in": [{"delete": [true, true]}]},
+  {"out": "cascaded", "in": [{"delete": [true, false]}]},
+  {"out": "deleted", "in": [{"delete": [false, true]}]},
+  {"out": "unreachable", "in": [{"delete": [false, false]}]}],
  "Proxiima.Edges.requiresOrigins":
  [{"out": true, "in": ["Abstraction"]}, {"out": false, "in": ["Perspective"]}],
  "Proxiima.Edges.projectTarget":
