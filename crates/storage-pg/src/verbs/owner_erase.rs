@@ -661,6 +661,7 @@ async fn invoke_host_lifecycle_erase(
         selection.clone(),
         expected_tables,
     );
+    // `Proxiima.HostState.lifecycleContext`.
     let receipt = lifecycle.port.erase(tx, request).await?;
     validate_erase_receipt(
         tx,
@@ -737,6 +738,7 @@ async fn validate_erase_receipt(
 ) -> Result<(), StorageError> {
     use std::collections::{BTreeMap as Map, BTreeSet};
 
+    // `Proxiima.HostState.EraseReceiptCheck`.
     if receipt.participant != lifecycle.descriptor.participant_id()
         || receipt.owner != owner
         || &receipt.scope != scope

@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::contract::LIST_NOTEBOOKS_TOOL;
 
-/// Static SQL: the registry rows of one owner, read on an owner-scoped
-/// transaction so owner RLS applies as well as the filter.
+// `Proxiima.HostState.ExampleNotebookOperation.listNotebooks`.
+// The owner-scoped transaction applies row security as well as the explicit filter.
 const LIST_NOTEBOOKS_SQL: &str = "SELECT notebook_id, name FROM proxiima_example.notebooks \
      WHERE owner_id = $1 ORDER BY name, notebook_id";
 

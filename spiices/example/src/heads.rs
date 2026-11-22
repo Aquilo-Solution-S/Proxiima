@@ -23,5 +23,6 @@ pub async fn note_heads(
     after: Option<MemoryId>,
     limit: u32,
 ) -> Result<SidecarHeadsPage, ToolError> {
+    // `Proxiima.HostState.ExampleNotebookOperation.readNoteHeads`.
     sidecar_heads_by_key::<NoteV1>(ctx, scope, key_prefix, after, limit).await
 }

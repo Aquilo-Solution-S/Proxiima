@@ -891,6 +891,7 @@ impl PgHostStateEraseContext {
     }
 }
 
+// `Proxiima.HostState.LifecycleRegistration`.
 fn validate_host_lifecycle_registration(
     surfaces: &proxiima_core::owner_inverse::OwnerSurfaces,
     registered: Option<&RegisteredHostStateParticipant>,

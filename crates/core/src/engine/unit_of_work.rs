@@ -305,6 +305,7 @@ pub struct GoalWorkOutcome<T> {
     pub facts: Vec<FactIngestOutcome>,
 }
 
+// `Proxiima.HostState.ParticipantRequirement`.
 fn validate_registration(
     registry: &crate::verbs::schema::SpiiceRegistryFrozen,
     descriptor: HostStateParticipantDescriptor,
@@ -350,6 +351,7 @@ fn validate_registration(
     Ok(())
 }
 
+// `Proxiima.HostState.CommandRequirement`.
 fn validate_host_state_command<C: HostStateCommand>(
     engine: &Engine,
     descriptor: HostStateParticipantDescriptor,
@@ -524,6 +526,7 @@ impl Engine {
         authority: &HostStateMaintenanceAuthority,
         owner: OwnerId,
     ) -> Result<HostStateUnitOfWork<'a>, ProtocolError> {
+        // `Proxiima.HostState.MaintenanceBinding`.
         if authority.system_binding != self.system_authority_binding {
             return Err(ProtocolError::forbidden(
                 "host-state maintenance authority belongs to a different engine",
@@ -933,6 +936,7 @@ impl<'a> UnitOfWork<'a> {
         &mut self,
         command: C,
     ) -> Result<HostStateOutcome<C::Outcome>, ProtocolError> {
+        // `Proxiima.HostState.commandAdmission`.
         let host_permit = match &self.authorization {
             UnitAuthorization::Ordinary(authz) => {
                 let owner = command.owner();
@@ -999,6 +1003,7 @@ impl<'a> UnitOfWork<'a> {
     ) -> Result<HostStateOutcome<C::Outcome>, ProtocolError> {
         let request = HostStateRequest::from_command(command);
         self.ensure_session().await?;
+        // `Proxiima.HostState.dispatchLeavesUnitUsable`.
         // Poison after the session is live, before dispatch, so a cancelled
         // await after participant SQL cannot be followed by a silent commit.
         self.poisoned = true;
@@ -1697,6 +1702,7 @@ fn erase_storage_error(err: crate::storage::StorageError) -> SeriesEraseError {
     }
 }
 
+// `Proxiima.HostState.MaintenanceOperation`.
 impl HostStateUnitOfWork<'_> {
     /// Execute a command for this unit's fixed owner and captured participant.
     ///

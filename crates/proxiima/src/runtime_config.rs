@@ -265,6 +265,7 @@ impl RuntimeBuilder {
             object_purge_interval: self.object_purge_interval.or(base.object_purge_interval),
             outbox_consumers: base.outbox_consumers.overlaid_by(self.outbox_consumers),
             outbox_http: self.outbox_http.or(base.outbox_http),
+            // `Proxiima.HostState.mergeRegistration`.
             duplicate_host_state_participant: self.duplicate_host_state_participant
                 || base.duplicate_host_state_participant
                 || (self.host_state_participant.is_some() && base.host_state_participant.is_some()),
@@ -1135,6 +1136,7 @@ impl RuntimeBuilder {
     /// database URLs, the store number and the defaults of the remaining
     /// storage settings. Not yet validated ([`StorageConfig::validate`]).
     fn take_storage(&mut self) -> Result<(StorageConfig, StorageParts), ProxiimaError> {
+        // `Proxiima.HostState.mergeRegistration`.
         if self.duplicate_host_state_participant {
             return Err(ProxiimaError::Config(
                 DUPLICATE_HOST_STATE_PARTICIPANT.into(),

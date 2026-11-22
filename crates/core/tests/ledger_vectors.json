@@ -715,6 +715,36 @@
   {"out": false, "in": [false, true, false]},
   {"out": false, "in": [false, false, true]},
   {"out": true, "in": [false, false, false]}],
+ "Proxiima.HostState.payloadAgreement":
+ [{"out": true, "in": [true, true]},
+  {"out": false, "in": [true, false]},
+  {"out": false, "in": [false, true]},
+  {"out": false, "in": [false, false]}],
+ "Proxiima.HostState.mergeRegistration":
+ [{"out": "absent", "in": ["absent", "absent"]},
+  {"out": "single", "in": ["absent", "single"]},
+  {"out": "duplicate", "in": ["absent", "duplicate"]},
+  {"out": "single", "in": ["single", "absent"]},
+  {"out": "duplicate", "in": ["single", "single"]},
+  {"out": "duplicate", "in": ["single", "duplicate"]},
+  {"out": "duplicate", "in": ["duplicate", "absent"]},
+  {"out": "duplicate", "in": ["duplicate", "single"]},
+  {"out": "duplicate", "in": ["duplicate", "duplicate"]}],
+ "Proxiima.HostState.lifecycleContext":
+ [{"out": "eraseTransaction", "in": ["erase"]},
+  {"out": "readOnlyExportSnapshot", "in": ["export"]}],
+ "Proxiima.HostState.dispatchLeavesUnitUsable":
+ [{"out": true, "in": ["permitted"]},
+  {"out": true, "in": ["alreadyApplied"]},
+  {"out": true, "in": ["refused"]},
+  {"out": false, "in": ["storageFault"]},
+  {"out": false, "in": ["invalidReply"]},
+  {"out": false, "in": ["cancelled"]}],
+ "Proxiima.HostState.commandAdmission":
+ [{"out": "factWrite", "in": ["ordinary"]},
+  {"out": "fixedOwner", "in": ["maintenance"]},
+  {"out": "refuse", "in": ["goalWork"]},
+  {"out": "refuse", "in": ["system"]}],
  "Proxiima.Goals.stateLabel":
  [{"out": "Active", "in": ["Active"]},
   {"out": "Paused", "in": ["Paused"]},

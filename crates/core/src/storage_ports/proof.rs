@@ -279,6 +279,7 @@ impl HostStateWritePermit {
     /// already stamped into the permit by the engine.
     #[must_use]
     pub fn matches_request(&self, request: &crate::storage_ports::HostStateRequest) -> bool {
+        // `Proxiima.HostState.RequestBinding`.
         self.participant_id == request.participant_id() && self.tables == request.tables()
     }
 }

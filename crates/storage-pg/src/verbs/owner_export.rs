@@ -93,6 +93,7 @@ async fn export_owner_bundle_snapshot(
     edges.sort_by_key(pin_sort_key);
     edges.dedup_by(|left, right| pin_sort_key(left) == pin_sort_key(right));
 
+    // `Proxiima.HostState.ExportReceiptRule.countReturnedRows`.
     let mut counts: BTreeMap<String, usize> = tables
         .iter()
         .map(|(table, rows)| (table.clone(), rows.len()))
@@ -167,6 +168,7 @@ async fn invoke_host_lifecycle_export(
         .filter(|policy| policy.owner_export.carries_rows())
         .map(|policy| policy.table)
         .collect::<Vec<_>>();
+    // `Proxiima.HostState.lifecycleContext`.
     let receipt = lifecycle
         .port
         .export(
@@ -178,6 +180,7 @@ async fn invoke_host_lifecycle_export(
             ),
         )
         .await?;
+    // `Proxiima.HostState.ExportReceiptRule`.
     if receipt.participant != lifecycle.descriptor.participant_id() || receipt.owner != owner {
         return Err(StorageError::Internal(
             "host lifecycle export receipt has a foreign participant or owner".into(),

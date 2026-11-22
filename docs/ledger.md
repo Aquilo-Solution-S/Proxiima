@@ -1709,6 +1709,171 @@ stateDiagram-v2
 
 ✗ **achieve needs an achieved child**, rejected: An abandoned child leaves the parent free to close.
 
+## Host state
+
+**Registration**: Participant registration accumulated across runtime configuration layers.
+
+- absent
+- single
+- duplicate
+
+**Participant requirement**: The frozen participant has a nonempty identity and a nonempty set of distinct declared state surfaces.
+
+- namedParticipant
+- atLeastOneSurface
+- namedSurfaces
+- distinctSurfaces
+- declaredStateSurfaces
+
+**Command requirement**: A command names the frozen participant and a nonempty, duplicate-free subset of its registered state surfaces.
+
+- sameParticipant
+- atLeastOneSurface
+- distinctSurfaces
+- registeredSurfaces
+
+**Request binding**: A dispatched request agrees exactly with the stamped participant and command table list.
+
+- participant
+- commandTables
+
+**Unit kind**: The unit's authority at the ordinary host-state entry point.
+
+- ordinary
+- maintenance
+- goalWork
+- system
+
+**Admission**: The gate used by the ordinary host-state entry point.
+
+- factWrite
+- fixedOwner
+- refuse
+
+**Boot resource**: Built and running handles expose these resources outside the application context.
+
+- systemAuthority
+- maintenanceAuthority
+- concreteBlobBackend
+
+**Maintenance binding**: Maintenance authority belongs to one engine boot and its frozen participant, and each opened unit fixes one owner.
+
+- boot
+- participant
+- owner
+
+**Maintenance operation**: A maintenance unit exposes only host-state commands and commit.
+
+- applyHostState
+- commit
+
+**Dispatch result**: Results of dispatch after the write session has opened.
+
+- permitted
+- alreadyApplied
+- refused
+- storageFault
+- invalidReply
+- cancelled
+
+**Shared write session**: Host-state work and cognitive writes share the unit's transaction and its completion.
+
+- liveDispatch
+- commitTogether
+- rollbackTogether
+
+**Lifecycle registration**: Lifecycle callback registration binds the participant and exactly its frozen managed surfaces.
+
+- sameParticipant
+- exactManagedSurfaceSet
+- subsetOfParticipantSurfaces
+
+**Lifecycle operation**: Host lifecycle operations distinguish an erase from an export.
+
+- erase
+- export
+
+**Lifecycle context**: A lifecycle callback's transaction context.
+
+- eraseTransaction
+- readOnlyExportSnapshot
+
+**Erase receipt check**: The checks on a host erase receipt before the shared erase can commit.
+
+- sameParticipant
+- sameOwner
+- sameScope
+- samePhysicalFacts
+- sameOriginalCopies
+- uniqueExactTables
+- zeroCountsForRetainedTables
+- countsFitBigint
+
+**Export receipt rule**: The checks and count source for a host export receipt.
+
+- sameParticipant
+- sameOwner
+- uniqueExactTables
+- declaredRowShape
+- countReturnedRows
+
+**Example notebook operation**: The example spiice's notebook operations.
+
+- receiptNote: The note receipt includes the written time carried by its payload.
+- keyNote: The note series key is the notebook and the note key.
+- readNoteHeads: The typed note head query accepts a natural-key prefix.
+- listNotebooks: The query lists the active owner's notebooks by name, then by ID.
+
+| registration | registration | merge registration |
+| --- | --- | --- |
+| absent | absent | absent |
+| absent | single | single |
+| absent | duplicate | duplicate |
+| single | absent | single |
+| single | single | duplicate |
+| single | duplicate | duplicate |
+| duplicate | absent | duplicate |
+| duplicate | single | duplicate |
+| duplicate | duplicate | duplicate |
+
+- merge registration: A participant is optional, and multiple registrations anywhere in the configuration refuse boot.
+
+| unit kind | command admission |
+| --- | --- |
+| ordinary | factWrite |
+| maintenance | fixedOwner |
+| goalWork | refuse |
+| system | refuse |
+
+- command admission: Ordinary commands require Fact-write authority, maintenance commands require the fixed owner, and other units use their own verbs.
+
+| bool | bool | payload agreement |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- payload agreement: The command owner and every owner named by its payload must equal the stamped owner before typed dispatch.
+
+| dispatch result | dispatch leaves unit usable |
+| --- | --- |
+| permitted | yes |
+| alreadyApplied | yes |
+| refused | yes |
+| storageFault | no |
+| invalidReply | no |
+| cancelled | no |
+
+- dispatch leaves unit usable: Business outcomes leave the shared unit usable; storage faults, a malformed reply or cancellation poison it.
+
+| lifecycle operation | lifecycle context |
+| --- | --- |
+| erase | eraseTransaction |
+| export | readOnlyExportSnapshot |
+
+- lifecycle context: The callback participates in the authorized erase transaction or in the read-only owner export snapshot.
+
 ## Identity
 
 **Series and version**: A series keeps its handle as later admissions append with immutable, time-ordered IDs.

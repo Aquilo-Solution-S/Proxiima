@@ -1,14 +1,7 @@
 //! Typed command dispatch for the host's one [`PgHostStateParticipant`].
 //!
-//! [`PgCommandDispatcher`] is that participant. It routes each request to the
-//! [`HostStateHandler`] registered for its command type. Before a handler runs
-//! the dispatcher compares the command's owner and every owner the payload
-//! names with the owner the engine stamped on the permit (Lean
-//! `HostStateMaintenance.PayloadAllowed`) and wraps the command in an
-//! [`AgreedCommand`], which only that comparison can construct. When the
-//! dispatcher calls a handler, the command's owners agreed with the permit it
-//! passes; the handler never sees the [`HostStateRequest`] envelope. An
-//! `AgreedCommand` is not bound to a permit: host code that keeps one and
+//! [`PgCommandDispatcher`] unwraps each request into the typed input of its registered handler.
+//! An `AgreedCommand` is not bound to a permit: host code that keeps one and
 //! calls [`HostStateHandler::handle`] itself with another permit is outside
 //! that guarantee. The session always derives authority-read identity from its
 //! own sealed permit, independently of the separate SQL-stamping permit.
@@ -81,7 +74,7 @@ pub trait HostStateHandler<C: HostStateCommand>: Send + Sync + 'static {
 }
 
 /// A host-state command whose owner and every payload owner equal the owner
-/// the engine stamped on the permit (Lean `PayloadAllowed`).
+/// the engine stamped on the permit.
 ///
 /// Only [`PgCommandDispatcher`] makes one, after that comparison succeeded;
 /// there is no public constructor, no `Clone` and no `Default`. A
@@ -100,10 +93,8 @@ pub struct AgreedCommand<C> {
 }
 
 impl<C: HostStatePayloadOwners> AgreedCommand<C> {
-    /// Lean `PayloadAllowed`: the command's owner and every owner its payload
-    /// names equal the owner the engine stamped on the permit. The one place
-    /// this is checked, and the only way to build the value.
     fn agree(command: C, stamped: &OwnerId) -> Result<Self, StorageError> {
+        // `Proxiima.HostState.payloadAgreement`.
         if command.owner() == *stamped
             && command
                 .payload_owners()
@@ -606,6 +597,37 @@ mod tests {
     impl HostStatePayloadOwners for Naming {
         fn payload_owners(&self) -> Vec<OwnerId> {
             self.payload.clone()
+        }
+    }
+
+    #[test]
+    fn payload_owner_agreement_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            inputs: [bool; 2],
+            #[serde(rename = "out")]
+            output: bool,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.HostState.payloadAgreement"].clone())
+                .expect("payload agreement vectors");
+        let stamped = OwnerId::from(GroupId::new(Uuid::from_u128(1)));
+        let foreign = OwnerId::from(UserId::new(Uuid::from_u128(2)));
+        for Vector {
+            inputs: [command_matches, payload_matches],
+            output,
+        } in rows
+        {
+            let command = Naming {
+                owner: if command_matches { stamped } else { foreign },
+                payload: vec![stamped, if payload_matches { stamped } else { foreign }],
+            };
+            assert_eq!(AgreedCommand::agree(command, &stamped).is_ok(), output);
         }
     }
 

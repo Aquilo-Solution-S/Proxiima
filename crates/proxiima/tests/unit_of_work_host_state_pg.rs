@@ -235,6 +235,7 @@ async fn wait_for_erase_holding_owner_fence_and_waiting_on_test_lock(
 }
 
 #[tokio::test]
+// `Proxiima.HostState.SharedWriteSession.rollbackTogether`.
 async fn injected_failures_leave_no_partial_commit() {
     let split_db = clone_split_core_db("proxiima_uow_hs_fail")
         .await
@@ -438,6 +439,7 @@ async fn unauthorized_unregistered_and_invalid_binding_refuse_before_mutation() 
 }
 
 #[tokio::test]
+// `Proxiima.HostState.SharedWriteSession.commitTogether`.
 async fn concurrent_finalize_commits_exactly_one_transition() {
     let split_db = clone_split_core_db("proxiima_uow_hs_conc")
         .await

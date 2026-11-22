@@ -8,6 +8,69 @@ use proxiima_server::AuthorizationServers;
 use super::*;
 
 #[test]
+fn host_participant_configuration_matches_ledger_vectors() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Registration {
+        Absent,
+        Single,
+        Duplicate,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        inputs: [Registration; 2],
+        #[serde(rename = "out")]
+        output: Registration,
+    }
+
+    use proxiima_core::storage_ports::{HostStateParticipantId, StateSurfaceName};
+
+    const TABLES: &[StateSurfaceName] = &[StateSurfaceName::new("fixture.state")];
+    let participant = Arc::new(proxiima_storage_pg::PgCommandDispatcher::new(
+        HostStateParticipantId::new("fixture"),
+        TABLES,
+    ));
+    let layer = |registration| match registration {
+        Registration::Absent => RuntimeBuilder::default(),
+        Registration::Single => {
+            RuntimeBuilder::default().host_state_participant(participant.clone())
+        }
+        Registration::Duplicate => RuntimeBuilder::default()
+            .host_state_participant(participant.clone())
+            .host_state_participant(participant.clone()),
+    };
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows: Vec<Vector> =
+        serde_json::from_value(vectors["Proxiima.HostState.mergeRegistration"].clone())
+            .expect("registration vectors");
+    for Vector {
+        inputs: [overlay, base],
+        output,
+    } in rows
+    {
+        let mut merged = layer(overlay)
+            .merge_over(layer(base))
+            .database_url("postgres://runtime/proxiima")
+            .platform_database_url("postgres://platform/proxiima")
+            .store_number(0);
+        let actual = match merged.take_storage() {
+            Ok((_, parts)) if parts.host_state_participant.is_some() => Registration::Single,
+            Ok(_) => Registration::Absent,
+            Err(ProxiimaError::Config(message)) if message == DUPLICATE_HOST_STATE_PARTICIPANT => {
+                Registration::Duplicate
+            }
+            Err(error) => panic!("unexpected configuration error: {error}"),
+        };
+        assert_eq!(actual, output, "overlay {overlay:?}, base {base:?}");
+    }
+}
+
+#[test]
 fn a_wrapped_failure_keeps_its_message_and_its_source() {
     let io = std::io::Error::other("disk gone");
     let error = ProxiimaError::Storage(cause_with("reading the ledger", io));
