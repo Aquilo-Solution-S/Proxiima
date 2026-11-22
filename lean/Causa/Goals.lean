@@ -1,4 +1,3 @@
-import Lean
 import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
@@ -103,21 +102,10 @@ def ErasedTargetsDisjointGoals
   ∀ e : ErasedPinTarget, e ∈ targets →
     ∀ g : Goal, g ∈ goals → erased_pin_target_t e ≠ goal_t g
 
-open Lean Elab Term Meta in
-/-- Generate the exact target projection from every field of `Causa.GoalPins`. -/
-elab "goal_pin_targets" pins:term : term => do
-  let pins ← elabTermEnsuringType pins (mkConst ``GoalPins)
-  let mut targets ← mkListLit (mkConst ``Id) []
-  for field in (getStructureFields (← getEnv) ``GoalPins).toList.reverse do
-    let value ← mkAppM (``GoalPins ++ field) #[pins]
-    let type ← inferType value
-    let ids ← if type.isAppOf ``Option then mkAppM ``Option.toList #[value] else pure value
-    targets ← mkAppM ``List.append #[ids, targets]
-  return targets
-
-/-- The version identities contained in the Goal's declared pins. -/
+/-- The version identities contained in the Goal's declared pins, one list per field of `Causa.GoalPins`. -/
 def goalDeclaredTargetIds (g : Goal) : List Id :=
-  goal_pin_targets g.pins
+  g.pins.assignment_t.toList ++ g.pins.dependency_t ++ g.pins.evidence_t ++
+    g.pins.motivated_by ++ g.pins.close_fact_t.toList ++ g.pins.write_act_t.toList
 
 def GoalIdUnique (goals : Set Goal) : Prop :=
   ∀ g1 g2 : Goal,

@@ -18,7 +18,9 @@ def GoalState.isOpen : GoalState → Bool
   | .Abandoned => false
 
 /-- Whether a Goal version requires a close Fact and ends its series. -/
-def GoalState.terminal (state : GoalState) : Bool := !state.isOpen
+def GoalState.terminal : GoalState → Bool
+  | .Active | .Paused => false
+  | .Achieved | .Abandoned => true
 
 /-- The host's pause disposition for queued work, with running work allowed to finish. -/
 inductive PendingWork where
@@ -76,7 +78,9 @@ def stateLabel : GoalState → String
   | .Abandoned => "Abandoned"
 
 /-- Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike. -/
-def blocksClose (child : GoalState) : Bool := child.isOpen
+def blocksClose : GoalState → Bool
+  | .Active | .Paused => true
+  | .Achieved | .Abandoned => false
 
 /-- An abandoned child leaves the parent free to close. -/
 theorem not_achieve_needs_an_achieved_child : blocksClose .Abandoned = false := by decide
