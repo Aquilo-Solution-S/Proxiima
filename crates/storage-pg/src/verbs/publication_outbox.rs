@@ -629,7 +629,7 @@ impl PublicationOutboxPort for PgStorage {
 /// Cancel what a forget of `t` must not deliver: every undelivered lane of
 /// its record goes, and the record itself goes when no lane is left;
 /// otherwise every lane left is delivered and the record is settled.
-/// `publication_origin` stays for erase. Restore does not re-enqueue.
+/// `publication_origin` stays for erase. See `Proxiima.ForgetRestore.restoreSteps`.
 ///
 /// Lanes are locked before the record, the order a publisher's mark takes
 /// them (lane, then `settle_records`), so the two cannot deadlock. A lane a

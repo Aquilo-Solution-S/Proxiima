@@ -1,6 +1,4 @@
-//! #488 S10: forget marks the row. The memory row and its sidecar rows stay in
-//! Postgres with `forgotten_at` set; the search projection and embeddings go;
-//! no object store is called.
+//! `Proxiima.ForgetRestore.retainedOnForget` and `Proxiima.ForgetRestore.derivedDeleteOrder`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

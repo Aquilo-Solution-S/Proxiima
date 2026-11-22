@@ -153,15 +153,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// Every surface says what forget does to it, and every answer is one
-    /// the forget can carry out.
-    ///
-    /// The arms this closes are `DeleteWithMemory` over a key shaped like
-    /// nothing the forget builds a `t` for, or `DumpThenCascade` without both
-    /// a `MemoryT` key and a completeness proof. Such a surface declared that
-    /// forgetting a memory destroys (or preserves) rows, and no valid leg
-    /// anywhere would have. Same shape as `UndeletableSurface` and
-    /// `UnmovableSurface`, one verb over.
+    /// `Proxiima.ForgetRestore.reachableLeg`.
     pub(super) fn validate_forget_legs(
         contract: &crate::spiice::contract::SpiiceContract,
     ) -> Result<(), SpiiceRegistryError> {

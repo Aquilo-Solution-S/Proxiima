@@ -285,9 +285,7 @@ async fn forget_non_last_t_rewinds_memory_head() {
     result.expect("forget rewind failed");
 }
 
-/// #488 S14: forgetting the head moves the head to the previous version;
-/// restoring it moves the head back. Restoring a live memory is a no-op
-/// success, and an id the owner does not have is `NotFound`.
+/// `Proxiima.ForgetRestore.repairHead` and `Proxiima.ForgetRestore.restoreAdmission`.
 #[tokio::test]
 async fn restore_moves_the_head_back_and_a_live_restore_changes_nothing() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

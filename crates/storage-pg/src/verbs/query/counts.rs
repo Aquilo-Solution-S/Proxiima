@@ -12,9 +12,8 @@ use crate::sidecars::int_to_u64;
 
 /// One row per `memory_head` handle, so a stateful series counts once
 /// however many versions it has, and one row per `goal_head` handle in any
-/// state. `memory` is read only to drop a series whose every version is
-/// forgotten: its head stays on the newest forgotten version (the
-/// `memory.handle` FK keeps it), and owner RLS hides that row.
+/// state. Joining the live Memory drops a series with only forgotten versions
+/// under `Proxiima.ForgetRestore.repairHead`.
 ///
 /// `read_owners` is the one owner predicate. The per-kind narrowing is the
 /// owner RLS on `memory_head` and `goal_head` under the caller's bound scope;

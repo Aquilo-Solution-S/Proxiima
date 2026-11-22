@@ -631,11 +631,9 @@ async fn load_ingest_replay(
     else {
         return Ok(None);
     };
-    // Forget keeps the `ingest_keys` row, so a source re-delivering a
-    // forgotten admission still replays: the row is read in the lifecycle
-    // scope, which sees it (#488), and the replay says it is forgotten. A
-    // row without its declared refs is refused rather than read as empty,
-    // which would silently bless a changed declaration.
+    // `Proxiima.ForgetRestore.retainedOnForget`. Replay returns the stored version
+    // and its forgotten flag without writing a new version or clearing the mark.
+    // Missing refs refuse replay because an empty default could bless a changed declaration.
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let replay_row: Result<Option<ReplayRow>, StorageError> = sqlx::query_as(
         "SELECT handle, refs, goal_refs, forgotten_at IS NOT NULL

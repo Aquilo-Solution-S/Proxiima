@@ -406,11 +406,9 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.lexical_languages USING (((cur
 ALTER POLICY proxiima_owner_write ON proxiima_core.lexical_languages USING (false) WITH CHECK (((current_setting('app.proxiima_scope'::text, true) = 'owner'::text) AND (cardinality(COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[])) > 0)));
 
 -- memory
--- A forgotten Memory (forgotten_at set) is hidden from owner reads and
--- writes, and from every sidecar policy that reaches it through memory, unless
--- the transaction runs in the lifecycle scope (PgLifecycleScope, #488).
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'proxiima_core', 'memory', 'owner_id', 'owner_id');
 
+-- `Proxiima.ForgetRestore.visibleInScope`.
 ALTER POLICY proxiima_owner_read ON proxiima_core.memory USING (
     (((owner_id = ANY ((SELECT COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (((kind = 'fact'::proxiima_core.memory_kind) AND (owner_id = ANY ((SELECT COALESCE((NULLIF(current_setting('app.owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'abstraction'::proxiima_core.memory_kind) AND (owner_id = ANY ((SELECT COALESCE((NULLIF(current_setting('app.read_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'perspective'::proxiima_core.memory_kind) AND (owner_id = ANY ((SELECT COALESCE((NULLIF(current_setting('app.read_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))))) AND ((forgotten_at IS NULL) OR (current_setting('app.proxiima_lifecycle'::text, true) = 'on'::text)))
 );
@@ -418,9 +416,7 @@ ALTER POLICY proxiima_owner_read ON proxiima_core.memory USING (
 ALTER POLICY proxiima_owner_write ON proxiima_core.memory USING ((((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (((kind = 'fact'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'abstraction'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'perspective'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))))) AND ((forgotten_at IS NULL) OR (current_setting('app.proxiima_lifecycle'::text, true) = 'on'::text)))) WITH CHECK ((((owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[])) AND (((kind = 'fact'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_owner'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'abstraction'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_abstraction'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))) OR ((kind = 'perspective'::proxiima_core.memory_kind) AND (owner_id = ANY (( SELECT COALESCE((NULLIF(current_setting('app.write_perspective'::text, true), ''::text))::uuid[], '{}'::uuid[]) AS "coalesce")::uuid[]))))) AND ((forgotten_at IS NULL) OR (current_setting('app.proxiima_lifecycle'::text, true) = 'on'::text))));
 
 -- memory_external_origin
--- Reached through the memory it describes (#478). Forget keeps the memory
--- row (#488), so a forgotten parent still has its owner; owner reads hide it
--- with the parent, lifecycle reads (export, erase, transfer) see it.
+-- Reach follows the parent Memory under `Proxiima.ForgetRestore.visibleInScope`.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class memory_owner', 'proxiima_core', 'memory_external_origin', 'memory_owner', NULL);
 
 ALTER POLICY proxiima_owner_read ON proxiima_core.memory_external_origin USING (((EXISTS ( SELECT 1

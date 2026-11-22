@@ -13,6 +13,7 @@ SELECT handle, t, kind, owner_id, schema_id, source_id, ingest_key, blob_id,
   FROM proxiima_core.memory;
 COMMENT ON VIEW proxiima_core.memory_including_forgotten IS 'Core''s read of every memory the caller''s row security shows, forgotten ones included. Not part of the SQL contract for spiices and hosts.';
 
+-- `Proxiima.ForgetRestore.visibleInScope`.
 CREATE OR REPLACE VIEW proxiima_core.live_memory WITH (security_invoker = true) AS
 SELECT * FROM proxiima_core.memory_including_forgotten WHERE forgotten_at IS NULL;
 COMMENT ON VIEW proxiima_core.live_memory IS 'Core''s read of the memories that are not forgotten, under the caller''s row security. Not part of the SQL contract for spiices and hosts.';

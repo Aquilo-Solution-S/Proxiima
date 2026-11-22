@@ -1,12 +1,6 @@
-//! The lifecycle scope: an owner transaction that also sees forgotten
-//! memories.
+//! Transaction lifetime of `Proxiima.ForgetRestore.visibleInScope`.
 //!
-//! The owner read policy on `proxiima_core.memory` hides a row whose
-//! `forgotten_at` is set, and every sidecar policy that reaches its parent
-//! through `memory` inherits that. The verbs that act on forgotten rows —
-//! forget itself, restore, erase, transfer, export and replay — run here
-//! instead. This module is the only writer of the GUC the policy reads; the
-//! type is crate-private, so no host or spiice can construct it.
+//! Only this module sets lifecycle scope, and its callers finish it even on logical refusal.
 
 use proxiima_core::StorageError;
 use sqlx::PgConnection;

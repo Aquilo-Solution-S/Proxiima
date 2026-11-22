@@ -449,10 +449,8 @@ pub(crate) async fn lock_lifecycle_targets_tx(
     Ok(())
 }
 
-/// Lock the source and every live or forgotten non-Fact depender before the
-/// source row is locked or forgotten. The memory forget-grounding trigger
-/// takes the live set as a SQL backstop; the re-read rejects a growing set rather than extending an
-/// already-held advisory set out of UUID order.
+/// `Proxiima.ForgetRestore.footprintOrder`.
+/// The SQL trigger takes the live set as a backstop. Growth retries to preserve lock order.
 async fn lock_forget_footprint_tx(
     tx: &mut Transaction<'_, Postgres>,
     source_t: Uuid,
@@ -543,27 +541,8 @@ pub(crate) async fn lock_forget_memories_tx(
     lock_lifecycle_targets_tx(tx, ts).await
 }
 
-/// Every row one forgotten `t` takes with it, from two iteration sources
-/// and through one statement shape.
-///
-/// **The stamp, for the `Dumped` legs.** `memory.sidecar_tables` records
-/// what THIS row actually wrote, and that is why forget walks it rather than
-/// the registry: a registry that gained a sidecar after this row was written
-/// must not delete from a table the row never touched, and one that LOST a
-/// table must still forget rows written before it went.
-/// `forget_dumps_only_stamped_tables_and_skips_unregistered_scan` pins that
-/// property by stamping a registered-but-nonexistent table and requiring the
-/// forget to succeed. The PG registry is the veto (a stamp naming an
-/// unregistered table is a constraint violation) and the owner-pin filter;
-/// the DB backs the other direction with `assert_sidecar_stamp_declared`.
-///
-/// **The contract, for the `Deleted` legs.** The embedding triple is a set
-/// of derived rows nothing stamps — no lane records them on the memory — so
-/// there is no stamp to walk and the declaration is the only list. The
-/// sketch is not a leg since #488 S14: a restore needs its text back.
-///
-/// Stamp legs run before declaration legs. Neither set holds a foreign key
-/// into the other.
+/// Hard erase walks stamped sidecars, then declared derived and retained legs.
+/// The stamp selects the sidecars this version wrote, including retired tables.
 async fn delete_memory_dependents(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -587,8 +566,7 @@ async fn delete_memory_dependents(
                 "stamped sidecar table {table} is not registered"
             )));
         }
-        // See [`is_owner_pinned`]: forgetting a Memory must not delete
-        // somebody else's audit rows.
+        // Pinned audit rows follow their own owner during erasure.
         if is_owner_pinned(sidecars, table) {
             continue;
         }
@@ -642,11 +620,7 @@ async fn delete_memory_dependents(
     run_forget_legs(tx, legs, t).await
 }
 
-/// What a forget deletes: the rows search and embedding derive from the
-/// memory — every linked spiice's search projection row, and its `Deleted`
-/// legs (the embedding triple). The memory row, its sketch and its sidecar
-/// rows stay, hidden by `forgotten_at`; before #488 the projection
-/// went by cascade with the sidecar row the forget deleted.
+/// `Proxiima.ForgetRestore.derivedDeleteOrder`.
 async fn delete_derived_dependents(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -728,12 +702,8 @@ fn forget_leg_sql(table: &str, key_column: &str) -> Result<SqlText, StorageError
     Ok(sql)
 }
 
-/// Point `memory_head.t` at the newest version that is not forgotten, or
-/// delete the head when the series has no row left. `memory.handle` FK
-/// requires the memory row to be gone first, so a series whose every version
-/// is forgotten keeps its head on the newest forgotten version; owner reads
-/// skip that row, so the series reads as absent. The caller must already hold
-/// the complete advisory lock for this handle.
+/// `Proxiima.ForgetRestore.repairHead`.
+/// The caller must hold the complete advisory lock for this handle.
 pub(crate) async fn sync_memory_head(
     tx: &mut Transaction<'_, Postgres>,
     handle: Uuid,
@@ -781,19 +751,12 @@ async fn probe_memory_handle_for_owner(
     .map_err(map_err)
 }
 
-/// The owner's row for `t`, locked, when it is live.
+/// Forget requires a live row. An already forgotten version answers as absent.
 const LOCK_LIVE_OWNED_SQL: &str = "SELECT handle, kind FROM proxiima_core.memory
           WHERE t = $1 AND owner_id = $2 AND forgotten_at IS NULL
           FOR UPDATE";
 
-/// Forget one memory: mark its row `forgotten_at`, delete what search and
-/// embedding derive from it, and move the series head off it.
-///
-/// The row and its sidecar rows stay. Runs inside the lifecycle scope, the
-/// one place an owner transaction may write a forgotten row, and leaves it
-/// before returning. No object store is involved.
-///
-/// The caller holds `tx`; nothing here commits.
+/// Runs in the caller's transaction and leaves lifecycle scope before returning.
 pub(crate) async fn forget_memory(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -856,9 +819,11 @@ async fn forget_in_lifecycle(
         .await
         .map_err(map_err)?
         .ok_or(StorageError::NotFound)?;
+    // `Proxiima.ForgetRestore.mutationReach`. Recheck the series after taking its locks.
     if locked_handle != handle || kinds.is_some_and(|kinds| !kinds.contains(&kind)) {
         return Err(StorageError::NotFound);
     }
+    // `Proxiima.ForgetRestore.markAfter` and `Proxiima.ForgetRestore.retainedOnForget`.
     sqlx::query(
         "UPDATE proxiima_core.memory
             SET forgotten_at = now()
@@ -881,19 +846,7 @@ const LOCK_OWNED_FOR_RESTORE_SQL: &str = "SELECT handle, kind, schema_id, sideca
           WHERE t = $1 AND owner_id = $2
           FOR UPDATE";
 
-/// Restore one forgotten memory: clear its `forgotten_at`, rebuild what
-/// [`forget_memory`] deleted, and move the series head back onto it unless a
-/// newer live version holds it.
-///
-/// Rebuilt: the search projection, in the language stamped on the memory
-/// row (the projection row that carried it is gone); embedding jobs for the
-/// spaces the Owner's route names now. The sidecar rows and the sketch never
-/// left. Cancelled publication records stay cancelled. No object store is
-/// involved.
-///
-/// A live `t` is a no-op success. Takes the same lock footprint as a
-/// forget, inside the lifecycle scope, and leaves the scope before
-/// returning. Commits `tx`.
+/// Takes the same lock footprint as forget, leaves lifecycle scope and commits `tx`.
 pub(crate) async fn restore_memory_oneshot_in_transaction(
     mut tx: Transaction<'static, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -936,14 +889,15 @@ async fn restore_in_lifecycle(
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_err)?;
-    // A `t` with no memory row has nothing to restore (#488 dropped the
-    // pre-#488 stub form with its table).
     let (locked_handle, kind, schema_id, sidecar_tables, language, forgotten) =
         row.ok_or(StorageError::NotFound)?;
+    // `Proxiima.ForgetRestore.mutationReach`.
     if locked_handle != handle || !reach.kinds.contains(&kind) {
         return Err(StorageError::NotFound);
     }
+    // `Proxiima.ForgetRestore.restoreAdmission`.
     sidecars.ensure_schema_restorable(&schema_id)?;
+    // `Proxiima.ForgetRestore.restoreSteps` and `Proxiima.ForgetRestore.markAfter`.
     if forgotten {
         sqlx::query(
             "UPDATE proxiima_core.memory

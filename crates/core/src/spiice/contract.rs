@@ -1234,13 +1234,10 @@ impl ForgetLeg {
     /// [`crate::owner_inverse::OwnerSurfaces`]; the verb reads the answer.
     #[must_use]
     pub const fn derive(surface: &Surface) -> Self {
+        // `Proxiima.ForgetRestore.classifySurface`.
         match surface.forget {
             ForgetRule::Keep { why } => Self::Kept { why },
-            // `completeness` is checked FIRST inside the delete arm and only
-            // there: every memory sidecar carries a `t` FK too, and it is
-            // still dumped and still deleted by the stamp walk. A cascade
-            // means "no statement" only where the rule already said "no
-            // preservation".
+            // Retained sidecars also carry an FK. Only a declared delete can use it as a delete leg.
             ForgetRule::DeleteWithMemory => match surface.completeness {
                 Some(via) => Self::Cascaded { via },
                 None => match surface.key {
@@ -2004,13 +2001,12 @@ mod tests {
         WeightedField,
     };
 
-    #[test]
-    fn dumped_cascade_is_only_a_memory_t_surface_with_a_completeness_proof() {
+    fn detail_surface() -> Surface {
         let via = DbConstraint {
             relation: "detail",
             name: "detail_parent_fkey",
         };
-        let mut surface = Surface {
+        Surface {
             table: "detail",
             key: KeyShape::MemoryT { column: "parent_t" },
             owner_column: None,
@@ -2021,7 +2017,13 @@ mod tests {
             lexical_language_column: None,
             counter: CounterRule::Uncounted { why: "detail" },
             completeness: Some(via),
-        };
+        }
+    }
+
+    #[test]
+    fn dumped_cascade_is_only_a_memory_t_surface_with_a_completeness_proof() {
+        let mut surface = detail_surface();
+        let via = surface.completeness.expect("detail has a cascade");
         assert_eq!(ForgetLeg::derive(&surface), ForgetLeg::Marked);
         surface.key = KeyShape::EntityT { column: "entity_t" };
         assert_eq!(ForgetLeg::derive(&surface), ForgetLeg::Unreachable);
@@ -2042,6 +2044,78 @@ mod tests {
         surface.completeness = Some(via);
         surface.erase = EraseRule::Cascade { via };
         assert_eq!(ForgetLeg::derive(&surface), ForgetLeg::Cascaded { via });
+    }
+
+    #[test]
+    fn forget_legs_match_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Rule {
+            Keep,
+            Retain([bool; 1]),
+            RetainCascadedDetail([bool; 1]),
+            Delete([bool; 2]),
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            inputs: [Rule; 1],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let classifications: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.ForgetRestore.classifySurface"].clone())
+                .expect("the ledger emits forget leg classifications");
+        let delete_rows = vectors["Proxiima.ForgetRestore.generatesDelete"]
+            .as_array()
+            .expect("the ledger emits generated-delete decisions");
+        assert!(!classifications.is_empty());
+        for vector in classifications {
+            let mut surface = detail_surface();
+            let unreachable_key = KeyShape::Custom(&["owner_id"]);
+            match vector.inputs {
+                [Rule::Keep] => surface.forget = ForgetRule::Keep { why: "fixture" },
+                [Rule::Retain([keyed])] => {
+                    surface.forget = ForgetRule::DumpThenDelete;
+                    if !keyed {
+                        surface.key = unreachable_key;
+                    }
+                }
+                [Rule::RetainCascadedDetail([matching_cascade])] => {
+                    if !matching_cascade {
+                        surface.erase = EraseRule::ByKey;
+                    }
+                }
+                [Rule::Delete([has_cascade, keyed])] => {
+                    surface.forget = ForgetRule::DeleteWithMemory;
+                    if !has_cascade {
+                        surface.completeness = None;
+                    }
+                    if !keyed {
+                        surface.key = unreachable_key;
+                    }
+                }
+            }
+            let leg = ForgetLeg::derive(&surface);
+            let classification = match leg {
+                ForgetLeg::Kept { .. } => "kept",
+                ForgetLeg::Marked => "marked",
+                ForgetLeg::Cascaded { .. } => "cascaded",
+                ForgetLeg::Deleted { .. } => "deleted",
+                ForgetLeg::Unreachable => "unreachable",
+            };
+            assert_eq!(classification, vector.out, "{surface:?}");
+            let generated = delete_rows
+                .iter()
+                .find(|row| row["in"][0] == classification)
+                .and_then(|row| row["out"].as_bool())
+                .expect("a generated-delete decision for every forget leg");
+            assert_eq!(leg.is_generated(), generated, "{surface:?}");
+        }
     }
 
     fn projected(weights: &'static [f32]) -> SearchProjectionDecl {

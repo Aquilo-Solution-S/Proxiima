@@ -1,5 +1,4 @@
-//! #488 S5: owner reads exclude forgotten memories; the lifecycle scope sees
-//! them. `forgotten_at` is set by raw SQL here — no verb sets it yet.
+//! `Proxiima.ForgetRestore.visibleInScope`.
 
 use proxiima_core::storage_ports::{MemoryInspectPort, MemoryReadPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;

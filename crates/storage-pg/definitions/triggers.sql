@@ -251,6 +251,7 @@ CREATE CONSTRAINT TRIGGER memory_declares_proxiima_core_goal_change_v1
 -- `Proxiima.Identity.seriesContract` and `Proxiima.Identity.schemaAuthority`.
 CREATE OR REPLACE TRIGGER memory_align_head BEFORE INSERT ON proxiima_core.memory FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_align_head();
 -- `Proxiima.Memory.versionAction`, `Proxiima.Identity.SeriesAndVersion` and `Proxiima.Identity.versionWriter`.
+-- `Causa.restore_forget`.
 CREATE OR REPLACE TRIGGER memory_append_only BEFORE UPDATE ON proxiima_core.memory FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_owner_or_append_only();
 
 CREATE OR REPLACE TRIGGER blob_schema_evolution_guard
