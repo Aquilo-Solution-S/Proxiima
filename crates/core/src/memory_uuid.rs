@@ -5,8 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use uuid::Uuid;
 
-const MAX_MILLIS: u64 = (1 << 48) - 1;
-const MAX_COUNTER: u16 = (1 << 12) - 1;
+const TIMESTAMP_BITS: usize = crate::ledger!(Proxiima.Identity.uuidTimestampBits);
+const COUNTER_BITS: usize = crate::ledger!(Proxiima.Identity.uuidCounterBits);
+const MAX_MILLIS: u64 = (1 << TIMESTAMP_BITS) - 1;
+const MAX_COUNTER: u16 = (1 << COUNTER_BITS) - 1;
 static GENERATOR: Mutex<Generator> = Mutex::new(Generator { previous: None });
 
 #[derive(Debug, Default)]
@@ -31,6 +33,7 @@ impl Generator {
         });
         let previous = self.previous.max(floor);
         let seed = u16::from_be_bytes([random[6], random[7]]) & MAX_COUNTER;
+        // `Proxiima.Identity.monotonicMint`.
         let (millis, counter) = match previous {
             Some((millis, counter)) if clock_millis <= millis => {
                 if counter == MAX_COUNTER {
@@ -56,7 +59,7 @@ impl Generator {
 /// Mint a time-ordered `UUIDv8` carrying the configured store number.
 ///
 /// All calls in this process share one timestamp and counter. Frozen or
-/// regressing clocks keep that order; counter exhaustion advances logical
+/// regressing clocks keep that order. Counter exhaustion advances logical
 /// time by one millisecond without waiting for the clock.
 ///
 /// # Panics
@@ -70,10 +73,10 @@ pub fn new_memory_uuid(store_number: u16) -> Uuid {
 
 /// Mint a memory UUID strictly after an existing revision's UUID.
 ///
-/// The revision's timestamp and counter are a floor for the same process-wide
-/// generator as [`new_memory_uuid`]. Advancing beyond both fields keeps the
-/// result greater regardless of the floor's store number or random bits, even
-/// when another process's clock is ahead. Later ordinary mints retain that floor.
+/// The revision's timestamp and counter set the floor for the process-wide
+/// generator used by [`new_memory_uuid`]. The new UUID exceeds that floor
+/// regardless of its store number and random bits, even for a revision from
+/// a process whose clock is ahead. Later ordinary mints retain that floor.
 ///
 /// Returns `None` if advancing the floor or the clock would exceed the layout's
 /// 48-bit timestamp range. A refused mint leaves the generator state unchanged.

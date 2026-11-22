@@ -85,8 +85,9 @@ impl EntityKind {
     }
 }
 
-/// `Proxiima.Identity.EmbeddableEntity`.
+/// An embedding target is a Memory ID with its layer or a Goal ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+// `Proxiima.Identity.EmbeddableEntity`.
 pub enum EmbeddableEntityRef {
     Memory {
         kind: MemoryKind,

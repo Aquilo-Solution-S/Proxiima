@@ -146,7 +146,7 @@ pub async fn get_goal(ctx: ToolCtx, raw: &str) -> Result<GoalItem, ToolError> {
     let handle = series_handle(&ctx, engine, id).await?;
     let mut req = QueryRequest::readable();
     req.entity_kind = Some(EntityKind::Goal);
-    // `Proxiima.Goals.readRevision`.
+    // `Proxiima.Identity.readRevision`.
     req.goal_handles = vec![handle];
     req.limit = 1;
     req.include_payloads = false;

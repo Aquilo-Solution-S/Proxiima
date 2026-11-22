@@ -1111,6 +1111,7 @@ END;
 $function$;
 
 -- `Causa.goal_motivations_valid`. The trigger also checks declared pins against erasure.
+-- `Proxiima.Identity.admissionIdAvailable`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_pin_target_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -2871,6 +2872,7 @@ AS $function$
     END
 $function$;
 
+-- `Proxiima.Identity.admissionIdAvailable`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_pin_checks()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -3786,7 +3788,7 @@ RETURNS timestamptz LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     ) AS millis) AS timestamp_bits
 $$;
 
--- The handle is frozen and the position never goes back.
+-- `Proxiima.Identity.publicationCounterUpdate`.
 CREATE OR REPLACE FUNCTION proxiima_core.publication_counter_forward_only() RETURNS trigger
     LANGUAGE plpgsql
     AS $$

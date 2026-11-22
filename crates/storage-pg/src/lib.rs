@@ -645,6 +645,7 @@ async fn run_migrations_on_pool(
     }
 }
 
+// `Proxiima.Identity.storeNumberLifecycle`.
 fn validate_store_number(persisted: Option<i32>, configured: u16) -> Result<(), StorageError> {
     match persisted {
         Some(number) if number == i32::from(configured) => Ok(()),
@@ -758,6 +759,7 @@ impl PgMigrationStorage {
     pub async fn initialize_store_number(&self, store_number: u16) -> Result<(), StorageError> {
         let mut connection = self.pool.acquire().await.map_err(error::map_err)?;
         let mut tx = begin_migration_transaction(&mut connection).await?;
+        // `Proxiima.Identity.storeNumberLifecycle`.
         sqlx::query(
             "INSERT INTO proxiima_core.store_identity (singleton, store_number) VALUES (true, $1) ON CONFLICT (singleton) DO NOTHING",
         )

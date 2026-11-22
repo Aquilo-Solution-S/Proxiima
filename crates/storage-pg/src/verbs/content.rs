@@ -40,10 +40,7 @@ pub fn hash_sidecar_payloads(payloads: &[SidecarPayload]) -> Result<[u8; 32], St
 /// A derived admission's Content hash: the payload hash keyed by the
 /// admission's kind.
 ///
-/// Content is visible only through an admission that names it (0023), so an
-/// Abstraction and a Perspective with the same payload get two rows: a writer
-/// then meets only Content of a kind it reads, and reuse never looks past its
-/// own limit.
+/// Separate hashes let each admission kind reuse Content visible to that kind.
 #[must_use]
 pub fn kind_scoped_hash(kind: &str, hash: &[u8; 32]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
@@ -54,12 +51,7 @@ pub fn kind_scoped_hash(kind: &str, hash: &[u8; 32]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// Insert or reuse `(owner, schema, hash)`.
-///
-/// Neither `RETURNING` nor a conflict target: each makes the insert read the
-/// new row, and a Content row is visible only through an admission that
-/// names it (0023), which the new row has not got yet. The fresh
-/// `content_id` cannot conflict, so any conflict is `(owner, schema, hash)`.
+/// Insert or reuse a Content row for this owner, schema and hash.
 pub async fn ensure_content(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: Uuid,
@@ -67,6 +59,7 @@ pub async fn ensure_content(
     content_hash: &[u8; 32],
 ) -> Result<Uuid, StorageError> {
     let content_id = Uuid::now_v7();
+    // `Proxiima.Identity.OwnerScopedContent`. Omit `RETURNING` and a conflict target to avoid reading the new row.
     let inserted = sqlx::query(
         "INSERT INTO proxiima_core.content (content_id, owner_id, schema_id, content_hash)
          VALUES ($1, $2, $3, $4)
@@ -140,7 +133,7 @@ pub async fn ensure_content_from_payloads(
     Ok(Some(ensure_content(tx, owner_id, schema_id, &hash).await?))
 }
 
-/// Drop Content rows no admission, live or forgotten, names.
+/// `Proxiima.Identity.collectContent`.
 pub async fn gc_unreferenced_content(
     tx: &mut Transaction<'_, Postgres>,
     content_id: Uuid,

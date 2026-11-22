@@ -177,11 +177,8 @@ delivery options, not required Proxiima dependencies.
 
 ### Attribution survives authority changes
 
-Stored `by` and `via` identify the attested writer of each version. They do
-not grant access and do not change when ownership transfers. This retains
-history without making a former writer a permanent reader. A transport
-session, a writer's caller/session UUID, and a delegation grant have distinct
-lifecycles. See [requests, sessions, and workers](concepts.md#requests-sessions-and-workers).
+[`Proxiima.Identity`](ledger.md#identity) keeps authorship history independent
+of current access. See [requests, sessions, and workers](concepts.md#requests-sessions-and-workers).
 
 ## The catalog is the contract
 

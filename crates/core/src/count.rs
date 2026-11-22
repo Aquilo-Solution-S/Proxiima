@@ -1,9 +1,6 @@
 //! Counts and lengths as the `u64` that reports, frames and hashes carry.
 
-/// `count` as a `u64`, saturating at `u64::MAX`.
-///
-/// A length cannot exceed `u64::MAX` on any supported target, so the saturation is never
-/// reached; naming it once keeps every report, frame and hash answering that case the same way.
+/// Convert a count to `u64`. The `u64::MAX` saturation fallback is unreachable on supported targets.
 #[must_use]
 pub fn count_u64(count: usize) -> u64 {
     u64::try_from(count).unwrap_or(u64::MAX)

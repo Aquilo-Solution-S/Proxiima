@@ -97,12 +97,14 @@ CREATE OR REPLACE TRIGGER erased_pin_target_insert_guard BEFORE INSERT ON proxii
 CREATE OR REPLACE TRIGGER goal_motivation_index_sync
     AFTER INSERT ON proxiima_core.goal
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.sync_goal_motivation_index();
+-- `Proxiima.Identity.schemaAuthority`.
 CREATE OR REPLACE TRIGGER goal_stamp_schema
     BEFORE INSERT ON proxiima_core.goal
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.goal_stamp_schema();
 CREATE OR REPLACE TRIGGER goal_motivation_index_sync_update
     AFTER UPDATE OF motivated_by ON proxiima_core.goal
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.sync_goal_motivation_index();
+-- `Proxiima.Identity.SeriesAndVersion`.
 CREATE OR REPLACE TRIGGER goal_append_only BEFORE UPDATE ON proxiima_core.goal FOR EACH ROW EXECUTE FUNCTION proxiima_core.schema_evolution_goal_guard();
 CREATE OR REPLACE TRIGGER goal_erased_pin_target BEFORE DELETE ON proxiima_core.goal FOR EACH ROW EXECUTE FUNCTION proxiima_core.goal_erase_witness();
 CREATE OR REPLACE TRIGGER goal_no_later_after_terminal BEFORE INSERT ON proxiima_core.goal FOR EACH ROW EXECUTE FUNCTION proxiima_core.goal_no_later_after_terminal();
@@ -114,6 +116,7 @@ CREATE CONSTRAINT TRIGGER goal_pin_target_checks_on_update
     ON proxiima_core.goal DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION proxiima_core.goal_pin_target_checks();
 DROP TRIGGER IF EXISTS goal_schema_head_alignment_on_update ON proxiima_core.goal;
+-- `Proxiima.Identity.seriesContract`.
 CREATE CONSTRAINT TRIGGER goal_schema_head_alignment_on_update
     AFTER UPDATE OF schema_id, handle, owner_id ON proxiima_core.goal
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
@@ -142,6 +145,7 @@ CREATE OR REPLACE TRIGGER goal_change_v1_append_only BEFORE UPDATE ON proxiima_c
 
 
 -- goal_head
+-- `Proxiima.Identity.SeriesAndVersion`.
 CREATE OR REPLACE TRIGGER goal_head_t_only BEFORE UPDATE ON proxiima_core.goal_head FOR EACH ROW EXECUTE FUNCTION proxiima_core.goal_head_t_only();
 
 
@@ -244,7 +248,9 @@ CREATE CONSTRAINT TRIGGER memory_declares_proxiima_core_goal_change_v1
     FOR EACH ROW
     WHEN ('proxiima_core.goal_change_v1' = ANY (NEW.sidecar_tables))
     EXECUTE FUNCTION proxiima_core.assert_declared_sidecar_present('proxiima_core.goal_change_v1', 't');
+-- `Proxiima.Identity.seriesContract` and `Proxiima.Identity.schemaAuthority`.
 CREATE OR REPLACE TRIGGER memory_align_head BEFORE INSERT ON proxiima_core.memory FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_align_head();
+-- `Proxiima.Identity.SeriesAndVersion` and `Proxiima.Identity.versionWriter`.
 CREATE OR REPLACE TRIGGER memory_append_only BEFORE UPDATE ON proxiima_core.memory FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_owner_or_append_only();
 
 CREATE OR REPLACE TRIGGER blob_schema_evolution_guard
@@ -257,8 +263,10 @@ CREATE OR REPLACE TRIGGER memory_sidecar_stamp_declared BEFORE INSERT OR UPDATE 
 
 
 -- memory_head
+-- `Proxiima.Identity.SeriesAndVersion`.
 CREATE OR REPLACE TRIGGER memory_head_t_only BEFORE UPDATE ON proxiima_core.memory_head FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_head_t_only();
 DROP TRIGGER IF EXISTS memory_align_head_on_update ON proxiima_core.memory;
+-- `Proxiima.Identity.seriesContract` and `Proxiima.Identity.schemaAuthority`.
 CREATE CONSTRAINT TRIGGER memory_align_head_on_update
     AFTER UPDATE OF schema_id, handle ON proxiima_core.memory
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
@@ -330,6 +338,7 @@ CREATE OR REPLACE TRIGGER write_act_v1_declared_by_memory_on_update
     EXECUTE FUNCTION proxiima_core.assert_memory_declares_sidecar('t');
 
 -- store_identity
+-- `Proxiima.Identity.storeNumberMutable`.
 CREATE OR REPLACE TRIGGER store_identity_immutable
     BEFORE UPDATE OR DELETE ON proxiima_core.store_identity
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.enforce_store_identity_immutable();

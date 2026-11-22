@@ -201,10 +201,7 @@ pub(crate) async fn purge_cold_objects_with_backoff(
     };
     for entry in plan.entries() {
         let key = entry.object_key.as_str();
-        // Never delete against the wrong store, and never silently drop the
-        // debt either: the row stays, `failed` counts it, and the receipt
-        // reports the erase as still owing bytes. A drain wired to the store
-        // that holds the bytes discharges it.
+        // A different store leaves the debt queued and counts it as failed in the receipt.
         if entry.object_store != cold.store_id().as_str() {
             outcome.failed = outcome.failed.saturating_add(1);
             tracing::warn!(
@@ -362,7 +359,7 @@ async fn record_purge_failure(
     Ok(updated.rows_affected() == 1)
 }
 
-/// A completed provider deletion retires only the queue version it observed.
+/// A deletion retires the queue version it observed.
 ///
 /// The queue IS the debt. The drain answers "is anything owed" by counting
 /// rows, not by trusting a flag that a crash between two writes could leave

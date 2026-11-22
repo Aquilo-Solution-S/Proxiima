@@ -114,7 +114,7 @@ async fn goal(
     result
 }
 
-// `Proxiima.Goals.readRevision`.
+// `Proxiima.Identity.readRevision`.
 #[tokio::test]
 async fn goal_handles_find_latest_and_open_pages_survive_lifecycle_writes() -> Result<(), TestError>
 {

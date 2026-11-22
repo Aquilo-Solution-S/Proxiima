@@ -298,6 +298,7 @@ async fn persist_citation_timeseries(
     }
 }
 
+// `Proxiima.Identity.schemaAuthority`.
 async fn upsert_blob(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

@@ -41,13 +41,13 @@ pub use scope_key::{ActionName, ResourceKey, ScopeKey, ScopeKeyError, ScopeKeyPa
 pub use tool_name::{provider_safe_tool_name, tool_name_matches};
 
 /// The principal and optional caller an authenticator attested for a write.
-///
 /// Separate from the authenticated credential subject and the selected owner.
 /// A direct principal call has no `via`; a session call names its session UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WriterAttribution {
     pub by: uuid::Uuid,
-    /// Required on serialized reads; `null` denotes a direct principal call.
+    /// Required on serialized reads. `null` denotes a direct principal call.
+    // `Proxiima.Identity.WriterAttribution`.
     #[serde(deserialize_with = "deserialize_writer_via")]
     pub via: Option<uuid::Uuid>,
 }

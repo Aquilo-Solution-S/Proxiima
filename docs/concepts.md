@@ -29,8 +29,7 @@ The [decisions](decisions.md#identity-and-ownership-have-separate-jobs) explain
 why these boundaries exist.
 
 A person, agent, or service is a principal (`UserId`). An owner is an `OwnerId`;
-a group owner is also a `GroupId`. Writer attribution (`by`, `via`) records who
-wrote a version and grants no access.
+a group owner is also a `GroupId`. See [`Proxiima.Identity`](ledger.md#identity).
 
 The host binds external credentials to principals and supplies the trusted
 owner resolver. Proxiima carries the resulting authority through a sealed
@@ -261,7 +260,7 @@ delegated grants store the five fields in one shape
 | Mechanism | Purpose | Boundary |
 |---|---|---|
 | MCP transport session | Bind protocol requests to a principal and default owner | Later requests reauthenticate and must agree with the binding |
-| Writer `via` | Keep caller or session provenance on a written version | Attested by authentication; not an access grant and not copied from the MCP session id |
+| Writer `via` | [Writer attribution](ledger.md#identity) | The authenticator supplies it independently of the MCP transport session |
 | Delegation grant and redeemed phase | Let queued work run one bounded command | One owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
 
 A delegated worker holds a `DelegationId` and redeems it when work starts; it
@@ -296,23 +295,10 @@ membership policy, external effects, and lifecycle obligations.
 
 ## Memory identity and content
 
-A memory series has a stable `handle`. Each admission has a unique `t` (the
-row identity). The pair `(handle, t)` identifies a version; a head is a query
-projection for the current version, not a replacement for version identity.
-Facts remain immutable. Abstractions, Perspectives, and Goals append a later
-version on the same handle rather than mutating an old row.
+Facts remain immutable. See [`Proxiima.Identity`](ledger.md#identity).
 
-Every memory and Goal version also records `by`, the principal who wrote it,
-and `via`, its caller session UUID or `null` for a direct principal call.
-The sealed request context supplies this pair. It grants no authority and is
-independent of ownership, payload authorship and grounding sources. Reads
-return the stored pair; an exact replay retains it, a new version captures its
-own writer, and transfer, forget and restore preserve it.
-
-Typed payload is owner-scoped `Content`. Content may be shared by admissions
-within its owner and schema, but shared content never collapses two `t` values.
 Use the [core rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/tree/main/crates/core/src)
-for public types and constructors; use migrations for table shape.
+for public types and constructors. Use migrations for table shape.
 
 ## Layering
 

@@ -23,31 +23,36 @@ fn from_lookup_requires_a_region_alongside_the_bucket() {
     assert!(msg.contains("PROXIIMA_S3_REGION"), "{msg}");
 }
 
-/// The store id is derived from endpoint and bucket unless the operator
-/// names it; a named id is validated where the config is read.
 #[test]
-fn from_lookup_derives_or_takes_the_store_id() {
-    let derived = S3RuntimeConfig::from_lookup(&env(&bucketed(&[(
-        "PROXIIMA_S3_ENDPOINT_URL",
-        "HTTPS://Minio.Local:443/",
-    )])))
-    .expect("valid config")
-    .expect("configured");
-    assert_eq!(derived.store_id, None);
-    assert_eq!(
-        derived.object_store_id().expect("derived").as_str(),
-        "s3:https://minio.local/b"
-    );
-    let named = S3RuntimeConfig::from_lookup(&env(&bucketed(&[(
-        "PROXIIMA_S3_STORE_ID",
-        "tenant-a.store_1",
-    )])))
-    .expect("valid config")
-    .expect("configured");
-    assert_eq!(
-        named.object_store_id().expect("named").as_str(),
-        "s3:id/tenant-a.store_1"
-    );
+fn object_store_source_matches_ledger_vectors() {
+    let ledger: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    let rows = ledger["Proxiima.Identity.objectStoreSource"]
+        .as_array()
+        .unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let mut settings = vec![("PROXIIMA_S3_ENDPOINT_URL", "HTTPS://Example.COM:443/")];
+        if row["in"][0].as_bool().unwrap() {
+            settings.push(("PROXIIMA_S3_STORE_ID", "tenant-a.store_1"));
+        }
+        let config = S3RuntimeConfig::from_lookup(&env(&bucketed(&settings)))
+            .expect("valid config")
+            .expect("configured");
+        let expected = match row["out"].as_str().unwrap() {
+            "operator" => "s3:id/tenant-a.store_1",
+            "endpointAndBucket" => "s3:https://example.com/b",
+            outcome => panic!("unknown object store source {outcome}"),
+        };
+        assert_eq!(
+            config.object_store_id().expect("store id").as_str(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn from_lookup_refuses_invalid_store_ids() {
     for bad in ["has space", "slash/inside"] {
         let err = S3RuntimeConfig::from_lookup(&env(&bucketed(&[("PROXIIMA_S3_STORE_ID", bad)])))
             .expect_err("an invalid store id is refused");

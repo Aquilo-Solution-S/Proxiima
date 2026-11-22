@@ -1178,6 +1178,7 @@ async fn insert_memory_revision(
     .bind(&prepared.guided_by)
     .bind(&prepared.sidecar_tables)
     .bind(prepared.occurred_at)
+    // `Proxiima.Identity.versionWriter`.
     .bind(prepared.writer.by)
     .bind(prepared.writer.via)
     .bind(prepared.forked_from)

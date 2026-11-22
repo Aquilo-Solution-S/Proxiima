@@ -1,6 +1,4 @@
-//! Derived authoring supersedes: a revision of an Abstraction becomes its
-//! series' live head, and carries its origin and reference edges with it.
-//! Through the example spiice's digest.
+//! Derived authoring coverage for revisions and the example spiice's digest edges.
 
 #[path = "fixtures/example_engine.rs"]
 #[allow(dead_code, reason = "each suite uses part of the shared fixture")]
@@ -171,6 +169,7 @@ async fn digest_can_use_core_superseding_derived_authoring() {
             .await
             .expect("memory read");
         let snapshot = read.memory.expect("the version is readable");
+        // `Proxiima.Identity.readRevision`.
         assert_eq!(snapshot.memory_id, expected);
         assert_eq!(snapshot.series, old_handle);
     }

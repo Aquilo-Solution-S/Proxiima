@@ -196,6 +196,7 @@ impl S3RuntimeConfig {
     /// Returns `BlobError::Config` when `store_id` is not a valid operator
     /// identity, or the endpoint URL or bucket cannot name a store.
     pub fn object_store_id(&self) -> Result<proxiima_core::ObjectStoreId, BlobError> {
+        // `Proxiima.Identity.objectStoreSource`.
         match &self.store_id {
             Some(id) => proxiima_core::ObjectStoreId::operator(id)
                 .map_err(|error| BlobError::Config(format!("PROXIIMA_S3_STORE_ID: {error}"))),

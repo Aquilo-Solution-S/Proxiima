@@ -693,13 +693,11 @@ impl FactWriteCommand {
         self
     }
 
-    /// Canonical receipt id per docs/concepts.md: BLAKE3 of `source_id` ||
-    /// the owner id's 16 bytes || schema-owned receipt key, separated by 0x00
-    /// bytes. Re-receipt of the same observation produces the same hash by
-    /// construction. Receiptless commands return `None` and are not replayed.
+    /// Receiptless commands return `None` and skip replay. Re-receipt of the same observation yields the same hash.
     #[must_use]
     pub fn receipt_id_for_owner(&self, owner: OwnerId) -> Option<FactReceiptId> {
         let receipt = self.receipt.as_ref()?;
+        // `Proxiima.Identity.receiptFields`.
         let mut hasher = blake3::Hasher::new();
         hasher.update(receipt.source_id.as_str().as_bytes());
         hasher.update(b"\x00");

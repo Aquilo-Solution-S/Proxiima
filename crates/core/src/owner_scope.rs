@@ -127,6 +127,7 @@ impl ScopeGrant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerScope {
     grant: ScopeGrant,
+    // Writer attribution grants no authority.
     writer: WriterAttribution,
     goal_principal: Option<crate::goal_collaboration::GoalPrincipalScope>,
     /// The owner a Goal work permit works ([`Self::goal_work`]).

@@ -43,7 +43,7 @@ impl GroupId {
 )]
 pub struct MemoryId(Uuid);
 
-/// Owner-scoped typed payload. Not an admission. Many `MemoryId`s may share one.
+/// Identifies an owner-scoped payload that multiple admissions can share.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -143,9 +143,7 @@ impl std::fmt::Display for SchemaVersion {
     }
 }
 
-/// BLAKE3-32 `ContentHash` of (`source_id`, owner, payload).
-/// Per docs/concepts.md
-/// re-receipt dedup, not `UUIDv7`.
+/// The digest used to recognize a repeated Fact receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FactReceiptId([u8; 32]);
 

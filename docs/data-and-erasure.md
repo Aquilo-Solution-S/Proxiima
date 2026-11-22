@@ -16,7 +16,7 @@ selects a source object within one owner, never a global content hash.
 
 | Operation | Effect |
 |---|---|
-| Supersede | Append a new version on a series; retain prior versions |
+| Supersede | Append a new version on a series and retain prior versions ([`Proxiima.Identity.SeriesAndVersion`](ledger.md#identity)) |
 | Forget | Mark an admission forgotten; keep its rows, identity and declared pins |
 | Owner erase | Destroy the selected owner's declared storage |
 | Source-scope erase | Destroy rows attributable to the selected source within one owner |

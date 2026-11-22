@@ -1,16 +1,9 @@
 //! Canonical JSON byte writer for transient payload identity.
 //!
-//! Deterministic, sorted-key bytes for content-addressed identity (e.g.
-//! operator idempotency keys). `serde_json` has no stable sorted-key
-//! output — its `preserve_order` feature does the opposite (preserves
-//! insertion order) — so this small, fully-tested writer owns those
-//! bytes rather than pulling a heavier external JCS crate. Arrays keep
-//! input order; primitive/number formatting delegates to `serde_json`.
+//! `serde_json` can preserve insertion order. The identity writer orders keys explicitly.
 
-/// Serialize a JSON value with recursively sorted object keys.
-///
-/// Arrays retain input order. Primitive formatting is delegated to
-/// `serde_json`, including number formatting.
+/// Serialize JSON with recursively sorted object keys and preserve array order.
+/// Primitive formatting uses `serde_json`.
 #[must_use]
 pub fn canonical_json_bytes(value: &serde_json::Value) -> Vec<u8> {
     let mut out = Vec::new();
@@ -39,6 +32,7 @@ fn write_canonical_json(value: &serde_json::Value, out: &mut Vec<u8>) {
             }
             out.push(b']');
         }
+        // `Proxiima.Identity.sortJsonKeys`.
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
             keys.sort_unstable();
@@ -57,6 +51,40 @@ fn write_canonical_json(value: &serde_json::Value, out: &mut Vec<u8>) {
                 );
             }
             out.push(b'}');
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_order_matches_ledger_vectors() {
+        let ledger: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows = ledger["Proxiima.Identity.sortJsonKeys"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let (input, ordered, unordered) = match row["in"][0].as_str().unwrap() {
+                "object" => (
+                    serde_json::json!({"z": {"b": 2, "a": 1}, "a": 0}),
+                    r#"{"a":0,"z":{"a":1,"b":2}}"#,
+                    r#"{"z":{"b":2,"a":1},"a":0}"#,
+                ),
+                "array" => (
+                    serde_json::json!(["z", "a"]),
+                    r#"["a","z"]"#,
+                    r#"["z","a"]"#,
+                ),
+                collection => panic!("unknown JSON collection {collection}"),
+            };
+            let expected = if row["out"].as_bool().unwrap() {
+                ordered
+            } else {
+                unordered
+            };
+            assert_eq!(canonical_json_bytes(&input), expected.as_bytes());
         }
     }
 }
