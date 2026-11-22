@@ -26,7 +26,7 @@ impl ColdObjectStore for CountingCold {
     fn store_id(&self) -> &proxiima_core::ObjectStoreId {
         static ID: std::sync::LazyLock<proxiima_core::ObjectStoreId> =
             std::sync::LazyLock::new(|| {
-                proxiima_core::ObjectStoreId::parse("s3:test/bucket").expect("test store id")
+                proxiima_core::ObjectStoreId::parse("s3:aws/bucket").expect("test store id")
             });
         &ID
     }

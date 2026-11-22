@@ -230,8 +230,8 @@ bucket and path style.
 The upload `PUT` signs the declared `byte_len` as its `Content-Length`, so the
 store refuses a body of any other length before it lands; a proxy in front of
 it must pass the header through. Staging reads an object into memory up to
-the declared length, at most eight uploads at a time per process; a ninth
-waits for a slot.
+the declared length, at most eight uploads at a time per store instance
+shared by its clones. Additional uploads wait for a slot.
 
 SigV4 signs the Host, including its port, the complete path, including any
 endpoint prefix, and the query. A proxy in front of an upload link must forward

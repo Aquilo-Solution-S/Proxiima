@@ -143,7 +143,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// The pinned corpus names every cited upload's synthetic store `s3:test/bucket`.
+/// The pinned corpus names every cited upload's synthetic store `s3:aws/bucket`.
 /// Model that store explicitly while retaining its in-memory test transport.
 #[derive(Default)]
 struct CorpusColdStore(MemoryColdStore);
@@ -153,7 +153,7 @@ impl ColdObjectStore for CorpusColdStore {
     fn store_id(&self) -> &proxiima_core::ObjectStoreId {
         static ID: std::sync::LazyLock<proxiima_core::ObjectStoreId> =
             std::sync::LazyLock::new(|| {
-                proxiima_core::ObjectStoreId::parse("s3:test/bucket").expect("test store id")
+                proxiima_core::ObjectStoreId::parse("s3:aws/bucket").expect("test store id")
             });
         &ID
     }
@@ -349,7 +349,7 @@ pub async fn seed(pg: &PgStorage) -> Result<Corpus, Box<dyn std::error::Error>> 
             "INSERT INTO proxiima_core.blob_uploads
                  (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
                   status, blob_id, sha256, expires_at, completed_at)
-             VALUES ($1, 'bucket', 's3:test/bucket', $2, 'f.pdf', 'application/pdf', 1,
+             VALUES ($1, 'bucket', 's3:aws/bucket', $2, 'f.pdf', 'application/pdf', 1,
                      $3::proxiima_core.blob_upload_status, $4, $5,
                      TIMESTAMPTZ '2030-01-01 00:00:00Z',
                      CASE WHEN $6 THEN TIMESTAMPTZ '2026-01-01 00:00:00Z' ELSE NULL END)",

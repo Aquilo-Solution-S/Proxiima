@@ -654,7 +654,7 @@ impl CitedBlobPort for StagedBlobs {
             "INSERT INTO proxiima_core.blob_uploads
                 (upload_id, owner_id, bucket, object_store, object_key, filename, mime,
                  expected_byte_len, content_hash, sha256, expires_at)
-             VALUES ($1, $2, 'kindrule', 's3:test/kindrule', $3, 'kindrule.txt', 'text/plain',
+             VALUES ($1, $2, 'kindrule', 's3:aws/kindrule', $3, 'kindrule.txt', 'text/plain',
                      8, $4, $4, now() + interval '1 hour')",
         )
         .bind(id)

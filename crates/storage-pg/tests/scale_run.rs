@@ -613,7 +613,7 @@ async fn seed_unshared_uploads(pool: &PgPool, owner: OwnerId, count: usize) -> s
          INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
               status, blob_id, sha256, content_hash, expires_at, completed_at)
-         SELECT $1, 'bucket', 's3:test/bucket', 'placeholder', 'f.bin', 'application/octet-stream', 3,
+         SELECT $1, 'bucket', 's3:aws/bucket', 'placeholder', 'f.bin', 'application/octet-stream', 3,
                 'completed', blob_id, content_hash, content_hash, now() + interval '1 day', now()
            FROM b",
     )

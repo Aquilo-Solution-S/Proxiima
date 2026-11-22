@@ -1522,15 +1522,26 @@ impl std::fmt::Debug for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Validate the fail-closed network/auth matrix.
+    /// Validate object maintenance cadence and the fail-closed network/auth matrix.
     ///
     /// # Errors
     ///
     /// Returns `ProxiimaError::Security` when transport exposure is unsafe,
     /// and `ProxiimaError::Config` for an invalid pool configuration or a
-    /// migration URL that does not name the platform URL's role and database.
+    /// migration URL that does not name the platform URL's role and database,
+    /// or when the object maintenance interval exceeds the configured upload TTL.
     pub fn validate(&self) -> Result<(), ProxiimaError> {
         self.storage.validate()?;
+        if let (Some(interval), Some(s3)) = (self.object_purge_interval, &self.s3)
+            && interval > Duration::from_secs(s3.upload_ttl_seconds)
+        {
+            return Err(ProxiimaError::Config(format!(
+                "{} ({interval:?}) must not exceed {} ({}s)",
+                settings::PROXIIMA_OBJECT_PURGE_INTERVAL_SECS.name(),
+                proxiima_blob_s3::settings::PROXIIMA_S3_UPLOAD_TTL_SECONDS.name(),
+                s3.upload_ttl_seconds,
+            )));
+        }
         let Some(mcp) = &self.mcp else {
             return Ok(());
         };

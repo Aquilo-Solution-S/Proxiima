@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-const STORE: &str = "s3:test/backoff";
+const STORE: &str = "s3:aws/backoff";
 
 /// Holds `objects`; refuses every key in `failing` while `refusing` is set.
 struct FlakyStore {
@@ -282,6 +282,16 @@ async fn a_debt_that_keeps_failing_is_named_stuck() -> TestResult {
         .await?;
         let renewed = pg.retry_cold_object_purges(options.dry_run(true)).await?;
         assert_eq!((renewed.due, renewed.stuck_count), (1, 1));
+
+        sqlx::query("UPDATE proxiima_core.cold_purge_pending SET attempts = 41")
+            .execute(pool)
+            .await?;
+        let exponent_limited = options
+            .backoff_base(Duration::from_secs(1))
+            .backoff_max(Duration::from_secs(1 << 42));
+        let outcome = pg.retry_cold_object_purges(exponent_limited).await?;
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(delays(pool).await?, (42, 1 << 40));
         Ok(())
     }
     .await;
@@ -389,7 +399,7 @@ async fn an_object_purge_pass_drains_or_skips_under_the_maintenance_lock() -> Te
         // Raw INSERT: no write path for cold_purge_pending reachable from test fixtures
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
-             VALUES ('objects/elsewhere', NULL, 's3:test/other')",
+             VALUES ('objects/elsewhere', NULL, 's3:aws/other')",
         )
         .execute(pg.pool_for_tests())
         .await?;

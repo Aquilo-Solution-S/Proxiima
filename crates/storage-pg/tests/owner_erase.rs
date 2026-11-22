@@ -64,7 +64,7 @@ impl ColdObjectStore for RefusingDeleteCold {
     fn store_id(&self) -> &proxiima_core::ObjectStoreId {
         static ID: std::sync::LazyLock<proxiima_core::ObjectStoreId> =
             std::sync::LazyLock::new(|| {
-                proxiima_core::ObjectStoreId::parse("s3:test/bucket").expect("test store id")
+                proxiima_core::ObjectStoreId::parse("s3:aws/bucket").expect("test store id")
             });
         &ID
     }
@@ -83,11 +83,11 @@ struct BucketNamedCold {
 }
 
 impl BucketNamedCold {
-    /// The store `s3:test/<bucket>`, the identity the fixtures below record.
+    /// The store `s3:aws/<bucket>`, the identity the fixtures below record.
     fn new(bucket: &str) -> Self {
         Self {
             objects: std::sync::Mutex::default(),
-            store: proxiima_core::ObjectStoreId::parse(&format!("s3:test/{bucket}"))
+            store: proxiima_core::ObjectStoreId::parse(&format!("s3:aws/{bucket}"))
                 .expect("test store id"),
         }
     }
@@ -200,7 +200,7 @@ async fn cite_blob(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
               status, blob_id, sha256, expires_at, completed_at)
-         VALUES ($1, 'bucket', 's3:test/bucket', $2, 'cited.pdf', 'application/pdf', 1,
+         VALUES ($1, 'bucket', 's3:aws/bucket', $2, 'cited.pdf', 'application/pdf', 1,
                  'completed', $3, $4, now() + interval '1 hour', now())",
     )
     .bind(owner.into_inner())
@@ -251,7 +251,7 @@ async fn completed_blob_upload(
         "INSERT INTO proxiima_core.blob_uploads
              (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
               status, blob_id, sha256, expires_at, completed_at)
-         VALUES ($1, 'bucket', 's3:test/bucket', $2, 'unreferenced.pdf', 'application/pdf', 1,
+         VALUES ($1, 'bucket', 's3:aws/bucket', $2, 'unreferenced.pdf', 'application/pdf', 1,
                  'completed', $3, $4, now() + interval '1 hour', now())",
     )
     .bind(owner.into_inner())
@@ -964,7 +964,7 @@ async fn erase_personal_owner_destroys_blobs_uploads_and_citation_sidecars() {
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                  (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len, expires_at)
-             VALUES ($1, 'bucket', 's3:test/bucket', 'pending/1', 'draft.pdf', 'application/pdf', 1,
+             VALUES ($1, 'bucket', 's3:aws/bucket', 'pending/1', 'draft.pdf', 'application/pdf', 1,
                      now() + interval '1 hour')",
         )
         .bind(owner.into_inner())
@@ -1192,7 +1192,7 @@ async fn failed_cold_purge_is_attributed_and_bounded_retry_clears_audit() {
         // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
-             VALUES ('objects/test-second-debt', $1, 's3:test/bucket')",
+             VALUES ('objects/test-second-debt', $1, 's3:aws/bucket')",
         )
         .bind(owner.into_inner())
         .execute(pool)
@@ -1403,8 +1403,8 @@ async fn a_drain_skips_and_names_debts_owed_by_another_store() {
         // Raw INSERT on purpose: a debt for an arbitrary object key, which the write path never owes.
         sqlx::query(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
-             VALUES ('cold/mine', $1, 's3:test/wired-bucket'),
-                    ('cold/theirs', $1, 's3:test/other-bucket')",
+             VALUES ('cold/mine', $1, 's3:aws/wired-bucket'),
+                    ('cold/theirs', $1, 's3:aws/other-bucket')",
         )
         .bind(owner.into_inner())
         .execute(pool)
@@ -1412,7 +1412,7 @@ async fn a_drain_skips_and_names_debts_owed_by_another_store() {
 
         let foreign_before: (i32, time::OffsetDateTime, time::OffsetDateTime) = sqlx::query_as(
             "SELECT attempts, next_attempt_at, enqueued_at FROM proxiima_core.cold_purge_pending
-              WHERE object_store = 's3:test/other-bucket'",
+              WHERE object_store = 's3:aws/other-bucket'",
         )
         .fetch_one(pool)
         .await?;
@@ -1431,18 +1431,18 @@ async fn a_drain_skips_and_names_debts_owed_by_another_store() {
                 .iter()
                 .map(|(store, count)| (store.as_str().to_owned(), *count))
                 .collect::<Vec<_>>(),
-            vec![("s3:test/other-bucket".to_owned(), 1)],
+            vec![("s3:aws/other-bucket".to_owned(), 1)],
             "the operator is told which store is owed"
         );
         assert_eq!(drained.remaining(), 0, "nothing else is owed to the wired store");
         let foreign_after: (i32, time::OffsetDateTime, time::OffsetDateTime) = sqlx::query_as(
             "SELECT attempts, next_attempt_at, enqueued_at FROM proxiima_core.cold_purge_pending
-              WHERE object_store = 's3:test/other-bucket'",
+              WHERE object_store = 's3:aws/other-bucket'",
         )
         .fetch_one(pool)
         .await?;
         assert_eq!(foreign_after, foreign_before, "the foreign debt is untouched");
-        sqlx::query("DELETE FROM proxiima_core.cold_purge_pending WHERE object_store = 's3:test/other-bucket'")
+        sqlx::query("DELETE FROM proxiima_core.cold_purge_pending WHERE object_store = 's3:aws/other-bucket'")
             .execute(pool)
             .await?;
         assert_eq!(pending_debts(pool).await?, 0);
@@ -1496,7 +1496,7 @@ async fn erase_source_scope_deletes_only_unshared_selected_blobs_and_objects() {
         sqlx::query(
             "INSERT INTO proxiima_core.blob_uploads
                  (owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len, expires_at)
-             VALUES ($1, 'bucket', 's3:test/bucket', 'pending/2', 'draft.pdf', 'application/pdf', 1,
+             VALUES ($1, 'bucket', 's3:aws/bucket', 'pending/2', 'draft.pdf', 'application/pdf', 1,
                      now() + interval '1 hour')",
         )
         .bind(owner.into_inner())

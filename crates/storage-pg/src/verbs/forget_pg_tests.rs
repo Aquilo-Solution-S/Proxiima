@@ -2055,7 +2055,7 @@ impl ColdObjectStore for FailDeleteCold {
     fn store_id(&self) -> &proxiima_core::ObjectStoreId {
         static ID: std::sync::LazyLock<proxiima_core::ObjectStoreId> =
             std::sync::LazyLock::new(|| {
-                proxiima_core::ObjectStoreId::parse("s3:test/bucket").expect("test store id")
+                proxiima_core::ObjectStoreId::parse("s3:aws/bucket").expect("test store id")
             });
         &ID
     }
@@ -2297,7 +2297,7 @@ async fn stale_purge_plan_rechecks_current_debt_before_provider_delete() {
         );
         assert_eq!(
             sqlx::query(
-                "UPDATE proxiima_core.cold_purge_pending SET object_store = 's3:test/other-bucket'
+                "UPDATE proxiima_core.cold_purge_pending SET object_store = 's3:aws/other-bucket'
                  WHERE object_key = $1",
             )
             .bind(reassigned_key)
@@ -2334,7 +2334,7 @@ async fn stale_purge_plan_rechecks_current_debt_before_provider_delete() {
         .await?;
         assert_eq!(
             remaining,
-            vec![(reassigned_key.to_owned(), "s3:test/other-bucket".to_owned())],
+            vec![(reassigned_key.to_owned(), "s3:aws/other-bucket".to_owned())],
             "the reassigned obligation survives with its actual store"
         );
         Ok(())

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-const STORE: &str = "s3:test/lease";
+const STORE: &str = "s3:aws/lease";
 
 async fn fresh() -> TestResult<(String, PgStorage)> {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

@@ -315,12 +315,8 @@ async fn run_migrate(
 /// Reconcile the blob store against the rows that name it, and print what
 /// disagrees.
 ///
-/// NO ADVISORY LOCK, unlike `maintain-embeddings`. That pass mutates —
-/// it deletes orphan rows and enqueues jobs — so two of them racing would
-/// duplicate work. This one only reads, so concurrent passes are merely
-/// redundant, and a lock would add a failure mode (a crashed holder blocking
-/// the health check) to a verb whose whole job is telling you something is
-/// wrong.
+/// Reconciliation can record purge debt for a late canonical object.
+/// The owner and key fences protect that write.
 ///
 /// EXITS 0 EVEN WHEN ARTEFACTS ARE MISSING, matching `maintain-embeddings`
 /// and `maintain-storage`. A non-zero exit here would mean "the pass

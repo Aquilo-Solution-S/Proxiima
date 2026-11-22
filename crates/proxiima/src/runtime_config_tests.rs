@@ -1369,3 +1369,51 @@ async fn the_env_oidc_authenticator_fills_in_only_without_one_in_code() {
         "a code authenticator wins; the env one is never built"
     );
 }
+
+#[test]
+fn object_maintenance_cadence_is_validated_before_startup() {
+    let s3 = S3RuntimeConfig {
+        bucket: "bucket".into(),
+        region: "region".into(),
+        key_pair: proxiima_blob_s3::S3KeyPair::new(String::new(), String::new()),
+        endpoint_url: None,
+        plaintext_hosts: proxiima_core::PlaintextHosts::none(),
+        force_path_style: false,
+        upload_ttl_seconds: 60,
+        max_blob_bytes: None,
+        store_id: None,
+    };
+    let builder = served_builder();
+    assert!(
+        builder
+            .clone()
+            .object_purge_interval(Duration::from_secs(61))
+            .resolve()
+            .is_ok()
+    );
+    let builder = builder.s3(s3);
+    let Err(ProxiimaError::Config(message)) = builder
+        .clone()
+        .object_purge_interval(Duration::from_millis(60_001))
+        .resolve()
+    else {
+        panic!("an interval longer than the upload TTL must fail startup");
+    };
+    assert!(
+        message.contains("PROXIIMA_OBJECT_PURGE_INTERVAL_SECS"),
+        "{message}"
+    );
+    assert!(
+        message.contains("PROXIIMA_S3_UPLOAD_TTL_SECONDS"),
+        "{message}"
+    );
+    for interval in [Duration::ZERO, Duration::from_secs(60)] {
+        assert!(
+            builder
+                .clone()
+                .object_purge_interval(interval)
+                .resolve()
+                .is_ok()
+        );
+    }
+}

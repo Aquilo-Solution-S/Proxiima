@@ -166,7 +166,7 @@ async fn cited_object_replacement_preserves_bytes_and_moves_only_primary_upload(
             .execute(&mut *tx)
             .await?;
         // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
-        sqlx::query("INSERT INTO proxiima_core.blob_uploads (upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES ($1,$2,'test','objects/blob','blob.bin','application/octet-stream',32,$3,$4,'s3:test/bucket',now()+interval '1 day')")
+        sqlx::query("INSERT INTO proxiima_core.blob_uploads (upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES ($1,$2,'test','objects/blob','blob.bin','application/octet-stream',32,$3,$4,'s3:aws/bucket',now()+interval '1 day')")
             .bind(upload)
             .bind(owner)
             .bind(source)
@@ -305,7 +305,7 @@ async fn cited_object_chain_moves_upload_to_terminal_primary() {
             .bind(source).bind(owner).bind(SOURCE_SCHEMA).bind(&hash)
             .execute(&mut *tx).await?;
         // Raw INSERT: no write path for blob_uploads reachable from test fixtures (the object store writes it).
-        sqlx::query("INSERT INTO proxiima_core.blob_uploads(upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES($1,$2,'test','objects/chain','chain.bin','application/octet-stream',32,$3,$4,'s3:test/bucket',now()+interval '1 day')")
+        sqlx::query("INSERT INTO proxiima_core.blob_uploads(upload_id,owner_id,bucket,object_key,filename,mime,expected_byte_len,blob_id,content_hash,object_store,expires_at) VALUES($1,$2,'test','objects/chain','chain.bin','application/octet-stream',32,$3,$4,'s3:aws/bucket',now()+interval '1 day')")
             .bind(upload).bind(owner).bind(source).bind(&hash)
             .execute(&mut *tx).await?;
         let metadata: serde_json::Value = sqlx::query_scalar("SELECT to_jsonb(upload)-'blob_id' FROM proxiima_core.blob_uploads upload WHERE upload_id=$1")

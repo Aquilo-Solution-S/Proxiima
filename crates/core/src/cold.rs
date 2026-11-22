@@ -146,10 +146,11 @@ impl ObjectStoreId {
     /// Parse an identity read back from storage.
     ///
     /// # Errors
-    /// [`ObjectStoreIdError::Malformed`] unless the value has a lower-case
-    /// scheme prefix (`[a-z][a-z0-9]*:`) and fits the stored bound.
+    /// [`ObjectStoreIdError::Malformed`] if the value exceeds the stored bound,
+    /// lacks a lower-case scheme prefix (`[a-z][a-z0-9]*:`), or has a
+    /// noncanonical body under the built-in `memory` or `s3` scheme.
     pub fn parse(stored: &str) -> Result<Self, ObjectStoreIdError> {
-        let Some((scheme, _)) = stored.split_once(':') else {
+        let Some((scheme, body)) = stored.split_once(':') else {
             return Err(ObjectStoreIdError::Malformed);
         };
         let mut bytes = scheme.bytes();
@@ -159,7 +160,21 @@ impl ObjectStoreId {
         if !well_formed {
             return Err(ObjectStoreIdError::Malformed);
         }
-        Ok(Self(stored.to_owned()))
+        let canonical = match scheme {
+            "memory" => Ok(Self::memory()),
+            "s3" => match body.rsplit_once('/') {
+                Some(("id", name)) => Self::operator(name),
+                Some(("aws", bucket)) => Self::derive_s3(None, bucket),
+                Some((origin, bucket)) => Self::derive_s3(Some(origin), bucket),
+                None => return Err(ObjectStoreIdError::Malformed),
+            },
+            // Other adapters own the bodies of their scheme-prefixed identities.
+            _ => return Ok(Self(stored.to_owned())),
+        };
+        canonical
+            .ok()
+            .filter(|id| id.as_str() == stored)
+            .ok_or(ObjectStoreIdError::Malformed)
     }
 
     #[must_use]
@@ -311,11 +326,30 @@ mod tests {
         for id in [
             ObjectStoreId::memory(),
             ObjectStoreId::operator("a").expect("valid"),
-            ObjectStoreId::derive_s3(Some("http://h:1"), "b").expect("valid"),
+            ObjectStoreId::derive_s3(Some("http://h:1/base"), "b").expect("valid"),
+            ObjectStoreId::derive_s3(None, "b").expect("valid"),
+            ObjectStoreId::parse("custom:target").expect("external scheme"),
         ] {
             assert_eq!(ObjectStoreId::parse(id.as_str()), Ok(id));
         }
-        for malformed in ["", "bucket-name", "S3:aws/b", "1x:y", ":"] {
+        for malformed in [
+            "",
+            "bucket-name",
+            "S3:aws/b",
+            "1x:y",
+            ":",
+            "memory:body",
+            "s3:",
+            "s3:id/",
+            "s3:id/bad name",
+            "s3:id/a/b",
+            "s3:aws/",
+            "s3:aws/a/b",
+            "s3:host/b",
+            "s3:https://HOST:443/b",
+            "s3:https://host//b",
+            "s3:https://host?query/b",
+        ] {
             assert_eq!(
                 ObjectStoreId::parse(malformed),
                 Err(ObjectStoreIdError::Malformed),

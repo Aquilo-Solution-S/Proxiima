@@ -5,6 +5,16 @@ pub const DEFAULT_BIND: &str = "127.0.0.1:31415";
 pub const DEFAULT_DATABASE_URL: &str =
     proxiima_core::ledger!(Proxiima.Repository.mcpDefaultDatabaseUrl);
 
+// Each action spelling feeds the parser, diagnostics and static help.
+macro_rules! storage_action_flag {
+    (retry) => {
+        "--retry-cold-object-purges"
+    };
+    (sweep) => {
+        "--sweep-expired-uploads"
+    };
+}
+
 /// Rows per transaction of `maintain-storage` without `--batch-size`.
 const DEFAULT_MAINTENANCE_BATCH: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 
@@ -54,9 +64,8 @@ Maintenance:
   maintain-embeddings      One self-healing pass: orphan sweep, reconcile
                            enqueue, health report.
                            Cron-safe (skips if another pass holds the lease)
-  maintain-storage         One storage pass: retry the object-store purge
-                           debts committed erases left, and/or rotate the
-                           change log on an explicit horizon. Cron-safe
+  maintain-storage         One storage pass: sweep expired uploads and/or
+                           retry object-store purge debt. Cron-safe
   maintain-blobs           One reconcile pass over the S3 bucket: report
                            artefacts whose object is gone, objects no row
                            claims, and rows naming another store. Deletes
@@ -142,7 +151,8 @@ Optional:
   -h, --help               Print this help
 ";
 
-pub const STORAGE_MAINTENANCE_USAGE: &str = "\
+pub const STORAGE_MAINTENANCE_USAGE: &str = concat!(
+    "\
 Usage: proxiima-mcp maintain-storage [OPTIONS]
 
 One storage-maintenance pass. Passes are serialized by a maintenance lease in
@@ -153,22 +163,25 @@ same sweep and drain in-process under the same lease
 no server, to name stuck debt, or to name and drain debt owed to another
 store, which a server refuses to start over.
 
-Neither action is a promise to a user. The drain finishes destruction a
-committed owner erase already owes the object store; the prune is log
-rotation. What a host promises about retention or holds is the host's to
-enforce before it calls erase.
+The sweep records purge debt for expired uploads. The drain finishes
+destruction already owed to the object store. Enforce retention promises
+and holds before calling erase.
 
 At least one action flag is required — there are deliberately no
 destruction defaults.
 
 Actions (at least one):
-  --retry-cold-object-purges
+  ",
+    storage_action_flag!(retry),
+    "
                            Retry a bounded batch of exact object-store keys
                            left by committed owner erases. Live retry
                            requires the serving host's PROXIIMA_S3_* block.
                            Exits non-zero while debt is owed to another
                            object store
-  --sweep-expired-uploads  Expire uploads whose TTL passed before they were
+  ",
+    storage_action_flag!(sweep),
+    "  Expire uploads whose TTL passed before they were
                            staged, owing both of their keys. Requires the
                            PROXIIMA_S3_* block; not with --dry-run
 
@@ -178,7 +191,8 @@ Optional:
   --dry-run                Report what would be purged without
                            changing anything
   -h, --help               Print this message
-";
+"
+);
 
 #[derive(Clone)]
 pub struct McpConfig {
@@ -449,7 +463,7 @@ pub fn parse_maintain_blobs_args<I: IntoIterator<Item = String>>(
 /// # Errors
 ///
 /// Returns `ArgsError` for help, unknown flags, missing values, an invalid
-/// duration or batch size, or when no action flag is given — destruction
+/// batch size, or when no action flag is given — destruction
 /// must be an explicit operator choice, so there is no default action.
 pub fn parse_storage_maintenance_args<I: IntoIterator<Item = String>>(
     args: I,
@@ -463,8 +477,8 @@ pub fn parse_storage_maintenance_args<I: IntoIterator<Item = String>>(
     let mut flags = Flags::new(args);
     while let Some(flag) = flags.next_flag()? {
         match flag.as_str() {
-            "--retry-cold-object-purges" => retry_cold_object_purges = true,
-            "--sweep-expired-uploads" => sweep_expired_uploads = true,
+            storage_action_flag!(retry) => retry_cold_object_purges = true,
+            storage_action_flag!(sweep) => sweep_expired_uploads = true,
             "--dry-run" => dry_run = true,
             "--database-url" => database_url = Some(flags.value("--database-url")?),
             "--batch-size" => {
@@ -481,13 +495,18 @@ pub fn parse_storage_maintenance_args<I: IntoIterator<Item = String>>(
 
     if !retry_cold_object_purges && !sweep_expired_uploads {
         return Err(ArgsError::Invalid(
-            "maintain-storage requires --retry-cold-object-purges or --sweep-expired-uploads"
-                .into(),
+            concat!(
+                "maintain-storage requires ",
+                storage_action_flag!(retry),
+                " or ",
+                storage_action_flag!(sweep),
+            )
+            .into(),
         ));
     }
     if sweep_expired_uploads && dry_run {
         return Err(ArgsError::Invalid(
-            "--sweep-expired-uploads has no dry run".into(),
+            concat!(storage_action_flag!(sweep), " has no dry run").into(),
         ));
     }
 

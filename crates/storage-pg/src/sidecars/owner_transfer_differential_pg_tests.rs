@@ -278,7 +278,7 @@ async fn blob_row(
         "INSERT INTO proxiima_core.blob_uploads
              (upload_id, owner_id, bucket, object_store, object_key, filename, mime, expected_byte_len,
               status, blob_id, sha256, content_hash, etag, expires_at, completed_at)
-         VALUES ($1, $2, 'bucket', 's3:test/bucket', $3, 'f.pdf', 'application/pdf', 1,
+         VALUES ($1, $2, 'bucket', 's3:aws/bucket', $3, 'f.pdf', 'application/pdf', 1,
                  'completed'::proxiima_core.blob_upload_status, $4, $5, $6, 'etag-1',
                  TIMESTAMPTZ '2030-01-01 00:00:00Z', TIMESTAMPTZ '2026-01-01 00:00:00Z')",
     )
@@ -557,7 +557,7 @@ pub async fn seed(pool: &PgPool) -> Result<Corpus, Box<dyn std::error::Error>> {
     sqlx::query(
         "INSERT INTO proxiima_core.cold_purge_pending
              (owner_id, object_key, object_store, enqueued_at)
-         VALUES ($1, 'cold/never-drained', 's3:test/bucket', TIMESTAMPTZ '2026-04-04 00:00:00Z')",
+         VALUES ($1, 'cold/never-drained', 's3:aws/bucket', TIMESTAMPTZ '2026-04-04 00:00:00Z')",
     )
     .bind(source.into_inner())
     .execute(pool)

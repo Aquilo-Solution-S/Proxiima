@@ -61,7 +61,7 @@ async fn seed_fork_blob(
              (owner_id, bucket, object_store, object_key, filename, mime,
               expected_byte_len, status, blob_id, sha256, content_hash,
               expires_at, completed_at)
-         VALUES ($1, 'bucket', 's3:test/bucket', 'placeholder', 'fork.bin',
+         VALUES ($1, 'bucket', 's3:aws/bucket', 'placeholder', 'fork.bin',
                  'application/octet-stream', 3, 'completed', $2, $3, $3,
                  now() + interval '1 day', now())
          RETURNING upload_id",

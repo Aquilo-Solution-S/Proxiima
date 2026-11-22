@@ -989,9 +989,6 @@ const KERNEL_SURFACES: &[Surface] = &[
         // to name the same owner.
         transfer: TransferRule::Follow,
         erase: EraseRule::ByOwner,
-        // DECLARED GAP for the bytes: the upload rows are carried field by
-        // field (no bucket, object_key, etag or error_message); the uploaded
-        // blob bytes themselves are deferred past #478.
         export: ExportRule::Allowlist(&[
             "upload_id",
             "blob_id",

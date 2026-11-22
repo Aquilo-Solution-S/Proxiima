@@ -219,7 +219,7 @@ mod tests {
             mounted_from_upload_id: None,
             content_hash: *blake3::hash(bytes).as_bytes(),
             bucket: "bucket".into(),
-            object_store: "s3:test/bucket".into(),
+            object_store: "s3:aws/bucket".into(),
             object_key: "objects/owner/core/uploaded-blob-v1/hash".into(),
             sha256,
             byte_len: u64::try_from(bytes.len()).unwrap(),
