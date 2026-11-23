@@ -18,7 +18,7 @@ abbrev BlobId            : Type := Id
 /-- Identifier of a typed sidecar payload. -/
 abbrev ContentId         : Type := Id
 
-/-- The version identities describing a retrieval situation. -/
+/-- The version identities admitted to a retrieval cue. -/
 abbrev Cue : Type := Set MemoryId
 
 /-- Proof representation of `Proxiima.Identity.WriterAttribution`. -/

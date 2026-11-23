@@ -889,6 +889,170 @@ macro_rules! ledger {
     (Proxiima.Repository.mcpDefaultDatabaseUrl) => {
         "postgres://postgres@localhost/proxiima_dev"
     };
+    // The shared ceiling in characters for tool text and hydrated search bodies.
+    (Proxiima.Search.textMaxChars) => {
+        8000
+    };
+    // The default requested search page size.
+    (Proxiima.Search.defaultPageSize) => {
+        8
+    };
+    // The maximum number of hits in a Memory search page.
+    (Proxiima.Search.pageSizeMax) => {
+        50
+    };
+    // The maximum number of search space selectors before deduplication.
+    (Proxiima.Search.spacesMax) => {
+        16
+    };
+    // The maximum number of raw search tag filters.
+    (Proxiima.Search.tagsMax) => {
+        16
+    };
+    // The maximum consumed depth of a relevance cursor.
+    (Proxiima.Search.relevanceDepthMax) => {
+        5000
+    };
+    // The lower endpoint of the search score interval.
+    (Proxiima.Search.unitScoreFloor) => {
+        0
+    };
+    // The upper endpoint of the search score interval.
+    (Proxiima.Search.unitScoreCeiling) => {
+        1
+    };
+    // The denominator offset for federated reciprocal ranks.
+    (Proxiima.Search.storeRankOffset) => {
+        60
+    };
+    // The denominator offset for hybrid reciprocal ranks.
+    (Proxiima.Search.hybridRankOffset) => {
+        60
+    };
+    // The default semantic weight on a ten-point scale.
+    (Proxiima.Search.hybridSemanticWeightTenths) => {
+        5
+    };
+    // The fixed candidate horizon per hybrid leg.
+    (Proxiima.Search.hybridWindow) => {
+        1000
+    };
+    // The core projection candidate limit per statement.
+    (Proxiima.Search.coreProjectionCap) => {
+        1000
+    };
+    // The non-hybrid budget multiplier before the projection cap.
+    (Proxiima.Search.requestOverfetchFactor) => {
+        20
+    };
+    // The per-query cap for scanning semantic candidates.
+    (Proxiima.Search.semanticScanCap) => {
+        1000
+    };
+    // The snippet budget in bytes.
+    (Proxiima.Search.snippetBytes) => {
+        480
+    };
+    // The deadline in seconds on a vector index request.
+    (Proxiima.Search.vectorRequestSeconds) => {
+        10
+    };
+    // The byte limit on a vector index request body.
+    (Proxiima.Search.vectorBodyBytes) => {
+        33554432
+    };
+    // The minimum character count for a vector index token.
+    (Proxiima.Search.vectorTokenMinChars) => {
+        32
+    };
+    // The explicit automatic lexical configuration request.
+    (Proxiima.Search.lexicalAuto) => {
+        "auto"
+    };
+    // The explicit deployment lexical configuration sentinel.
+    (Proxiima.Search.lexicalDeploymentDefault) => {
+        "@deployment"
+    };
+    // PostgreSQL text search weight classes in increasing weight order.
+    (Proxiima.Search.weightClasses) => {
+        ["D", "C", "B", "A"]
+    };
+    // Default PostgreSQL weights by increasing class on a ten-point scale.
+    (Proxiima.Search.postgresWeightTenths) => {
+        [1, 2, 4, 10]
+    };
+    // The declared relative weight of a uniformly weighted field.
+    (Proxiima.Search.uniformWeight) => {
+        1
+    };
+    // The flag combination omitting normalization.
+    (Proxiima.Search.normalizationNone) => {
+        0
+    };
+    // The PostgreSQL rank scaling flag.
+    (Proxiima.Search.normalizationScale) => {
+        32
+    };
+    // The PostgreSQL logarithmic document length flag.
+    (Proxiima.Search.normalizationLogLength) => {
+        1
+    };
+    // The decimal precision of rendered band endpoints.
+    (Proxiima.Search.bandDecimalPlaces) => {
+        2
+    };
+    // The exact match band floor as a percentage.
+    (Proxiima.Search.exactFloorPercent) => {
+        50
+    };
+    // The exact match band ceiling as a percentage.
+    (Proxiima.Search.exactCeilingPercent) => {
+        100
+    };
+    // The rescue band floor as a percentage.
+    (Proxiima.Search.rescueFloorPercent) => {
+        25
+    };
+    // The rescue band ceiling as a percentage.
+    (Proxiima.Search.rescueCeilingPercent) => {
+        45
+    };
+    // The flat substring score as a percentage.
+    (Proxiima.Search.substringPercent) => {
+        25
+    };
+    // The minimum admitted HNSW search breadth.
+    (Proxiima.Search.hnswEfSearchMin) => {
+        1
+    };
+    // The maximum admitted HNSW search breadth.
+    (Proxiima.Search.hnswEfSearchMax) => {
+        1000
+    };
+    // The minimum admitted HNSW iterative scan tuple cap.
+    (Proxiima.Search.hnswScanTuplesMin) => {
+        1
+    };
+    // The maximum admitted HNSW iterative scan tuple cap.
+    (Proxiima.Search.hnswScanTuplesMax) => {
+        2147483647
+    };
+    // Default HNSW search breadth.
+    (Proxiima.Search.hnswDefaultBreadth) => {
+        100
+    };
+    // Default tuple limit for iterative HNSW scans.
+    (Proxiima.Search.hnswDefaultTupleCap) => {
+        20000
+    };
+    // Default mode for iterative HNSW scans.
+    (Proxiima.Search.hnswDefaultMode) => {
+        "relaxed_order"
+    };
+    // Unique candidate IDs a spiice passes to the Query authority path in one request.
+    (Proxiima.Search.authorizedCandidateMax) => {
+        2000
+    };
     // The loopback address supplied by the canonical MCP host.
     (Proxiima.Transport.canonicalBind) => {
         "127.0.0.1:31415"

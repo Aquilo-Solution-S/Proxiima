@@ -6830,6 +6830,492 @@ stateDiagram-v2
 
 **retired drain** = \[inventoryRawAdmissionsByAscendingOwnerPages, commitEachOwnerPage, resumeFromRemainingAdmissions]: Retired Fact drain uses raw admissions and resumes at committed page boundaries.
 
+## Search
+
+**Candidate bound**: What a candidate source can conclude about the search window.
+
+- complete
+- bounded
+- unknown
+
+**Rank comparison**: Comparison outcomes for a pair of ranked hits.
+
+- lt
+- eq
+- gt
+
+**Search mode**: The requested ranking mode and the effective mode on an owner lane.
+
+- lexical
+- semantic
+- hybrid
+
+**Lane route**: Search proceeds on a ready lane, or degrades or refuses an unavailable semantic leg.
+
+- lexical
+- semantic
+- hybrid
+- degradedLexical
+- refuse
+
+**Candidate stage**: The order of choosing candidates and presenting their snippet on a result page.
+
+- restrictToAdmissible
+- boundRankedWindow
+- admitVisibleMemory
+- selectPage
+- hydrateSnippet
+
+**Projection requirement**: The fields determining whether a ranked projection participates in the shared search.
+
+- rendererBands
+- comparableScale
+- matchesRequestedKind
+- matchesRequestedSchema
+- supportsRequestedTags
+
+**Render property**: The properties a shared lexical statement renders once for its spiice.
+
+- language
+- bands
+- rankWeights
+
+**Core band**: Rank windows known to the shared projection renderer.
+
+- exact
+- rescue
+- substring
+
+**Language policy**: Lexical configuration policy for a projected row.
+
+- perRow
+- pinned
+- pinnedUnion
+
+**Language stamp**: Which configuration a lexical projection stamps.
+
+- rowConfig
+- pinnedConfig
+- firstPinnedConfig
+
+**Relevance lanes**: The evidence that tells relevance paging how to merge the selected lanes.
+
+- single
+- equalScale
+- unequalScale
+
+**Relevance order**: The ordering space that also defines the continuation.
+
+- score
+- perLaneRank
+
+**Relevance key**: Ordered keys carried by a relevance continuation.
+
+- scoreBits
+- admissionId
+- consumedDepth
+
+**Vector key field**: The fields used to advance the index's entry scan.
+
+- entityId
+- model
+- dimension
+
+**Vector operation**: A request that reaches the vector HTTP boundary.
+
+- put
+- delete
+- owner
+- nearest
+- entries
+
+**Vector http result**: The branch that prices an index HTTP result.
+
+- refused
+- unavailable
+- unknownStore
+
+**Tag filter stage**: Search tag processing stages.
+
+- capRawList
+- trim
+- foldAscii
+- discardBlank
+- sort
+- deduplicate
+
+**Hybrid stage**: The steps that turn admitted hybrid hits into a page.
+
+- floorEachLeg
+- rankEachLeg
+- sumWeightedReciprocals
+- pageFusedResults
+
+**Candidate horizon**: Ranked search can retain a fixed horizon, widen with cursor depth or push the keyset into the candidate scan.
+
+- fixed
+- depthPlusPage
+- recencyKeyset
+
+**Iterative scan**: The lexical forms of pgvector's iterative index scan.
+
+- off
+- strictOrder
+- relaxedOrder
+
+**Hnsw setting**: The GUCs that a semantic search sets locally for its transaction.
+
+- searchBreadth
+- iterativeScan
+- scanTupleCap
+
+**Hit score**: Sources of score for a returned search hit.
+
+- lexical
+- semantic
+- hybridWeightedRanks
+- storeRank
+
+**Language declaration**: Shape of a lexical declaration at freeze.
+
+- pinned
+- emptyUnion
+- nonemptyUnion
+- emittedColumn
+- otherColumn
+
+**Lexical request**: The request classes at lexical configuration resolution.
+
+- omitted
+- reliableDetection
+- unreliableDetection
+- recognizedLanguage
+- plausibleConfig
+- malformed
+
+**Lexical resolution**: What the lexical resolver hands to admission.
+
+- deployment
+- detectedConfig
+- languageConfig
+- explicitConfig
+- refusal
+
+**text max chars** = 8000: The shared ceiling in characters for tool text and hydrated search bodies.
+
+**default page size** = 8: The default requested search page size.
+
+**page size max** = 50: The maximum number of hits in a Memory search page.
+
+**spaces max** = 16: The maximum number of search space selectors before deduplication.
+
+**tags max** = 16: The maximum number of raw search tag filters.
+
+**relevance depth max** = 5000: The maximum consumed depth of a relevance cursor.
+
+**unit score floor** = 0: The lower endpoint of the search score interval.
+
+**unit score ceiling** = 1: The upper endpoint of the search score interval.
+
+**store rank offset** = 60: The denominator offset for federated reciprocal ranks.
+
+**hybrid rank offset** = 60: The denominator offset for hybrid reciprocal ranks.
+
+**hybrid semantic weight tenths** = 5: The default semantic weight on a ten-point scale.
+
+**hybrid window** = 1000: The fixed candidate horizon per hybrid leg.
+
+**core projection cap** = 1000: The core projection candidate limit per statement.
+
+**request overfetch factor** = 20: The non-hybrid budget multiplier before the projection cap.
+
+**semantic scan cap** = 1000: The per-query cap for scanning semantic candidates.
+
+**snippet bytes** = 480: The snippet budget in bytes.
+
+**vector request seconds** = 10: The deadline in seconds on a vector index request.
+
+**vector body bytes** = 33554432: The byte limit on a vector index request body.
+
+**vector token min chars** = 32: The minimum character count for a vector index token.
+
+**lexical auto** = "auto": The explicit automatic lexical configuration request.
+
+**lexical deployment default** = "@deployment": The explicit deployment lexical configuration sentinel.
+
+**weight classes** = \["D", "C", "B", "A"]: PostgreSQL text search weight classes in increasing weight order.
+
+**postgres weight tenths** = \[1, 2, 4, 10]: Default PostgreSQL weights by increasing class on a ten-point scale.
+
+**uniform weight** = 1: The declared relative weight of a uniformly weighted field.
+
+**normalization none** = 0: The flag combination omitting normalization.
+
+**normalization scale** = 32: The PostgreSQL rank scaling flag.
+
+**normalization log length** = 1: The PostgreSQL logarithmic document length flag.
+
+**band decimal places** = 2: The decimal precision of rendered band endpoints.
+
+**exact floor percent** = 50: The exact match band floor as a percentage.
+
+**exact ceiling percent** = 100: The exact match band ceiling as a percentage.
+
+**rescue floor percent** = 25: The rescue band floor as a percentage.
+
+**rescue ceiling percent** = 45: The rescue band ceiling as a percentage.
+
+**substring percent** = 25: The flat substring score as a percentage.
+
+**hnsw ef search min** = 1: The minimum admitted HNSW search breadth.
+
+**hnsw ef search max** = 1000: The maximum admitted HNSW search breadth.
+
+**hnsw scan tuples min** = 1: The minimum admitted HNSW iterative scan tuple cap.
+
+**hnsw scan tuples max** = 2147483647: The maximum admitted HNSW iterative scan tuple cap.
+
+**candidate stages** = \[restrictToAdmissible, boundRankedWindow, admitVisibleMemory, selectPage, hydrateSnippet]: Spend the window on admissible candidates, read visible Memories, then hydrate the selected page.
+
+**projection requirements** = \[comparableScale, rendererBands, matchesRequestedKind, matchesRequestedSchema, supportsRequestedTags]: An unscoped search still requires the renderer's comparable bands and narrows only by supplied filters.
+
+**uniform properties** = \[language, bands, rankWeights]: All projected schemas sharing the renderer agree on language, score windows and rank weights.
+
+**required bands** = \[exact, rescue, substring]: The shared renderer resolves exact, rescue and substring windows by name.
+
+**relevance cursor keys** = \[scoreBits, admissionId, consumedDepth]: Preserve the last emitted score exactly with its admission ID and consumed depth.
+
+**vector entry keys** = \[entityId, model, dimension]: Page vector entries strictly after entity ID, model and dimension.
+
+**vector operations** = \[put, delete, owner, nearest, entries]: The typed POST operations exposed by the vector index router.
+
+**default mode** = hybrid: Default ranking mode when the search request omits it.
+
+**tag filter stages** = \[capRawList, trim, foldAscii, discardBlank, sort, deduplicate]: Bound raw filters before normalizing them to distinct nonblank exact tags.
+
+**hybrid stages** = \[floorEachLeg, rankEachLeg, sumWeightedReciprocals, pageFusedResults]: Apply each leg's raw floor before one-based reciprocal ranking and then page the weighted sum.
+
+**hnsw default breadth** = 100: Default HNSW search breadth.
+
+**hnsw default tuple cap** = 20000: Default tuple limit for iterative HNSW scans.
+
+**hnsw default mode** = "relaxed\_order": Default mode for iterative HNSW scans.
+
+**http candidate bound** = unknown: The HTTP response carries hits without the source's completeness claim.
+
+**authorized candidate max** = 2000: Unique candidate IDs a spiice passes to the Query authority path in one request.
+
+| candidate bound | candidate bound | combine bounds |
+| --- | --- | --- |
+| complete | complete | complete |
+| complete | bounded | bounded |
+| complete | unknown | unknown |
+| bounded | complete | bounded |
+| bounded | bounded | bounded |
+| bounded | unknown | bounded |
+| unknown | complete | unknown |
+| unknown | bounded | bounded |
+| unknown | unknown | unknown |
+
+- combine bounds: Any known cap dominates, and exhaustion needs confirmation from every leg.
+
+| rank comparison | rank comparison | rank comparison | store hit order |
+| --- | --- | --- | --- |
+| lt | lt | lt | lt |
+| lt | lt | eq | lt |
+| lt | lt | gt | lt |
+| lt | eq | lt | lt |
+| lt | eq | eq | lt |
+| lt | eq | gt | lt |
+| lt | gt | lt | lt |
+| lt | gt | eq | lt |
+| lt | gt | gt | lt |
+| eq | lt | lt | lt |
+| eq | lt | eq | lt |
+| eq | lt | gt | lt |
+| eq | eq | lt | lt |
+| eq | eq | eq | eq |
+| eq | eq | gt | gt |
+| eq | gt | lt | gt |
+| eq | gt | eq | gt |
+| eq | gt | gt | gt |
+| gt | lt | lt | gt |
+| gt | lt | eq | gt |
+| gt | lt | gt | gt |
+| gt | eq | lt | gt |
+| gt | eq | eq | gt |
+| gt | eq | gt | gt |
+| gt | gt | lt | gt |
+| gt | gt | eq | gt |
+| gt | gt | gt | gt |
+
+- store hit order: Compare federated scores first, then list position, then source rank.
+
+| source survives | target survives | duplicate | neighbor edge eligible |
+| --- | --- | --- | --- |
+| yes | yes | yes | no |
+| yes | yes | no | yes |
+| yes | no | yes | no |
+| yes | no | no | yes |
+| no | yes | yes | no |
+| no | yes | no | yes |
+| no | no | yes | no |
+| no | no | no | no |
+
+- neighbor edge eligible: Keep a distinct edge when at least one endpoint survives the merged page.
+
+| search mode | semantic ready | lane route |
+| --- | --- | --- |
+| lexical | yes | lexical |
+| lexical | no | lexical |
+| semantic | yes | semantic |
+| semantic | no | refuse |
+| hybrid | yes | hybrid |
+| hybrid | no | degradedLexical |
+
+- lane route: Hybrid falls back to lexical, while explicitly semantic search requires a ready vector leg.
+
+| search mode | supplied | keep semantic weight |
+| --- | --- | --- |
+| lexical | yes | no |
+| lexical | no | no |
+| semantic | yes | no |
+| semantic | no | no |
+| hybrid | yes | yes |
+| hybrid | no | no |
+
+- keep semantic weight: A supplied fusion weight follows only an effective hybrid search.
+
+| language policy | language stamp |
+| --- | --- |
+| perRow | rowConfig |
+| pinned | pinnedConfig |
+| pinnedUnion | firstPinnedConfig |
+
+- language stamp: Use the row's language, the pinned configuration, or the first member of a pinned union.
+
+| declared | ranked hit | uses substring |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
+- uses substring: A ready substring leg is used only when the schema opted in and returned no ranked hits.
+
+| relevance lanes | relevance order |
+| --- | --- |
+| single | score |
+| equalScale | score |
+| unequalScale | perLaneRank |
+
+- relevance order: Compare scores on one scale and interleave ranks across unequal scales.
+
+| vector http result | vector error status |
+| --- | --- |
+| refused | 400 |
+| unavailable | 503 |
+| unknownStore | 404 |
+
+- vector error status: Use distinct response statuses for refusal, unavailability and unknown stores.
+
+| search mode | no rows | has positive semantic score | warns on lexical degradation |
+| --- | --- | --- | --- |
+| lexical | yes | yes | no |
+| lexical | yes | no | no |
+| lexical | no | yes | no |
+| lexical | no | no | no |
+| semantic | yes | yes | no |
+| semantic | yes | no | no |
+| semantic | no | yes | no |
+| semantic | no | no | no |
+| hybrid | yes | yes | no |
+| hybrid | yes | no | no |
+| hybrid | no | yes | no |
+| hybrid | no | no | yes |
+
+- warns on lexical degradation: Warn a spiice caller when a nonempty hybrid page has no positive semantic score.
+
+| hybrid fusion | recency | candidate horizon |
+| --- | --- | --- |
+| yes | yes | fixed |
+| yes | no | fixed |
+| no | yes | recencyKeyset |
+| no | no | depthPlusPage |
+
+- candidate horizon: Hybrid fixes the horizon in both orders; pure relevance widens within the cap and pure recency applies its keyset.
+
+| iterative scan | hnsw settings |
+| --- | --- |
+| off | \[searchBreadth, iterativeScan] |
+| strictOrder | \[searchBreadth, iterativeScan, scanTupleCap] |
+| relaxedOrder | \[searchBreadth, iterativeScan, scanTupleCap] |
+
+- hnsw settings: Enabled iterative scans set the tuple cap in addition to the scan mode and breadth.
+
+| empty | reached cap | chunk candidate bound |
+| --- | --- | --- |
+| yes | yes | complete |
+| yes | no | complete |
+| no | yes | bounded |
+| no | no | unknown |
+
+- chunk candidate bound: Index bounds distinguish a capped chunk scan from a proof of Memory exhaustion.
+
+| search mode | federated | score source |
+| --- | --- | --- |
+| lexical | yes | storeRank |
+| lexical | no | lexical |
+| semantic | yes | storeRank |
+| semantic | no | semantic |
+| hybrid | yes | storeRank |
+| hybrid | no | hybridWeightedRanks |
+
+- score source: The score source on an effective search lane, or the replacement score of a federated merge.
+
+| floor in range | ceiling in range | ordered | admit comparable band |
+| --- | --- | --- | --- |
+| yes | yes | yes | yes |
+| yes | yes | no | no |
+| yes | no | yes | no |
+| yes | no | no | no |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | no |
+
+- admit comparable band: Accept a comparable band with ordered endpoints both inside the score interval.
+
+| language declaration | admit language policy |
+| --- | --- |
+| pinned | yes |
+| emptyUnion | no |
+| nonemptyUnion | yes |
+| emittedColumn | yes |
+| otherColumn | no |
+
+- admit language policy: A pinned union needs a first member and a per-row policy needs the emitted column.
+
+| lexical request | lexical resolution |
+| --- | --- |
+| omitted | deployment |
+| reliableDetection | detectedConfig |
+| unreliableDetection | deployment |
+| recognizedLanguage | languageConfig |
+| plausibleConfig | explicitConfig |
+| malformed | refusal |
+
+- lexical resolution: Resolve detection and language codes, defer a plausible explicit name to the catalog and refuse malformed input.
+
+| is default | referenced | retire configuration |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | no |
+| no | yes | no |
+| no | no | yes |
+
+- retire configuration: The retirement routine may remove a non-default configuration without references.
+
 ## Transport
 
 **Listener requirement**: Requirements for a configured serving address.
