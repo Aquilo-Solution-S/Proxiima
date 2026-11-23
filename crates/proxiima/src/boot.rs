@@ -225,9 +225,7 @@ pub(crate) async fn boot<A: SpiiceBundle>(
         embedding_router,
         parts.owner_drop_proof.clone(),
     )?;
-    // The one handle on the captured outbox. Host-only: it is not in
-    // `StoragePorts`, so no spiice, tool or write session can reach a
-    // captured event, and a publisher task gets it from here.
+    // `Proxiima.Publication.hostOutboxOperations`.
     let outbox: Arc<dyn proxiima_core::storage_ports::publication::PublicationOutboxPort> =
         Arc::new(pg.clone());
     let outbox_retention: Arc<
@@ -569,12 +567,6 @@ pub(crate) fn connect_blob_store(
 /// Compose the engine over the frozen registry and wired storage, attaching
 /// the deployment tool scope, the publication configuration, the host's
 /// embedding router and the host's personal-owner drop proof.
-///
-/// `try_with_publication_config` is on the UNCONDITIONAL path, with the
-/// parsed config even when it binds no source. That is the whole boot
-/// guarantee: a bundle that freezes a listenable schema and a deployment
-/// that never set `PROXIIMA_PUBLICATION_SOURCE` is refused here, naming the
-/// schemas, instead of admitting writes that would each fail at capture.
 fn compose_engine(
     registry: proxiima_core::SpiiceRegistryFrozen,
     pg: &PgStorage,
@@ -586,10 +578,9 @@ fn compose_engine(
     if let Some(proof) = owner_drop_proof {
         storage_ports = storage_ports.owner_drop_proof(proof);
     }
-    let mut engine = Engine::new(registry, storage_ports.build())
-        .with_embedding_runtime_policy(config.storage.embedding_runtime_policy)
-        .try_with_publication_config(config.publication.clone())
-        .map_err(|error| ProxiimaError::Config(error.to_string()))?;
+    let mut engine = Engine::try_new(registry, storage_ports.build(), config.publication.clone())
+        .map_err(|error| ProxiimaError::Config(error.to_string()))?
+        .with_embedding_runtime_policy(config.storage.embedding_runtime_policy);
     if let Some(router) = embedding_router {
         engine = engine.with_embedding_router(router);
     }

@@ -1,27 +1,4 @@
-//! Transactional publication of listenable Facts (issue #305).
-//!
-//! A schema declares itself listenable through [`crate::FactPayload::LISTENABLE`].
-//! Every admitted Fact of such a schema captures ONE immutable `CloudEvents`
-//! 1.0 record, keyed by the Fact's `t`, in the same transaction as the
-//! `memory` row and its typed sidecars. This module owns the pieces of that
-//! capture that are pure data:
-//!
-//! - [`PublicationSource`] — the configured producer identity, never
-//!   caller-supplied.
-//! - [`PublicationLimits`] / [`PublicationConfig`] — the deployment's export
-//!   size cap and pending-queue bound.
-//! - [`PublicationDraft`] — everything core resolves BEFORE storage is
-//!   called. It is plain `Clone` data so the bounded write retry can re-run
-//!   the whole transaction body without re-deriving it.
-//! - [`PublicationExtensions`] — the host-bound `CloudEvents` extension
-//!   attributes every captured event of this deployment carries.
-//! - [`SealedPublication`] — the envelope bytes and their digest, sealed
-//!   against the `t` storage minted.
-//!
-//! The port that drains the captured records lives in
-//! [`crate::storage_ports::publication`]; it is host-only and is reachable
-//! from no spiice-facing facade. What a host implements to receive the
-//! drained events is [`intake`].
+//! Transactional capture of listenable Facts and the host's delivery intake.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -35,27 +12,29 @@ use crate::{OwnerId, SchemaId, SchemaVersion};
 pub mod intake;
 
 /// Default ceiling on records that have not been published yet.
-pub const DEFAULT_MAX_PENDING: u64 = 100_000;
+pub const DEFAULT_MAX_PENDING: u64 = crate::ledger!(Proxiima.Publication.defaultMaxPending);
 
 /// Default ceiling on one sealed envelope, in bytes.
-pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 524_288;
+pub const DEFAULT_MAX_PAYLOAD_BYTES: usize =
+    crate::ledger!(Proxiima.Publication.defaultMaxPayloadBytes);
 
 /// `CloudEvents` `specversion` this substrate emits. 1.0.2 is a patch release
 /// of the 1.0 line and the attribute stays `"1.0"`.
-pub const CLOUDEVENTS_SPEC_VERSION: &str = "1.0";
+pub const CLOUDEVENTS_SPEC_VERSION: &str =
+    crate::ledger!(Proxiima.Publication.cloudEventsSpecVersion);
 
 /// `CloudEvents` `datacontenttype` this substrate emits. The `data` member is
 /// the typed payload's serde JSON, always.
-pub const CLOUDEVENTS_DATA_CONTENT_TYPE: &str = "application/json";
+pub const CLOUDEVENTS_DATA_CONTENT_TYPE: &str =
+    crate::ledger!(Proxiima.Publication.dataContentType);
 
 /// The configured producer identity bound to every event this deployment
 /// captures.
 ///
 /// `CloudEvents` requires `source` to be a non-empty URI-reference; this
 /// newtype additionally refuses a relative reference, because a delivered
-/// event has no base URI to resolve one against. Practically: an absolute
-/// URI or a URN — something containing a scheme separator — with no
-/// whitespace and no control characters.
+/// event has no base URI to resolve one against. The source is an absolute URI or URN without a fragment, whitespace,
+/// or control characters. The spelling is preserved.
 ///
 /// It is deployment configuration and NEVER a caller-supplied value: a
 /// producer that could assert its own source could impersonate another
@@ -81,16 +60,9 @@ impl PublicationSource {
         {
             return Err(PublicationSourceError::IllegalCharacter { value: raw });
         }
-        let Some((scheme, rest)) = raw.split_once(':') else {
-            return Err(PublicationSourceError::NotAbsolute { value: raw });
-        };
-        if scheme.is_empty() || rest.is_empty() {
-            return Err(PublicationSourceError::NotAbsolute { value: raw });
-        }
-        if !scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-            || !scheme
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        // `Proxiima.Publication.absoluteProducerSource`.
+        if raw.split_once(':').is_none_or(|(_, rest)| rest.is_empty())
+            || !fluent_uri::Uri::parse(raw.as_str()).is_ok_and(|uri| !uri.has_fragment())
         {
             return Err(PublicationSourceError::NotAbsolute { value: raw });
         }
@@ -154,8 +126,7 @@ impl Default for PublicationLimits {
 /// `source` is `None` in a deployment that registers no listenable schema.
 /// A frozen registry that DOES register one and leaves it `None` is a build
 /// error — see [`PublicationConfig::validate_against`] — and a listenable
-/// write refuses with [`PublicationError::SourceUnbound`] regardless, so an
-/// unvalidated composition cannot leak an unsourced event.
+/// write refuses with [`PublicationError::SourceUnbound`] if the source is absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PublicationConfig {
     pub source: Option<PublicationSource>,
@@ -192,6 +163,7 @@ impl PublicationConfig {
         &self,
         listenable: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), PublicationError> {
+        // `Proxiima.Publication.compositionAdmitted`.
         if self.source.is_some() {
             return Ok(());
         }
@@ -216,10 +188,12 @@ pub const MAX_PUBLICATION_EXTENSIONS: usize =
     crate::ledger!(Proxiima.Authentication.maxHostRunExtensions);
 
 /// `CloudEvents` 1.0.2 §3.1 ceiling on an extension attribute NAME.
-pub const MAX_EXTENSION_NAME_CHARS: usize = 20;
+pub const MAX_EXTENSION_NAME_CHARS: usize =
+    crate::ledger!(Proxiima.Publication.maxExtensionNameChars);
 
 /// Ceiling on one string-valued extension attribute, in bytes.
-pub const MAX_EXTENSION_VALUE_BYTES: usize = 256;
+pub const MAX_EXTENSION_VALUE_BYTES: usize =
+    crate::ledger!(Proxiima.Publication.maxExtensionValueBytes);
 
 /// The `CloudEvents` 1.0.2 core context attribute names, which an extension
 /// may never shadow. `data_base64` is included although this substrate only
@@ -349,6 +323,7 @@ impl PublicationExtensions {
         name: String,
         value: ExtensionValue,
     ) -> Result<(), PublicationExtensionsError> {
+        // `Proxiima.Publication.extensionAdmitted`.
         validate_extension_name(&name)?;
         validate_extension_value(&name, &value)?;
         if self.0.contains_key(&name) {
@@ -408,6 +383,7 @@ impl<'a> IntoIterator for &'a PublicationExtensions {
     }
 }
 
+// `Proxiima.Publication.envelopeSectionOrder`.
 impl serde::Serialize for PublicationExtensions {
     /// Serializes as a MAP so the envelope can flatten it inline, in name
     /// order, between the substrate's own attributes and `data`.
@@ -732,7 +708,7 @@ impl SubjectPosition {
     /// Width of the decimal `sequence` attribute: every `u64`, zero-padded,
     /// so that the string order the `CloudEvents` sequence extension
     /// specifies is the numeric order.
-    pub const SEQUENCE_DIGITS: usize = 20;
+    pub const SEQUENCE_DIGITS: usize = crate::ledger!(Proxiima.Publication.sequenceDigits);
 
     #[must_use]
     pub const fn new(subject: Uuid, sequence: NonZeroU64) -> Self {
@@ -848,6 +824,7 @@ impl SealedPublication {
         let owner = draft.owner.to_string();
         let subject = position.subject_attribute();
         let sequence = position.sequence_attribute();
+        // `Proxiima.Publication.envelopeSectionOrder`.
         let envelope = CloudEventEnvelope {
             specversion: CLOUDEVENTS_SPEC_VERSION,
             id: &event_id,
@@ -863,6 +840,7 @@ impl SealedPublication {
             extensions: &draft.extensions,
             data: &draft.data,
         };
+        // `Proxiima.Publication.sealedEventIdentity`.
         let bytes = serde_json::to_vec(&envelope)
             .map_err(|err| PublicationError::ExportFailed(err.to_string()))?;
         if bytes.len() > limits.max_payload_bytes {

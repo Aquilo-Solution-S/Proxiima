@@ -4,6 +4,8 @@ use crate::ScopeKeyError;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SpiiceRegistryError {
+    #[error(transparent)]
+    Publication(#[from] crate::publication::PublicationError),
     #[error("spiice {spiice_id} evolution {evolution_id:?} is invalid: {reason}")]
     InvalidSchemaEvolution {
         spiice_id: &'static str,

@@ -366,6 +366,33 @@ fn statuses_map_to_accept_reject_or_retry() {
     }
 }
 
+#[test]
+fn http_acknowledgement_matches_ledger_vectors() {
+    use reqwest::StatusCode;
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.httpAcknowledgement"]
+        .as_array()
+        .expect("acknowledgement table");
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let status = match row["in"][0].as_str().expect("status class") {
+            "success" => StatusCode::NO_CONTENT,
+            "badRequest" => StatusCode::BAD_REQUEST,
+            "unprocessable" => StatusCode::UNPROCESSABLE_ENTITY,
+            "other" => StatusCode::SERVICE_UNAVAILABLE,
+            other => panic!("unknown status class {other}"),
+        };
+        let outcome = match classify(status, "") {
+            Ok(Intake::Accepted) => "accepted",
+            Ok(Intake::Rejected { .. }) => "rejected",
+            Err(_) => "intakeError",
+        };
+        assert_eq!(outcome, row["out"].as_str().expect("outcome"));
+    }
+}
+
 #[tokio::test]
 async fn a_delivery_posts_the_raw_envelope_with_its_headers() {
     let ca = Ca::new();

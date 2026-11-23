@@ -297,6 +297,19 @@ static CONTRACT_MIGRATOR: SpiiceContract = SpiiceContract {
     bespoke_transfer_legs: &[],
 };
 
+fn evolution_engine(
+    registry: proxiima_core::SpiiceRegistryFrozen,
+    storage: PgStorage,
+) -> proxiima_core::Engine {
+    let source = PublicationSource::new("urn:proxiima:evolution").expect("fixture source");
+    proxiima_core::Engine::try_new(
+        registry,
+        Arc::new(storage).storage_ports(),
+        PublicationConfig::new(source),
+    )
+    .expect("fixture publication configuration")
+}
+
 fn register_v1(r: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {
     r.try_add_spiice(SpiiceDescriptor {
         spiice_id: SPIICE.into(),
@@ -710,11 +723,7 @@ async fn seed_v1_facts(payloads: Vec<FactV1>) -> SeededFacts {
         .unwrap();
     pg.initialize_store_number(0).await.unwrap();
     let old = storage(&runtime_url, &platform_url, &r1, sidecars_v1()).await;
-    let old_engine = proxiima_core::Engine::new(r1, Arc::new(old).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap();
+    let old_engine = evolution_engine(r1, old);
     let owner = proxiima_core::OwnerId::new(Uuid::now_v7());
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
@@ -821,7 +830,7 @@ async fn seed_goal_routes(
     register_v1(&mut registry).unwrap();
     let registry = registry.try_freeze().unwrap();
     let storage = storage(&runtime_url, &platform_url, &registry, sidecars_v1()).await;
-    let engine = proxiima_core::Engine::new(registry, Arc::new(storage).storage_ports());
+    let engine = evolution_engine(registry, storage);
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(seeded.owner, Role::admin())],
@@ -968,10 +977,7 @@ async fn fact_schema_evolution_preserves_receipt_and_replays_on_target() {
         .unwrap();
     pg.initialize_store_number(0).await.unwrap();
     let old = storage(&runtime_url, &platform_url, &r1, sidecars_v1()).await;
-    let source = PublicationSource::new("urn:proxiima:evolution").unwrap();
-    let old_engine = proxiima_core::Engine::new(r1.clone(), Arc::new(old).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(source))
-        .unwrap();
+    let old_engine = evolution_engine(r1.clone(), old);
     let owner = proxiima_core::OwnerId::new(Uuid::now_v7());
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
@@ -1015,11 +1021,7 @@ async fn fact_schema_evolution_preserves_receipt_and_replays_on_target() {
         .await
         .unwrap();
     let new = storage(&runtime_url, &platform_url, &r2, s2).await;
-    let new_engine = proxiima_core::Engine::new(r2, Arc::new(new).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap();
+    let new_engine = evolution_engine(r2, new);
     replay_fact_v2_and_check_receipt(
         &new_engine,
         &authz,
@@ -1459,11 +1461,7 @@ async fn fact_schema_evolution_runs_v1_to_v3_chain_with_only_v3_active() {
     .await
     .unwrap();
     let active = storage(seeded.db.runtime_url(), &platform_url, &r3, s3).await;
-    let engine = proxiima_core::Engine::new(r3, Arc::new(active).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap();
+    let engine = evolution_engine(r3, active);
     let owner: Uuid = sqlx::query_scalar("SELECT owner_id FROM proxiima_core.memory WHERE t=$1")
         .bind(seeded.ids[0])
         .fetch_one(&admin)
@@ -1582,11 +1580,7 @@ async fn run_replacement_chain(second_transform: proxiima::spiice::SchemaMigrati
         sidecars,
     )
     .await;
-    let engine = proxiima_core::Engine::new(registry, Arc::new(active).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap();
+    let engine = evolution_engine(registry, active);
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(seeded.owner, Role::admin())],

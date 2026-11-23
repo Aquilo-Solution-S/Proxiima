@@ -19,6 +19,7 @@ fn engine() -> Engine {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn engine_from_registry(registry: SpiiceRegistry) -> Engine {
@@ -26,6 +27,7 @@ fn engine_from_registry(registry: SpiiceRegistry) -> Engine {
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn owner() -> OwnerId {

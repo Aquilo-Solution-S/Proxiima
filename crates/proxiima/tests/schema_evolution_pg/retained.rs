@@ -1,7 +1,7 @@
 use super::*;
 
 use proxiima::spiice::{EraseMode, SeriesSelection};
-use proxiima_core::{Engine, MemoryId};
+use proxiima_core::MemoryId;
 
 struct AppV2Retained;
 
@@ -92,12 +92,7 @@ async fn seed_referencing_fact() -> (SeededFacts, Uuid) {
     register_v1(&mut registry).unwrap();
     let registry = registry.try_freeze().unwrap();
     let storage = storage(&runtime_url, &platform_url, &registry, sidecars_v1()).await;
-    let (engine, system) = Engine::new(registry, Arc::new(storage).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap()
-        .into_system_authority();
+    let (engine, system) = evolution_engine(registry, storage).into_system_authority();
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(seeded.owner, Role::admin())],
@@ -185,7 +180,7 @@ async fn run_case(new_identity: bool) {
     assert_migrated(&admin, target, source, before_outbox, new_identity).await;
 
     let active = storage(seeded.db.runtime_url(), &platform_url, &registry, sidecars).await;
-    let engine = Engine::new(registry, Arc::new(active).storage_ports());
+    let engine = evolution_engine(registry, active);
     let authz = authenticated_context(AuthzContext::for_subject_with_role(
         UserId::new(Uuid::now_v7()),
         [(seeded.owner, Role::admin())],

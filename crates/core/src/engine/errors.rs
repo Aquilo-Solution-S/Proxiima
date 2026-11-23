@@ -9,13 +9,7 @@ use crate::{RuleClass, StorageError, StorageRule};
 
 /// Map a refused publication capture onto the public protocol surface.
 ///
-/// - an oversized export, a failed export and a listenable write on the
-///   receipt-only route are things the CALLER (or the spiice author) can
-///   fix, and read as `invalid_argument`;
-/// - an exhausted outbox is backpressure on a legal write, and reads as
-///   `capacity_exhausted` (MCP `-32000`, REST 503) so a caller backs off
-///   instead of opening an incident (docs/host-integration.md);
-/// - an unbound source is the deployment's, and reads as `internal`.
+/// `Proxiima.Publication.captureRefusal`.
 #[must_use]
 pub(crate) fn map_publication_error(err: &PublicationError) -> ProtocolError {
     match err {
@@ -28,6 +22,40 @@ pub(crate) fn map_publication_error(err: &PublicationError) -> ProtocolError {
             ProtocolError::capacity_exhausted(err.to_string())
         }
         PublicationError::SourceUnbound { .. } => ProtocolError::internal(err.to_string()),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn capture_refusal_matches_ledger_vectors() {
+    use crate::error::ErrorCode;
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.captureRefusal"]
+        .as_array()
+        .expect("capture refusal table");
+    assert_eq!(rows.len(), 5);
+    for row in rows {
+        let error = match row["in"][0].as_str().expect("capture failure") {
+            "payloadTooLarge" => PublicationError::PayloadTooLarge { bytes: 2, max: 1 },
+            "capacity" => PublicationError::CapacityExhausted { pending: 1, max: 1 },
+            "exportFailed" => PublicationError::ExportFailed("test payload".into()),
+            "sourceUnbound" => PublicationError::SourceUnbound {
+                schema_id: "test".into(),
+            },
+            "untypedWrite" => PublicationError::UntypedListenableWrite {
+                schema_id: "test".into(),
+            },
+            other => panic!("unknown capture failure {other}"),
+        };
+        let expected = match row["out"].as_str().expect("capture refusal") {
+            "invalidArgument" => ErrorCode::InvalidArgument,
+            "backpressure" => ErrorCode::CapacityExhausted,
+            "internal" => ErrorCode::Internal,
+            other => panic!("unknown capture refusal {other}"),
+        };
+        assert_eq!(map_publication_error(&error).code, expected);
     }
 }
 

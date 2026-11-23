@@ -225,10 +225,10 @@ pub async fn assert_tombstone_head() -> TestResult {
         .with_sidecars(sidecars)
         .await?
         .with_spiices(&registry);
-    let engine = Arc::new(proxiima::Engine::new(
-        registry,
-        Arc::new(storage).storage_ports(),
-    ));
+    let engine = Arc::new(
+        proxiima::Engine::new(registry, Arc::new(storage).storage_ports())
+            .expect("engine configuration"),
+    );
     let owner = owner();
     let authz = authz(&[owner]);
     let ctx = proxiima_core::test_fixtures::tool_ctx_on(

@@ -70,6 +70,7 @@ impl World {
             registry.freeze_or_panic_for_tests(),
             Arc::new(self.pg.clone()).storage_ports(),
         )
+        .expect("engine configuration")
     }
 
     async fn fact_of(&self, owner: OwnerId) -> TestResult<MemoryId> {

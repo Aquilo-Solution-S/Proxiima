@@ -365,7 +365,8 @@ async fn owner_scoped_ops_deny_host_context_after_role_narrowing() {
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
 
     let err = engine
         .get_graph(&ctx.authz, &GetGraphReadRequest { owner })
@@ -494,7 +495,8 @@ async fn host_resolved_user_with_viewer_role_cannot_manage_group() {
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let err = engine
         .add_member(&ctx.authz, group, fake_user().into(), Relation::Editor)
         .await

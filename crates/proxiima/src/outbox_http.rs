@@ -30,22 +30,23 @@ use crate::settings::{
 };
 
 /// The consumer name the built-in sink registers under.
-pub(crate) const CONSUMER: &str = "http";
+pub(crate) const CONSUMER: &str = proxiima_core::ledger!(Proxiima.Publication.httpConsumer);
 
 /// Under the runtime's 5 s `accept` bound, so the sink answers (with an
 /// [`IntakeError`]) before the runtime abandons the call.
-pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_millis(4_500);
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.Publication.httpRequestTimeoutMillis
+));
 
 /// The longest receiver body kept as a rejection reason, in characters.
-const MAX_REASON_CHARS: usize = 512;
+const MAX_REASON_CHARS: usize = proxiima_core::ledger!(Proxiima.Publication.httpReasonChars);
 
-/// The most of a rejection body ever read: [`MAX_REASON_CHARS`] characters
-/// of UTF-8. The rest is never read, so a receiver's body size never
-/// becomes this process's allocation.
-const MAX_REASON_BYTES: usize = MAX_REASON_CHARS * 4;
+/// Bytes retained from a rejection body. The last received chunk can exceed the remaining budget.
+const MAX_REASON_BYTES: usize = proxiima_core::ledger!(Proxiima.Publication.httpReasonBytes);
 
-pub(crate) const CONTENT_TYPE: &str = "application/cloudevents+json";
-pub(crate) const DELIVERY_COUNT_HEADER: &str = "Proxiima-Delivery-Count";
+pub(crate) const CONTENT_TYPE: &str = proxiima_core::ledger!(Proxiima.Publication.httpContentType);
+pub(crate) const DELIVERY_COUNT_HEADER: &str =
+    proxiima_core::ledger!(Proxiima.Publication.httpDeliveryCountHeader);
 
 /// The `http` consumer name.
 ///
@@ -113,6 +114,7 @@ impl HttpIntake {
         let mut builder = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none());
+        // `Proxiima.Publication.httpTrustAdmitted`.
         if let Some(ca_file) = ca_file {
             let pem = std::fs::read(ca_file).map_err(|err| {
                 ProxiimaError::Config(format!("{ENV_CA_FILE} could not be read: {err}"))
@@ -181,6 +183,7 @@ impl HttpIntake {
 ///   [`IntakeError`], and the runtime retries. Retrying is the safe default
 ///   for a status this table does not name.
 pub(crate) fn classify(status: reqwest::StatusCode, body: &str) -> Result<Intake, IntakeError> {
+    // `Proxiima.Publication.httpAcknowledgement`.
     if status.is_success() {
         return Ok(Intake::Accepted);
     }
@@ -231,8 +234,8 @@ impl DurableIntake for HttpIntake {
     }
 }
 
-/// The first [`MAX_REASON_BYTES`] of a rejection body, read chunk by chunk
-/// and decoded lossily. A body that fails mid-read keeps what arrived.
+/// Retain at most [`MAX_REASON_BYTES`] before lossy decoding. A failed read keeps the
+/// prefix already received. Once full, request no further chunks.
 async fn reason_body(mut response: reqwest::Response) -> String {
     let mut bytes = Vec::with_capacity(MAX_REASON_BYTES);
     while bytes.len() < MAX_REASON_BYTES {

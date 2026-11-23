@@ -7,16 +7,36 @@ use crate::SpiiceRegistryError;
 use crate::authz::{
     DelegationRuntimeAuthority, DelegationRuntimeBinding, SystemAuthority, SystemAuthorityBinding,
 };
+use crate::publication::{PublicationConfig, PublicationError};
 use crate::storage_ports::{EngineStoragePorts, StoragePorts};
 use crate::verbs::schema::SpiiceRegistryFrozen;
 
 impl Engine {
-    /// Build an engine over `registry` and `storage`. An engine always has
-    /// storage; it is the only constructor, and [`Self::try_compose`] calls it.
-    #[must_use]
-    pub fn new(registry: SpiiceRegistryFrozen, storage: StoragePorts) -> Self {
+    /// Build an engine over a registry with no listenable schemas.
+    ///
+    /// # Errors
+    ///
+    /// Returns a publication error when a listenable schema requires a source.
+    pub fn new(
+        registry: SpiiceRegistryFrozen,
+        storage: StoragePorts,
+    ) -> Result<Self, PublicationError> {
+        Self::try_new(registry, storage, PublicationConfig::default())
+    }
+
+    /// Build an engine with the deployment's publication source and bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a publication error when a listenable schema requires a source.
+    pub fn try_new(
+        registry: SpiiceRegistryFrozen,
+        storage: StoragePorts,
+        publication: PublicationConfig,
+    ) -> Result<Self, PublicationError> {
+        publication.validate_against(registry.listenable_schema_ids())?;
         // `Proxiima.DatabaseAuthority.EngineStorage`
-        Self {
+        Ok(Self {
             registry,
             system_authority_binding: SystemAuthorityBinding::fresh(),
             delegation_runtime_binding: DelegationRuntimeBinding::fresh(),
@@ -24,9 +44,9 @@ impl Engine {
             embedding_router: None,
             embedding_runtime_policy: crate::embedding::EmbeddingRuntimePolicy::default(),
             embedding_control: super::embeddings::EmbeddingControl::default(),
-            publication: crate::publication::PublicationConfig::default(),
+            publication,
             mcp_url: Arc::new(RwLock::new(None)),
-        }
+        })
     }
 
     /// Split out the host-held System write witness while the caller still
@@ -66,7 +86,7 @@ impl Engine {
         storage: StoragePorts,
         register: impl FnOnce(&mut crate::SpiiceRegistry),
     ) -> Self {
-        Self::try_compose(storage, |registry| {
+        Self::try_compose(storage, PublicationConfig::default(), |registry| {
             register(registry);
             Ok(())
         })
@@ -84,14 +104,16 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns a registry error from spiice registration or freeze.
+    /// Returns a registry error from spiice registration or freeze, or a
+    /// publication configuration error when a listenable schema requires a source.
     pub fn try_compose(
         storage: StoragePorts,
+        publication: PublicationConfig,
         register: impl FnOnce(&mut crate::SpiiceRegistry) -> Result<(), SpiiceRegistryError>,
     ) -> Result<Self, SpiiceRegistryError> {
         let mut registry = crate::SpiiceRegistry::new();
         register(&mut registry)?;
-        Ok(Self::new(registry.try_freeze()?, storage))
+        Ok(Self::try_new(registry.try_freeze()?, storage, publication)?)
     }
 
     /// Get a reference to the schema registry.
@@ -123,29 +145,6 @@ impl Engine {
     ) -> Self {
         self.embedding_runtime_policy = policy;
         self
-    }
-
-    /// Bind the deployment's publication source and capture bounds
-    /// (docs/host-integration.md).
-    ///
-    /// Fallible on purpose. A registry that freezes a listenable schema and
-    /// a configuration that binds no source is a deployment which would
-    /// refuse every write of that schema at runtime; the host learns that
-    /// at boot, naming the schemas that made a source required, instead of
-    /// on the first admission.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::publication::PublicationError::SourceUnbound`] when
-    /// the frozen registry carries a listenable schema and `config.source`
-    /// is `None`.
-    pub fn try_with_publication_config(
-        mut self,
-        config: crate::publication::PublicationConfig,
-    ) -> Result<Self, crate::publication::PublicationError> {
-        config.validate_against(self.registry.listenable_schema_ids())?;
-        self.publication = config;
-        Ok(self)
     }
 
     /// The bound publication configuration.
@@ -208,6 +207,7 @@ mod tests {
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             StoragePorts::rejecting_for_tests(),
         )
+        .expect("engine configuration")
         .with_embedding_runtime_policy(policy)
         .with_embedding_router(Arc::new(
             crate::embedding::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
@@ -232,13 +232,11 @@ mod tests {
     /// and the message names the schema that made a source required.
     #[test]
     fn a_listenable_registry_refuses_to_boot_without_a_source() {
-        let engine = Engine::new(
+        let err = Engine::new(
             crate::test_fixtures::probe_registry(),
             StoragePorts::rejecting_for_tests(),
-        );
-        let err = engine
-            .try_with_publication_config(crate::publication::PublicationConfig::default())
-            .expect_err("an unbound source must fail the build");
+        )
+        .expect_err("an unbound source must fail the build");
         assert!(
             matches!(
                 err,
@@ -246,6 +244,37 @@ mod tests {
                     if schema_id == "probe/listenable-v1"
             ),
             "unexpected error: {err:?}"
+        );
+    }
+    #[test]
+    fn configured_and_closure_composition_refuse_an_unbound_source() {
+        use crate::publication::{PublicationConfig, PublicationError};
+        use crate::test_fixtures::register_probe_schemas;
+
+        let config = PublicationConfig::default();
+        let direct = Engine::try_new(
+            crate::test_fixtures::probe_registry(),
+            StoragePorts::rejecting_for_tests(),
+            config.clone(),
+        );
+        assert!(matches!(
+            direct,
+            Err(PublicationError::SourceUnbound { .. })
+        ));
+
+        let composed = Engine::try_compose(
+            StoragePorts::rejecting_for_tests(),
+            config,
+            register_probe_schemas,
+        );
+        assert!(
+            matches!(
+                composed,
+                Err(crate::SpiiceRegistryError::Publication(
+                    PublicationError::SourceUnbound { .. }
+                ))
+            ),
+            "{composed:?}"
         );
     }
 }

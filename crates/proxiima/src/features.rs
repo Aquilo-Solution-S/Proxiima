@@ -659,14 +659,17 @@ impl std::fmt::Debug for PublicationRetention {
 /// hold row locks over an unbounded delete. A backlog larger than this is
 /// reclaimed by [`prune_until_short`], one statement at a time.
 const RETENTION_PRUNE_BATCH: std::num::NonZeroU32 =
-    std::num::NonZeroU32::new(1_000).expect("1000 is not zero");
+    std::num::NonZeroU32::new(proxiima_core::ledger!(Proxiima.Publication.retentionBatch))
+        .expect("positive retention batch");
 
 /// How often a prune sequence runs.
 ///
 /// DELIBERATELY not once per drain pass: the drain polls every 500 ms, while
 /// the horizon the prune enforces is at least a minute, so nothing becomes
 /// prunable faster than this.
-const RETENTION_PRUNE_INTERVAL: Duration = Duration::from_mins(1);
+const RETENTION_PRUNE_INTERVAL: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Publication.retentionIntervalSeconds
+));
 
 /// One prune sequence: delete batches until one comes back short, so every
 /// record past the horizon is gone when it returns. Each batch is its own
@@ -680,6 +683,7 @@ async fn prune_until_short(
 ) -> Result<u64, StorageError> {
     let mut total = 0;
     while !cancel.is_cancelled() {
+        // `Proxiima.Publication.pruneAgain`.
         let pruned = port.prune_published(older_than, limit).await?;
         total += pruned;
         if pruned < u64::from(limit.get()) {

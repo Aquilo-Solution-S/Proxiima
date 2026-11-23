@@ -33,10 +33,78 @@ fn a_source_must_be_an_absolute_uri_or_urn() {
         PublicationSource::new("scheme:"),
         Err(PublicationSourceError::NotAbsolute { .. })
     ));
+    for raw in [
+        "urn:hello%QQ",
+        "https://[not-ip]/",
+        "https://a/b#fragment",
+        "https://a/{x}",
+    ] {
+        assert!(
+            matches!(
+                PublicationSource::new(raw),
+                Err(PublicationSourceError::NotAbsolute { .. })
+            ),
+            "{raw}"
+        );
+    }
+    let canonical = "HTTPS://example.test/a%2fb";
+    assert_eq!(
+        PublicationSource::new(canonical).unwrap().as_str(),
+        canonical
+    );
     assert_eq!(
         "urn:x:y".parse::<PublicationSource>().expect("parse"),
         PublicationSource::new("urn:x:y").expect("new")
     );
+}
+
+#[test]
+fn composition_source_requirement_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/ledger_vectors.json")).expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.compositionAdmitted"]
+        .as_array()
+        .expect("composition table");
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let (listenable, bound): (bool, bool) =
+            serde_json::from_value(row["in"].clone()).expect("input");
+        let config = if bound {
+            PublicationConfig::new("urn:proxiima:test".parse().expect("source"))
+        } else {
+            PublicationConfig::default()
+        };
+        assert_eq!(
+            config
+                .validate_against(listenable.then_some("test/listenable"))
+                .is_ok(),
+            row["out"].as_bool().expect("admission")
+        );
+    }
+}
+
+#[test]
+fn source_spelling_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/ledger_vectors.json")).expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.absoluteProducerSource"]
+        .as_array()
+        .expect("producer source table");
+    assert_eq!(rows.len(), 5);
+    for row in rows {
+        let value = match row["in"][0].as_str().expect("spelling") {
+            "empty" => "",
+            "forbiddenCharacters" => "urn:with space",
+            "relative" => "/a/b",
+            "invalidUri" => "urn:malformed%XX",
+            "absoluteUri" => "HTTPS://example.test/a%2fb",
+            other => panic!("unknown spelling {other}"),
+        };
+        assert_eq!(
+            PublicationSource::new(value).is_ok(),
+            row["out"].as_bool().expect("validity")
+        );
+    }
 }
 
 fn position() -> SubjectPosition {

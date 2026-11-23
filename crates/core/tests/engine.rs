@@ -26,6 +26,7 @@ fn boot_engine(principal: OwnerId, owner: OwnerId) -> Engine {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn fixed_router() -> Arc<SingleClientRouter> {

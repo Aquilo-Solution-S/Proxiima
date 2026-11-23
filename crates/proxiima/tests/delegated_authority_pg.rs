@@ -56,6 +56,7 @@ async fn an_issued_grant_is_stored_as_issued_and_redeems() {
         registry.freeze_or_panic_for_tests(),
         StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_runtime_authorities();
     let registry = Arc::new(engine.registry().clone());
     let service = DelegatedAuthorityService::new(

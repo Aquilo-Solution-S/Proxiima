@@ -69,10 +69,14 @@ pub(crate) fn object_purge_interval_from_lookup(
 /// read from. One minute is not a safe replay window either — it is the
 /// point below which the setting is certainly a mistake, so it is refused
 /// rather than honoured.
-pub(crate) const MIN_PUBLISHED_RETENTION: Duration = Duration::from_mins(1);
+pub(crate) const MIN_PUBLISHED_RETENTION: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Publication.minRetentionSeconds
+));
 
 /// How long a DELIVERED record is kept when nothing says otherwise.
-pub(crate) const DEFAULT_PUBLISHED_RETENTION: Duration = Duration::from_hours(24 * 7);
+pub(crate) const DEFAULT_PUBLISHED_RETENTION: Duration = Duration::from_secs(
+    proxiima_core::ledger!(Proxiima.Publication.defaultRetentionSeconds),
+);
 
 /// Read how long a DELIVERED record is kept before the publisher task
 /// reclaims it (docs/host-integration.md §Retention). `Some(Duration::ZERO)`
@@ -97,7 +101,7 @@ pub(crate) fn published_retention_from_lookup(
              got {raw:?}"
         ))
     })?;
-    if seconds == 0 {
+    if seconds == proxiima_core::ledger!(Proxiima.Publication.retentionOffSeconds) {
         return Ok(Some(Duration::ZERO));
     }
     let horizon = Duration::from_secs(seconds);
@@ -128,17 +132,15 @@ pub(crate) fn publication_config_from_lookup(
             })
         })
         .transpose()?;
-    let max_pending = parse_positive(lookup, &ENV_OUTBOX_MAX_PENDING)?;
-    let max_payload_bytes = parse_positive(lookup, &ENV_OUTBOX_MAX_PAYLOAD_BYTES)?;
+    let max_pending = parse_positive::<u64>(lookup, &ENV_OUTBOX_MAX_PENDING)?;
+    let max_payload_bytes = parse_positive::<usize>(lookup, &ENV_OUTBOX_MAX_PAYLOAD_BYTES)?;
     if source.is_none() && max_pending.is_none() && max_payload_bytes.is_none() {
         return Ok(None);
     }
     let defaults = PublicationLimits::default();
     let limits = PublicationLimits {
         max_pending: max_pending.unwrap_or(defaults.max_pending),
-        max_payload_bytes: max_payload_bytes
-            .and_then(|value| usize::try_from(value).ok())
-            .unwrap_or(defaults.max_payload_bytes),
+        max_payload_bytes: max_payload_bytes.unwrap_or(defaults.max_payload_bytes),
     };
     Ok(Some(PublicationConfig { source, limits }))
 }
@@ -146,17 +148,17 @@ pub(crate) fn publication_config_from_lookup(
 /// A bound must be a positive integer. Zero is refused rather than treated
 /// as "unlimited": both limits are refusals, and a zero one would refuse
 /// every listenable write instead of none.
-fn parse_positive(
+fn parse_positive<T: std::str::FromStr + PartialEq + From<u8>>(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     key: &Setting,
-) -> Result<Option<u64>, ProxiimaError> {
+) -> Result<Option<T>, ProxiimaError> {
     let Some(raw) = key.read_source(lookup) else {
         return Ok(None);
     };
-    let value: u64 = raw.parse().map_err(|_| {
+    let value: T = raw.parse().map_err(|_| {
         ProxiimaError::Config(format!("{key} must be a positive integer, got {raw:?}"))
     })?;
-    if value == 0 {
+    if value == T::from(0) {
         return Err(ProxiimaError::Config(format!(
             "{key} must be greater than zero; a zero bound refuses every listenable write"
         )));
@@ -227,13 +229,45 @@ mod tests {
     }
 
     #[test]
+    fn declared_publication_defaults_match_runtime_defaults() {
+        let limits = PublicationLimits::default();
+        assert_eq!(
+            settings::PROXIIMA_OUTBOX_MAX_PENDING
+                .default()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            limits.max_pending,
+        );
+        assert_eq!(
+            settings::PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES
+                .default()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            limits.max_payload_bytes,
+        );
+        assert_eq!(
+            settings::PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS
+                .default()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            DEFAULT_PUBLISHED_RETENTION.as_secs(),
+        );
+    }
+
+    #[test]
     fn a_malformed_publication_block_is_a_boot_error() {
+        let too_wide = format!("{}0", usize::MAX);
         for pairs in [
             vec![(ENV_PUBLICATION_SOURCE, "not a uri")],
+            vec![(ENV_PUBLICATION_SOURCE, "urn:example:bad%XX")],
             vec![(ENV_OUTBOX_MAX_PENDING, "lots")],
             vec![(ENV_OUTBOX_MAX_PENDING, "0")],
             vec![(ENV_OUTBOX_MAX_PAYLOAD_BYTES, "-1")],
             vec![(ENV_OUTBOX_MAX_PAYLOAD_BYTES, "0")],
+            vec![(ENV_OUTBOX_MAX_PAYLOAD_BYTES, &too_wide)],
         ] {
             let err = publication_config_from_lookup(&env(&pairs))
                 .expect_err("a malformed publication block must refuse the boot");

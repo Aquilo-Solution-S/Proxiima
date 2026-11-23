@@ -658,7 +658,8 @@ mod tests {
         let engine = crate::Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
         let group = GroupId::new(Uuid::now_v7());
         let first_admin = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(first_admin, AuthPath::HostBearer);
@@ -675,7 +676,8 @@ mod tests {
         let engine = crate::Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let goal = crate::EntityId::Goal(crate::GoalId::new(Uuid::now_v7()));
@@ -700,7 +702,8 @@ mod tests {
         let engine = crate::Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
@@ -768,7 +771,8 @@ mod tests {
             crate::StoragePorts::rejecting_with_owner_access_read(std::sync::Arc::new(AdminOn(
                 destination,
             ))),
-        );
+        )
+        .expect("engine configuration");
         let ordinary = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         engine
             .authorize_transfer_destination_out_of_band(&ordinary, &destination.into())

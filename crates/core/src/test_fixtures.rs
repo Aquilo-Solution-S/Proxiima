@@ -248,11 +248,21 @@ pub fn tool_ctx_with(
 /// ([`StoragePorts::rejecting_for_tests`]), for a test that never reaches
 /// storage.
 #[must_use]
+///
+/// # Panics
+///
+/// Panics if the fixed fixture publication configuration is invalid.
 pub fn rejecting_engine(registry: impl AsRef<SpiiceRegistryFrozen>) -> Arc<Engine> {
-    Arc::new(Engine::new(
-        registry.as_ref().clone(),
-        StoragePorts::rejecting_for_tests(),
-    ))
+    Arc::new(
+        Engine::try_new(
+            registry.as_ref().clone(),
+            StoragePorts::rejecting_for_tests(),
+            proxiima_core::publication::PublicationConfig::new(
+                "urn:proxiima:test".parse().expect("fixture source"),
+            ),
+        )
+        .expect("engine configuration"),
+    )
 }
 
 /// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`
@@ -498,10 +508,16 @@ pub static SCHEMALESS_PROBE_SPIICE: proxiima_core::spiice::contract::SpiiceContr
 #[must_use]
 pub fn probe_registry() -> proxiima_core::SpiiceRegistryFrozen {
     let mut registry = proxiima_core::SpiiceRegistry::new();
-    registry.add_contract_or_panic_for_tests(&PROBE_SPIICE);
-    registry.add_fact_schema_or_panic_for_tests::<ListenableProbeV1>();
-    registry.add_fact_schema_or_panic_for_tests::<UnlistenableProbeV1>();
+    register_probe_schemas(&mut registry).expect("probe registrations");
     registry.freeze_or_panic_for_tests()
+}
+
+pub(crate) fn register_probe_schemas(
+    registry: &mut proxiima_core::SpiiceRegistry,
+) -> Result<(), proxiima_core::SpiiceRegistryError> {
+    registry.try_add_contract(&PROBE_SPIICE)?;
+    registry.try_add_fact_schema::<ListenableProbeV1>()?;
+    registry.try_add_fact_schema::<UnlistenableProbeV1>()
 }
 
 /// Check every row of `settings` that declares a default against the reader

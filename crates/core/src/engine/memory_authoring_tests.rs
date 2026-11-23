@@ -17,6 +17,7 @@ fn engine() -> Engine {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn derivation_sidecar() -> SidecarPayload {
@@ -303,7 +304,8 @@ async fn a_node_write_hands_storage_its_origins_and_references() {
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_with_memory_authoring(recorder.clone()),
-    );
+    )
+    .expect("engine configuration");
     let owner = owner();
     let permit = OwnerWritePermit::new(
         owner,

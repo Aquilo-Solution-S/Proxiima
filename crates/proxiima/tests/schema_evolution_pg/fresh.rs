@@ -1,6 +1,6 @@
 use super::*;
 
-use proxiima::{Engine, FactWrite};
+use proxiima::FactWrite;
 use proxiima_core::test_fixtures::authenticated_context;
 use proxiima_pg_testkit::SplitRoleDb;
 
@@ -54,11 +54,7 @@ async fn fresh_database_migrates_directly_to_v2_before_serving() {
         sidecars_v2(),
     )
     .await;
-    let engine = Engine::new(registry, Arc::new(pg_storage).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").expect("publication source"),
-        ))
-        .expect("publication configuration");
+    let engine = evolution_engine(registry, pg_storage);
     let authz = authenticated_context(AuthzContext::single_owner(&owner, AuthPath::HostBearer));
     let written = engine
         .ingest_fact(

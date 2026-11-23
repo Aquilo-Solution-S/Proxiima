@@ -271,7 +271,7 @@ pub async fn compose(
     extra(&mut registry);
     let registry = registry.freeze_or_panic_for_tests();
     let pg = storage_over(runtime_url, platform_url, &registry).await;
-    Engine::new(registry, Arc::new(pg).storage_ports())
+    Engine::new(registry, Arc::new(pg).storage_ports()).expect("engine configuration")
 }
 
 /// A clock barrier: returns the first instant in a later millisecond than

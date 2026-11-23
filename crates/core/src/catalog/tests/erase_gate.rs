@@ -173,6 +173,7 @@ fn engine(begin_calls: Arc<AtomicUsize>) -> Arc<Engine> {
     Arc::new(
         Engine::try_compose(
             StoragePorts::rejecting_with_write_session(factory),
+            crate::publication::PublicationConfig::default(),
             |registry| {
                 registry.try_add_contract(&GATE_CONTRACT)?;
                 registry.try_add_tool::<WipeTool>(GATE_SPIICE)?;

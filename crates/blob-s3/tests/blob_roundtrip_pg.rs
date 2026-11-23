@@ -230,6 +230,7 @@ async fn complete_via_engine(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         std::sync::Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
     .complete_upload_as_fact(&service, ctx, owner, upload_id, &[])
     .await
 }
@@ -246,6 +247,7 @@ async fn complete_via_engine_with_expectation(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         std::sync::Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
     .complete_upload_as_fact_with_expectation(blobs, ctx, owner, upload_id, &[], expectation)
     .await
 }
@@ -266,6 +268,7 @@ async fn transfer_via_engine(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         std::sync::Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
     .transfer_to_owner(&authz, entity, destination)
     .await
 }
@@ -1774,6 +1777,7 @@ fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
         registry.clone(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_runtime_authorities();
     CitedBlobDeliveryService::bind(
         CitedBlobReadService::new_runtime(Arc::new(store.clone()), &runtime_authority),
@@ -2432,6 +2436,7 @@ async fn reconcile_with_bound_authority(store: &CitedBlobStore) -> CitedBlobReco
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_system_authority();
     store
         .bind_system_authority(&authority)
@@ -2441,6 +2446,7 @@ async fn reconcile_with_bound_authority(store: &CitedBlobStore) -> CitedBlobReco
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_system_authority();
     let foreign_error = store
         .reconcile_all(&foreign_authority)

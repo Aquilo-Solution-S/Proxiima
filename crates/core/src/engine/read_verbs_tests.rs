@@ -17,6 +17,7 @@ fn engine() -> Engine {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn tag_probe_ingress(
@@ -96,6 +97,7 @@ fn tag_probe_engine() -> Engine {
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 /// #479 item 3: every core memory schema displays the field its search

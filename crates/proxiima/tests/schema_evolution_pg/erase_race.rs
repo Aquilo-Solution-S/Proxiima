@@ -42,11 +42,7 @@ async fn seed() -> Seeded {
         .unwrap();
     pg.initialize_store_number(0).await.unwrap();
     let old = storage(db.runtime_url(), db.platform_url(), &r1, sidecars_v1()).await;
-    let engine = proxiima_core::Engine::new(r1, Arc::new(old).storage_ports())
-        .try_with_publication_config(PublicationConfig::new(
-            PublicationSource::new("urn:proxiima:evolution").unwrap(),
-        ))
-        .unwrap();
+    let engine = evolution_engine(r1, old);
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
     let mut owners = Vec::new();
     for _ in 0..2 {
@@ -382,8 +378,7 @@ async fn a_series_erase_waits_for_a_schema_evolution_before_it_takes_a_fence() {
         sidecars_v2(),
     )
     .await;
-    let (engine, authority) =
-        proxiima_core::Engine::new(r2, Arc::new(active).storage_ports()).into_system_authority();
+    let (engine, authority) = evolution_engine(r2, active).into_system_authority();
     let pg = Arc::new(seeded.pg);
 
     let gate = hold(&admin, UPDATE_GATE).await;

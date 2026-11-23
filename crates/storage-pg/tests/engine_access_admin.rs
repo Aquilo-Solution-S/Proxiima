@@ -56,7 +56,8 @@ impl World {
         let engine = Engine::new(
             registry.freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        );
+        )
+        .expect("engine configuration");
         Self {
             pg,
             engine,

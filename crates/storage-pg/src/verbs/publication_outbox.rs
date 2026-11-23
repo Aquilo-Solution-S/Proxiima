@@ -1,24 +1,7 @@
 //! The publication outbox: capture inside the Fact's transaction, and the
 //! host-only drain over what was captured (issue #305).
 //!
-//! Four parts that must not be confused. [`capture_publication_in_tx`]
-//! runs inside the caller's Fact transaction and is the only writer of a
-//! captured event and of its delivery lanes, one per registered consumer;
-//! the [`PublicationOutboxPort`] impl below runs in a publisher process and
-//! only ever moves one consumer's lane through its delivery lifecycle; the
-//! [`PublicationRetentionPort`] impl reclaims records that were already
-//! DELIVERED to every consumer; the [`PublicationConsumerPort`] impl
-//! registers consumers and retires them. None of the first two deletes
-//! anything, the third cannot touch an undelivered record, and only a retire
-//! cancels a lane that was not delivered: an expired lease makes a lane
-//! deliverable again, never destroys it.
-//!
-//! A record's own `state` is the aggregate of its lanes: `published` exactly
-//! when no lane is undelivered. Every statement that can make the last lane
-//! delivered or go away (a mark, a retire) settles the aggregate in the same
-//! transaction, under the record's row lock.
-//!
-//! [`PublicationRetentionPort`]: proxiima_core::storage_ports::publication::PublicationRetentionPort
+//! Capture, fenced delivery, consumer administration and retention.
 
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -45,11 +28,7 @@ use crate::sidecars::int_to_u64;
 /// it before materializing), so two writes to one series never read the same
 /// value, and the table's trigger refuses to let it go back.
 ///
-/// The counter is its own row rather than a column of `memory_head`, because
-/// before #488 forget deleted the head when a series had no live row left
-/// and recreated it from scratch on the way back. A position kept on the
-/// head restarted at 1 after that and reused positions consumers had
-/// already seen (#476).
+/// The counter is stored independently of the head.
 ///
 /// # Errors
 ///
@@ -59,15 +38,17 @@ pub(crate) async fn next_series_position(
     tx: &mut Transaction<'_, Postgres>,
     handle: Uuid,
 ) -> Result<SubjectPosition, StorageError> {
+    // Allocate under the series lock so every capture gets a greater position.
     let sequence: i64 = sqlx::query_scalar(
         "INSERT INTO proxiima_core.publication_counter AS c (handle, owner_id, sequence)
-         SELECT h.handle, h.owner_id, 1
+         SELECT h.handle, h.owner_id, $2
            FROM proxiima_core.memory_head h
           WHERE h.handle = $1
          ON CONFLICT (handle) DO UPDATE SET sequence = c.sequence + 1
       RETURNING c.sequence",
     )
     .bind(handle)
+    .bind::<i64>(proxiima_core::ledger!(Proxiima.Publication.firstSequence))
     .fetch_optional(tx.as_mut())
     .await
     .map_err(map_err)?
@@ -87,19 +68,8 @@ pub(crate) async fn next_series_position(
 
 /// Capture one listenable Fact's event in the transaction that admits it.
 ///
-/// Ordering inside `ingest_core` is deliberate: the capacity refusal comes
-/// FIRST, so an exhausted outbox costs a bounded index probe rather than a
-/// serialization of the whole payload; the seal comes second, because it
-/// needs the `t` the admission just minted; the insert is last. Every one
-/// of the three is an `Err` the caller propagates, and the caller's
-/// transaction is dropped — which is the whole point: a Fact that could not
-/// capture its event was never written.
-///
-/// The record gets one delivery lane per consumer registered as of this
-/// statement, read and written in ONE statement so the set it fans out to is
-/// the set it read. With no consumer registered there is nobody to owe the
-/// event to, and the record is published at once rather than held against
-/// the pending ceiling forever.
+/// Capacity is checked before serialization to keep refusals cheap.
+/// Seal uses the occurrence time and ID the Fact write already minted.
 ///
 /// # Errors
 ///
@@ -125,6 +95,7 @@ pub(crate) async fn capture_publication_in_tx(
     let occurred_at = occurred_at.ok_or_else(|| {
         internal("publication capture requires the occurrence time of a new Fact admission")
     })?;
+    // `Proxiima.Publication.captureOrder`.
     refuse_when_full(tx, &plan.limits).await?;
     let sealed =
         SealedPublication::seal(plan, t, occurred_at, position).map_err(StorageError::from)?;
@@ -148,6 +119,7 @@ pub(crate) async fn capture_publication_in_tx(
     .execute(tx.as_mut())
     .await
     .map_err(map_err)?;
+    // `Proxiima.Publication.fanOut`.
     let lanes = sqlx::query(
         "INSERT INTO proxiima_core.publication_delivery (t, consumer)
          SELECT $1, name FROM proxiima_core.publication_consumer",
@@ -204,10 +176,14 @@ pub(crate) async fn capture_publication_in_tx(
 ///
 /// The estimate misses the writes since it was taken, so this bounds how far
 /// the pending ceiling can be overshot by the write rate times this window.
-const BACKLOG_ESTIMATE_VALID_FOR: Duration = Duration::from_secs(30);
+const BACKLOG_ESTIMATE_VALID_FOR: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Publication.backlogFreshSeconds
+));
 
 /// How old the estimate must be before a claim measures it again.
-const BACKLOG_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(10);
+const BACKLOG_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Publication.backlogRefreshSeconds
+));
 
 /// The estimate a write may trust: one row, and none once it is too old.
 const FRESH_BACKLOG_ESTIMATE_SQL: &str = "SELECT pending FROM proxiima_core.publication_backlog
@@ -266,6 +242,13 @@ async fn refuse_when_full(
     tx: &mut Transaction<'_, Postgres>,
     limits: &PublicationLimits,
 ) -> Result<(), StorageError> {
+    // `Proxiima.Publication.withinQueueCeiling`.
+    let Some(offset) = limits.max_pending.checked_sub(1) else {
+        return Err(StorageError::from(PublicationError::CapacityExhausted {
+            pending: 0,
+            max: 0,
+        }));
+    };
     // A fresh estimate under the ceiling admits the write at the cost of one
     // row. Anything else — no fresh estimate, or one at the ceiling that may
     // be stale-high — takes the exact probe below, so a refusal is never
@@ -280,13 +263,6 @@ async fn refuse_when_full(
     {
         return Ok(());
     }
-    let Some(offset) = limits.max_pending.checked_sub(1) else {
-        // `max_pending = 0` admits no record at all; say so without a query.
-        return Err(StorageError::from(PublicationError::CapacityExhausted {
-            pending: 0,
-            max: 0,
-        }));
-    };
     let offset = i64::try_from(offset).map_err(|_| {
         StorageError::ConstraintViolation("max_pending does not fit a bigint offset".into())
     })?;
@@ -314,6 +290,7 @@ async fn refuse_when_full(
 /// A record is deliverable only while it has an origin owned by the record's owner and is not an
 /// erased pin target. Spliced into every statement that claims, marks or renews a lane, so they
 /// cannot disagree about what is deliverable; each declares its outbox row as `record`.
+// `Proxiima.Publication.originEligible`.
 macro_rules! deliverable {
     () => {
         "AND EXISTS (
@@ -354,6 +331,7 @@ macro_rules! deliverable {
 /// undelivered lanes) serves both the predicate and the sort. `FOR UPDATE OF
 /// lane` locks the lane only: a record row stays free for the other
 /// consumers' marks.
+// `Proxiima.Publication.laneClaimable`.
 const CLAIM_SQL: &str = concat!(
     "WITH claimed AS (
              SELECT lane.t
@@ -409,7 +387,8 @@ const CLAIM_SQL: &str = concat!(
 /// its first `publish`. The floor is a refusal rather than a clamp: a
 /// caller that asked for 0 s asked for something that cannot work, and
 /// silently substituting 1 s would hide the misconfiguration.
-const MIN_CLAIM_LEASE: Duration = Duration::from_secs(1);
+const MIN_CLAIM_LEASE: Duration =
+    Duration::from_secs(proxiima_core::ledger!(Proxiima.Publication.minLeaseSeconds));
 
 #[async_trait::async_trait]
 impl PublicationOutboxPort for PgStorage {
@@ -526,6 +505,7 @@ impl PublicationOutboxPort for PgStorage {
         let outcomes = ids
             .iter()
             .map(|id| {
+                // `Proxiima.Publication.markVerdict`.
                 if published.contains(id) {
                     AckOutcome::Published
                 } else if already.contains(id) {
@@ -552,6 +532,7 @@ impl PublicationOutboxPort for PgStorage {
                 MIN_CLAIM_LEASE.as_millis(),
             )));
         }
+        // `Proxiima.Publication.canMark`.
         let mut tx = self.platform_transaction().await?;
         // The same deliverability filter as CLAIM_SQL, so a record the claim
         // would no longer hand out is not delivered under an older claim.
@@ -667,6 +648,7 @@ pub(crate) async fn cancel_undelivered_for_forget(
     .execute(tx.as_mut())
     .await
     .map_err(map_err)?;
+    // `Proxiima.Publication.laneLifecycle`.
     let removed = sqlx::query(
         "DELETE FROM proxiima_core.publication_outbox record
           WHERE record.t = $1
@@ -686,7 +668,7 @@ pub(crate) async fn cancel_undelivered_for_forget(
     Ok(())
 }
 
-/// Mark published each of `records` that has no undelivered lane left.
+/// `Proxiima.Publication.aggregateSettled`.
 ///
 /// Locks the records FIRST, in a statement of its own, and decides in the
 /// next one. Under READ COMMITTED that next statement takes a fresh snapshot
@@ -786,8 +768,7 @@ impl PublicationConsumerPort for PgStorage {
         crate::owner_scope::finish_transaction(tx, result).await
     }
 
-    /// One transaction: block every lane write, drop the consumer (its lanes
-    /// go with it, by cascade), settle the records it was the last to owe.
+    /// `Proxiima.Publication.laneLifecycle`.
     ///
     /// The `SHARE` lock on the lanes is what makes the settle complete. A
     /// capture or a mark that is already writing lanes finishes first; one
@@ -915,6 +896,7 @@ impl PgStorage {
     /// means the schema was tampered with — the migration seeds it — and
     /// refusing to boot is better than publishing unstamped events that no
     /// cleaner will ever be able to vouch for.
+    /// `Proxiima.Publication.originAuthority`.
     pub async fn origin_scope(&self) -> Result<OriginScope, StorageError> {
         let mut tx = self.platform_transaction().await?;
         let id: Option<Uuid> = sqlx::query_scalar(
@@ -944,6 +926,7 @@ impl PgStorage {
 /// because `DELETE` takes no `LIMIT` of its own.
 /// The prune statement. `publication_outbox_published_idx` holds only the
 /// delivered rows by `published_at`, so a batch reads the rows it deletes.
+/// `Proxiima.Publication.laneLifecycle`.
 const PRUNE_PUBLISHED_SQL: &str = "DELETE FROM proxiima_core.publication_outbox
               WHERE ctid IN (
                     SELECT p.ctid

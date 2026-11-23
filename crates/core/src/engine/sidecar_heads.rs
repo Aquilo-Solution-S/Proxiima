@@ -66,6 +66,7 @@ mod tests {
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
         )
+        .expect("engine configuration")
     }
 
     fn request() -> SidecarHeadsRequest {
@@ -175,7 +176,8 @@ mod tests {
         let engine = Engine::new(
             registry.freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
         let subject = UserId::new(uuid::Uuid::new_v4());
         let authz = AuthzContext::for_subject_with_role(subject, [], AuthPath::HostBearer);
         let page = engine

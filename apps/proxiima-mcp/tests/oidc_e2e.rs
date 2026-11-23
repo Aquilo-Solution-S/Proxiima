@@ -930,7 +930,8 @@ async fn oidc_e2e_group_auth_host_resolved_editor_role_permits_tool_call()
     let permit_engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let permit_authz =
         proxiima_core::test_fixtures::authenticated_context(AuthzContext::for_subject_with_role(
             UserId::new(Uuid::now_v7()),

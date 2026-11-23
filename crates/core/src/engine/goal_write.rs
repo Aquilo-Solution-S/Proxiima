@@ -784,6 +784,7 @@ mod tests {
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
         )
+        .expect("engine configuration")
     }
 
     #[test]

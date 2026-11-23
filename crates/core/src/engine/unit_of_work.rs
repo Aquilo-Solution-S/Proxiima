@@ -1964,6 +1964,7 @@ pub(crate) mod tests {
         let factory = Arc::new(BeginSpyFactory { begin_calls });
         Engine::try_compose(
             StoragePorts::rejecting_with_write_session(factory),
+            crate::publication::PublicationConfig::default(),
             |registry| {
                 registry.try_add_contract(&HOST_STATE_TEST_CONTRACT)?;
                 Ok(())

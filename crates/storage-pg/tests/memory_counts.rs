@@ -135,6 +135,7 @@ fn engine(pg: &PgStorage) -> Engine {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
 }
 
 fn personal() -> (UserId, OwnerId) {

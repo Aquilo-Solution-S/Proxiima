@@ -1,20 +1,4 @@
-//! Host-only drain port for the Fact publication outbox (issue #305).
-//!
-//! Deliberately NOT part of [`crate::storage_ports::StoragePorts`]: the
-//! engine never holds it, `ToolCtx`, `WriteSession` and `UnitOfWork` never
-//! see it, and no spiice-facing facade exposes it. The storage BACKEND type
-//! implements it and the host runtime holds that handle, which is the only
-//! shape in which "claim other owners' rows and hand them to the host's intake" is a
-//! legitimate operation: a publisher is infrastructure, not a caller.
-//!
-//! [`PublicationOutboxPort`] has no delete or purge method, and never
-//! should: an expiring lease can only make a record deliverable again, never
-//! destroy it. Housekeeping of records that ARE delivered lives on a second,
-//! separate host-only trait, [`PublicationRetentionPort`], so that "a
-//! publisher may drain" and "an operator may reclaim delivered storage" stay
-//! two capabilities rather than one. Registering and retiring a consumer is a
-//! third, [`PublicationConsumerPort`]: retiring is the one act that cancels
-//! an undelivered promise, so the drain handle does not carry it either.
+//! Host-only capabilities for Fact publication. Spiice storage ports omit them.
 
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -88,10 +72,10 @@ impl ConsumerName {
     /// is registered as (`RuntimeBuilder::outbox_intake`). The schema seeds
     /// it, so records captured before any intake was configured are owed to
     /// it.
-    pub const DEFAULT: &'static str = "default";
+    pub const DEFAULT: &'static str = crate::ledger!(Proxiima.Publication.defaultConsumer);
 
     /// The longest name, in bytes.
-    pub const MAX_LEN: usize = 63;
+    pub const MAX_LEN: usize = crate::ledger!(Proxiima.Publication.maxConsumerNameBytes);
 
     /// # Errors
     ///
@@ -166,7 +150,7 @@ impl PublisherId {
         if raw.chars().any(char::is_control) {
             return Err(PublisherIdError::IllegalCharacter { value: raw });
         }
-        if raw.len() > 128 {
+        if raw.len() > crate::ledger!(Proxiima.Publication.maxPublisherIdBytes) {
             return Err(PublisherIdError::TooLong { bytes: raw.len() });
         }
         Ok(Self(raw))

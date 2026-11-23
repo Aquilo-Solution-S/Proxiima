@@ -154,6 +154,7 @@ impl ReceivedEvent {
     /// admitted Fact's `t`, nothing more. See [`EventIdentity`].
     #[must_use]
     pub fn identity(&self) -> EventIdentity {
+        // `Proxiima.Publication.identifiesFact`.
         match uuid::Uuid::parse_str(&self.id) {
             Ok(uuid) if uuid.to_string() == self.id => EventIdentity::Fact(MemoryId::new(uuid)),
             _ => EventIdentity::Opaque(self.id.clone()),
@@ -198,9 +199,10 @@ impl IntakeError {
 /// again. Both outcomes count — a rejection nobody recorded is
 /// indistinguishable from an event that never arrived.
 ///
-/// Deduplicate on [`ReceivedEvent::id`]. Redelivery is not an error case, it
-/// is the normal cost of at-least-once: the process can stop between `accept`
-/// returning and the record being marked.
+/// If the sink projects by subject, commit the event ID and any increase of
+/// that subject’s position together with the decision. On redelivery, return
+/// the stored decision for [`ReceivedEvent::id`]. An older or equal sequence
+/// does not move the projection back. The sink owns this transaction.
 ///
 /// `accept` is called one event at a time, and must return within a few
 /// seconds (the runtime gives up on a call after 5 s and retries the event).
@@ -232,6 +234,7 @@ impl ReceivedEvent {
     /// a case to deliver.
     pub fn from_record(record: &ClaimedPublication) -> Result<Self, serde_json::Error> {
         let envelope: CloudEventEnvelope = serde_json::from_slice(&record.envelope)?;
+        // `Proxiima.Publication.subjectPositionAdmitted`.
         let (Some(subject), Some(sequence)) = (&envelope.subject, &envelope.sequence) else {
             return Err(serde_json::Error::custom(
                 "publication envelope is missing its subject/sequence position",
@@ -348,6 +351,33 @@ mod tests {
             let error = ReceivedEvent::from_record(&claimed(envelope_with(subject, sequence)))
                 .expect_err("refused");
             assert_eq!(error.classify(), serde_json::error::Category::Data);
+        }
+    }
+
+    #[test]
+    fn position_admission_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows = vectors["Proxiima.Publication.subjectPositionAdmitted"]
+            .as_array()
+            .expect("position table");
+        assert_eq!(rows.len(), 5);
+        let valid = "00000000000000000003";
+        for row in rows {
+            let (subject, sequence) = match row["in"][0].as_str().expect("position inputs") {
+                "neither" => (None, None),
+                "subjectOnly" => (Some(FACT_UUID), None),
+                "sequenceOnly" => (None, Some(valid)),
+                "bothCanonical" => (Some(FACT_UUID), Some(valid)),
+                "bothMalformed" => (Some(FACT_UUID), Some("3")),
+                other => panic!("unknown position form {other}"),
+            };
+            let record = claimed(envelope_with(subject, sequence));
+            assert_eq!(
+                ReceivedEvent::from_record(&record).is_ok(),
+                row["out"].as_bool().expect("admission")
+            );
         }
     }
 

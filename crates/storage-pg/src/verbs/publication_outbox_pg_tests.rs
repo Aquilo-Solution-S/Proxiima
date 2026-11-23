@@ -2114,11 +2114,172 @@ async fn publish_and_backdate(pg: &PgStorage, pool: &sqlx::PgPool, t: Uuid, secs
     .expect("backdate");
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum LifecycleEvent {
+    Forget,
+    Retire,
+    Retain,
+    HardErase,
+}
+
+async fn apply_lifecycle_event(pg: &PgStorage, owner: OwnerId, event: LifecycleEvent) -> Uuid {
+    let audit = consumer("audit");
+    if matches!(event, LifecycleEvent::Forget | LifecycleEvent::Retire) {
+        pg.register(&audit).await.expect("register audit");
+    }
+    let fact =
+        ingest_listenable_with_source_id(pg, &owner, &probe("lifecycle"), Some("lifecycle-source"))
+            .await
+            .expect("capture");
+    let id = fact.memory_id.into_inner();
+    match event {
+        LifecycleEvent::Forget => {
+            let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
+            MemoryAuthoringPort::forget_memory(pg, &permit, fact.memory_id)
+                .await
+                .expect("forget");
+        }
+        LifecycleEvent::Retire => {
+            let default = ConsumerName::default();
+            let claim = claim_for(pg, &default).await;
+            pg.mark_published(&default, id, claim[0].claim)
+                .await
+                .expect("mark default");
+            assert!(matches!(
+                pg.retire(&audit).await.expect("retire"),
+                RetireOutcome::Retired { undelivered: 1 }
+            ));
+        }
+        LifecycleEvent::Retain => {
+            publish_and_backdate(pg, pg.pool_for_tests(), id, 7_200.0).await;
+            pg.prune_published(Duration::from_hours(1), NonZeroU32::MIN)
+                .await
+                .expect("prune");
+        }
+        LifecycleEvent::HardErase => {
+            let source = SourceId::new("lifecycle-source");
+            let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalSourceScope {
+                user_id: owner.as_user(),
+                source_id: source.clone(),
+                drop_event_id: "publication-lifecycle".into(),
+            });
+            let outcome = OwnerInversePort::erase_personal_source_scope(
+                pg,
+                &auth,
+                owner.as_user(),
+                &source,
+                pg.surfaces(),
+            )
+            .await
+            .expect("source erase");
+            assert!(matches!(outcome, OwnerEraseOutcome::Completed { .. }));
+        }
+    }
+    id
+}
+
+#[tokio::test]
+async fn lane_lifecycle_matches_ledger_vectors() {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Effect {
+        lanes: String,
+        record: String,
+        preserves_origin: bool,
+    }
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        input: (LifecycleEvent,),
+        out: Effect,
+    }
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows: Vec<Vector> =
+        serde_json::from_value(vectors["Proxiima.Publication.laneLifecycle"].clone())
+            .expect("lane lifecycle table");
+    assert_eq!(rows.len(), 4);
+    for Vector {
+        input: (event,),
+        out,
+    } in rows
+    {
+        let (pg, db) = fresh_pg("pub_lifecycle_ledger").await;
+        let pool = pg.pool_for_tests();
+        let owner = owner_fixture();
+        register_owner(pool, &owner).await;
+        let id = apply_lifecycle_event(&pg, owner, event).await;
+
+        let expected_lanes = match out.lanes.as_str() {
+            "retiredConsumer" => vec![ConsumerName::DEFAULT],
+            "undelivered" | "prunedRecord" | "erasedRecord" => vec![],
+            other => panic!("unknown lane effect {other}"),
+        };
+        let expected_record = match out.record.as_str() {
+            "settle" => Some("published"),
+            "deleteIfNoLanesOtherwiseSettle" | "deleteIfPublishedAndOld" | "delete" => None,
+            other => panic!("unknown record effect {other}"),
+        };
+        let lanes: Vec<String> = sqlx::query_scalar(
+            "SELECT consumer FROM proxiima_core.publication_delivery WHERE t = $1 ORDER BY consumer",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .expect("remaining lanes");
+        let stored: Option<String> = sqlx::query_scalar(
+            "SELECT state::text FROM proxiima_core.publication_outbox WHERE t = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .expect("aggregate state");
+        assert_eq!(lanes, expected_lanes);
+        assert_eq!(stored.as_deref(), expected_record);
+        assert_eq!(
+            publication_origin(pool, id).await.is_some(),
+            out.preserves_origin
+        );
+        drop(pg);
+        drop_db(&db).await.expect("drop fixture database");
+    }
+}
+
 async fn states(pool: &sqlx::PgPool) -> Vec<(Uuid, String)> {
     sqlx::query_as("SELECT t, state::text FROM proxiima_core.publication_outbox ORDER BY t")
         .fetch_all(pool)
         .await
         .expect("states read")
+}
+
+#[tokio::test]
+async fn consumer_seed_and_name_bound_match_the_ledger() {
+    let (pg, db) = fresh_pg("pub_consumer_ledger").await;
+    assert_eq!(
+        pg.registered().await.expect("seeded lanes"),
+        [ConsumerName::default()]
+    );
+    let maximum = "a".repeat(ConsumerName::MAX_LEN);
+    pg.register(&ConsumerName::new(&maximum).expect("maximum length"))
+        .await
+        .expect("database accepts the Rust limit");
+    let over = format!("{maximum}a");
+    let refused = sqlx::query("INSERT INTO proxiima_core.publication_consumer (name) VALUES ($1)")
+        .bind(over)
+        .execute(pg.pool_for_tests())
+        .await
+        .expect_err("database refuses one byte over the Rust limit");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::constraint),
+        Some("publication_consumer_name_chk"),
+    );
+    drop(pg);
+    drop_db(&db).await.expect("drop fixture database");
 }
 
 /// Retention reclaims DELIVERED records and nothing else. A record still
@@ -2708,8 +2869,7 @@ async fn every_event_of_a_series_carries_the_next_position_in_it() {
         vec![1, 2]
     );
 
-    // The position never goes back. It lives in `publication_counter`
-    // since 0032, so that a forget that deletes the head cannot reset it.
+    // The counter cannot regress: `Proxiima.Identity.publicationCounterUpdate`.
     let refused =
         sqlx::query("UPDATE proxiima_core.publication_counter SET sequence = 0 WHERE handle = $1")
             .bind(series)
@@ -2722,11 +2882,8 @@ async fn every_event_of_a_series_carries_the_next_position_in_it() {
     let _ = drop_db(&db).await;
 }
 
-/// Forgetting every row of a series deletes its head; restore recreates it.
-/// The next event must still take a position above every position the
-/// series already published, or a consumer that dedupes by position drops
-/// it. (#488 S14; the forget cancels the undelivered records, so the prior
-/// positions are read before it.)
+/// Forgetting every version hides the series head. A subsequent write still
+/// advances the independent publication counter after restore.
 #[tokio::test]
 async fn forget_restore_write_publishes_above_prior_sequences() {
     let (pg, db) = fresh_pg("pub_restore_counter").await;

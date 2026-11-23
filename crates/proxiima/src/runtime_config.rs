@@ -425,6 +425,7 @@ impl RuntimeBuilder {
     /// The delivery contract is [`Self::outbox_intake`]'s, per consumer.
     #[must_use]
     pub fn outbox_consumer(mut self, name: ConsumerName, intake: Arc<dyn DurableIntake>) -> Self {
+        // `Proxiima.Publication.consumerBinding`.
         self.outbox_consumers.0.insert(name, intake);
         self
     }
@@ -1080,6 +1081,7 @@ impl RuntimeBuilder {
             return Ok(());
         };
         let name = crate::outbox_http::consumer_name();
+        // `Proxiima.Publication.consumerBinding`.
         if self.outbox_consumers.0.contains_key(&name) {
             return Err(ProxiimaError::Config(format!(
                 "{} is set and the host also registered an outbox consumer named \
@@ -1113,6 +1115,10 @@ impl RuntimeBuilder {
     /// The storage half of both resolves: the host-state participant, the
     /// database URLs, the store number and the defaults of the remaining
     /// storage settings. Not yet validated ([`StorageConfig::validate`]).
+    pub(crate) fn publication_config(&self) -> PublicationConfig {
+        self.publication.clone().unwrap_or_default()
+    }
+
     fn take_storage(&mut self) -> Result<(StorageConfig, StorageParts), ProxiimaError> {
         // `Proxiima.HostState.mergeRegistration`.
         if self.duplicate_host_state_participant {

@@ -456,14 +456,22 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
         &self,
         s3: crate::S3RuntimeConfig,
     ) -> Result<(ConnectedStorage, StorageUploadSweeper), ProxiimaError> {
+        let builder = self.0.merged_builder()?;
+        let publication = builder.publication_config();
+        let (config, parts) = builder.resolve_storage()?;
+        let registry = crate::boot::compose_registry::<A>(false)?;
         let ValidatedStorage {
             storage, registry, ..
-        } = self.connect_validated_storage().await?;
+        } = crate::boot::connect_storage::<A>(&config, &parts, registry).await?;
         let (storage, blobs) = crate::boot::connect_blob_store(storage, s3)?;
         // The one-shot command owns the authority of the engine it composes.
-        let (_, authority) =
-            crate::Engine::new(registry, Arc::new(storage.clone()).storage_ports())
-                .into_system_authority();
+        let (_, authority) = crate::Engine::try_new(
+            registry,
+            Arc::new(storage.clone()).storage_ports(),
+            publication,
+        )
+        .map_err(|error| ProxiimaError::Config(error.to_string()))?
+        .into_system_authority();
         blobs
             .bind_system_authority(&authority)
             .map_err(|error| ProxiimaError::Config(error.to_string()))?;

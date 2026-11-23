@@ -164,7 +164,8 @@ mod pg_tests {
         let engine = Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             proxiima_core::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
         let authz = authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer));
         engine
             .authorize_owner_write(&authz, owner, MemoryKind::Fact)
@@ -1381,6 +1382,7 @@ mod pg_tests {
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let configured_pg = pg.clone().with_spiices(&registry);
         let engine = Engine::new(registry, Arc::new(configured_pg).storage_ports())
+            .expect("engine configuration")
             .with_embedding_router(routed(RecordingBatchEmbedding {
                 batch_widths: Arc::default(),
             }));
@@ -2043,6 +2045,7 @@ mod pg_tests {
         let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
         let configured_pg = pg.clone().with_spiices(&registry);
         let engine = Engine::new(registry, Arc::new(configured_pg).storage_ports())
+            .expect("engine configuration")
             .with_embedding_router(routed(CappedEmbedding {
                 max_chars,
                 model_id: "stub-fact-embed",

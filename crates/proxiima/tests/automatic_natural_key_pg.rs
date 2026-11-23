@@ -505,7 +505,8 @@ async fn fixture(
         .with_sidecars(sidecars)
         .await?
         .with_spiices(&registry);
-    let engine = proxiima::Engine::new(registry, Arc::new(storage).storage_ports());
+    let engine = proxiima::Engine::new(registry, Arc::new(storage).storage_ports())
+        .expect("engine configuration");
     Ok(example_engine::ExampleEngine {
         engine: Arc::new(engine),
         pool: admin,

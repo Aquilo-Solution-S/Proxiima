@@ -454,7 +454,8 @@ mod tests {
         let engine = Engine::new(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        );
+        )
+        .expect("engine configuration");
 
         let error = engine
             .complete_upload_as_fact_with_expectation(

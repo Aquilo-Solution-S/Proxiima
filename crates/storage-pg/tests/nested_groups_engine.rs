@@ -94,7 +94,8 @@ impl Harness {
         let engine = Engine::new(
             registry.freeze_or_panic_for_tests(),
             storage.clone().storage_ports(),
-        );
+        )
+        .expect("engine configuration");
         Ok(Self {
             name,
             storage,

@@ -100,6 +100,7 @@ async fn a_fact_citing_an_aborted_upload_is_a_conflict() {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
     .complete_upload_as_fact(&service, &ctx, owner, &upload_id, &[])
     .await
     .expect_err("a Fact may not cite an aborted upload");

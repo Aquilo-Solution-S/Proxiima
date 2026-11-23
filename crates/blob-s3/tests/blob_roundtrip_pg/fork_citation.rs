@@ -41,7 +41,8 @@ async fn mounted_citation_survives_source_owner_erase() {
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         Arc::new(pg.clone()).storage_ports(),
-    );
+    )
+    .expect("engine configuration");
     let source_data =
         seed_cited_source(&pg, &store, &config, &pool, &engine, &source_auth, source).await;
     let (destination_auth, _goal) =

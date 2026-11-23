@@ -1,33 +1,4 @@
-//! The outbox drains: each host-provided [`DurableIntake`], registered under a
-//! consumer name, receives every captured Fact in this process (docs/host-integration.md
-//! §Delivery, §Consumers).
-//!
-//! One loop per consumer claims a batch of that consumer's lanes, calls
-//! [`DurableIntake::accept`] once per record, marks the lanes it took
-//! delivered in one transaction per batch, and hands the claim of a record it
-//! did not take back. Drains share nothing but the record: a
-//! consumer that fails or lags holds only its own lanes, and a record is
-//! published once every consumer's lane is.
-//!
-//! - **Outcomes.** `accept` returning `Ok` (`Accepted` or `Rejected`) is a
-//!   decision the intake made durable, so the record is marked published. An
-//!   [`IntakeError`](proxiima_core::publication::intake::IntakeError), an
-//!   `accept` that outlives its timeout, or captured bytes that do not parse
-//!   release the claim. Marks wait for the end of the batch, or half the lease,
-//!   whichever comes first. The only way a lane leaves `pending`/`claimed` is
-//!   `PublicationOutboxPort::mark_published_batch`, fenced on the claim tokens.
-//! - **Per-record isolation.** A record that fails is released and the pass
-//!   carries on with the rest of the batch. A pass reports a failure only when
-//!   nothing at all got through.
-//! - **Hand-back.** Shutdown and a quiesce release the record in flight and
-//!   every claim not yet attempted, so no lease has to expire for work nobody
-//!   is doing.
-//! - **Pass backoff.** A pass that delivered nothing doubles the wait before
-//!   the next claim, from the poll interval up to 30 s.
-//!
-//! Delivery is at-least-once: a process that stops between `accept` and the
-//! mark redelivers the record when its lease expires, with a higher
-//! `delivered_count`, and the intake deduplicates on the event id.
+//! The outbox drain for one host-provided intake and its consumer lane.
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
@@ -47,13 +18,16 @@ use proxiima_core::storage_ports::publication::{
     ReleaseOutcome,
 };
 use proxiima_core::write_wake::WriteWake;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::workers::{Backoff, Pass, Wake, WorkerPass};
 
 /// The longest a failing drain waits between passes, and the shipped
 /// [`Settings::idle_poll_max`].
-const MAX_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_BACKOFF: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Publication.pollCeilingSeconds
+));
 
 /// How one drain claims and delivers.
 #[derive(Debug, Clone)]
@@ -84,17 +58,22 @@ impl Settings {
         Self {
             publisher_id: PublisherId::new(format!("proxiima:{}", std::process::id()))
                 .expect("`proxiima:<pid>` is a valid publisher label"),
-            batch: NonZeroU32::new(64).expect("64 is not zero"),
-            lease: Duration::from_secs(30),
+            batch: NonZeroU32::new(proxiima_core::ledger!(Proxiima.Publication.drainBatch))
+                .expect("positive claim batch"),
+            lease: Duration::from_secs(proxiima_core::ledger!(
+                Proxiima.Publication.drainLeaseSeconds
+            )),
             // Crate tests compile this with `cfg(test)` and must not sit
             // out the shipped 500 ms backoff between failed accepts.
             poll_interval: if cfg!(test) {
                 Duration::from_millis(50)
             } else {
-                Duration::from_millis(500)
+                Duration::from_millis(proxiima_core::ledger!(Proxiima.Publication.pollFloorMillis))
             },
             idle_poll_max: MAX_BACKOFF,
-            accept_timeout: Duration::from_secs(5),
+            accept_timeout: Duration::from_secs(proxiima_core::ledger!(
+                Proxiima.Publication.intakeTimeoutSeconds
+            )),
         }
     }
 }
@@ -146,7 +125,7 @@ enum Failure {
 /// What became of one record that did not fail.
 enum Flow {
     /// The intake made an outcome durable; the mark is still owed.
-    Accepted,
+    Accepted { flush_at: Instant },
     /// The claim had moved on: another drain owns the record now.
     Stale,
     /// The hook asked to behave as though the process died here.
@@ -155,28 +134,28 @@ enum Flow {
     HandBack,
 }
 
-/// Records the intake took in this pass whose mark is still owed, and when
-/// the oldest was taken.
+/// Durable decisions awaiting a mark, with the oldest claim’s deadline.
 #[derive(Default)]
 struct Accepted<'a> {
     records: Vec<&'a ClaimedPublication>,
-    since: Option<tokio::time::Instant>,
+    deadline: Option<Instant>,
 }
 
 impl<'a> Accepted<'a> {
-    fn push(&mut self, record: &'a ClaimedPublication) {
-        self.since.get_or_insert_with(tokio::time::Instant::now);
+    fn push(&mut self, record: &'a ClaimedPublication, flush_at: Instant) {
+        self.deadline.get_or_insert(flush_at);
         self.records.push(record);
     }
 
-    fn age(&self) -> Duration {
-        self.since.map_or(Duration::ZERO, |since| since.elapsed())
-    }
-
     fn take(&mut self) -> Vec<&'a ClaimedPublication> {
-        self.since = None;
+        self.deadline = None;
         std::mem::take(&mut self.records)
     }
+}
+
+// `Proxiima.Publication.handBack`.
+fn hand_back(quiescing: bool, stopping: bool, in_flight: bool) -> bool {
+    stopping || (quiescing && !in_flight)
 }
 
 /// The claim → accept → mark loop over one consumer's lanes and its intake.
@@ -274,18 +253,42 @@ impl Drain {
         let mut accepted = Accepted::default();
         let mut records = claimed.iter();
         while let Some(record) = records.next() {
-            let flow = if gate.is_closing() {
+            let flow = if hand_back(gate.is_closing(), cancel.is_cancelled(), false) {
                 Ok(Flow::HandBack)
             } else {
-                self.deliver(record, cancel).await
+                // Keep polling the same attempt after flushing older marks.
+                let attempt = async {
+                    let flow = self.deliver(record, gate, cancel).await;
+                    if flow.is_err() {
+                        self.release(record).await;
+                    }
+                    flow
+                };
+                tokio::pin!(attempt);
+                // `Proxiima.Publication.flushAccepted`.
+                if let Some(deadline) = accepted.deadline {
+                    tokio::select! {
+                        biased;
+                        () = tokio::time::sleep_until(deadline) => {
+                            let ((), flow) = tokio::join!(
+                                self.mark(&mut accepted, &mut delivered, &mut first_failure),
+                                attempt,
+                            );
+                            flow
+                        }
+                        flow = &mut attempt => flow,
+                    }
+                } else {
+                    attempt.await
+                }
             };
             match flow {
-                Ok(Flow::Accepted) => {
-                    accepted.push(record);
-                    // The lease the renew gave this claim runs out whatever
-                    // the rest of the batch costs, so marks do not wait past
-                    // half of it.
-                    if accepted.age() >= self.settings.lease / 2 {
+                Ok(Flow::Accepted { flush_at }) => {
+                    accepted.push(record, flush_at);
+                    if accepted
+                        .deadline
+                        .is_some_and(|deadline| deadline <= Instant::now())
+                    {
                         self.mark(&mut accepted, &mut delivered, &mut first_failure)
                             .await;
                     }
@@ -293,6 +296,7 @@ impl Drain {
                 Ok(Flow::Stale) => {}
                 // As though the process died here: what is accepted and not
                 // yet marked stays leased, as `after_accept` promises.
+                // `Proxiima.Publication.canRedeliverAfterExpiry`.
                 Ok(Flow::Abort) => return Ok(count),
                 Ok(Flow::HandBack) => {
                     // Not a failure: what the intake already took is marked,
@@ -308,13 +312,13 @@ impl Drain {
                     return Ok(count);
                 }
                 Err(failure) => {
-                    self.release(record).await;
                     first_failure.get_or_insert(failure);
                 }
             }
         }
         self.mark(&mut accepted, &mut delivered, &mut first_failure)
             .await;
+        // `Proxiima.Publication.deliveryPassFailed`.
         match first_failure {
             // Nothing got through at all: report it, so `run` backs off
             // rather than spinning on a dead intake.
@@ -370,11 +374,9 @@ impl Drain {
     async fn deliver(
         &self,
         record: &ClaimedPublication,
+        gate: &GateWorker,
         cancel: &CancellationToken,
     ) -> Result<Flow, Failure> {
-        if cancel.is_cancelled() {
-            return Ok(Flow::HandBack);
-        }
         // Parsed here, once. Only the category of the parse error is logged:
         // its text can quote the payload.
         let event = ReceivedEvent::from_record(record).map_err(|error| {
@@ -391,6 +393,8 @@ impl Drain {
         // while this pass was busy may belong to another drain now, and the
         // record may have been erased since the claim. Either way it is not
         // ours to deliver; it is neither marked nor released.
+        let flush_at = Instant::now()
+            + self.settings.lease / proxiima_core::ledger!(Proxiima.Publication.flushLeaseDivisor);
         let still_ours = self
             .outbox
             .renew_claim(&self.consumer, record.id, record.claim, self.settings.lease)
@@ -404,13 +408,18 @@ impl Drain {
             );
             return Ok(Flow::Stale);
         }
+        if hand_back(gate.is_closing(), cancel.is_cancelled(), true) {
+            return Ok(Flow::HandBack);
+        }
         let accepted = tokio::select! {
+            biased;
             () = cancel.cancelled() => return Ok(Flow::HandBack),
             accepted = tokio::time::timeout(
                 self.settings.accept_timeout,
                 AssertUnwindSafe(self.intake.accept(&event)).catch_unwind(),
             ) => accepted,
         };
+        // `Proxiima.Publication.owesMark`.
         match accepted {
             // `Accepted` and `Rejected` are both outcomes the intake made
             // durable.
@@ -431,7 +440,7 @@ impl Drain {
         if self.hook.after_accept(&record.event_id).await.is_break() {
             return Ok(Flow::Abort);
         }
-        Ok(Flow::Accepted)
+        Ok(Flow::Accepted { flush_at })
     }
 
     /// Hand one claim back, best effort. A failed release is not an error:
@@ -572,6 +581,168 @@ mod tests {
     use proxiima_core::storage_ports::publication::ClaimToken;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
+
+    #[test]
+    fn hand_back_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: (bool, bool, bool),
+            out: bool,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors");
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Publication.handBack"].clone())
+                .expect("hand-back table");
+        assert_eq!(rows.len(), 8);
+        for row in rows {
+            assert_eq!(hand_back(row.input.0, row.input.1, row.input.2), row.out);
+        }
+    }
+
+    #[derive(Debug)]
+    struct DeadlineOutbox {
+        records: Vec<ClaimedPublication>,
+        releasing: tokio::sync::Notify,
+        finish_release: tokio::sync::Notify,
+        marks: tokio::sync::mpsc::UnboundedSender<(Instant, Vec<Uuid>)>,
+    }
+
+    #[async_trait::async_trait]
+    impl PublicationOutboxPort for DeadlineOutbox {
+        async fn claim(
+            &self,
+            _: &ConsumerName,
+            _: &PublisherId,
+            _: NonZeroU32,
+            _: Duration,
+        ) -> Result<Vec<ClaimedPublication>, proxiima_core::StorageError> {
+            Ok(self.records.clone())
+        }
+
+        async fn mark_published_batch(
+            &self,
+            _: &ConsumerName,
+            claims: &[(Uuid, ClaimToken)],
+        ) -> Result<Vec<AckOutcome>, proxiima_core::StorageError> {
+            self.marks
+                .send((Instant::now(), claims.iter().map(|(id, _)| *id).collect()))
+                .expect("mark observer");
+            Ok(vec![AckOutcome::Published; claims.len()])
+        }
+
+        async fn renew_claim(
+            &self,
+            _: &ConsumerName,
+            _: Uuid,
+            _: ClaimToken,
+            _: Duration,
+        ) -> Result<bool, proxiima_core::StorageError> {
+            Ok(true)
+        }
+
+        async fn release(
+            &self,
+            _: &ConsumerName,
+            _: Uuid,
+            _: ClaimToken,
+        ) -> Result<ReleaseOutcome, proxiima_core::StorageError> {
+            self.releasing.notify_one();
+            self.finish_release.notified().await;
+            Ok(ReleaseOutcome::Released)
+        }
+
+        async fn pending_count(&self) -> Result<u64, proxiima_core::StorageError> {
+            Ok(2)
+        }
+    }
+
+    #[derive(Debug)]
+    struct RefuseSecond {
+        first: Uuid,
+    }
+
+    #[async_trait::async_trait]
+    impl DurableIntake for RefuseSecond {
+        async fn accept(&self, event: &ReceivedEvent) -> Result<Intake, IntakeError> {
+            if event.id == self.first.to_string() {
+                Ok(Intake::Accepted)
+            } else {
+                Err(IntakeError::new("later attempt failed"))
+            }
+        }
+    }
+
+    fn claimed(id: Uuid) -> ClaimedPublication {
+        let envelope = serde_json::json!({
+            "specversion": "1.0",
+            "id": id,
+            "source": "urn:proxiima:deadline",
+            "type": "probe/test",
+            "subject": id,
+            "sequence": "00000000000000000001",
+            "data": {},
+        });
+        ClaimedPublication {
+            id,
+            event_id: id.to_string(),
+            owner_id: Uuid::nil(),
+            schema_id: "probe/test".into(),
+            schema_version: 1,
+            event_type: "probe/test".into(),
+            envelope: serde_json::to_vec(&envelope).expect("fixture envelope"),
+            digest: [0; 32],
+            attempts: 1,
+            claim: ClaimToken::new(id),
+            lease_expires_at: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    // `Proxiima.Publication.flushAccepted`.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_later_delivery_cannot_delay_accepted_marks() {
+        let first = Uuid::from_u128(1);
+        let (marks, mut marked) = tokio::sync::mpsc::unbounded_channel();
+        let outbox = Arc::new(DeadlineOutbox {
+            records: vec![claimed(first), claimed(Uuid::from_u128(2))],
+            releasing: tokio::sync::Notify::new(),
+            finish_release: tokio::sync::Notify::new(),
+            marks,
+        });
+        let lease = Duration::from_secs(8);
+        let drain = Drain::new(
+            outbox.clone(),
+            ConsumerName::default(),
+            Arc::new(RefuseSecond { first }),
+            Settings {
+                lease,
+                ..Settings::new()
+            },
+            Arc::new(Proceed),
+        );
+        let (_gate, worker) = QuiesceGate::new();
+        let start = Instant::now();
+        let task =
+            tokio::spawn(async move { drain.pass(&CancellationToken::new(), &worker).await });
+        tokio::time::timeout(lease, outbox.releasing.notified())
+            .await
+            .expect("the failed attempt starts to release");
+        let (at, ids) = tokio::time::timeout(lease, marked.recv())
+            .await
+            .expect("mark before the lease expires")
+            .expect("one mark");
+        assert_eq!(at, start + lease / 2);
+        assert_eq!(ids, vec![first]);
+        outbox.finish_release.notify_one();
+        assert_eq!(
+            task.await
+                .expect("pass joins")
+                .expect("one record delivered"),
+            2
+        );
+    }
 
     /// An outbox that never has anything to deliver; counts its claims.
     #[derive(Debug, Default)]

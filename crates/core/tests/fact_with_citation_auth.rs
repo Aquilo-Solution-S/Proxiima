@@ -101,6 +101,7 @@ fn engine() -> Engine {
         registry.freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
 }
 
 fn draft(_owner: &OwnerId) -> FactWriteCommand {

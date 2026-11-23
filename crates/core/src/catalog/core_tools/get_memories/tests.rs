@@ -163,10 +163,13 @@ fn fixture() -> Fixture {
         },
         requested: Mutex::new(Vec::new()),
     });
-    let engine = Arc::new(crate::Engine::new(
-        ctx.registry().clone(),
-        crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
-    ));
+    let engine = Arc::new(
+        crate::Engine::new(
+            ctx.registry().clone(),
+            crate::StoragePorts::rejecting_with_memory_inspect(local.clone()),
+        )
+        .expect("engine configuration"),
+    );
     ctx = crate::test_fixtures::tool_ctx_on(
         ctx.owner(),
         ctx.authz().clone(),

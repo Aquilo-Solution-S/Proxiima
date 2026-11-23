@@ -12,6 +12,7 @@ fn bound_authority(store: &CitedBlobStore) -> proxiima_core::authz::SystemAuthor
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_system_authority();
     store
         .bind_system_authority(&authority)
@@ -202,6 +203,7 @@ async fn the_sweep_requires_the_boot_authority() {
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
+    .expect("engine configuration")
     .into_system_authority();
     let refused = f
         .store

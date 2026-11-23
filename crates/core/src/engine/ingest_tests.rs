@@ -189,7 +189,8 @@ async fn authorize_fact_ingest_stamps_draft_owner_from_permit() {
     let engine = Engine::new(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
     let draft = FactWriteCommand::from_payload(
         "test/source",
@@ -212,7 +213,8 @@ async fn fact_ingest_refuses_a_goal_change_a_goal_write_did_not_make() {
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
     let forged = crate::GoalChangeV1 {
         series: uuid::Uuid::now_v7(),
@@ -239,7 +241,8 @@ async fn authorize_fact_ingest_denies_a_context_without_access() {
     let engine = Engine::new(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -262,7 +265,8 @@ async fn a_context_without_access_precedes_invalid_fact_kind() {
     let engine = Engine::new(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let mut draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -286,7 +290,8 @@ async fn authorize_fact_with_citation_denies_a_context_without_access() {
     let engine = Engine::new(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     let draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -319,11 +324,11 @@ async fn authorize_fact_with_citation_denies_a_context_without_access() {
 fn listenable_engine() -> Engine {
     let source = crate::publication::PublicationSource::new("urn:proxiima:r6-tests")
         .expect("a URN is an absolute source");
-    Engine::new(
+    Engine::try_new(
         crate::test_fixtures::probe_registry(),
         crate::StoragePorts::rejecting_for_tests(),
+        crate::publication::PublicationConfig::new(source),
     )
-    .try_with_publication_config(crate::publication::PublicationConfig::new(source))
     .expect("a bound source boots")
 }
 

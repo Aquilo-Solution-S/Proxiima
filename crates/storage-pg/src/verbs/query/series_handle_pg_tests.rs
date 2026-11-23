@@ -43,7 +43,8 @@ async fn write_permit(owner: &OwnerId) -> Result<OwnerWritePermit, StorageError>
     let engine = Engine::new(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    );
+    )
+    .expect("engine configuration");
     engine
         .authorize_owner_write(
             &authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer)),

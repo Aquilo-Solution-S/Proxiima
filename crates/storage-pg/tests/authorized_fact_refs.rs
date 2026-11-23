@@ -353,6 +353,7 @@ fn engine(pg: &PgStorage, registry: &proxiima_core::SpiiceRegistryFrozen) -> pro
         registry.clone(),
         std::sync::Arc::new(pg.clone()).storage_ports(),
     )
+    .expect("engine configuration")
 }
 
 fn inline_citation() -> InlineCitedObjectDraft {
