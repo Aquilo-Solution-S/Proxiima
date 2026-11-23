@@ -105,11 +105,10 @@ impl World {
             registry.add_authorization_hook(hook);
         }
         registry.add_fact_schema_or_panic_for_tests::<ReferencedFact>();
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
         Self {
             pg,

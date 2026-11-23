@@ -563,11 +563,10 @@ async fn revoke_member(
 }
 
 async fn membership_permit(owner: OwnerId) -> Result<OwnerWritePermit, Box<dyn std::error::Error>> {
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let authz =
         proxiima_core::test_fixtures::authenticated_context(AuthzContext::for_subject_with_role(
             UserId::new(Uuid::now_v7()),

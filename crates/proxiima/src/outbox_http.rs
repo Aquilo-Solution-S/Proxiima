@@ -42,7 +42,7 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_millis(proxiima_core
 const MAX_REASON_CHARS: usize = proxiima_core::ledger!(Proxiima.Publication.httpReasonChars);
 
 /// Bytes retained from a rejection body. The last received chunk can exceed the remaining budget.
-const MAX_REASON_BYTES: usize = proxiima_core::ledger!(Proxiima.Publication.httpReasonBytes);
+const MAX_REASON_BYTES: usize = MAX_REASON_CHARS * 4;
 
 pub(crate) const CONTENT_TYPE: &str = proxiima_core::ledger!(Proxiima.Publication.httpContentType);
 pub(crate) const DELIVERY_COUNT_HEADER: &str =
@@ -114,7 +114,7 @@ impl HttpIntake {
         let mut builder = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none());
-        // `Proxiima.Publication.httpTrustAdmitted`.
+        // Refuse an unreadable or malformed configured CA bundle and use system roots if none is set.
         if let Some(ca_file) = ca_file {
             let pem = std::fs::read(ca_file).map_err(|err| {
                 ProxiimaError::Config(format!("{ENV_CA_FILE} could not be read: {err}"))

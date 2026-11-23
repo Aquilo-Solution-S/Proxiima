@@ -62,11 +62,10 @@ mod tests {
     use crate::{MemoryId, SchemaId, SpiiceRegistry, UserId};
 
     fn engine() -> Engine {
-        Engine::new(
+        Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
         )
-        .expect("engine configuration")
     }
 
     fn request() -> SidecarHeadsRequest {
@@ -173,11 +172,10 @@ mod tests {
     async fn all_vetoed_readable_owners_return_an_empty_page_before_storage() {
         let mut registry = SpiiceRegistry::new();
         registry.add_authorization_hook(Arc::new(Veto));
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        )
-        .expect("engine configuration");
+        );
         let subject = UserId::new(uuid::Uuid::new_v4());
         let authz = AuthzContext::for_subject_with_role(subject, [], AuthPath::HostBearer);
         let page = engine

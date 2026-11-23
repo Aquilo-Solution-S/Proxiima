@@ -96,11 +96,10 @@ async fn a_fact_citing_an_aborted_upload_is_a_conflict() {
     let service = CitedBlobService::new(Arc::new(AbortAfterStagePort {
         inner: store.clone(),
     }) as Arc<dyn CitedBlobPort>);
-    let error = Engine::new(
+    let error = Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         Arc::new(pg.clone()).storage_ports(),
     )
-    .expect("engine configuration")
     .complete_upload_as_fact(&service, &ctx, owner, &upload_id, &[])
     .await
     .expect_err("a Fact may not cite an aborted upload");

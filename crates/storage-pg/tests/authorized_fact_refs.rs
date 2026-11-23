@@ -349,11 +349,10 @@ fn direct_draft(logical_id: &str, raw_refs: Vec<Uuid>) -> FactWriteCommand {
 }
 
 fn engine(pg: &PgStorage, registry: &proxiima_core::SpiiceRegistryFrozen) -> proxiima_core::Engine {
-    proxiima_core::Engine::new(
+    proxiima_core::Engine::new_or_panic_for_tests(
         registry.clone(),
         std::sync::Arc::new(pg.clone()).storage_ports(),
     )
-    .expect("engine configuration")
 }
 
 fn inline_citation() -> InlineCitedObjectDraft {

@@ -53,11 +53,10 @@ impl World {
         for hook in hooks {
             registry.add_authorization_hook(hook);
         }
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         Self {
             pg,
             engine,

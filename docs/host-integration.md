@@ -875,8 +875,6 @@ with a reason. The limits and concurrency contract live in
 
 ## Fact publication outbox
 
-Capture and delivery follow [`Proxiima.Publication`](ledger.md#publication).
-
 Implement `DurableIntake` in the host and register it with
 `RuntimeBuilder::outbox_intake`, or register named consumers with
 `outbox_consumer`. A captured listenable Fact is committed to the outbox in
@@ -910,11 +908,15 @@ actor attribution. The typed `PublicationRecord`, `DurableIntake`, and delivery 
 CloudEvents envelope and retry contract in rustdoc. Scheduling, execution, and
 call logging belong to the host; the outbox is its change channel.
 
+Capture and delivery rules are in [`Proxiima.Publication`](ledger.md#publication).
+
 Quiesce lets an in-flight intake finish. Shutdown abandons it. Both flush
 completed decisions and release the claims they did not finish.
 
 The built-in HTTP sink reads `PROXIIMA_OUTBOX_HTTP_URL` and delivers each event
-to that receiver without following redirects. Plaintext HTTP requires loopback
+to that receiver without following redirects. The receiver returns 2xx, 400 or
+422 only after committing its decision, because each of those statuses settles
+the lane. Plaintext HTTP requires loopback
 or an exact host entry in `PROXIIMA_PLAINTEXT_HOSTS`, whether or not a token is
 configured. See [configuration](configuration.md) for the token-file and CA
 settings.

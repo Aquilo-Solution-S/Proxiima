@@ -18,7 +18,7 @@ default = []
 testkit = []
 
 [dependencies]
-fluent-uri = "0.3.2"
+fluent-uri = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

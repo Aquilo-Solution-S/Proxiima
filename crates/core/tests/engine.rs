@@ -22,11 +22,10 @@ fn fresh_owner() -> (OwnerId, OwnerId) {
 
 fn boot_engine(principal: OwnerId, owner: OwnerId) -> Engine {
     let _ = (principal, owner);
-    Engine::new(
+    Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
-    .expect("engine configuration")
 }
 
 fn fixed_router() -> Arc<SingleClientRouter> {

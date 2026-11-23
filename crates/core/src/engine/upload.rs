@@ -451,11 +451,10 @@ mod tests {
         }));
         let owner = OwnerId::from(UserId::new(uuid::Uuid::nil()));
         let authority = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        )
-        .expect("engine configuration");
+        );
 
         let error = engine
             .complete_upload_as_fact_with_expectation(

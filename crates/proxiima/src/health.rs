@@ -113,13 +113,10 @@ mod tests {
         let probe = Probe {
             pool,
             cancel: CancellationToken::new(),
-            engine: Arc::new(
-                Engine::new(
-                    proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
-                    proxiima_core::StoragePorts::rejecting_for_tests(),
-                )
-                .expect("engine configuration"),
-            ),
+            engine: Arc::new(Engine::new_or_panic_for_tests(
+                proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
+                proxiima_core::StoragePorts::rejecting_for_tests(),
+            )),
             objects: ObjectPurgeHealth::default(),
             ended: EndedWorkers::default(),
         };

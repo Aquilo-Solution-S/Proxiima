@@ -91,11 +91,10 @@ impl Harness {
         if let Some(hook) = hook {
             registry.add_authorization_hook(hook);
         }
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             storage.clone().storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         Ok(Self {
             name,
             storage,

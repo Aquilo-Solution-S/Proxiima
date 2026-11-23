@@ -13,11 +13,10 @@ fn owner() -> OwnerId {
 }
 
 fn engine() -> Engine {
-    Engine::new(
+    Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
-    .expect("engine configuration")
 }
 
 fn derivation_sidecar() -> SidecarPayload {
@@ -301,11 +300,10 @@ fn guided_interpretation_keeps_exact_goal_versions_and_deduplicates() {
 #[tokio::test]
 async fn a_node_write_hands_storage_its_origins_and_references() {
     let recorder = Arc::new(RecordingAuthoring::default());
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_with_memory_authoring(recorder.clone()),
-    )
-    .expect("engine configuration");
+    );
     let owner = owner();
     let permit = OwnerWritePermit::new(
         owner,

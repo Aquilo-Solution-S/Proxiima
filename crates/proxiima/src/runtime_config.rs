@@ -425,7 +425,7 @@ impl RuntimeBuilder {
     /// The delivery contract is [`Self::outbox_intake`]'s, per consumer.
     #[must_use]
     pub fn outbox_consumer(mut self, name: ConsumerName, intake: Arc<dyn DurableIntake>) -> Self {
-        // `Proxiima.Publication.consumerBinding`.
+        // The latest host binding replaces the intake under the same name.
         self.outbox_consumers.0.insert(name, intake);
         self
     }
@@ -784,7 +784,8 @@ impl RuntimeBuilder {
         Ok(builder)
     }
 
-    /// Fill unset storage fields from the environment, leaving serving and object-store configuration to their callers.
+    /// Fill unset storage and publication capture fields from the environment,
+    /// leaving serving and object-store configuration to their callers.
     ///
     /// # Errors
     ///
@@ -838,6 +839,9 @@ impl RuntimeBuilder {
         if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(lookup) {
             self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(lookup)?);
         }
+        if self.publication.is_none() {
+            self.publication = publication_config_from_lookup(lookup)?;
+        }
         Ok(self)
     }
 
@@ -887,9 +891,6 @@ impl RuntimeBuilder {
                 .read_source(lookup)
                 .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
-        }
-        if self.publication.is_none() {
-            self.publication = publication_config_from_lookup(lookup)?;
         }
         if self.published_retention.is_none() {
             self.published_retention = crate::config::published_retention_from_lookup(lookup)?;
@@ -1081,7 +1082,7 @@ impl RuntimeBuilder {
             return Ok(());
         };
         let name = crate::outbox_http::consumer_name();
-        // `Proxiima.Publication.consumerBinding`.
+        // Refuse an HTTP lane that would replace an explicit host binding.
         if self.outbox_consumers.0.contains_key(&name) {
             return Err(ProxiimaError::Config(format!(
                 "{} is set and the host also registered an outbox consumer named \
@@ -1112,13 +1113,13 @@ impl RuntimeBuilder {
         Ok(())
     }
 
-    /// The storage half of both resolves: the host-state participant, the
-    /// database URLs, the store number and the defaults of the remaining
-    /// storage settings. Not yet validated ([`StorageConfig::validate`]).
     pub(crate) fn publication_config(&self) -> PublicationConfig {
         self.publication.clone().unwrap_or_default()
     }
 
+    /// The storage half of both resolves: the host-state participant, the
+    /// database URLs, the store number and the defaults of the remaining
+    /// storage settings. Not yet validated ([`StorageConfig::validate`]).
     fn take_storage(&mut self) -> Result<(StorageConfig, StorageParts), ProxiimaError> {
         // `Proxiima.HostState.mergeRegistration`.
         if self.duplicate_host_state_participant {

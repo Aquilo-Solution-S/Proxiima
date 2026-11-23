@@ -201,6 +201,46 @@ fn a_listenable_schema_without_a_json_schema_fails_the_build() {
     );
 }
 
+#[test]
+fn schema_freeze_admission_matches_ledger_vectors() {
+    use crate::test_fixtures::{
+        SCHEMALESS_PROBE_SPIICE, SchemalessListenableProbeV1, register_probe_schemas,
+    };
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.schemaFreezeAdmitted"]
+        .as_array()
+        .expect("schema freeze table");
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let (listenable, has_json_schema): (bool, bool) =
+            serde_json::from_value(row["in"].clone()).expect("schema evidence");
+        let mut registry = SpiiceRegistry::new();
+        let schema_id = if has_json_schema {
+            register_probe_schemas(&mut registry).expect("register typed probe");
+            "probe/listenable-v1"
+        } else {
+            registry.add_contract_or_panic_for_tests(&SCHEMALESS_PROBE_SPIICE);
+            registry.add_fact_schema_or_panic_for_tests::<SchemalessListenableProbeV1>();
+            "probe/schemaless-v1"
+        };
+        registry
+            .schemas
+            .iter_mut()
+            .find(|schema| schema.schema_id.as_str() == schema_id)
+            .expect("registered schema")
+            .listenable = listenable;
+        let result = registry.validate_listenable_schemas_publish_a_json_schema();
+        assert_eq!(
+            result.is_ok(),
+            row["out"].as_bool().expect("freeze decision"),
+            "{result:?}"
+        );
+    }
+}
+
 /// Every contract cross-check, each with a registry shaped to trip it
 /// and nothing else.
 ///

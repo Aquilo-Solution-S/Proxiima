@@ -220,11 +220,10 @@ async fn a_row_is_set_by_whoever_may_erase_that_owners_memory() {
             ]),
             "the host's clock reads every owner's rows"
         );
-        let (_, foreign) = proxiima_core::Engine::new(
+        let (_, foreign) = proxiima_core::Engine::new_or_panic_for_tests(
             proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
             proxiima_core::StoragePorts::rejecting_for_tests(),
         )
-        .expect("engine configuration")
         .into_system_authority();
         let refused = engine
             .all_retention(&foreign)

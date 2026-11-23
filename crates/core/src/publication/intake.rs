@@ -154,7 +154,7 @@ impl ReceivedEvent {
     /// admitted Fact's `t`, nothing more. See [`EventIdentity`].
     #[must_use]
     pub fn identity(&self) -> EventIdentity {
-        // `Proxiima.Publication.identifiesFact`.
+        // Classify canonical UUID spellings as Fact IDs and preserve other IDs verbatim.
         match uuid::Uuid::parse_str(&self.id) {
             Ok(uuid) if uuid.to_string() == self.id => EventIdentity::Fact(MemoryId::new(uuid)),
             _ => EventIdentity::Opaque(self.id.clone()),
@@ -201,7 +201,9 @@ impl IntakeError {
 ///
 /// If the sink projects by subject, commit the event ID and any increase of
 /// that subject’s position together with the decision. On redelivery, return
-/// the stored decision for [`ReceivedEvent::id`]. An older or equal sequence
+/// the stored decision for [`ReceivedEvent::id`]. The process can stop between
+/// `accept` and the mark, allowing the lease to expire and the event to be
+/// delivered again (`Proxiima.Publication.laneClaimable`). An older or equal sequence
 /// does not move the projection back. The sink owns this transaction.
 ///
 /// `accept` is called one event at a time, and must return within a few

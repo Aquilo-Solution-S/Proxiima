@@ -643,14 +643,12 @@ impl Engine {
             return Ok(None);
         }
         let schema_id = fact_info.schema_id.clone();
-        let Some(source) = self.publication.source.clone() else {
-            return Err(super::errors::map_publication_error(
-                &crate::publication::PublicationError::SourceUnbound {
-                    schema_id: schema_id.as_str().to_owned(),
-                },
-            ));
-        };
-        // `Proxiima.Publication.typedCaptureAdmitted`.
+        let source = self
+            .publication
+            .source
+            .clone()
+            .expect("engine composition binds a source for every listenable schema");
+        // Capture requires exactly one typed Fact payload of this schema and version.
         let mut matches = sidecars.iter().filter(|payload| {
             payload.kind == PayloadKind::Fact
                 && payload.schema_id == schema_id

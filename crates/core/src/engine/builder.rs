@@ -12,24 +12,12 @@ use crate::storage_ports::{EngineStoragePorts, StoragePorts};
 use crate::verbs::schema::SpiiceRegistryFrozen;
 
 impl Engine {
-    /// Build an engine over a registry with no listenable schemas.
-    ///
-    /// # Errors
-    ///
-    /// Returns a publication error when a listenable schema requires a source.
-    pub fn new(
-        registry: SpiiceRegistryFrozen,
-        storage: StoragePorts,
-    ) -> Result<Self, PublicationError> {
-        Self::try_new(registry, storage, PublicationConfig::default())
-    }
-
     /// Build an engine with the deployment's publication source and bounds.
     ///
     /// # Errors
     ///
     /// Returns a publication error when a listenable schema requires a source.
-    pub fn try_new(
+    pub fn new(
         registry: SpiiceRegistryFrozen,
         storage: StoragePorts,
         publication: PublicationConfig,
@@ -47,6 +35,22 @@ impl Engine {
             publication,
             mcp_url: Arc::new(RwLock::new(None)),
         })
+    }
+
+    /// Assemble an engine with the fixed test publication source.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the test publication configuration is invalid.
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new_or_panic_for_tests(registry: SpiiceRegistryFrozen, storage: StoragePorts) -> Self {
+        let source = "urn:proxiima:test"
+            .parse()
+            .expect("valid test publication source");
+        Self::new(registry, storage, PublicationConfig::new(source))
+            .expect("valid test engine configuration")
     }
 
     /// Split out the host-held System write witness while the caller still
@@ -86,11 +90,9 @@ impl Engine {
         storage: StoragePorts,
         register: impl FnOnce(&mut crate::SpiiceRegistry),
     ) -> Self {
-        Self::try_compose(storage, PublicationConfig::default(), |registry| {
-            register(registry);
-            Ok(())
-        })
-        .expect("spiice registry must be valid")
+        let mut registry = crate::SpiiceRegistry::new();
+        register(&mut registry);
+        Self::new_or_panic_for_tests(registry.freeze_or_panic_for_tests(), storage)
     }
 
     /// One-call composite assembly: build a [`crate::SpiiceRegistry`],
@@ -113,7 +115,7 @@ impl Engine {
     ) -> Result<Self, SpiiceRegistryError> {
         let mut registry = crate::SpiiceRegistry::new();
         register(&mut registry)?;
-        Ok(Self::try_new(registry.try_freeze()?, storage, publication)?)
+        Ok(Self::new(registry.try_freeze()?, storage, publication)?)
     }
 
     /// Get a reference to the schema registry.
@@ -203,11 +205,10 @@ mod tests {
             Duration::from_secs(3),
         )
         .expect("valid policy");
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             StoragePorts::rejecting_for_tests(),
         )
-        .expect("engine configuration")
         .with_embedding_runtime_policy(policy)
         .with_embedding_router(Arc::new(
             crate::embedding::SingleClientRouter::bind(Arc::new(HangingCustomEmbedding))
@@ -235,6 +236,7 @@ mod tests {
         let err = Engine::new(
             crate::test_fixtures::probe_registry(),
             StoragePorts::rejecting_for_tests(),
+            crate::publication::PublicationConfig::default(),
         )
         .expect_err("an unbound source must fail the build");
         assert!(
@@ -247,24 +249,13 @@ mod tests {
         );
     }
     #[test]
-    fn configured_and_closure_composition_refuse_an_unbound_source() {
+    fn closure_composition_refuses_an_unbound_source() {
         use crate::publication::{PublicationConfig, PublicationError};
         use crate::test_fixtures::register_probe_schemas;
 
-        let config = PublicationConfig::default();
-        let direct = Engine::try_new(
-            crate::test_fixtures::probe_registry(),
-            StoragePorts::rejecting_for_tests(),
-            config.clone(),
-        );
-        assert!(matches!(
-            direct,
-            Err(PublicationError::SourceUnbound { .. })
-        ));
-
         let composed = Engine::try_compose(
             StoragePorts::rejecting_for_tests(),
-            config,
+            PublicationConfig::default(),
             register_probe_schemas,
         );
         assert!(

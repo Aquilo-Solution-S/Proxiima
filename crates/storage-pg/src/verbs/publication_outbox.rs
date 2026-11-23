@@ -119,7 +119,7 @@ pub(crate) async fn capture_publication_in_tx(
     .execute(tx.as_mut())
     .await
     .map_err(map_err)?;
-    // `Proxiima.Publication.fanOut`.
+    // Capture a lane for each current registration. Later registrations never backfill lanes.
     let lanes = sqlx::query(
         "INSERT INTO proxiima_core.publication_delivery (t, consumer)
          SELECT $1, name FROM proxiima_core.publication_consumer",
@@ -446,6 +446,7 @@ impl PublicationOutboxPort for PgStorage {
         // record erased or taken over after the pre-accept renew is not
         // recorded as delivered. The consumer may already hold it; that
         // window is at-least-once delivery and no mark can close it.
+        // `Proxiima.Publication.canMark`.
         let deliverable: Vec<Uuid> = sqlx::query_scalar(concat!(
             "SELECT lane.t
                FROM proxiima_core.publication_delivery lane
@@ -504,16 +505,7 @@ impl PublicationOutboxPort for PgStorage {
         .map_err(map_err)?;
         let outcomes = ids
             .iter()
-            .map(|id| {
-                // `Proxiima.Publication.markVerdict`.
-                if published.contains(id) {
-                    AckOutcome::Published
-                } else if already.contains(id) {
-                    AckOutcome::AlreadyPublished
-                } else {
-                    AckOutcome::StaleClaim
-                }
-            })
+            .map(|id| mark_verdict(published.contains(id), already.contains(id)))
             .collect();
         crate::owner_scope::finish_transaction(tx, Ok(outcomes)).await
     }
@@ -532,7 +524,6 @@ impl PublicationOutboxPort for PgStorage {
                 MIN_CLAIM_LEASE.as_millis(),
             )));
         }
-        // `Proxiima.Publication.canMark`.
         let mut tx = self.platform_transaction().await?;
         // The same deliverability filter as CLAIM_SQL, so a record the claim
         // would no longer hand out is not delivered under an older claim.
@@ -768,8 +759,6 @@ impl PublicationConsumerPort for PgStorage {
         crate::owner_scope::finish_transaction(tx, result).await
     }
 
-    /// `Proxiima.Publication.laneLifecycle`.
-    ///
     /// The `SHARE` lock on the lanes is what makes the settle complete. A
     /// capture or a mark that is already writing lanes finishes first; one
     /// that starts later waits, and then reads a consumer set without this
@@ -800,6 +789,7 @@ impl PublicationConsumerPort for PgStorage {
         let outcome = if removed == 0 {
             RetireOutcome::NotRegistered
         } else {
+            // `Proxiima.Publication.laneLifecycle`.
             settle_records(&mut tx, &owed).await?;
             RetireOutcome::Retired {
                 undelivered: proxiima_core::count_u64(owed.len()),
@@ -896,9 +886,9 @@ impl PgStorage {
     /// means the schema was tampered with — the migration seeds it — and
     /// refusing to boot is better than publishing unstamped events that no
     /// cleaner will ever be able to vouch for.
-    /// `Proxiima.Publication.originAuthority`.
     pub async fn origin_scope(&self) -> Result<OriginScope, StorageError> {
         let mut tx = self.platform_transaction().await?;
+        // Only the stamping installation can vouch for the origin. Refuse a missing identity.
         let id: Option<Uuid> = sqlx::query_scalar(
             "SELECT installation_id FROM proxiima_core.installation WHERE singleton",
         )
@@ -961,6 +951,15 @@ impl proxiima_core::storage_ports::publication::PublicationRetentionPort for PgS
             .map_err(map_err)?
             .rows_affected();
         crate::owner_scope::finish_transaction(tx, Ok(deleted)).await
+    }
+}
+
+// `Proxiima.Publication.markVerdict`.
+fn mark_verdict(changed: bool, published: bool) -> AckOutcome {
+    match (changed, published) {
+        (true, _) => AckOutcome::Published,
+        (false, true) => AckOutcome::AlreadyPublished,
+        (false, false) => AckOutcome::StaleClaim,
     }
 }
 

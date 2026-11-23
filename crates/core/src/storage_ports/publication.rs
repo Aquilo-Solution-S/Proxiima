@@ -1,4 +1,11 @@
 //! Host-only capabilities for Fact publication. Spiice storage ports omit them.
+//!
+//! [`PublicationOutboxPort`] has no delete or purge method. An expiring lease
+//! can only make a record deliverable again (`Proxiima.Publication.laneClaimable`).
+//! [`PublicationRetentionPort`] reclaims delivered records. Of the consumer
+//! operations on [`PublicationConsumerPort`], retiring is the one act that
+//! cancels an undelivered promise (`Proxiima.Publication.laneLifecycle`).
+//! These are separate host capabilities (`Proxiima.Publication.hostOutboxOperations`).
 
 use std::num::NonZeroU32;
 use std::time::Duration;

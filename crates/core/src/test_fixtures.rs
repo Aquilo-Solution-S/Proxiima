@@ -253,16 +253,10 @@ pub fn tool_ctx_with(
 ///
 /// Panics if the fixed fixture publication configuration is invalid.
 pub fn rejecting_engine(registry: impl AsRef<SpiiceRegistryFrozen>) -> Arc<Engine> {
-    Arc::new(
-        Engine::try_new(
-            registry.as_ref().clone(),
-            StoragePorts::rejecting_for_tests(),
-            proxiima_core::publication::PublicationConfig::new(
-                "urn:proxiima:test".parse().expect("fixture source"),
-            ),
-        )
-        .expect("engine configuration"),
-    )
+    Arc::new(Engine::new_or_panic_for_tests(
+        registry.as_ref().clone(),
+        StoragePorts::rejecting_for_tests(),
+    ))
 }
 
 /// The one test constructor of [`ToolCtx`], built as `ToolHost::ctx_for`

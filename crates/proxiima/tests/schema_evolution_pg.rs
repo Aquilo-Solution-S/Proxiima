@@ -16,7 +16,6 @@ use proxiima::spiice::{
     PgSchemaEvolution, SpiiceBundle, SpiiceDescriptor, SpiiceProvenance, SpiiceRegistry,
     SpiiceRegistryError,
 };
-use proxiima_core::publication::{PublicationConfig, PublicationSource};
 use proxiima_core::spiice::{
     CounterRule, DbConstraint, EmbeddingRecipe, EraseRule, ExportRule, ForgetRule, KeyShape,
     ProjectionDecl, Provenance, SchemaContract, SchemaEvolution, SchemaRef, SearchProjectionDecl,
@@ -301,13 +300,7 @@ fn evolution_engine(
     registry: proxiima_core::SpiiceRegistryFrozen,
     storage: PgStorage,
 ) -> proxiima_core::Engine {
-    let source = PublicationSource::new("urn:proxiima:evolution").expect("fixture source");
-    proxiima_core::Engine::try_new(
-        registry,
-        Arc::new(storage).storage_ports(),
-        PublicationConfig::new(source),
-    )
-    .expect("fixture publication configuration")
+    proxiima_core::Engine::new_or_panic_for_tests(registry, Arc::new(storage).storage_ports())
 }
 
 fn register_v1(r: &mut SpiiceRegistry) -> Result<(), SpiiceRegistryError> {

@@ -210,13 +210,10 @@ mod tests {
         };
         let edge = McpEdge {
             tool_host: ToolHost::from_engine(
-                Arc::new(
-                    proxiima_core::Engine::new(
-                        registry,
-                        proxiima_core::StoragePorts::rejecting_for_tests(),
-                    )
-                    .expect("engine configuration"),
-                ),
+                Arc::new(proxiima_core::Engine::new_or_panic_for_tests(
+                    registry,
+                    proxiima_core::StoragePorts::rejecting_for_tests(),
+                )),
                 SpiiceServices::default(),
             ),
             edge_auth: Arc::new(EdgeAuth::headless()),

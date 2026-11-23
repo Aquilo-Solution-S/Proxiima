@@ -465,7 +465,7 @@ impl<'env, A: SpiiceApp + 'static> StorageProxiima<'env, A> {
         } = crate::boot::connect_storage::<A>(&config, &parts, registry).await?;
         let (storage, blobs) = crate::boot::connect_blob_store(storage, s3)?;
         // The one-shot command owns the authority of the engine it composes.
-        let (_, authority) = crate::Engine::try_new(
+        let (_, authority) = crate::Engine::new(
             registry,
             Arc::new(storage.clone()).storage_ports(),
             publication,

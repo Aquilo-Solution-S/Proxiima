@@ -3794,7 +3794,6 @@ RETURNS timestamptz LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
 $$;
 
 -- `Proxiima.Identity.publicationCounterUpdate`.
--- `Proxiima.Identity.publicationCounterUpdate`.
 CREATE OR REPLACE FUNCTION proxiima_core.publication_counter_forward_only() RETURNS trigger
     LANGUAGE plpgsql
     AS $$

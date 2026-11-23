@@ -578,7 +578,7 @@ fn compose_engine(
     if let Some(proof) = owner_drop_proof {
         storage_ports = storage_ports.owner_drop_proof(proof);
     }
-    let mut engine = Engine::try_new(registry, storage_ports.build(), config.publication.clone())
+    let mut engine = Engine::new(registry, storage_ports.build(), config.publication.clone())
         .map_err(|error| ProxiimaError::Config(error.to_string()))?
         .with_embedding_runtime_policy(config.storage.embedding_runtime_policy);
     if let Some(router) = embedding_router {

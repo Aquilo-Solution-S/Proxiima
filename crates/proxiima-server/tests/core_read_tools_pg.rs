@@ -55,13 +55,10 @@ async fn graph_and_tool_catalog_share_behavior_visibility() -> Result<(), Box<dy
         if hidden {
             registry.add_request_behavior(HidesRemember);
         }
-        let engine = Arc::new(
-            Engine::new(
-                registry.freeze_or_panic_for_tests(),
-                Arc::new(pg.clone()).storage_ports(),
-            )
-            .expect("engine configuration"),
-        );
+        let engine = Arc::new(Engine::new_or_panic_for_tests(
+            registry.freeze_or_panic_for_tests(),
+            Arc::new(pg.clone()).storage_ports(),
+        ));
         let server = ToolHost::from_engine(engine, SpiiceServices::default());
         let auth = AuthContext {
             owner,
@@ -97,10 +94,10 @@ async fn core_read_resources_return_bare_uuids_and_author() -> Result<(), Box<dy
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let engine = Arc::new(
-        Engine::new(registry.clone(), Arc::new(pg.clone()).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = Arc::new(Engine::new_or_panic_for_tests(
+        registry.clone(),
+        Arc::new(pg.clone()).storage_ports(),
+    ));
     let server = ToolHost::from_engine(engine, SpiiceServices::default());
     // The host is now the authoritative scope chokepoint, so reads need an
     // authenticated full-scope context (production always passes Some(auth);
@@ -194,10 +191,10 @@ async fn search_results_expose_structured_memory_id() -> Result<(), Box<dyn std:
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let engine = Arc::new(
-        Engine::new(registry.clone(), Arc::new(pg.clone()).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = Arc::new(Engine::new_or_panic_for_tests(
+        registry.clone(),
+        Arc::new(pg.clone()).storage_ports(),
+    ));
     let server = ToolHost::from_engine(engine, SpiiceServices::default());
     let auth = AuthContext {
         owner,
@@ -275,10 +272,10 @@ async fn goal_resources_list_and_paginate() -> Result<(), Box<dyn std::error::Er
     let (foreign_handle, _) = insert_active_goal(&pg, &foreign_owner).await?;
 
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let engine = Arc::new(
-        Engine::new(registry.clone(), Arc::new(pg.clone()).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = Arc::new(Engine::new_or_panic_for_tests(
+        registry.clone(),
+        Arc::new(pg.clone()).storage_ports(),
+    ));
     let server = ToolHost::from_engine(engine, SpiiceServices::default());
     let auth = AuthContext {
         owner,
@@ -400,10 +397,10 @@ async fn goal_resources_carry_text_set_at_and_changed_at() -> Result<(), Box<dyn
     .await?;
 
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let engine = Arc::new(
-        Engine::new(registry.clone(), Arc::new(pg.clone()).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = Arc::new(Engine::new_or_panic_for_tests(
+        registry.clone(),
+        Arc::new(pg.clone()).storage_ports(),
+    ));
     let server = ToolHost::from_engine(engine, SpiiceServices::default());
     let auth = AuthContext {
         owner,
@@ -500,10 +497,10 @@ async fn edge_resources_read_back_interpretation_references()
 
     let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let engine = Arc::new(
-        Engine::new(registry.clone(), Arc::new(pg.clone()).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = Arc::new(Engine::new_or_panic_for_tests(
+        registry.clone(),
+        Arc::new(pg.clone()).storage_ports(),
+    ));
     let server = ToolHost::from_engine(engine, SpiiceServices::default());
     let auth = AuthContext {
         owner,

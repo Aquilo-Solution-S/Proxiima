@@ -40,11 +40,10 @@ fn draft() -> FactWriteCommand {
 
 async fn write_permit(owner: &OwnerId) -> Result<OwnerWritePermit, StorageError> {
     let user_id = owner.as_user();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     engine
         .authorize_owner_write(
             &authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer)),

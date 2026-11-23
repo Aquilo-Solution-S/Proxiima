@@ -480,12 +480,6 @@ impl Engine {
     /// (never the caller's label) and the host's extension attributes, under
     /// this engine's limits. Storage composes the payload itself, because the
     /// version's `t` and the series handle are minted inside its transaction.
-    ///
-    /// # Errors
-    ///
-    /// `Internal` when the schema is listenable and no publication source is
-    /// configured: boot validation refuses that composition, so only an
-    /// unvalidated one reaches here.
     pub(in crate::engine) fn goal_atomic_context<'a, A>(
         &'a self,
         authority: &'a A,
@@ -503,13 +497,11 @@ impl Engine {
             )
             .is_some_and(|schema| schema.listenable);
         let publication = if listenable {
-            let Some(source) = self.publication.source.as_ref() else {
-                return Err(super::errors::map_publication_error(
-                    &crate::publication::PublicationError::SourceUnbound {
-                        schema_id: GoalChangeV1::SCHEMA_ID.to_owned(),
-                    },
-                ));
-            };
+            let source = self
+                .publication
+                .source
+                .as_ref()
+                .expect("engine composition binds a source for every listenable schema");
             let authz = self.operation_authority(authority)?.authz();
             Some(PublicationStamp::new(
                 source,
@@ -780,11 +772,10 @@ mod tests {
     use crate::{Engine, GoalId, OwnerId, SchemaId, SchemaVersion, SpiiceRegistry};
 
     fn engine() -> Engine {
-        Engine::new(
+        Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
         )
-        .expect("engine configuration")
     }
 
     #[test]

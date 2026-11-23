@@ -22,6 +22,7 @@ module_name_repetitions = "allow"
 assert_is_empty = "allow"
 
 [workspace.dependencies]
+fluent-uri = "0.3.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 rust_decimal = { version = "1.36.0", default-features = false, features = ["serde"] }

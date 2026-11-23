@@ -331,11 +331,10 @@ mod tests {
     fn context() -> AppContext {
         AppContext {
             host: crate::ProxiimaHost::for_tests(Arc::new(
-                proxiima_core::Engine::new(
+                proxiima_core::Engine::new_or_panic_for_tests(
                     SpiiceRegistry::new().freeze_or_panic_for_tests(),
                     proxiima_core::StoragePorts::rejecting_for_tests(),
-                )
-                .expect("engine configuration"),
+                ),
             )),
         }
     }

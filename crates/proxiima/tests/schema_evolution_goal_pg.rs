@@ -11,7 +11,6 @@ use proxiima::spiice::{
     PgGoalSidecar, PgMigrationGoalPayload, PgMigrationSchemas, PgSchemaEvolution, PgSidecarReadCtx,
     SpiiceBundle, SpiiceDescriptor, SpiiceProvenance, SpiiceRegistry, SpiiceRegistryError,
 };
-use proxiima_core::publication::{PublicationConfig, PublicationSource};
 use proxiima_core::spiice::{
     CounterRule, DbConstraint, EmbeddingRecipe, EraseRule, ExportRule, ForgetRule, KeyShape,
     ProjectionDecl, Provenance, SchemaContract, SchemaEvolution, SchemaRef, SearchProjectionDecl,
@@ -492,12 +491,7 @@ async fn goal_schema_evolution_preserves_ids_series_sidecars_and_replay() {
     let admin = sqlx::PgPool::connect(&db.admin_url()).await.unwrap();
     insert_owner(&admin, owner).await;
     let old = storage(&runtime, &platform, &ro, so).await;
-    let engine = proxiima_core::Engine::try_new(
-        ro,
-        Arc::new(old).storage_ports(),
-        PublicationConfig::new(PublicationSource::new("urn:goal:evolution").unwrap()),
-    )
-    .unwrap();
+    let engine = proxiima_core::Engine::new_or_panic_for_tests(ro, Arc::new(old).storage_ports());
     let topology = GoalTopologyWrite::new(Vec::new(), Vec::new(), Vec::new()).unwrap();
     let request = IdempotencyKey::new("goal-create-evolution").unwrap();
     let (first, modified) =
@@ -573,12 +567,7 @@ async fn finish_goal_evolution(finish: GoalEvolutionFinish) {
         admin,
     } = finish;
     let new = storage(runtime.as_str(), platform.as_str(), &rn, sn).await;
-    let engine2 = proxiima_core::Engine::try_new(
-        rn,
-        Arc::new(new).storage_ports(),
-        PublicationConfig::new(PublicationSource::new("urn:goal:evolution").unwrap()),
-    )
-    .unwrap();
+    let engine2 = proxiima_core::Engine::new_or_panic_for_tests(rn, Arc::new(new).storage_ports());
     let replay = engine2
         .create_goal(
             &authz,

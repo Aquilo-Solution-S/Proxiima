@@ -1,3 +1,5 @@
+import Proxiima.Operations
+
 /-! # Publication -/
 
 namespace Proxiima.Publication
@@ -26,10 +28,10 @@ def backlogFreshSeconds : Nat := 30
 /-- The shortest interval in seconds between backlog estimate refreshes. -/
 def backlogRefreshSeconds : Nat := 10
 
-/-- The producer emits structured CloudEvents at this specification version. -/
+/-- The structured CloudEvents specification version. -/
 def cloudEventsSpecVersion : String := "1.0"
 
-/-- The producer serializes the typed payload as JSON. -/
+/-- The media type of the typed payload. -/
 def dataContentType : String := "application/json"
 
 /-- The longest CloudEvents extension name. -/
@@ -92,9 +94,6 @@ def httpDeliveryCountHeader : String := "Proxiima-Delivery-Count"
 /-- The maximum characters retained from a receiver rejection reason. -/
 def httpReasonChars : Nat := 512
 
-/-- The maximum bytes retained from a receiver rejection body. -/
-def httpReasonBytes : Nat := 2048
-
 /-- Whether a Fact is a new admission and carries a publication plan. -/
 inductive CaptureAdmission where
   | replay | quiet | listenable
@@ -139,7 +138,7 @@ def schemaFreezeAdmitted : (listenable : Bool) → (hasJsonSchema : Bool) → Bo
   | true, false => false
   | true, true | false, true | false, false => true
 
-/-- A host is the sole source of the configured event URI and trusted run extensions. -/
+/-- The provenance fields of a captured envelope. -/
 inductive EnvelopeProvenance where
   | deploymentSource | admittedOwner | authorizedModel | hostBoundExtensions
   deriving DecidableEq
@@ -148,7 +147,7 @@ inductive EnvelopeProvenance where
 def stampedProvenance : List EnvelopeProvenance :=
   [.deploymentSource, .admittedOwner, .authorizedModel, .hostBoundExtensions]
 
-/-- The envelope writes substrate attributes, sorted extensions, then data. -/
+/-- The sections of a structured envelope. -/
 inductive EnvelopeSection where
   | substrate | extensions | data
   deriving DecidableEq
@@ -166,34 +165,48 @@ def subjectPositionAdmitted : PositionAttributes → Bool
   | .bothCanonical => true
   | .neither | .subjectOnly | .sequenceOnly | .bothMalformed => false
 
-/-- An outbox mutation that can settle or remove lanes and bodies. -/
+/-- The delivery evidence on a record being forgotten. -/
+inductive ForgetDelivery where
+  | noDeliveredLane | deliveredWithDebt | deliveredWithoutDebt
+  deriving DecidableEq
+
+/-- The debts on a record when removing a consumer. -/
+inductive RetirementDebt where
+  | lastDebt | otherDebt | noDebtToConsumer
+  deriving DecidableEq
+
+/-- The state of a retained record relative to the pruning horizon. -/
+inductive RetentionState where
+  | pending | publishedRecent | publishedOld
+  deriving DecidableEq
+
+/-- A lifecycle operation with the record state relevant to its decision. -/
 inductive LaneEvent where
-  | forget | retire | retain | hardErase
+  | forget (delivery : ForgetDelivery)
+  | retire (debt : RetirementDebt)
+  | retain (state : RetentionState)
+  | hardErase
   deriving DecidableEq
 
-/-- Which lanes a lifecycle operation removes from the captured event. -/
-inductive LaneRemoval where
-  | undelivered | retiredConsumer | prunedRecord | erasedRecord
-  deriving DecidableEq
-
-/-- What the lifecycle operation does with the aggregate record. -/
+/-- The lifecycle effect on the aggregate record. -/
 inductive RecordEffect where
-  | deleteIfNoLanesOtherwiseSettle | settle | deleteIfPublishedAndOld | delete
+  | keep | settle | delete
   deriving DecidableEq
 
-/-- The lane removal, aggregate effect and origin preservation of a lifecycle operation. -/
+/-- The aggregate record effect and whether its origin survives. -/
 structure LaneEffect where
-  lanes : LaneRemoval
   record : RecordEffect
   preservesOrigin : Bool
   deriving DecidableEq
 
-/-- Forget cancels pending work, retirement removes a consumer, retention reclaims published bodies and erase removes origins. -/
+/-- Decide the aggregate record and origin effects of a lifecycle operation. -/
 def laneLifecycle : LaneEvent → LaneEffect
-  | .forget => ⟨.undelivered, .deleteIfNoLanesOtherwiseSettle, true⟩
-  | .retire => ⟨.retiredConsumer, .settle, true⟩
-  | .retain => ⟨.prunedRecord, .deleteIfPublishedAndOld, true⟩
-  | .hardErase => ⟨.erasedRecord, .delete, false⟩
+  | .forget .noDeliveredLane => ⟨.delete, true⟩
+  | .forget .deliveredWithDebt | .retire .lastDebt => ⟨.settle, true⟩
+  | .forget .deliveredWithoutDebt | .retire .otherDebt | .retire .noDebtToConsumer
+  | .retain .pending | .retain .publishedRecent => ⟨.keep, true⟩
+  | .retain .publishedOld => ⟨.delete, true⟩
+  | .hardErase => ⟨.delete, false⟩
 
 /-- A consumer's current lease and delivery status. -/
 inductive LaneState where
@@ -241,21 +254,10 @@ def owesMark : IntakeOutcome → Bool
   | .accepted | .rejected => true
   | .malformed | .intakeError | .panic | .timeout => false
 
-/-- Cancel all unstarted work when quiescing or stopping, and interrupt in-flight intake only on shutdown. -/
-def handBack : (quiescing : Bool) → (stopping : Bool) → (inFlight : Bool) → Bool
-  | true, true, true | false, true, true | true, true, false | false, true, false => true
-  | true, false, false => true
-  | true, false, true | false, false, true | false, false, false => false
-
-/-- Whether a configured HTTP receiver has an explicit trust bundle. -/
-inductive TrustSource where
-  | system | configured | malformed
-  deriving DecidableEq
-
-/-- Refuse a malformed trust bundle, otherwise use its roots or the system roots. -/
-def httpTrustAdmitted : TrustSource → Bool
-  | .system | .configured => true
-  | .malformed => false
+/-- Cancellation hands back work in flight. -/
+def handBack : Proxiima.Operations.ClaimBoundary → Bool
+  | .cancelled => true
+  | .opened | .closed => false
 
 /-- The relevant classes of HTTP response status. -/
 inductive HttpStatusClass where
@@ -268,16 +270,6 @@ def httpAcknowledgement : HttpStatusClass → IntakeOutcome
   | .badRequest | .unprocessable => .rejected
   | .other => .intakeError
 
-/-- The parser's classification of a configured producer identifier. -/
-inductive SourceSpelling where
-  | empty | forbiddenCharacters | relative | invalidUri | absoluteUri
-  deriving DecidableEq
-
-/-- Preserve the original spelling of a valid absolute URI and refuse other source strings. -/
-def absoluteProducerSource : SourceSpelling → Bool
-  | .absoluteUri => true
-  | .empty | .forbiddenCharacters | .relative | .invalidUri => false
-
 /-- The remaining delivery debt of a captured record. -/
 inductive LaneDebt where
   | none | pending | leased
@@ -287,26 +279,6 @@ inductive LaneDebt where
 def aggregateSettled : LaneDebt → Bool
   | .none => true
   | .pending | .leased => false
-
-/-- The targets at capture are the consumers registered at that instant. -/
-inductive FanOut where
-  | noConsumers | consumersRegistered | consumersAddedLater
-  deriving DecidableEq
-
-/-- Capture creates lanes for the registrations it sees and registration never backfills old records. -/
-def fanOut : FanOut → Bool
-  | .consumersRegistered => true
-  | .noConsumers | .consumersAddedLater => false
-
-/-- The number of matching typed payloads on a listenable write. -/
-inductive MatchingPayloads where
-  | none | exactlyOne | multiple
-  deriving DecidableEq
-
-/-- Capture requires exactly one typed Fact payload of the schema and version being admitted. -/
-def typedCaptureAdmitted : MatchingPayloads → Bool
-  | .exactlyOne => true
-  | .none | .multiple => false
 
 /-- The fixed metadata and bytes after the envelope is sealed. -/
 inductive SealedPart where
@@ -326,16 +298,6 @@ inductive QueueEvidence where
 def withinQueueCeiling : QueueEvidence → Bool
   | .freshBelowLimit | .probedBelowLimit => true
   | .zeroLimit | .probedAtLeastLimit => false
-
-/-- The scope that can check the original physical event. -/
-inductive OriginBinding where
-  | sameInstallation | differentInstallation | unreadableIdentity
-  deriving DecidableEq
-
-/-- Only the stamping installation supplies an authority for the origin. -/
-def originAuthority : OriginBinding → Bool
-  | .sameInstallation => true
-  | .differentInstallation | .unreadableIdentity => false
 
 /-- When captured records become due for a mark batch. -/
 inductive MarkTiming where
@@ -364,16 +326,6 @@ def hostOutboxOperations : OutboxCapability → List OutboxOperation
   | .retention => [.prune]
   | .exactOriginCheck => [.checkOrigin]
 
-/-- The inputs to binding a single host extension. -/
-inductive ExtensionBinding where
-  | valid | invalidName | invalidValue | reservedName | duplicateName | tooMany
-  deriving DecidableEq
-
-/-- A host extension must obey the name, value and capacity checks and add a new attribute. -/
-def extensionAdmitted : ExtensionBinding → Bool
-  | .valid => true
-  | .invalidName | .invalidValue | .reservedName | .duplicateName | .tooMany => false
-
 /-- The recorded attribution and bytes reuse frozen at capture. -/
 inductive ImmutablePublicationField where
   | physicalFact | originalOwner | originalSource | eventId | envelope | digest
@@ -382,42 +334,6 @@ inductive ImmutablePublicationField where
 /-- Publication identity, attribution and envelope bytes survive transfer unchanged. -/
 def immutablePublication : List ImmutablePublicationField :=
   [.physicalFact, .originalOwner, .originalSource, .eventId, .envelope, .digest]
-
-/-- Whether intake has received a captured ID in its canonical Fact UUID spelling. -/
-inductive EventIdSpelling where
-  | canonical | otherUuidSpelling | opaque
-  deriving DecidableEq
-
-/-- An intake classifies canonical UUIDs as Fact IDs and preserves other text verbatim. -/
-def identifiesFact : EventIdSpelling → Bool
-  | .canonical => true
-  | .otherUuidSpelling | .opaque => false
-
-/-- The durable evidence a publisher could observe before stopping. -/
-inductive DeliveryBoundary where
-  | beforeAcknowledgement | acknowledgedUnmarked | marked
-  deriving DecidableEq
-
-/-- A process exit before a fenced mark leaves the lane available to redeliver after expiry. -/
-def canRedeliverAfterExpiry : DeliveryBoundary → Bool
-  | .beforeAcknowledgement | .acknowledgedUnmarked => true
-  | .marked => false
-
-/-- The operation attempting to bind a configured consumer name. -/
-inductive ConsumerBinding where
-  | first | subsequentHostBinding | httpConflictsWithHost
-  deriving DecidableEq
-
-/-- The effect of binding a name in the runtime configuration. -/
-inductive ConsumerBindingEffect where
-  | insert | replace | refuse
-  deriving DecidableEq
-
-/-- A host can replace its intake; the HTTP registration refuses a collision. -/
-def consumerBinding : ConsumerBinding → ConsumerBindingEffect
-  | .first => .insert
-  | .subsequentHostBinding => .replace
-  | .httpConflictsWithHost => .refuse
 
 /-- The remaining work after a bounded retention delete. -/
 inductive RetentionBatchResult where

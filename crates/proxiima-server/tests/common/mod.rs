@@ -214,10 +214,10 @@ pub async fn host_from_database_urls(
         store_number,
     )
     .await?;
-    let engine = std::sync::Arc::new(
-        proxiima_core::Engine::new(frozen, std::sync::Arc::new(pg).storage_ports())
-            .expect("engine configuration"),
-    );
+    let engine = std::sync::Arc::new(proxiima_core::Engine::new_or_panic_for_tests(
+        frozen,
+        std::sync::Arc::new(pg).storage_ports(),
+    ));
     Ok(proxiima_server::ToolHost::from_engine(
         engine,
         proxiima_core::SpiiceServices::default(),

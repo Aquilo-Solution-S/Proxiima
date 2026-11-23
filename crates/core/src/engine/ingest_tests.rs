@@ -186,11 +186,10 @@ async fn authorize_fact_ingest_stamps_draft_owner_from_permit() {
     let owner = test_owner();
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
     let draft = FactWriteCommand::from_payload(
         "test/source",
@@ -210,11 +209,10 @@ async fn authorize_fact_ingest_stamps_draft_owner_from_permit() {
 #[tokio::test]
 async fn fact_ingest_refuses_a_goal_change_a_goal_write_did_not_make() {
     let owner = test_owner();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let authz = AuthzContext::single_owner(&owner, AuthPath::HostBearer);
     let forged = crate::GoalChangeV1 {
         series: uuid::Uuid::now_v7(),
@@ -238,11 +236,10 @@ async fn fact_ingest_refuses_a_goal_change_a_goal_write_did_not_make() {
 async fn authorize_fact_ingest_denies_a_context_without_access() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -262,11 +259,10 @@ async fn authorize_fact_ingest_denies_a_context_without_access() {
 async fn a_context_without_access_precedes_invalid_fact_kind() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let mut draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -287,11 +283,10 @@ async fn a_context_without_access_precedes_invalid_fact_kind() {
 async fn authorize_fact_with_citation_denies_a_context_without_access() {
     let mut registry = SpiiceRegistry::new();
     registry.add_fact_schema_or_panic_for_tests::<TestFact>();
-    let engine = Engine::new(
+    let engine = Engine::new_or_panic_for_tests(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let draft = FactWriteCommand::from_payload(
         "test/source",
         &TestFact {
@@ -322,14 +317,10 @@ async fn authorize_fact_with_citation_denies_a_context_without_access() {
 /// An engine over the probe registry with a bound deployment source —
 /// the only shape in which a listenable schema can be admitted at all.
 fn listenable_engine() -> Engine {
-    let source = crate::publication::PublicationSource::new("urn:proxiima:r6-tests")
-        .expect("a URN is an absolute source");
-    Engine::try_new(
+    Engine::new_or_panic_for_tests(
         crate::test_fixtures::probe_registry(),
         crate::StoragePorts::rejecting_for_tests(),
-        crate::publication::PublicationConfig::new(source),
     )
-    .expect("a bound source boots")
 }
 
 fn listenable_probe(note: &str) -> crate::test_fixtures::ListenableProbeV1 {
@@ -365,7 +356,7 @@ async fn a_listenable_admission_captures_the_deployment_source_permit_owner_and_
     let plan = authorized
         .publication()
         .expect("a listenable schema carries a capture plan");
-    assert_eq!(plan.draft.source.as_str(), "urn:proxiima:r6-tests");
+    assert_eq!(plan.draft.source.as_str(), "urn:proxiima:test");
     assert_eq!(
         plan.draft.owner, owner,
         "the permit's owner, not the draft's"

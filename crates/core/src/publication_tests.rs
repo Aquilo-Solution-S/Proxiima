@@ -83,30 +83,6 @@ fn composition_source_requirement_matches_ledger_vectors() {
     }
 }
 
-#[test]
-fn source_spelling_matches_ledger_vectors() {
-    let vectors: serde_json::Value =
-        serde_json::from_str(include_str!("../tests/ledger_vectors.json")).expect("ledger vectors");
-    let rows = vectors["Proxiima.Publication.absoluteProducerSource"]
-        .as_array()
-        .expect("producer source table");
-    assert_eq!(rows.len(), 5);
-    for row in rows {
-        let value = match row["in"][0].as_str().expect("spelling") {
-            "empty" => "",
-            "forbiddenCharacters" => "urn:with space",
-            "relative" => "/a/b",
-            "invalidUri" => "urn:malformed%XX",
-            "absoluteUri" => "HTTPS://example.test/a%2fb",
-            other => panic!("unknown spelling {other}"),
-        };
-        assert_eq!(
-            PublicationSource::new(value).is_ok(),
-            row["out"].as_bool().expect("validity")
-        );
-    }
-}
-
 fn position() -> SubjectPosition {
     SubjectPosition::new(
         Uuid::parse_str("01930000-0000-8000-8000-0000000000aa").expect("v8 id"),

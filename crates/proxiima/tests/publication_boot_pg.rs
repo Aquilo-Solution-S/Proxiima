@@ -347,6 +347,42 @@ async fn the_publication_env_block_is_read_and_validated_by_the_facade() {
     result.expect("publication env block");
 }
 
+#[tokio::test]
+async fn storage_only_upload_sweep_composes_with_the_environment_publication_source() {
+    let db = clone_split_core_db("proxiima_pub_sweep")
+        .await
+        .expect("PG required");
+    migrated_app::migrate_app::<ListenableApp>(db.platform_url()).await;
+    let lookup = env(&[
+        ("PROXIIMA_PUBLICATION_SOURCE", "urn:proxiima:sweep-test"),
+        ("PROXIIMA_MCP_BIND", "ignored-serving-value"),
+        ("PROXIIMA_S3_BUCKET", "proxiima-sweep-test"),
+        ("PROXIIMA_S3_REGION", "us-east-1"),
+        ("PROXIIMA_S3_ACCESS_KEY_ID", "test"),
+        ("PROXIIMA_S3_SECRET_ACCESS_KEY", "test"),
+        ("PROXIIMA_S3_ENDPOINT_URL", "http://127.0.0.1:1"),
+    ]);
+    // The empty sweep queries its database without making an object request.
+    let s3 = proxiima_blob_s3::S3RuntimeConfig::from_lookup(&lookup)
+        .expect("valid fixture configuration")
+        .expect("fixture bucket");
+    let (_, sweeper) = proxiima::StorageProxiima::<ListenableApp>::app()
+        .from_lookup(lookup)
+        .configure(|b| {
+            b.database_url(db.runtime_url())
+                .platform_database_url(db.platform_url())
+                .store_number(0)
+        })
+        .connect_storage_with_s3(s3)
+        .await
+        .expect("the storage-only lookup binds the source required at composition");
+    let outcome = sweeper.sweep_expired_uploads(1).await.expect("empty sweep");
+    assert_eq!(
+        (outcome.expired, outcome.owed, outcome.remaining),
+        (0, 0, 0)
+    );
+}
+
 /// Capture is downstream of authorization, so a refused write leaves
 /// nothing to publish.
 ///

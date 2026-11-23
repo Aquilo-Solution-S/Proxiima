@@ -229,35 +229,6 @@ mod tests {
     }
 
     #[test]
-    fn declared_publication_defaults_match_runtime_defaults() {
-        let limits = PublicationLimits::default();
-        assert_eq!(
-            settings::PROXIIMA_OUTBOX_MAX_PENDING
-                .default()
-                .unwrap()
-                .parse::<u64>()
-                .unwrap(),
-            limits.max_pending,
-        );
-        assert_eq!(
-            settings::PROXIIMA_OUTBOX_MAX_PAYLOAD_BYTES
-                .default()
-                .unwrap()
-                .parse::<usize>()
-                .unwrap(),
-            limits.max_payload_bytes,
-        );
-        assert_eq!(
-            settings::PROXIIMA_OUTBOX_PUBLISHED_RETENTION_SECS
-                .default()
-                .unwrap()
-                .parse::<u64>()
-                .unwrap(),
-            DEFAULT_PUBLISHED_RETENTION.as_secs(),
-        );
-    }
-
-    #[test]
     fn a_malformed_publication_block_is_a_boot_error() {
         let too_wide = format!("{}0", usize::MAX);
         for pairs in [

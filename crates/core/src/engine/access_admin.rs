@@ -655,11 +655,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_bootstrap_group_admin_requires_operator_authority() {
-        let engine = crate::Engine::new(
+        let engine = crate::Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        )
-        .expect("engine configuration");
+        );
         let group = GroupId::new(Uuid::now_v7());
         let first_admin = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(first_admin, AuthPath::HostBearer);
@@ -673,11 +672,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_transfer_refuses_goal_entities_before_owner_lookup() {
-        let engine = crate::Engine::new(
+        let engine = crate::Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        )
-        .expect("engine configuration");
+        );
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let goal = crate::EntityId::Goal(crate::GoalId::new(Uuid::now_v7()));
@@ -699,11 +697,10 @@ mod tests {
 
     #[tokio::test]
     async fn access_admin_transfer_refuses_a_personal_destination() {
-        let engine = crate::Engine::new(
+        let engine = crate::Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_for_tests(),
-        )
-        .expect("engine configuration");
+        );
         let caller = UserId::new(Uuid::now_v7());
         let authz = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         let entity = crate::EntityId::Memory(crate::MemoryId::new(Uuid::now_v7()));
@@ -766,13 +763,12 @@ mod tests {
     async fn a_forwarded_context_is_refused_as_a_destination_out_of_band() {
         let caller = UserId::new(Uuid::now_v7());
         let destination = GroupId::new(Uuid::now_v7());
-        let engine = crate::Engine::new(
+        let engine = crate::Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             crate::StoragePorts::rejecting_with_owner_access_read(std::sync::Arc::new(AdminOn(
                 destination,
             ))),
-        )
-        .expect("engine configuration");
+        );
         let ordinary = AuthzContext::for_subject(caller, AuthPath::HostBearer);
         engine
             .authorize_transfer_destination_out_of_band(&ordinary, &destination.into())

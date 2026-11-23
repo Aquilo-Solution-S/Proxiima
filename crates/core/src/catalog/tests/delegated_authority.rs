@@ -239,8 +239,7 @@ fn runtime(
     deployment_scope: ServedSurface,
 ) -> (crate::Engine, DelegatedAuthorityService, DelegatedCommand) {
     let (engine, _system, delegation_runtime) =
-        crate::Engine::new(frozen, crate::StoragePorts::rejecting_for_tests())
-            .expect("engine configuration")
+        crate::Engine::new_or_panic_for_tests(frozen, crate::StoragePorts::rejecting_for_tests())
             .into_runtime_authorities();
     let registry = Arc::new(engine.registry().clone());
     let command = DelegatedCommand::parse(TOOL_NAME, &registry).expect("registered command");
@@ -444,11 +443,10 @@ async fn foreign_runtime_phase_is_denied_before_engine_work() {
     let (subject, owner, store, access) = fixtures();
     let (foreign_engine, service, command) =
         runtime(registry(true), store, access, ServedSurface::All);
-    let target_engine = crate::Engine::new(
+    let target_engine = crate::Engine::new_or_panic_for_tests(
         foreign_engine.registry().clone(),
         crate::StoragePorts::rejecting_for_tests(),
-    )
-    .expect("engine configuration");
+    );
     let caller = source(
         subject,
         owner,
@@ -595,10 +593,11 @@ async fn redemption_rechecks_owner_id_profile_registry_and_role() {
         Err(DelegatedAuthorityError::ToolScopeDenied(_))
     ));
 
-    let (no_tool_engine, _system, no_tool_runtime) =
-        crate::Engine::new(registry(false), crate::StoragePorts::rejecting_for_tests())
-            .expect("engine configuration")
-            .into_runtime_authorities();
+    let (no_tool_engine, _system, no_tool_runtime) = crate::Engine::new_or_panic_for_tests(
+        registry(false),
+        crate::StoragePorts::rejecting_for_tests(),
+    )
+    .into_runtime_authorities();
     let no_tool_service = DelegatedAuthorityService::new(
         store,
         access.clone(),
@@ -801,8 +800,7 @@ async fn dispatcher_command_requires_an_exact_leaf_for_caller_and_deployment() {
     let (subject, owner, store, access) = fixtures();
     let frozen = dispatcher_registry();
     let (engine, _system, runtime_authority) =
-        crate::Engine::new(frozen, crate::StoragePorts::rejecting_for_tests())
-            .expect("engine configuration")
+        crate::Engine::new_or_panic_for_tests(frozen, crate::StoragePorts::rejecting_for_tests())
             .into_runtime_authorities();
     let registry = Arc::new(engine.registry().clone());
     let command = DelegatedCommand::parse(format!("{DISPATCHER_TOOL_NAME}:run"), registry.as_ref())
@@ -871,10 +869,11 @@ async fn dispatcher_command_requires_an_exact_leaf_for_caller_and_deployment() {
 #[tokio::test]
 async fn a_delegated_read_needs_its_exact_caller_key_and_keeps_only_that_key() {
     let (subject, owner, store, access) = fixtures();
-    let (engine, _system, authority) =
-        crate::Engine::new(registry(true), crate::StoragePorts::rejecting_for_tests())
-            .expect("engine configuration")
-            .into_runtime_authorities();
+    let (engine, _system, authority) = crate::Engine::new_or_panic_for_tests(
+        registry(true),
+        crate::StoragePorts::rejecting_for_tests(),
+    )
+    .into_runtime_authorities();
     let registry = Arc::new(engine.registry().clone());
     let read = crate::protocol::tool::CORE_SEARCH_MEMORIES;
     let command = DelegatedCommand::parse(read, &registry).expect("registered read");

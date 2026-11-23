@@ -99,11 +99,10 @@ impl Harness {
             veto,
             seen: seen.clone(),
         }));
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
 
         let group = GroupId::new(Uuid::now_v7());
         let admin = UserId::new(Uuid::now_v7());

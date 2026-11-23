@@ -25,11 +25,10 @@ struct RecoveryObserved {
 
 fn delivery_service(store: &CitedBlobStore) -> CitedBlobDeliveryService {
     let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
-    let (_, _, runtime_authority) = Engine::new(
+    let (_, _, runtime_authority) = Engine::new_or_panic_for_tests(
         registry.clone(),
         proxiima_core::StoragePorts::rejecting_for_tests(),
     )
-    .expect("engine configuration")
     .into_runtime_authorities();
     CitedBlobDeliveryService::bind(
         CitedBlobReadService::new_runtime(Arc::new(store.clone()), &runtime_authority),
@@ -104,11 +103,10 @@ async fn observe_recovery(
             config.clone(),
             pg.platform_scope_for_host(),
         )?;
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         let service = CitedBlobService::new(Arc::new(store.clone()));
         let owner = owner_fixture();
         let authz = proxiima_core::test_fixtures::authenticated_context(
@@ -271,11 +269,10 @@ async fn observe_live_pages(database: &str, config: &S3RuntimeConfig) -> TestRes
             config.clone(),
             pg.platform_scope_for_host(),
         )?;
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         let service = CitedBlobService::new(Arc::new(store.clone()));
         let owner = owner_fixture();
         let authz = proxiima_core::test_fixtures::authenticated_context(
@@ -409,11 +406,10 @@ async fn observe_resolution_order(
             config.clone(),
             pg.platform_scope_for_host(),
         )?;
-        let engine = Engine::new(
+        let engine = Engine::new_or_panic_for_tests(
             SpiiceRegistry::new().freeze_or_panic_for_tests(),
             Arc::new(pg.clone()).storage_ports(),
-        )
-        .expect("engine configuration");
+        );
         let service = CitedBlobService::new(Arc::new(store.clone()));
         let owner = owner_fixture();
         let authz = proxiima_core::test_fixtures::authenticated_context(

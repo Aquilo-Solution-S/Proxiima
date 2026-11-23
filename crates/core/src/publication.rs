@@ -1,4 +1,11 @@
 //! Transactional capture of listenable Facts and the host's delivery intake.
+//!
+//! A fresh listenable Fact admission captures one immutable `CloudEvents` record
+//! in the same transaction as the Fact and its typed sidecars
+//! (`Proxiima.Publication.atomicCapture`). The deployment's source is never
+//! caller-supplied (`Proxiima.Publication.stampedProvenance`). The
+//! [drain port](crate::storage_ports::publication) is reachable from no
+//! spiice-facing facade (`Proxiima.Publication.hostOutboxOperations`).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -60,7 +67,7 @@ impl PublicationSource {
         {
             return Err(PublicationSourceError::IllegalCharacter { value: raw });
         }
-        // `Proxiima.Publication.absoluteProducerSource`.
+        // Refuse anything but a strict absolute URI without a fragment, then keep its original spelling.
         if raw.split_once(':').is_none_or(|(_, rest)| rest.is_empty())
             || !fluent_uri::Uri::parse(raw.as_str()).is_ok_and(|uri| !uri.has_fragment())
         {
@@ -124,9 +131,8 @@ impl Default for PublicationLimits {
 /// The publication half of the engine/storage configuration.
 ///
 /// `source` is `None` in a deployment that registers no listenable schema.
-/// A frozen registry that DOES register one and leaves it `None` is a build
-/// error — see [`PublicationConfig::validate_against`] — and a listenable
-/// write refuses with [`PublicationError::SourceUnbound`] if the source is absent.
+/// A frozen registry that registers one requires a source at composition.
+/// See [`PublicationConfig::validate_against`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PublicationConfig {
     pub source: Option<PublicationSource>,
@@ -323,7 +329,7 @@ impl PublicationExtensions {
         name: String,
         value: ExtensionValue,
     ) -> Result<(), PublicationExtensionsError> {
-        // `Proxiima.Publication.extensionAdmitted`.
+        // Refuse invalid names or values, reserved or duplicate names, and excess attributes.
         validate_extension_name(&name)?;
         validate_extension_value(&name, &value)?;
         if self.0.contains_key(&name) {

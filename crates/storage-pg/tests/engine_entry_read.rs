@@ -66,11 +66,10 @@ impl World {
         for hook in hooks {
             registry.add_authorization_hook(hook);
         }
-        Engine::new(
+        Engine::new_or_panic_for_tests(
             registry.freeze_or_panic_for_tests(),
             Arc::new(self.pg.clone()).storage_ports(),
         )
-        .expect("engine configuration")
     }
 
     async fn fact_of(&self, owner: OwnerId) -> TestResult<MemoryId> {

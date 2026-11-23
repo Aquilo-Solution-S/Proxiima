@@ -153,9 +153,33 @@ impl<'a> Accepted<'a> {
     }
 }
 
-// `Proxiima.Publication.handBack`.
-fn hand_back(quiescing: bool, stopping: bool, in_flight: bool) -> bool {
-    stopping || (quiescing && !in_flight)
+#[derive(Clone, Copy)]
+#[cfg_attr(test, derive(serde::Deserialize))]
+#[cfg_attr(test, serde(rename_all = "camelCase"))]
+enum ClaimBoundary {
+    Opened,
+    Closed,
+    Cancelled,
+}
+
+impl ClaimBoundary {
+    fn observe(gate: &GateWorker, cancel: &CancellationToken) -> Self {
+        if cancel.is_cancelled() {
+            Self::Cancelled
+        } else if gate.is_closing() {
+            Self::Closed
+        } else {
+            Self::Opened
+        }
+    }
+
+    // `Proxiima.Publication.handBack`.
+    fn hand_back(self) -> bool {
+        match self {
+            Self::Cancelled => true,
+            Self::Opened | Self::Closed => false,
+        }
+    }
 }
 
 /// The claim → accept → mark loop over one consumer's lanes and its intake.
@@ -253,9 +277,8 @@ impl Drain {
         let mut accepted = Accepted::default();
         let mut records = claimed.iter();
         while let Some(record) = records.next() {
-            let flow = if hand_back(gate.is_closing(), cancel.is_cancelled(), false) {
-                Ok(Flow::HandBack)
-            } else {
+            // `Proxiima.Operations.proceedWithClaim`.
+            let flow = if matches!(ClaimBoundary::observe(gate, cancel), ClaimBoundary::Opened) {
                 // Keep polling the same attempt after flushing older marks.
                 let attempt = async {
                     let flow = self.deliver(record, gate, cancel).await;
@@ -281,6 +304,8 @@ impl Drain {
                 } else {
                     attempt.await
                 }
+            } else {
+                Ok(Flow::HandBack)
             };
             match flow {
                 Ok(Flow::Accepted { flush_at }) => {
@@ -296,7 +321,6 @@ impl Drain {
                 Ok(Flow::Stale) => {}
                 // As though the process died here: what is accepted and not
                 // yet marked stays leased, as `after_accept` promises.
-                // `Proxiima.Publication.canRedeliverAfterExpiry`.
                 Ok(Flow::Abort) => return Ok(count),
                 Ok(Flow::HandBack) => {
                     // Not a failure: what the intake already took is marked,
@@ -408,7 +432,7 @@ impl Drain {
             );
             return Ok(Flow::Stale);
         }
-        if hand_back(gate.is_closing(), cancel.is_cancelled(), true) {
+        if ClaimBoundary::observe(gate, cancel).hand_back() {
             return Ok(Flow::HandBack);
         }
         let accepted = tokio::select! {
@@ -587,7 +611,7 @@ mod tests {
         #[derive(serde::Deserialize)]
         struct Vector {
             #[serde(rename = "in")]
-            input: (bool, bool, bool),
+            input: (ClaimBoundary,),
             out: bool,
         }
         let vectors: serde_json::Value =
@@ -596,9 +620,9 @@ mod tests {
         let rows: Vec<Vector> =
             serde_json::from_value(vectors["Proxiima.Publication.handBack"].clone())
                 .expect("hand-back table");
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 3);
         for row in rows {
-            assert_eq!(hand_back(row.input.0, row.input.1, row.input.2), row.out);
+            assert_eq!(row.input.0.hand_back(), row.out);
         }
     }
 

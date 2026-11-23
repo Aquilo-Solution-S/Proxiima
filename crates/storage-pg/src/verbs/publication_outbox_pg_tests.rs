@@ -2114,51 +2114,158 @@ async fn publish_and_backdate(pg: &PgStorage, pool: &sqlx::PgPool, t: Uuid, secs
     .expect("backdate");
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ForgetDelivery {
+    NoDeliveredLane,
+    DeliveredWithDebt,
+    DeliveredWithoutDebt,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RetirementDebt {
+    LastDebt,
+    OtherDebt,
+    NoDebtToConsumer,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RetentionState {
+    Pending,
+    PublishedRecent,
+    PublishedOld,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum LifecycleEvent {
-    Forget,
-    Retire,
-    Retain,
+    Forget((ForgetDelivery,)),
+    Retire((RetirementDebt,)),
+    Retain((RetentionState,)),
     HardErase,
 }
 
-async fn apply_lifecycle_event(pg: &PgStorage, owner: OwnerId, event: LifecycleEvent) -> Uuid {
-    let audit = consumer("audit");
-    if matches!(event, LifecycleEvent::Forget | LifecycleEvent::Retire) {
-        pg.register(&audit).await.expect("register audit");
+async fn lane_consumers(pool: &sqlx::PgPool, id: Uuid) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT consumer FROM proxiima_core.publication_delivery WHERE t = $1 ORDER BY consumer",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .expect("remaining lanes")
+}
+
+async fn aggregate_state(
+    pool: &sqlx::PgPool,
+    id: Uuid,
+) -> Option<(String, Option<time::OffsetDateTime>)> {
+    sqlx::query_as(
+        "SELECT state::text, published_at FROM proxiima_core.publication_outbox WHERE t = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .expect("aggregate state")
+}
+
+async fn mark_lifecycle_lane(pg: &PgStorage, consumer: &ConsumerName, id: Uuid) {
+    let claimed = claim_for(pg, consumer).await;
+    assert_eq!(claimed.len(), 1, "one lifecycle record for this consumer");
+    assert_eq!(
+        pg.mark_published(consumer, id, claimed[0].claim)
+            .await
+            .expect("mark lane"),
+        AckOutcome::Published
+    );
+}
+
+const LIFECYCLE_SOURCE: &str = "lifecycle-source";
+
+async fn capture_at_lifecycle_state(
+    pg: &PgStorage,
+    owner: OwnerId,
+    audit: &ConsumerName,
+    event: LifecycleEvent,
+) -> MemoryId {
+    let default = ConsumerName::default();
+    if matches!(event, LifecycleEvent::Forget(_) | LifecycleEvent::Retire(_)) {
+        pg.register(audit).await.expect("register audit");
     }
     let fact =
-        ingest_listenable_with_source_id(pg, &owner, &probe("lifecycle"), Some("lifecycle-source"))
+        ingest_listenable_with_source_id(pg, &owner, &probe("lifecycle"), Some(LIFECYCLE_SOURCE))
             .await
             .expect("capture");
     let id = fact.memory_id.into_inner();
+
     match event {
-        LifecycleEvent::Forget => {
+        LifecycleEvent::Forget((ForgetDelivery::DeliveredWithDebt,))
+        | LifecycleEvent::Retire((RetirementDebt::LastDebt,))
+        | LifecycleEvent::Retain((RetentionState::PublishedRecent,)) => {
+            mark_lifecycle_lane(pg, &default, id).await;
+        }
+        LifecycleEvent::Forget((ForgetDelivery::DeliveredWithoutDebt,)) => {
+            mark_lifecycle_lane(pg, &default, id).await;
+            mark_lifecycle_lane(pg, audit, id).await;
+        }
+        LifecycleEvent::Retire((RetirementDebt::NoDebtToConsumer,)) => {
+            mark_lifecycle_lane(pg, audit, id).await;
+        }
+        LifecycleEvent::Retain((RetentionState::PublishedOld,)) => {
+            publish_and_backdate(pg, pg.pool_for_tests(), id, 7_200.0).await;
+        }
+        LifecycleEvent::Forget((ForgetDelivery::NoDeliveredLane,))
+        | LifecycleEvent::Retire((RetirementDebt::OtherDebt,))
+        | LifecycleEvent::Retain((RetentionState::Pending,))
+        | LifecycleEvent::HardErase => {}
+    }
+    fact.memory_id
+}
+
+async fn apply_lifecycle_event<'a>(
+    pg: &PgStorage,
+    owner: OwnerId,
+    fact_id: MemoryId,
+    audit: &'a ConsumerName,
+    event: LifecycleEvent,
+) -> Vec<&'a str> {
+    match event {
+        LifecycleEvent::Forget((delivery,)) => {
             let permit = OwnerWritePermit::new_for_tests(owner, MemoryKind::Fact);
-            MemoryAuthoringPort::forget_memory(pg, &permit, fact.memory_id)
+            MemoryAuthoringPort::forget_memory(pg, &permit, fact_id)
                 .await
                 .expect("forget");
+            match delivery {
+                ForgetDelivery::NoDeliveredLane => vec![],
+                ForgetDelivery::DeliveredWithDebt => vec![ConsumerName::DEFAULT],
+                ForgetDelivery::DeliveredWithoutDebt => vec![audit.as_str(), ConsumerName::DEFAULT],
+            }
         }
-        LifecycleEvent::Retire => {
-            let default = ConsumerName::default();
-            let claim = claim_for(pg, &default).await;
-            pg.mark_published(&default, id, claim[0].claim)
-                .await
-                .expect("mark default");
-            assert!(matches!(
-                pg.retire(&audit).await.expect("retire"),
-                RetireOutcome::Retired { undelivered: 1 }
-            ));
+        LifecycleEvent::Retire((debt,)) => {
+            let undelivered = match debt {
+                RetirementDebt::LastDebt | RetirementDebt::OtherDebt => 1,
+                RetirementDebt::NoDebtToConsumer => 0,
+            };
+            assert_eq!(
+                pg.retire(audit).await.expect("retire"),
+                RetireOutcome::Retired { undelivered },
+            );
+            vec![ConsumerName::DEFAULT]
         }
-        LifecycleEvent::Retain => {
-            publish_and_backdate(pg, pg.pool_for_tests(), id, 7_200.0).await;
+        LifecycleEvent::Retain((state,)) => {
             pg.prune_published(Duration::from_hours(1), NonZeroU32::MIN)
                 .await
                 .expect("prune");
+            match state {
+                RetentionState::Pending | RetentionState::PublishedRecent => {
+                    vec![ConsumerName::DEFAULT]
+                }
+                RetentionState::PublishedOld => vec![],
+            }
         }
         LifecycleEvent::HardErase => {
-            let source = SourceId::new("lifecycle-source");
+            let source = SourceId::new(LIFECYCLE_SOURCE);
             let auth = EraseAuthorization::new_for_tests(OwnerEraseTarget::PersonalSourceScope {
                 user_id: owner.as_user(),
                 source_id: source.clone(),
@@ -2174,18 +2281,24 @@ async fn apply_lifecycle_event(pg: &PgStorage, owner: OwnerId, event: LifecycleE
             .await
             .expect("source erase");
             assert!(matches!(outcome, OwnerEraseOutcome::Completed { .. }));
+            vec![]
         }
     }
-    id
 }
 
 #[tokio::test]
 async fn lane_lifecycle_matches_ledger_vectors() {
+    #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum RecordEffect {
+        Keep,
+        Settle,
+        Delete,
+    }
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Effect {
-        lanes: String,
-        record: String,
+        record: RecordEffect,
         preserves_origin: bool,
     }
     #[derive(serde::Deserialize)]
@@ -2201,7 +2314,7 @@ async fn lane_lifecycle_matches_ledger_vectors() {
     let rows: Vec<Vector> =
         serde_json::from_value(vectors["Proxiima.Publication.laneLifecycle"].clone())
             .expect("lane lifecycle table");
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 10);
     for Vector {
         input: (event,),
         out,
@@ -2211,40 +2324,55 @@ async fn lane_lifecycle_matches_ledger_vectors() {
         let pool = pg.pool_for_tests();
         let owner = owner_fixture();
         register_owner(pool, &owner).await;
-        let id = apply_lifecycle_event(&pg, owner, event).await;
+        let audit = consumer("audit");
+        let fact_id = capture_at_lifecycle_state(&pg, owner, &audit, event).await;
+        let id = fact_id.into_inner();
+        let before = aggregate_state(pool, id).await.expect("captured aggregate");
 
-        let expected_lanes = match out.lanes.as_str() {
-            "retiredConsumer" => vec![ConsumerName::DEFAULT],
-            "undelivered" | "prunedRecord" | "erasedRecord" => vec![],
-            other => panic!("unknown lane effect {other}"),
+        let expected_lanes = apply_lifecycle_event(&pg, owner, fact_id, &audit, event).await;
+
+        let after = aggregate_state(pool, id).await;
+        let record = match after {
+            None => RecordEffect::Delete,
+            Some(after) if after == before => RecordEffect::Keep,
+            Some((state, Some(_))) if before.0 != "published" && state == "published" => {
+                RecordEffect::Settle
+            }
+            Some(after) => {
+                panic!("unexpected aggregate change for {event:?}: {before:?} -> {after:?}")
+            }
         };
-        let expected_record = match out.record.as_str() {
-            "settle" => Some("published"),
-            "deleteIfNoLanesOtherwiseSettle" | "deleteIfPublishedAndOld" | "delete" => None,
-            other => panic!("unknown record effect {other}"),
-        };
-        let lanes: Vec<String> = sqlx::query_scalar(
-            "SELECT consumer FROM proxiima_core.publication_delivery WHERE t = $1 ORDER BY consumer",
-        )
-        .bind(id)
-        .fetch_all(pool)
-        .await
-        .expect("remaining lanes");
-        let stored: Option<String> = sqlx::query_scalar(
-            "SELECT state::text FROM proxiima_core.publication_outbox WHERE t = $1",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .expect("aggregate state");
-        assert_eq!(lanes, expected_lanes);
-        assert_eq!(stored.as_deref(), expected_record);
+        assert_eq!(record, out.record, "{event:?}");
+        assert_eq!(lane_consumers(pool, id).await, expected_lanes, "{event:?}");
         assert_eq!(
             publication_origin(pool, id).await.is_some(),
-            out.preserves_origin
+            out.preserves_origin,
+            "{event:?}",
         );
         drop(pg);
         drop_db(&db).await.expect("drop fixture database");
+    }
+}
+
+#[test]
+fn mark_verdict_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+            .expect("ledger vectors");
+    let rows = vectors["Proxiima.Publication.markVerdict"]
+        .as_array()
+        .expect("mark verdict table");
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let (changed, published): (bool, bool) =
+            serde_json::from_value(row["in"].clone()).expect("mark evidence");
+        let expected = match row["out"].as_str().expect("mark verdict") {
+            "published" => AckOutcome::Published,
+            "alreadyPublished" => AckOutcome::AlreadyPublished,
+            "staleClaim" => AckOutcome::StaleClaim,
+            other => panic!("unknown mark verdict {other}"),
+        };
+        assert_eq!(super::mark_verdict(changed, published), expected);
     }
 }
 

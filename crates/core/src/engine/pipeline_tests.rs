@@ -15,19 +15,17 @@ use super::Engine;
 type ResolvedAuthz = AuthzContext;
 
 fn engine() -> Engine {
-    Engine::new(
+    Engine::new_or_panic_for_tests(
         SpiiceRegistry::new().freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
-    .expect("engine configuration")
 }
 
 fn engine_from_registry(registry: SpiiceRegistry) -> Engine {
-    Engine::new(
+    Engine::new_or_panic_for_tests(
         registry.freeze_or_panic_for_tests(),
         crate::StoragePorts::rejecting_for_tests(),
     )
-    .expect("engine configuration")
 }
 
 fn owner() -> OwnerId {
