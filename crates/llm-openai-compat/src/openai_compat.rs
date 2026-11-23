@@ -236,7 +236,7 @@ impl OpenAiEmbeddingResponse {
     }
 }
 
-/// `Proxiima.Embeddings.providerFailure`.
+// `Proxiima.Embeddings.providerFailure`.
 fn embed_http_error(
     status: reqwest::StatusCode,
     retry_after: Option<Duration>,

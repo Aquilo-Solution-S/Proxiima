@@ -433,7 +433,7 @@ async fn delete_referencing_rows(
     Ok(())
 }
 
-/// `Proxiima.ErasureExport.countedInboundFields`.
+// `Proxiima.ErasureExport.countedInboundFields`.
 const DANGLING_PINS_SQL: &str = "\
 SELECT count(*) FROM proxiima_core.memory_including_forgotten
  WHERE (origins && $1::uuid[] OR refs && $1::uuid[])

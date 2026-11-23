@@ -328,7 +328,7 @@ impl Engine {
         Ok(GroupMemberPage { members, has_more })
     }
 
-    /// `Proxiima.OwnerAuthority.membershipConsent`.
+    // `Proxiima.OwnerAuthority.membershipConsent`.
     async fn authorize_membership_detach(
         &self,
         authz: &AuthzContext,

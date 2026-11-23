@@ -102,7 +102,7 @@ static PROCESS_START: OnceLock<OffsetDateTime> = OnceLock::new();
 static SWEEP_DONE: AtomicBool = AtomicBool::new(false);
 static CATALOG_READY: AtomicBool = AtomicBool::new(false);
 
-/// `Proxiima.Repository.adminConfiguration`.
+// `Proxiima.Repository.adminConfiguration`.
 fn configured_admin_url() -> Option<String> {
     trimmed_url(std::env::var(ADMIN_URL_VAR).ok())
 }

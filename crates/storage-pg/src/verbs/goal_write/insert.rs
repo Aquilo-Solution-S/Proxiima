@@ -92,7 +92,7 @@ async fn lock_goal_request(
     Ok(())
 }
 
-/// `Proxiima.Goals.parentRevision`.
+// `Proxiima.Goals.parentRevision`.
 async fn resolve_series_edge(
     tx: &mut Transaction<'_, Postgres>,
     owner: &proxiima_core::OwnerId,
@@ -233,7 +233,7 @@ pub(super) async fn prepare_goal_insert<'a>(
     })
 }
 
-/// `Proxiima.Goals.publishChangeFact`.
+// `Proxiima.Goals.publishChangeFact`.
 fn goal_change_stamp(
     context: GoalAtomicContext<'_>,
 ) -> Result<Option<PublicationStamp<'_>>, StorageError> {

@@ -626,7 +626,7 @@ async fn delete_memory_dependents(
     run_forget_legs(tx, legs, t).await
 }
 
-/// `Proxiima.ForgetRestore.derivedDeleteOrder`.
+// `Proxiima.ForgetRestore.derivedDeleteOrder`.
 async fn delete_derived_dependents(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,

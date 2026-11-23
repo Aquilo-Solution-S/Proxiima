@@ -84,7 +84,7 @@ pub(crate) fn source_admin(
     })
 }
 
-/// `Proxiima.GoalCollaboration.storedGuestGoalAccess`.
+// `Proxiima.GoalCollaboration.storedGuestGoalAccess`.
 fn guest_columns(role: proxiima_core::Role) -> Result<RoleColumns, StorageError> {
     if role.administers() {
         return Err(StorageError::ConstraintViolation(

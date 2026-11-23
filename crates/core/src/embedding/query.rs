@@ -135,8 +135,8 @@ impl QueryInstructions {
 
     /// The instruction `task`'s queries are wrapped in: its own, else the
     /// default, else none.
-    #[must_use]
     /// `Proxiima.Embeddings.queryWording`.
+    #[must_use]
     pub fn for_task(&self, task: QueryTask) -> Option<&QueryInstruction> {
         task.name()
             .and_then(|name| self.by_task.get(name))

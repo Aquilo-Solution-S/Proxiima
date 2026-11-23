@@ -1243,7 +1243,7 @@ fn validate_body_max_chars(requested: Option<usize>) -> Result<(), ToolError> {
     Ok(())
 }
 
-/// `Proxiima.Search.tagFilterStages`.
+// `Proxiima.Search.tagFilterStages`.
 fn fold_tag_filter(tags: &mut Vec<String>) {
     for tag in tags.iter_mut() {
         *tag = super::memory::util::fold_tag(tag);
@@ -1306,7 +1306,7 @@ fn search_memory_output(
     }
 }
 
-/// `Proxiima.Search.keepSemanticWeight`.
+// `Proxiima.Search.keepSemanticWeight`.
 fn weight_for_effective_mode(requested: Option<f32>, effective: SearchMode) -> Option<f32> {
     requested.filter(|_| matches!(effective, SearchMode::Hybrid))
 }
@@ -1333,7 +1333,7 @@ async fn embed_query_for_search(
     })
 }
 
-/// `Proxiima.Search.neighborEdgeEligible`.
+// `Proxiima.Search.neighborEdgeEligible`.
 fn retain_surviving_neighbor_edges(memories: &[SearchMemoryOutput], edges: &mut Vec<NeighborEdge>) {
     let surviving: std::collections::HashSet<&str> = memories
         .iter()

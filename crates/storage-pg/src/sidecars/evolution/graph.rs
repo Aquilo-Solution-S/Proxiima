@@ -50,7 +50,7 @@ pub(super) async fn validate(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
     validate_goal_parents(tx).await
 }
 
-/// `Proxiima.SchemaEvolution.goalPinRoles`.
+// `Proxiima.SchemaEvolution.goalPinRoles`.
 async fn validate_goal_pins(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS (
         SELECT 1 FROM proxiima_core.goal g

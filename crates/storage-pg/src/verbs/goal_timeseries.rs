@@ -539,7 +539,7 @@ pub(crate) async fn persist_prepared_goal_write(
     })
 }
 
-/// `Proxiima.Goals.admissionOrder`.
+// `Proxiima.Goals.admissionOrder`.
 async fn revalidate_prepared_goal_targets(
     tx: &mut Transaction<'_, Postgres>,
     prepared: &PreparedGoalWrite,

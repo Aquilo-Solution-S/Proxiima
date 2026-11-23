@@ -140,7 +140,7 @@ pub(super) async fn plan(
     Ok(())
 }
 
-/// `Proxiima.SchemaEvolution.identityRoutes`.
+// `Proxiima.SchemaEvolution.identityRoutes`.
 async fn memory_replay(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

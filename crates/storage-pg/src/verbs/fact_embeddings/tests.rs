@@ -1590,7 +1590,7 @@ mod pg_tests {
         result
     }
 
-    /// `Proxiima.Embeddings.settleClaim`.
+    // `Proxiima.Embeddings.settleClaim`.
     #[tokio::test]
     async fn reclaimed_claim_cannot_mutate_successor_job() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -2174,7 +2174,7 @@ mod pg_tests {
         }
     }
 
-    /// `Proxiima.Embeddings.claimRecovery`.
+    // `Proxiima.Embeddings.claimRecovery`.
     #[tokio::test]
     async fn a_failed_release_preserves_the_drain_error_and_leaves_the_claim_to_expire()
     -> Result<(), Box<dyn std::error::Error>> {

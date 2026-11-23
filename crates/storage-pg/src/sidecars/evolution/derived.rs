@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::{MigrationInput, MigrationPlan, PgSchemaEvolution};
 use crate::error::map_err;
 
-/// `Proxiima.SchemaEvolution.rebuildParts`.
+// `Proxiima.SchemaEvolution.rebuildParts`.
 pub(super) async fn rebuild(
     tx: &mut Transaction<'_, Postgres>,
     input: &MigrationInput,

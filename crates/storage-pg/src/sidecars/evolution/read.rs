@@ -10,7 +10,7 @@ use super::{
     PgSidecarReadCtx,
 };
 
-/// `Proxiima.SchemaEvolution.conversionInputs`.
+// `Proxiima.SchemaEvolution.conversionInputs`.
 pub(crate) async fn read_sources(
     tx: &mut Transaction<'_, Postgres>,
     program: &PgSchemaEvolution,

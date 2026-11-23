@@ -276,7 +276,7 @@ impl Role {
         }
     }
 
-    /// `Proxiima.Authentication.forwardingCap`.
+    // `Proxiima.Authentication.forwardingCap`.
     const fn forwarding_cap() -> Self {
         Self {
             read: AccessCeiling::Perspective,

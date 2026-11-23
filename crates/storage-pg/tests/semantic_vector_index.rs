@@ -232,7 +232,7 @@ async fn embed(
     Ok(())
 }
 
-/// `Proxiima.Embeddings.publishChunks`.
+// `Proxiima.Embeddings.publishChunks`.
 #[tokio::test]
 async fn a_stale_second_claim_prevents_every_host_index_put() -> TestResult {
     let index = Arc::new(RecordingIndex::default());

@@ -713,7 +713,7 @@ impl EmbeddingJobDiagnosticRow {
     }
 }
 
-/// `Proxiima.Embeddings.diagnosticClaimAge`.
+// `Proxiima.Embeddings.diagnosticClaimAge`.
 pub(crate) fn embedding_job_state(
     status: &EmbeddingJobState,
     claim_age_seconds: Option<i64>,

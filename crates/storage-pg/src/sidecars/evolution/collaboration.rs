@@ -172,7 +172,7 @@ pub(super) async fn preserve(tx: &mut Transaction<'_, Postgres>) -> Result<(), S
     Ok(())
 }
 
-/// `Proxiima.SchemaEvolution.collaborationChecks`.
+// `Proxiima.SchemaEvolution.collaborationChecks`.
 async fn validate_generations(tx: &mut Transaction<'_, Postgres>) -> Result<(), StorageError> {
     let changed: bool = sqlx::query_scalar("SELECT EXISTS (
         SELECT 1 FROM proxiima_core.schema_evolution_authority a

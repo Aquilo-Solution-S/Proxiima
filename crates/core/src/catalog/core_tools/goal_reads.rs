@@ -209,7 +209,7 @@ fn project_goals(rows: Vec<crate::verbs::query::GoalRow>) -> Vec<GoalItem> {
         .collect()
 }
 
-/// `Proxiima.Goals.stateFilter`.
+// `Proxiima.Goals.stateFilter`.
 fn parse_goal_states(raw: Option<&str>) -> Result<BTreeSet<GoalState>, ToolError> {
     let Some(raw) = raw else {
         return Ok(BTreeSet::new());

@@ -132,7 +132,7 @@ enum RemoteAnswer {
     Unanswered,
 }
 
-/// `Proxiima.Query.batchAnswer`.
+// `Proxiima.Query.batchAnswer`.
 async fn read_remote_memories(
     ctx: &ToolCtx,
     requested: &[(MemoryId, &str)],

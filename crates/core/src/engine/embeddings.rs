@@ -631,7 +631,7 @@ impl Engine {
         Ok(())
     }
 
-    /// `Proxiima.Embeddings.publishChunks`.
+    // `Proxiima.Embeddings.publishChunks`.
     async fn store_claim_embeddings(
         &self,
         client: &BoundEmbeddingClient,

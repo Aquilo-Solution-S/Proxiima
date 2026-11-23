@@ -362,7 +362,7 @@ enum RememberCitationDrafts {
     },
 }
 
-/// `Proxiima.Citations.citationInput`.
+// `Proxiima.Citations.citationInput`.
 fn remember_citation_drafts(
     citation: RememberCitation,
 ) -> Result<RememberCitationDrafts, ToolError> {

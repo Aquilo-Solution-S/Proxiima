@@ -97,7 +97,7 @@ macro_rules! lane {
 
 impl Lane {
     #[must_use]
-    /// `Proxiima.Embeddings.indexEncoding`.
+    // `Proxiima.Embeddings.indexEncoding`.
     pub(crate) const fn of(dim: EmbeddingDim) -> Self {
         match dim {
             EmbeddingDim::D384 => lane!(width384, vector),

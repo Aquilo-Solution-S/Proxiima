@@ -916,8 +916,8 @@ impl SpiiceRegistryFrozen {
     /// Version-agnostic, because embeddability is a statement about what
     /// a schema's text IS rather than about its shape. A v2 that wanted
     /// the opposite answer would be describing different content.
-    #[must_use]
     /// `Proxiima.Embeddings.schemaEmbeddable`.
+    #[must_use]
     pub fn schema_is_embeddable(&self, schema_id: &str) -> bool {
         !self
             .index

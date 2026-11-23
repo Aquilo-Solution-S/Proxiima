@@ -67,8 +67,8 @@ impl EmbeddingRoute {
     }
 
     /// The current client used by durable work and search queries.
-    #[must_use]
     /// `Proxiima.Embeddings.searchSpace`.
+    #[must_use]
     pub const fn current_client(&self) -> Option<&BoundEmbeddingClient> {
         self.current.as_ref()
     }
@@ -81,8 +81,8 @@ impl EmbeddingRoute {
 
     /// Spaces a new memory of this Owner is queued for: `current`, then
     /// `next`.
-    #[must_use]
     /// `Proxiima.Embeddings.writeSpaces`.
+    #[must_use]
     pub fn write_spaces(&self) -> Vec<EmbeddingSpace> {
         self.clients()
             .map(|client| client.space().clone())

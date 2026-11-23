@@ -1,4 +1,4 @@
-//! `Proxiima.ForgetRestore.visibleInScope`.
+// `Proxiima.ForgetRestore.visibleInScope`.
 
 use proxiima_core::storage_ports::{MemoryInspectPort, MemoryReadPort, OwnerWritePermit};
 use proxiima_core::test_fixtures::owner_scope_for_tests;

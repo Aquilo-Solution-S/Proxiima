@@ -15,7 +15,7 @@ use crate::{
 /// answer an unknown id gets at the gate.
 pub const EVIDENCE_DOES_NOT_EXIST: &str = "evidence does not exist";
 
-/// `Proxiima.Goals.GoalState`.
+/// The lifecycle state of a Goal version: `Proxiima.Goals.GoalState`.
 #[derive(
     Debug,
     Clone,

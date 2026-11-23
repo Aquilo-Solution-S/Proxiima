@@ -462,7 +462,7 @@ async fn load_row_payloads_batch_on_connection(
     Ok(result)
 }
 
-/// `Proxiima.Query.includesVersion`.
+// `Proxiima.Query.includesVersion`.
 fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64) -> SqlText {
     let reference_filter = filters
         .iter()

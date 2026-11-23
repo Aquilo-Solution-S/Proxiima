@@ -49,7 +49,7 @@ pub use upload::CoreUploadTool;
 pub(crate) const DEFAULT_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Query.defaultPageLimit);
 pub(crate) const MAX_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Query.maxPageLimit);
 
-/// `Proxiima.Query.pageLimit`.
+// `Proxiima.Query.pageLimit`.
 pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::ToolError> {
     // Shared with the spiice tool trait so zero is refused on both surfaces.
     crate::reject_zero_limit(limit)?;

@@ -142,6 +142,7 @@ pub async fn ensure_content_from_payloads(
     Ok(Some(ensure_content(tx, owner_id, schema_id, &hash).await?))
 }
 
+/// Delete a content row once no live or forgotten memory names it:
 /// `Proxiima.Identity.collectContent`.
 pub async fn gc_unreferenced_content(
     tx: &mut Transaction<'_, Postgres>,
