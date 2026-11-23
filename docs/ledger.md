@@ -4876,6 +4876,311 @@ stateDiagram-v2
 
 **retired drain** = \[inventoryRawAdmissionsByAscendingOwnerPages, commitEachOwnerPage, resumeFromRemainingAdmissions]: Retired Fact drain uses raw admissions and resumes at committed page boundaries.
 
+## Transport
+
+**Host**: Which application supplies the listener settings.
+
+- facade
+- canonical
+
+**Listener requirement**: Requirements for a configured serving address.
+
+- hostAuthenticator
+- noInsecureSingleOwnerMode
+- loopbackWithoutExposure
+- resolvedHostsWithExposure
+- concreteOriginWithExposure
+
+**Authority source**: The inbound authority sources in order of precedence.
+
+- host
+- requestAuthority
+
+**Public host source**: Inputs used to choose public hosts.
+
+- explicit
+- publicUrl
+- allowedOrigins
+
+**Origin part**: Parts of a browser origin matched against a pattern.
+
+- concreteScheme
+- concreteHost
+- exactOrAnyPort
+
+**Origin scheme**: Schemes distinguished when a request Origin omits its port.
+
+- http
+- https
+- other
+
+**Guard**: Listener layers, in request execution order.
+
+- bodyLimit
+- host
+- origin
+- routeAuthentication
+
+**Declared length**: What the request reveals about its body size before the body is read.
+
+- aboveLimit
+- withinLimit
+- unavailable
+
+**Body action**: The action of the outer body guard.
+
+- refuseEarly
+- limitReads
+
+**Browser request**: Browser request classes distinguished by the Origin guard.
+
+- noOrigin
+- invalidOrigin
+- actual
+- validPreflight
+- malformedPreflight
+
+**Origin action**: Whether to continue to the route or answer at the Origin guard.
+
+- continueToRoute
+- originForbidden
+- preflightNoContent
+- preflightBadRequest
+
+**Route group**: Listener routes grouped by their guard placement.
+
+- probe
+- publicRoute
+- protectedRoute
+
+**Rest exposure**: What the compile feature and runtime setting can expose.
+
+- disabled
+- unavailable
+- served
+
+**Action method**: HTTP methods recognized for actions on the REST tool surface.
+
+- post
+- query
+- other
+
+**Narrowed action check**: Where an action key can be supplied on a narrowed REST route.
+
+- pathSuppliesAction
+- bodyMustOmitAction
+
+**Owner source**: The sources of an ordinary request's owner, in selection order.
+
+- session
+- header
+- trustedDefault
+
+**Credential failure**: Transport refusal classes following credential and owner resolution.
+
+- invalidBearer
+- unavailableSession
+- ownerSelectionRefused
+
+**Binding operation**: Session binding operations at admission and observation.
+
+- pruneIdle
+- evictOldestOfPrincipal
+- refuseRatherThanEvictAnotherPrincipal
+- closeRemovedOrRefusedTransport
+- refreshLiveBinding
+
+**Mcp entry**: Protocol entry modes that distinguish session support.
+
+- initialize
+- perRequest
+
+**Header requirement**: Admission requirements at request-header projection.
+
+- allowlistedNameOrPrefix
+- singleValue
+- visibleAscii
+
+**Outbound endpoint**: Transport categories distinguished by outbound endpoint validation.
+
+- https
+- plaintextEligibleHost
+- plaintextOtherHost
+- unsupportedScheme
+
+**Plaintext host exclusion**: Components excluded from an exact plaintext host name.
+
+- wildcards
+- addresses
+- ranges
+- ports
+- schemes
+
+**canonical bind** = "127.0.0.1:31415": The loopback address supplied by the canonical MCP host.
+
+**default expose network** = no: Network exposure is opt-in.
+
+**default rest enabled** = no: The REST runtime switch starts off.
+
+**default health endpoints** = no: The health route switch starts off.
+
+**listener requirements** = \[hostAuthenticator, noInsecureSingleOwnerMode, loopbackWithoutExposure, resolvedHostsWithExposure, concreteOriginWithExposure]: A listener requires host auth, with loopback unless public exposure is enabled and resolves a host list and names a concrete origin.
+
+**authority source** = \[host, requestAuthority]: The listener checks Host when present and otherwise checks the request URI authority.
+
+**loopback hosts** = \["localhost", "127.0.0.1", "::1"]: Hosts present in every listener's authority allowlist.
+
+**loopback origins** = \["http://localhost", "http://127.0.0.1", "http://\[::1]"]: Loopback browser origins used when none are configured for the listener.
+
+**webview origins** = \["tauri://localhost", "https://tauri.localhost"]: Desktop webview origins used when none are configured for the listener.
+
+**public host sources** = \[explicit, publicUrl, allowedOrigins]: Public hosts come from the explicit list when present, or are derived from both the public URL and the allowed origins.
+
+**origin match** = \[concreteScheme, concreteHost, exactOrAnyPort]: Match a concrete scheme and host case-insensitively, with any port for a portless pattern.
+
+**http port** = 80: Default port of an HTTP request Origin.
+
+**https port** = 443: Default port of an HTTPS request Origin.
+
+**guard order** = \[bodyLimit, host, origin, routeAuthentication]: The composed router checks the body, Host and Origin before route authentication.
+
+**default body bytes** = 4194304: The default listener and MCP request body budget in bytes.
+
+**min body bytes** = 1: Smallest configured listener request body budget in bytes.
+
+**readiness database seconds** = 2: The database check's readiness timeout in seconds.
+
+**narrowed action** = \[pathSuppliesAction, bodyMustOmitAction]: A narrowed REST route injects the path action and refuses any action field in the body.
+
+**owner header** = "X-Proxiima-Owner": The owner selector's HTTP header name.
+
+**owner selection** = \[session, header, trustedDefault]: A live binding wins, otherwise the owner header wins over a trusted default.
+
+**session binding operations** = \[pruneIdle, evictOldestOfPrincipal, refuseRatherThanEvictAnotherPrincipal, closeRemovedOrRefusedTransport, refreshLiveBinding]: Binding admission prunes idle entries and evicts only its principal's oldest entries; observation refreshes a live binding.
+
+**binding idle seconds** = 3600: Idle lifetime in seconds of an in-process owner binding.
+
+**max bindings** = 4096: Largest number of local owner bindings.
+
+**max principal bindings** = 64: Largest number of local owner bindings for one principal.
+
+**default legacy sessions** = yes: Legacy MCP sessions are enabled by default.
+
+**default json response** = no: Stateless MCP calls do not prefer JSON by default.
+
+**default sse ping seconds** = 15: The default SSE ping interval in seconds.
+
+**default session idle seconds** = 300: The default transport session idle timeout in seconds.
+
+**default sse retry seconds** = 3: The default SSE retry hint in seconds.
+
+**disable timer seconds** = 0: A zero in any of the three transport duration settings disables its timer.
+
+**default heartbeat seconds** = 30: The normal progress notification interval in seconds.
+
+**min heartbeat milliseconds** = 100: Minimum progress notification interval in milliseconds.
+
+**max mcp revision** = "2026-07-28": Newest MCP revision the handler implements.
+
+**list ttl milliseconds** = 0: Freshness of MCP list results in milliseconds.
+
+**credential headers** = \["authorization", "proxy-authorization", "cookie"]: Headers excluded from forwarding by exact name and by prefix.
+
+**projected header** = \[allowlistedNameOrPrefix, singleValue, visibleAscii]: A projected header must match the allowlist, have one value and be visible ASCII.
+
+**plaintext host exclusions** = \[wildcards, addresses, ranges, ports, schemes]: Parse exact ASCII plaintext host names before comparing them case-insensitively.
+
+| host | default bind |
+| --- | --- |
+| facade | — |
+| canonical | "127.0.0.1:31415" |
+
+- default bind: Without a supplied bind, the facade has no listener and the canonical host binds to loopback.
+
+| origin scheme | origin default port |
+| --- | --- |
+| http | 80 |
+| https | 443 |
+| other | — |
+
+- origin default port: The implicit port of a request Origin for schemes with an HTTP port convention.
+
+| declared length | body budget |
+| --- | --- |
+| aboveLimit | refuseEarly |
+| withinLimit | limitReads |
+| unavailable | limitReads |
+
+- body budget: Refuse an over-cap declared length immediately and limit streaming reads for every other body.
+
+| browser request | browser admission |
+| --- | --- |
+| noOrigin | continueToRoute |
+| invalidOrigin | originForbidden |
+| actual | continueToRoute |
+| validPreflight | preflightNoContent |
+| malformedPreflight | preflightBadRequest |
+
+- browser admission: Refuse invalid or repeated Origin headers, answer preflight at the guard, and leave actual calls on the route's auth path.
+
+| route group | route guards |
+| --- | --- |
+| probe | \[] |
+| publicRoute | \[bodyLimit, host, origin] |
+| protectedRoute | \[bodyLimit, host, origin, routeAuthentication] |
+
+- route guards: Guard placement for probes, public routes and protected routes.
+
+| compiled | enabled | rest exposure |
+| --- | --- | --- |
+| yes | yes | served |
+| yes | no | disabled |
+| no | yes | unavailable |
+| no | no | disabled |
+
+- rest exposure: REST serves only with both switches on, and an enabled setting without REST support is reported as unavailable.
+
+| action method | read only | rest action method |
+| --- | --- | --- |
+| post | yes | yes |
+| post | no | yes |
+| query | yes | yes |
+| query | no | no |
+| other | yes | no |
+| other | no | no |
+
+- rest action method: Actions accept POST, and QUERY is available for read-only actions.
+
+| credential failure | credential failure status |
+| --- | --- |
+| invalidBearer | 401 |
+| unavailableSession | 404 |
+| ownerSelectionRefused | 403 |
+
+- credential failure status: Invalid bearer is 401, unavailable session is opaque 404, and refused owner selection is 403.
+
+| mcp entry | legacy enabled | mcp sessions |
+| --- | --- | --- |
+| initialize | yes | yes |
+| initialize | no | no |
+| perRequest | yes | no |
+| perRequest | no | no |
+
+- mcp sessions: Only legacy initialize can use a server-side session, and only when enabled.
+
+| outbound endpoint | plaintext enabled | outbound transport |
+| --- | --- | --- |
+| https | yes | yes |
+| https | no | yes |
+| plaintextEligibleHost | yes | yes |
+| plaintextEligibleHost | no | no |
+| plaintextOtherHost | yes | no |
+| plaintextOtherHost | no | no |
+| unsupportedScheme | yes | no |
+| unsupportedScheme | no | no |
+
+- outbound transport: HTTPS is admitted; HTTP requires both a permissive policy and a loopback or explicitly named host.
+
 ## Causa
 
 Causa — Audience
@@ -5245,3 +5550,7 @@ Causa — Schema evolution
 ✓ **schema migration pins resolve** (axioms: `propext`): Every Memory and Goal pin in the retained migration graph resolves in its identity space and avoids removed identities.
 
 ✓ **schema migration validates retained store** (axioms: `propext`)
+
+## Transport timing
+
+✓ **heartbeat before idle** (axioms: `propext`, `Quot.sound`): A positive idle timeout strictly above the progress floor admits a heartbeat before the deadline.

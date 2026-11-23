@@ -1,4 +1,56 @@
-{"Proxiima.Repository.versionAccepted":
+{"Proxiima.Transport.routeGuards":
+ [{"out": [], "in": ["probe"]},
+  {"out": ["bodyLimit", "host", "origin"], "in": ["publicRoute"]},
+  {"out": ["bodyLimit", "host", "origin", "routeAuthentication"],
+   "in": ["protectedRoute"]}],
+ "Proxiima.Transport.restExposure":
+ [{"out": "served", "in": [true, true]},
+  {"out": "disabled", "in": [true, false]},
+  {"out": "unavailable", "in": [false, true]},
+  {"out": "disabled", "in": [false, false]}],
+ "Proxiima.Transport.restActionMethod":
+ [{"out": true, "in": ["post", true]},
+  {"out": true, "in": ["post", false]},
+  {"out": true, "in": ["query", true]},
+  {"out": false, "in": ["query", false]},
+  {"out": false, "in": ["other", true]},
+  {"out": false, "in": ["other", false]}],
+ "Proxiima.Transport.outboundTransport":
+ [{"out": true, "in": ["https", true]},
+  {"out": true, "in": ["https", false]},
+  {"out": true, "in": ["plaintextEligibleHost", true]},
+  {"out": false, "in": ["plaintextEligibleHost", false]},
+  {"out": false, "in": ["plaintextOtherHost", true]},
+  {"out": false, "in": ["plaintextOtherHost", false]},
+  {"out": false, "in": ["unsupportedScheme", true]},
+  {"out": false, "in": ["unsupportedScheme", false]}],
+ "Proxiima.Transport.originDefaultPort":
+ [{"out": 80, "in": ["http"]},
+  {"out": 443, "in": ["https"]},
+  {"out": null, "in": ["other"]}],
+ "Proxiima.Transport.mcpSessions":
+ [{"out": true, "in": ["initialize", true]},
+  {"out": false, "in": ["initialize", false]},
+  {"out": false, "in": ["perRequest", true]},
+  {"out": false, "in": ["perRequest", false]}],
+ "Proxiima.Transport.defaultBind":
+ [{"out": null, "in": ["facade"]},
+  {"out": "127.0.0.1:31415", "in": ["canonical"]}],
+ "Proxiima.Transport.credentialFailureStatus":
+ [{"out": 401, "in": ["invalidBearer"]},
+  {"out": 404, "in": ["unavailableSession"]},
+  {"out": 403, "in": ["ownerSelectionRefused"]}],
+ "Proxiima.Transport.browserAdmission":
+ [{"out": "continueToRoute", "in": ["noOrigin"]},
+  {"out": "originForbidden", "in": ["invalidOrigin"]},
+  {"out": "continueToRoute", "in": ["actual"]},
+  {"out": "preflightNoContent", "in": ["validPreflight"]},
+  {"out": "preflightBadRequest", "in": ["malformedPreflight"]}],
+ "Proxiima.Transport.bodyBudget":
+ [{"out": "refuseEarly", "in": ["aboveLimit"]},
+  {"out": "limitReads", "in": ["withinLimit"]},
+  {"out": "limitReads", "in": ["unavailable"]}],
+ "Proxiima.Repository.versionAccepted":
  [{"out": true, "in": ["initial"]},
   {"out": true, "in": ["unchanged"]},
   {"out": true, "in": ["nextPatch"]},

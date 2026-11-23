@@ -605,4 +605,112 @@ macro_rules! ledger {
     (Proxiima.Repository.mcpDefaultDatabaseUrl) => {
         "postgres://postgres@localhost/proxiima_dev"
     };
+    // The loopback address supplied by the canonical MCP host.
+    (Proxiima.Transport.canonicalBind) => {
+        "127.0.0.1:31415"
+    };
+    // Network exposure is opt-in.
+    (Proxiima.Transport.defaultExposeNetwork) => {
+        false
+    };
+    // The REST runtime switch starts off.
+    (Proxiima.Transport.defaultRestEnabled) => {
+        false
+    };
+    // The health route switch starts off.
+    (Proxiima.Transport.defaultHealthEndpoints) => {
+        false
+    };
+    // Hosts present in every listener's authority allowlist.
+    (Proxiima.Transport.loopbackHosts) => {
+        ["localhost", "127.0.0.1", "::1"]
+    };
+    // Loopback browser origins used when none are configured for the listener.
+    (Proxiima.Transport.loopbackOrigins) => {
+        ["http://localhost", "http://127.0.0.1", "http://[::1]"]
+    };
+    // Desktop webview origins used when none are configured for the listener.
+    (Proxiima.Transport.webviewOrigins) => {
+        ["tauri://localhost", "https://tauri.localhost"]
+    };
+    // Default port of an HTTP request Origin.
+    (Proxiima.Transport.httpPort) => {
+        80
+    };
+    // Default port of an HTTPS request Origin.
+    (Proxiima.Transport.httpsPort) => {
+        443
+    };
+    // The default listener and MCP request body budget in bytes.
+    (Proxiima.Transport.defaultBodyBytes) => {
+        4194304
+    };
+    // Smallest configured listener request body budget in bytes.
+    (Proxiima.Transport.minBodyBytes) => {
+        1
+    };
+    // The database check's readiness timeout in seconds.
+    (Proxiima.Transport.readinessDatabaseSeconds) => {
+        2
+    };
+    // The owner selector's HTTP header name.
+    (Proxiima.Transport.ownerHeader) => {
+        "X-Proxiima-Owner"
+    };
+    // Idle lifetime in seconds of an in-process owner binding.
+    (Proxiima.Transport.bindingIdleSeconds) => {
+        3600
+    };
+    // Largest number of local owner bindings.
+    (Proxiima.Transport.maxBindings) => {
+        4096
+    };
+    // Largest number of local owner bindings for one principal.
+    (Proxiima.Transport.maxPrincipalBindings) => {
+        64
+    };
+    // Legacy MCP sessions are enabled by default.
+    (Proxiima.Transport.defaultLegacySessions) => {
+        true
+    };
+    // Stateless MCP calls do not prefer JSON by default.
+    (Proxiima.Transport.defaultJsonResponse) => {
+        false
+    };
+    // The default SSE ping interval in seconds.
+    (Proxiima.Transport.defaultSsePingSeconds) => {
+        15
+    };
+    // The default transport session idle timeout in seconds.
+    (Proxiima.Transport.defaultSessionIdleSeconds) => {
+        300
+    };
+    // The default SSE retry hint in seconds.
+    (Proxiima.Transport.defaultSseRetrySeconds) => {
+        3
+    };
+    // A zero in any of the three transport duration settings disables its timer.
+    (Proxiima.Transport.disableTimerSeconds) => {
+        0
+    };
+    // The normal progress notification interval in seconds.
+    (Proxiima.Transport.defaultHeartbeatSeconds) => {
+        30
+    };
+    // Minimum progress notification interval in milliseconds.
+    (Proxiima.Transport.minHeartbeatMilliseconds) => {
+        100
+    };
+    // Newest MCP revision the handler implements.
+    (Proxiima.Transport.maxMcpRevision) => {
+        "2026-07-28"
+    };
+    // Freshness of MCP list results in milliseconds.
+    (Proxiima.Transport.listTtlMilliseconds) => {
+        0
+    };
+    // Headers excluded from forwarding by exact name and by prefix.
+    (Proxiima.Transport.credentialHeaders) => {
+        ["authorization", "proxy-authorization", "cookie"]
+    };
 }
