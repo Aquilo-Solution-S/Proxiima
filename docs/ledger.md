@@ -5372,6 +5372,443 @@ stateDiagram-v2
 
 - schema id spelling: A declared schema ID must be lowercase without whitespace.
 
+## Publication
+
+**Capture admission**: Whether a Fact is a new admission and carries a publication plan.
+
+- replay
+- quiet
+- listenable
+
+**Capture stage**: The possible capture stages before a listenable write can commit.
+
+- capacity
+- seal
+- insert
+- commit
+
+**Capture failure**: The failures that prevent a Fact from capturing its event.
+
+- payloadTooLarge
+- capacity
+- exportFailed
+- sourceUnbound
+- untypedWrite
+
+**Capture refusal**: The engine's stable capture refusal categories.
+
+- invalidArgument
+- backpressure
+- internal
+
+**Envelope provenance**: The provenance fields of a captured envelope.
+
+- deploymentSource
+- admittedOwner
+- authorizedModel
+- hostBoundExtensions
+
+**Envelope section**: The sections of a structured envelope.
+
+- substrate
+- extensions
+- data
+
+**Position attributes**: The spelling or presence of the subject and position attributes.
+
+- neither
+- subjectOnly
+- sequenceOnly
+- bothCanonical
+- bothMalformed
+
+**Forget delivery**: The delivery evidence on a record being forgotten.
+
+- noDeliveredLane
+- deliveredWithDebt
+- deliveredWithoutDebt
+
+**Retirement debt**: The debts on a record when removing a consumer.
+
+- lastDebt
+- otherDebt
+- noDebtToConsumer
+
+**Retention state**: The state of a retained record relative to the pruning horizon.
+
+- pending
+- publishedRecent
+- publishedOld
+
+**Lane event**: A lifecycle operation with the record state relevant to its decision.
+
+- forget
+- retire
+- retain
+- hardErase
+
+**Record effect**: The lifecycle effect on the aggregate record.
+
+- keep
+- settle
+- delete
+
+**Lane effect**: The aggregate record effect and whether its origin survives.
+
+- record
+- preserves origin
+
+**Lane state**: A consumer's current lease and delivery status.
+
+- pending
+- claimLive
+- claimExpired
+- published
+
+**Mark result**: The mark result observed after a fenced batch update.
+
+- published
+- alreadyPublished
+- staleClaim
+
+**Origin evidence**: The storage evidence examined for an exact physical publication origin.
+
+- retained
+- erased
+- missing
+
+**Intake outcome**: The outcome of attempting intake for one claimed event.
+
+- accepted
+- rejected
+- malformed
+- intakeError
+- panic
+- timeout
+
+**Http status class**: The relevant classes of HTTP response status.
+
+- success
+- badRequest
+- unprocessable
+- other
+
+**Lane debt**: The remaining delivery debt of a captured record.
+
+- none
+- pending
+- leased
+
+**Sealed part**: The fixed metadata and bytes after the envelope is sealed.
+
+- physicalFactId
+- unversionedSchema
+- versionedSchemaUri
+- occurrenceTime
+- bytes
+- blake3Digest
+
+**Queue evidence**: Which path proves full-queue backpressure.
+
+- zeroLimit
+- freshBelowLimit
+- probedBelowLimit
+- probedAtLeastLimit
+
+**Mark timing**: When captured records become due for a mark batch.
+
+- continuing
+- leaseDeadline
+- passEnds
+- handBack
+
+**Outbox capability**: The independent capabilities held by the host runtime.
+
+- delivery
+- registration
+- retention
+- exactOriginCheck
+
+**Outbox operation**: Which publication calls a host-held capability grants.
+
+- claim
+- renew
+- mark
+- release
+- register
+- list
+- retire
+- prune
+- checkOrigin
+
+**Immutable publication field**: The recorded attribution and bytes reuse frozen at capture.
+
+- physicalFact
+- originalOwner
+- originalSource
+- eventId
+- envelope
+- digest
+
+**Retention batch result**: The remaining work after a bounded retention delete.
+
+- full
+- short
+- failed
+- cancelled
+
+**Delivery pass evidence**: The visible result of the records attempted in a pass.
+
+- progress
+- noProgressWithFailure
+- noFailure
+
+**default max pending** = 100000: The default pending-record ceiling.
+
+**default max payload bytes** = 524288: The default serialized envelope ceiling in bytes.
+
+**default retention seconds** = 604800: The default published-body retention in seconds.
+
+**min retention seconds** = 60: The minimum positive published-body retention in seconds.
+
+**retention off seconds** = 0: The configured retention value that disables pruning.
+
+**min lease seconds** = 1: The minimum duration of a publication claim in seconds.
+
+**backlog fresh seconds** = 30: The publication backlog estimate freshness window in seconds.
+
+**backlog refresh seconds** = 10: The shortest interval in seconds between backlog estimate refreshes.
+
+**cloud events spec version** = "1.0": The structured CloudEvents specification version.
+
+**data content type** = "application/json": The media type of the typed payload.
+
+**max extension name chars** = 20: The longest CloudEvents extension name.
+
+**max extension value bytes** = 256: The longest string extension value in bytes.
+
+**first sequence** = 1: The initial positive sequence allocated to a series.
+
+**sequence digits** = 20: Series positions are padded to this many decimal digits.
+
+**default consumer** = "default": The default durable consumer lane seeded by the installation.
+
+**max consumer name bytes** = 63: The longest consumer name in bytes.
+
+**max publisher id bytes** = 128: The longest publisher label in bytes.
+
+**drain batch** = 64: The number of records a drain leases at once.
+
+**drain lease seconds** = 30: The default duration of a drain's claim in seconds.
+
+**poll floor millis** = 500: The first poll wait of an idle or failed drain in milliseconds.
+
+**poll ceiling seconds** = 30: The maximum wait in seconds before polling again.
+
+**intake timeout seconds** = 5: The deadline in seconds for one intake attempt.
+
+**flush lease divisor** = 2: Dispatch a pending mark by this divisor of the renewed claim duration.
+
+**retention batch** = 1000: The maximum records in one retention transaction.
+
+**retention interval seconds** = 60: The interval between complete retention passes in seconds.
+
+**http consumer** = "http": The name of the built-in HTTP consumer lane.
+
+**http request timeout millis** = 4500: The HTTP request deadline in milliseconds.
+
+**http content type** = "application/cloudevents+json": The structured CloudEvents HTTP media type.
+
+**http delivery count header** = "Proxiima-Delivery-Count": The HTTP header carrying the count of delivery claims.
+
+**http reason chars** = 512: The maximum characters retained from a receiver rejection reason.
+
+**capture order** = \[capacity, seal, insert, commit]: The capture pipeline checks capacity, seals the envelope, inserts it before committing.
+
+**stamped provenance** = \[deploymentSource, admittedOwner, authorizedModel, hostBoundExtensions]: The capture plan stamps source, owner and authorized host provenance.
+
+**envelope section order** = \[substrate, extensions, data]: The serialization order of structured event sections.
+
+**sealed event identity** = \[physicalFactId, unversionedSchema, versionedSchemaUri, occurrenceTime, bytes, blake3Digest]: The envelope identity binds the physical Fact, schema, occurrence, bytes and digest.
+
+**immutable publication** = \[physicalFact, originalOwner, originalSource, eventId, envelope, digest]: Publication identity, attribution and envelope bytes survive transfer unchanged.
+
+| capture admission | atomic capture |
+| --- | --- |
+| replay | no |
+| quiet | no |
+| listenable | yes |
+
+- atomic capture: Only a fresh listenable admission captures an outbox event in its transaction.
+
+| capture failure | capture refusal |
+| --- | --- |
+| payloadTooLarge | invalidArgument |
+| capacity | backpressure |
+| exportFailed | invalidArgument |
+| sourceUnbound | internal |
+| untypedWrite | invalidArgument |
+
+- capture refusal: Export and payload defects are invalid input, queue exhaustion is backpressure and missing source is internal.
+
+| has listenable | source bound | composition admitted |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | yes |
+| no | no | yes |
+
+- composition admitted: A frozen registry needs a producer source exactly when it has at least one listenable schema.
+
+| listenable | has json schema | schema freeze admitted |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | yes |
+| no | no | yes |
+
+- schema freeze admitted: A listenable schema must resolve to a typed JSON schema before freeze.
+
+| position attributes | subject position admitted |
+| --- | --- |
+| neither | no |
+| subjectOnly | no |
+| sequenceOnly | no |
+| bothCanonical | yes |
+| bothMalformed | no |
+
+- subject position admitted: A stored event must carry a canonical pair of subject and position attributes.
+
+| lane event | lane lifecycle |
+| --- | --- |
+| forget (noDeliveredLane) | record: delete, preserves origin: yes |
+| forget (deliveredWithDebt) | record: settle, preserves origin: yes |
+| forget (deliveredWithoutDebt) | record: keep, preserves origin: yes |
+| retire (lastDebt) | record: settle, preserves origin: yes |
+| retire (otherDebt) | record: keep, preserves origin: yes |
+| retire (noDebtToConsumer) | record: keep, preserves origin: yes |
+| retain (pending) | record: keep, preserves origin: yes |
+| retain (publishedRecent) | record: keep, preserves origin: yes |
+| retain (publishedOld) | record: delete, preserves origin: yes |
+| hardErase | record: delete, preserves origin: no |
+
+- lane lifecycle: Decide the aggregate record and origin effects of a lifecycle operation.
+
+| lane state | lane claimable |
+| --- | --- |
+| pending | yes |
+| claimLive | no |
+| claimExpired | yes |
+| published | no |
+
+- lane claimable: Claim only pending work and expired claims of the selected consumer.
+
+| exact live claim | origin eligible | can mark |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- can mark: A live exact claim may mark only if the retained origin remains eligible.
+
+| changed | published | mark verdict |
+| --- | --- | --- |
+| yes | yes | published |
+| yes | no | published |
+| no | yes | alreadyPublished |
+| no | no | staleClaim |
+
+- mark verdict: Report a newly updated lane first, then an already published lane, then a stale claim.
+
+| origin evidence | origin eligible |
+| --- | --- |
+| retained | yes |
+| erased | no |
+| missing | no |
+
+- origin eligible: Hand over and mark only when the publication origin is retained and eligible.
+
+| intake outcome | owes mark |
+| --- | --- |
+| accepted | yes |
+| rejected | yes |
+| malformed | no |
+| intakeError | no |
+| panic | no |
+| timeout | no |
+
+- owes mark: The runtime owes a mark after either durable decision and retries failures.
+
+| claim boundary | hand back |
+| --- | --- |
+| opened | no |
+| closed | no |
+| cancelled | yes |
+
+- hand back: Cancellation hands back work in flight.
+
+| http status class | http acknowledgement |
+| --- | --- |
+| success | accepted |
+| badRequest | rejected |
+| unprocessable | rejected |
+| other | intakeError |
+
+- http acknowledgement: Success and 400 or 422 settle a lane, while other HTTP statuses are retryable.
+
+| lane debt | aggregate settled |
+| --- | --- |
+| none | yes |
+| pending | no |
+| leased | no |
+
+- aggregate settled: A record is settled precisely when no delivery debt remains.
+
+| queue evidence | within queue ceiling |
+| --- | --- |
+| zeroLimit | no |
+| freshBelowLimit | yes |
+| probedBelowLimit | yes |
+| probedAtLeastLimit | no |
+
+- within queue ceiling: A low fresh estimate or low exact probe permits capture; a zero or saturated ceiling refuses it.
+
+| mark timing | flush accepted |
+| --- | --- |
+| continuing | no |
+| leaseDeadline | yes |
+| passEnds | yes |
+| handBack | yes |
+
+- flush accepted: Send outstanding marks when the lease-relative deadline arrives or the pass hands back or ends.
+
+| outbox capability | host outbox operations |
+| --- | --- |
+| delivery | \[claim, renew, mark, release] |
+| registration | \[register, list, retire] |
+| retention | \[prune] |
+| exactOriginCheck | \[checkOrigin] |
+
+- host outbox operations: Delivery, administration, retention and origin eligibility use disjoint ports.
+
+| retention batch result | prune again |
+| --- | --- |
+| full | yes |
+| short | no |
+| failed | no |
+| cancelled | no |
+
+- prune again: Only a full retention batch calls for another transaction in the same pass.
+
+| delivery pass evidence | delivery pass failed |
+| --- | --- |
+| progress | no |
+| noProgressWithFailure | yes |
+| noFailure | no |
+
+- delivery pass failed: Only a pass with a failure and no successful mark reports its first failure.
+
 ## Query
 
 **Read at**: A point read selects the named admission or the newest readable admission of its series.

@@ -689,6 +689,126 @@ macro_rules! ledger {
     (Proxiima.Payloads.sidecarHeadPageMax) => {
         1000
     };
+    // The default pending-record ceiling.
+    (Proxiima.Publication.defaultMaxPending) => {
+        100000
+    };
+    // The default serialized envelope ceiling in bytes.
+    (Proxiima.Publication.defaultMaxPayloadBytes) => {
+        524288
+    };
+    // The default published-body retention in seconds.
+    (Proxiima.Publication.defaultRetentionSeconds) => {
+        604800
+    };
+    // The minimum positive published-body retention in seconds.
+    (Proxiima.Publication.minRetentionSeconds) => {
+        60
+    };
+    // The configured retention value that disables pruning.
+    (Proxiima.Publication.retentionOffSeconds) => {
+        0
+    };
+    // The minimum duration of a publication claim in seconds.
+    (Proxiima.Publication.minLeaseSeconds) => {
+        1
+    };
+    // The publication backlog estimate freshness window in seconds.
+    (Proxiima.Publication.backlogFreshSeconds) => {
+        30
+    };
+    // The shortest interval in seconds between backlog estimate refreshes.
+    (Proxiima.Publication.backlogRefreshSeconds) => {
+        10
+    };
+    // The structured CloudEvents specification version.
+    (Proxiima.Publication.cloudEventsSpecVersion) => {
+        "1.0"
+    };
+    // The media type of the typed payload.
+    (Proxiima.Publication.dataContentType) => {
+        "application/json"
+    };
+    // The longest CloudEvents extension name.
+    (Proxiima.Publication.maxExtensionNameChars) => {
+        20
+    };
+    // The longest string extension value in bytes.
+    (Proxiima.Publication.maxExtensionValueBytes) => {
+        256
+    };
+    // The initial positive sequence allocated to a series.
+    (Proxiima.Publication.firstSequence) => {
+        1
+    };
+    // Series positions are padded to this many decimal digits.
+    (Proxiima.Publication.sequenceDigits) => {
+        20
+    };
+    // The default durable consumer lane seeded by the installation.
+    (Proxiima.Publication.defaultConsumer) => {
+        "default"
+    };
+    // The longest consumer name in bytes.
+    (Proxiima.Publication.maxConsumerNameBytes) => {
+        63
+    };
+    // The longest publisher label in bytes.
+    (Proxiima.Publication.maxPublisherIdBytes) => {
+        128
+    };
+    // The number of records a drain leases at once.
+    (Proxiima.Publication.drainBatch) => {
+        64
+    };
+    // The default duration of a drain's claim in seconds.
+    (Proxiima.Publication.drainLeaseSeconds) => {
+        30
+    };
+    // The first poll wait of an idle or failed drain in milliseconds.
+    (Proxiima.Publication.pollFloorMillis) => {
+        500
+    };
+    // The maximum wait in seconds before polling again.
+    (Proxiima.Publication.pollCeilingSeconds) => {
+        30
+    };
+    // The deadline in seconds for one intake attempt.
+    (Proxiima.Publication.intakeTimeoutSeconds) => {
+        5
+    };
+    // Dispatch a pending mark by this divisor of the renewed claim duration.
+    (Proxiima.Publication.flushLeaseDivisor) => {
+        2
+    };
+    // The maximum records in one retention transaction.
+    (Proxiima.Publication.retentionBatch) => {
+        1000
+    };
+    // The interval between complete retention passes in seconds.
+    (Proxiima.Publication.retentionIntervalSeconds) => {
+        60
+    };
+    // The name of the built-in HTTP consumer lane.
+    (Proxiima.Publication.httpConsumer) => {
+        "http"
+    };
+    // The HTTP request deadline in milliseconds.
+    (Proxiima.Publication.httpRequestTimeoutMillis) => {
+        4500
+    };
+    // The structured CloudEvents HTTP media type.
+    (Proxiima.Publication.httpContentType) => {
+        "application/cloudevents+json"
+    };
+    // The HTTP header carrying the count of delivery claims.
+    (Proxiima.Publication.httpDeliveryCountHeader) => {
+        "Proxiima-Delivery-Count"
+    };
+    // The maximum characters retained from a receiver rejection reason.
+    (Proxiima.Publication.httpReasonChars) => {
+        512
+    };
     // The default per-store request timeout in seconds.
     (Proxiima.Query.remoteTimeoutSeconds) => {
         2
