@@ -183,7 +183,12 @@ async fn delivery_rejects_expired_and_raw_or_foreign_phases_before_backend() {
 #[tokio::test]
 async fn matching_delivery_preserves_owner_and_goal_requests() {
     let backend = Arc::new(RecordingRead::default());
-    let service = CitedBlobReadService::new(backend.clone());
+    let runtime = DelegationRuntimeAuthority::new(DelegationRuntimeBinding::fresh());
+    let service = bound_delivery(
+        CitedBlobReadService::new_runtime(backend.clone(), &runtime),
+        "core_search_memories",
+        &runtime,
+    );
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let object = Uuid::now_v7();
     let authz = crate::test_fixtures::authenticated_context(AuthzContext::single_owner(
@@ -294,7 +299,7 @@ fn delivery_binding_refuses_absent_write_and_dispatcher_keys() {
 }
 
 #[tokio::test]
-async fn bound_delivery_checks_operation_scope_before_backend() {
+async fn bound_delivery_rechecks_scope_for_each_request() {
     let backend = Arc::new(RecordingRead::default());
     let authority = DelegationRuntimeAuthority::new(DelegationRuntimeBinding::fresh());
     let service = bound_delivery(
@@ -316,14 +321,6 @@ async fn bound_delivery_checks_operation_scope_before_backend() {
         .with_tool_scope(crate::ToolScope::Palette(vec![
             crate::ScopeKey::parse("core_search_memories").unwrap(),
         ]));
-    assert_eq!(
-        service
-            .authorize_delivery(&search_only, request.clone())
-            .await
-            .expect_err("unrelated search scope"),
-        CitedBlobReadError::AccessDenied
-    );
-    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
     let admitted = authz
         .with_tool_scope(crate::ToolScope::Palette(vec![
             crate::ScopeKey::parse("core_memory_spaces").unwrap(),
@@ -335,6 +332,22 @@ async fn bound_delivery_checks_operation_scope_before_backend() {
         .expect("bound read keeps existing mandatory-read policy");
     assert_eq!(result.into_parts().0, request);
     assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+
+    assert_eq!(
+        service
+            .authorize_delivery(&search_only, request.clone())
+            .await
+            .expect_err("a previous admission cannot authorize a new request"),
+        CitedBlobReadError::AccessDenied
+    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+
+    let retry = service
+        .authorize_delivery(&admitted, request.clone())
+        .await
+        .expect("retry obtains its own admission");
+    assert_eq!(retry.into_parts().0, request);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

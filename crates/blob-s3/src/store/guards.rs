@@ -41,7 +41,7 @@ pub(super) async fn lock_owner_fence(
 ) -> Result<(), BlobError> {
     proxiima_storage_pg::access::fences::lock_owner_fence_shared_tx(tx, owner)
         .await
-        .map_err(|err| BlobError::State(format!("lock upload owner fence: {err}")))
+        .map_err(BlobError::from)
 }
 
 /// The fence, then the object keys, in the global fence -> key -> row order: the row is read or
@@ -54,7 +54,7 @@ pub(super) async fn lock_fence_and_keys(
     lock_owner_fence(tx, owner).await?;
     proxiima_storage_pg::access::fences::lock_object_keys_tx(tx, keys)
         .await
-        .map_err(|err| BlobError::State(format!("lock upload object key: {err}")))
+        .map_err(BlobError::from)
 }
 
 pub(super) fn validate_prepare(
@@ -64,14 +64,21 @@ pub(super) fn validate_prepare(
     if req.filename.trim().is_empty() {
         return Err(BlobError::State("filename is required".into()));
     }
-    if req.filename.len() > 255 {
-        return Err(BlobError::State("filename exceeds 255 bytes".into()));
+    const MAX_FILENAME_BYTES: usize = proxiima_core::ledger!(Proxiima.Citations.maxFilenameBytes);
+    if req.filename.len() > MAX_FILENAME_BYTES {
+        return Err(BlobError::State(format!(
+            "filename exceeds {MAX_FILENAME_BYTES} bytes"
+        )));
     }
     if req.mime.trim().is_empty() {
         return Err(BlobError::State("mime is required".into()));
     }
-    if req.mime.len() > 127 {
-        return Err(BlobError::State("mime exceeds 127 bytes".into()));
+    const MAX_MEDIA_TYPE_BYTES: usize =
+        proxiima_core::ledger!(Proxiima.Citations.maxMediaTypeBytes);
+    if req.mime.len() > MAX_MEDIA_TYPE_BYTES {
+        return Err(BlobError::State(format!(
+            "mime exceeds {MAX_MEDIA_TYPE_BYTES} bytes"
+        )));
     }
     if req.byte_len > i64::MAX as u64 {
         return Err(BlobError::State("byte_len exceeds Postgres bigint".into()));

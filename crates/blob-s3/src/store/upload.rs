@@ -1,10 +1,4 @@
 //! The write lane: prepare → stage → corpus completion, with abort as the other exit.
-//!
-//! These four stay in one file because their contract is an ordering, not a
-//! set of independent verbs. `stage_upload` records the canonical locator
-//! and retires the redundant pending transfer copy. Corpus completion settles
-//! the upload row in the same transaction as the cited object and Fact;
-//! pending-key deletion remains best effort outside it.
 
 use aws_sdk_s3::primitives::ByteStream;
 use proxiima_core::citations::UploadedBlobPayload;
@@ -35,19 +29,8 @@ use super::transitions::{
 };
 use crate::error::BlobError;
 
-/// Re-run a whole `begin → body → commit` transaction while it fails with a
-/// transient conflict, up to the workspace-wide attempt budget.
-///
-/// The upload lane now takes object-key fences, and it takes them in a
-/// different relative order from erase — erase fences the key before deleting
-/// its rows, an abort locks its row before fencing the key — so `40P01` is a
-/// normal outcome of two correct transactions rather than a fault. The only
-/// correct answer is to roll back and try again, which is safe exactly because
-/// `op` opens its own transaction each call.
-///
-/// Provider work is deliberately not inside `op`: an S3 failure is not a
-/// serialization failure, and re-running a conditional PUT is a different
-/// decision from re-running a database transaction.
+/// Retry a fresh transaction within the shared attempt budget after a transient
+/// conflict. Keep provider I/O outside the replayed operation.
 async fn with_retried_tx<T, F, Fut>(mut op: F) -> Result<T, BlobError>
 where
     F: FnMut() -> Fut,
@@ -462,6 +445,7 @@ impl CitedBlobStore {
         let owner = req.owner();
         ensure_owner_write_access(ctx, &owner)?;
         let upload_id = parse_opaque_identifier(&req.upload_id)?;
+        // `Proxiima.ObjectMaintenance.stagesPerStore`.
         let _slot = self
             .stage_slots
             .acquire()
@@ -567,6 +551,7 @@ impl CitedBlobStore {
         upload_id: Uuid,
         row: &super::rows::UploadRow,
     ) -> Result<Option<CitedBlobStaged>, BlobError> {
+        // `Proxiima.Citations.stageSource`. Expiry rechecks staging under the row lock.
         let status = if row.status == UploadStatus::Pending
             && row.expires_at < OffsetDateTime::now_utc()
         {
@@ -652,6 +637,11 @@ impl CitedBlobStore {
             self.commit_stage_locator(owner_scope, owner, upload_id, row, &staged.payload)
         })
         .await?;
+        let Some(decision) = decision else {
+            self.purge_pending_upload_best_effort(&row.bucket, upload_id)
+                .await;
+            return Err(BlobError::State("upload not found for Owner".into()));
+        };
         match decision {
             StageLocatorDecision::Staged => {
                 self.purge_pending_upload_best_effort(&row.bucket, upload_id)
@@ -688,7 +678,7 @@ impl CitedBlobStore {
         upload_id: Uuid,
         row: &super::rows::UploadRow,
         staged: &UploadedBlobPayload,
-    ) -> Result<StageLocatorDecision, BlobError> {
+    ) -> Result<Option<StageLocatorDecision>, BlobError> {
         let canonical_key = &staged.object_key;
         let mut tx = self.begin_owner_tx(owner_scope).await?;
         // The canonical key is about to gain (or has just lost) its only row
@@ -720,9 +710,7 @@ impl CitedBlobStore {
                 self.resolve_erased_owner_row(upload_id, canonical_key)
                     .await?;
                 tx.commit().await.map_err(BlobError::Db)?;
-                self.purge_pending_upload_best_effort(&row.bucket, upload_id)
-                    .await;
-                return Err(BlobError::State("upload not found for Owner".into()));
+                return Ok(None);
             }
         } else {
             stage_locator_decision(row.status, None, rows_affected)?
@@ -735,7 +723,7 @@ impl CitedBlobStore {
             other => other,
         };
         tx.commit().await.map_err(BlobError::Db)?;
-        Ok(decision)
+        Ok(Some(decision))
     }
 
     /// The row this stage was writing is gone. Decide, under the canonical
@@ -778,11 +766,7 @@ impl CitedBlobStore {
         upload_id: Uuid,
         canonical_key: &str,
     ) -> Result<(), BlobError> {
-        let mut platform_tx = self
-            .platform_scope
-            .begin()
-            .await
-            .map_err(|error| BlobError::State(error.to_string()))?;
+        let mut platform_tx = self.platform_scope.begin().await?;
         let still_referenced: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                  SELECT 1
@@ -819,10 +803,7 @@ impl CitedBlobStore {
         .execute(&mut *platform_tx)
         .await
         .map_err(BlobError::Db)?;
-        platform_tx
-            .commit()
-            .await
-            .map_err(|error| BlobError::State(error.to_string()))?;
+        platform_tx.commit().await?;
         Ok(())
     }
 
@@ -917,8 +898,7 @@ impl CitedBlobStore {
             owner,
             upload_id,
         )
-        .await
-        .map_err(|err| BlobError::State(format!("owe terminal upload keys: {err}")))?;
+        .await?;
         Ok(StageLocatorDecision::RepairTerminal(terminal))
     }
 
@@ -1062,16 +1042,9 @@ impl CitedBlobStore {
         owner: &OwnerId,
         upload_id: Uuid,
     ) -> Result<AbortCommit, BlobError> {
-        // Abort participates in the same owner fence as finish and transfer.
-        // The row lock is the exact status revalidation: an earlier pool read
-        // must never authorize a pending->aborted write after another
-        // transition published the upload.
         let mut tx = self.begin_owner_tx(owner_scope).await?;
-        // Before the row lock, in the global fence → key → row order. An abort
-        // retires the only row that keeps this upload's canonical object
-        // reachable, which is the same question an erase's retain anti-join
-        // asks; the derived key is used rather than the row's, because the
-        // fence has to be held before the row is read.
+        // `Proxiima.Citations.settlementLockOrder`. Derive the key before the row
+        // lock so abort and erase serialize on the same retained bytes.
         lock_fence_and_keys(&mut tx, owner, &[canonical_object_key(upload_id)]).await?;
         let row = load_upload_for_update(&mut tx, owner, upload_id).await?;
         match row.status {
@@ -1117,8 +1090,7 @@ impl CitedBlobStore {
                 owner,
                 upload_id,
             )
-            .await
-            .map_err(|err| BlobError::State(format!("owe aborted upload keys: {err}")))?
+            .await?
         } else {
             Vec::new()
         };
