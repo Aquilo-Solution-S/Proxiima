@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 
-pub const DEFAULT_BIND: &str = "127.0.0.1:31415";
+pub const DEFAULT_BIND: &str = proxiima_core::ledger!(Proxiima.Transport.canonicalBind);
 pub const DEFAULT_DATABASE_URL: &str =
     proxiima_core::ledger!(Proxiima.Repository.mcpDefaultDatabaseUrl);
 
@@ -67,8 +67,9 @@ Maintenance:
 
 Endpoint:
   http://127.0.0.1:31415/mcp
-  MCP initialize must include X-Proxiima-Owner: <uuid>, the owner's bare
-  id. The server binds that owner to Mcp-Session-Id.
+  For a new MCP session without a trusted owner default, include
+  X-Proxiima-Owner: <uuid> with the owner's bare UUID. The server binds
+  the selected owner to Mcp-Session-Id.
 
 Tools:
   The MCP tools/list call returns the tools this server serves the caller.

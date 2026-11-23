@@ -14,17 +14,20 @@ use tokio::sync::RwLock;
 /// so a generous ceiling covers long-lived Streamable-HTTP clients while
 /// still bounding memory; it stays in the same order of magnitude as the
 /// stream max-lifetime ceiling.
-pub(crate) const SESSION_IDLE_TTL: Duration = Duration::from_hours(1);
+pub(crate) const SESSION_IDLE_TTL: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Transport.bindingIdleSeconds
+));
 
 /// Hard cap on concurrently bound sessions. When full, a principal may evict
 /// only one of its own bindings; a new principal is refused rather than
 /// evicting another caller's session.
-const MAX_SESSIONS: usize = 4096;
+const MAX_SESSIONS: usize = proxiima_core::ledger!(Proxiima.Transport.maxBindings);
 
 /// Maximum number of sessions one authenticated principal may hold. When the
 /// principal reaches this limit, only its own least-recently-seen session is
 /// evicted.
-pub(crate) const MAX_SESSIONS_PER_PRINCIPAL: usize = 64;
+pub(crate) const MAX_SESSIONS_PER_PRINCIPAL: usize =
+    proxiima_core::ledger!(Proxiima.Transport.maxPrincipalBindings);
 
 struct Binding {
     owner: OwnerId,
@@ -125,6 +128,7 @@ impl McpSessionBindings {
         principal: OwnerId,
         now: Instant,
     ) -> bool {
+        // `Proxiima.Transport.sessionBindingOperations`.
         let (bound, mut removed) = {
             let mut guard = self.inner.write().await;
             let map = &mut *guard;
@@ -141,8 +145,6 @@ impl McpSessionBindings {
                     map.remove(&id);
                     removed.push(id);
                 } else {
-                    // The global bound is full of other principals' sessions. A
-                    // new principal cannot evict another caller's session.
                     bound = false;
                 }
             }
@@ -188,8 +190,7 @@ impl McpSessionBindings {
             }
             let last_seen = binding.last_seen.load(Ordering::Relaxed);
             if !self.is_expired(last_seen, now) {
-                // Refresh so the TTL is idle-based, not creation-based:
-                // active sessions never expire mid-use.
+                // `Proxiima.Transport.sessionBindingOperations`.
                 binding.last_seen.fetch_max(now, Ordering::Relaxed);
                 return Some(binding.owner);
             }
@@ -257,6 +258,7 @@ impl McpSessionBindings {
 
 #[must_use]
 pub fn parse_owner_key(raw: &str) -> Option<OwnerId> {
+    // `Proxiima.OwnerAuthority.ownerIdBytes`; OwnerId owns the wire parser.
     raw.parse().ok()
 }
 

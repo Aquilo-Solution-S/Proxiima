@@ -30,7 +30,7 @@ crate::settings! {
         default: "false",
     }
     PROXIIMA_MCP_BIND: SocketAddress {
-        purpose: "MCP listener address; no listener when unset",
+        purpose: "MCP listener address; unset leaves facade hosts without a listener and the canonical host uses its loopback default",
         when_needed: "serving MCP",
     }
     PROXIIMA_EXPOSE_NETWORK: Boolean {

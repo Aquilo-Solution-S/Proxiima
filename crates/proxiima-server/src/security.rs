@@ -27,8 +27,9 @@ use crate::oauth::{ResourceChallenges, ResourceServerMetadata};
 use crate::problem::Problem;
 
 const MCP_SESSION_ID_HEADER: &str = "Mcp-Session-Id";
-pub(crate) const PROXIIMA_OWNER_HEADER: &str = "X-Proxiima-Owner";
-const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+pub(crate) const PROXIIMA_OWNER_HEADER: &str =
+    proxiima_core::ledger!(Proxiima.Transport.ownerHeader);
+const LOOPBACK_HOSTS: [&str; 3] = proxiima_core::ledger!(Proxiima.Transport.loopbackHosts);
 
 /// Browser Origin allowlist: a portless entry accepts any port; an explicit
 /// port also matches a browser Origin that omits it when it is the scheme
@@ -96,6 +97,7 @@ impl OriginAllowlist {
         let Some(parsed) = RequestOrigin::parse(origin) else {
             return false;
         };
+        // `Proxiima.Transport.originMatch`.
         self.patterns.iter().any(|pattern| {
             pattern.scheme == parsed.scheme
                 && pattern.host == parsed.host
@@ -282,6 +284,7 @@ impl HostRequestError {
 }
 
 fn request_authority(request: &Request) -> Result<NormalizedAuthority, HostRequestError> {
+    // `Proxiima.Transport.authoritySource`.
     if let Some(host) = request.headers().get(HOST) {
         let host = host.to_str().map_err(|_| {
             tracing::warn!(
@@ -393,6 +396,7 @@ async fn enforce_cors(
     request: Request,
     next: Next,
 ) -> Response {
+    // `Proxiima.Transport.browserAdmission`.
     let mut origins = request.headers().get_all(ORIGIN).iter();
     let Some(origin) = origins.next().cloned() else {
         let mut response = next.run(request).await;
@@ -514,13 +518,11 @@ fn append_vary(response: &mut Response, value: &'static str) {
 
 #[must_use]
 pub fn default_allowlist() -> OriginAllowlist {
-    OriginAllowlist::new([
-        "http://localhost",
-        "http://127.0.0.1",
-        "http://[::1]",
-        "tauri://localhost",
-        "https://tauri.localhost",
-    ])
+    OriginAllowlist::new(
+        proxiima_core::ledger!(Proxiima.Transport.loopbackOrigins)
+            .into_iter()
+            .chain(proxiima_core::ledger!(Proxiima.Transport.webviewOrigins)),
+    )
 }
 
 /// # Errors
@@ -621,13 +623,7 @@ async fn mcp_auth(
     let Some(token) = extract_bearer(&request) else {
         return unauthorized(&state, &path);
     };
-    // Validate the bearer BEFORE resolving owner/session so an invalid
-    // token always yields 401 regardless of session/owner-header state.
-    // This closes the 401/403 oracle: an unauthenticated caller learns
-    // nothing about owner or session requirements. Owner binding happens
-    // after selection, from this retained authentication result — plus, for
-    // a Group owner its role map does not carry, one per-owner resolution
-    // through the host's access port.
+    // `Proxiima.Authentication.sessionChecks`; retain verification across owner selection.
     let Some(resolved) = state.auth.resolve_unbound(&token).await else {
         return unauthorized(&state, &path);
     };
@@ -703,10 +699,6 @@ enum OwnerSelection {
     Missing,
 }
 
-/// A session binding wins for ordinary credentials, followed by the owner
-/// header and host-named default. A forwarding claim is mandatory: a live
-/// session and any owner header must agree with its owner. A present but
-/// malformed owner header never falls back to a claim or default.
 async fn selected_owner(
     sessions: &McpSessionBindings,
     headers: &HeaderMap,
@@ -714,10 +706,11 @@ async fn selected_owner(
     default: Option<OwnerId>,
     forwarded: Option<OwnerId>,
 ) -> OwnerSelection {
+    // `Proxiima.Transport.ownerSelection` and `Proxiima.Authentication.forwardingChecks`.
+    // A supplied but malformed header refuses selection.
     let owner_header = headers
         .get(PROXIIMA_OWNER_HEADER)
         .map(|raw| raw.to_str().ok().and_then(parse_owner_key));
-    // `Proxiima.Authentication.sessionChecks`.
     if let Some(raw_session_id) = headers.get(MCP_SESSION_ID_HEADER) {
         let Ok(session_id) = raw_session_id.to_str() else {
             return OwnerSelection::UnknownSession;
@@ -869,16 +862,8 @@ fn strip_bearer_scheme(raw: &str) -> Option<&str> {
 }
 
 fn parse_pattern(value: &str) -> Result<OriginPattern, ServerError> {
-    let pattern = value.trim();
-    if pattern.is_empty() || pattern == "*" {
-        return Err(invalid_origin(value));
-    }
-    let Some((scheme, host, port)) = parse_origin_parts(pattern) else {
-        return Err(invalid_origin(value));
-    };
-    if scheme.is_empty() || host.is_empty() {
-        return Err(invalid_origin(value));
-    }
+    let (scheme, host, port) =
+        parse_origin_parts(value.trim()).ok_or_else(|| invalid_origin(value))?;
     Ok(OriginPattern {
         scheme,
         host,
@@ -899,9 +884,10 @@ struct RequestOrigin {
 impl RequestOrigin {
     fn parse(value: &str) -> Option<Self> {
         let (scheme, host, port) = parse_origin_parts(value)?;
+        // `Proxiima.Transport.originDefaultPort`.
         let port = port.or(match scheme.as_str() {
-            "http" => Some(80),
-            "https" => Some(443),
+            "http" => Some(proxiima_core::ledger!(Proxiima.Transport.httpPort)),
+            "https" => Some(proxiima_core::ledger!(Proxiima.Transport.httpsPort)),
             _ => None,
         });
         Some(Self { scheme, host, port })
@@ -910,25 +896,26 @@ impl RequestOrigin {
 
 fn parse_origin_parts(value: &str) -> Option<(String, String, Option<u16>)> {
     let (scheme, rest) = value.split_once("://")?;
-    if rest.contains(['/', '?', '#', '@']) {
+    let (first, rest_of_scheme) = scheme.as_bytes().split_first()?;
+    if !first.is_ascii_alphabetic()
+        || !rest_of_scheme
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"+-.".contains(byte))
+        || rest.contains(['/', '?', '#', '@', '*'])
+    {
         return None;
     }
-    let (host, port) = if let Some(rest) = rest.strip_prefix('[') {
-        let (host, after) = rest.split_once(']')?;
-        let port = if let Some(port) = after.strip_prefix(':') {
-            Some(port.parse().ok()?)
-        } else if after.is_empty() {
-            None
-        } else {
-            return None;
-        };
-        (format!("[{}]", host.to_ascii_lowercase()), port)
-    } else if let Some((host, port)) = rest.rsplit_once(':') {
-        (host.to_ascii_lowercase(), Some(port.parse().ok()?))
-    } else {
-        (rest.to_ascii_lowercase(), None)
-    };
-    Some((scheme.to_ascii_lowercase(), host, port))
+
+    let authority: http::uri::Authority = rest.parse().ok()?;
+    let host = authority.host();
+    let port = authority.port_u16();
+    if host.is_empty() || (port.is_none() && host.len() != rest.len()) {
+        return None;
+    }
+    if let Some(ip) = host.strip_prefix('[') {
+        ip.strip_suffix(']')?.parse::<std::net::Ipv6Addr>().ok()?;
+    }
+    Some((scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), port))
 }
 
 #[cfg(test)]

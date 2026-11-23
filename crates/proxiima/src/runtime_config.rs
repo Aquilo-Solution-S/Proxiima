@@ -14,6 +14,7 @@ use proxiima_core::{
 };
 use proxiima_server::{
     HostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
+    SessionIdleTimeout,
 };
 use proxiima_storage_pg::{PgHostStateParticipant, PgPlatformScope, PgPoolConfig, PgTuning};
 
@@ -1057,7 +1058,9 @@ impl RuntimeBuilder {
         if let Some(bytes) = self.max_request_body_bytes {
             mcp_transport.max_request_body_bytes = bytes;
         }
-        if mcp_transport.max_request_body_bytes == 0 {
+        if mcp_transport.max_request_body_bytes
+            < proxiima_core::ledger!(Proxiima.Transport.minBodyBytes)
+        {
             return Err(ProxiimaError::Config(
                 "the request body limit must be at least 1 byte".into(),
             ));
@@ -1211,17 +1214,24 @@ impl RuntimeBuilder {
             storage: storage_config,
             s3: self.s3,
             owner: self.owner,
+            // `Proxiima.Transport.defaultBind` leaves the facade bind unset.
             mcp: self.mcp_bind.map(|bind| McpSettings { bind }),
-            expose_network: self.expose_network.unwrap_or(false),
+            expose_network: self.expose_network.unwrap_or(proxiima_core::ledger!(
+                Proxiima.Transport.defaultExposeNetwork
+            )),
             allowed_origins: self.allowed_origins.unwrap_or_default(),
             allowed_hosts: self.allowed_hosts.unwrap_or_default(),
             served_surface,
             stream_revalidation,
             insecure_single_owner: self.insecure_single_owner,
-            rest_enabled: self.rest_enabled.unwrap_or(false),
+            rest_enabled: self.rest_enabled.unwrap_or(proxiima_core::ledger!(
+                Proxiima.Transport.defaultRestEnabled
+            )),
             request_headers,
             forwarder: self.forwarder,
-            health_endpoints: self.health_endpoints.unwrap_or(false),
+            health_endpoints: self.health_endpoints.unwrap_or(proxiima_core::ledger!(
+                Proxiima.Transport.defaultHealthEndpoints
+            )),
             mcp_transport,
             auth: RuntimeAuthState {
                 has_host_authenticator: parts.has_authenticator(),
@@ -1525,6 +1535,7 @@ impl RuntimeConfig {
             return Ok(());
         };
 
+        // `Proxiima.Transport.listenerRequirements`.
         if self.insecure_single_owner {
             return Err(ProxiimaError::Security(
                 "insecure single-owner mode cannot serve MCP; configure host auth".into(),
@@ -1586,6 +1597,7 @@ impl RuntimeConfig {
     /// network-exposed deployment would 403 every real request.
     #[must_use]
     pub fn public_allowed_hosts(&self) -> Vec<String> {
+        // `Proxiima.Transport.publicHostSources`.
         if !self.allowed_hosts.is_empty() {
             return dedup_hosts(
                 self.allowed_hosts
@@ -1823,7 +1835,7 @@ fn oidc_env_keys() -> &'static [Setting] {
 }
 
 /// The `PROXIIMA_MCP_*` transport block: `None` when none is set, else
-/// rmcp's defaults with the set values applied. Seconds of `0` disable the
+/// the transport defaults with the set values applied. Seconds of `0` disable the
 /// SSE ping, the session idle timeout, or the retry hint.
 fn mcp_transport_from_lookup(
     lookup: &(impl proxiima_core::EnvLookup + ?Sized),
@@ -1844,14 +1856,22 @@ fn mcp_transport_from_lookup(
             .read_source(lookup)
             .map(|raw| parse_duration_seconds(setting, &raw))
             .transpose()
-            .map(|parsed| parsed.map(|duration| (!duration.is_zero()).then_some(duration)))
+            .map(|parsed| {
+                const DISABLED: Duration = Duration::from_secs(proxiima_core::ledger!(
+                    Proxiima.Transport.disableTimerSeconds
+                ));
+                parsed.map(|duration| (duration != DISABLED).then_some(duration))
+            })
     };
     let mut transport = McpTransportConfig::default();
     if let Some(keep_alive) = optional_secs(&KEEP_ALIVE)? {
         transport.sse_keep_alive = keep_alive;
     }
     if let Some(idle) = optional_secs(&SESSION_IDLE)? {
-        transport.session_idle_timeout = idle;
+        transport.session_idle_timeout = idle
+            .map(SessionIdleTimeout::new)
+            .transpose()
+            .map_err(|err| ProxiimaError::Config(format!("{SESSION_IDLE}: {err}")))?;
     }
     if let Some(retry) = optional_secs(&RETRY)? {
         transport.sse_retry = retry;

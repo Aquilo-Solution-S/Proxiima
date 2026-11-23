@@ -15,10 +15,7 @@ use proxiima_core::{RequestHeaders, SpiiceServices, ToolError};
 
 use crate::ServerError;
 
-/// Headers that carry the caller's own credentials. Forwarding one to spiice
-/// code would hand a tool the bearer the edge just consumed, so no allowlist
-/// may name one, directly or through a prefix.
-const CREDENTIAL_HEADERS: [&str; 3] = ["authorization", "proxy-authorization", "cookie"];
+const CREDENTIAL_HEADERS: [&str; 3] = proxiima_core::ledger!(Proxiima.Transport.credentialHeaders);
 
 /// Which inbound request headers the served path copies into
 /// [`RequestHeaders`].
@@ -106,7 +103,7 @@ impl RequestHeaderAllowlist {
             return Ok(None);
         }
         let mut pairs = Vec::new();
-        // Services see only the request header names selected by the host.
+        // `Proxiima.Transport.projectedHeader`.
         for name in headers.keys().filter(|name| self.allows(name)) {
             let mut values = headers.get_all(name).iter();
             let Some(value) = values.next() else {

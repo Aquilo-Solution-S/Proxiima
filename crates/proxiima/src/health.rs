@@ -28,7 +28,9 @@ pub(crate) const READYZ_PATH: &str = "/readyz";
 
 /// Longest a readiness probe waits on the database. Below the usual probe
 /// timeout, so a stalled pool reads as "not ready", not as a hung probe.
-const READY_TIMEOUT: Duration = Duration::from_secs(2);
+const READY_TIMEOUT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Transport.readinessDatabaseSeconds
+));
 
 #[derive(Clone)]
 struct Probe {

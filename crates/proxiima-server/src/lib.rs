@@ -30,9 +30,9 @@ pub use mcp::session::{owner_key, parse_owner_key};
 pub use mcp::tool_list::ToolListNotifier;
 pub use mcp::transport::{
     BodyLimitLayer, DEFAULT_PROGRESS_HEARTBEAT, MAX_REQUEST_BODY_BYTES, McpStreamableService,
-    McpTransportConfig, body_limit_layer, enforce_body_limit, guard_listener,
-    streamable_http_service, streamable_http_service_with_transport,
-    streamable_http_service_wrapping,
+    McpTransportConfig, SessionIdleTimeout, SessionIdleTimeoutError, body_limit_layer,
+    enforce_body_limit, guard_listener, streamable_http_service,
+    streamable_http_service_with_transport, streamable_http_service_wrapping,
 };
 pub use oauth::{
     AUTHORIZATION_SERVER_METADATA_PATH, AuthorizationServers,

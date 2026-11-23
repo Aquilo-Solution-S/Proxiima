@@ -82,6 +82,7 @@ impl Problem {
     /// the selected owner. The bearer layer adds its `WWW-Authenticate`
     /// challenge to this answer.
     pub(crate) fn auth_required(instance: &str) -> Self {
+        // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
             StatusCode::UNAUTHORIZED,
             "auth-required",
@@ -157,6 +158,7 @@ impl Problem {
     }
 
     pub(crate) fn owner_selection_refused(instance: &str) -> Self {
+        // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
             StatusCode::FORBIDDEN,
             "owner-selection-refused",
@@ -172,6 +174,7 @@ impl Problem {
     /// A present `Mcp-Session-Id` with no live binding for this caller.
     /// Streamable-HTTP clients re-initialize on the `404` status.
     pub(crate) fn session_not_found(instance: &str) -> Self {
+        // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
             StatusCode::NOT_FOUND,
             "session-not-found",
@@ -247,5 +250,32 @@ impl IntoResponse for Problem {
             headers.insert(header::ALLOW, HeaderValue::from_static(allow));
         }
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_refusals_match_ledger_vectors() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = data["Proxiima.Transport.credentialFailureStatus"]
+            .as_array()
+            .unwrap();
+        for row in rows {
+            let problem = match row["in"][0].as_str().unwrap() {
+                "invalidBearer" => Problem::auth_required("/mcp"),
+                "unavailableSession" => Problem::session_not_found("/mcp"),
+                "ownerSelectionRefused" => Problem::owner_selection_refused("/mcp"),
+                choice => panic!("unknown credential failure: {choice}"),
+            };
+            assert_eq!(
+                serde_json::json!(problem.status.as_u16()),
+                row["out"],
+                "{row}"
+            );
+        }
     }
 }

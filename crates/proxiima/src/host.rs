@@ -312,6 +312,7 @@ pub use proxiima_server::selfdoc::{build_instructions, how_to_markdown};
 pub use proxiima_server::{
     AuthContext, AuthorizationServers, HostAllowlist, MAX_REQUEST_BODY_BYTES, McpTransportConfig,
     PublicClientFacade, PublicClientFacadeError, RequestHeaderAllowlist, ResourceServerMetadata,
+    SessionIdleTimeout, SessionIdleTimeoutError,
 };
 /// Stable exported Postgres `OwnerAccessPort` adapter for embedding hosts
 /// (see [`proxiima_storage_pg::PgOwnerAccessResolver`]).

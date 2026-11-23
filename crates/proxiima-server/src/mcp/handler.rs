@@ -35,18 +35,13 @@ use crate::selfdoc;
 /// Product name reported to MCP clients on `initialize`.
 const SERVER_NAME: &str = "proxiima";
 
-/// Newest MCP revision Proxiima implements. rmcp's default admits every
-/// revision rmcp knows, so an rmcp upgrade that learns a newer one would
-/// start serving it before Proxiima meets it: `2026-07-28` was admitted that
-/// way while the SEP-2549 list cache hints it requires were missing, and a
-/// client on it rejected `tools/list`. Raise this only with the revision's
-/// server obligations met; a test fails when rmcp knows a newer one.
+/// `Proxiima.Transport.maxMcpRevision`; rmcp would otherwise admit every revision it knows.
 const MAX_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// SEP-2549 freshness of every list result, in milliseconds. Each list is
 /// projected from the caller's token scope, so a grant or revocation must
 /// show on the next list rather than after a cache expires.
-const LIST_TTL_MS: u64 = 0;
+const LIST_TTL_MS: u64 = proxiima_core::ledger!(Proxiima.Transport.listTtlMilliseconds);
 
 /// SEP-2549 cache scope of every list result: per-caller, for the same
 /// reason as [`LIST_TTL_MS`], so no shared cache may serve it to another
@@ -551,11 +546,8 @@ impl ServerHandler for DynamicHandler {
 /// Await `call`, sending `notifications/progress` for the request's token
 /// every interval until it finishes.
 ///
-/// rmcp closes a session that carries no traffic for its idle timeout, and
-/// neither SSE pings nor a call still running count: a long tool call lost
-/// its session and its result. Each notification is session traffic, and
-/// tells the client the call is alive. `progress` counts beats — the spec
-/// asks only that it increase — and no total is claimed.
+/// rmcp counts progress notifications as session traffic. The beat count
+/// increases with each notification and omits a total.
 async fn with_progress_heartbeat<F: Future>(
     call: F,
     heartbeat: Option<(ProgressToken, Peer<RoleServer>, Duration)>,

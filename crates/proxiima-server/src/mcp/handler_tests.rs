@@ -257,6 +257,8 @@ fn trusted_auth(trusted_model_id: &str) -> AuthContext {
 /// happened.
 #[test]
 fn the_protocol_ceiling_is_rmcps_newest_revision() {
+    const IMPLEMENTED_REVISION: &str = proxiima_core::ledger!(Proxiima.Transport.maxMcpRevision);
+    assert_eq!(MAX_PROTOCOL_VERSION.as_str(), IMPLEMENTED_REVISION);
     assert_eq!(
         ProtocolVersion::KNOWN_VERSIONS.last(),
         Some(&MAX_PROTOCOL_VERSION),

@@ -96,6 +96,7 @@ fn parse_plaintext_host(entry: &str) -> Result<String, PlaintextHostsError> {
     if entry.is_empty() {
         return Err(refuse("empty entry"));
     }
+    // `Proxiima.Transport.plaintextHostExclusions`.
     if entry.contains('*') {
         return Err(refuse("wildcards are not accepted"));
     }
@@ -202,6 +203,7 @@ pub fn validate_endpoint_url_for_hosts(
         .host()
         .ok_or_else(|| EndpointUrlError::InvalidUrl("missing host".into()))?;
 
+    // `Proxiima.Transport.outboundTransport`.
     if scheme.eq_ignore_ascii_case("https") {
         return Ok(());
     }
@@ -233,6 +235,37 @@ pub fn is_loopback_endpoint(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_admission_matches_ledger_vectors() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows = data["Proxiima.Transport.outboundTransport"]
+            .as_array()
+            .unwrap();
+        let named = PlaintextHosts::parse("local-dependency.test").unwrap();
+        for row in rows {
+            let policy = if row["in"][1].as_bool().unwrap() {
+                EndpointUrlPolicy::AllowLoopbackHttp
+            } else {
+                EndpointUrlPolicy::HttpsOnly
+            };
+            let endpoints: &[&str] = match row["in"][0].as_str().unwrap() {
+                "https" => &["https://example.com/path"],
+                "plaintextEligibleHost" => &["http://localhost", "http://local-dependency.test"],
+                "plaintextOtherHost" => &["http://example.com"],
+                "unsupportedScheme" => &["ftp://example.com/path"],
+                choice => panic!("unknown endpoint class: {choice}"),
+            };
+            for endpoint in endpoints {
+                assert_eq!(
+                    validate_endpoint_url_for_hosts(endpoint, policy, &named).is_ok(),
+                    row["out"].as_bool().unwrap(),
+                    "{endpoint} with {policy:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn https_is_accepted_under_both_policies() {

@@ -15,8 +15,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use http_body_util::Limited;
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    session::local::{LocalSessionManager, SessionConfig},
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -172,6 +171,7 @@ fn service_over_sessions<H>(
 where
     H: rmcp::ServerHandler + Send + 'static,
 {
+    // `Proxiima.Transport.mcpSessions`; the allowlists and cancellation come from the edge.
     let config = StreamableHttpServerConfig::default()
         .with_allowed_origins(allowlist.origins())
         .with_allowed_hosts(host_allowlist.hosts().iter().cloned())
@@ -182,7 +182,8 @@ where
         .with_json_response(transport.json_response)
         .with_max_request_body_bytes(transport.max_request_body_bytes);
     let mut sessions = LocalSessionManager::default();
-    sessions.session_config.keep_alive = transport.session_idle_timeout;
+    sessions.session_config.keep_alive =
+        transport.session_idle_timeout.map(SessionIdleTimeout::get);
     let progress_heartbeat = transport.progress_heartbeat();
     let sessions = Arc::new(sessions);
     let inner = StreamableHttpService::new(
@@ -201,11 +202,10 @@ where
 }
 
 /// The listener-wide guards over a router whose routes already carry their
-/// own authentication, in the one order they are correct in. Layers run
-/// outermost first: the body cap 413s an oversized request before anything
-/// parses it, then the Host guard, then CORS/Origin. Authentication is applied
-/// to the router before this call, so it runs after all three. Native CLI
-/// clients commonly omit `Origin` and keep the bearer path.
+/// own authentication. Layers run outermost first: body limit, Host,
+/// then Origin/CORS. An over-cap declared length is refused before auth.
+/// Streamed bodies are bounded as the route reads them. Native clients
+/// without an Origin continue to route authentication.
 #[must_use = "serve the returned router; the guards apply to it"]
 pub fn guard_listener(
     router: axum::Router,
@@ -213,6 +213,7 @@ pub fn guard_listener(
     hosts: HostAllowlist,
     max_body_bytes: usize,
 ) -> axum::Router {
+    // `Proxiima.Transport.guardOrder`.
     router
         .layer(cors_layer(origins))
         .layer(host_guard_layer(hosts))
@@ -220,9 +221,10 @@ pub fn guard_listener(
 }
 
 /// Default cap on the accepted request-body size. Sits generously above the
-/// largest legitimate MCP request; anything larger is a client error or
-/// abuse and is refused before auth or JSON parsing runs.
-pub const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// largest legitimate MCP request. See [`enforce_body_limit`] for how
+/// declared and streamed sizes are enforced.
+pub const MAX_REQUEST_BODY_BYTES: usize =
+    proxiima_core::ledger!(Proxiima.Transport.defaultBodyBytes);
 
 /// rmcp Streamable HTTP tuning a host may set (`PROXIIMA_MCP_*`).
 ///
@@ -237,7 +239,7 @@ pub struct McpTransportConfig {
     /// never closes it (rmcp's `SessionConfig::keep_alive`). SSE pings are
     /// not traffic and neither is a tool call still running: the progress
     /// heartbeat is, for a call that carries a progress token.
-    pub session_idle_timeout: Option<Duration>,
+    pub session_idle_timeout: Option<SessionIdleTimeout>,
     /// SSE priming-event retry interval; `None` sends none.
     pub sse_retry: Option<Duration>,
     /// Keep a server-side session per client that opens with `initialize`;
@@ -253,14 +255,18 @@ pub struct McpTransportConfig {
 }
 
 impl Default for McpTransportConfig {
-    /// rmcp's defaults, with Proxiima's body cap.
+    /// Proxiima's default Streamable HTTP settings.
     fn default() -> Self {
         Self {
-            sse_keep_alive: Some(Duration::from_secs(15)),
-            session_idle_timeout: Some(SessionConfig::DEFAULT_KEEP_ALIVE),
-            sse_retry: Some(Duration::from_secs(3)),
-            legacy_session_mode: true,
-            json_response: false,
+            sse_keep_alive: Some(Duration::from_secs(proxiima_core::ledger!(
+                Proxiima.Transport.defaultSsePingSeconds
+            ))),
+            session_idle_timeout: Some(SessionIdleTimeout::DEFAULT),
+            sse_retry: Some(Duration::from_secs(proxiima_core::ledger!(
+                Proxiima.Transport.defaultSseRetrySeconds
+            ))),
+            legacy_session_mode: proxiima_core::ledger!(Proxiima.Transport.defaultLegacySessions),
+            json_response: proxiima_core::ledger!(Proxiima.Transport.defaultJsonResponse),
             max_request_body_bytes: MAX_REQUEST_BODY_BYTES,
         }
     }
@@ -273,7 +279,9 @@ impl McpTransportConfig {
     /// idle for a whole timeout while the call runs.
     #[must_use]
     pub fn progress_heartbeat(&self) -> Duration {
+        // `Causa.heartbeat_before_idle`.
         self.session_idle_timeout
+            .map(SessionIdleTimeout::get)
             .map_or(DEFAULT_PROGRESS_HEARTBEAT, |idle| {
                 DEFAULT_PROGRESS_HEARTBEAT.min(idle / 2)
             })
@@ -282,12 +290,64 @@ impl McpTransportConfig {
 }
 
 /// Progress heartbeat interval when the idle timeout allows it.
-pub const DEFAULT_PROGRESS_HEARTBEAT: Duration = Duration::from_secs(30);
+pub const DEFAULT_PROGRESS_HEARTBEAT: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Transport.defaultHeartbeatSeconds
+));
 
 /// Floor for the heartbeat, so a tiny idle timeout cannot spin it.
-const MIN_PROGRESS_HEARTBEAT: Duration = Duration::from_millis(100);
+const MIN_PROGRESS_HEARTBEAT: Duration = Duration::from_millis(proxiima_core::ledger!(
+    Proxiima.Transport.minHeartbeatMilliseconds
+));
 
-/// Outermost MCP guard: reject oversized bodies with 413 before auth or parsing.
+/// An enabled session idle timeout that leaves time to send a progress heartbeat.
+///
+/// ```compile_fail,E0423
+/// let _ = proxiima_server::SessionIdleTimeout(std::time::Duration::ZERO);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionIdleTimeout(Duration);
+
+impl SessionIdleTimeout {
+    const DEFAULT: Self = {
+        let idle = Duration::from_secs(proxiima_core::ledger!(
+            Proxiima.Transport.defaultSessionIdleSeconds
+        ));
+        match Self::new(idle) {
+            Ok(timeout) => timeout,
+            Err(_) => panic!("the default session idle timeout must exceed the progress floor"),
+        }
+    };
+
+    /// Validate the duration of an enabled timeout. Use `None` in
+    /// [`McpTransportConfig`] to disable idle expiry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionIdleTimeoutError`] at or below the progress floor.
+    pub const fn new(idle: Duration) -> Result<Self, SessionIdleTimeoutError> {
+        if idle.as_nanos() <= MIN_PROGRESS_HEARTBEAT.as_nanos() {
+            return Err(SessionIdleTimeoutError {
+                minimum: MIN_PROGRESS_HEARTBEAT,
+            });
+        }
+        Ok(Self(idle))
+    }
+
+    /// The validated duration.
+    #[must_use]
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
+/// The configured idle timeout does not leave time for a heartbeat.
+#[derive(Debug, thiserror::Error)]
+#[error("an enabled MCP session idle timeout must exceed {minimum:?}")]
+pub struct SessionIdleTimeoutError {
+    minimum: Duration,
+}
+
+/// Outermost MCP body guard.
 /// A declared `Content-Length` over the cap is refused immediately; the body
 /// is otherwise wrapped in [`Limited`] so a chunked or length-lying stream
 /// errors past the cap instead of buffering unbounded memory.
@@ -323,6 +383,7 @@ pub fn body_limit_layer(max_bytes: usize) -> BodyLimitLayer {
 }
 
 async fn limit_body(max_bytes: usize, request: Request<Body>, next: Next) -> Response {
+    // `Proxiima.Transport.bodyBudget`.
     if let Some(len) = request
         .headers()
         .get(http::header::CONTENT_LENGTH)

@@ -231,7 +231,8 @@ async fn a_tool_call_outlives_the_session_idle_timeout_on_a_heartbeat_or_without
                     .served_surface(ServedSurface::All)
                     .host_tools(gate)
                     .mcp_transport(proxiima_server::McpTransportConfig {
-                        session_idle_timeout: idle,
+                        session_idle_timeout: idle
+                            .map(|timeout| proxiima::SessionIdleTimeout::new(timeout).unwrap()),
                         ..proxiima_server::McpTransportConfig::default()
                     })
                     .authenticator(Arc::new(StubAuth { subject }))

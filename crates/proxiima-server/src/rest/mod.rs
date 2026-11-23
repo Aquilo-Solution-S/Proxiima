@@ -472,6 +472,7 @@ fn find_descriptor<'a>(state: &'a RestState, tool: &str) -> Option<&'a ToolDescr
 /// routinely reject unrecognized methods, and a read that is unreachable
 /// through a customer proxy is worse than a read with imprecise semantics.
 fn gate_method(method: &Method, allow: Allow, instance: &str) -> Result<(), Problem> {
+    // `Proxiima.Transport.restActionMethod`.
     if *method == Method::POST || (allow.admits_query() && *method == Method::QUERY) {
         return Ok(());
     }
@@ -544,7 +545,7 @@ fn request_arguments(body: &Bytes, instance: &str) -> Result<serde_json::Value, 
 
 /// Inject the route's action into the body.
 ///
-/// A body that also carries `action` is rejected even when the values agree.
+/// `Proxiima.Transport.narrowedAction`.
 /// Silent agreement invites a client that sets only the body field and
 /// breaks when the route changes.
 fn inject_action(
@@ -639,6 +640,26 @@ mod tests {
         );
 
         assert!(gate_method(&Method::DELETE, Allow::tool(true), "/v1/tools/x").is_err());
+    }
+
+    #[test]
+    fn rest_action_methods_match_ledger_vectors() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = data["Proxiima.Transport.restActionMethod"]
+            .as_array()
+            .unwrap();
+        for row in rows {
+            let method = match row["in"][0].as_str().unwrap() {
+                "post" => Method::POST,
+                "query" => Method::QUERY,
+                "other" => Method::DELETE,
+                choice => panic!("unknown action method: {choice}"),
+            };
+            let allow = Allow::action(row["in"][1].as_bool().unwrap());
+            let result = gate_method(&method, allow, "/v1/tools/x/y");
+            assert_eq!(result.is_ok(), row["out"].as_bool().unwrap(), "{row}");
+        }
     }
 
     /// The header says `QUERY` exactly when the gate admits it.

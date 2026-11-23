@@ -1577,6 +1577,43 @@ fn parse_rejects_star() {
 }
 
 #[test]
+fn origin_default_ports_match_ledger_vectors() {
+    let data: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    let rows = data["Proxiima.Transport.originDefaultPort"]
+        .as_array()
+        .unwrap();
+    for row in rows {
+        let scheme = match row["in"][0].as_str().unwrap() {
+            "http" => "http",
+            "https" => "https",
+            "other" => "tauri",
+            choice => panic!("unknown origin scheme: {choice}"),
+        };
+        let parsed = super::RequestOrigin::parse(&format!("{scheme}://example.com")).unwrap();
+        assert_eq!(serde_json::json!(parsed.port), row["out"], "{row}");
+    }
+}
+
+#[test]
+fn origin_parser_refuses_invalid_scheme_and_authority_syntax() {
+    for pattern in [
+        "1https://example.com",
+        "ht tps://example.com",
+        "://example.com",
+        "https://",
+        "https://:443",
+        "https://bad host",
+        "https://*.example.com",
+        "https://[not-ip]:443",
+        "https://example.com:",
+        "https://example.com:65536",
+    ] {
+        assert_invalid_origin(pattern);
+    }
+}
+
+#[test]
 fn parse_rejects_garbage() {
     assert_invalid_origin("not an origin");
 }

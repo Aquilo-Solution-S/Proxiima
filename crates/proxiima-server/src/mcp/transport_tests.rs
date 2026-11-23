@@ -139,6 +139,27 @@ async fn oversized_content_length_is_rejected_before_auth() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+#[test]
+fn the_session_idle_timeout_must_exceed_the_progress_floor() {
+    use super::{MIN_PROGRESS_HEARTBEAT, McpTransportConfig, SessionIdleTimeout};
+    use std::time::Duration;
+
+    for invalid in [
+        Duration::ZERO,
+        MIN_PROGRESS_HEARTBEAT / 2,
+        MIN_PROGRESS_HEARTBEAT,
+    ] {
+        assert!(SessionIdleTimeout::new(invalid).is_err(), "{invalid:?}");
+    }
+    let valid = MIN_PROGRESS_HEARTBEAT + Duration::from_nanos(1);
+    let config = McpTransportConfig {
+        session_idle_timeout: Some(SessionIdleTimeout::new(valid).unwrap()),
+        ..McpTransportConfig::default()
+    };
+    assert_eq!(config.progress_heartbeat(), MIN_PROGRESS_HEARTBEAT);
+    assert!(config.progress_heartbeat() < valid);
+}
+
 // A configured cap replaces the default one.
 #[tokio::test]
 async fn configured_body_limit_is_enforced() {
