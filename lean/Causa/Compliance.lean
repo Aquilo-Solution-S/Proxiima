@@ -3,7 +3,6 @@ import Causa.Owner
 import Causa.Memory
 import Causa.Authorization
 import Causa.EdgeAuthorization
-import Proxiima.ErasureExport
 
 /-! Causa — Compliance -/
 
@@ -11,18 +10,14 @@ namespace Causa
 
 def abandoned (o : Owner) : Prop := ∀ u : User, o u = none
 
-/-- The Memory targets named by a field used in the scoped erase receipt. -/
-def eraseReceiptTargets (m : Memory) : Proxiima.Edges.PinField → List MemoryId
-  | .origins => memory_origins m
-  | .refs => memory_refs m
-  | .reads => memory_reads m
-  | .forkedFrom => (memory_forked_from m).toList
-  | .goalRefs | .guidedBy => []
-
-/-- Absence of incoming receipt-counted pins from the supplied surviving Memories. -/
-def unreferenced (memories : Set Memory) (id : MemoryId) : Prop :=
-  ∀ m : Memory, m ∈ memories → ∀ field ∈ Proxiima.ErasureExport.countedInboundFields,
-    id ∉ eraseReceiptTargets m field
+/-- Absence of incoming pins from surviving Memories and Goals. -/
+def unreferenced (memories : Set Memory) (goals : Set Goal) (id : MemoryId) : Prop :=
+  (∀ m : Memory, m ∈ memories → memory_t m ≠ id →
+    id ∉ memory_origins m ∧ id ∉ memory_reference_ids m ∧ id ∉ memory_reads m ∧
+    id ∉ memory_goal_refs m ∧ id ∉ memory_guided_by m) ∧
+  (∀ g : Goal, g ∈ goals →
+    goal_assignment g ≠ some id ∧ id ∉ goal_evidence g ∧
+    id ∉ goal_motivated_by g ∧ goal_close_fact_t g ≠ some id ∧ goal_write_act_t g ≠ some id)
 
 /-- Whether a stored Memory is flagged as forgotten. -/
 def forgotten (memories : Set Memory) (id : MemoryId) : Prop :=
@@ -58,8 +53,8 @@ def SpiiceScopedErase.selects {memories : Set Memory}
 
 /-- Eligibility for hard erasure. -/
 def wipeable (o : Owner) (memories : Set Memory)
-    (id : MemoryId) (policy : Prop) : Prop :=
-  abandoned o ∨ (forgotten memories id ∧ unreferenced memories id ∧ policy) ∨
+    (goals : Set Goal) (id : MemoryId) (policy : Prop) : Prop :=
+  abandoned o ∨ (forgotten memories id ∧ unreferenced memories goals id ∧ policy) ∨
     ∃ e : SpiiceScopedErase memories, e.owner = o ∧ e.selects id
 
 /-- Whether a pin resolves to a live Memory for rendering. -/

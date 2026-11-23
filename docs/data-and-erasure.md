@@ -145,7 +145,7 @@ versions. Cross-owner, foreign-schema, or unerasable references refuse before
 deletion. Reference closure and transaction bounds are part of the typed API.
 
 The erase is the unit's sole operation. Dry-run uses the same selection and
-rollback path, and reports the same page. [Scoped erase rules](ledger.md#erasure-and-export)
+rollback path, and reports the same page.
 
 Every selection but an explicit id list is erased in pages. A page is the next
 1,024 versions of the selection's reference closure, oldest selected series
@@ -199,7 +199,7 @@ cutoff later than the stock host's clock.
 
 Receipts identify the operation and scope, counts derived from declared
 surfaces, and outstanding external purge debt. Core does not persist an erase
-journal. [Operation receipt rules](ledger.md#erasure-and-export) A host that needs evidence stores the request record and returned
+journal. A host that needs evidence stores the request record and returned
 receipt under its own policy. A response lost after commit is an
 `unknown_after_commit` observation: it does not imply rollback, and the host
 must not claim to reconstruct deleted-row counts from `operation_id`. Recover

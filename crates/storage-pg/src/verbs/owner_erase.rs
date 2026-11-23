@@ -1236,8 +1236,8 @@ async fn capture_selected_handles(tx: &mut Tx<'_>) -> Result<(), StorageError> {
     Ok(())
 }
 
-// `Proxiima.ErasureExport.selectedHeadDispositions`.
 async fn sync_selected_heads(tx: &mut Tx<'_>, owner_id: uuid::Uuid) -> Result<(), StorageError> {
+    // `Proxiima.ForgetRestore.repairHead`.
     sqlx::query(
         "UPDATE proxiima_core.memory_head h
             SET t = r.t

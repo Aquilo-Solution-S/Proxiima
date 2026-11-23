@@ -144,6 +144,7 @@ async fn erase(
     let request: EraseRequest =
         serde_json::from_slice(&body).map_err(|err| Refusal::BadRequest(err.to_string()))?;
     // The issuing home owns the minimum retention horizon before vouching.
+    // A later cutoff would take the schema whole.
     // `Proxiima.ErasureExport.remoteAdmission`.
     if request.cutoff > time::OffsetDateTime::now_utc() {
         return Err(Refusal::BadRequest(

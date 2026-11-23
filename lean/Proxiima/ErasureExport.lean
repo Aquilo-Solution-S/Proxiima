@@ -122,7 +122,7 @@ inductive CompletionStep where
   | reportOutstandingDebt
   deriving DecidableEq
 
-/-- Index settlement is synchronous and cold-object work is attempted after database commit. -/
+/-- The order of index settlement, database commit, cold purge attempt and debt reporting. -/
 def completionOrder : List CompletionStep :=
   [.settleHostIndex, .commitDatabaseAndColdDebt, .attemptColdPurge, .reportOutstandingDebt]
 
@@ -145,11 +145,13 @@ inductive SeriesScopeCheck where
   | nonCoreSpiice
   | ownMemorySchemas
   | invokingActionIsDeclaredDestructive
+  | noUnerasableReferences
   deriving DecidableEq
 
 /-- The scoped inverse checks the owner's footprint and the invoking spiice and action. -/
 def seriesScope : List SeriesScopeCheck :=
-  [.oneOwner, .nonCoreSpiice, .ownMemorySchemas, .invokingActionIsDeclaredDestructive]
+  [.oneOwner, .nonCoreSpiice, .ownMemorySchemas, .invokingActionIsDeclaredDestructive,
+   .noUnerasableReferences]
 
 /-- How a scoped inverse handles its exclusive transaction. -/
 inductive SeriesTransaction where
@@ -202,7 +204,7 @@ inductive AgeSelector where
   | declaredBefore
   deriving DecidableEq
 
-/-- Time-based selectors compare and order by the same effective clock, then by exact version ID. -/
+/-- The effective clock for each time-based selector. -/
 def ageClock : AgeSelector → AgeClock
   | .admittedBefore => .admission
   | .occurredBefore => .occurrenceOrAdmission
@@ -292,7 +294,7 @@ inductive RetentionKeyPart where
   | schema
   deriving DecidableEq
 
-/-- The retention row key and inventory order. -/
+/-- The retention row key in inventory sort order. -/
 def retentionKey : List RetentionKeyPart := [.owner, .schema]
 
 /-- A remote retention request must establish forwarded authority, a retention vouch and owner binding. -/
@@ -340,15 +342,6 @@ inductive ExportSnapshotStep where
 def exportSnapshotOrder : List ExportSnapshotStep :=
   [.takeSharedEraseFence, .readRepeatableReadOnlySnapshot]
 
-/-- The possible repairs to a head after deleting its selected admissions. -/
-inductive SelectedHeadDisposition where
-  | keepNewestRemaining
-  | remove
-  deriving DecidableEq
-
-/-- A selected head follows the latest remaining version or disappears when its series is empty. -/
-def selectedHeadDispositions : List SelectedHeadDisposition := [.keepNewestRemaining, .remove]
-
 /-- The order used for a generated export surface. -/
 inductive ExportOrderPart where
   | declaredKey
@@ -357,15 +350,6 @@ inductive ExportOrderPart where
 
 /-- The declared key followed by the remaining primary key columns produces a total export order. -/
 def exportRowOrder : List ExportOrderPart := [.declaredKey, .remainingPrimaryKey]
-
-/-- The sources of the counts on an owner export bundle. -/
-inductive ExportCountSource where
-  | tableRows
-  | projectedEdges
-  deriving DecidableEq
-
-/-- Export counts are computed from the returned rows and edges. -/
-def exportCountSources : List ExportCountSource := [.tableRows, .projectedEdges]
 
 /-- Publication copies reached by a bulk erase. -/
 inductive PublicationCopySelector where

@@ -1543,6 +1543,7 @@ impl UnitOfWork<'_> {
                     format!("{spiice_id} is not a registered spiice"),
                 )
             })?;
+        // `Proxiima.ErasureExport.seriesScope`.
         if contract.ordinal == crate::spiice::contract::CORE_ORDINAL {
             return Err(ProtocolError::forbidden(
                 "core schemas are erased only by the owner and source-scope erases",
@@ -1552,6 +1553,7 @@ impl UnitOfWork<'_> {
         // The calling action's own effect, stamped by the registration's
         // call wrapper, and a tool the named spiice's contract lists — so a
         // destructive tool of one spiice cannot erase another's series.
+        // `Proxiima.ErasureExport.seriesScope`.
         if let UnitAuthorization::Ordinary(authz) = self.authorization
             && let Some(tool) = authz.invoking_tool()
             && !(tool.effect.is_some_and(ToolEffect::is_destructive)

@@ -2,6 +2,7 @@
 //! (docs/data-and-erasure.md).
 //!
 //! An unset policy keeps indefinitely. The host chooses when to apply it.
+//! Nothing inherits. A group's row is its own.
 
 use crate::{OwnerId, SchemaId};
 

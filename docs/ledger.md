@@ -2028,6 +2028,7 @@ stateDiagram-v2
 - nonCoreSpiice
 - ownMemorySchemas
 - invokingActionIsDeclaredDestructive
+- noUnerasableReferences
 
 **Series transaction**: How a scoped inverse handles its exclusive transaction.
 
@@ -2134,20 +2135,10 @@ stateDiagram-v2
 - takeSharedEraseFence
 - readRepeatableReadOnlySnapshot
 
-**Selected head disposition**: The possible repairs to a head after deleting its selected admissions.
-
-- keepNewestRemaining
-- remove
-
 **Export order part**: The order used for a generated export surface.
 
 - declaredKey
 - remainingPrimaryKey
-
-**Export count source**: The sources of the counts on an owner export bundle.
-
-- tableRows
-- projectedEdges
 
 **Publication copy selector**: Publication copies reached by a bulk erase.
 
@@ -2230,9 +2221,9 @@ stateDiagram-v2
 
 **erase receipt outcomes** = \[completed, notFound, unauthorized, refused]: The outcomes carrying the operation ID minted for the attempt.
 
-**completion order** = \[settleHostIndex, commitDatabaseAndColdDebt, attemptColdPurge, reportOutstandingDebt]: Index settlement is synchronous and cold-object work is attempted after database commit.
+**completion order** = \[settleHostIndex, commitDatabaseAndColdDebt, attemptColdPurge, reportOutstandingDebt]: The order of index settlement, database commit, cold purge attempt and debt reporting.
 
-**series scope** = \[oneOwner, nonCoreSpiice, ownMemorySchemas, invokingActionIsDeclaredDestructive]: The scoped inverse checks the owner's footprint and the invoking spiice and action.
+**series scope** = \[oneOwner, nonCoreSpiice, ownMemorySchemas, invokingActionIsDeclaredDestructive, noUnerasableReferences]: The scoped inverse checks the owner's footprint and the invoking spiice and action.
 
 **closure order** = \[expandWholeSeries, includeKeyedRestrictReferrers, orderDependantsBeforeTargets, lockAndRecheck, deleteInternalReferenceRows, deleteVersions]: Whole series and keyed restricting referrers form the closure checked before delete.
 
@@ -2244,7 +2235,7 @@ stateDiagram-v2
 
 **blob liveness** = \[noSurvivingAdmission, noSurvivingUploadAlias]: Blob deletion checks remaining citations and object deletion separately checks remaining aliases.
 
-**retention key** = \[owner, schema]: The retention row key and inventory order.
+**retention key** = \[owner, schema]: The retention row key in inventory sort order.
 
 **remote admission** = \[forwardedOwner, signedRetentionVouch, sameRequestOwner, cutoffNotFuture]: The remote retention checks performed before the series selection.
 
@@ -2252,11 +2243,7 @@ stateDiagram-v2
 
 **export snapshot order** = \[takeSharedEraseFence, readRepeatableReadOnlySnapshot]: Export waits for the shared erase fence before taking its repeatable read snapshot.
 
-**selected head dispositions** = \[keepNewestRemaining, remove]: A selected head follows the latest remaining version or disappears when its series is empty.
-
 **export row order** = \[declaredKey, remainingPrimaryKey]: The declared key followed by the remaining primary key columns produces a total export order.
-
-**export count sources** = \[tableRows, projectedEdges]: Export counts are computed from the returned rows and edges.
 
 **publication copy selectors** = \[selectedPhysicalFacts, originalOwnerAndSource]: Both physical identity and original attribution select delivery copies, including copies that followed a transfer.
 
@@ -2337,7 +2324,7 @@ stateDiagram-v2
 | occurredBefore | occurrenceOrAdmission |
 | declaredBefore | declared |
 
-- age clock: Time-based selectors compare and order by the same effective clock, then by exact version ID.
+- age clock: The effective clock for each time-based selector.
 
 | paged | has earlier work | blocked seed |
 | --- | --- | --- |

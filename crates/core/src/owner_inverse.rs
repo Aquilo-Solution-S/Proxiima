@@ -521,8 +521,7 @@ pub struct OwnerExportBundle {
     pub edges: Vec<serde_json::Value>,
 }
 
-// The wire count map is derived on write and discarded on read.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[serde(remote = "OwnerExportBundle", rename = "OwnerExportBundle")]
 struct OwnerExportBundleWire {
     operation_id: uuid::Uuid,
@@ -537,31 +536,9 @@ struct OwnerExportBundleWire {
     edges: Vec<serde_json::Value>,
 }
 
-impl From<OwnerExportBundleWire> for OwnerExportBundle {
-    fn from(wire: OwnerExportBundleWire) -> Self {
-        drop(wire.counts);
-        Self {
-            operation_id: wire.operation_id,
-            target: wire.target,
-            owner: wire.owner,
-            derived_requester: wire.derived_requester,
-            derived_auth_path: wire.derived_auth_path,
-            exported_at: wire.exported_at,
-            tables: wire.tables,
-            edges: wire.edges,
-        }
-    }
-}
-
 impl serde::Serialize for OwnerExportBundle {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         OwnerExportBundleWire::serialize(self, serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for OwnerExportBundle {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        OwnerExportBundleWire::deserialize(deserializer)
     }
 }
 
@@ -583,7 +560,7 @@ impl OwnerExportBundle {
     }
 
     /// One count per returned table, plus the projected edge count.
-    /// `Proxiima.ErasureExport.exportCountSources`.
+    /// `Proxiima.HostState.ExportReceiptRule.countReturnedRows`.
     #[must_use]
     pub fn counts(&self) -> BTreeMap<String, usize> {
         let mut counts: BTreeMap<_, _> = self
@@ -591,6 +568,7 @@ impl OwnerExportBundle {
             .iter()
             .map(|(table, rows)| (table.clone(), rows.len()))
             .collect();
+        // Edges are a separate projection without an exported table.
         counts.insert("edges".into(), self.edges.len());
         counts
     }

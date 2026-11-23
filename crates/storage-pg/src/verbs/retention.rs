@@ -42,6 +42,7 @@ pub(crate) async fn read_retention<'e>(
 ) -> Result<Vec<Retention>, StorageError> {
     let owners: Option<Vec<Uuid>> =
         owners.map(|owners| owners.iter().map(|owner| owner.into_inner()).collect());
+    // `Proxiima.ErasureExport.retentionKey`.
     let rows: Vec<(Uuid, String, i32)> = sqlx::query_as(
         "SELECT owner_id, schema_id, keep_days
            FROM proxiima_core.retention

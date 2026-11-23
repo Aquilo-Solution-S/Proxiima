@@ -1047,6 +1047,8 @@ pub enum TransferLeg {
 impl TransferLeg {
     /// Classify one surface as in `Proxiima.ErasureExport.classifyTransfer`.
     ///
+    /// A bespoke Follow leg takes precedence because a generated statement on
+    /// `memory_head` or `blob_uploads` would silently match no rows.
     /// Freeze and the resolved transfer surface set share this classifier.
     /// Freeze checks the bespoke claims and reserves bespoke and dedupe for core.
     #[must_use]

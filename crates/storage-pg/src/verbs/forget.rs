@@ -1115,7 +1115,6 @@ async fn erase_memory_in_lifecycle(
 /// # Errors
 ///
 /// Returns storage errors from the delete statements.
-/// `Proxiima.ErasureExport.closureOrder`.
 pub async fn erase_memory_series(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,

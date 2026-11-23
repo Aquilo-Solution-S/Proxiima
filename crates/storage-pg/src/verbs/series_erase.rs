@@ -336,19 +336,15 @@ const ADMITTED_BEFORE_SQL: &str = concat!(
  LIMIT $4"
 );
 
-/// Compare each series by occurrence or admission, then break ties by exact ID.
-macro_rules! occurred_before_from_newest {
-    () => {
-        "SELECT t FROM newest
+/// A schema can contain Facts, Abstractions and Perspectives.
+/// `Proxiima.ErasureExport.ageClock`. Break ties by exact version ID.
+const OCCURRED_BEFORE_SQL: &str = concat!(
+    newest_versions_cte!(),
+    "SELECT t FROM newest
  WHERE COALESCE(occurred_at < $3, t < $4)
  ORDER BY COALESCE(occurred_at, proxiima_core.memory_created_at(t)), t
  LIMIT $5"
-    };
-}
-
-/// A schema can contain Facts, Abstractions and Perspectives.
-/// `Proxiima.ErasureExport.ageClock`.
-const OCCURRED_BEFORE_SQL: &str = concat!(newest_versions_cte!(), occurred_before_from_newest!());
+);
 
 /// The smallest `UUIDv8` of the millisecond `cutoff` falls in. A `t` below
 /// it was minted in an earlier millisecond; `uuid` compares bytewise and a
@@ -908,9 +904,14 @@ fn count(n: usize) -> u64 {
 mod tests {
     use std::collections::BTreeMap;
 
+    use proxiima_core::{OwnerId, UserId};
     use uuid::Uuid;
 
-    use super::{Footprint, Version, erase_order, memory_uuid_floor};
+    use super::{
+        Footprint, OCCURRED_BEFORE_SQL, Version, erase_order, memory_uuid_floor, over,
+        page_or_refusal,
+    };
+    use crate::test_fixtures::{create_content, create_user, fresh_pg, writer};
 
     /// A closure of one-version series `1..=n`; each `(a, b)` is a row of
     /// series `a` that references series `b`.
@@ -1010,32 +1011,98 @@ mod tests {
         assert_eq!(numbers(erase_order(&closure)), vec![vec![2], vec![1]]);
     }
 
+    #[test]
+    fn blocked_paged_seed_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.ErasureExport.blockedSeed"]
+            .as_array()
+            .unwrap();
+        for row in rows.iter().filter(|row| row["in"][0] == true) {
+            let has_earlier_work = row["in"][1].as_bool().unwrap();
+            let page = closure(u128::from(has_earlier_work), &[]);
+            let versions = page.ts();
+            let refusal = over(vec!["blocked seed".into()]);
+            match page_or_refusal(page, refusal.clone()) {
+                Ok((page, more_remaining)) => {
+                    assert_eq!(row["out"], "returnEarlierPage");
+                    assert_eq!(page.ts(), versions);
+                    assert!(more_remaining);
+                }
+                Err(actual) => {
+                    assert_eq!(row["out"], "refuse");
+                    assert_eq!(actual, refusal);
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn occurrence_and_admission_share_one_page_order() {
-        let (pg, _database) = crate::test_fixtures::fresh_pg("mixed_erase_clocks").await;
+        let (pg, _database) = fresh_pg("mixed_erase_clocks").await;
+        let pool = pg.pool_for_tests();
+        let user = UserId::new(Uuid::now_v7());
+        let owner = OwnerId::from(user);
+        let schema = "test/mixed-erase-clocks";
+        create_user(pool, user)
+            .await
+            .expect("register fixture owner");
+        let content = create_content(pool, owner, schema, [0; 32])
+            .await
+            .expect("create derived content");
         let instant = |second| time::OffsetDateTime::from_unix_timestamp(second).unwrap();
         let derived = memory_uuid_floor(instant(1_790_000_000));
         let tied_fact = memory_uuid_floor(instant(1_790_000_001));
         let recent_fact = memory_uuid_floor(instant(1_790_000_002));
         let old_fact = memory_uuid_floor(instant(1_790_000_003));
         let cutoff = instant(1_790_000_004);
-        let seeds: Vec<Uuid> = sqlx::query_scalar(concat!(
-            "WITH newest AS (SELECT * FROM unnest($1::uuid[], $2::timestamptz[]) AS v(t, occurred_at)) ",
-            occurred_before_from_newest!()
-        ))
-        .bind([derived, tied_fact, recent_fact, old_fact].as_slice())
-        .bind([
-            None,
-            Some(instant(1_790_000_000)),
-            Some(instant(1_790_000_001)),
-            Some(instant(1_789_999_999)),
-        ].as_slice())
-        .bind(cutoff)
-        .bind(memory_uuid_floor(cutoff))
-        .bind(3_i64)
-        .fetch_all(pg.pool_for_tests())
-        .await
-        .expect("the next page of mixed-clock series");
+        // Fixed admission IDs make a cross-kind clock tie reproducible.
+        for (t, occurred_at) in [
+            (old_fact, Some(instant(1_789_999_999))),
+            (derived, None),
+            (tied_fact, Some(instant(1_790_000_000))),
+            (recent_fact, Some(instant(1_790_000_001))),
+        ] {
+            let kind = if occurred_at.is_some() {
+                "fact"
+            } else {
+                "abstraction"
+            };
+            sqlx::query(
+                "INSERT INTO proxiima_core.memory_head (handle, t, kind, owner_id, schema_id)
+                 VALUES ($1, $1, $2::text::proxiima_core.memory_kind, $3, $4)",
+            )
+            .bind(t)
+            .bind(kind)
+            .bind(owner.into_inner())
+            .bind(schema)
+            .execute(pool)
+            .await
+            .expect("insert fixture head");
+            sqlx::query(
+                "INSERT INTO proxiima_core.memory
+                    (handle, t, kind, owner_id, schema_id, occurred_at, content_id, origins, \"by\")
+                 SELECT handle, t, kind, owner_id, schema_id, $2, $3, $4, $5
+                   FROM proxiima_core.memory_head WHERE handle = $1",
+            )
+            .bind(t)
+            .bind(occurred_at)
+            .bind((t == derived).then_some(content))
+            .bind((t == derived).then_some(old_fact).as_slice())
+            .bind(writer().by)
+            .execute(pool)
+            .await
+            .expect("insert fixture version");
+        }
+        let seeds: Vec<Uuid> = sqlx::query_scalar(OCCURRED_BEFORE_SQL)
+            .bind(owner.into_inner())
+            .bind(schema)
+            .bind(cutoff)
+            .bind(memory_uuid_floor(cutoff))
+            .bind(3_i64)
+            .fetch_all(pool)
+            .await
+            .expect("the next page of mixed-clock series");
         assert_eq!(seeds, [old_fact, derived, tied_fact]);
     }
 

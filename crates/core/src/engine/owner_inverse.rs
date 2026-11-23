@@ -75,7 +75,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns internal when the authority port cannot answer.
+    /// Returns `internal` when the port cannot answer because callers treat `Unauthorized` as permanent.
     pub(in crate::engine) async fn erase_authority_grants(
         &self,
         authz: &AuthzContext,

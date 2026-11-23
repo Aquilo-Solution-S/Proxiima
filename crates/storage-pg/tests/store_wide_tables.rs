@@ -1,4 +1,5 @@
 //! Check `Proxiima.ErasureExport.coreRelationClassified` from the migrated catalog.
+//! Surface enumerators cannot see an undeclared table.
 
 use std::collections::BTreeSet;
 
