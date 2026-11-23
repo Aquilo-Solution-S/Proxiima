@@ -1115,6 +1115,7 @@ async fn erase_memory_in_lifecycle(
 /// # Errors
 ///
 /// Returns storage errors from the delete statements.
+/// `Proxiima.ErasureExport.closureOrder`.
 pub async fn erase_memory_series(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -1327,6 +1328,7 @@ SELECT m.handle, m.t FROM proxiima_core.memory_including_forgotten m
 /// # Errors
 ///
 /// Returns storage errors from the lock statement.
+/// `Proxiima.ErasureExport.selectionLockOrder`.
 pub(crate) async fn lock_admissions_for_erase(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -1472,6 +1474,7 @@ SELECT b.blob_id FROM proxiima_core.blob b
 /// (`memory_cites m b -> memory_owner m = blob_owner b`). It costs nothing
 /// when the invariant holds and, if it ever did not, leaves the row rather
 /// than deleting another owner's blob.
+// `Proxiima.ErasureExport.blobLiveness`.
 async fn gc_unreferenced_blobs(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: Uuid,

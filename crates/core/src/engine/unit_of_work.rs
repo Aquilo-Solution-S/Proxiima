@@ -1407,6 +1407,7 @@ impl<'a> UnitOfWork<'a> {
         selection: SeriesSelection,
         mode: EraseMode,
     ) -> Result<SeriesEraseReceipt, SeriesEraseError> {
+        // `Proxiima.ErasureExport.seriesTransaction`.
         if self.poisoned || self.erased || self.session.is_some() {
             return Err(ProtocolError::invalid_argument(
                 "unit_of_work",
@@ -1471,6 +1472,7 @@ impl<'a> UnitOfWork<'a> {
                     return Err(SeriesEraseError::Refused(refusal));
                 }
             };
+            // `Proxiima.ErasureExport.seriesTransaction`. Dropping the dry-run session rolls it back.
             if mode == EraseMode::Erase {
                 self.session = Some(session);
             }
@@ -1615,6 +1617,7 @@ async fn authorize_series_erase(
     authorization: &UnitAuthorization<'_>,
     owner: OwnerId,
 ) -> Result<crate::storage_ports::OwnerWritePermit, SeriesEraseError> {
+    // `Proxiima.ErasureExport.seriesAuthority`.
     let permit = match *authorization {
         UnitAuthorization::Ordinary(authz) => engine.authorize_owner_admin(authz, &owner).await?,
         UnitAuthorization::System(authority) => {

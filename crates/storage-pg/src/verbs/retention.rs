@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::error::map_err;
 
-/// Upsert the permit owner's row for `schema`, or delete it for `None`.
+/// `Proxiima.ErasureExport.retentionKey`. An absent policy means indefinite retention.
 pub(crate) async fn set_retention<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     permit: &OwnerWritePermit,

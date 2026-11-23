@@ -459,6 +459,7 @@ of the largest owner whose source-scoped erase must succeed. A whole-owner
 erase needs room only for the owner's mounted object keys and received
 published Facts.
 
+See the [erasure and export ledger](ledger.md#erasure-and-export) for the fence wait.
 A whole-owner or source-scoped erase waits for a running schema evolution. Each
 attempt waits at most the fence lock timeout (5 s), and the erase retries a
 bounded number of times; if the evolution is still running after that, the

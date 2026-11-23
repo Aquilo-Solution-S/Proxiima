@@ -1003,6 +1003,7 @@ REVOKE ALL ON FUNCTION proxiima_core.record_erased_pin_target(target uuid, targe
 
 -- Goal functions
 
+-- `Causa.hard_erase_goal_records_kind`.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_erase_witness()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -2694,6 +2695,7 @@ END;
 $function$;
 
 -- `Proxiima.SchemaEvolution.identityRoutes`. The capture inverse follows the mapped admission across owners.
+-- `Causa.hard_erase_memory_records_kind`.
 CREATE OR REPLACE FUNCTION proxiima_core.memory_erase_witness()
  RETURNS trigger
  LANGUAGE plpgsql

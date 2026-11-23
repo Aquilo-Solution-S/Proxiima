@@ -1,6 +1,4 @@
-//! The `retention` rows (docs/data-and-erasure.md): set by whoever may erase
-//! that owner's memory by hand, read for every owner the caller may read,
-//! and read whole by the host's clock.
+//! Owner and system access to retention policies.
 
 use super::Engine;
 use crate::authz::{AuthzContext, SystemAuthority};
@@ -25,6 +23,7 @@ impl Engine {
         schema: &SchemaId,
         keep_days: Option<KeepDays>,
     ) -> Result<(), ProtocolError> {
+        // `Proxiima.ErasureExport.retentionAuthority`.
         let permit = self.authorize_owner_admin(authz, owner).await?;
         self.storage
             .retention
@@ -44,6 +43,7 @@ impl Engine {
         &self,
         authz: &AuthzContext,
     ) -> Result<Vec<Retention>, ProtocolError> {
+        // `Proxiima.ErasureExport.retentionAuthority`.
         let owners = self.authorize_read(authz).await?;
         if owners.is_empty() {
             return Ok(Vec::new());
@@ -65,6 +65,7 @@ impl Engine {
         &self,
         authority: &SystemAuthority,
     ) -> Result<Vec<Retention>, ProtocolError> {
+        // `Proxiima.ErasureExport.retentionAuthority`.
         if !authority.authorizes(&self.system_authority_binding) {
             return Err(ProtocolError::forbidden(
                 "system authority belongs to a different engine boot",

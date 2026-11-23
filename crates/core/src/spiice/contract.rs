@@ -937,18 +937,10 @@ pub enum EraseLeg {
 }
 
 impl EraseLeg {
-    /// Classify one surface against a spiice's declared bespoke list.
+    /// Classify one surface as in `Proxiima.ErasureExport.classifyErase`.
     ///
-    /// THE classifier. `validate_erase_legs` calls it at freeze and the
-    /// erase calls it per surface, so "which tables does the erase cover"
-    /// has one answer and the boot check is a check on the code that runs
-    /// rather than on a second description of it.
-    ///
-    /// A `Cascade` or `Never` declaration wins over the bespoke list: those
-    /// two say NO statement runs, and a spiice that also names a
-    /// hand-written leg for such a table is contradicting itself.
-    /// `validate_erase_legs` refuses that rather than letting this silently
-    /// pick a winner.
+    /// Freeze and the bulk inverse use this classifier. Freeze refuses
+    /// conflicting bespoke declarations even where the classifier has a leg.
     #[must_use]
     pub fn derive(surface: &Surface, bespoke: &[&'static str]) -> Self {
         // A declared cascade constraint supplies the delete.

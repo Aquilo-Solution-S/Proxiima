@@ -72,12 +72,7 @@ async fn begin_bulk_erase_tx(
     // conflict, so the outer erase retries the whole tx.
     crate::platform_scope::set_local_lock_timeout(tx.as_mut(), platform.fence_lock_timeout())
         .await?;
-    // Owner export holds this fence in SHARE mode for its whole snapshot
-    // (`PgPlatformScope::begin_export_snapshot`). ROW EXCLUSIVE waits for
-    // running exports and makes queued ones wait for this commit, so an
-    // export never overlaps an erase and one queued behind it reads its
-    // result. Erases do not exclude each other here: the mode is
-    // self-compatible.
+    // `Proxiima.ErasureExport.compatibleFence`.
     sqlx::query("LOCK TABLE proxiima_core.export_erase_fence IN ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await
@@ -191,6 +186,7 @@ pub(crate) async fn erase_with_lifecycle(
             }
             let cold_purge =
                 erase_selected(&mut tx, owner, selection, surfaces, lifecycle.as_ref()).await?;
+            // `Proxiima.ErasureExport.completionOrder`.
             let outcome = complete(auth, &mut tx, &cold_purge, vectors, owner).await?;
             tx.commit().await.map_err(map_err)?;
             Ok(EraseAttempt::Completed(cold_purge, outcome))
@@ -220,6 +216,7 @@ async fn complete(
     })
 }
 
+// `Proxiima.ErasureExport.completionOrder`.
 async fn finalize_cold_purge(
     pool: &PgPool,
     platform: &crate::PgPlatformScope,
@@ -255,6 +252,7 @@ async fn finalize_cold_purge(
 /// A user owner is erased only with the host drop proof the engine verified.
 /// Any other owner (a registered group, or an id never registered) is erased
 /// only once it has no members; `still_live` names that refusal.
+// `Proxiima.ErasureExport.admitOwnerErase`.
 async fn erase_precondition(
     tx: &mut Tx<'_>,
     auth: &EraseAuthorization,
@@ -839,6 +837,7 @@ async fn validate_erase_receipt(
 /// Core keeps no erase journal: the erase is one transaction, a crash rolls
 /// it back whole, and what the host owes its users is the host's record to
 /// keep.
+// `Proxiima.ErasureExport.bulkInverse`.
 async fn open_erase_bookkeeping(
     tx: &mut Tx<'_>,
     surfaces: &OwnerSurfaces,
@@ -985,6 +984,7 @@ async fn lock_publication_origins(
 /// predicates operate over unique `t` keys, so a Fact matching both legs is
 /// deleted and counted once. Rows without trustworthy origins are still
 /// removed when their physical Fact is selected.
+// `Proxiima.ErasureExport.publicationCopySelectors`.
 async fn revoke_original_publications(
     tx: &mut Tx<'_>,
     owner: OwnerId,
@@ -1130,6 +1130,7 @@ async fn create_selected_sets(
         .execute(&mut **tx)
         .await
         .map_err(map_err)?;
+    // `Proxiima.ErasureExport.bulkSelectionKey`.
     match scope {
         SelectionScope::Owner => {
             sqlx::query(
@@ -1235,6 +1236,7 @@ async fn capture_selected_handles(tx: &mut Tx<'_>) -> Result<(), StorageError> {
     Ok(())
 }
 
+// `Proxiima.ErasureExport.selectedHeadDispositions`.
 async fn sync_selected_heads(tx: &mut Tx<'_>, owner_id: uuid::Uuid) -> Result<(), StorageError> {
     sqlx::query(
         "UPDATE proxiima_core.memory_head h
@@ -1546,6 +1548,7 @@ async fn delete_embeddings(tx: &mut Tx<'_>, table: &str) -> Result<u64, StorageE
 /// owner additionally removes every grant issued under that subject's bearer,
 /// including grants targeting a group owner; otherwise the deleted identity
 /// would remain durable in another owner's authority table.
+// `Proxiima.ErasureExport.grantSelection`.
 async fn delete_delegated_authority_grants(
     tx: &mut Tx<'_>,
     owner: OwnerId,
@@ -1627,6 +1630,7 @@ struct BlobEraseCounts {
 /// this owner's rows can never touch another owner's. The S3 object is
 /// shareable, though, so "the row is going" does not imply "the bytes are
 /// going" — [`enqueue_blob_object_keys`] is where that question is asked.
+// `Proxiima.ErasureExport.eraseBlob`.
 async fn delete_blobs(
     tx: &mut Tx<'_>,
     owner: OwnerId,

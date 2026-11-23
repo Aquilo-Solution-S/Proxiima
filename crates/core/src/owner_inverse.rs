@@ -500,8 +500,8 @@ pub struct OwnerExportRequest {
 ///
 /// The shape is DERIVED: `tables` has exactly the surfaces whose
 /// [`ExportRule`] is `Rows` or `Allowlist`, and
-/// `counts` is a projection of `tables`, so a new surface joins the bundle
-/// by declaring itself and nothing else. A typed field per table would put
+/// `counts` is a projection of `tables` and `edges`, so a new surface
+/// joins the bundle by declaring itself and nothing else. A typed field per table would put
 /// every new surface behind a hand edit here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerExportBundle {
@@ -516,9 +516,8 @@ pub struct OwnerExportBundle {
     /// empty: absence in the bundle would otherwise be indistinguishable
     /// from a surface the export forgot.
     pub tables: BTreeMap<String, Vec<serde_json::Value>>,
-    /// Pins projected from the exported `proxiima_core.memory` rows'
-    /// `origins` and `refs` arrays. Not a surface — there is no edge table —
-    /// so it stays its own field.
+    /// Pins projected from exported Memory rows and Goal motivation declarations.
+    /// The bundle carries the projection in its own field because there is no edge table.
     pub edges: Vec<serde_json::Value>,
 }
 

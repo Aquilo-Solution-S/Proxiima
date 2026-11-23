@@ -69,6 +69,8 @@ a callback cannot expand the core selection. See
 
 ## Declared inverses
 
+See the [erasure and export ledger](ledger.md#erasure-and-export) for the inverse and receipt rules.
+
 Each storage surface declares its erase, export, and transfer behavior.
 Generated inverse legs follow those declarations. Constraint-backed cascades
 are verified against PostgreSQL's catalog; exceptional legs have an explicit
@@ -143,7 +145,7 @@ versions. Cross-owner, foreign-schema, or unerasable references refuse before
 deletion. Reference closure and transaction bounds are part of the typed API.
 
 The erase is the unit's sole operation. Dry-run uses the same selection and
-rollback path, and reports the same page.
+rollback path, and reports the same page. [Scoped erase rules](ledger.md#erasure-and-export)
 
 Every selection but an explicit id list is erased in pages. A page is the next
 1,024 versions of the selection's reference closure, oldest selected series
@@ -155,11 +157,14 @@ was erased, so one large record never stalls the series behind it. A referrer
 is always erased before or with what it references, so every commit leaves a
 consistent store, and a shared object goes with its last citing admission. An
 id list over the cap is refused whole, and so is one indivisible unit over a
-page, before the first page is erased: a single series or a ring of series that
-reference one another. Retrying an already erased series is a no-op. Rustdoc
+page, before any of that unit is erased: a single series or a ring of series
+that reference one another. Earlier pages can commit before the oversized unit
+is refused. Retrying an already erased series is a no-op. Rustdoc
 owns selection fields, caps, and receipt types.
 
 ### Retention
+
+The [retention rules](ledger.md#erasure-and-export) define the policy bounds and remote admission.
 
 Retention is one `retention` row per owner and schema: `keep_days`, `1..=36500`
 (`KeepDays`). No row keeps for good, and nothing inherits: a group's row is its
@@ -194,7 +199,7 @@ cutoff later than the stock host's clock.
 
 Receipts identify the operation and scope, counts derived from declared
 surfaces, and outstanding external purge debt. Core does not persist an erase
-journal. A host that needs evidence stores the request record and returned
+journal. [Operation receipt rules](ledger.md#erasure-and-export) A host that needs evidence stores the request record and returned
 receipt under its own policy. A response lost after commit is an
 `unknown_after_commit` observation: it does not imply rollback, and the host
 must not claim to reconstruct deleted-row counts from `operation_id`. Recover

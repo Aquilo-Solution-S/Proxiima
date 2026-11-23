@@ -91,7 +91,7 @@ async fn declared_sidecar(
     })
 }
 
-/// Series of `schema` under `owner_id` with a hot version whose sidecar row
+/// Series of `schema` under `owner_id` with a version whose sidecar row
 /// matches every predicate. One seed per series, its oldest matching
 /// version; oldest first, at most `limit`.
 pub(super) async fn sidecar_equals_seeds(
@@ -144,9 +144,9 @@ pub(super) async fn sidecar_equals_seeds(
 }
 
 /// Series of `schema` under `owner_id` whose newest version, over every
-/// version of the series, is hot and holds a `column` value older than
+/// version of the series, holds a `column` value older than
 /// `cutoff`. The seed is that newest version; oldest value first, at most
-/// `limit`.
+/// `limit`. `Proxiima.ErasureExport.declaredClockCandidate`.
 #[expect(
     clippy::too_many_arguments,
     reason = "one selection's fields plus the transaction, registry and owner it runs under"
