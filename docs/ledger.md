@@ -5372,6 +5372,490 @@ stateDiagram-v2
 
 - schema id spelling: A declared schema ID must be lowercase without whitespace.
 
+## Query
+
+**Read at**: A point read selects the named admission or the newest readable admission of its series.
+
+- version
+- seriesHead
+
+**History**: An ordered query can select only live heads or also live superseded admissions.
+
+- headsOnly
+- includeSuperseded
+
+**Read owner**: Which stored owner a Memory projection can name in the current session.
+
+- currentLocal
+- otherLocal
+- remote
+- unknown
+
+**Space label**: The public labels for a known Memory owner.
+
+- current
+- ownerUuid
+
+**Remote outcome**: The result of looking up a requested version through its issuing store.
+
+- found
+- absent
+- erased
+- unknownStore
+- unanswered
+
+**Batch answer**: The three outcomes of a UUID in the wire batch.
+
+- found
+- missing
+- unanswered
+
+**Remote identity**: How a remote admission compares with the requested admission.
+
+- sameVersion
+- otherVersionOfStore
+- otherStore
+
+**Implicit route**: The store route for a query without an explicit store selection.
+
+- localOnly
+- uniqueRemote
+- allReadable
+
+**Remote schema matches**: How many readable remote stores declare the selected schema.
+
+- none
+- one
+- multiple
+
+**Store selection**: The caller's selection when remote inventory fails to answer.
+
+- implicit
+- explicitLocal
+- explicitRemote
+
+**Inventory fallback**: How the query proceeds without a remote inventory answer.
+
+- localWithUnanswered
+- validateLocalSelection
+- retryableRefusal
+
+**Descending page key**: A page's ordered keys are compared newest first.
+
+- seriesHandle
+- createdAt
+- admissionId
+
+**Cursor encoding**: The two wire encodings of a cursor envelope.
+
+- json
+- unpaddedBase64Url
+
+**Cursor input**: Distinguish result shaping, position and presentation when minting a cursor.
+
+- resultFilter
+- resultOrder
+- resumePosition
+- pageSize
+- presentation
+
+**Cursor binding**: Where an input to a paged response belongs in the continuation.
+
+- fingerprint
+- keyset
+- excluded
+
+**Cursor check**: The fields checked before a cursor exposes its continuation.
+
+- formatVersion
+- queryFingerprint
+
+**Cursor kind**: The two keysets used by ordered queries.
+
+- memory
+- goal
+
+**Stream**: An ordered query over one entity kind or the mixed Memory stream.
+
+- mixed
+- fact
+- abstraction
+- perspective
+- goal
+
+**Exact filter**: A .mixedmpty exact filter selects Goal handles, Fact references to Goals, or tags.
+
+- goalHandles
+- referencedGoalHandles
+- tags
+
+**Tag match**: Nonempty exact tag predicates check overlap or containment on one declared tag column.
+
+- any
+- all
+
+**Owner page stage**: The stages of an ordered page assembled from indexed owner streams.
+
+- filterVisibleRows
+- limitPerOwner
+- mergeAndLimit
+
+**Motivation**: An unrestricted motivation filter, no motivations, or a set of matching Perspectives.
+
+- any
+- unmotivated
+- matchingPerspectives
+
+**Goal time source**: Derive a Goal version's changed time from its admission and its set time from the earliest admission.
+
+- earliestAdmission
+- returnedAdmission
+
+**Read surface**: The two authority gates used by row reads and the graph overview.
+
+- rows
+- graphOverview
+
+**Entry authorization step**: Steps for authorizing a caller's explicit list of entry reads.
+
+- loadVisibleEntriesTogether
+- authorizeInRequestOrder
+
+**Graph readiness**: Graph readiness reports current client routing separately from retryable and terminal embedding work.
+
+- embeddings client configured
+- pending embedding jobs
+- failed embedding jobs
+
+**Limit input**: A page limit before defaulting or clamping.
+
+- omitted
+- zero
+- withinBound
+- aboveBound
+
+**Limit action**: The action for an ordered page limit.
+
+- useDefault
+- refuse
+- keep
+- clamp
+
+**Trimmed length**: The lengths distinguished after trimming whitespace and counting characters.
+
+- blank
+- withinBound
+- oversized
+
+**Text admission**: The field can be accepted, refused as blank, or refused with an exceeded bound.
+
+- accept
+- blank
+- tooLong
+
+**Head counts**: A count reply has a separate field for each entity kind.
+
+- facts
+- abstractions
+- perspectives
+- goals
+
+**Query instruction**: An optional instruction supplies a template when it is configured and leaves a bare query otherwise.
+
+- unchanged
+- substituteQuery
+- refuseMissingPlaceholder
+
+**remote timeout seconds** = 2: The default per-store request timeout in seconds.
+
+**remote batch deadline seconds** = 10: The shared deadline in seconds for an origin batch.
+
+**max remote reads per store** = 8: The maximum concurrent origin reads per store in a batch.
+
+**goal page keys** = \[seriesHandle, admissionId]: The Goal keyset puts its stable series handle before the version ID.
+
+**search recency keys** = \[createdAt, admissionId]: A recency search resumes by creation time and then by admission ID.
+
+**cursor encoding** = \[json, unpaddedBase64Url]: Serialize the envelope as JSON and encode its bytes as unpadded base64url.
+
+**cursor checks** = \[formatVersion, queryFingerprint]: Validate a decoded cursor's version and then its query fingerprint.
+
+**cursor version** = 1: Initial version of the fingerprinted cursor envelope.
+
+**cursor fingerprint hex chars** = 16: The query binding fingerprint width in hexadecimal characters.
+
+**owner page stages** = \[filterVisibleRows, limitPerOwner, mergeAndLimit]: Apply visibility and query predicates before each owner limit, then merge and bound the page.
+
+**goal time sources** = \[earliestAdmission, returnedAdmission]: The admission sources of Goal set and change timestamps, in that order.
+
+**entry authorization** = \[loadVisibleEntriesTogether, authorizeInRequestOrder]: Fetch visibility in one batch and then authorize each entry in request order.
+
+**default page limit** = 50: Default size of a common ordered page when the caller omits its limit.
+
+**max page limit** = 200: Ceiling for the common ordered-page limit.
+
+**max batch memory ids** = 100: Maximum input UUIDs in one batch read, before deduplication.
+
+**max query chars** = 512: Maximum accepted query length in characters after trimming.
+
+**max text cap chars** = 8000: Maximum text cap a caller may request in a search result, in characters.
+
+**default recall limit** = 16: Default number of sketches returned by recall.
+
+**max recall limit** = 32: Maximum number of sketches returned by recall.
+
+**max recall subjects** = 16: Maximum number of subjects in a recall cue.
+
+**sketch chars** = 160: Maximum characters in a local recall sketch.
+
+**counted versions** = headsOnly: A count row refers to the latest live readable admission per series.
+
+**query placeholder** = "{query}": The literal placeholder replaced with the search text in a configured embedding instruction.
+
+| history | live | visible head | includes version |
+| --- | --- | --- | --- |
+| headsOnly | yes | yes | yes |
+| headsOnly | yes | no | no |
+| headsOnly | no | yes | no |
+| headsOnly | no | no | no |
+| includeSuperseded | yes | yes | yes |
+| includeSuperseded | yes | no | yes |
+| includeSuperseded | no | yes | no |
+| includeSuperseded | no | no | no |
+
+- includes version: Select a live row, and in a head-only window require that it is a visible head.
+
+| local store | explicit space | validate read space |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- validate read space: Check explicit space on either route, and default to the current space on the local route.
+
+| read owner | space label |
+| --- | --- |
+| currentLocal | current |
+| otherLocal | ownerUuid |
+| remote | ownerUuid |
+| unknown | — |
+
+- space label: Label the stored owner with its key, or use null when the owner is unknown.
+
+| remote outcome | batch answer |
+| --- | --- |
+| found | found |
+| absent | missing |
+| erased | missing |
+| unknownStore | missing |
+| unanswered | unanswered |
+
+- batch answer: A batch separates answered absence from an unanswered, retryable read.
+
+| read at | remote identity | accepts remote version |
+| --- | --- | --- |
+| version | sameVersion | yes |
+| version | otherVersionOfStore | no |
+| version | otherStore | no |
+| seriesHead | sameVersion | yes |
+| seriesHead | otherVersionOfStore | yes |
+| seriesHead | otherStore | no |
+
+- accepts remote version: Exact replies must echo the requested admission, and head replies must come from the requested store.
+
+| local matches | remote schema matches | implicit route |
+| --- | --- | --- |
+| yes | none | localOnly |
+| yes | one | allReadable |
+| yes | multiple | allReadable |
+| no | none | allReadable |
+| no | one | uniqueRemote |
+| no | multiple | allReadable |
+
+- implicit route: A uniquely declared schema routes to its store; otherwise query all readable stores.
+
+| includes local | duplicates | accepts inventory |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | no |
+| no | yes | no |
+| no | no | yes |
+
+- accepts inventory: Reject a remote inventory containing the local number or repeated numbers.
+
+| store selection | inventory fallback |
+| --- | --- |
+| implicit | localWithUnanswered |
+| explicitLocal | validateLocalSelection |
+| explicitRemote | retryableRefusal |
+
+- inventory fallback: Preserve explicit local selection, flag implicit fallback, and refuse explicit remote selection.
+
+| selected remote | continuation | asks remote stores |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
+- asks remote stores: A continuation reuses the local cursor and therefore only the first page asks remote stores for hits.
+
+| cursor input | cursor binding |
+| --- | --- |
+| resultFilter | fingerprint |
+| resultOrder | fingerprint |
+| resumePosition | keyset |
+| pageSize | excluded |
+| presentation | excluded |
+
+- cursor binding: Page size and search presentation are excluded, while filters and order bind the keyset.
+
+| cursor kind | stream | cursor matches stream |
+| --- | --- | --- |
+| memory | mixed | no |
+| memory | fact | yes |
+| memory | abstraction | yes |
+| memory | perspective | yes |
+| memory | goal | no |
+| goal | mixed | no |
+| goal | fact | no |
+| goal | abstraction | no |
+| goal | perspective | no |
+| goal | goal | yes |
+
+- cursor matches stream: A continuation requires exactly one stream and its matching keyset kind.
+
+| exact filter | stream | accepts exact filter |
+| --- | --- | --- |
+| goalHandles | mixed | no |
+| goalHandles | fact | no |
+| goalHandles | abstraction | no |
+| goalHandles | perspective | no |
+| goalHandles | goal | yes |
+| referencedGoalHandles | mixed | no |
+| referencedGoalHandles | fact | yes |
+| referencedGoalHandles | abstraction | no |
+| referencedGoalHandles | perspective | no |
+| referencedGoalHandles | goal | no |
+| tags | mixed | no |
+| tags | fact | yes |
+| tags | abstraction | yes |
+| tags | perspective | yes |
+| tags | goal | no |
+
+- accepts exact filter: Nonempty exact filters are accepted only on a stream that implements them.
+
+| tag match | any match | all match | matches tags |
+| --- | --- | --- | --- |
+| any | yes | yes | yes |
+| any | yes | no | yes |
+| any | no | yes | no |
+| any | no | no | no |
+| all | yes | yes | yes |
+| all | yes | no | no |
+| all | no | yes | yes |
+| all | no | no | no |
+
+- matches tags: Any requires at least one matching tag, and All requires every requested tag on that row.
+
+| stream | memory page extra rows |
+| --- | --- |
+| mixed | 0 |
+| fact | 1 |
+| abstraction | 1 |
+| perspective | 1 |
+| goal | 0 |
+
+- memory page extra rows: Fetch one extra row for an exhaustion witness in single-stream ordered reads.
+
+| motivation | has motivation | intersects | matches motivation |
+| --- | --- | --- | --- |
+| any | yes | yes | yes |
+| any | yes | no | yes |
+| any | no | yes | yes |
+| any | no | no | yes |
+| unmotivated | yes | yes | no |
+| unmotivated | yes | no | no |
+| unmotivated | no | yes | yes |
+| unmotivated | no | no | yes |
+| matchingPerspectives | yes | yes | yes |
+| matchingPerspectives | yes | no | no |
+| matchingPerspectives | no | yes | no |
+| matchingPerspectives | no | no | no |
+
+- matches motivation: Match the Goal's motivation against the selected filter and Perspective intersection.
+
+| read surface | rows readable | owner admin | permits read surface |
+| --- | --- | --- | --- |
+| rows | yes | yes | yes |
+| rows | yes | no | yes |
+| rows | no | yes | no |
+| rows | no | no | no |
+| graphOverview | yes | yes | yes |
+| graphOverview | yes | no | no |
+| graphOverview | no | yes | yes |
+| graphOverview | no | no | no |
+
+- permits read surface: Row reads use row visibility and the graph overview requires owner administration.
+
+| readable | lock | writable | permits owner version read |
+| --- | --- | --- | --- |
+| yes | yes | yes | yes |
+| yes | yes | no | no |
+| yes | no | yes | yes |
+| yes | no | no | yes |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | no |
+
+- permits owner version read: An ordered owner read needs read authority, and a row-locking read also needs write authority.
+
+| live memory parent | goal parent | readable sketch |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- readable sketch: A requested sketch needs either a readable live Memory or a readable Goal parent.
+
+| limit input | page limit |
+| --- | --- |
+| omitted | useDefault |
+| zero | refuse |
+| withinBound | keep |
+| aboveBound | clamp |
+
+- page limit: Default an omitted limit, refuse zero, keep a positive limit up to the ceiling, and clamp above it.
+
+| trimmed length | admit trimmed text |
+| --- | --- |
+| blank | blank |
+| withinBound | accept |
+| oversized | tooLong |
+
+- admit trimmed text: Reject blank or oversized trimmed text with distinct reasons.
+
+| has question | has subjects | recall has cue |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- recall has cue: Recall requires a nonblank question or at least one subject.
+
+| configured | has placeholder | query instruction |
+| --- | --- | --- |
+| yes | yes | substituteQuery |
+| yes | no | refuseMissingPlaceholder |
+| no | yes | unchanged |
+| no | no | unchanged |
+
+- query instruction: Refuse a configured instruction without the query placeholder.
+
 ## Repository
 
 **Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
@@ -6448,6 +6932,12 @@ Causa — Memory
 - Premise **guided by only perspective**: Restriction of Goal guidance to Perspectives.
 - Premise **fact origins empty**: Exclusion of grounding origins from Facts.
 - Premise **blob kind admitted**: A cited version satisfies `Proxiima.Citations.citationAllowed`.
+
+✓ **readable head is newest** (axioms: none): A head read cannot return a result with a newer readable admission in the same series.
+
+✓ **has more iff continuation** (axioms: `propext`, `Quot.sound`): The wire has-more flag agrees with the presence of its continuation.
+
+✓ **batch partition keeps order** (axioms: `propext`): A batch partition preserves the request order after duplicate IDs collapse.
 
 ✓ **restore forget** (axioms: `propext`): Forget followed by an admitted restore recovers the original live Memory row.
 

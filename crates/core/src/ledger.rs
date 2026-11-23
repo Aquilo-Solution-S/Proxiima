@@ -689,6 +689,66 @@ macro_rules! ledger {
     (Proxiima.Payloads.sidecarHeadPageMax) => {
         1000
     };
+    // The default per-store request timeout in seconds.
+    (Proxiima.Query.remoteTimeoutSeconds) => {
+        2
+    };
+    // The shared deadline in seconds for an origin batch.
+    (Proxiima.Query.remoteBatchDeadlineSeconds) => {
+        10
+    };
+    // The maximum concurrent origin reads per store in a batch.
+    (Proxiima.Query.maxRemoteReadsPerStore) => {
+        8
+    };
+    // Initial version of the fingerprinted cursor envelope.
+    (Proxiima.Query.cursorVersion) => {
+        1
+    };
+    // The query binding fingerprint width in hexadecimal characters.
+    (Proxiima.Query.cursorFingerprintHexChars) => {
+        16
+    };
+    // Default size of a common ordered page when the caller omits its limit.
+    (Proxiima.Query.defaultPageLimit) => {
+        50
+    };
+    // Ceiling for the common ordered-page limit.
+    (Proxiima.Query.maxPageLimit) => {
+        200
+    };
+    // Maximum input UUIDs in one batch read, before deduplication.
+    (Proxiima.Query.maxBatchMemoryIds) => {
+        100
+    };
+    // Maximum accepted query length in characters after trimming.
+    (Proxiima.Query.maxQueryChars) => {
+        512
+    };
+    // Maximum text cap a caller may request in a search result, in characters.
+    (Proxiima.Query.maxTextCapChars) => {
+        8000
+    };
+    // Default number of sketches returned by recall.
+    (Proxiima.Query.defaultRecallLimit) => {
+        16
+    };
+    // Maximum number of sketches returned by recall.
+    (Proxiima.Query.maxRecallLimit) => {
+        32
+    };
+    // Maximum number of subjects in a recall cue.
+    (Proxiima.Query.maxRecallSubjects) => {
+        16
+    };
+    // Maximum characters in a local recall sketch.
+    (Proxiima.Query.sketchChars) => {
+        160
+    };
+    // The literal placeholder replaced with the search text in a configured embedding instruction.
+    (Proxiima.Query.queryPlaceholder) => {
+        "{query}"
+    };
     // Minimum age in seconds for stale test clones considered by the sweeper.
     (Proxiima.Repository.cloneGraceSeconds) => {
         300
