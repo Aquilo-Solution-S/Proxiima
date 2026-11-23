@@ -210,6 +210,7 @@ WITH keep AS (
 ///
 /// `ConstraintViolation` for a negative limit; otherwise maps SQL failures
 /// through the shared mapper.
+/// `Proxiima.Embeddings.purgeJob`.
 pub(crate) async fn purge_embedding_spaces(
     pool: &sqlx::PgPool,
     platform: &crate::PgPlatformScope,
@@ -247,6 +248,7 @@ WITH vectors AS (
 
 /// A transfer's leg: after the series' rows moved to `owner_id`, drop its
 /// vectors, heads and jobs in spaces the destination's route does not name.
+/// `Proxiima.Embeddings.transferCoverage`.
 pub(crate) async fn purge_series_embedding_spaces_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: uuid::Uuid,
@@ -297,6 +299,7 @@ async fn purge_in_tx(
 /// transfer's other leg, so the moved memory is embedded under the
 /// destination's route. A head under a non-embeddable schema, or one whose
 /// row is forgotten, queues nothing.
+/// `Proxiima.Embeddings.spaceReceivesJobs`.
 pub(crate) async fn enqueue_series_head_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: uuid::Uuid,

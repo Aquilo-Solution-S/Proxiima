@@ -68,6 +68,7 @@ impl EmbeddingRoute {
 
     /// The current client used by durable work and search queries.
     #[must_use]
+    /// `Proxiima.Embeddings.searchSpace`.
     pub const fn current_client(&self) -> Option<&BoundEmbeddingClient> {
         self.current.as_ref()
     }
@@ -81,6 +82,7 @@ impl EmbeddingRoute {
     /// Spaces a new memory of this Owner is queued for: `current`, then
     /// `next`.
     #[must_use]
+    /// `Proxiima.Embeddings.writeSpaces`.
     pub fn write_spaces(&self) -> Vec<EmbeddingSpace> {
         self.clients()
             .map(|client| client.space().clone())
@@ -252,6 +254,54 @@ mod tests {
         let first = super::EmbeddingRoute::moving(None, new.clone()).expect("a first route");
         assert!(first.current_client().is_none(), "nothing to search yet");
         assert_eq!(first.write_spaces(), vec![new.space().clone()]);
+    }
+
+    #[test]
+    fn route_matches_ledger_vectors() {
+        let current = named("current", 768);
+        let next = named("next", 1024);
+        let route_for = |state: &str| match state {
+            "absent" => super::EmbeddingRoute::none(),
+            "current" => super::EmbeddingRoute::current(current.clone()),
+            "nextOnly" => super::EmbeddingRoute::moving(None, next.clone()).expect("next"),
+            "moving" => {
+                super::EmbeddingRoute::moving(Some(current.clone()), next.clone()).expect("moving")
+            }
+            other => panic!("unknown route state {other}"),
+        };
+        let space_for = |position: &str| match position {
+            "current" => current.space(),
+            "next" => next.space(),
+            other => panic!("unknown space {other}"),
+        };
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("parse ledger vectors");
+        for row in vectors["Proxiima.Embeddings.writeSpaces"]
+            .as_array()
+            .expect("write space vectors")
+        {
+            let route = route_for(row["in"][0].as_str().expect("route"));
+            let expected: Vec<_> = row["out"]
+                .as_array()
+                .expect("ordered spaces")
+                .iter()
+                .map(|item| space_for(item.as_str().expect("space")).clone())
+                .collect();
+            assert_eq!(route.write_spaces(), expected);
+        }
+        for row in vectors["Proxiima.Embeddings.searchSpace"]
+            .as_array()
+            .expect("search space vectors")
+        {
+            let route = route_for(row["in"][0].as_str().expect("route"));
+            assert_eq!(
+                route
+                    .current_client()
+                    .map(super::BoundEmbeddingClient::space),
+                row["out"].as_str().map(space_for)
+            );
+        }
     }
 
     #[test]

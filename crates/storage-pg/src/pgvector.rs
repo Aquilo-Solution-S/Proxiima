@@ -7,9 +7,10 @@ use sqlx::{Encode, Postgres, Type};
 
 use crate::tuning::{HnswIterativeScan, PgTuning};
 
-pub(crate) const REQUIRED_PGVECTOR_MAJOR: u32 = 0;
-pub(crate) const REQUIRED_PGVECTOR_MINOR: u32 = 8;
-pub(crate) const REQUIRED_PGVECTOR_PATCH: u32 = 0;
+const REQUIRED_PGVECTOR: [u32; 3] = proxiima_core::ledger!(Proxiima.Embeddings.pgvectorMinimum);
+pub(crate) const REQUIRED_PGVECTOR_MAJOR: u32 = REQUIRED_PGVECTOR[0];
+pub(crate) const REQUIRED_PGVECTOR_MINOR: u32 = REQUIRED_PGVECTOR[1];
+pub(crate) const REQUIRED_PGVECTOR_PATCH: u32 = REQUIRED_PGVECTOR[2];
 
 /// The HNSW search settings for one semantic search, in one statement.
 ///
@@ -62,18 +63,33 @@ pub(crate) struct Lane {
 }
 
 macro_rules! lane {
-    ($width:literal, vector) => {
+    ($width:ident, vector) => {
         lane!($width, "vector", false)
     };
-    ($width:literal, halfvec) => {
+    ($width:ident, halfvec) => {
         lane!($width, "halfvec", true)
     };
-    ($width:literal, $kind:literal, $half:literal) => {
+    ($width:ident, $kind:literal, $half:literal) => {
         Lane {
-            width: $width,
-            predicate: concat!("emb.dim = ", $width),
-            vec: concat!("emb.vec::", $kind, "(", $width, ")"),
-            cast: concat!("::", $kind, "(", $width, ")"),
+            width: proxiima_core::ledger!(Proxiima.Embeddings.$width),
+            predicate: concat!(
+                "emb.dim = ",
+                proxiima_core::ledger!(Proxiima.Embeddings.$width)
+            ),
+            vec: concat!(
+                "emb.vec::",
+                $kind,
+                "(",
+                proxiima_core::ledger!(Proxiima.Embeddings.$width),
+                ")"
+            ),
+            cast: concat!(
+                "::",
+                $kind,
+                "(",
+                proxiima_core::ledger!(Proxiima.Embeddings.$width),
+                ")"
+            ),
             half: $half,
         }
     };
@@ -81,14 +97,15 @@ macro_rules! lane {
 
 impl Lane {
     #[must_use]
+    /// `Proxiima.Embeddings.indexEncoding`.
     pub(crate) const fn of(dim: EmbeddingDim) -> Self {
         match dim {
-            EmbeddingDim::D384 => lane!(384, vector),
-            EmbeddingDim::D768 => lane!(768, vector),
-            EmbeddingDim::D1024 => lane!(1024, vector),
-            EmbeddingDim::D1536 => lane!(1536, vector),
-            EmbeddingDim::D2048 => lane!(2048, halfvec),
-            EmbeddingDim::D3072 => lane!(3072, halfvec),
+            EmbeddingDim::D384 => lane!(width384, vector),
+            EmbeddingDim::D768 => lane!(width768, vector),
+            EmbeddingDim::D1024 => lane!(width1024, vector),
+            EmbeddingDim::D1536 => lane!(width1536, vector),
+            EmbeddingDim::D2048 => lane!(width2048, halfvec),
+            EmbeddingDim::D3072 => lane!(width3072, halfvec),
         }
     }
 
@@ -187,16 +204,30 @@ mod tests {
     /// planner serves each from its index is pinned by `hot_path_plans`.
     #[test]
     fn every_lane_spells_its_expression_and_binds_its_cast() {
-        for dim in EmbeddingDim::ALL {
+        let widths: [usize; EmbeddingDim::ALL.len()] =
+            proxiima_core::ledger!(Proxiima.Embeddings.indexedWidths);
+        assert_eq!(EmbeddingDim::ALL.map(EmbeddingDim::width), widths);
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+                .expect("parse ledger vectors");
+        let rows = vectors["Proxiima.Embeddings.indexEncoding"]
+            .as_array()
+            .expect("index encoding vectors");
+        for row in rows {
+            let dim = match row["in"][0].as_str().expect("width case") {
+                "d384" => EmbeddingDim::D384,
+                "d768" => EmbeddingDim::D768,
+                "d1024" => EmbeddingDim::D1024,
+                "d1536" => EmbeddingDim::D1536,
+                "d2048" => EmbeddingDim::D2048,
+                "d3072" => EmbeddingDim::D3072,
+                other => panic!("unknown width {other}"),
+            };
             let lane = Lane::of(dim);
             assert_eq!(usize::try_from(lane.width).ok(), Some(dim.width()));
             assert_eq!(Lane::from_stored(lane.width).ok(), Some(lane));
-            // pgvector builds no HNSW index over `vector` wider than 2000.
-            let kind = if dim.width() > 2000 {
-                "halfvec"
-            } else {
-                "vector"
-            };
+            let kind = row["out"].as_str().expect("index encoding");
             assert_eq!(lane.predicate, format!("emb.dim = {}", dim.width()));
             assert_eq!(lane.vec, format!("emb.vec::{kind}({})", dim.width()));
             assert_eq!(lane.cast, format!("::{kind}({})", dim.width()));

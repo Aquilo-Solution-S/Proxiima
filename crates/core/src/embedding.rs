@@ -98,17 +98,25 @@ impl LlmError {
     }
 }
 
-pub const DEFAULT_EMBED_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
-pub const DEFAULT_EMBED_BATCH_SIZE: usize = 32;
-pub const DEFAULT_EMBED_DRAIN_CONCURRENCY: usize = 1;
-pub const DEFAULT_EMBED_WORKER_INTERVAL: Duration = Duration::from_secs(5);
-pub const DEFAULT_EMBED_STALE_CLAIM_TIMEOUT: Duration = Duration::from_mins(15);
+pub const DEFAULT_EMBED_REQUEST_TIMEOUT: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.requestSeconds));
+pub const DEFAULT_EMBED_BATCH_SIZE: usize = crate::ledger!(Proxiima.Embeddings.batchSize);
+pub const DEFAULT_EMBED_DRAIN_CONCURRENCY: usize =
+    crate::ledger!(Proxiima.Embeddings.drainConcurrency);
+pub const DEFAULT_EMBED_WORKER_INTERVAL: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.idleSeconds));
+pub const DEFAULT_EMBED_STALE_CLAIM_TIMEOUT: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.staleClaimSeconds));
 
-pub const MAX_EMBED_REQUEST_TIMEOUT: Duration = Duration::from_hours(1);
-pub const MAX_EMBED_BATCH_SIZE: usize = 1_024;
-pub const MAX_EMBED_DRAIN_CONCURRENCY: usize = 64;
-pub const MAX_EMBED_WORKER_INTERVAL: Duration = Duration::from_hours(1);
-pub const MAX_EMBED_STALE_CLAIM_TIMEOUT: Duration = Duration::from_hours(24);
+pub const MAX_EMBED_REQUEST_TIMEOUT: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.requestSecondsMax));
+pub const MAX_EMBED_BATCH_SIZE: usize = crate::ledger!(Proxiima.Embeddings.batchSizeMax);
+pub const MAX_EMBED_DRAIN_CONCURRENCY: usize =
+    crate::ledger!(Proxiima.Embeddings.drainConcurrencyMax);
+pub const MAX_EMBED_WORKER_INTERVAL: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.idleSecondsMax));
+pub const MAX_EMBED_STALE_CLAIM_TIMEOUT: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Embeddings.staleClaimSecondsMax));
 
 /// Generic host policy for durable embedding work.
 ///
@@ -314,7 +322,7 @@ impl EmbeddingRuntimePolicy {
 
     #[must_use]
     pub fn claim_heartbeat_interval(self) -> Duration {
-        self.stale_claim_timeout / 3
+        self.stale_claim_timeout / crate::ledger!(Proxiima.Embeddings.heartbeatDivisor)
     }
 
     #[must_use]
@@ -456,15 +464,11 @@ pub async fn embed_many_with_timeout(
 
 /// Smallest piece, in bytes, the chunked-embedding rescue can produce.
 /// A rejected segment is split only if both halves reach this floor.
-pub const CHUNKED_EMBED_MIN_BYTES: usize = 2048;
+pub const CHUNKED_EMBED_MIN_BYTES: usize = MIN_EMBED_INPUT_CAP_CHARS.div_ceil(2);
 
-/// Lowest [`crate::models::EmbedCaps::max_input_chars`] [`embed_in_chunks`]
-/// can satisfy. A cap below this floor can turn a rescuable input terminal.
-///
-/// Floor = largest piece the split can emit. A segment is cut only when
-/// each half is still at least [`CHUNKED_EMBED_MIN_BYTES`], so a piece is at
-/// most `2 * CHUNKED_EMBED_MIN_BYTES - 1` bytes. Characters never exceed bytes.
-pub const MIN_EMBED_INPUT_CAP_CHARS: usize = 2 * CHUNKED_EMBED_MIN_BYTES - 1;
+/// Smallest character cap accepted by the OpenAI-compatible adapter.
+/// The balanced ASCII split starts one byte above this floor.
+pub const MIN_EMBED_INPUT_CAP_CHARS: usize = crate::ledger!(Proxiima.Embeddings.inputCapMin);
 
 /// Complete chunk coverage or the final refusal at the minimum split size.
 #[derive(Debug, PartialEq)]

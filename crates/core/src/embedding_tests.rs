@@ -24,6 +24,31 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 #[test]
+fn frozen_embedding_eligibility_matches_ledger_vectors() {
+    use crate::{FactPayload, SpiiceRegistry, UtteranceV1, WriteActV1};
+
+    let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/ledger_vectors.json"))
+            .expect("parse ledger vectors");
+    for row in vectors["Proxiima.Embeddings.schemaEmbeddable"]
+        .as_array()
+        .expect("eligibility vectors")
+    {
+        let schema = match row["in"][0].as_str().expect("registry case") {
+            "unknown" => "test/unknown-v1",
+            "everyLayerDeclines" => WriteActV1::SCHEMA_ID,
+            "aLayerEmbeds" => UtteranceV1::SCHEMA_ID,
+            other => panic!("unknown registry case {other}"),
+        };
+        assert_eq!(
+            registry.schema_is_embeddable(schema),
+            row["out"].as_bool().expect("eligibility")
+        );
+    }
+}
+
+#[test]
 fn embedding_runtime_policy_has_finite_defaults() {
     let policy = EmbeddingRuntimePolicy::default();
     assert_eq!(policy.request_timeout(), DEFAULT_EMBED_REQUEST_TIMEOUT);

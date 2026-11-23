@@ -58,6 +58,7 @@ enum ClientState {
 }
 
 impl ClientState {
+    // `Proxiima.Embeddings.admitCall` uses the active backoff, after checking expiry.
     fn refusal(&self, admission: Admission, now: Instant) -> Option<LlmError> {
         match (self, admission) {
             (Self::Ready, _) | (Self::Waiting(_), Admission::Query) => None,
@@ -150,8 +151,8 @@ impl SharedState {
         {
             return;
         }
-        // An in-flight success cannot clear a refusal published by a concurrent call.
-        // Configuration pauses last until the original client binding is replaced.
+        // The generation prevents a stale success from clearing a concurrent refusal.
+        // A configuration pause belongs to the original binding.
         let refusal = matches!(
             result,
             Err(LlmError::Configuration(_) | LlmError::Retryable { .. } | LlmError::Internal(_))
@@ -398,6 +399,7 @@ struct ControlledClient {
 }
 
 impl ControlledClient {
+    // `Proxiima.Embeddings.validateVector`.
     fn validate(&self, vector: Vec<f32>) -> Result<Vec<f32>, LlmError> {
         if vector.len() != self.space.dim().width() {
             return Err(LlmError::Configuration(

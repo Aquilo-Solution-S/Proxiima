@@ -583,11 +583,8 @@ impl Engine {
             .await
     }
 
-    /// Once per heartbeat interval, not per drain call: one UPDATE that frees
-    /// what a dead drainer left `processing`. The heartbeat keeps a live
-    /// drainer's claims inside the window, so this cannot steal in-flight
-    /// work, and a worker that drains a backlog batch by batch pays for it
-    /// once an interval.
+    /// Reclaim once per `Proxiima.Embeddings.heartbeatDivisor` interval,
+    /// so a worker draining a backlog avoids a reclaim query on each batch.
     async fn reclaim_stale_embedding_claims(
         &self,
         policy: crate::EmbeddingRuntimePolicy,
@@ -614,9 +611,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Publish every claim's chunks and complete the claims in one
-    /// transaction, each fenced on its token. A stale claim fails the batch
-    /// before anything is written.
+    /// `Proxiima.Embeddings.publishChunks`.
     async fn store_claim_embeddings(
         &self,
         client: &BoundEmbeddingClient,

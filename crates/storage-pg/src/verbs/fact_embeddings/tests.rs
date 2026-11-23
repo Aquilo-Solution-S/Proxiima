@@ -749,6 +749,7 @@ mod pg_tests {
     /// See `Proxiima.Embeddings.reconcilePageSize`.
     #[tokio::test]
     async fn a_reconcile_step_reads_one_page_of_heads() -> Result<(), Box<dyn std::error::Error>> {
+        const PAGE: i64 = proxiima_core::ledger!(Proxiima.Embeddings.reconcilePageSize);
         let (pg, db_name) = fresh_pg("proxiima_spg_embed").await;
         let _platform = pg.platform_scope_for_host();
         let result: Result<(), Box<dyn std::error::Error>> = async {
@@ -779,7 +780,7 @@ mod pg_tests {
                 .bind(1024_i16)
                 .bind(None::<Vec<Uuid>>)
                 .bind(cursor)
-                .bind(proxiima_core::ledger!(Proxiima.Embeddings.reconcilePageSize) as i64)
+                .bind(PAGE)
                 .fetch_one(&mut *tx)
                 .await?;
             tx.rollback().await?;

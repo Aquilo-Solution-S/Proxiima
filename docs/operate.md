@@ -344,9 +344,10 @@ the source ends, or the frame limit is reached. See the
 ## Embeddings
 
 An embedding client enables semantic retrieval; lexical retrieval works without
-one. A host may route clients per owner. The configured embedding space includes
-model identity, dimension, and preprocessing; rows from a different space are
-not interchangeable. Use the embedding migration/coverage APIs when moving an
+one. A host may route clients per owner. The configured embedding space keys
+vectors by model identity and dimension. Include any distinct document
+preprocessing in the configured model identity. See the
+[embedding rules](ledger.md#embeddings). Use the embedding migration/coverage APIs when moving an
 owner between models.
 
 | Signal | Action |

@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 /// The placeholder a [`QueryInstruction`] replaces with the query.
-pub const QUERY_PLACEHOLDER: &str = "{query}";
+pub const QUERY_PLACEHOLDER: &str = crate::ledger!(Proxiima.Embeddings.queryPlaceholder);
 
 /// What a search is looking for, so a route can word the query for it.
 ///
@@ -136,6 +136,7 @@ impl QueryInstructions {
     /// The instruction `task`'s queries are wrapped in: its own, else the
     /// default, else none.
     #[must_use]
+    /// `Proxiima.Embeddings.queryWording`.
     pub fn for_task(&self, task: QueryTask) -> Option<&QueryInstruction> {
         task.name()
             .and_then(|name| self.by_task.get(name))
@@ -197,5 +198,29 @@ mod tests {
         assert_eq!(both.render("q", CODE), "code: q");
         assert_eq!(both.render("q", QueryTask::DEFAULT), "any: q");
         assert_eq!(both.render("q", QueryTask::named("other")), "any: q");
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("parse ledger vectors");
+        for row in vectors["Proxiima.Embeddings.queryWording"]
+            .as_array()
+            .expect("query wording vectors")
+        {
+            let mut instructions = QueryInstructions::default();
+            if row["in"][0].as_bool().expect("named instruction") {
+                instructions = instructions.with_instruction(CODE, instruction("named: {query}"));
+            }
+            if row["in"][1].as_bool().expect("default instruction") {
+                instructions = instructions
+                    .with_instruction(QueryTask::DEFAULT, instruction("default: {query}"));
+            }
+            let expected = match row["out"].as_str().expect("instruction source") {
+                "named" => "named: q",
+                "default" => "default: q",
+                "original" => "q",
+                other => panic!("unknown source {other}"),
+            };
+            assert_eq!(instructions.render("q", CODE), expected);
+        }
     }
 }

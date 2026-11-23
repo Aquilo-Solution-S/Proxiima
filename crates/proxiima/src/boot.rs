@@ -377,6 +377,7 @@ enum SchemaStep {
 
 /// Where a store of these parts keeps its vectors: in a host index when one
 /// is configured, else in Postgres.
+/// See `Proxiima.Embeddings.vectorStorageParts`.
 fn vector_storage(parts: &StorageParts) -> VectorStorage {
     match parts.vector_index {
         Some(_) => VectorStorage::HostIndex,

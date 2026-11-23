@@ -7,7 +7,7 @@ use super::{EmbeddingClient, LlmError, QueryInstructions, QueryTask, SemanticWei
 /// cannot be added to the enum and missed by [`EmbeddingDim::ALL`],
 /// [`EmbeddingDim::from_width`] or the refusal message.
 macro_rules! embedding_dims {
-    ($($variant:ident = $width:literal),+ $(,)?) => {
+    ($($variant:ident = $width:ident),+ $(,)?) => {
         /// A vector width the store can index.
         ///
         /// Closed on purpose. pgvector indexes one width per HNSW index, so
@@ -25,13 +25,13 @@ macro_rules! embedding_dims {
 
         impl EmbeddingDim {
             /// Every supported width, narrowest first.
-            pub const ALL: [Self; [$($width),+].len()] = [$(Self::$variant),+];
+            pub const ALL: [Self; [$(stringify!($variant)),+].len()] = [$(Self::$variant),+];
 
             /// Number of components in a vector of this width.
             #[must_use]
             pub const fn width(self) -> usize {
                 match self {
-                    $(Self::$variant => $width),+
+                    $(Self::$variant => crate::ledger!(Proxiima.Embeddings.$width)),+
                 }
             }
 
@@ -39,7 +39,7 @@ macro_rules! embedding_dims {
             #[must_use]
             pub const fn width_u32(self) -> u32 {
                 match self {
-                    $(Self::$variant => $width),+
+                    $(Self::$variant => crate::ledger!(Proxiima.Embeddings.$width)),+
                 }
             }
 
@@ -47,7 +47,7 @@ macro_rules! embedding_dims {
             #[must_use]
             pub const fn from_width(width: usize) -> Option<Self> {
                 match width {
-                    $($width => Some(Self::$variant),)+
+                    $(crate::ledger!(Proxiima.Embeddings.$width) => Some(Self::$variant),)+
                     _ => None,
                 }
             }
@@ -56,12 +56,12 @@ macro_rules! embedding_dims {
 }
 
 embedding_dims! {
-    D384 = 384,
-    D768 = 768,
-    D1024 = 1024,
-    D1536 = 1536,
-    D2048 = 2048,
-    D3072 = 3072,
+    D384 = width384,
+    D768 = width768,
+    D1024 = width1024,
+    D1536 = width1536,
+    D2048 = width2048,
+    D3072 = width3072,
 }
 
 impl TryFrom<usize> for EmbeddingDim {
@@ -114,6 +114,7 @@ pub struct EmbeddingSpace {
 
 impl EmbeddingSpace {
     #[must_use]
+    /// `Proxiima.Embeddings.Space`.
     pub fn new(model_id: impl Into<String>, dim: EmbeddingDim) -> Self {
         Self {
             model_id: model_id.into(),

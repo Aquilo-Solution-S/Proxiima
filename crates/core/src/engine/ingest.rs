@@ -531,6 +531,7 @@ impl Engine {
             .await
     }
 
+    /// `Proxiima.Embeddings.writeSpaces` and `Proxiima.Embeddings.schemaEmbeddable`.
     pub(in crate::engine) async fn embedding_spaces_for_write(
         &self,
         owner: &OwnerId,

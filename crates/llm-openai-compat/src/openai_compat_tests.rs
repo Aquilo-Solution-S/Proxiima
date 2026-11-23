@@ -484,11 +484,31 @@ fn status_policy_is_independent_of_error_body() {
         "arbitrary text with no protocol meaning",
     ];
     let retry_after = Some(std::time::Duration::from_mins(2));
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("parse ledger vectors");
+    let rows = vectors["Proxiima.Embeddings.providerFailure"]
+        .as_array()
+        .expect("provider failure vectors");
     for code in (100..200).chain(300..1_000) {
+        let case = format!("http{code}");
+        let kind = rows
+            .iter()
+            .find(|row| row["in"][0] == case)
+            .or_else(|| rows.iter().find(|row| row["in"][0] == "other"))
+            .expect("status vector")["out"]
+            .as_str()
+            .expect("provider outcome");
         let status = reqwest::StatusCode::from_u16(code).expect("valid HTTP status");
         for body in bodies {
             let error = super::embed_http_error(status, retry_after, body);
             assert_http_failure(&error, code, retry_after);
+            assert!(match kind {
+                "inputRefused" => matches!(error, LlmError::InputRefused(_)),
+                "configuration" => matches!(error, LlmError::Configuration(_)),
+                "transient" => matches!(error, LlmError::Retryable { .. }),
+                other => panic!("unknown provider outcome {other}"),
+            });
             if let LlmError::Retryable { message, .. } = error {
                 assert!(message.ends_with(body));
             }

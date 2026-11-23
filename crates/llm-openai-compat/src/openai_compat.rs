@@ -26,7 +26,8 @@ pub const DEFAULT_EMBED_TIMEOUT: Duration = proxiima_core::embedding::DEFAULT_EM
 
 const RESPONSE_ENVELOPE_BYTES: usize = 64 * 1024;
 const BYTES_PER_FLOAT_HEADROOM: usize = 32;
-const ERROR_BODY_PREFIX_BYTES: usize = 512;
+const ERROR_BODY_PREFIX_BYTES: usize =
+    proxiima_core::ledger!(Proxiima.Embeddings.errorBodyPrefixBytes);
 
 #[derive(Clone)]
 pub struct OpenAiCompatConfig {
@@ -235,7 +236,7 @@ impl OpenAiEmbeddingResponse {
     }
 }
 
-/// Classify the provider status independently of its diagnostic text.
+/// `Proxiima.Embeddings.providerFailure`.
 fn embed_http_error(
     status: reqwest::StatusCode,
     retry_after: Option<Duration>,

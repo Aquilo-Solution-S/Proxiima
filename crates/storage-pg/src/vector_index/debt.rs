@@ -314,13 +314,9 @@ async fn repair(
     Ok(())
 }
 
-/// Compare the host index with the heads, a page of each at a time in key
-/// order, and repair what differs: an entry with no head is deleted, an
-/// entry under another owner moves to the head's owner, and a head with no
-/// entry at its version is deleted so reconciliation embeds it again. The
-/// heads are read before the entries, and each repair takes the drain's
-/// lock and rechecks its head, so a concurrent drain is never undone; the
-/// store reads every candidate under its owner rules either way.
+/// `Proxiima.Embeddings.indexRepair`. Read heads before index entries in key order.
+/// Delete entries with no head, move entries at a stale owner, and remove
+/// heads whose version has no entry so reconciliation can rebuild them.
 pub(crate) async fn sweep_index(
     pool: &sqlx::PgPool,
     platform: &crate::PgPlatformScope,

@@ -553,7 +553,8 @@ impl EmbeddingSlot {
 }
 
 /// The only slot bound.
-pub const SLOT_DEFAULT: EmbeddingSlot = EmbeddingSlot("default");
+pub const SLOT_DEFAULT: EmbeddingSlot =
+    EmbeddingSlot(crate::ledger!(Proxiima.Embeddings.defaultSlot));
 
 /// One `(column, slot)` pair: the output grain of a recipe.
 ///

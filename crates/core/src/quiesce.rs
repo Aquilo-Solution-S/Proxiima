@@ -42,7 +42,7 @@ pub enum FeatureStatus {
     Running,
     /// A pause was requested; the worker has not parked yet.
     Quiescing,
-    /// The worker is parked: it claims nothing and holds nothing.
+    /// The worker is parked between passes.
     Quiescent,
     /// The worker task ended: runtime shutdown, or it terminated by itself.
     Stopped,

@@ -10,9 +10,8 @@ use proxiima_core::{PgIdent, SqlText};
 
 /// Owner-scoped embed text for one memory.
 ///
-/// Text comes from the `(table, column)` the row's schema declares as its
-/// [`proxiima_core::spiice::EmbedUnit`]. A schema that declares none, or
-/// that is listed in `non_embeddable_schemas`, has nothing to embed.
+/// See `Proxiima.Embeddings.DeclaredText`. An excluded schema or one with
+/// no declared embed unit yields no input.
 ///
 /// # Errors
 ///

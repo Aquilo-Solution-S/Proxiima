@@ -85,6 +85,82 @@ fn bound(client: &Arc<RecordingClient>) -> BoundEmbeddingClient {
 }
 
 #[test]
+fn managed_gate_matches_ledger_vectors() {
+    let now = Instant::now();
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/ledger_vectors.json"))
+            .expect("parse ledger vectors");
+    for row in vectors["Proxiima.Embeddings.admitCall"]
+        .as_array()
+        .expect("admission vectors")
+    {
+        let state = match row["in"][0].as_str().expect("client state") {
+            "ready" => ClientState::Ready,
+            "backingOff" => ClientState::Waiting(Wait {
+                since: now,
+                delay: Duration::from_secs(1),
+                backoff: Duration::from_secs(1),
+                status: None,
+            }),
+            "paused" => ClientState::Paused(EmbeddingConfigurationFault::BadRequest),
+            other => panic!("unknown state {other}"),
+        };
+        let purpose = match row["in"][1].as_str().expect("provider call") {
+            "indexing" => Admission::Background,
+            "query" => Admission::Query,
+            other => panic!("unknown call {other}"),
+        };
+        assert_eq!(
+            state.refusal(purpose, now).is_none(),
+            row["out"].as_bool().expect("admission decision")
+        );
+    }
+}
+
+#[test]
+fn managed_vector_validation_matches_ledger_vectors() {
+    let client = ControlledClient {
+        inner: RecordingClient::new("validation", Reply::Accept),
+        space: EmbeddingSpace::new("validation", crate::EmbeddingDim::D384),
+        control: Arc::new(ClientControl::default()),
+        policy: EmbeddingRuntimePolicy::default(),
+    };
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/ledger_vectors.json"))
+            .expect("parse ledger vectors");
+    for row in vectors["Proxiima.Embeddings.validateVector"]
+        .as_array()
+        .expect("vector validation cases")
+    {
+        let width = if row["in"][0].as_bool().expect("width matches") {
+            384
+        } else {
+            383
+        };
+        let component = if row["in"][1].as_bool().expect("finite") {
+            1.0
+        } else {
+            f32::NAN
+        };
+        let actual = client.validate(vec![component; width]);
+        assert!(match row["out"].as_str().expect("validation") {
+            "accepted" => actual.is_ok(),
+            "widthFault" => matches!(
+                actual,
+                Err(LlmError::Configuration(
+                    EmbeddingConfigurationFault::VectorWidth {
+                        expected: 384,
+                        received: 383
+                    }
+                ))
+            ),
+            "invalidComponent" => matches!(actual, Err(LlmError::Retryable { .. })),
+            other => panic!("unknown validation outcome {other}"),
+        });
+    }
+}
+
+#[test]
 fn the_stale_claim_reclaim_runs_once_per_interval() {
     let control = EmbeddingControl::default();
     let every = Duration::from_mins(5);

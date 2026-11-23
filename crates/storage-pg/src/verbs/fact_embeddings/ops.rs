@@ -10,8 +10,8 @@ use sqlx::{Connection, PgConnection, PgPool};
 use crate::error::map_err;
 
 /// Bound the exact/ANN comparisons performed by one operator observation.
-const RECALL_CANARY_SAMPLE_CAP: u16 = 32;
-const RECALL_CANARY_NEIGHBORS: u16 = 10;
+const RECALL_CANARY_SAMPLE_CAP: u16 = proxiima_core::ledger!(Proxiima.Embeddings.recallSampleCap);
+const RECALL_CANARY_NEIGHBORS: u16 = proxiima_core::ledger!(Proxiima.Embeddings.recallNeighbors);
 /// Session settings for the ANN leg of the recall canary: the HNSW search
 /// settings plus a seqscan ban, so the canary measures the index rather than
 /// the planner's opinion of it. One statement, one round trip.
@@ -101,6 +101,7 @@ struct EmbeddingOrphanSweepRow {
 /// # Errors
 ///
 /// Maps SQL failures through the shared mapper.
+/// `Proxiima.Embeddings.recallComparison`.
 pub(crate) async fn embedding_ann_observability(
     pool: &PgPool,
     platform: &crate::PgPlatformScope,
