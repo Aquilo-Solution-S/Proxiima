@@ -22,6 +22,7 @@ impl Engine {
         owner: &OwnerId,
         source: &str,
     ) -> Result<Option<Cursor>, ProtocolError> {
+        // `Proxiima.Admission.cursorRequiresFactWrite`.
         let permit = self.authorize_write(authz, owner, MemoryKind::Fact).await?;
         self.load_source_cursor_authorized(&permit, source).await
     }
@@ -90,6 +91,7 @@ impl Engine {
         owner: &OwnerId,
         source: &str,
     ) -> Result<Option<Duration>, ProtocolError> {
+        // `Proxiima.Admission.cursorRequiresFactWrite`.
         let owner = self
             .authorize_owner_read(authz, owner, MemoryKind::Fact)
             .await?;

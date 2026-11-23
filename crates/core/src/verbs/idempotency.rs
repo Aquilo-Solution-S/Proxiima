@@ -1,8 +1,4 @@
-//! One meaning for a tool `idempotency_key`: same key and content replays;
-//! changed content under a known key is a conflict naming the existing handle.
-//!
-//! Every keyed MCP/REST write surface reaches a verdict only through
-//! [`judge`]. Storage supplies the stored `(handle, fingerprint equal?)`.
+//! Request key parsing, fingerprint encoding and replay arbitration.
 
 use crate::canonical_json_bytes;
 use crate::text_bounds::check_trimmed_len;

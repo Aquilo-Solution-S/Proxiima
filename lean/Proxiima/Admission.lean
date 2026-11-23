@@ -249,6 +249,35 @@ def commitsUnit : UnitDisposition → Bool
   | .commit => true
   | .drop | .poisonedCommit => false
 
+/-- Data admitted together by one typed Fact write. -/
+inductive TypedFactCommitMember where
+  | fact
+  | registeredSidecars
+  | admittedCitation
+
+/-- A typed Fact and its supplied sidecars and citation persist in one transaction. -/
+def typedFactCommit : List TypedFactCommitMember := [.fact, .registeredSidecars, .admittedCitation]
+
+/-- Steps that turn an ownerless Fact request into an owner-stamped write. -/
+inductive FactOwnerStep where
+  | resolveSingleWritableOwner
+  | authorizeFactWrite
+  | stampResolvedOwner
+
+/-- Fact authorization resolves one writable owner and storage stamps the permit's owner. -/
+def factOwnerOrder : List FactOwnerStep :=
+  [.resolveSingleWritableOwner, .authorizeFactWrite, .stampResolvedOwner]
+
+/-- The verification performed at a Fact write's typed and external ingress boundaries. -/
+inductive IngressValidation where
+  | factSchemaRegistration
+  | externalCitationContract
+
+/-- A typed Fact requires registration and an inline external citation also requires payload validation. -/
+def factIngressValidation : (inlineCitation : Bool) → List IngressValidation
+  | false => [.factSchemaRegistration]
+  | true => [.factSchemaRegistration, .externalCitationContract]
+
 /-- The phases shared by governed Fact and derived Memory writes. -/
 inductive MemoryWriteStep where
   | prepare

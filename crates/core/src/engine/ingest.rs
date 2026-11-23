@@ -114,6 +114,7 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
+        // `Proxiima.Admission.factOwnerOrder`.
         let owner = self.single_fact_write_owner(authority)?;
         let permit = self
             .authorize_write(authority, &owner, MemoryKind::Fact)
@@ -229,10 +230,7 @@ impl Engine {
             .await?;
         normalize_fact_draft(&mut draft)?;
 
-        // Validate the Fact only by schema-existence, matching
-        // `authorize_fact_ingest`. The Fact payload is built from a
-        // trusted typed struct. The untrusted cited-object payload is
-        // agent-supplied JSON, so it stays fully validated below.
+        // `Proxiima.Admission.factIngressValidation`: inline citation JSON comes from the caller.
         let fact_info = self.fact_schema_info(&draft.schema_id, draft.schema_version)?;
         let fact_sidecar_table = fact_info.sidecar_table.clone();
         let fact_natural_key_columns = fact_info.natural_key_columns.clone();

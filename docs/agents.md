@@ -31,8 +31,8 @@ change with the host build, so this page does not copy their schemas.
    is a judgment call: do not record transient narration or duplicate an
    existing Fact.
 7. **Verify the effect.** Re-query the result and inspect the host response.
-   The operation's transaction and response are the evidence; a previous read
-   is not proof that a later write succeeded.
+   A previous read cannot verify a later write. See the
+   [admission rules](ledger.md#admission) in `Proxiima.Admission`.
 
 ## Fact, interpretation, and action
 

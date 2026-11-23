@@ -17,16 +17,15 @@ use crate::{MemoryId, SchemaId};
 ///
 /// A precondition check reads the few rows a decision turns on. A read that
 /// wants more than this is a query, and queries go through the read ports.
-pub const SIDECAR_SESSION_READ_MAX_ROWS: u32 = 512;
+pub const SIDECAR_SESSION_READ_MAX_ROWS: u32 = crate::ledger!(Proxiima.Admission.sidecarReadMax);
 
 /// One spiice-owned read of its OWN registered sidecar surface, run inside
 /// the write session's transaction.
 ///
 /// This is the read half of `read → check → append`: a spiice that must see
 /// its own rows before deciding what to append needs them read under the
-/// same advisory lock and the same snapshot as the append. A pool-scoped
-/// read cannot give it either, which is the whole reason a raw transaction
-/// used to be worth reaching for.
+/// same exclusive advisory lock and in the same transaction as the append.
+/// A pool-scoped read cannot observe the session's uncommitted changes.
 ///
 /// **Invariant — read-only by construction, not by inspection.** No caller
 /// statement crosses this boundary. The backend emits the whole statement

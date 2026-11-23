@@ -59,6 +59,7 @@ impl FactIngestPort for PgStorage {
                 .await?;
                 let tables = self.sidecars.tables_for_payloads(&payloads)?;
                 let scopes = self.scopes.targets_for_payloads(&payloads)?;
+                // `Proxiima.Admission.typedFactCommit`.
                 let outcome = verbs::fact_ingest::ingest_authorized_fact_in_tx(
                     &mut tx,
                     &self.sidecars,

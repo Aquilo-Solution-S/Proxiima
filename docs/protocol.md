@@ -152,7 +152,8 @@ truth. Source ingestion deduplicates using its owner, source, and ingestion
 key; keyless admissions mint a new version. An `idempotency_key` names one
 request: the same key with the same content replays and returns the same
 handle; with changed content it fails with `idempotency_conflict` naming
-that handle; write a new version with a new key and `supersedes`.
+that handle; write a new version with a new key and `supersedes`. See
+the [admission rules](ledger.md#admission) in `Proxiima.Admission`.
 
 An episode or explicit `UnitOfWork` commits its declared operations atomically.
 Authoring derived content carries declared-input provenance. An interpretation

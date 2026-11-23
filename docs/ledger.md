@@ -126,6 +126,23 @@
 - drop
 - poisonedCommit
 
+**Typed fact commit member**: Data admitted together by one typed Fact write.
+
+- fact
+- registeredSidecars
+- admittedCitation
+
+**Fact owner step**: Steps that turn an ownerless Fact request into an owner-stamped write.
+
+- resolveSingleWritableOwner
+- authorizeFactWrite
+- stampResolvedOwner
+
+**Ingress validation**: The verification performed at a Fact write's typed and external ingress boundaries.
+
+- factSchemaRegistration
+- externalCitationContract
+
 **Memory write step**: The phases shared by governed Fact and derived Memory writes.
 
 - prepare
@@ -204,6 +221,10 @@
 **source cursor key** = \[owner, source]: Cursor reads, writes and erasure key the stored bytes by the resolved owner and exact source.
 
 **detached ingest order** = \[spawnOnFirstPoll, runWithOriginalAuthority, settleWithinDeadline]: The spawned Fact ingest can finish after request cancellation, within its own deadline.
+
+**typed fact commit** = \[fact, registeredSidecars, admittedCitation]: A typed Fact and its supplied sidecars and citation persist in one transaction.
+
+**fact owner order** = \[resolveSingleWritableOwner, authorizeFactWrite, stampResolvedOwner]: Fact authorization resolves one writable owner and storage stamps the permit's owner.
 
 **memory write order** = \[prepare, lock, claim, materialize]: Governed Memory writes prepare the candidate, lock its targets, arbitrate its claim and materialize on one transaction.
 
@@ -338,6 +359,13 @@
 | poisonedCommit | no |
 
 - commits unit: Only an explicit commit of a healthy unit makes its transaction durable.
+
+| inline citation | fact ingress validation |
+| --- | --- |
+| yes | \[factSchemaRegistration, externalCitationContract] |
+| no | \[factSchemaRegistration] |
+
+- fact ingress validation: A typed Fact requires registration and an inline external citation also requires payload validation.
 
 | space | goal | select destination |
 | --- | --- | --- |

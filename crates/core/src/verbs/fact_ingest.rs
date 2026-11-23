@@ -767,6 +767,23 @@ mod tests {
     }
 
     #[test]
+    fn typed_fact_ingest_key_is_fixed_width_lowercase_hex() {
+        let payload = crate::memory::payloads::write_act::WriteActV1 {
+            episode_id: uuid::Uuid::nil(),
+        };
+        let command = super::FactWriteCommand::from_payload("episode", &payload);
+        let key = command.ingest_key.expect("typed Fact ingest key");
+        assert_eq!(
+            key.len(),
+            crate::ledger!(Proxiima.Admission.receiptIndexHexChars)
+        );
+        assert!(
+            key.bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
     fn an_occurrence_beyond_the_future_bound_is_refused() {
         let now = at("2026-10-15T12:00:00Z");
         let err = check_occurred_at(

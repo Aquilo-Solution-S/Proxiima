@@ -2,9 +2,7 @@
 //! reads that go straight at it.
 //!
 //! Crate-internal write and reads: every governed write path lands its row
-//! through the prepare / lock / claim / materialize phases
-//! (`prepare_memory_admission`, `lock_prepared_memory_admission`,
-//! `claim_prepared_memory_admission`, `materialize_prepared_memory_admission`);
+//! through `Proxiima.Admission.memoryWriteOrder`;
 //! `ingest_fact_timeseries` composes those same phases for in-crate tests
 //! only. A public door onto them is a second write path — one that skips the
 //! sidecar, the projection row, the sketch and the embedding enqueue its
@@ -386,13 +384,7 @@ pub(crate) async fn prepare_memory_admission_at(
     if let Some(source_id) = draft.source_id.as_deref() {
         crate::access::fences::lock_source_fence_shared_tx(tx, owner, source_id).await?;
     }
-    // Then the spiice-declared lifecycle scopes, shared, BEFORE the handle
-    // and `t` locks below. That order — owner fence, source fence, scope
-    // fence, handle, lifecycle `t`, rows — is what makes a racing scope
-    // erase queue behind this write instead of closing a lock cycle with it.
-    // Under the fence, "is this scope still registered" has one answer for
-    // the life of the transaction: an erase that committed first is visible,
-    // and one that has not is waiting.
+    // `Proxiima.Admission.memoryLockOrder` avoids a lock cycle with scope erase.
     // `Proxiima.Payloads.scopeAdmissionOrder`.
     fence_declared_scopes(tx, owner, admission.scopes).await?;
     let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
@@ -507,6 +499,7 @@ async fn admission_handle(
     admission: MemoryAdmissionDraft<'_>,
     reserved: Option<(Uuid, Uuid)>,
 ) -> Result<(Uuid, bool), StorageError> {
+    // `Proxiima.Admission.factSeries`.
     if let Some(handle) = reserved
         .map(|(handle, _)| handle)
         .or(admission.draft.handle)
@@ -544,11 +537,7 @@ async fn resolve_natural_series_handle(
         .iter()
         .map(|(name, value)| (name.as_str(), value.clone()))
         .collect::<Vec<_>>();
-    // The series of a natural key outlives forgetting its head (#488 review
-    // r3): the lookup runs in the lifecycle scope, so a changed write after
-    // forget appends to the forgotten series, as a changed derive does,
-    // instead of minting a second series that a restore would leave live
-    // beside the first. The forgotten version stays history.
+    // `Proxiima.Admission.reuseNaturalSeries`: lifecycle scope exposes forgotten heads.
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let handle = super::query::owned_head_handle(
         tx.as_mut(),
@@ -631,8 +620,7 @@ async fn load_ingest_replay(
     else {
         return Ok(None);
     };
-    // Replay returns the stored version and its forgotten flag without
-    // writing a new version or clearing the mark.
+    // `Proxiima.Admission.receiptAnswers`.
     // Missing refs refuse replay because an empty default could bless a changed declaration.
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let replay_row: Result<Option<ReplayRow>, StorageError> = sqlx::query_as(
@@ -729,13 +717,8 @@ async fn replay_decision(
 /// Follow a replayed key's re-observations to the newest admission of the
 /// payload, and decide between replaying it and admitting it again.
 ///
-/// Re-observation `n` of `key` claims [`reobservation_key`]`(key, n)`, in
-/// order, so the chain has no gaps: every key stays bound to the one `t` it
-/// first claimed (docs/concepts.md), and a retried re-observation is
-/// found here and replays. The newest admission is displaced when its handle
-/// has moved on to another row — the source went back to a state an earlier
-/// observation already recorded. A forgotten admission is never admitted
-/// again: forget keeps its key replaying.
+/// Follow consecutive derived keys to find the last admission before
+/// deciding `Proxiima.Admission.appendObservation`.
 async fn latest_observation(
     tx: &mut Transaction<'_, Postgres>,
     receipt: IngestReceipt<'_>,
@@ -774,6 +757,7 @@ async fn latest_observation(
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_err)?;
+        // `Proxiima.Admission.appendObservation`.
         return Ok(if displaced {
             ReplayDecision::Reobserve { next_key }
         } else {
@@ -798,9 +782,8 @@ fn reobservation_key(key: &str, n: u64) -> String {
 /// the lifecycle set is held. A concurrent loser discovers the replay here,
 /// still before citation/content persistence.
 ///
-/// When a tool `idempotency_key` request is present it alone decides: the
-/// receipt-key short-circuit is skipped so a revision's natural note key
-/// cannot answer as a replay of an older version under a different request.
+/// `Proxiima.Admission.replayAuthority` keeps a revision's natural note key
+/// from returning the older version.
 pub(crate) async fn claim_prepared_memory_admission(
     tx: &mut Transaction<'_, Postgres>,
     prepared: PreparedMemoryAdmission,
@@ -822,9 +805,6 @@ pub(crate) async fn claim_prepared_memory_admission(
                 }));
             }
         }
-        // Request key claimed: do not also short-circuit on the natural
-        // receipt key (note_id+title+body+tags). That key is still inserted
-        // below only when no request is present.
         return Ok(PreparedMemoryAdmission::New(prepared));
     }
     if let (Some(source_id), Some(key)) = (

@@ -26,8 +26,7 @@ impl ExistingHandle for RequestReplay {
     }
 }
 
-/// Judge a keyed request against the ledger. Forgotten admissions still
-/// answer (as `#488`), with `forgotten: true`.
+/// Judge a keyed request against the retained admission.
 pub(crate) async fn judge_request(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -118,6 +117,7 @@ pub(crate) async fn claim_request(
     .await
     .map_err(map_err)?;
 
+    // A concurrent claim uses the same `Proxiima.Admission.requestVerdict`.
     if claimed.rows_affected() == 0 {
         return judge_request(tx, owner, request).await;
     }

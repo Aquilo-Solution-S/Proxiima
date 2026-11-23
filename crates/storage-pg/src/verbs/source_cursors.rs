@@ -1,3 +1,5 @@
+// `Proxiima.Admission.sourceCursorKey`.
+
 use std::time::Duration;
 
 use proxiima_core::storage_ports::OwnerWritePermit;

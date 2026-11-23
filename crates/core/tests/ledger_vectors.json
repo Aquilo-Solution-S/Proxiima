@@ -1332,6 +1332,9 @@
   {"out": "explicitHandle", "in": [true, false]},
   {"out": "naturalKeyMatch", "in": [false, true]},
   {"out": "mint", "in": [false, false]}],
+ "Proxiima.Admission.factIngressValidation":
+ [{"out": ["factSchemaRegistration", "externalCitationContract"], "in": [true]},
+  {"out": ["factSchemaRegistration"], "in": [false]}],
  "Proxiima.Admission.cursorRequiresFactWrite":
  [{"out": true, "in": ["load"]},
   {"out": true, "in": ["store"]},

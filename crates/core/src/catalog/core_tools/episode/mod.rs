@@ -56,7 +56,7 @@ pub struct EpisodeRememberItem {
     pub tags: Vec<String>,
     #[serde(default)]
     #[schemars(
-        description = "Optional key, 1 to 180 chars, unique within this call, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
+        description = "Optional key, 1 to 180 chars after trimming, unique among remember items, naming this one request: same key and content replays; changed content is `idempotency_conflict`. Use `supersedes` for a new version."
     )]
     pub idempotency_key: Option<String>,
     #[serde(default)]
@@ -146,7 +146,9 @@ pub struct EpisodeGoalItem {
     #[schemars(description = "Exact Perspective versions that motivated the goal.")]
     pub motivated_by: Vec<String>,
     #[serde(default)]
-    #[schemars(description = "Optional replay key, 1 to 180 chars, unique within this call.")]
+    #[schemars(
+        description = "Optional replay key, 1 to 180 chars after trimming, unique among goal items."
+    )]
     pub idempotency_key: Option<String>,
 }
 
