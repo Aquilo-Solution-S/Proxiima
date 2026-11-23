@@ -123,6 +123,9 @@ fn owner_fence_label(owner: OwnerId) -> String {
     format!("proxiima-owner-fence:{}", owner.into_inner())
 }
 
+// A waiter shows in `pg_locks` before its backend reports the `Lock` wait
+// event, and leaves that event while it runs its deadlock check, so one query
+// asks for both and the loop polls until it sees them together.
 async fn wait_for_owner_fence_wait(
     pool: &PgPool,
     owner: OwnerId,
@@ -135,9 +138,11 @@ async fn wait_for_owner_fence_wait(
                  SELECT EXISTS (
                      SELECT 1
                        FROM pg_locks l
+                       JOIN pg_stat_activity a USING (pid)
                        CROSS JOIN lock_key k
                       WHERE l.locktype = 'advisory'
                         AND NOT l.granted
+                        AND a.wait_event_type = 'Lock'
                         AND l.classid::bigint = ((k.key >> 32) & 4294967295)
                         AND l.objid::bigint = (k.key & 4294967295)
                  )",
@@ -155,45 +160,6 @@ async fn wait_for_owner_fence_wait(
     Ok(())
 }
 
-async fn advisory_wait_reports_lock_event(pool: &PgPool, label: &str) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "WITH lock_key AS (SELECT hashtextextended($1, 0) AS key)
-         SELECT EXISTS (
-             SELECT 1
-               FROM pg_locks l
-               JOIN pg_stat_activity a USING (pid)
-               CROSS JOIN lock_key k
-              WHERE l.locktype = 'advisory' AND NOT l.granted
-                AND a.wait_event_type = 'Lock'
-                AND l.classid::bigint = ((k.key >> 32) & 4294967295)
-                AND l.objid::bigint = (k.key & 4294967295)
-         )",
-    )
-    .bind(label)
-    .fetch_one(pool)
-    .await
-}
-
-async fn advisory_integer_wait_reports_lock_event(
-    pool: &PgPool,
-    key: i64,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT EXISTS (
-             SELECT 1
-               FROM pg_locks l
-               JOIN pg_stat_activity a USING (pid)
-              WHERE l.locktype = 'advisory' AND NOT l.granted
-                AND a.wait_event_type = 'Lock'
-                AND l.classid::bigint = (($1::bigint >> 32) & 4294967295)
-                AND l.objid::bigint = ($1::bigint & 4294967295)
-         )",
-    )
-    .bind(key)
-    .fetch_one(pool)
-    .await
-}
-
 async fn wait_for_erase_holding_owner_fence_and_waiting_on_test_lock(
     pool: &PgPool,
     owner: OwnerId,
@@ -203,21 +169,26 @@ async fn wait_for_erase_holding_owner_fence_and_waiting_on_test_lock(
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let observed: bool = sqlx::query_scalar(
+                // One backend, in one sample of the lock table: the test key is
+                // shared, so a parallel run's erase must not stand in for this one.
                 "WITH owner_key AS (SELECT hashtextextended($1, 0) AS key),
-                      test_key AS (SELECT $2::bigint AS key)
+                      test_key AS (SELECT $2::bigint AS key),
+                      locks AS (SELECT pid, locktype, granted, mode, classid, objid FROM pg_locks)
                  SELECT EXISTS (
-                     SELECT 1 FROM pg_locks l CROSS JOIN owner_key k
-                      WHERE l.locktype = 'advisory' AND l.granted
-                        AND l.mode = 'ExclusiveLock'
-                        AND l.classid::bigint = ((k.key >> 32) & 4294967295)
-                        AND l.objid::bigint = (k.key & 4294967295)
-                 ) AND EXISTS (
                      SELECT 1
-                       FROM pg_locks l
-                       CROSS JOIN test_key k
-                      WHERE l.locktype = 'advisory' AND NOT l.granted
-                        AND l.classid::bigint = ((k.key >> 32) & 4294967295)
-                        AND l.objid::bigint = (k.key & 4294967295)
+                       FROM locks fence
+                       JOIN locks waiting USING (pid)
+                       JOIN pg_stat_activity a USING (pid)
+                       CROSS JOIN owner_key o
+                       CROSS JOIN test_key t
+                      WHERE fence.locktype = 'advisory' AND fence.granted
+                        AND fence.mode = 'ExclusiveLock'
+                        AND fence.classid::bigint = ((o.key >> 32) & 4294967295)
+                        AND fence.objid::bigint = (o.key & 4294967295)
+                        AND waiting.locktype = 'advisory' AND NOT waiting.granted
+                        AND waiting.classid::bigint = ((t.key >> 32) & 4294967295)
+                        AND waiting.objid::bigint = (t.key & 4294967295)
+                        AND a.wait_event_type = 'Lock'
                  )",
             )
             .bind(label.as_str())
@@ -1203,7 +1174,6 @@ async fn host_state_and_whole_owner_erase_wait_on_the_same_owner_fence_both_ways
         wait_for_owner_fence_wait(&pool, owner)
             .await
             .map_err(|error| std::io::Error::other(format!("erase fence wait: {error}")))?;
-        assert!(advisory_wait_reports_lock_event(&pool, &owner_fence_label(owner)).await?);
         maintenance.abort();
         assert!(
             maintenance
@@ -1268,7 +1238,6 @@ async fn host_state_and_whole_owner_erase_wait_on_the_same_owner_fence_both_ways
         wait_for_erase_holding_owner_fence_and_waiting_on_test_lock(&pool, owner, trigger_key)
             .await
             .map_err(|error| std::io::Error::other(format!("erase trigger lock wait: {error}")))?;
-        assert!(advisory_integer_wait_reports_lock_event(&pool, trigger_key).await?);
 
         let callback_count = participant.callback_calls();
         let waiting_engine = engine.clone();
@@ -1289,7 +1258,6 @@ async fn host_state_and_whole_owner_erase_wait_on_the_same_owner_fence_both_ways
         wait_for_owner_fence_wait(&pool, owner)
             .await
             .map_err(|error| std::io::Error::other(format!("maintenance fence wait: {error}")))?;
-        assert!(advisory_wait_reports_lock_event(&pool, &owner_fence_label(owner)).await?);
         assert_eq!(
             participant.callback_calls(),
             callback_count,
