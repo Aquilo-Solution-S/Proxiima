@@ -25,10 +25,6 @@ macro_rules! ledger {
     (Proxiima.Admission.sidecarReadMax) => {
         512
     };
-    // The encoded width of the lowercase BLAKE3 digest used as a typed Fact ingest key.
-    (Proxiima.Admission.receiptIndexHexChars) => {
-        64
-    };
     // The domain prefix of a length-framed request fingerprint.
     (Proxiima.Admission.requestFingerprintDomain) => {
         "proxiima-request-v1"
@@ -44,6 +40,10 @@ macro_rules! ledger {
     // The index prefix for the digest of the length-framed key and fingerprint.
     (Proxiima.Admission.fingerprintRowPrefix) => {
         "f:"
+    };
+    // The source prefix of every request ledger scope.
+    (Proxiima.Admission.requestSourcePrefix) => {
+        "core/key/"
     };
     // The direct observation source family for a recorded conversation turn.
     (Proxiima.Admission.utteranceSource) => {

@@ -196,15 +196,15 @@ impl<P: FactPayload> OwnedFactWrite<P> {
 }
 
 /// One transaction the Engine can attach several authorized writes to.
-/// Drop without [`Self::commit`] rolls the transaction back.
+/// Drop without [`Self::commit`] rolls the transaction back. Do not hold
+/// the unit open across broker or provider network I/O.
 ///
 /// [`Engine::unit_of_work`] defers opening a transaction until the first
 /// operation that needs the write session. Natural-key selection and
 /// embedding-job enqueue run in that transaction.
 ///
 /// Host-state commands ([`Self::apply_host_state`]) run on the same
-/// transaction as Fact writes. Do not hold the unit open across broker or
-/// provider network I/O. A participant error poisons the unit: later writes
+/// transaction as Fact writes. A participant error poisons the unit: later writes
 /// fail and [`Self::commit`] refuses so a partial host operation cannot land.
 pub struct UnitOfWork<'a> {
     engine: &'a Engine,
@@ -1110,7 +1110,6 @@ impl<'a> UnitOfWork<'a> {
             .ingest_authorized_fact(&authorized, &embedding_spaces)
             .await
             .map_err(super::errors::map_fact_ingest_error)?;
-        // `Proxiima.Admission.unitEndpointLive`.
         if !outcome.idempotent_replay {
             self.written.push(outcome.memory_id);
             self.written_kinds
@@ -1157,8 +1156,8 @@ impl<'a> UnitOfWork<'a> {
                     "derived write referenced row not found",
                 )
             })?;
+        // Citing a same-unit forgotten replay is allowed only when this item also replays.
         if replay_only && !outcome.idempotent_replay {
-            // Storage refuses this; never commit a new row on a forgotten slot.
             self.poisoned = true;
             return Err(ProtocolError::forbidden(
                 super::pipeline::ENTRY_NOT_FOUND_MESSAGE,

@@ -41,50 +41,34 @@ pub(super) async fn insert_or_replay_goal(
     columns: RowColumns<'_>,
     guard: PostLockGuard,
 ) -> Result<InsertedGoal, StorageError> {
-    let mut retried_collision = false;
-    loop {
-        let mut attempt = tx.begin().await.map_err(crate::error::map_err)?;
-        let result = async {
-            let prepared = prepare_goal_insert(
-                &mut attempt,
-                draft,
-                expected_prior,
-                change,
-                context,
-                columns,
-            )
-            .await?;
-            if let GoalWritePreparation::New(prepared_write) = &prepared.preparation {
-                lock_prepared_goal_write(&mut attempt, prepared_write).await?;
-                // A replay bypasses the guard on the current children.
-                match guard {
-                    PostLockGuard::None => {}
-                    PostLockGuard::NoOpenChildren => {
-                        super::ensure_goal_children_closed(
-                            &mut attempt,
-                            &draft.owner(),
-                            prepared_write.handle(),
-                        )
-                        .await?;
-                    }
-                }
+    let mut attempt = tx.begin().await.map_err(crate::error::map_err)?;
+    let prepared = prepare_goal_insert(
+        &mut attempt,
+        draft,
+        expected_prior,
+        change,
+        context,
+        columns,
+    )
+    .await?;
+    if let GoalWritePreparation::New(prepared_write) = &prepared.preparation {
+        lock_prepared_goal_write(&mut attempt, prepared_write).await?;
+        // A replay bypasses the guard on the current children.
+        match guard {
+            PostLockGuard::None => {}
+            PostLockGuard::NoOpenChildren => {
+                super::ensure_goal_children_closed(
+                    &mut attempt,
+                    &draft.owner(),
+                    prepared_write.handle(),
+                )
+                .await?;
             }
-            persist_prepared_goal_insert(&mut attempt, sidecars, &prepared).await
-        }
-        .await;
-        match result {
-            Ok(outcome) => {
-                attempt.commit().await.map_err(crate::error::map_err)?;
-                return Ok(outcome);
-            }
-            Err(StorageError::MemoryIdCollision) if !retried_collision => {
-                attempt.rollback().await.map_err(crate::error::map_err)?;
-                retried_collision = true;
-            }
-            Err(StorageError::MemoryIdCollision) => return Err(crate::error::collision_exhausted()),
-            Err(error) => return Err(error),
         }
     }
+    let outcome = persist_prepared_goal_insert(&mut attempt, sidecars, &prepared).await?;
+    attempt.commit().await.map_err(crate::error::map_err)?;
+    Ok(outcome)
 }
 
 /// Serialize goal writes that carry the same owner and request id for the

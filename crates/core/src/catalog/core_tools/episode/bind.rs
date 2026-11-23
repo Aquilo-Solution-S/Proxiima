@@ -138,7 +138,7 @@ pub(super) fn parse_unique_keys<'a, T>(
         .map(|item| Ok((item, parse_idempotency_key(key_of(item))?)))
         .collect::<Result<Vec<_>, ToolError>>()?;
     let mut seen = HashSet::new();
-    // `Proxiima.Admission.uniqueEpisodeKeys`.
+    // Explicit keys must be unique within this item family after normalization.
     for key in items.iter().filter_map(|(_, key)| key.as_ref()) {
         if !seen.insert(key) {
             return Err(ToolError::InvalidInput(format!(
@@ -155,35 +155,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn episode_key_preflight_matches_ledger_vectors() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
-        let rows = vectors["Proxiima.Admission.uniqueEpisodeKeys"]
-            .as_array()
-            .unwrap();
-        assert_eq!(rows.len(), 3);
-        for row in rows {
-            let items = match row["in"][0].as_str().unwrap() {
-                "omitted" => [None, None],
-                "firstExplicit" => [Some(" k "), None],
-                "repeatedExplicit" => [Some(" k "), Some("k")],
-                name => panic!("unknown episode key case {name}"),
-            };
-            let result = parse_unique_keys(&items, |key| *key, "remember");
-            assert_eq!(result.is_ok(), row["out"].as_bool().unwrap());
-            match result {
-                Ok(keys) => {
-                    for ((_, parsed), raw) in keys.into_iter().zip(items) {
-                        assert_eq!(
-                            parsed.as_ref().map(IdempotencyKey::as_str),
-                            raw.map(str::trim)
-                        );
-                    }
-                }
-                Err(error) => assert!(matches!(error, ToolError::InvalidInput(message)
-                    if message == "duplicate idempotency_key in one episode remember: k")),
-            }
-        }
+    fn episode_key_preflight_rejects_equivalent_explicit_keys() {
+        let items = [Some(" k "), Some("k")];
+        let result = parse_unique_keys(&items, |key| *key, "remember");
+        assert!(matches!(result, Err(ToolError::InvalidInput(message))
+            if message == "duplicate idempotency_key in one episode remember: k"));
+    }
+
+    #[test]
+    fn episode_key_preflight_preserves_omitted_and_normalizes_explicit_keys() {
+        let items = [Some(" k "), None, None];
+        let keys = parse_unique_keys(&items, |key| *key, "remember").unwrap();
+        assert_eq!(keys[0].1.as_ref().map(IdempotencyKey::as_str), Some("k"));
+        assert!(keys[1].1.is_none());
+        assert!(keys[2].1.is_none());
     }
 
     #[test]

@@ -1,4 +1,6 @@
 //! Request key parsing, fingerprint encoding and replay arbitration.
+//!
+//! Every keyed MCP/REST write surface reaches a verdict only through [`judge`].
 
 use crate::canonical_json_bytes;
 use crate::text_bounds::check_trimmed_len;
@@ -98,18 +100,19 @@ impl KeyScope {
     /// Full `ingest_keys.source_id` for this scope's request ledger.
     #[must_use]
     pub fn ledger_source(self) -> String {
+        const PREFIX: &str = crate::ledger!(Proxiima.Admission.requestSourcePrefix);
         // `Proxiima.Admission.requestScopeUsesGoalAndSubject`.
         match self {
             Self::GoalAbstraction(goal, subject) | Self::GoalPerspective(goal, subject) => {
                 format!(
-                    "core/key/{}/{}/{}",
+                    "{PREFIX}{}/{}/{}",
                     self.as_str(),
                     goal.into_inner(),
                     subject.into_inner()
                 )
             }
             Self::Note | Self::Utterance | Self::Abstraction | Self::Perspective => {
-                format!("core/key/{}", self.as_str())
+                format!("{PREFIX}{}", self.as_str())
             }
         }
     }

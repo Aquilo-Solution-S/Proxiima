@@ -32,8 +32,7 @@ pub async fn ingest_receipt(
     ingest_key: &str,
 ) -> Result<Option<IngestReceipt>, StorageError> {
     require_ingest_identity(source_id, ingest_key)?;
-    // `Proxiima.Admission.ingestKeyParts`, `Proxiima.Admission.receiptAnswers`,
-    // and `Proxiima.DatabaseAuthority.ScopedRead`.
+    // `Proxiima.Admission.ingestKeyParts` and `Proxiima.DatabaseAuthority.ScopedRead`.
     let row: Option<(Uuid, Uuid, String)> = sqlx::query_as(
         "SELECT m.t, m.handle, m.schema_id
            FROM proxiima_core.ingest_keys k

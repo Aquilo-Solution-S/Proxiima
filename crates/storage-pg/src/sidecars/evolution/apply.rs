@@ -146,6 +146,8 @@ async fn memory_replay(
     input: &MigrationInput,
     plan: &MigrationPlan,
 ) -> Result<(), StorageError> {
+    const SOURCE_PREFIX: &str = proxiima_core::ledger!(Proxiima.Admission.requestSourcePrefix);
+    const ROW_PREFIX: &str = proxiima_core::ledger!(Proxiima.Admission.fingerprintRowPrefix);
     for source in &input.memories {
         let mapping = &plan.mappings[&source.id().into_inner()];
         sqlx::query("UPDATE proxiima_core.ingest_keys SET t=$1 WHERE t=$2 AND owner_id=$3")
@@ -162,7 +164,10 @@ async fn memory_replay(
         }
     }
     for (source, old, new) in &plan.fingerprints {
-        if !source.starts_with("core/key/") || !old.starts_with("f:") || !new.starts_with("f:") {
+        if !source.starts_with(SOURCE_PREFIX)
+            || !old.starts_with(ROW_PREFIX)
+            || !new.starts_with(ROW_PREFIX)
+        {
             return Err(refused(
                 "a request fingerprint migration must name the request ledger's f: keys",
             ));

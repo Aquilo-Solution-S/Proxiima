@@ -13,6 +13,7 @@
 - retry
 - returnOutcome
 - refuseCollision
+- retryLater
 
 **Request record**: A retained request record is compared against the incoming fingerprint.
 
@@ -65,17 +66,6 @@
 - displacedLive
 - forgotten
 
-**Receipt use**: Whether a forgotten admission is sought for a public read or exact ingest replay.
-
-- lookup: An owner-scoped lookup holds a share lock on any visible admission.
-- replay: Replay answers using the original identity and does not restore the admission.
-
-**Fact write leg**: The three payload legs that require typed Fact persistence.
-
-- sidecar
-- citation
-- publication
-
 **Episode step**: The order of the episode's writes followed by their shared commit.
 
 - writeAct
@@ -91,12 +81,6 @@
 - derive
 - stance
 - goal
-
-**Episode key match**: An episode compares explicit keys after normalization within one item family.
-
-- omitted
-- firstExplicit
-- repeatedExplicit
 
 **Sidecar precondition step**: The session steps of a sidecar precondition read.
 
@@ -150,11 +134,8 @@
 - claim
 - materialize
 
-**Memory lock**: The locks acquired by a new Memory admission before its durable writes.
+**Memory lock**: The target locks taken for a prepared Memory admission.
 
-- ownerFence
-- sourceFence
-- declaredScopeFences
 - seriesHandles
 - lifecycleVersions
 
@@ -179,17 +160,6 @@
 - forgottenMatch
 - noMatch
 
-**Derivation request key**: Where a tool's derived request gets its key.
-
-- typedExplicit
-- contentFingerprint
-
-**Unit endpoint**: How earlier episode endpoints can participate in later writes.
-
-- newMemory
-- newGoal
-- forgottenReplay
-
 **request key max** = 180: Maximum characters in a trimmed explicit request key.
 
 **episode remember max** = 16: Maximum remembered Facts in one episode.
@@ -202,8 +172,6 @@
 
 **sidecar read max** = 512: Default and maximum row limit for a sidecar precondition read.
 
-**receipt index hex chars** = 64: The encoded width of the lowercase BLAKE3 digest used as a typed Fact ingest key.
-
 **request fingerprint domain** = "proxiima-request-v1": The domain prefix of a length-framed request fingerprint.
 
 **transaction attempts** = 3: Total begin-body-commit attempts in the storage retry loop.
@@ -211,8 +179,6 @@
 **fingerprint set order** = \[sort, deduplicate]: Request fingerprint UUID sets and normalized tags are sorted and deduplicated.
 
 **fingerprint payload** = \[schemaIdLength, schemaId, schemaVersion, canonicalJson]: A payload's schema and version precede its canonical JSON in a fingerprint field.
-
-**typed fact legs** = \[sidecar, citation, publication]: The typed route admits sidecars, citations and publication; the receipt-only route refuses all three.
 
 **episode order** = \[writeAct, remember, derive, stance, goal, commit]: An episode writes the act and all declared items in one owner unit.
 
@@ -228,13 +194,15 @@
 
 **memory write order** = \[prepare, lock, claim, materialize]: Governed Memory writes prepare the candidate, lock its targets, arbitrate its claim and materialize on one transaction.
 
-**memory lock order** = \[ownerFence, sourceFence, declaredScopeFences, seriesHandles, lifecycleVersions]: Admission takes its owner, optional source and declared-scope fences before handle and version locks.
+**memory lock order** = \[seriesHandles, lifecycleVersions]: A Memory admission locks its series handle before its lifecycle targets.
 
 **ingest key parts** = \[owner, source, ingestKey]: A sourced receipt keys its original admission by owner, source and ingest key.
 
 **request row prefix** = "r:": The index prefix for the request identity digest.
 
 **fingerprint row prefix** = "f:": The index prefix for the digest of the length-framed key and fingerprint.
+
+**request source prefix** = "core/key/": The source prefix of every request ledger scope.
 
 **utterance source** = "core/conversation": The direct observation source family for a recorded conversation turn.
 
@@ -249,7 +217,7 @@
 | identityCollision | yes | yes | refuseCollision |
 | identityCollision | yes | no | retry |
 | identityCollision | no | yes | refuseCollision |
-| identityCollision | no | no | refuseCollision |
+| identityCollision | no | no | retryLater |
 | other | yes | yes | returnOutcome |
 | other | yes | no | returnOutcome |
 | other | no | yes | returnOutcome |
@@ -305,15 +273,6 @@
 
 - append observation: Re-observation can append only a displaced live observation and only when enabled.
 
-| receipt use | forgotten | receipt answers |
-| --- | --- | --- |
-| lookup | yes | no |
-| lookup | no | yes |
-| replay | yes | yes |
-| replay | no | yes |
-
-- receipt answers: Receipt lookup hides forgotten admissions while receipt replay can return them.
-
 | episode slot | written | local memory slot |
 | --- | --- | --- |
 | remember | yes | yes |
@@ -335,14 +294,6 @@
 | no | no | yes |
 
 - accept episode item: A bound item requires a fresh admission that can reference the episode's write-act.
-
-| episode key match | unique episode keys |
-| --- | --- |
-| omitted | yes |
-| firstExplicit | yes |
-| repeatedExplicit | no |
-
-- unique episode keys: A repeated normalized explicit key is refused during preflight.
 
 | cursor operation | cursor requires fact write |
 | --- | --- |
@@ -383,14 +334,6 @@
 | noMatch | no |
 
 - reuse natural series: An existing natural-key series can take a new version even if its predecessor is forgotten.
-
-| unit endpoint | unit endpoint live |
-| --- | --- |
-| newMemory | yes |
-| newGoal | yes |
-| forgottenReplay | no |
-
-- unit endpoint live: Written Memory and Goals supply same-unit typed endpoints; a forgotten replay supplies no live endpoint.
 
 ## Authentication
 

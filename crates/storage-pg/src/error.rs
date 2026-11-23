@@ -166,8 +166,9 @@ pub(crate) const MAX_STORAGE_ATTEMPTS: usize =
 /// Re-run `op` (a full begin→body→commit transaction) up to
 /// [`MAX_STORAGE_ATTEMPTS`] times for transient errors and memory ID collisions.
 /// At most one retry can follow a collision within that budget. A collision
-/// with no attempt left is a constraint violation. Other outcomes, including
-/// a final `Retryable`, are returned as-is.
+/// after a collision retry is a constraint violation. If the first collision
+/// arrives on the last attempt, return a retryable error. Other outcomes
+/// are returned as-is.
 ///
 /// `op` must be self-contained: it opens its own transaction each call, so a
 /// rolled-back deadlocked attempt leaves no partial state behind.
@@ -183,10 +184,17 @@ where
         let can_retry = attempt < MAX_STORAGE_ATTEMPTS;
         // `Proxiima.Admission.retryTransaction`.
         match op().await {
-            Err(StorageError::MemoryIdCollision) if can_retry && !retried_collision => {
+            Err(StorageError::MemoryIdCollision) if retried_collision => {
+                return Err(collision_exhausted());
+            }
+            Err(StorageError::MemoryIdCollision) if can_retry => {
                 retried_collision = true;
             }
-            Err(StorageError::MemoryIdCollision) => return Err(collision_exhausted()),
+            Err(StorageError::MemoryIdCollision) => {
+                return Err(StorageError::Retryable(
+                    "transaction attempt budget exhausted on a memory UUID collision".into(),
+                ));
+            }
             Err(StorageError::Retryable(_)) if can_retry => {}
             outcome => return outcome,
         }
@@ -439,11 +447,12 @@ mod memory_collision_tests {
                 std::future::ready(outcome)
             })
             .await;
-            if collision_index + 1 == MAX_STORAGE_ATTEMPTS {
-                assert!(matches!(result, Err(StorageError::ConstraintViolation(_))));
+            let expected = if collision_index + 1 == MAX_STORAGE_ATTEMPTS {
+                "transaction attempt budget exhausted on a memory UUID collision"
             } else {
-                assert!(matches!(result, Err(StorageError::Retryable(_))));
-            }
+                "deadlock"
+            };
+            assert!(matches!(result, Err(StorageError::Retryable(message)) if message == expected));
             assert_eq!(attempts, MAX_STORAGE_ATTEMPTS);
         }
     }

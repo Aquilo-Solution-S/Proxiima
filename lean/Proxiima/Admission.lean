@@ -20,9 +20,6 @@ def episodeBindMax : Nat := 32
 /-- Default and maximum row limit for a sidecar precondition read. -/
 def sidecarReadMax : Nat := 512
 
-/-- The encoded width of the lowercase BLAKE3 digest used as a typed Fact ingest key. -/
-def receiptIndexHexChars : Nat := 64
-
 /-- The domain prefix of a length-framed request fingerprint. -/
 def requestFingerprintDomain : String := "proxiima-request-v1"
 
@@ -40,13 +37,14 @@ inductive RetryAction where
   | retry
   | returnOutcome
   | refuseCollision
+  | retryLater
 
 /-- A collision can use one remaining attempt and every retry consumes the total budget. -/
 def retryTransaction : TransactionOutcome → (attemptLeft : Bool) → (collisionRetried : Bool) → RetryAction
   | .transient, true, false | .transient, true, true => .retry
   | .identityCollision, true, false => .retry
-  | .identityCollision, true, true | .identityCollision, false, false
-  | .identityCollision, false, true => .refuseCollision
+  | .identityCollision, true, true | .identityCollision, false, true => .refuseCollision
+  | .identityCollision, false, false => .retryLater
   | .transient, false, false | .transient, false, true
   | .other, true, false | .other, true, true
   | .other, false, false | .other, false, true => .returnOutcome
@@ -138,27 +136,6 @@ def appendObservation : ObservationStatus → (enabled : Bool) → Bool
   | .displacedLive, false | .head, true | .head, false
   | .forgotten, true | .forgotten, false => false
 
-/-- Whether a forgotten admission is sought for a public read or exact ingest replay. -/
-inductive ReceiptUse where
-  /-- An owner-scoped lookup holds a share lock on any visible admission. -/
-  | lookup
-  /-- Replay answers using the original identity and does not restore the admission. -/
-  | replay
-
-/-- Receipt lookup hides forgotten admissions while receipt replay can return them. -/
-def receiptAnswers : ReceiptUse → (forgotten : Bool) → Bool
-  | .lookup, true => false
-  | .lookup, false | .replay, true | .replay, false => true
-
-/-- The three payload legs that require typed Fact persistence. -/
-inductive FactWriteLeg where
-  | sidecar
-  | citation
-  | publication
-
-/-- The typed route admits sidecars, citations and publication; the receipt-only route refuses all three. -/
-def typedFactLegs : List FactWriteLeg := [.sidecar, .citation, .publication]
-
 /-- The order of the episode's writes followed by their shared commit. -/
 inductive EpisodeStep where
   | writeAct
@@ -188,17 +165,6 @@ def localMemorySlot : EpisodeSlot → (written : Bool) → Bool
 def acceptEpisodeItem : (bound : Bool) → (replayed : Bool) → Bool
   | true, true => false
   | false, false | false, true | true, false => true
-
-/-- An episode compares explicit keys after normalization within one item family. -/
-inductive EpisodeKeyMatch where
-  | omitted
-  | firstExplicit
-  | repeatedExplicit
-
-/-- A repeated normalized explicit key is refused during preflight. -/
-def uniqueEpisodeKeys : EpisodeKeyMatch → Bool
-  | .omitted | .firstExplicit => true
-  | .repeatedExplicit => false
 
 /-- The session steps of a sidecar precondition read. -/
 inductive SidecarPreconditionStep where
@@ -288,17 +254,13 @@ inductive MemoryWriteStep where
 /-- Governed Memory writes prepare the candidate, lock its targets, arbitrate its claim and materialize on one transaction. -/
 def memoryWriteOrder : List MemoryWriteStep := [.prepare, .lock, .claim, .materialize]
 
-/-- The locks acquired by a new Memory admission before its durable writes. -/
+/-- The target locks taken for a prepared Memory admission. -/
 inductive MemoryLock where
-  | ownerFence
-  | sourceFence
-  | declaredScopeFences
   | seriesHandles
   | lifecycleVersions
 
-/-- Admission takes its owner, optional source and declared-scope fences before handle and version locks. -/
-def memoryLockOrder : List MemoryLock :=
-  [.ownerFence, .sourceFence, .declaredScopeFences, .seriesHandles, .lifecycleVersions]
+/-- A Memory admission locks its series handle before its lifecycle targets. -/
+def memoryLockOrder : List MemoryLock := [.seriesHandles, .lifecycleVersions]
 
 /-- The durable identity of a sourced receipt lookup or replay. -/
 inductive IngestKeyPart where
@@ -314,6 +276,9 @@ def requestRowPrefix : String := "r:"
 
 /-- The index prefix for the digest of the length-framed key and fingerprint. -/
 def fingerprintRowPrefix : String := "f:"
+
+/-- The source prefix of every request ledger scope. -/
+def requestSourcePrefix : String := "core/key/"
 
 /-- Whether the authoring request named an owner space or a working Goal. -/
 inductive WriteDestination where
@@ -346,21 +311,5 @@ inductive NaturalSeriesProbe where
 def reuseNaturalSeries : NaturalSeriesProbe → Bool
   | .liveMatch | .forgottenMatch => true
   | .noMatch => false
-
-/-- Where a tool's derived request gets its key. -/
-inductive DerivationRequestKey where
-  | typedExplicit
-  | contentFingerprint
-
-/-- How earlier episode endpoints can participate in later writes. -/
-inductive UnitEndpoint where
-  | newMemory
-  | newGoal
-  | forgottenReplay
-
-/-- Written Memory and Goals supply same-unit typed endpoints; a forgotten replay supplies no live endpoint. -/
-def unitEndpointLive : UnitEndpoint → Bool
-  | .newMemory | .newGoal => true
-  | .forgottenReplay => false
 
 end Proxiima.Admission

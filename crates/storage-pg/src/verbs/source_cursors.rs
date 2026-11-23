@@ -1,5 +1,3 @@
-// `Proxiima.Admission.sourceCursorKey`.
-
 use std::time::Duration;
 
 use proxiima_core::storage_ports::OwnerWritePermit;
@@ -21,6 +19,7 @@ pub(crate) async fn load_source_cursor<'e>(
     // `source_cursors.owner_id` is NOT NULL in the schema, so `=` is exactly
     // `IS NOT DISTINCT FROM` here and below while keeping the pkey usable
     // (`PostgreSQL` has no index strategy for DistinctExpr).
+    // `Proxiima.Admission.sourceCursorKey`.
     let row: Option<Vec<u8>> = sqlx::query_scalar(
         "SELECT cursor
            FROM proxiima_core.source_cursors

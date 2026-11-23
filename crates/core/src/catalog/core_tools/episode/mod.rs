@@ -1,4 +1,4 @@
-//! `core_episode_commit` — write order in `Proxiima.Admission.episodeOrder`.
+//! `core_episode_commit` writes an episode in one owner unit.
 
 mod bind;
 
@@ -273,6 +273,7 @@ async fn episode_commit(
         super::memory_spaces::resolve_space_for_write(&ctx, args.space.as_deref())?;
     let engine = ctx.engine();
     let mut uow = engine.unit_of_work(&authz).await?;
+    // `Proxiima.Admission.episodeOrder`.
     let write_act = uow
         .ingest_fact(FactWrite::new(
             space.owner,

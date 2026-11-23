@@ -384,8 +384,7 @@ pub(crate) async fn prepare_memory_admission_at(
     if let Some(source_id) = draft.source_id.as_deref() {
         crate::access::fences::lock_source_fence_shared_tx(tx, owner, source_id).await?;
     }
-    // `Proxiima.Admission.memoryLockOrder` avoids a lock cycle with scope erase.
-    // `Proxiima.Payloads.scopeAdmissionOrder`.
+    // `Proxiima.Payloads.scopeAdmissionOrder` avoids a lock cycle with scope erase.
     fence_declared_scopes(tx, owner, admission.scopes).await?;
     let owner_id = crate::access::owner_registry::ensure_owner_row(tx.as_mut(), owner).await?;
     // These fences are held through commit, so a whole-owner/source erase
@@ -620,7 +619,6 @@ async fn load_ingest_replay(
     else {
         return Ok(None);
     };
-    // `Proxiima.Admission.receiptAnswers`.
     // Missing refs refuse replay because an empty default could bless a changed declaration.
     let lifecycle = crate::lifecycle_scope::PgLifecycleScope::enter(tx.as_mut()).await?;
     let replay_row: Result<Option<ReplayRow>, StorageError> = sqlx::query_as(
@@ -716,9 +714,6 @@ async fn replay_decision(
 
 /// Follow a replayed key's re-observations to the newest admission of the
 /// payload, and decide between replaying it and admitting it again.
-///
-/// Follow consecutive derived keys to find the last admission before
-/// deciding `Proxiima.Admission.appendObservation`.
 async fn latest_observation(
     tx: &mut Transaction<'_, Postgres>,
     receipt: IngestReceipt<'_>,
@@ -871,6 +866,7 @@ pub(crate) async fn lock_prepared_memory_targets(
     if let Some(source_id) = prepared.draft.source_id.as_deref() {
         crate::access::fences::lock_source_fence_shared_tx(tx, &prepared.owner, source_id).await?;
     }
+    // `Proxiima.Admission.memoryLockOrder`.
     crate::verbs::forget::lock_memory_handles_tx(tx, &[prepared.handle]).await?;
     crate::verbs::forget::lock_lifecycle_targets_tx(tx, &prepared.targets).await
 }

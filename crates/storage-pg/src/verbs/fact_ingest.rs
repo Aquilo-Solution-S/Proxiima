@@ -202,7 +202,7 @@ pub(crate) async fn ingest_fact_command_in_tx(
     embedding_spaces: &[proxiima_core::EmbeddingSpace],
     store_number: u16,
 ) -> Result<FactIngestOutcome, StorageError> {
-    // `Proxiima.Admission.typedFactLegs`.
+    // Sidecars, citations and publication require typed Fact persistence.
     if !authorized.sidecar_payloads().is_empty() {
         return Err(StorageError::ConstraintViolation(
             "typed Fact sidecars require the typed persistence path".into(),

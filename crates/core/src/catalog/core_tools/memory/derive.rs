@@ -584,7 +584,7 @@ pub(crate) fn derive_request_key(
         supersedes_id,
         guided_by,
     );
-    // `Proxiima.Admission.DerivationRequestKey`.
+    // An explicit request key wins over the content fingerprint.
     let key = match &authored.idempotency_key {
         Some(key) => key.clone(),
         None => crate::IdempotencyKey::new(fp.to_hex()).map_err(ToolError::InvalidInput)?,

@@ -1267,14 +1267,6 @@
   {"out": true, "in": ["listed"]},
   {"out": false, "in": ["unlisted"]},
   {"out": false, "in": ["malformed"]}],
- "Proxiima.Admission.unitEndpointLive":
- [{"out": true, "in": ["newMemory"]},
-  {"out": true, "in": ["newGoal"]},
-  {"out": false, "in": ["forgottenReplay"]}],
- "Proxiima.Admission.uniqueEpisodeKeys":
- [{"out": true, "in": ["omitted"]},
-  {"out": true, "in": ["firstExplicit"]},
-  {"out": false, "in": ["repeatedExplicit"]}],
  "Proxiima.Admission.selectDestination":
  [{"out": {"error": "bothDestinations"}, "in": [true, true]},
   {"out": {"ok": "ownerSpace"}, "in": [true, false]},
@@ -1292,7 +1284,7 @@
   {"out": "refuseCollision", "in": ["identityCollision", true, true]},
   {"out": "retry", "in": ["identityCollision", true, false]},
   {"out": "refuseCollision", "in": ["identityCollision", false, true]},
-  {"out": "refuseCollision", "in": ["identityCollision", false, false]},
+  {"out": "retryLater", "in": ["identityCollision", false, false]},
   {"out": "returnOutcome", "in": ["other", true, true]},
   {"out": "returnOutcome", "in": ["other", true, false]},
   {"out": "returnOutcome", "in": ["other", false, true]},
@@ -1313,11 +1305,6 @@
   {"out": "requestKey", "in": [true, false]},
   {"out": "sourceReceipt", "in": [false, true]},
   {"out": "none", "in": [false, false]}],
- "Proxiima.Admission.receiptAnswers":
- [{"out": false, "in": ["lookup", true]},
-  {"out": true, "in": ["lookup", false]},
-  {"out": true, "in": ["replay", true]},
-  {"out": true, "in": ["replay", false]}],
  "Proxiima.Admission.localMemorySlot":
  [{"out": true, "in": ["remember", true]},
   {"out": false, "in": ["remember", false]},

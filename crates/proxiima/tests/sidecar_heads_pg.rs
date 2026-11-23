@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use example_engine::ExampleEngine;
 use proxiima::spiice::{SidecarAtom, SidecarHeadsScope, ToolError, sidecar_heads_by_key};
 use proxiima::{AuthPath, AuthzContext, ErrorCode, GroupId, MemoryId, OwnerId, Role, UserId};
+use proxiima_core::storage_ports::SidecarSessionRead;
 use proxiima_example::testkit::remember_note;
 use proxiima_example::{NoteV1, StampV1, note_heads};
 use uuid::Uuid;
@@ -62,6 +63,40 @@ fn protocol_error(error: ToolError, expected: ErrorCode) {
         panic!("expected protocol {expected:?}, got {error}");
     };
     assert_eq!(error.code, expected, "{error}");
+}
+
+#[tokio::test]
+async fn read_own_sidecar_holds_exclusive_lock_through_commit() -> TestResult {
+    let fixture = ExampleEngine::new("sidecar_read_lock", |_| {}).await;
+    let owner = owner();
+    let authz = authz(&[owner]);
+    let mut unit = fixture.engine.unit_of_work(&authz).await?;
+    let key = 1;
+    let rows = unit
+        .read_own_sidecar(
+            key,
+            owner,
+            &SidecarSessionRead {
+                table: "proxiima_example.stamp_v1",
+                predicates: &[("t", SidecarAtom::Uuid(Uuid::now_v7()))],
+                limit: None,
+            },
+        )
+        .await?;
+    assert!(rows.is_empty());
+
+    let mut probe = fixture.pool.acquire().await?;
+    let try_lock =
+        || sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_xact_lock($1)").bind(key);
+    assert!(!try_lock().fetch_one(&mut *probe).await?);
+    let shared: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock_shared($1)")
+        .bind(key)
+        .fetch_one(&mut *probe)
+        .await?;
+    assert!(!shared, "the read must hold an exclusive lock");
+    unit.commit().await?;
+    assert!(try_lock().fetch_one(&mut *probe).await?);
+    Ok(())
 }
 
 #[tokio::test]
