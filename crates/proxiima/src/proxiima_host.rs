@@ -4,14 +4,9 @@ use std::sync::Arc;
 
 use proxiima_blob_s3::CitedBlobStore;
 use proxiima_core::storage_ports::publication::{OriginScope, PublicationOriginEligibilityPort};
-use proxiima_core::{
-    AuthzContext, Engine, OwnerId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices,
-    StorageError,
-};
-use proxiima_storage_pg::{
-    OwnerTransaction, OwnerTransactions, PgHostStateEraseContext, PgPlatformScope,
-    PgSidecarRegistryFrozen,
-};
+use proxiima_core::{Engine, OwnerId, SpiiceRegistryFrozen, SpiiceServiceError, SpiiceServices};
+pub use proxiima_storage_pg::HostOwnerTransactions;
+use proxiima_storage_pg::{PgHostStateEraseContext, PgPlatformScope, PgSidecarRegistryFrozen};
 use sqlx::PgPool;
 
 use crate::CoreMcpTools;
@@ -29,7 +24,7 @@ pub struct ProxiimaHost {
     pub(crate) engine: Arc<Engine>,
     pub(crate) registry: Arc<SpiiceRegistryFrozen>,
     pub(crate) pool: PgPool,
-    pub(crate) owner_transactions: OwnerTransactions,
+    pub(crate) owner_transactions: HostOwnerTransactions,
     pub(crate) platform_scope: PgPlatformScope,
     pub(crate) pg_sidecars: Arc<PgSidecarRegistryFrozen>,
     pub(crate) erase_context: PgHostStateEraseContext,
@@ -42,38 +37,6 @@ pub struct ProxiimaHost {
     pub(crate) object_purge_health: crate::object_maintenance::ObjectPurgeHealth,
     /// The background workers that ended before shutdown.
     pub(crate) ended_workers: crate::workers::EndedWorkers,
-}
-
-/// Opens an extra-table transaction for the served owner under the caller's authority.
-#[derive(Clone, Debug)]
-pub struct HostOwnerTransactions(OwnerTransactions);
-
-impl HostOwnerTransactions {
-    pub(crate) const fn new(transactions: OwnerTransactions) -> Self {
-        Self(transactions)
-    }
-
-    /// Bind the caller's authority for the served owner before opening a transaction.
-    ///
-    /// # Errors
-    ///
-    /// [`Forbidden`](StorageError::Forbidden) when the context cannot serve the owner or has expired.
-    /// Propagates database errors.
-    pub async fn begin(
-        &self,
-        caller: &AuthzContext,
-        owner: OwnerId,
-    ) -> Result<OwnerTransaction, StorageError> {
-        // `Proxiima.OwnerAuthority.ScopeRestriction.confinement`.
-        let caller = caller.clone().narrowed_to_owner(owner);
-        let scope = caller
-            .as_ref()
-            .and_then(AuthzContext::owner_scope)
-            .ok_or_else(|| {
-                StorageError::Forbidden("authenticated scope for the served owner required".into())
-            })?;
-        self.0.begin(scope).await
-    }
 }
 
 impl ProxiimaHost {
@@ -114,10 +77,13 @@ impl ProxiimaHost {
     /// Atomic writes alongside a Fact use [`crate::UnitOfWork::apply_host_state`].
     #[must_use]
     pub fn owner_transactions_for_host(&self) -> HostOwnerTransactions {
-        HostOwnerTransactions::new(self.owner_transactions.clone())
+        self.owner_transactions.clone()
     }
 
-    /// The platform scope boot validated.
+    /// The boot-validated platform scope for the host's own SQL adapters.
+    ///
+    /// Transactions begun from this scope use the platform role and are never
+    /// handed to a spiice or tool.
     #[must_use]
     pub fn platform_scope_for_host(&self) -> PgPlatformScope {
         self.platform_scope.clone()
@@ -202,7 +168,7 @@ impl ProxiimaHost {
             registry: Arc::new(engine.registry().clone()),
             engine,
             pool: PgPool::connect_lazy_with(sqlx::postgres::PgConnectOptions::new()),
-            owner_transactions: OwnerTransactions::for_tests(),
+            owner_transactions: HostOwnerTransactions::for_tests(),
             platform_scope: PgPlatformScope::for_tests(),
             pg_sidecars: Arc::default(),
             erase_context: PgHostStateEraseContext::for_surfaces_for_tests(

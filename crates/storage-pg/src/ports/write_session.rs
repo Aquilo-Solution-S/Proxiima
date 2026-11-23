@@ -49,7 +49,11 @@ pub struct PgHostStateSession<'session, 'connection> {
 }
 
 impl<'connection> PgHostStateSession<'_, 'connection> {
-    /// The unit's transaction for SQL against the callback's declared host tables.
+    /// Run host-state SQL against the callback's declared tables.
+    ///
+    /// The unit uses the owner-bound runtime role for caller writes and the
+    /// platform role for host maintenance. The host's state adapter keeps
+    /// this transaction out of spiices and tools.
     pub fn transaction(&mut self) -> &mut Transaction<'connection, Postgres> {
         self.tx
     }

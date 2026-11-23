@@ -104,7 +104,9 @@ pub use access::{
 pub use delegated_authority::PgDelegationStore;
 pub use ledger_name::{is_core_ledger, parse_ledger_name, parse_name_parts};
 pub use owner_scope::begin_owner_transaction;
-pub use owner_transaction::{OwnerStatement, OwnerTransaction, OwnerTransactions};
+pub use owner_transaction::{
+    HostOwnerTransactions, OwnerStatement, OwnerTransaction, owner_transaction,
+};
 pub use platform_scope::{PgPlatformScope, begin_migration_transaction};
 pub use pool_config::PgPoolConfig;
 pub use ports::{
@@ -1100,12 +1102,11 @@ fn env_int_or<T: std::str::FromStr>(
 }
 
 impl PgStorage {
-    /// The service that begins [`OwnerTransaction`]s on this store's pool.
-    /// The runtime publishes it to every tool call; the Spiice SDK reaches it
-    /// through `proxiima_spiice::owner_transaction`.
+    /// Open extra-table transactions for a caller and served owner, or install
+    /// the corresponding tool service with [`HostOwnerTransactions::publish_to_tools`].
     #[must_use]
-    pub fn owner_transactions(&self) -> OwnerTransactions {
-        OwnerTransactions::new(self.pool.clone())
+    pub fn owner_transactions_for_host(&self) -> HostOwnerTransactions {
+        HostOwnerTransactions::new(self.pool.clone())
     }
 
     /// The immutable number validated against this database at boot.

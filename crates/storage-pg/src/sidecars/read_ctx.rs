@@ -332,17 +332,18 @@ pub(crate) fn validate_sidecar_read_sql(
 /// [`OwnerTransaction`](crate::OwnerTransaction) apply it before they run a
 /// statement.
 pub(crate) fn refuse_core_schema_sql(sql: &str) -> Result<(), StorageError> {
-    let normalized: String = sql
-        .chars()
-        .filter(|ch| !ch.is_whitespace() && *ch != '"')
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect();
-    if normalized.contains("proxiima_core.") {
+    if sql_identifiers(sql).any(|name| name.eq_ignore_ascii_case("proxiima_core")) {
         return Err(StorageError::Internal(
             "spiice SQL must not reference proxiima_core.*".to_string(),
         ));
     }
     Ok(())
+}
+
+/// Conservatively split on identifier boundaries, including quotes, comment
+/// punctuation and qualification dots. Literals and comments are scanned too.
+pub(crate) fn sql_identifiers(sql: &str) -> impl Iterator<Item = &str> {
+    sql.split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '$')
 }
 
 fn validate_sidecar_read_sql_shape(sql: &str) -> Result<(), StorageError> {

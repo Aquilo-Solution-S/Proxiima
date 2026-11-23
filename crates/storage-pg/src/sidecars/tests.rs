@@ -195,13 +195,24 @@ fn opt_u64_as_i64_rejects_out_of_range_values_in_both_directions() {
 
 #[test]
 fn public_sidecar_batch_read_denies_core_schema_unless_registry_admits_it() {
-    let sql = "SELECT memory_id FROM proxiima_core.agent_note_v1 WHERE memory_id = ANY($1)";
-    let err = validate_sidecar_read_sql(sql, false).expect_err("public helper denies core SQL");
-    assert!(
-        err.to_string().contains("proxiima_core.*"),
-        "message: {err}"
-    );
-    validate_sidecar_read_sql(sql, true).expect("registered core sidecars may read core tables");
+    for sql in [
+        "SELECT memory_id FROM proxiima_core.agent_note_v1 WHERE memory_id = ANY($1)",
+        "SELECT memory_id FROM proxiima_core/**/.memory WHERE memory_id = ANY($1)",
+        "SELECT memory_id FROM proxiima_core--x\n.memory WHERE memory_id = ANY($1)",
+    ] {
+        let err = validate_sidecar_read_sql(sql, false).expect_err("public helper denies core SQL");
+        assert!(
+            err.to_string().contains("proxiima_core.*"),
+            "{sql:?}: {err}"
+        );
+        validate_sidecar_read_sql(sql, true)
+            .expect("registered core sidecars may read core tables");
+    }
+    validate_sidecar_read_sql(
+        "SELECT notebook_id FROM proxiima_example.notebooks WHERE notebook_id = ANY($1)",
+        false,
+    )
+    .expect("extra-table reads remain available");
 }
 
 /// Parity pin: `pg_sidecar!(key: …)` and the contract `Surface`'s

@@ -29,9 +29,11 @@ use crate::settings;
 /// ([`RuntimeBuilder::authenticator_with_platform_scope`]).
 #[derive(Clone)]
 pub struct PlatformAuthContext {
-    /// The runtime's platform scope, validated at boot
-    /// ([`PgPlatformScope::new`]: platform role, ownership, `FORCE RLS`
-    /// census) — the one way to run platform-scoped queries.
+    /// The runtime's boot-validated platform scope for host SQL adapters.
+    ///
+    /// It runs with the platform role and is never handed to a spiice or tool.
+    /// [`PgPlatformScope::new`] validates its role, ownership and `FORCE RLS`
+    /// census.
     pub platform_scope: PgPlatformScope,
     /// The runtime's owner-access port (host port or the Postgres resolver,
     /// under the forwarder policy when one is configured).

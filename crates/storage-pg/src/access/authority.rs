@@ -187,8 +187,9 @@ impl<'session, 'connection> PgAuthoritySession<'session, 'connection> {
         })
     }
 
-    /// The original transaction for the host's own SQL and declared membership
-    /// edits. This gateway never commits, rolls back or retries it.
+    /// The original platform-role transaction for the host's own SQL and
+    /// declared membership edits. This is a host-adapter API, never handed to
+    /// a spiice or tool. This gateway never commits, rolls back or retries it.
     pub fn transaction(&mut self) -> &mut Transaction<'connection, Postgres> {
         self.tx
     }

@@ -138,8 +138,11 @@ impl PgPlatformScope {
         Ok((schemas, store_number))
     }
 
-    /// Begin a platform transaction under its explicit policy, including on
-    /// tables owned by this role. No implicit RLS bypass is used.
+    /// Begin host SQL under the platform role and its explicit policy.
+    ///
+    /// This transaction is for the host's own adapters, including tables owned
+    /// by the platform role. The host keeps it out of spiices and tools. No
+    /// implicit RLS bypass is used.
     ///
     /// # Errors
     ///

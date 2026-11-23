@@ -198,18 +198,29 @@ async fn the_tool_lists_the_callers_notebooks_on_its_owner_transaction() {
         "the shared scope reads owner A's notebook as owner A"
     );
     assert_eq!(
-        listed(&built, both, owner_b).await,
+        listed(&built, both.clone(), owner_b).await,
         Vec::new(),
         "owner B must not see owner A's notebook, even on a scope that reads both"
     );
 
-    let ctx_a = proxiima::ToolCtx::new(
-        owner_a,
-        authz_a.clone(),
+    let ctx_b = proxiima::ToolCtx::new(
+        owner_b,
+        both,
         built.host().services().clone(),
         proxiima::ToolCaller::new("test", "test", "0"),
         built.host().engine().clone(),
     );
+    let mut read = owner_transaction(&ctx_b).await.expect("served owner B");
+    let rows: Vec<Uuid> = read
+        .fetch_all(sqlx::query_scalar(
+            "SELECT notebook_id FROM proxiima_example.notebooks",
+        ))
+        .await
+        .expect("the tool transaction narrows the shared scope");
+    assert!(rows.is_empty(), "owner B must not read owner A's notebook");
+    read.commit().await.expect("commit");
+
+    let ctx_a = ctx_b.with_owner(owner_a);
     let mut dropped = owner_transaction(&ctx_a)
         .await
         .expect("the runtime publishes owner transactions");

@@ -25,7 +25,7 @@ impl ConnectedStorage {
     /// Open transactions for the authenticated caller and served owner.
     #[must_use]
     pub fn owner_transactions_for_host(&self) -> HostOwnerTransactions {
-        HostOwnerTransactions::new(self.0.owner_transactions())
+        self.0.owner_transactions_for_host()
     }
 
     /// Take the embedding maintenance lease, or return `None` if held.

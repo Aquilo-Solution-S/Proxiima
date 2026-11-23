@@ -18,16 +18,12 @@ mod authorized_read;
 mod bundle;
 mod detached;
 mod migrator;
-mod owner_transaction;
 mod sidecar_heads;
 mod space;
 mod worker;
 
 pub use bundle::SpiiceBundle;
 pub use migrator::{NamedMigrator, is_spiice_ledger_id, spiice_ledger_table};
-/// An owner-scoped transaction for the spiice's own tables, begun for the
-/// calling owner ([`owner_transaction`]), and the statements it runs.
-pub use owner_transaction::owner_transaction;
 /// The owner a call's optional `space` argument names. A tool declares a
 /// top-level `space: Option<String>` argument and resolves it here: for a
 /// read with [`resolve_space_for_read`], for a write with
@@ -298,7 +294,7 @@ pub use proxiima_storage_pg::{
     MemoryEmbedding, MemoryVersion, cited_objects_present, lexical_languages, lock_memory_shared,
     memories_citing, memory_embeddings, memory_versions, series_versions,
 };
-pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction};
+pub use proxiima_storage_pg::{OwnerStatement, OwnerTransaction, owner_transaction};
 pub use proxiima_storage_pg::{PgMigrationSchemas, PgSchemaEvolution};
 pub use proxiima_storage_pg::{
     PgSidecarRegistry, PgSidecarRegistryFrozen, register_core_pg_sidecars,

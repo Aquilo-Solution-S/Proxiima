@@ -282,7 +282,7 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
                 engine: booted.engine.clone(),
                 registry: booted.registry.clone(),
                 pool: booted.pool.clone(),
-                owner_transactions: booted.storage.owner_transactions(),
+                owner_transactions: booted.storage.owner_transactions_for_host(),
                 platform_scope: booted.platform_scope.clone(),
                 pg_sidecars: booted.pg_sidecars.clone(),
                 erase_context: booted.erase_context.clone(),
@@ -1106,7 +1106,7 @@ fn assemble_services<A: SpiiceApp>(
             .is_none(),
         "host-state maintenance authority must remain outside SpiiceServices"
     );
-    services.try_insert(host.owner_transactions.clone())?;
+    host.owner_transactions.publish_to_tools(&mut services)?;
     if let Some((transfer, verified_read, owner_reconcile)) =
         cited_blob_services(host.blobs.as_ref(), runtime_authority)
     {

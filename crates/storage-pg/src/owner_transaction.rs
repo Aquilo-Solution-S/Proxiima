@@ -2,7 +2,10 @@
 //! runtime publishes, and the transaction it begins, which runs the
 //! statements a spiice builds with sqlx and nothing else.
 
-use proxiima_core::{OwnerScope, StorageError};
+use proxiima_core::{
+    AuthzContext, OwnerId, OwnerScope, SpiiceServiceError, SpiiceServices, StorageError, ToolCtx,
+    ToolError,
+};
 use sqlx::error::BoxDynError;
 use sqlx::postgres::{PgArguments, PgQueryResult, PgRow, PgStatement};
 use sqlx::query::{Query, QueryAs, QueryScalar};
@@ -10,18 +13,15 @@ use sqlx::{Execute, Executor, FromRow, PgPool, Postgres, SqlStr, Transaction};
 
 use crate::error::map_err;
 use crate::owner_scope::begin_owner_transaction;
-use crate::sidecars::refuse_core_schema_sql;
+use crate::sidecars::{refuse_core_schema_sql, sql_identifiers};
 
-/// Begins [`OwnerTransaction`]s on the serving pool, which it keeps to
-/// itself. Made by [`PgStorage::owner_transactions`](crate::PgStorage::owner_transactions).
-#[derive(Debug, Clone)]
-pub struct OwnerTransactions {
-    pool: PgPool,
-}
+/// Opens an extra-table transaction for the served owner under the caller's authority.
+#[derive(Clone, Debug)]
+pub struct HostOwnerTransactions(OwnerTransactions);
 
-impl OwnerTransactions {
+impl HostOwnerTransactions {
     pub(crate) const fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self(OwnerTransactions { pool })
     }
 
     /// A service over a pool that never connects, for a composition test
@@ -39,13 +39,93 @@ impl OwnerTransactions {
         )
     }
 
+    /// Bind the caller's authority for the served owner before opening a transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`Forbidden`](StorageError::Forbidden) when the context cannot serve the owner or has expired.
+    /// Propagates database errors.
+    pub async fn begin(
+        &self,
+        caller: &AuthzContext,
+        owner: OwnerId,
+    ) -> Result<OwnerTransaction, StorageError> {
+        self.0.begin_for_owner(caller, owner).await
+    }
+
+    /// Install the tool's owner-transaction service in the composed service set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is already installed.
+    pub fn publish_to_tools(
+        &self,
+        services: &mut SpiiceServices,
+    ) -> Result<(), SpiiceServiceError> {
+        services.try_insert(self.0.clone())
+    }
+}
+
+/// Begin a transaction on the spiice's own tables for the owner served by `ctx`.
+///
+/// Every statement of the operation runs on the returned
+/// [`OwnerTransaction`]; it applies owner RLS as well as the statement's own
+/// filter, refuses a statement that names the core schema, and rolls back
+/// unless committed. Use the Engine's [`proxiima_core::engine::UnitOfWork`]
+/// for Fact and state writes.
+///
+/// # Errors
+///
+/// [`ToolError::Unavailable`] when the host serving `ctx` publishes no
+/// owner-transaction service. [`ToolError::Storage`] carries a scope refusal
+/// or a database error when the transaction cannot begin.
+///
+/// ```compile_fail,E0432
+/// use proxiima_storage_pg::OwnerTransactions;
+/// ```
+pub async fn owner_transaction(ctx: &ToolCtx) -> Result<OwnerTransaction, ToolError> {
+    let transactions = ctx.service::<OwnerTransactions>().ok_or_else(|| {
+        ToolError::Unavailable(
+            "owner-scoped transactions are not configured: the host serving this tool \
+             publishes no OwnerTransactions service"
+                .into(),
+        )
+    })?;
+    Ok(transactions
+        .begin_for_owner(ctx.authz(), ctx.owner())
+        .await?)
+}
+
+/// The service installed in tool contexts. Its raw scope entry stays in this crate.
+#[derive(Debug, Clone)]
+pub(crate) struct OwnerTransactions {
+    pool: PgPool,
+}
+
+impl OwnerTransactions {
+    async fn begin_for_owner(
+        &self,
+        caller: &AuthzContext,
+        owner: OwnerId,
+    ) -> Result<OwnerTransaction, StorageError> {
+        // `Proxiima.OwnerAuthority.ScopeRestriction.confinement`.
+        let caller = caller.clone().narrowed_to_owner(owner);
+        let scope = caller
+            .as_ref()
+            .and_then(AuthzContext::owner_scope)
+            .ok_or_else(|| {
+                StorageError::Forbidden("authenticated scope for the served owner required".into())
+            })?;
+        self.begin(scope).await
+    }
+
     /// Begin a transaction under `scope`, as
     /// [`begin_owner_transaction`] does.
     ///
     /// # Errors
     ///
     /// Refuses expired authority and propagates database errors.
-    pub async fn begin(&self, scope: &OwnerScope) -> Result<OwnerTransaction, StorageError> {
+    pub(crate) async fn begin(&self, scope: &OwnerScope) -> Result<OwnerTransaction, StorageError> {
         Ok(OwnerTransaction {
             transaction: begin_owner_transaction(&self.pool, scope).await?,
         })
@@ -61,7 +141,8 @@ impl OwnerTransactions {
 /// `INSERT`, `UPDATE`, `DELETE` or `MERGE`, and it is sent as a prepared
 /// statement, which holds one command. A statement that names the core
 /// schema is refused before it runs, by the rule the sidecar read context
-/// applies. The transaction's boundaries are its own: [`Self::commit`]
+/// applies. Session settings and PostgreSQL's SQL-to-XML helpers are outside
+/// this statement interface. The transaction's boundaries are its own: [`Self::commit`]
 /// commits; dropping it rolls it back.
 pub struct OwnerTransaction {
     transaction: Transaction<'static, Postgres>,
@@ -78,9 +159,8 @@ impl OwnerTransaction {
     ///
     /// # Errors
     ///
-    /// The refusal of a statement that is not one data statement or that
-    /// names the core schema, a bind that does not encode, or the database's
-    /// error.
+    /// A statement outside the extra-table SQL boundary, a bind that does
+    /// not encode, or a database error.
     pub async fn fetch_all<Q: OwnerStatement>(
         &mut self,
         statement: Q,
@@ -271,15 +351,12 @@ impl Checked {
         let arguments = arguments.map_err(|error| map_err(sqlx::Error::Encode(error)))?;
         let text = sql.as_str();
         refuse_other_than_data_statement(text)?;
-        // Reserve the settings function name, including quoted and qualified spellings.
-        let mut identifiers =
-            text.split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '$');
-        if identifiers.any(|name| name.eq_ignore_ascii_case("set_config"))
-            || text.to_ascii_lowercase().contains("u&\"")
+        let normalized = text.to_ascii_lowercase();
+        if sql_identifiers(&normalized).any(reserved_owner_statement_identifier)
+            || normalized.contains("u&\"")
         {
             return Err(StorageError::Internal(
-                "an owner transaction does not accept settings functions or Unicode-escaped identifiers"
-                    .into(),
+                "an owner transaction accepts extra-table SQL with literal identifiers".into(),
             ));
         }
         refuse_core_schema_sql(text)?;
@@ -289,6 +366,14 @@ impl Checked {
             persistent,
         })
     }
+}
+
+fn reserved_owner_statement_identifier(name: &str) -> bool {
+    matches!(name, "set_config" | "pg_settings")
+        || name.split_once("_to_xml").is_some_and(|(source, suffix)| {
+            matches!(source, "query" | "table" | "cursor" | "schema" | "database")
+                && matches!(suffix, "" | "_and_xmlschema" | "schema")
+        })
 }
 
 impl Execute<'_, Postgres> for Checked {
@@ -310,89 +395,5 @@ impl Execute<'_, Postgres> for Checked {
 }
 
 #[cfg(test)]
-mod tests {
-    use proxiima_core::StorageError;
-
-    use super::Checked;
-
-    #[test]
-    fn a_statement_that_names_the_core_schema_is_refused_before_it_runs() {
-        let refused = Checked::new(
-            sqlx::query_as::<_, (uuid::Uuid,)>("SELECT t FROM PROXIIMA_CORE.memory WHERE t = $1")
-                .bind(uuid::Uuid::nil()),
-        )
-        .err()
-        .expect("core-schema SQL is refused");
-        assert!(
-            matches!(&refused, StorageError::Internal(message) if message.contains("proxiima_core")),
-            "{refused:?}"
-        );
-        for sql in [
-            r#"SELECT t FROM "proxiima_core".memory"#,
-            "SELECT t FROM proxiima_core . memory",
-            r#"SELECT t FROM "proxiima_core" . "memory""#,
-        ] {
-            assert!(
-                matches!(Checked::new(sqlx::query(sql)), Err(StorageError::Internal(message))
-                    if message.contains("proxiima_core")),
-                "{sql:?} must be refused"
-            );
-        }
-        assert!(Checked::new(sqlx::query("SELECT 1 FROM proxiima_example.notebooks")).is_ok());
-    }
-
-    #[test]
-    fn statements_that_change_settings_are_refused_before_they_run() {
-        for sql in [
-            "SELECT set_config('app.owner', $1, true)",
-            "SELECT pg_catalog.set_config('app.owner', $1, false)",
-            r#"SELECT "set_config" ('app.owner', $1, true)"#,
-            r#"SELECT "pg_catalog"."set_config"('app.owner', $1, false)"#,
-            r#"SELECT U&"set\005fconfig"('app.owner', $1, false)"#,
-            "SET app.owner = 'value'",
-            "RESET app.owner",
-        ] {
-            assert!(
-                Checked::new(sqlx::query(sql)).is_err(),
-                "{sql:?} must be refused"
-            );
-        }
-        assert!(
-            Checked::new(sqlx::query(
-                "UPDATE proxiima_example.notebooks SET name = $1 WHERE notebook_id = $2",
-            ))
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn a_statement_that_is_not_a_data_statement_is_refused_before_it_runs() {
-        for sql in [
-            "COMMIT",
-            "  rollback",
-            "/* note */ COMMIT",
-            "SAVEPOINT a",
-            "SET LOCAL role = 'postgres'",
-            "DO $$ BEGIN END $$",
-            "",
-        ] {
-            let refused = Checked::new(sqlx::query(sql))
-                .err()
-                .unwrap_or_else(|| panic!("{sql:?} is refused"));
-            assert!(
-                matches!(&refused, StorageError::Internal(message) if message.contains("owner transaction")),
-                "{sql:?}: {refused:?}"
-            );
-        }
-        for sql in [
-            "select 1",
-            "\n  WITH a AS (SELECT 1) SELECT * FROM a",
-            "INSERT INTO t VALUES (1)",
-            "Update t SET a = 1",
-            "DELETE FROM t",
-            "MERGE INTO t USING s ON true WHEN MATCHED THEN DO NOTHING",
-        ] {
-            assert!(Checked::new(sqlx::query(sql)).is_ok(), "{sql:?}");
-        }
-    }
-}
+#[path = "owner_transaction_tests.rs"]
+mod tests;
