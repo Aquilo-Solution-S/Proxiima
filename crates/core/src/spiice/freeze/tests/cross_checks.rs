@@ -1068,3 +1068,51 @@ fn freeze_refuses_an_empty_pinned_language_union() {
         Some(SpiiceRegistryError::EmptyProjectionLanguageUnion { .. }),
     ));
 }
+
+#[test]
+fn projection_language_admission_matches_ledger_vectors() {
+    use super::projection_fixtures::{
+        FIXTURE_BANDS, ONE_LEVEL, uniformity_contract, uniformity_schema,
+    };
+    use crate::spiice::contract::LanguagePolicy;
+
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        input: [String; 1],
+        out: bool,
+    }
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<Vector> =
+        serde_json::from_value(vectors["Proxiima.Search.admitLanguagePolicy"].clone()).unwrap();
+    let contract = uniformity_contract(&[]);
+    for Vector {
+        input: [declaration],
+        out,
+    } in rows
+    {
+        let language = match declaration.as_str() {
+            "pinned" => LanguagePolicy::Pinned("simple"),
+            "emptyUnion" => LanguagePolicy::PinnedUnion(&[]),
+            "nonemptyUnion" => LanguagePolicy::PinnedUnion(&["simple", "english"]),
+            "emittedColumn" => LanguagePolicy::PerRow {
+                column: "lexical_language",
+            },
+            "otherColumn" => LanguagePolicy::PerRow {
+                column: "other_language",
+            },
+            _ => panic!("unknown language declaration {declaration}"),
+        };
+        let schema = uniformity_schema(
+            "thing",
+            "test_spiice.thing_v1",
+            ONE_LEVEL,
+            language,
+            FIXTURE_BANDS,
+        );
+        let result = SpiiceRegistry::validate_projection_language(&contract, &schema);
+        assert_eq!(result.is_ok(), out, "{declaration}: {result:?}");
+    }
+}

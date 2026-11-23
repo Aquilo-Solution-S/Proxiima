@@ -905,10 +905,6 @@ macro_rules! ledger {
     (Proxiima.Search.spacesMax) => {
         16
     };
-    // The maximum number of raw search tag filters.
-    (Proxiima.Search.tagsMax) => {
-        16
-    };
     // The maximum consumed depth of a relevance cursor.
     (Proxiima.Search.relevanceDepthMax) => {
         5000
@@ -1029,10 +1025,6 @@ macro_rules! ledger {
     (Proxiima.Search.hnswScanTuplesMin) => {
         1
     };
-    // The maximum admitted HNSW iterative scan tuple cap.
-    (Proxiima.Search.hnswScanTuplesMax) => {
-        2147483647
-    };
     // Default HNSW search breadth.
     (Proxiima.Search.hnswDefaultBreadth) => {
         100
@@ -1040,10 +1032,6 @@ macro_rules! ledger {
     // Default tuple limit for iterative HNSW scans.
     (Proxiima.Search.hnswDefaultTupleCap) => {
         20000
-    };
-    // Default mode for iterative HNSW scans.
-    (Proxiima.Search.hnswDefaultMode) => {
-        "relaxed_order"
     };
     // Unique candidate IDs a spiice passes to the Query authority path in one request.
     (Proxiima.Search.authorizedCandidateMax) => {

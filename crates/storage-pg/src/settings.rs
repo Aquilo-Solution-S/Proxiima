@@ -63,14 +63,6 @@ mod tests {
     }
 
     #[test]
-    fn hnsw_mode_default_matches_the_ledger() {
-        assert_eq!(
-            PgTuning::default().hnsw_iterative_scan.as_setting(),
-            proxiima_core::ledger!(Proxiima.Search.hnswDefaultMode),
-        );
-    }
-
-    #[test]
     fn overlay_presence_matches_ledger_vectors() {
         #[derive(serde::Deserialize)]
         struct Vector {

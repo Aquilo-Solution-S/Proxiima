@@ -245,6 +245,55 @@ fn is_plausible_config_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn lexical_resolution_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [String; 1],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Search.lexicalResolution"].clone()).unwrap();
+        for Vector {
+            input: [request],
+            out,
+        } in rows
+        {
+            let (requested, text) = match request.as_str() {
+                "omitted" => (None, ""),
+                "reliableDetection" => (
+                    Some("auto"),
+                    "The library opens every morning, and the librarians help readers find books. \
+                     Many children visit after school to read stories and learn about the world.",
+                ),
+                "unreliableDetection" => (Some("auto"), "a"),
+                "recognizedLanguage" => (Some("de-DE"), ""),
+                "plausibleConfig" => (Some("public.german_hunspell"), ""),
+                "malformed" => (Some("ger man"), ""),
+                _ => panic!("unknown lexical request {request}"),
+            };
+            let expected = match out.as_str() {
+                "deployment" => Ok(LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT.to_owned()),
+                "detectedConfig" => Ok("english".to_owned()),
+                "languageConfig" => Ok("german".to_owned()),
+                "explicitConfig" => Ok("public.german_hunspell".to_owned()),
+                "refusal" => Err(InvalidLexicalLanguage {
+                    supplied: requested.unwrap().to_owned(),
+                }),
+                _ => panic!("unknown lexical resolution {out}"),
+            };
+            assert_eq!(
+                resolve_lexical_language(requested, text),
+                expected,
+                "{request}"
+            );
+        }
+    }
+
     /// The sentinel is not a configuration name a caller can type: a
     /// `PostgreSQL` identifier cannot start with `@`, so the request form
     /// and the resolved form cannot be confused for one another.

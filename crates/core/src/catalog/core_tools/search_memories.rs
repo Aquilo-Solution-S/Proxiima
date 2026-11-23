@@ -18,6 +18,7 @@ use crate::{ToolCtx, ToolError};
 
 use super::citation_of_fact::{FactCitationOutput, fact_citation_output};
 use super::memory::search::{NeighborEdge, neighbor_edges_from_rows};
+use super::memory::util::MAX_TAGS;
 use super::memory_spaces::ResolvedMemorySpace;
 
 const SEMANTIC_SEARCH_UNAVAILABLE: &str =
@@ -29,9 +30,6 @@ const DEFAULT_BODY_MAX_CHARS: usize = crate::MAX_TEXT_CAP_CHARS;
 /// this tool's only per-request work multiplier; cap it like every other
 /// list argument.
 const MAX_SEARCH_SPACES: usize = crate::ledger!(Proxiima.Search.spacesMax);
-/// Matches the write-side cap of 16 distinct tags per memory — a filter
-/// larger than any storable tag set cannot narrow anything further.
-const MAX_SEARCH_TAGS: usize = crate::ledger!(Proxiima.Search.tagsMax);
 
 #[derive(Debug, Default)]
 pub struct SearchMemoriesTool;
@@ -125,7 +123,7 @@ pub struct SearchMemoriesArgs {
     pub schema_id: Option<String>,
     #[serde(default)]
     #[schemars(
-        length(max = MAX_SEARCH_TAGS),
+        length(max = MAX_TAGS),
         description = "Optional tag filter. Tags are matched in stored form — trimmed and lowercased — so `Rust` and `rust` filter alike. Empty means no tag filter."
     )]
     pub tags: Vec<String>,
@@ -434,7 +432,7 @@ fn with_stores_property(
         "minItems": 1,
         "items": {"type": "integer", "minimum": 0, "maximum": 65535, "enum": names, "oneOf": described},
         "description": format!(
-            "Stores to search; omit for all of them. A schema_id only one store declares searches that store only. Other stores answer on the first page only.\n{prose}"
+            "Stores to search; omit for all of them. A schema_id only one store declares searches that store only. Other stores answer on the first page only. A federated page may skip local hits pushed past the limit because the local cursor is kept.\n{prose}"
         ),
     });
     if let Some(properties) = schema
@@ -488,7 +486,7 @@ fn merge_store_hits(
         .into_iter()
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
         .map(|(mut hit, score)| {
-            // `Proxiima.Search.scoreSource`.
+            // A federated hit carries its store-local reciprocal rank as its score.
             hit.score = score;
             hit
         })
@@ -928,6 +926,7 @@ async fn search_one_space(
         until: prepared.until,
         order: args.order,
         min_score: args.min_score,
+        // Degraded hybrid requests remain valid, but the verb rejects weights on lexical searches.
         semantic_weight: weight_for_effective_mode(args.semantic_weight, mode),
         after,
         semantic: lane.arm.semantic().cloned(),
@@ -1264,9 +1263,10 @@ fn validate_list_caps(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
         )));
     }
     // `Proxiima.Search.tagFilterStages`.
-    if args.tags.len() > MAX_SEARCH_TAGS {
+    // A filter larger than any storable tag set cannot narrow the search further.
+    if args.tags.len() > MAX_TAGS {
         return Err(ToolError::InvalidInput(format!(
-            "at most {MAX_SEARCH_TAGS} tags in the tags filter"
+            "at most {MAX_TAGS} tags in the tags filter"
         )));
     }
     Ok(())
@@ -1346,6 +1346,7 @@ fn retain_surviving_neighbor_edges(memories: &[SearchMemoryOutput], edges: &mut 
     edges.retain(|edge| {
         let touches =
             surviving.contains(edge.source.as_str()) || surviving.contains(edge.target.as_str());
+        // Short-circuit so only edges that touch the page are marked seen.
         touches && seen_edges.insert((edge.source.clone(), edge.target.clone(), edge.kind))
     });
 }

@@ -14,9 +14,6 @@ def pageSizeMax : Nat := 50
 /-- The maximum number of search space selectors before deduplication. -/
 def spacesMax : Nat := 16
 
-/-- The maximum number of raw search tag filters. -/
-def tagsMax : Nat := 16
-
 /-- The maximum consumed depth of a relevance cursor. -/
 def relevanceDepthMax : Nat := 5000
 
@@ -106,9 +103,6 @@ def hnswEfSearchMax : Nat := 1000
 
 /-- The minimum admitted HNSW iterative scan tuple cap. -/
 def hnswScanTuplesMin : Nat := 1
-
-/-- The maximum admitted HNSW iterative scan tuple cap. -/
-def hnswScanTuplesMax : Nat := 2147483647
 
 /-- What a candidate source can conclude about the search window. -/
 inductive CandidateBound where
@@ -263,7 +257,7 @@ def languageStamp : LanguagePolicy → LanguageStamp
   | .pinned => .pinnedConfig
   | .pinnedUnion => .firstPinnedConfig
 
-/-- A ready substring leg is used only when the schema opted in and returned no ranked hits. -/
+/-- A substring leg is used only when the schema opted in and returned no ranked hits. -/
 def usesSubstring : (declared : Bool) → (rankedHit : Bool) → Bool
   | true, false => true
   | true, true | false, true | false, false => false
@@ -363,7 +357,7 @@ inductive HybridStage where
   | pageFusedResults
   deriving DecidableEq
 
-/-- Apply each leg's raw floor before one-based reciprocal ranking and then page the weighted sum. -/
+/-- Apply each leg's raw floor before reciprocal ranking and then page the weighted sum. -/
 def hybridStages : List HybridStage := [.floorEachLeg, .rankEachLeg, .sumWeightedReciprocals, .pageFusedResults]
 
 /-- Ranked search can retain a fixed horizon, widen with cursor depth or push the keyset into the candidate scan. -/
@@ -404,9 +398,6 @@ def hnswDefaultBreadth : Nat := 100
 /-- Default tuple limit for iterative HNSW scans. -/
 def hnswDefaultTupleCap : Nat := 20000
 
-/-- Default mode for iterative HNSW scans. -/
-def hnswDefaultMode : String := "relaxed_order"
-
 /-- Index bounds distinguish a capped chunk scan from a proof of Memory exhaustion. -/
 def chunkCandidateBound : (empty : Bool) → (reachedCap : Bool) → CandidateBound
   | true, true | true, false => .complete
@@ -415,21 +406,6 @@ def chunkCandidateBound : (empty : Bool) → (reachedCap : Bool) → CandidateBo
 
 /-- The HTTP response carries hits without the source's completeness claim. -/
 def httpCandidateBound : CandidateBound := .unknown
-
-/-- Sources of score for a returned search hit. -/
-inductive HitScore where
-  | lexical
-  | semantic
-  | hybridWeightedRanks
-  | storeRank
-  deriving DecidableEq
-
-/-- The score source on an effective search lane, or the replacement score of a federated merge. -/
-def scoreSource : SearchMode → (federated : Bool) → HitScore
-  | .lexical, false => .lexical
-  | .semantic, false => .semantic
-  | .hybrid, false => .hybridWeightedRanks
-  | .lexical, true | .semantic, true | .hybrid, true => .storeRank
 
 /-- Accept a comparable band with ordered endpoints both inside the score interval. -/
 def admitComparableBand : (floorInRange : Bool) → (ceilingInRange : Bool) → (ordered : Bool) → Bool

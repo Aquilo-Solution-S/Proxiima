@@ -1318,8 +1318,10 @@ pub struct Surface {
 /// Where a spiice's search verb ranks, and therefore which shape of
 /// statement serves it.
 ///
-/// The generated renderer derives eligibility from resolved render bands.
-/// A spiice-owned SQL statement carries its own provenance and is reviewed with that tool.
+/// The core renderer reads the declared rank source. Freeze checks the
+/// declaration's uniformity and trusts a [`Self::Projection`] claim about
+/// the SQL a spiice runs. A false claim can give that spiice a statement
+/// shape it cannot use. The usual access checks still apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RankSource {
     /// Rank the projection ALONE, then join the owning sidecar for the
@@ -1366,7 +1368,8 @@ impl RankSource {
 /// freeze error naming the schema and the band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BandComparability {
-    /// Scores share the core scale, with finite ordered band endpoints in the unit interval.
+    /// Scores share the core scale, with finite ordered band endpoints in
+    /// the unit interval, so a merge may compare scores directly.
     CoreBands,
     /// Scores use a different scale for the reason recorded in `why`.
     Divergent { why: &'static str },

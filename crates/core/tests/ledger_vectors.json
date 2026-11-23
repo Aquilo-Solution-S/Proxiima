@@ -97,13 +97,6 @@
   {"out": "gt", "in": ["gt", "gt", "lt"]},
   {"out": "gt", "in": ["gt", "gt", "eq"]},
   {"out": "gt", "in": ["gt", "gt", "gt"]}],
- "Proxiima.Search.scoreSource":
- [{"out": "storeRank", "in": ["lexical", true]},
-  {"out": "lexical", "in": ["lexical", false]},
-  {"out": "storeRank", "in": ["semantic", true]},
-  {"out": "semantic", "in": ["semantic", false]},
-  {"out": "storeRank", "in": ["hybrid", true]},
-  {"out": "hybridWeightedRanks", "in": ["hybrid", false]}],
  "Proxiima.Search.retireConfiguration":
  [{"out": false, "in": [true, true]},
   {"out": false, "in": [true, false]},

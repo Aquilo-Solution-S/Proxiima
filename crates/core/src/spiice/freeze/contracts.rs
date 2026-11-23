@@ -480,7 +480,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    fn validate_projection_language(
+    pub(super) fn validate_projection_language(
         contract: &crate::spiice::contract::SpiiceContract,
         schema: &crate::spiice::contract::SchemaContract,
     ) -> Result<(), SpiiceRegistryError> {

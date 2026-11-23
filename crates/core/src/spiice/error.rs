@@ -672,7 +672,7 @@ pub enum SpiiceRegistryError {
     #[error(
         "spiice {spiice_id} claims BandComparability::CoreBands, but schema \
          {schema_id} declares band {band:?} as {window}. Comparable bands need finite, \
-         ordered endpoints in [0, 1]"
+         ordered endpoints in [0, 1] so the merge can compare scores on the same scale"
     )]
     ProjectionBandOutsideCoreWindow {
         spiice_id: &'static str,

@@ -36,8 +36,7 @@ const HNSW_EF_SEARCH_RANGE: RangeInclusive<u32> =
     proxiima_core::ledger!(Proxiima.Search.hnswEfSearchMin)
         ..=proxiima_core::ledger!(Proxiima.Search.hnswEfSearchMax);
 const HNSW_MAX_SCAN_TUPLES_RANGE: RangeInclusive<u32> =
-    proxiima_core::ledger!(Proxiima.Search.hnswScanTuplesMin)
-        ..=proxiima_core::ledger!(Proxiima.Search.hnswScanTuplesMax);
+    proxiima_core::ledger!(Proxiima.Search.hnswScanTuplesMin)..=i32::MAX as u32;
 
 /// pgvector's `hnsw.iterative_scan` mode for the semantic branch's session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

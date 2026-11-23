@@ -108,7 +108,7 @@ pub fn parse_observed_at(raw: Option<&str>) -> Result<Option<time::OffsetDateTim
 }
 
 /// Upper bound on distinct normalized tags per memory.
-pub(super) const MAX_TAGS: usize = 16;
+pub(in crate::catalog::core_tools) const MAX_TAGS: usize = 16;
 
 /// Upper bound on one normalized tag, in characters.
 pub(super) const MAX_TAG_CHARS: usize = 48;

@@ -408,18 +408,11 @@ impl VectorIndex for VectorIndexClient {
         let candidates = answer
             .candidates
             .into_iter()
-            .map(|candidate| {
-                if !proxiima_core::verbs::query::valid_search_score(candidate.score) {
-                    return Err(StorageError::Unavailable(
-                        "vector index nearest answered a score outside 0..=1".into(),
-                    ));
-                }
-                Ok(VectorCandidate {
-                    memory_id: MemoryId::new(candidate.memory_id),
-                    similarity_score: candidate.score,
-                })
+            .map(|candidate| VectorCandidate {
+                memory_id: MemoryId::new(candidate.memory_id),
+                similarity_score: candidate.score,
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         Ok(VectorCandidatePage::new(
             candidates,
             // `Proxiima.Search.httpCandidateBound`.
@@ -493,7 +486,7 @@ pub fn vector_index_router(
         .with_state(Arc::new(indexes))
 }
 
-/// Authenticate the request before dispatch.
+/// Authenticate the request before dispatch by comparing the token digests in constant time.
 async fn authenticate(
     State(expected): State<sha2::digest::Output<Sha256>>,
     request: Request,

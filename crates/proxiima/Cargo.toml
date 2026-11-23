@@ -43,7 +43,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 # The vector index router compares token digests (`vector_index_http`).
 sha2 = { workspace = true }
-subtle = "2.6"
+subtle = { workspace = true }
 opentelemetry = { workspace = true }
 tokio = { workspace = true, features = ["net", "signal", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }

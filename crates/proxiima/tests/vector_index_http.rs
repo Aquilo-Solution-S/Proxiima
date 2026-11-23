@@ -335,9 +335,8 @@ impl VectorIndex for Lying {
     }
 }
 
-/// The client parses each answer where it enters the store: more candidates
-/// than the window, a score outside `0..=1`, and entries out of key order or
-/// past the limit are the index failing, not results.
+/// The client refuses answers past the requested window and entries outside
+/// the requested keyset page.
 #[tokio::test]
 async fn the_client_refuses_answers_that_break_the_port() {
     let candidate = |score| VectorCandidate {
@@ -363,7 +362,7 @@ async fn the_client_refuses_answers_that_break_the_port() {
                 vec![entry(2), entry(1)],
             ),
         ),
-        (2, lying(vec![candidate(1.5)], vec![entry(1), entry(2)])),
+        (2, lying(vec![], vec![entry(1), entry(2)])),
     ]))
     .await;
     let query = vector([1.0, 0.0]);
@@ -400,22 +399,6 @@ async fn the_client_refuses_answers_that_break_the_port() {
             .is_ok()
     );
     assert!(
-        unavailable(
-            second
-                .nearest(
-                    &VectorCandidateFilter {
-                        owners: vec![owner(1)],
-                        memories: vec![],
-                    },
-                    &query,
-                    5,
-                )
-                .await
-                .map(drop),
-        ),
-        "score above 1"
-    );
-    assert!(
         unavailable(first.entries(None, 5).await.map(drop)),
         "out of key order"
     );
@@ -431,6 +414,68 @@ async fn the_client_refuses_answers_that_break_the_port() {
     assert!(
         unavailable(first.put(memory(1), owner(1), 1, &[query]).await),
         "an index failure is the index down"
+    );
+}
+
+#[tokio::test]
+async fn search_refuses_an_out_of_range_score_from_the_http_index() {
+    use proxiima_core::storage_ports::MemoryReadPort;
+    use proxiima_core::test_fixtures::owner_scope_for_tests;
+    use proxiima_core::verbs::query::{
+        MemorySearchRequest, MemorySearchScope, SearchMode, SearchOrder, SupersessionStatus,
+        TagMatch,
+    };
+    use proxiima_storage_pg::test_fixtures::{TestNote, fresh_pg_host_index};
+
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let candidate_id = MemoryId::new(Uuid::now_v7());
+    let served = serve(BTreeMap::from([(
+        1,
+        Arc::new(Lying {
+            candidates: vec![VectorCandidate {
+                memory_id: candidate_id,
+                similarity_score: 1.5,
+            }],
+            entries: vec![],
+        }) as Arc<dyn VectorIndex>,
+    )]))
+    .await;
+    let index = client(&served, 1);
+    let (pg, _db) = fresh_pg_host_index("http_index_invalid_score", Arc::new(index)).await;
+    TestNote::new("Index result", "Hydrated from memory")
+        .create(&pg, owner)
+        .await
+        .unwrap();
+    let scope = owner_scope_for_tests(&[owner]);
+    let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let request = MemorySearchRequest {
+        scope: MemorySearchScope::Owner(owner),
+        read_owners: vec![owner],
+        query: "index result".into(),
+        mode: SearchMode::Semantic,
+        supersession: SupersessionStatus::HeadsOnly,
+        limit: 1,
+        kind: None,
+        schema_id: None,
+        tags: vec![],
+        tag_match: TagMatch::All,
+        since: None,
+        until: None,
+        order: SearchOrder::Relevance,
+        min_score: None,
+        semantic_weight: None,
+        after: None,
+        semantic: Some(vector([1.0, 0.0])),
+    };
+    let result = pg
+        .search_memories(Some(&scope), &request, registry.search_projections())
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(StorageError::Unavailable(ref message)) if message.contains("score outside 0..=1")
+        ),
+        "{result:?}",
     );
 }
 

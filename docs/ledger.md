@@ -6969,13 +6969,6 @@ stateDiagram-v2
 - iterativeScan
 - scanTupleCap
 
-**Hit score**: Sources of score for a returned search hit.
-
-- lexical
-- semantic
-- hybridWeightedRanks
-- storeRank
-
 **Language declaration**: Shape of a lexical declaration at freeze.
 
 - pinned
@@ -7008,8 +7001,6 @@ stateDiagram-v2
 **page size max** = 50: The maximum number of hits in a Memory search page.
 
 **spaces max** = 16: The maximum number of search space selectors before deduplication.
-
-**tags max** = 16: The maximum number of raw search tag filters.
 
 **relevance depth max** = 5000: The maximum consumed depth of a relevance cursor.
 
@@ -7071,8 +7062,6 @@ stateDiagram-v2
 
 **hnsw scan tuples min** = 1: The minimum admitted HNSW iterative scan tuple cap.
 
-**hnsw scan tuples max** = 2147483647: The maximum admitted HNSW iterative scan tuple cap.
-
 **candidate stages** = \[restrictToAdmissible, boundRankedWindow, admitVisibleMemory, selectPage, hydrateSnippet]: Spend the lexical projection window on admissible candidates, read visible Memories, then hydrate the selected page.
 
 **projection requirements** = \[comparableScale, rendererBands, matchesRequestedKind, matchesRequestedSchema, supportsRequestedTags]: An unscoped search still requires the renderer's comparable bands and narrows only by supplied filters.
@@ -7091,13 +7080,11 @@ stateDiagram-v2
 
 **tag filter stages** = \[capRawList, trim, foldAscii, discardBlank, sort, deduplicate]: Bound raw filters before normalizing them to distinct nonblank exact tags.
 
-**hybrid stages** = \[floorEachLeg, rankEachLeg, sumWeightedReciprocals, pageFusedResults]: Apply each leg's raw floor before one-based reciprocal ranking and then page the weighted sum.
+**hybrid stages** = \[floorEachLeg, rankEachLeg, sumWeightedReciprocals, pageFusedResults]: Apply each leg's raw floor before reciprocal ranking and then page the weighted sum.
 
 **hnsw default breadth** = 100: Default HNSW search breadth.
 
 **hnsw default tuple cap** = 20000: Default tuple limit for iterative HNSW scans.
-
-**hnsw default mode** = "relaxed\_order": Default mode for iterative HNSW scans.
 
 **http candidate bound** = unknown: The HTTP response carries hits without the source's completeness claim.
 
@@ -7199,7 +7186,7 @@ stateDiagram-v2
 | no | yes | no |
 | no | no | no |
 
-- uses substring: A ready substring leg is used only when the schema opted in and returned no ranked hits.
+- uses substring: A substring leg is used only when the schema opted in and returned no ranked hits.
 
 | relevance lanes | relevance order |
 | --- | --- |
@@ -7259,17 +7246,6 @@ stateDiagram-v2
 | no | no | unknown |
 
 - chunk candidate bound: Index bounds distinguish a capped chunk scan from a proof of Memory exhaustion.
-
-| search mode | federated | score source |
-| --- | --- | --- |
-| lexical | yes | storeRank |
-| lexical | no | lexical |
-| semantic | yes | storeRank |
-| semantic | no | semantic |
-| hybrid | yes | storeRank |
-| hybrid | no | hybridWeightedRanks |
-
-- score source: The score source on an effective search lane, or the replacement score of a federated merge.
 
 | floor in range | ceiling in range | ordered | admit comparable band |
 | --- | --- | --- | --- |

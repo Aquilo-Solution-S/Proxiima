@@ -831,6 +831,7 @@ lists the wire. The client speaks plaintext only to loopback or a named
 plaintext host.
 
 `nearest` returns a `VectorCandidatePage` with an explicit `CandidateBound`.
+A host `VectorIndex` returns finite scores in 0..=1; any other score fails the search.
 Keep the source's claim through local admission; fewer authorized results do
 not prove that the source was exhausted. The existing HTTP wire carries only
 candidates, so `VectorIndexClient` reports `Unknown` even for a short answer.

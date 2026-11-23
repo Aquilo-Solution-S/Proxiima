@@ -671,7 +671,10 @@ fn substring_leg_sql_parts(
     // A flat band: the substring arm ranks nothing, it only admits — hence
     // zero width, and no `ts_rank` call to normalize.
     let mut floor = SqlText::new("");
-    floor.push_f32_fixed(bands.substring.floor, 2)?;
+    floor.push_f32_fixed(
+        bands.substring.floor,
+        proxiima_core::ledger!(Proxiima.Search.bandDecimalPlaces),
+    )?;
     // Same reason as the ranked arm's: this window is shared across the
     // missing schemas now, so a row admission will drop must not spend a
     // slot in it. See `admit_side_restriction`.
@@ -941,13 +944,19 @@ fn ranked_projection_sql_parts(
 
 /// The band's floor, at two decimals as `Band::parts` renders it.
 fn push_band_floor(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
-    sql.push_f32_fixed(band.floor, 2)?;
+    sql.push_f32_fixed(
+        band.floor,
+        proxiima_core::ledger!(Proxiima.Search.bandDecimalPlaces),
+    )?;
     Ok(())
 }
 
 /// The band's width, at two decimals as `Band::parts` renders it.
 fn push_band_width(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
-    sql.push_f32_fixed(band.ceiling - band.floor, 2)?;
+    sql.push_f32_fixed(
+        band.ceiling - band.floor,
+        proxiima_core::ledger!(Proxiima.Search.bandDecimalPlaces),
+    )?;
     Ok(())
 }
 
@@ -1276,7 +1285,6 @@ fn admit_side_restriction(
 /// Load snippets by sidecar key for the rows that made the page, using the
 /// lineage loader. A row without a loaded snippet keeps an empty snippet.
 /// Admission checks declared sidecar presence independently of hydration.
-/// `Proxiima.Payloads.enforceStamp`.
 async fn hydrate_snippets_on_connection(
     connection: &mut PgConnection,
     projections: &[MemorySearchProjection],
