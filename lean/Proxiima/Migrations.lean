@@ -78,13 +78,6 @@ def recordedVersionAdmitted : MissingVersionPolicy → (shipped : Bool) → Bool
   | .reject, false => false
   | .reject, true | .allow, false | .allow, true => true
 
-/-- Checks retained under either missing-version policy. -/
-inductive LedgerIntegrityCheck where
-  | successfulRows
-  | shippedChecksums
-  | ledgerAssignment
-  deriving DecidableEq
-
 /-- The private lane's relationship to unknown history when work is pending. -/
 inductive PrivateLaneHistory where
   | pendingRootBesideUnknown
@@ -147,12 +140,6 @@ inductive SourceOrder where
 def sourceOrder : List SourceOrder :=
   [.coreFirst, .linkedSourcesInCompositionOrder, .upMigrationsInMigratorOrder]
 
-/-- Conflicts checked before connecting to a composed database. -/
-inductive SourceConflict where
-  | duplicateUpVersionAcrossComposition
-  | duplicateResolvedPrivateLedger
-  deriving DecidableEq
-
 /-- Placement of migration ledgers. -/
 inductive LedgerSelection where
   | coreDefault
@@ -175,22 +162,6 @@ def ledgerPlacement : LedgerSelection → LedgerPlacement
 
 /-- Maximum byte length of a spiice id in a derived ledger name. -/
 def maxLedgerIdBytes : Nat := 40
-
-/-- Normalization used to compare migration ledger names. -/
-inductive IdentifierRule where
-  | quotedPartsPreserveCaseAndUnescapeQuotes
-  | unquotedPartsFoldAscii
-  | truncateOnCharacterBoundary
-  | unqualifiedLedgerResolvesToPublic
-  deriving DecidableEq
-
-/-- Migration work that shares the same advisory lock. -/
-inductive LockHolder where
-  | fullRunSession
-  | planSnapshotSession
-  | preflightSnapshotSession
-  | sourceTransaction
-  deriving DecidableEq
 
 /-- The advisory lock key shared by migration sessions and source transactions. -/
 def lockKey : Nat := 0x70726f786d696772
@@ -301,13 +272,6 @@ inductive ResetWork where
 def resetCommit : List ResetWork :=
   [.dropProxiimaSchemas, .dropCompiledSpiiceLedgers, .deleteUnattributedAndDependentRowsOnOptIn,
    .deleteAttributableSharedVersions]
-
-/-- Database and registry requirements of a retired Fact schema. -/
-inductive RetirementCheck where
-  | inactiveSchemaWithByKeyInverse
-  | unrestorable
-  | drainBeforeDestructiveDdl
-  deriving DecidableEq
 
 /-- Decisions on preflight failures requiring operator action. -/
 inductive ReadinessFailure where

@@ -32,7 +32,8 @@ projection declares the key; stateless schemas use
 boundary: `with_sidecars(...).await` validates declared key columns against
 the real SQL schema and must be awaited and propagated during boot.
 
-Core SQL reads follow [`Proxiima.DatabaseAuthority.MemorySqlRoute`](ledger.md#database-authority).
+Core Memory SQL declares whether it includes forgotten rows. Direct reads are
+reserved for row locks and policy or view definitions.
 
 Do not add a runtime spiice registry, raw spiice SQL against core tables,
 caller-supplied owner authorization, an edge table, generic JSON payload

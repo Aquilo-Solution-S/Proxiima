@@ -141,7 +141,7 @@ macro_rules! ledger {
     (Proxiima.Authentication.publicGrantTypes) => {
         ["authorization_code", "refresh_token"]
     };
-    // The public token endpoint authentication method used when registration omits the method and required when it supplies one.
+    // The public token endpoint authentication method.
     (Proxiima.Authentication.publicRegistrationAuthMethod) => {
         "none"
     };

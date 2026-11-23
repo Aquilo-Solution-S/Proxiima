@@ -66,7 +66,6 @@ impl PgIdent {
     ///
     /// `StorageError::Internal` when `value` is not one or two identifier
     /// parts.
-    // `Proxiima.DatabaseAuthority.SqlIdentifierForm`
     pub fn table(value: &str) -> Result<Self, StorageError> {
         if is_qualified_table_ident(value) {
             Ok(Self(value.to_owned()))
@@ -122,7 +121,6 @@ impl PgIdent {
     /// `StorageError::Internal` when `value` is empty, longer than 63 bytes
     /// (Postgres truncates silently, which would name another object) or
     /// contains NUL.
-    // `Proxiima.DatabaseAuthority.SqlIdentifierForm`
     pub fn quoted(value: &str) -> Result<Self, StorageError> {
         if value.is_empty() || value.len() > MAX_IDENTIFIER_BYTES || value.contains('\0') {
             return Err(StorageError::Internal(format!(
@@ -231,7 +229,6 @@ impl SqlText {
     ///
     /// `StorageError::Internal` for NaN or an infinity, which are not SQL
     /// numbers.
-    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_f32(&mut self, n: f32) -> Result<&mut Self, StorageError> {
         use std::fmt::Write as _;
         if !n.is_finite() {
@@ -266,7 +263,6 @@ impl SqlText {
     ///
     /// `StorageError::Internal` when the text holds NUL, which a literal
     /// cannot carry.
-    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_literal(&mut self, text: &str) -> Result<&mut Self, StorageError> {
         if text.contains('\0') {
             return Err(StorageError::Internal(format!(
@@ -292,7 +288,6 @@ impl SqlText {
     /// backslashes of the statement stay as written, so the literal reads as
     /// written under `standard_conforming_strings = on`, the server default
     /// since 9.1, which the store's functions already rely on.
-    // `Proxiima.DatabaseAuthority.SqlLiteralForm`
     pub fn push_sql_literal(&mut self, sql: &SqlText) -> &mut Self {
         self.0.push('\'');
         self.0.push_str(&sql.0.replace('\'', "''"));
@@ -319,7 +314,7 @@ impl SqlText {
     ///
     /// When a placeholder is empty.
     #[must_use]
-    // `Proxiima.DatabaseAuthority.SqlTemplateFill`
+    // Scan only the original text and prefer the longest key at each position.
     pub fn fill(template: &'static str, parts: &[(&'static str, &SqlText)]) -> Self {
         assert!(
             parts.iter().all(|(placeholder, _)| !placeholder.is_empty()),
@@ -373,7 +368,6 @@ impl From<sqlx::SqlStr> for SqlText {
 }
 
 impl sqlx::SqlSafeStr for SqlText {
-    // `Proxiima.DatabaseAuthority.SqlComposition`
     fn into_sql_str(self) -> sqlx::SqlStr {
         // The only `AssertSqlSafe` for composed SQL: `SqlText` holds only
         // program literals, checked identifiers, numbers, UUIDs, hex digits,
@@ -427,7 +421,6 @@ impl SqlBuilder {
     }
 
     /// Append the next placeholder and bind `value` to it.
-    // `Proxiima.DatabaseAuthority.SqlComposition`
     pub fn push_bind<'t, T>(&mut self, value: T) -> &mut Self
     where
         T: Encode<'t, Postgres> + Type<Postgres>,

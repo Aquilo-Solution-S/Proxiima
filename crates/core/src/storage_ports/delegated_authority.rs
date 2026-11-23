@@ -337,7 +337,7 @@ impl DelegationGrant {
         expires_at: SystemTime,
         issued_at: SystemTime,
     ) -> Self {
-        // `Proxiima.Authentication.GrantHandle`.
+        // A queued job keeps this UUIDv7 handle, never the bearer.
         let delegation_id = DelegationId::from_uuid(Uuid::now_v7());
         Self {
             delegation_id,

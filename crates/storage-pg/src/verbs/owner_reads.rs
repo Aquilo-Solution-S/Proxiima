@@ -90,7 +90,6 @@ pub async fn memory_versions(
     owner: &OwnerId,
     memory_ids: &[MemoryId],
 ) -> Result<Vec<MemoryVersion>, StorageError> {
-    // `Proxiima.DatabaseAuthority.ScopedRead`
     let rows: Vec<VersionRow> = sqlx::query_as(VERSIONS_OF_IDS_SQL)
         .bind(owner.into_inner())
         .bind(raw_ids(memory_ids))
@@ -142,7 +141,6 @@ pub async fn lock_memory_shared(
     owner: &OwnerId,
     memory_id: MemoryId,
 ) -> Result<Option<MemoryVersion>, StorageError> {
-    // `Proxiima.DatabaseAuthority.ScopedRead`
     let row: Option<VersionRow> = sqlx::query_as(LOCK_ONE_SQL)
         .bind(owner.into_inner())
         .bind(memory_id.into_inner())

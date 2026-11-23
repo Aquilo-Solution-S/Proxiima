@@ -61,7 +61,7 @@ impl PgSidecarRegistryFrozen {
     /// `owner_rls_table` record nor a Follows marker, or whose owner policies
     /// differ from the text `owner_rls_apply_policies` recorded, and propagates
     /// database errors.
-    // `Proxiima.DatabaseAuthority.OwnerPolicyCheck` `Proxiima.DatabaseAuthority.FollowsPolicy`
+    // Follows RLS requires a recorded marker, a live Memory and an index leading with owner_id.
     pub async fn ensure_owner_rls(&self, conn: &mut PgConnection) -> Result<(), StorageError> {
         let expected = self.owner_follows_memory_sidecar_tables();
         let absent: Vec<String> = sqlx::query_scalar(

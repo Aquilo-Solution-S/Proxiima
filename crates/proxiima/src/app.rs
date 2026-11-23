@@ -25,7 +25,11 @@ pub struct AppInfo {
 pub trait SpiiceApp: SpiiceBundle {
     fn app_info() -> AppInfo;
 
-    /// Supply application defaults. A spiice that wants MCP by default sets
+    /// The app's defaults are the lowest configuration layer, under the environment
+    /// and the host's own builder calls. In tuples, later elements override fields
+    /// set by earlier ones (`Proxiima.Configuration.lastConfiguredSlot`).
+    ///
+    /// A spiice that wants MCP by default sets
     /// [`RuntimeBuilder::mcp_bind`] here.
     ///
     /// A second [`RuntimeBuilder::host_state_participant`] registration refuses boot.

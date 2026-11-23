@@ -42,7 +42,6 @@ impl RuntimeGrants {
         schemas: Vec<String>,
         ledgers: Vec<String>,
     ) -> Result<Self, ProxiimaError> {
-        // `Proxiima.DatabaseAuthority.GrantRoleCheck`
         let runtime_role = url_user(database_url, "DATABASE_URL")?;
         let platform_role = url_user(platform_database_url, "PROXIIMA_PLATFORM_DATABASE_URL")?;
         if runtime_role == platform_role {
@@ -226,7 +225,6 @@ pub(crate) fn ledger_names(migrators: &[NamedMigrator]) -> Vec<String> {
 
 fn url_user(url: &str, variable: &str) -> Result<String, ProxiimaError> {
     // The parse error is not echoed: it could carry URL fragments.
-    // `Proxiima.DatabaseAuthority.ConnectionDiagnostic`
     PgConnectOptions::from_str(url)
         .map(|options| options.get_username().to_owned())
         .map_err(|_| ProxiimaError::Config(format!("{variable} is not a valid Postgres URL")))
@@ -294,7 +292,7 @@ fn grant_statements(
 ) -> Result<Vec<GrantStatement>, ProxiimaError> {
     let runtime = quoted(runtime_role)?;
     let mut statements = Vec::new();
-    // `Proxiima.DatabaseAuthority.SchemaGrant`
+    // Grants stay scoped to each composed schema and confer no ownership or role membership.
     for name in schemas {
         let schema = quoted(name)?;
         let schema_statement = |class, template| {
@@ -325,8 +323,7 @@ fn grant_statements(
             ),
         ]);
         if name == CORE_SCHEMA {
-            // The blanket grant above also covers core views, which are read-only.
-            // `Proxiima.DatabaseAuthority.ReadOnlyGrant`
+            // The blanket table grant also covers views.
             statements.push(GrantStatement::new(
                 "RESTRICT core view grants",
                 name,
@@ -351,7 +348,7 @@ fn grant_statements(
             ),
         ]);
     }
-    // `Proxiima.DatabaseAuthority.ReadOnlyGrant`
+    // Runtime can read migration ledgers, with schema usage added only where needed.
     let mut ledger_schemas: Vec<&String> = ledgers
         .iter()
         .filter(|ledger| !ledger.runtime_schema_usage && !schemas.contains(&ledger.schema))
@@ -460,7 +457,6 @@ mod tests {
                 assert!(sql.contains(&expected.as_str()), "missing {expected}");
             }
         }
-        // `Proxiima.DatabaseAuthority.SchemaGrant`
         for statement in &sql {
             if statement.starts_with("REVOKE") {
                 continue;

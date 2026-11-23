@@ -181,9 +181,7 @@ impl PgPoolConfig {
         // PgBouncer refuses startup parameters it does not know, so the
         // connection is refused before it starts. Binary results, which
         // prepared queries use, are unaffected either way.
-        // `Proxiima.DatabaseAuthority.PoolerCompatibility`
         options = options.extra_float_digits(None::<i8>);
-        // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
         if self.statement_timeout != OMIT_STATEMENT_TIMEOUT {
             options = options.options([(
                 "statement_timeout",

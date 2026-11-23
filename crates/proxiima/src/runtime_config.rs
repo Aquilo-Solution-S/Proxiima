@@ -1127,7 +1127,6 @@ impl RuntimeBuilder {
                 DUPLICATE_HOST_STATE_PARTICIPANT.into(),
             ));
         }
-        // `Proxiima.DatabaseAuthority.RequiredStorageSetting`
         let database_url = self
             .database_url
             .take()
@@ -1301,7 +1300,6 @@ impl StorageConfig {
     /// [`Self::migration_database_url`] when set, otherwise
     /// [`Self::platform_database_url`].
     #[must_use]
-    // `Proxiima.DatabaseAuthority.MigrationConnection`
     pub fn migrations_url(&self) -> &str {
         self.migration_database_url
             .as_deref()
@@ -1327,7 +1325,6 @@ impl StorageConfig {
 
 impl std::fmt::Debug for StorageConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `Proxiima.DatabaseAuthority.ConnectionDiagnostic`
         f.debug_struct("StorageConfig")
             .field("database_url", &"<redacted>")
             .field("store_number", &self.store_number)
@@ -1916,14 +1913,12 @@ fn embedding_runtime_policy_env_is_set(lookup: &(impl proxiima_core::EnvLookup +
 fn check_migration_database_url(migration: &str, platform: &str) -> Result<(), ProxiimaError> {
     use std::str::FromStr as _;
 
-    // `Proxiima.DatabaseAuthority.ConnectionDiagnostic`
     let parse = |url: &str, variable: &str| {
         sqlx::postgres::PgConnectOptions::from_str(url)
             .map_err(|_| ProxiimaError::Config(format!("{variable} is not a valid Postgres URL")))
     };
     let migration = parse(migration, "PROXIIMA_MIGRATION_DATABASE_URL")?;
     let platform = parse(platform, "PROXIIMA_PLATFORM_DATABASE_URL")?;
-    // `Proxiima.DatabaseAuthority.MigrationConnection`
     if migration.get_username() != platform.get_username() {
         return Err(ProxiimaError::Config(
             "PROXIIMA_MIGRATION_DATABASE_URL must connect as the role of \

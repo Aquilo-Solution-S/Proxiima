@@ -3,8 +3,16 @@
 /// How a memory sidecar relates to its memory's owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarOwnerMode {
+    /// With no `owner_id` column, the row reaches its owner through its Memory.
     None,
+    /// Stamps the Memory's owner at insert and keeps it when the Memory transfers
+    /// (`TransferRule::RetainAtSource`). Memory-following forget skips the row.
+    /// Owner erase and export use the stamp. Source erase also matches the
+    /// Memory's source (`Proxiima.Payloads.pinnedInverse`).
     Pinned,
+    /// Stamps the Memory's owner at insert and keeps them equal. Transfer rehomes the
+    /// row, forget processes it with the Memory, and erase and export use its current
+    /// owner. A forgotten Memory hides the row from owner reads.
     Follows,
 }
 

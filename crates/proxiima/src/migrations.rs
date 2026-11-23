@@ -772,7 +772,7 @@ struct SessionLock<'c> {
 
 impl<'c> SessionLock<'c> {
     async fn acquire(conn: &'c mut PgConnection) -> Result<Self, sqlx::Error> {
-        // `Proxiima.Migrations.LockHolder`
+        // The migration run, pending plan and preflight snapshots share this lock.
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(MIGRATION_LOCK_KEY)
             .execute(&mut *conn)
@@ -1024,7 +1024,6 @@ async fn pin_migration_search_path(conn: &mut PgConnection) -> Result<(), sqlx::
         .execute(&mut *conn)
         .await?;
     // `acquire_session_connection` marks this connection close-on-drop.
-    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
     sqlx::query("SET statement_timeout = 0")
         .execute(&mut *conn)
         .await?;
@@ -1434,7 +1433,6 @@ async fn prepare_ledger(
     };
     let mut tx = conn.begin().await.map_err(map_err)?;
     // Prepare the ledger under the same lock as the run and read snapshots.
-    // `Proxiima.Migrations.LockHolder`
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(tx.as_mut())
@@ -1762,8 +1760,7 @@ async fn validate_ledgers(
     ensure_core_ledger_compatible_on_connection_with_policy(conn, MissingMigrationPolicy::Allow)
         .await
         .map_err(MigrationError::CorePreflight)?;
-    // These integrity checks apply under either missing-version policy.
-    // `Proxiima.Migrations.LedgerIntegrityCheck`
+    // Both missing-version policies require successful rows, shipped checksums and correct ledger assignment.
     let assignments: BTreeMap<i64, &NamedMigrator> = sources
         .iter()
         .flat_map(|&source| {
@@ -1923,7 +1920,6 @@ pub(crate) fn check_lineup(sources: &[NamedMigrator]) -> Result<(), MigrationErr
 /// The refusals that need no database, for core followed by the host's
 /// sources: a run raises them before it connects, a plan likewise.
 fn validate_sources(sources: &[&NamedMigrator]) -> Result<(), MigrationError> {
-    // `Proxiima.Migrations.SourceConflict`
     reject_duplicate_versions(sources)?;
     reject_shared_spiice_ledgers(sources)
 }

@@ -11,12 +11,6 @@ inductive DisplaySource where
 /-- The sources for a Memory display body in priority order. -/
 def displaySources : List DisplaySource := [.typedProjection, .readFallback]
 
-/-- The node kinds a payload reference can target. -/
-inductive ReferenceTarget where
-  | memoryVersion
-  | goalVersion
-  deriving DecidableEq
-
 /-- The scope is present only when its kind is declared and its row ID is supplied. -/
 def scopeSelection : (declared : Bool) → (hasScopeId : Bool) → Bool
   | true, true => true
@@ -223,7 +217,7 @@ inductive SidecarOwnerMode where
   | follows
   deriving DecidableEq
 
-/-- Pinned and Follows sidecars stamp the row's own owner at insertion. -/
+/-- Pinned and Follows sidecars stamp their Memory's owner into their own column at insertion. -/
 def stampsOwner : SidecarOwnerMode → Bool
   | .none => false
   | .pinned | .follows => true
@@ -377,19 +371,13 @@ inductive StorageSchemaSource where
 def storageSchemaCensus : List StorageSchemaSource :=
   [.core, .activeSurface, .registeredSidecar, .retiredSurface]
 
-/-- The search and embedding consumers of a payload column. -/
-inductive PayloadColumnConsumer where
-  | search
-  | embedding
-  deriving DecidableEq
-
 /-- The contract checks required before a pending transfer refusal can be used. -/
 inductive TransferRefusalPart where
   | reason
   | enforcementSite
   deriving DecidableEq
 
-/-- A schema-declared transfer refusal carries its reason and at least one enforcement site. -/
+/-- A schema-declared transfer refusal carries its reason and its enforcement site. -/
 def transferRefusalParts : List TransferRefusalPart := [.reason, .enforcementSite]
 
 /-- The identifiers and behavior reconciled against core when binding a storage registration. -/
@@ -433,7 +421,7 @@ inductive SidecarWriteLeg where
   | derivedProjection
   deriving DecidableEq
 
-/-- A sidecar write uses one frozen entry and one transaction for both legs. -/
+/-- The two legs of a sidecar write. -/
 def sidecarWrite : List SidecarWriteLeg := [.typedRow, .derivedProjection]
 
 /-- The data a surface contributes to an owner export. -/
@@ -455,7 +443,7 @@ inductive OwnedHeadColumn where
   | exactVersion
   deriving DecidableEq
 
-/-- The declared sidecar Memory key joins the current head under the current owner. -/
+/-- The columns read from the owned current sidecar head. -/
 def ownedHeadColumns : List OwnedHeadColumn := [.handle, .exactVersion]
 
 /-- The checks on a typed fork copy. -/
@@ -463,8 +451,6 @@ inductive ForkCopyCheck where
   | abstractionOrPerspective
   | explicitCopyPolicy
   | unpinnedSidecar
-  | sourceUse
-  | destinationWrite
   deriving DecidableEq
 
 /-- The sidecar loader requires an opted-in unpinned Abstraction or Perspective schema. -/

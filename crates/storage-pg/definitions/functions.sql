@@ -506,7 +506,7 @@ BEGIN
 END
 $function$;
 
--- `Proxiima.Migrations.RetirementCheck.drainBeforeDestructiveDdl`.
+-- Drain the retired Fact schema before destructive DDL.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_fact_schema_drained(
     retired_schema_id text, retiring_tables text[]
 ) RETURNS void
@@ -2097,8 +2097,7 @@ $function$;
 REVOKE ALL ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) FROM PUBLIC;
 COMMENT ON FUNCTION proxiima_core.install_reference(target_schema text, target_table text, reference_column text, referenced text, on_delete text) IS 'Installs the foreign key of one column of a spiice or host table to a core row, in a migration: referenced is memory (a uuid column, to proxiima_core.memory.t), owner (a uuid column, to proxiima_core.owners.owner_id) or lexical_language (a regconfig column, to proxiima_core.lexical_languages.config), on_delete is no_action or cascade. An owner reference, a lexical-language reference and a reference of a registered memory sidecar take no_action only. The constraint is named <table>_<column>_fkey; foreign keys the column already has are kept when each has the same delete action, and refused otherwise. Idempotent; platform scope only (docs/host-integration.md §Core references).';
 
--- Blanket table grants include views, so narrow the grant after applying them.
--- `Proxiima.DatabaseAuthority.CoreViewRule`
+-- Restore SELECT-only access to core views after blanket table grants.
 CREATE OR REPLACE FUNCTION proxiima_core.restrict_view_grants()
  RETURNS void
  LANGUAGE plpgsql
@@ -2147,7 +2146,7 @@ COMMENT ON FUNCTION proxiima_core.restrict_view_grants() IS 'Revokes every privi
 -- spiice sources, when a table may not exist yet and is only marked, and once
 -- after them. Marks of other schemas are left alone, so binaries composing
 -- different bundles over one database do not undo each other.
--- `Proxiima.DatabaseAuthority.FollowsPolicy`
+-- Follows RLS requires a recorded marker, a live Memory and an index leading with owner_id.
 CREATE OR REPLACE FUNCTION proxiima_core.sync_owner_follows(schemas text[], tables text[])
  RETURNS void
  LANGUAGE plpgsql
@@ -2239,7 +2238,7 @@ REVOKE ALL ON FUNCTION proxiima_core.sync_owner_follows(schemas text[], tables t
 COMMENT ON FUNCTION proxiima_core.sync_owner_follows(schemas text[], tables text[]) IS 'Host only: replaces the owner_follows marks of the composed schemas with the registry Follows tables, and gives each existing one the follows owner RLS (owner_id AND EXISTS over its memory) and a btree index leading with owner_id.';
 
 -- Remove records for dropped tables; sync_owner_follows regenerates Follows policies.
--- `Proxiima.DatabaseAuthority.OwnerPolicyCheck`
+-- Refresh recorded forced owner RLS after the definitions pass.
 CREATE OR REPLACE FUNCTION proxiima_core.reinstall_owner_rls()
  RETURNS void
  LANGUAGE plpgsql

@@ -74,7 +74,6 @@ impl PgSidecarRegistryFrozen {
     ///
     /// Returns `ConstraintViolation` when the frozen composition declares the schema retired.
     pub fn ensure_schema_restorable(&self, schema_id: &str) -> Result<(), StorageError> {
-        // `Proxiima.Migrations.RetirementCheck`
         if self
             .retired_facts
             .iter()
@@ -1000,7 +999,7 @@ impl PgSidecarWriter {
     /// not match the registered Rust type, or when the schema declares
     /// `LanguagePolicy::PerRow` and the write declares no language. Returns
     /// storage errors from the concrete inserter.
-    // `Proxiima.Payloads.sidecarWrite`.
+    // Both writes use one frozen entry and one transaction (`Proxiima.Payloads.sidecarWrite`).
     pub(crate) async fn insert_memory_sidecar(
         &self,
         tx: &mut Transaction<'_, Postgres>,

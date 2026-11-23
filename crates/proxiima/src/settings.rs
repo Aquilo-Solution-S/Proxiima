@@ -270,6 +270,10 @@ pub fn plain_text<'a>(rows: impl IntoIterator<Item = &'a Setting>) -> String {
 }
 
 /// Warn once for each undeclared `PROXIIMA_*` variable name while allowing startup.
+///
+/// Warnings include names only. A host may define names of its own and
+/// pass them here to mark them as declared
+/// (`Proxiima.Configuration.warnForName`).
 pub fn warn_unknown_env<'a>(host: impl IntoIterator<Item = &'a Setting>) {
     let names: Vec<String> = std::env::vars_os()
         .map(|(name, _)| name.to_string_lossy().into_owned())

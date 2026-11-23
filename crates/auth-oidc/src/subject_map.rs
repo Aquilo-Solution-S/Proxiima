@@ -154,7 +154,7 @@ impl OidcSubjectMap {
         subject: String,
         binding: SubjectBinding,
     ) -> Result<(), OidcSubjectMapError> {
-        // `Proxiima.Authentication.SubjectBinding`.
+        // Issuer, subject and principal must be nonempty.
         if issuer.is_empty() {
             return Err(OidcSubjectMapError::EmptyField {
                 index,
@@ -175,7 +175,7 @@ impl OidcSubjectMap {
                 .transpose()?,
         };
         let key = (issuer.clone(), subject.clone());
-        // `Proxiima.Authentication.SubjectBinding`.
+        // One binding per issuer and subject.
         if self.entries.contains_key(&key) {
             return Err(OidcSubjectMapError::DuplicateEntry { issuer, subject });
         }
@@ -194,7 +194,7 @@ impl OidcSubjectMap {
     /// Returns [`OidcSubjectMapError::InvalidJson`] when `raw` does not
     /// parse, or the per-entry validation errors from [`Self::insert`].
     pub fn from_json(raw: &str) -> Result<Self, OidcSubjectMapError> {
-        // `Proxiima.Authentication.SubjectBinding`.
+        // A malformed record refuses the whole map.
         let raw_entries: Vec<RawEntry> = serde_json::from_str(raw)
             .map_err(|err| OidcSubjectMapError::InvalidJson(err.to_string()))?;
         let mut map = Self::new();

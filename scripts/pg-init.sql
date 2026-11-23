@@ -19,7 +19,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS btree_gin;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- `Proxiima.DatabaseAuthority.DatabaseRole` `Proxiima.DatabaseAuthority.ScopedReader`
+-- The platform role owns relations. Serving uses owner RLS and dedicated read-only definers.
 DO $roles$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'proxiima_platform') THEN
@@ -74,7 +74,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE proxiima_goal_reader
 
 -- Empty SQLx ledgers: only SQLx records applied migrations. Creating these
 -- before the global defaults are used keeps runtime access read-only.
--- `Proxiima.DatabaseAuthority.ReadOnlyGrant`
 CREATE TABLE IF NOT EXISTS public._sqlx_migrations (
     version bigint PRIMARY KEY, description text NOT NULL,
     installed_on timestamptz NOT NULL DEFAULT now(), success boolean NOT NULL,
@@ -89,7 +88,7 @@ REVOKE ALL ON public._sqlx_migrations, public._sqlx_migrations_proxiima_example
 GRANT SELECT ON public._sqlx_migrations, public._sqlx_migrations_proxiima_example
     TO proxiima_runtime;
 
--- `Proxiima.DatabaseAuthority.CoreViewRule` `Proxiima.DatabaseAuthority.bootstrapOwnershipOrder`
+-- `Proxiima.DatabaseAuthority.bootstrapOwnershipOrder`
 DO $ownership$
 DECLARE object record;
 BEGIN

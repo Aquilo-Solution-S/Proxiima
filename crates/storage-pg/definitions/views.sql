@@ -1,4 +1,4 @@
--- `Proxiima.DatabaseAuthority.MemorySqlRoute` `Proxiima.DatabaseAuthority.CoreViewRule`
+-- Core Memory reads choose a view by forgotten-row visibility.
 -- In platform scope the view is the only filter for forgotten rows.
 -- A row lock needs UPDATE, which the serving role lacks on core views.
 -- A sidecar policy delegates visibility to the spine policy directly.
@@ -26,7 +26,6 @@ GRANT SELECT ON proxiima_core.live_memory, proxiima_core.memory_including_forgot
 -- functions. Their columns are the contract; core's tables are not.
 
 -- The join keeps the view non-updatable regardless of grants.
--- `Proxiima.DatabaseAuthority.CoreViewRule`
 CREATE OR REPLACE VIEW proxiima_core.memory_version WITH (security_invoker = true) AS
 SELECT m.t,
        m.handle,
@@ -41,5 +40,4 @@ SELECT m.t,
   LEFT JOIN proxiima_core.memory_head AS h ON h.handle = m.handle AND h.t = m.t;
 COMMENT ON VIEW proxiima_core.memory_version IS 'Memory versions for spiice and host SQL: read-only, under the caller''s row security. head is true for the version its series currently points at (docs/host-integration.md §SQL contract).';
 
--- `Proxiima.DatabaseAuthority.CoreViewRule`
 SELECT proxiima_core.restrict_view_grants();

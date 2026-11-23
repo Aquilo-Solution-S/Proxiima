@@ -189,7 +189,7 @@ pub(crate) async fn boot<A: SpiiceBundle>(
     config: &RuntimeConfig,
     parts: &RuntimeParts,
 ) -> Result<Booted, ProxiimaError> {
-    // `Proxiima.DatabaseAuthority.PreconnectionCheck`
+    // Resolve the embedding route before opening storage.
     let embedding_router =
         embedding_router_for(parts.embed_client.clone(), parts.embedding_router.clone())?;
     let ValidatedStorage {
@@ -275,7 +275,7 @@ async fn connect_serving_storage(
 ) -> Result<PgStorage, ProxiimaError> {
     let schema_names = composed_schema_names(registry);
     let schema_refs: Vec<&str> = schema_names.iter().map(String::as_str).collect();
-    // `Proxiima.Configuration.storagePolicySource`
+    // Pool and query policy come from the resolved config; boot reads no environment.
     // `Proxiima.DatabaseAuthority.connectionPurpose`
     let platform_pool = config
         .pg_pool_config
@@ -395,7 +395,7 @@ async fn connect_schema(
     vectors: VectorStorage,
     step: SchemaStep,
 ) -> Result<(), ProxiimaError> {
-    // `Proxiima.Configuration.storagePolicySource`
+    // Pool and query policy come from the resolved config; boot reads no environment.
     // `Proxiima.DatabaseAuthority.connectionPurpose`
     let migration_pg = proxiima_storage_pg::PgMigrationStorage::connect_with_config(
         config.migrations_url(),

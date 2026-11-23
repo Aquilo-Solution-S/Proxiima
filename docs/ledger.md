@@ -401,13 +401,6 @@
 - tryRefresh
 - waitForRefresh
 
-**Subject binding**: A configured issuer and subject map to a principal and optional runner, with empty keys, duplicate bindings and malformed records refused.
-
-- issuer
-- subject
-- principal
-- runner
-
 **Subject admission**: The possible admission results for a verified subject.
 
 - allow
@@ -468,7 +461,7 @@
 - factory
 - both
 
-**Authenticator slot**: Resolution keeps each layer's supplied form, rejects a selected layer with both forms and runs a selected factory after platform admission.
+**Authenticator slot**: Resolution keeps each layer's supplied form, rejects a selected layer with both forms.
 
 - inherit
 - useDirect
@@ -536,7 +529,7 @@
 - authorizationMetadata
 - registration
 
-**Registration check**: Registration takes at least one absolute redirect URL and public token endpoint authentication. The provider admits redirects.
+**Registration check**: Registration takes at least one absolute redirect URL and public token endpoint authentication.
 
 - nonemptyAbsoluteRedirects
 - publicAuthentication
@@ -545,10 +538,6 @@
 
 - flat
 - dispatcherLeaf
-
-**Grant handle**: A queued job stores an opaque redacted UUIDv7 grant handle and no bearer.
-
-- id
 
 **Grant issue check**: Issuance checks recorded before minting a grant for a finite verified host bearer.
 
@@ -658,7 +647,7 @@
 
 **registration checks** = \[nonemptyAbsoluteRedirects, publicAuthentication]: The redirect and token endpoint authentication checks on public-client registration.
 
-**public registration auth method** = "none": The public token endpoint authentication method used when registration omits the method and required when it supplies one.
+**public registration auth method** = "none": The public token endpoint authentication method.
 
 **delegated commands** = \[flat, dispatcherLeaf]: The two command kinds admitted for delegation, excluding resources and bare dispatchers.
 
@@ -792,7 +781,7 @@ stateDiagram-v2
 | no | matching | caller |
 | no | supplied | caller |
 
-- model label source: Verified model attestation survives narrowing; a different explicit label is refused and a blank label is omitted.
+- model label source: A verified model attestation supplies the label and conflicts with a different explicit label.
 
 **stream lifetime**: The first deadline starts closing, every pulled item is delivered, and closing ends at the budget, a pending poll or source EOF.
 
@@ -831,7 +820,7 @@ stateDiagram-v2
 | verifiedCollection | yes |
 | ownerReconciliation | no |
 
-- delegate blob operation: Verified collection needs a positive bound and owner reconciliation requires owner authority.
+- delegate blob operation: Owner reconciliation requires owner authority.
 
 ## Citations
 
@@ -1387,11 +1376,6 @@ stateDiagram-v2
 - earlier
 - later
 
-**Storage policy source**: The possible sources of storage policy during facade boot.
-
-- resolvedConfiguration
-- processEnvironment
-
 **Setting source**: The registered sources that supply operator documentation and host help.
 
 - facade
@@ -1406,13 +1390,11 @@ stateDiagram-v2
 - statedDefault
 - differentValue
 
-**storage policy source** = resolvedConfiguration: Facade storage boot consumes its resolved pool and query policy without a second environment lookup.
-
 **true words** = \["1", "true", "yes", "on"]: The case-insensitive boolean words that read as true after trimming.
 
 **false words** = \["0", "false", "no", "off"]: The case-insensitive boolean words that read as false after trimming.
 
-**documentation sources** = \[facade, core, postgres, objectStore, host]: The composition order for settings documentation and help, with development tools outside the composition.
+**documentation sources** = \[facade, core, postgres, objectStore, host]: The composition order for settings documentation and help.
 
 | presence | presence | presence | layer precedence |
 | --- | --- | --- | --- |
@@ -1425,7 +1407,7 @@ stateDiagram-v2
 | supplied | supplied | omitted | host |
 | supplied | supplied | supplied | host |
 
-- layer precedence: In host, environment, application order, the first supplied value wins, then built-in defaults; authenticators supplied in code take precedence over environment OIDC.
+- layer precedence: In host, environment, application order, the first supplied value wins, then built-in defaults.
 
 | lookup profile | setting group | reads group |
 | --- | --- | --- |
@@ -1438,7 +1420,7 @@ stateDiagram-v2
 | storageOnly | serving | no |
 | storageOnly | objectStore | no |
 
-- reads group: Storage commands read storage and its embedding runtime policy, with object configuration acquired separately by commands that need it.
+- reads group: Storage commands read only storage and its embedding runtime policy.
 
 | lookup text | lookup presence |
 | --- | --- |
@@ -1446,7 +1428,7 @@ stateDiagram-v2
 | blank | omitted |
 | nonblank | supplied |
 
-- lookup presence: A missing or blank setting is omitted, and nonblank text is passed to the reader trimmed.
+- lookup presence: A missing or blank setting is omitted.
 
 | environment name | warn for name |
 | --- | --- |
@@ -1454,7 +1436,7 @@ stateDiagram-v2
 | unknownProductName | yes |
 | unrelated | no |
 
-- warn for name: Warn once per unknown product name without exposing its value or refusing startup.
+- warn for name: Warn for an unknown product name.
 
 | presence | presence | last configured slot |
 | --- | --- | --- |
@@ -1475,115 +1457,11 @@ stateDiagram-v2
 
 ## Database authority
 
-**Database role**: The platform role owns relations, while the serving role uses owner-scoped access under RLS.
-
-- platform
-- runtime
-
 **Serving admission**: Serving admission checks the role split and the live relation and definer inventory after schema validation.
 
 - validateSchema
 - validatePlatform
 - validateRuntime
-
-**Platform binding check**: Platform transactions must match the validated database and effective role and retain their restricted role attributes.
-
-- database
-- effectiveRole
-- roleAttributes
-
-**System write authority**: System writes require a witness minted by consuming the engine and bound to that engine's boot.
-
-- consumeEngine
-- matchBootWitness
-
-**Owner transaction scope**: An owner transaction sets its sealed subject's memory ceilings and Goal access for that transaction only.
-
-- data
-- goalSubject
-- ownerManagement
-
-**Scoped read**: Scoped SPIICE reads reuse the caller's transaction; version and receipt locks last through it, and a shared memory lock requires write authority.
-
-- readInOwnerTransaction
-- lockReceiptAdmission
-- lockVersionWithWriteAuthority
-
-**Core view rule**: Core views invoke caller RLS and receive SELECT-only serving grants.
-
-- invokerSecurity
-- runtimeSelectOnly
-
-**Memory sql route**: Core Memory SQL declares whether it includes forgotten rows; direct reads are reserved for row locks and policy or view definitions.
-
-- liveView: The live route uses proxiima_core.live_memory.
-- includingForgottenView: The inclusive route uses proxiima_core.memory_including_forgotten.
-- spineWrite
-- spineRowLock
-- spineDefinition
-
-**Memory scan region**: The production Rust SQL guardrail scans outside file-level and inline-module test code.
-
-- productionItems
-- excludeTestFiles
-- excludeTestModules
-
-**Sql composition**: The SQL composition boundary uses checked identifiers and program literals, binds request data, and confines raw SQLx composition to one module.
-
-- checkedIdentifier
-- programLiteral
-- boundRequestData
-- trustedFragment
-- confinedSqlxEscape
-
-**Sql identifier form**: Tables take one or two unquoted parts, other unquoted identifiers take one, and quoted catalog names escape quotes and refuse empty, NUL or oversized values.
-
-- unquotedTable
-- unquotedName
-- quotedCatalogName
-
-**Sql literal form**: Program literals double quotes, use escape strings for backslashes, refuse NUL and nonfinite floats, and preserve backslashes in composed statement literals.
-
-- text
-- escapeText
-- finiteFloat
-- composedStatement
-
-**Sql template fill**: Template replacement scans the original left to right, prefers the longest matching key at a position, and refuses empty keys.
-
-- leftmost
-- longestAtEqualPosition
-- skipReplacementText
-- refuseEmptyKeys
-
-**Owner policy check**: Migration installs and refreshes classified, forced owner RLS; the serving census rejects missing, unclassified or drifted policy state.
-
-- relationClassification
-- enabledAndForced
-- recordedPolicyShape
-
-**Follows policy**: Follows sidecars stamp the owning Memory's owner and require a recorded policy, live-memory check and leading owner index.
-
-- stampOwner
-- checkLiveMemoryAndOwner
-- requirePolicyAndIndex
-
-**Scoped reader**: Scoped database reader functions have dedicated read-only owners with execution granted explicitly and withheld from PUBLIC; candidate results are admitted under ordinary visibility.
-
-- searchCandidates
-- goalVisibility
-
-**Platform write definer**: For a table with definer-only writes, the owner-write policy admits no rows and a platform-owned `SECURITY DEFINER` function is the sole writer.
-
-- denyOwnerWrites
-- writeThroughPlatformDefiner
-
-**Pooler compatibility**: Serving transactions keep settings and locks transaction-local; connection startup omits the float-format parameter.
-
-- localSettings
-- transactionLocks
-- noSessionCommands
-- omitFloatFormat
 
 **Database operation**: The connection chosen by the database operation.
 
@@ -1597,35 +1475,6 @@ stateDiagram-v2
 - runtime
 - platform
 - migration
-
-**Statement timeout policy**: The statement timeout policy depends on the work the connection performs.
-
-- poolStartup: Pool startup applies the resolved statement timeout when configured to send it.
-- migrationSession: A migration session disables the statement timeout for that session.
-- ownerEraseTransaction: Bulk owner erase disables the statement timeout for its transaction only.
-
-**Required storage setting**: Migration, boot and maintenance require the runtime URL, platform URL and store number.
-
-- runtimeUrl
-- platformUrl
-- storeNumber
-
-**Migration connection**: The migration URL defaults to the platform URL; an override must keep its database and role.
-
-- platformDefault
-- sameDatabaseAndRoleOverride
-
-**Connection diagnostic**: Connection diagnostics omit the URL.
-
-- invalidUrl
-- migrationIdentityMismatch
-- redactedConfig
-
-**Preconnection check**: Boot freezes the registry and validates configuration and the embedding route before connecting storage.
-
-- configurationAndListenerAllowlists
-- freezeRegistry
-- embeddingRoute
 
 **Storage overlay**: The storage block being overlaid.
 
@@ -1644,24 +1493,6 @@ stateDiagram-v2
 - initializeStore
 - grantInLockedTransaction
 
-**Grant role check**: Runtime grants target the runtime URL role only after confirming it differs from the platform URL role.
-
-- runtimeUrlRole
-- distinctPlatformUrlRole
-
-**Schema grant**: Existing composed schemas grant usage, table DML and sequence access with schema-scoped defaults; the phase grants neither ownership nor role membership and revokes runtime and public CREATE.
-
-- schemaUsage
-- tableDml: SELECT, INSERT, UPDATE and DELETE.
-- sequenceAccess: USAGE, SELECT and UPDATE.
-- scopedDefaults
-- revokeCreate
-
-**Read only grant**: Core views end SELECT-only after broad table grants, and migration ledgers grant runtime SELECT with schema usage only as needed.
-
-- coreViews
-- migrationLedgers
-
 **Scoped reader grant step**: Reader grants cover the composed schemas and switch to the function owner only for the grant before restoring the platform role.
 
 - selectComposedReader
@@ -1673,18 +1504,6 @@ stateDiagram-v2
 
 - relations
 - sequences
-
-**Engine storage**: Engine storage is required at construction; the shipped backend is PostgreSQL, and refuse-all storage is test-only.
-
-- requiredPorts
-- postgresBackend
-- testOnlyRefusal
-
-**Storage port requirement**: Storage assembly reports all missing required ports together; erase authority and personal-drop proof are optional.
-
-- collectMissingRequired
-- optionalEraseAuthority
-- optionalPersonalDropProof
 
 **Storage outcome**: The external storage outcomes whose protocol category differs by operation.
 
@@ -1700,12 +1519,6 @@ stateDiagram-v2
 
 - invalidArgument
 - internal
-
-**Sql failure route**: Database fault classes have different storage routes.
-
-- typedRule
-- retryWholeTransaction
-- internalBackstop
 
 **serving admission order** = \[validateSchema, validatePlatform, validateRuntime]: Validation precedes handing out the serving storage.
 
@@ -3836,12 +3649,6 @@ stateDiagram-v2
 - reject
 - allow
 
-**Ledger integrity check**: Checks retained under either missing-version policy.
-
-- successfulRows
-- shippedChecksums
-- ledgerAssignment
-
 **Private lane history**: The private lane's relationship to unknown history when work is pending.
 
 - pendingRootBesideUnknown
@@ -3877,11 +3684,6 @@ stateDiagram-v2
 - linkedSourcesInCompositionOrder
 - upMigrationsInMigratorOrder
 
-**Source conflict**: Conflicts checked before connecting to a composed database.
-
-- duplicateUpVersionAcrossComposition
-- duplicateResolvedPrivateLedger
-
 **Ledger selection**: Placement of migration ledgers.
 
 - coreDefault
@@ -3893,20 +3695,6 @@ stateDiagram-v2
 - publicCoreLedger
 - publicIdDerivedLedger
 - configuredLedger
-
-**Identifier rule**: Normalization used to compare migration ledger names.
-
-- quotedPartsPreserveCaseAndUnescapeQuotes
-- unquotedPartsFoldAscii
-- truncateOnCharacterBoundary
-- unqualifiedLedgerResolvesToPublic
-
-**Lock holder**: Migration work that shares the same advisory lock.
-
-- fullRunSession
-- planSnapshotSession
-- preflightSnapshotSession
-- sourceTransaction
 
 **Session disposal**: How migrations dispose of session state on completion or cancellation.
 
@@ -3962,12 +3750,6 @@ stateDiagram-v2
 - dropCompiledSpiiceLedgers
 - deleteUnattributedAndDependentRowsOnOptIn
 - deleteAttributableSharedVersions
-
-**Retirement check**: Database and registry requirements of a retired Fact schema.
-
-- inactiveSchemaWithByKeyInverse
-- unrestorable
-- drainBeforeDestructiveDdl
 
 **Readiness failure**: Decisions on preflight failures requiring operator action.
 
@@ -5219,11 +5001,6 @@ stateDiagram-v2
 - typedProjection
 - readFallback
 
-**Reference target**: The node kinds a payload reference can target.
-
-- memoryVersion
-- goalVersion
-
 **Receipt field part**: The parts of a declared receipt field in byte order.
 
 - nameLength
@@ -5391,11 +5168,6 @@ stateDiagram-v2
 - registeredSidecar
 - retiredSurface
 
-**Payload column consumer**: The search and embedding consumers of a payload column.
-
-- search
-- embedding
-
 **Transfer refusal part**: The contract checks required before a pending transfer refusal can be used.
 
 - reason
@@ -5443,8 +5215,6 @@ stateDiagram-v2
 - abstractionOrPerspective
 - explicitCopyPolicy
 - unpinnedSidecar
-- sourceUse
-- destinationWrite
 
 **display sources** = \[typedProjection, readFallback]: The sources for a Memory display body in priority order.
 
@@ -5520,7 +5290,7 @@ stateDiagram-v2
 
 **storage schema census** = \[core, activeSurface, registeredSidecar, retiredSurface]: The sorted storage schema census includes every schema reached from these sources.
 
-**transfer refusal parts** = \[reason, enforcementSite]: A schema-declared transfer refusal carries its reason and at least one enforcement site.
+**transfer refusal parts** = \[reason, enforcementSite]: A schema-declared transfer refusal carries its reason and its enforcement site.
 
 **sidecar agreement** = \[schemaKind, typedPayload, naturalKey, sidecarTable, memoryKey, ownerMode, writeCapabilities]: PostgreSQL-side registration must agree with the frozen core registration and contract.
 
@@ -5528,9 +5298,9 @@ stateDiagram-v2
 
 **scope admission order** = \[canonicalDistinctScopes, fenceAndProbeEachScope, lockSeries]: A scoped admission checks liveness under the shared scope fence before the series locks.
 
-**sidecar write** = \[typedRow, derivedProjection]: A sidecar write uses one frozen entry and one transaction for both legs.
+**sidecar write** = \[typedRow, derivedProjection]: The two legs of a sidecar write.
 
-**owned head columns** = \[handle, exactVersion]: The declared sidecar Memory key joins the current head under the current owner.
+**owned head columns** = \[handle, exactVersion]: The columns read from the owned current sidecar head.
 
 **fork copy checks** = \[abstractionOrPerspective, explicitCopyPolicy, unpinnedSidecar]: The sidecar loader requires an opted-in unpinned Abstraction or Perspective schema.
 
@@ -5592,7 +5362,7 @@ stateDiagram-v2
 | pinned | yes |
 | follows | yes |
 
-- stamps owner: Pinned and Follows sidecars stamp the row's own owner at insertion.
+- stamps owner: Pinned and Follows sidecars stamp their Memory's owner into their own column at insertion.
 
 | pinned traversal | pinned inverse |
 | --- | --- |
@@ -8164,7 +7934,7 @@ Causa — Principles
 
 ✓ **principle access is one resolved role** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Principle 3 — Owner and audience access through one resolved role.
 
-✓ **principle 4 the field fixes the kind** (axioms: `propext`): Relationship typing for the Memory and Goal targets in `Proxiima.Payloads.ReferenceTarget`.
+✓ **principle 4 the field fixes the kind** (axioms: `propext`): Each relationship field fixes its target kind (`Proxiima.Edges.pinField`).
 
 ✓ **principle 5 no transition retargets a pin** (axioms: `propext`): Principle 5 — Stability of pin targets through forgetting and erasure.
 

@@ -130,13 +130,6 @@ def keyCoordinateBytes : Nat := 32
 /-- The stock validator's JWT clock tolerance in seconds. -/
 def clockSkewSeconds : Nat := 60
 
-/-- A configured issuer and subject map to a principal and optional runner, with empty keys, duplicate bindings and malformed records refused. -/
-structure SubjectBinding where
-  issuer : String
-  subject : String
-  principal : String
-  runner : Option String
-
 /-- The possible admission results for a verified subject. -/
 inductive SubjectAdmission where
   | allow | refuse
@@ -204,7 +197,7 @@ def ownerResolverConsumers : List OwnerResolverConsumer :=
 inductive AuthenticatorForms where
   | neither | direct | factory | both
 
-/-- Resolution keeps each layer's supplied form, rejects a selected layer with both forms and runs a selected factory after platform admission. -/
+/-- Resolution keeps each layer's supplied form, rejects a selected layer with both forms. -/
 inductive AuthenticatorSlot where
   | inherit | useDirect | buildWithPlatform | conflict
 
@@ -257,7 +250,7 @@ inductive ModelClaim where
 inductive ModelLabelSource where
   | credential | caller | unknown | conflict
 
-/-- Verified model attestation survives narrowing; a different explicit label is refused and a blank label is omitted. -/
+/-- A verified model attestation supplies the label and conflicts with a different explicit label. -/
 def modelLabelSource : (attested : Bool) → ModelClaim → ModelLabelSource
   | true, .absent | true, .matching => .credential
   | true, .supplied => .conflict
@@ -316,14 +309,14 @@ inductive FacadeRoute where
 /-- Facade metadata and registration return the same configured public client; other deployments publish neither. -/
 def publicClientRoutes : List FacadeRoute := [.authorizationMetadata, .registration]
 
-/-- Registration takes at least one absolute redirect URL and public token endpoint authentication. The provider admits redirects. -/
+/-- Registration takes at least one absolute redirect URL and public token endpoint authentication. -/
 inductive RegistrationCheck where
   | nonemptyAbsoluteRedirects | publicAuthentication
 
 /-- The redirect and token endpoint authentication checks on public-client registration. -/
 def registrationChecks : List RegistrationCheck := [.nonemptyAbsoluteRedirects, .publicAuthentication]
 
-/-- The public token endpoint authentication method used when registration omits the method and required when it supplies one. -/
+/-- The public token endpoint authentication method. -/
 def publicRegistrationAuthMethod : String := "none"
 
 /-- A registered delegated command is a flat tool or a dispatcher leaf, with serialized scope derived from the typed command. -/
@@ -335,10 +328,6 @@ def delegatedCommands : List DelegatedCommand := [.flat, .dispatcherLeaf]
 
 /-- Maximum delegated tool identifier length in characters. -/
 def maxDelegatedCommandChars : Nat := 200
-
-/-- A queued job stores an opaque redacted UUIDv7 grant handle and no bearer. -/
-structure GrantHandle where
-  id : String
 
 /-- Issuance checks recorded before minting a grant for a finite verified host bearer. -/
 inductive GrantIssueCheck where
@@ -376,7 +365,7 @@ def phaseChecks : List PhaseCheck := [.runtime, .expiry, .purpose, .target]
 inductive BlobOperation where
   | delivery | verifiedCollection | ownerReconciliation
 
-/-- Verified collection needs a positive bound and owner reconciliation requires owner authority. -/
+/-- Owner reconciliation requires owner authority. -/
 def delegateBlobOperation : BlobOperation → Bool
   | .delivery | .verifiedCollection => true
   | .ownerReconciliation => false

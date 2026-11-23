@@ -79,7 +79,6 @@ async fn begin_bulk_erase_tx(
         .map_err(map_err)?;
     // `Proxiima.SchemaEvolution.eraseFenceOrder`. Wait under the transaction's lock timeout.
     crate::access::fences::lock_evolution_tables_for_erase_tx(&mut tx).await?;
-    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
     sqlx::query("SET LOCAL statement_timeout = 0")
         .execute(&mut *tx)
         .await

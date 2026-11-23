@@ -16,7 +16,7 @@ inductive Layer where
   | host
   deriving DecidableEq
 
-/-- In host, environment, application order, the first supplied value wins, then built-in defaults; authenticators supplied in code take precedence over environment OIDC. -/
+/-- In host, environment, application order, the first supplied value wins, then built-in defaults. -/
 def layerPrecedence : Presence → Presence → Presence → Layer
   | .supplied, .supplied, .supplied | .supplied, .supplied, .omitted
   | .supplied, .omitted, .supplied | .supplied, .omitted, .omitted => .host
@@ -38,7 +38,7 @@ inductive SettingGroup where
   | objectStore
   deriving DecidableEq
 
-/-- Storage commands read storage and its embedding runtime policy, with object configuration acquired separately by commands that need it. -/
+/-- Storage commands read only storage and its embedding runtime policy. -/
 def readsGroup : LookupProfile → SettingGroup → Bool
   | .serving, .storage | .serving, .embeddingRuntime | .serving, .serving
   | .serving, .objectStore => true
@@ -52,7 +52,7 @@ inductive LookupText where
   | nonblank
   deriving DecidableEq
 
-/-- A missing or blank setting is omitted, and nonblank text is passed to the reader trimmed. -/
+/-- A missing or blank setting is omitted. -/
 def lookupPresence : LookupText → Presence
   | .missing | .blank => .omitted
   | .nonblank => .supplied
@@ -64,7 +64,7 @@ inductive EnvironmentName where
   | unrelated
   deriving DecidableEq
 
-/-- Warn once per unknown product name without exposing its value or refusing startup. -/
+/-- Warn for an unknown product name. -/
 def warnForName : EnvironmentName → Bool
   | .declared | .unrelated => false
   | .unknownProductName => true
@@ -81,15 +81,6 @@ def lastConfiguredSlot : Presence → Presence → Option PairPosition
   | .supplied, .omitted => some .earlier
   | .omitted, .supplied | .supplied, .supplied => some .later
 
-/-- The possible sources of storage policy during facade boot. -/
-inductive StoragePolicySource where
-  | resolvedConfiguration
-  | processEnvironment
-  deriving DecidableEq
-
-/-- Facade storage boot consumes its resolved pool and query policy without a second environment lookup. -/
-def storagePolicySource : StoragePolicySource := .resolvedConfiguration
-
 /-- The case-insensitive boolean words that read as true after trimming. -/
 def trueWords : List String := ["1", "true", "yes", "on"]
 
@@ -105,7 +96,7 @@ inductive SettingSource where
   | host
   deriving DecidableEq
 
-/-- The composition order for settings documentation and help, with development tools outside the composition. -/
+/-- The composition order for settings documentation and help. -/
 def documentationSources : List SettingSource := [.facade, .core, .postgres, .objectStore, .host]
 
 /-- The inputs compared against each declared default's effective reader. -/

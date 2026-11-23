@@ -102,6 +102,7 @@ where
     .await
 }
 
+// The declared sidecar Memory key joins the current head under the current owner.
 // `Proxiima.Payloads.ownedHeadColumns`.
 async fn owned_head_column<'e, E>(
     executor: E,

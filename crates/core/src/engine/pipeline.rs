@@ -287,7 +287,7 @@ impl Engine {
             Err(err)
         };
         let writes = !matches!(operation, AuthzOperation::Read { .. });
-        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
+        // System writes require a witness bound to this engine's boot.
         if writes
             && authz.auth_path() == AuthPath::System
             && !authz.carries_system_authority(&self.system_authority_binding)

@@ -461,7 +461,7 @@ pub async fn split_role_urls_without_pgvector(
     clippy::too_many_lines,
     reason = "isolated split-role fixture provisioning"
 )]
-// `Proxiima.DatabaseAuthority.DatabaseRole`
+// The fixture gives table ownership to the platform role and serves through owner RLS.
 async fn split_roles(
     database: &str,
     spiice_schemas: &[&str],

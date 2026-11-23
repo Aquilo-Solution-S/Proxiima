@@ -31,7 +31,7 @@ class Finding:
         return f"{rel}:{self.line}: {self.rule}: {self.text.strip()}"
 
 
-# `Proxiima.DatabaseAuthority.MemorySqlRoute`
+# Core reads choose a view by forgotten-row visibility, with direct reads for locks and policy or view definitions.
 # Released migrations are immutable.
 MEMORY_READ = re.compile(
     r"\b(DELETE\s+)?(?:FROM|JOIN|USING)\s+(?:[\w.]+(?:\s+\w+)?\s*,\s*)*(proxiima_core\.memory)(?![\w.])",
@@ -61,7 +61,7 @@ MEMORY_READ_RUST_ROOTS = ("crates/*/src", "apps", "tools", "spiices")
 
 
 def mask_test_modules(text: str) -> str:
-    # `Proxiima.DatabaseAuthority.MemoryScanRegion`
+    # The production SQL scan excludes test files and inline test modules.
     if not TEST_ATTRIBUTE.search(text):
         return text
     kept: list[str] = []
@@ -237,7 +237,7 @@ def sql_escape_files(root: Path) -> dict[str, str]:
 
 
 def check_sql_escape(findings: list[Finding]) -> None:
-    # `Proxiima.DatabaseAuthority.SqlComposition`
+    # Keep the raw SQLx composition escape in the checked SQL text module.
     files = sql_escape_files(ROOT)
     if not re.search(r"\bAssertSqlSafe\b", files.get(SQL_ESCAPE_MODULE, "")):
         findings.append(Finding(ROOT / SQL_ESCAPE_MODULE, 1, "sql text", "the SqlText module no longer names AssertSqlSafe"))

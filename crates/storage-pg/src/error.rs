@@ -46,7 +46,7 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
 #[allow(clippy::needless_pass_by_value)]
 pub fn map_err(e: sqlx::Error) -> StorageError {
     use sqlx::Error;
-    // `Proxiima.DatabaseAuthority.SqlFailureRoute`
+    // Typed refusals reach callers, transient faults permit a full transaction retry, and backstops are internal.
     if let Error::Database(db) = &e
         && let Some(refused) = refusal(db.code().as_deref(), db.constraint(), db.message())
     {

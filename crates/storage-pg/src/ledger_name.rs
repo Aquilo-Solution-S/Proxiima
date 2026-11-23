@@ -26,7 +26,6 @@ fn is_name_space(c: char) -> bool {
 /// against the name (SQL accepts more spellings than this reads, comments
 /// among them): it is not matched by what it resolves to.
 #[must_use]
-// `Proxiima.Migrations.IdentifierRule`
 pub fn parse_ledger_name(name: &str) -> Option<(String, String)> {
     match <[String; 1]>::try_from(parse_name_parts(name)?) {
         Ok([table]) => Some(("public".to_owned(), table)),

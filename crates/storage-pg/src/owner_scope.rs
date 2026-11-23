@@ -176,7 +176,7 @@ pub(crate) async fn bind_goal_work_owner(
     Ok(())
 }
 
-// `Proxiima.DatabaseAuthority.OwnerTransactionScope`
+// Bind the sealed subject's Memory ceilings and Goal access for this transaction only.
 pub(crate) async fn bind_owner_scope(
     connection: &mut PgConnection,
     scope: &OwnerScope,

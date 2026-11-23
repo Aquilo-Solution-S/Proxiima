@@ -634,7 +634,7 @@ async fn run_migrations_on_pool(
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
     let mut conn = pool.acquire().await.map_err(internal)?;
-    // `Proxiima.DatabaseAuthority.StatementTimeoutPolicy`
+    // Schema migration disables the statement timeout for its session.
     sqlx::query("SET statement_timeout = 0")
         .execute(&mut *conn)
         .await
@@ -1532,7 +1532,6 @@ impl PgStorage {
     /// optional ports storage does not implement (`owner_drop_proof`).
     #[must_use]
     pub fn storage_ports_builder(self: Arc<Self>) -> StoragePortsBuilder {
-        // `Proxiima.DatabaseAuthority.EngineStorage`
         StoragePorts::builder()
             .fact_ingest(self.clone())
             .memory_authoring(self.clone())

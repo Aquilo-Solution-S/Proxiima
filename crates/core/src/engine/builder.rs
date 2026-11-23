@@ -23,7 +23,6 @@ impl Engine {
         publication: PublicationConfig,
     ) -> Result<Self, PublicationError> {
         publication.validate_against(registry.listenable_schema_ids())?;
-        // `Proxiima.DatabaseAuthority.EngineStorage`
         Ok(Self {
             registry,
             system_authority_binding: SystemAuthorityBinding::fresh(),
@@ -58,7 +57,6 @@ impl Engine {
     /// so they cannot extract this after boot.
     #[must_use]
     pub fn into_system_authority(self) -> (Self, SystemAuthority) {
-        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
         let authority = SystemAuthority::new(self.system_authority_binding.clone());
         (self, authority)
     }
@@ -69,7 +67,6 @@ impl Engine {
     #[doc(hidden)]
     #[must_use]
     pub fn into_runtime_authorities(self) -> (Self, SystemAuthority, DelegationRuntimeAuthority) {
-        // `Proxiima.DatabaseAuthority.SystemWriteAuthority`
         let system = SystemAuthority::new(self.system_authority_binding.clone());
         let delegation = DelegationRuntimeAuthority::new(self.delegation_runtime_binding.clone());
         (self, system, delegation)

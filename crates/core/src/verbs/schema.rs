@@ -570,7 +570,7 @@ pub fn contract_search_projections(
                 schema_version: schema.schema_version(),
                 kind: schema.kind,
                 sidecar_table: sidecar_table.to_owned(),
-                // `Proxiima.Payloads.PayloadColumnConsumer` uses the declared Memory key.
+                // Search and embedding projections join on the declared Memory key column.
                 sidecar_key_column: contract
                     .sidecar_memory_key_column(sidecar_table)
                     .ok_or(
@@ -647,7 +647,7 @@ pub(crate) fn contract_embed_units(
                 let Some(table) = unit.table else {
                     continue;
                 };
-                // `Proxiima.Payloads.PayloadColumnConsumer` uses the declared Memory key.
+                // Search and embedding projections join on the declared Memory key column.
                 let key_column = contract.sidecar_memory_key_column(table).ok_or(
                     crate::spiice::SpiiceRegistryError::EmbeddedSidecarNotMemoryKeyed {
                         spiice_id: contract.spiice_id,

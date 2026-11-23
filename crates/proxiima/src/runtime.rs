@@ -36,6 +36,11 @@ use proxiima_storage_pg::{PgDelegationStore, PgOwnerAccessResolver};
 
 /// Application runtime facade.
 ///
+/// Configuration layers, lowest first, are [`SpiiceApp::configure`] (the app's
+/// defaults), the environment ([`Self::from_env`] / [`Self::from_lookup`]), and
+/// this value's own builder calls, which take precedence
+/// (`Proxiima.Configuration.layerPrecedence`).
+///
 /// Every feature starts when its config is present (docs/configuration.md § Runtime features).
 /// [`Self::build`] and [`Self::run`] start the same features.
 pub struct Proxiima<'env, A: SpiiceApp> {
@@ -267,7 +272,6 @@ impl<'env, A: SpiiceApp + 'static> Proxiima<'env, A> {
     /// refusals `resolve` itself raises, which precede storage whatever
     /// this function does. `run_refuses_an_unparseable_origin_before_storage`
     /// is what pins the ordering here, for both entry points at once.
-    // `Proxiima.DatabaseAuthority.PreconnectionCheck`
     async fn boot_common(self) -> Result<BootedRuntime, ProxiimaError> {
         let (config, mut parts) = self.resolve()?;
         let allowlist = if config.mcp.is_some() {
