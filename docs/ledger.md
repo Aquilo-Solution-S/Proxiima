@@ -1750,12 +1750,6 @@ stateDiagram-v2
 - fixedOwner
 - refuse
 
-**Boot resource**: Built and running handles expose these resources outside the application context.
-
-- systemAuthority
-- maintenanceAuthority
-- concreteBlobBackend
-
 **Maintenance binding**: Maintenance authority belongs to one engine boot and its frozen participant, and each opened unit fixes one owner.
 
 - boot
@@ -1817,13 +1811,6 @@ stateDiagram-v2
 - declaredRowShape
 - countReturnedRows
 
-**Example notebook operation**: The example spiice's notebook operations.
-
-- receiptNote: The note receipt includes the written time carried by its payload.
-- keyNote: The note series key is the notebook and the note key.
-- readNoteHeads: The typed note head query accepts a natural-key prefix.
-- listNotebooks: The query lists the active owner's notebooks by name, then by ID.
-
 | registration | registration | merge registration |
 | --- | --- | --- |
 | absent | absent | absent |
@@ -1836,7 +1823,7 @@ stateDiagram-v2
 | duplicate | single | duplicate |
 | duplicate | duplicate | duplicate |
 
-- merge registration: A participant is optional, and multiple registrations anywhere in the configuration refuse boot.
+- merge registration: A participant is optional, and a second registration anywhere is a duplicate.
 
 | unit kind | command admission |
 | --- | --- |
@@ -1846,15 +1833,6 @@ stateDiagram-v2
 | system | refuse |
 
 - command admission: Ordinary commands require Fact-write authority, maintenance commands require the fixed owner, and other units use their own verbs.
-
-| bool | bool | payload agreement |
-| --- | --- | --- |
-| yes | yes | yes |
-| yes | no | no |
-| no | yes | no |
-| no | no | no |
-
-- payload agreement: The command owner and every owner named by its payload must equal the stamped owner before typed dispatch.
 
 | dispatch result | dispatch leaves unit usable |
 | --- | --- |

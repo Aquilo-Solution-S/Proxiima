@@ -9,7 +9,7 @@ inductive Registration where
   | duplicate
   deriving DecidableEq
 
-/-- A participant is optional, and multiple registrations anywhere in the configuration refuse boot. -/
+/-- A participant is optional, and a second registration anywhere is a duplicate. -/
 def mergeRegistration : Registration → Registration → Registration
   | .absent, .absent => .absent
   | .single, .absent | .absent, .single => .single
@@ -61,13 +61,6 @@ def commandAdmission : UnitKind → Admission
   | .maintenance => .fixedOwner
   | .goalWork | .system => .refuse
 
-/-- Built and running handles expose these resources outside the application context. -/
-inductive BootResource where
-  | systemAuthority
-  | maintenanceAuthority
-  | concreteBlobBackend
-  deriving DecidableEq
-
 /-- Maintenance authority belongs to one engine boot and its frozen participant, and each opened unit fixes one owner. -/
 inductive MaintenanceBinding where
   | boot
@@ -80,11 +73,6 @@ inductive MaintenanceOperation where
   | applyHostState
   | commit
   deriving DecidableEq
-
-/-- The command owner and every owner named by its payload must equal the stamped owner before typed dispatch. -/
-def payloadAgreement : (commandOwnerMatches : Bool) → (allPayloadOwnersMatch : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
 
 /-- Results of dispatch after the write session has opened. -/
 inductive DispatchResult where
@@ -151,18 +139,6 @@ inductive ExportReceiptRule where
   | uniqueExactTables
   | declaredRowShape
   | countReturnedRows
-  deriving DecidableEq
-
-/-- The example spiice's notebook operations. -/
-inductive ExampleNotebookOperation where
-  /-- The note receipt includes the written time carried by its payload. -/
-  | receiptNote
-  /-- The note series key is the notebook and the note key. -/
-  | keyNote
-  /-- The typed note head query accepts a natural-key prefix. -/
-  | readNoteHeads
-  /-- The query lists the active owner's notebooks by name, then by ID. -/
-  | listNotebooks
   deriving DecidableEq
 
 end Proxiima.HostState

@@ -715,11 +715,6 @@
   {"out": false, "in": [false, true, false]},
   {"out": false, "in": [false, false, true]},
   {"out": true, "in": [false, false, false]}],
- "Proxiima.HostState.payloadAgreement":
- [{"out": true, "in": [true, true]},
-  {"out": false, "in": [true, false]},
-  {"out": false, "in": [false, true]},
-  {"out": false, "in": [false, false]}],
  "Proxiima.HostState.mergeRegistration":
  [{"out": "absent", "in": ["absent", "absent"]},
   {"out": "single", "in": ["absent", "single"]},

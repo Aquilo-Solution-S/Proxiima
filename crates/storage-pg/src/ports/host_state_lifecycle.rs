@@ -13,7 +13,9 @@ use sqlx::{Postgres, Transaction};
 ///
 /// Callbacks run inside Proxiima's existing transaction/snapshot. They may
 /// execute transaction-local SQL only; they must not perform external
-/// effects or wait for external operations because rollback covers the transaction only.
+/// effects or wait for external operations. Rollback covers only the transaction.
+/// During whole-owner erase, the callback runs with the owner fence and the
+/// export/erase fence held, so waiting on an external operation stalls the owner's writers.
 /// This boundary is not a SQL sandbox: a trusted implementation can still use
 /// temporary tables, functions, advisory locks, or out-of-band connections.
 #[async_trait::async_trait]

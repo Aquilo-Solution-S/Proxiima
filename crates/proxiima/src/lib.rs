@@ -92,9 +92,10 @@
 //! }
 //! ```
 //!
-//! The maintenance unit intentionally has no cognitive write or read methods:
+//! The maintenance unit exposes the methods in `Proxiima.HostState.MaintenanceOperation`.
+//! The following cognitive operations are unavailable on that unit.
 //!
-//! ```compile_fail
+//! ```compile_fail,E0599
 //! # use proxiima_core::FactPayload;
 //! # use proxiima_core::engine::FactWrite;
 //! async fn fact<P: FactPayload + Clone>(
@@ -104,7 +105,7 @@
 //! }
 //! ```
 //!
-//! ```compile_fail
+//! ```compile_fail,E0599
 //! # use proxiima_core::GoalPayload;
 //! # use proxiima_core::verbs::goal_write::GoalCreateRequest;
 //! async fn goal<P: GoalPayload>(
@@ -114,7 +115,7 @@
 //! }
 //! ```
 //!
-//! ```compile_fail
+//! ```compile_fail,E0599
 //! # use proxiima_core::{OwnerId, SchemaId};
 //! async fn read_head(
 //!     unit: &mut proxiima::HostStateUnitOfWork<'_>, owner: OwnerId, schema: &SchemaId,
@@ -123,7 +124,7 @@
 //! }
 //! ```
 //!
-//! ```compile_fail
+//! ```compile_fail,E0599
 //! # use proxiima_core::{MemoryId, OwnerId};
 //! async fn forget(unit: &mut proxiima::HostStateUnitOfWork<'_>, owner: OwnerId, id: MemoryId) {
 //!     let _ = unit.forget(owner, id).await;

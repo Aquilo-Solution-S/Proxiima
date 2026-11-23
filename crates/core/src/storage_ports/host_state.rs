@@ -122,7 +122,7 @@ pub trait GoalWorkCommand: HostStateCommand {
 /// The owners a [`HostStateCommand`] payload names, stated by the command
 /// author.
 ///
-/// Under `Proxiima.HostState.payloadAgreement`, command authorization
+/// Command authorization
 /// does not establish payload agreement, so the participant must compare every
 /// owner the payload names with the permit's owner. A separate trait keeps
 /// [`HostStateCommand`] unchanged for existing implementors; the method is

@@ -1,6 +1,8 @@
 //! Typed command dispatch for the host's one [`PgHostStateParticipant`].
 //!
 //! [`PgCommandDispatcher`] unwraps each request into the typed input of its registered handler.
+//! The dispatcher hands the handler a command whose owners agree with the
+//! permit it passes.
 //! An `AgreedCommand` is not bound to a permit: host code that keeps one and
 //! calls [`HostStateHandler::handle`] itself with another permit is outside
 //! that guarantee. The session always derives authority-read identity from its
@@ -94,7 +96,7 @@ pub struct AgreedCommand<C> {
 
 impl<C: HostStatePayloadOwners> AgreedCommand<C> {
     fn agree(command: C, stamped: &OwnerId) -> Result<Self, StorageError> {
-        // `Proxiima.HostState.payloadAgreement`.
+        // The command owner and every payload owner must equal the stamped owner.
         if command.owner() == *stamped
             && command
                 .payload_owners()
@@ -597,37 +599,6 @@ mod tests {
     impl HostStatePayloadOwners for Naming {
         fn payload_owners(&self) -> Vec<OwnerId> {
             self.payload.clone()
-        }
-    }
-
-    #[test]
-    fn payload_owner_agreement_matches_ledger_vectors() {
-        #[derive(serde::Deserialize)]
-        struct Vector {
-            #[serde(rename = "in")]
-            inputs: [bool; 2],
-            #[serde(rename = "out")]
-            output: bool,
-        }
-
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
-                .expect("ledger vectors");
-        let rows: Vec<Vector> =
-            serde_json::from_value(vectors["Proxiima.HostState.payloadAgreement"].clone())
-                .expect("payload agreement vectors");
-        let stamped = OwnerId::from(GroupId::new(Uuid::from_u128(1)));
-        let foreign = OwnerId::from(UserId::new(Uuid::from_u128(2)));
-        for Vector {
-            inputs: [command_matches, payload_matches],
-            output,
-        } in rows
-        {
-            let command = Naming {
-                owner: if command_matches { stamped } else { foreign },
-                payload: vec![stamped, if payload_matches { stamped } else { foreign }],
-            };
-            assert_eq!(AgreedCommand::agree(command, &stamped).is_ok(), output);
         }
     }
 

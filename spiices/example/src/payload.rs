@@ -55,7 +55,6 @@ impl FactPayload for NoteV1 {
         receipt.field_uuid("notebook_id", *notebook_id);
         receipt.field_str("key", key);
         receipt.field_str("body", body);
-        // `Proxiima.HostState.ExampleNotebookOperation.receiptNote`.
         receipt.field_time("written_at", *written_at);
         receipt.finish()
     }
@@ -78,7 +77,6 @@ impl FactPayload for NoteV1 {
 }
 
 impl PayloadProjection for NoteV1 {
-    // `Proxiima.HostState.ExampleNotebookOperation.keyNote`.
     const KEY_FIELDS: &'static [KeyField<Self>] = &[
         KeyField::uuid("notebook_id", |value| value.notebook_id),
         KeyField::text("key", |value| &value.key),

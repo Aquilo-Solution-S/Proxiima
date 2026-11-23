@@ -594,13 +594,11 @@ macro_rules! runtime_handle_methods {
         /// host-safe capabilities.
         #[must_use]
         pub const fn blobs(&self) -> Option<&CitedBlobStore> {
-            // `Proxiima.HostState.BootResource.concreteBlobBackend`.
             self.runtime.host.blobs.as_ref()
         }
 
         #[must_use]
         pub fn system_authority(&self) -> &SystemAuthority {
-            // `Proxiima.HostState.BootResource.systemAuthority`.
             &self.runtime.system_authority
         }
 
@@ -670,7 +668,6 @@ macro_rules! runtime_handle_methods {
         pub const fn host_state_maintenance_authority(
             &self,
         ) -> Option<&proxiima_core::engine::HostStateMaintenanceAuthority> {
-            // `Proxiima.HostState.BootResource.maintenanceAuthority`.
             self.runtime.host_state_maintenance_authority.as_ref()
         }
 
