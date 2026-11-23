@@ -144,7 +144,7 @@ impl EmbeddingWritePort for PgStorage {
         }
         // `Proxiima.Embeddings.publishChunks` and `Proxiima.Embeddings.hostPublication`.
         let mut tx = self.platform_transaction().await?;
-        let mut outcomes = Vec::with_capacity(writes.len());
+        // Finish the fences before sending any vectors to the host index.
         for (write, space) in writes.iter().zip(spaces) {
             verbs::fact_embeddings::complete_embedding_job_claim(
                 &mut tx,
@@ -154,6 +154,9 @@ impl EmbeddingWritePort for PgStorage {
                 write.proof,
             )
             .await?;
+        }
+        let mut outcomes = Vec::with_capacity(writes.len());
+        for write in writes {
             outcomes.push(
                 self.insert_embedding_version(&mut tx, write.owner, write.entity, write.vectors)
                     .await?,

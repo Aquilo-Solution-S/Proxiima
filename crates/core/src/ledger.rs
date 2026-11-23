@@ -321,7 +321,7 @@ macro_rules! ledger {
     (Proxiima.Embeddings.idleSecondsMax) => {
         3600
     };
-    // Idle polling backs off to this many seconds or the initial interval if it is longer.
+    // Idle poll backoff ceiling in seconds.
     (Proxiima.Embeddings.idleBackoffSeconds) => {
         60
     };
@@ -353,7 +353,7 @@ macro_rules! ledger {
     (Proxiima.Embeddings.reconcileOwnerPageSize) => {
         1000
     };
-    // Minimum adapter character cap, one below the first balanced ASCII split.
+    // Minimum client character cap for chunk rescue.
     (Proxiima.Embeddings.inputCapMin) => {
         4095
     };
@@ -369,7 +369,7 @@ macro_rules! ledger {
     (Proxiima.Embeddings.defaultMatryoshka) => {
         false
     };
-    // The sole slot bindable by a spiice embedding recipe.
+    // Default embedding slot.
     (Proxiima.Embeddings.defaultSlot) => {
         "default"
     };

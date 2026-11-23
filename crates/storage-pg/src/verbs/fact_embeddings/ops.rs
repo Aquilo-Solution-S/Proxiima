@@ -415,6 +415,7 @@ async fn current_embedding_ids_by_distance(
         .begin()
         .await
         .map_err(|err| StorageError::Internal(format!("begin recall canary tx: {err}")))?;
+    // Each recall leg gets its own transaction-local planner settings.
     match plan {
         DistancePlan::Exact => {
             sqlx::query("SET LOCAL enable_indexscan = off")

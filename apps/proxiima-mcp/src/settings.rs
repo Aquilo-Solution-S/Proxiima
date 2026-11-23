@@ -43,7 +43,9 @@ proxiima::settings! {
         default: concat!(proxiima_core::ledger!(Proxiima.Embeddings.inputCapDefault)),
     }
     PROXIIMA_EMBED_QUERY_INSTRUCTION: Text {
-        purpose: "template every search query is embedded in; holds `{query}`, and `\\n` is a newline",
+        purpose: concat!("template every search query is embedded in; holds `",
+            proxiima_core::ledger!(Proxiima.Embeddings.queryPlaceholder), "`, and `",
+            proxiima_core::ledger!(Proxiima.Embeddings.queryNewlineEscape), "` is a newline"),
         when_needed: "instruction-tuned model",
     }
     OTEL_EXPORTER_OTLP_ENDPOINT: Url {

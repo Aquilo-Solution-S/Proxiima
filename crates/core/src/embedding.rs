@@ -466,8 +466,9 @@ pub async fn embed_many_with_timeout(
 /// A rejected segment is split only if both halves reach this floor.
 pub const CHUNKED_EMBED_MIN_BYTES: usize = MIN_EMBED_INPUT_CAP_CHARS.div_ceil(2);
 
-/// Smallest character cap accepted by the OpenAI-compatible adapter.
-/// The balanced ASCII split starts one byte above this floor.
+/// Smallest character cap whose over-cap inputs can all be split for rescue.
+/// A cap below this floor can turn a rescuable input terminal.
+/// See `Proxiima.Embeddings.inputCapMin`.
 pub const MIN_EMBED_INPUT_CAP_CHARS: usize = crate::ledger!(Proxiima.Embeddings.inputCapMin);
 
 /// Complete chunk coverage or the final refusal at the minimum split size.
@@ -598,14 +599,15 @@ where
 }
 
 fn split_segment(segment: &str) -> Option<(&str, &str)> {
-    let mut cut = segment.len() / 2;
-    while cut > 0 && !segment.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    if cut < CHUNKED_EMBED_MIN_BYTES {
-        return None;
-    }
-    Some((&segment[..cut], &segment[cut..]))
+    let midpoint = segment.len() / 2;
+    let lower = segment.floor_char_boundary(midpoint);
+    let cut = if lower >= CHUNKED_EMBED_MIN_BYTES {
+        lower
+    } else {
+        segment.ceil_char_boundary(midpoint)
+    };
+    (cut >= CHUNKED_EMBED_MIN_BYTES && segment.len() - cut >= CHUNKED_EMBED_MIN_BYTES)
+        .then(|| segment.split_at(cut))
 }
 
 #[cfg(test)]

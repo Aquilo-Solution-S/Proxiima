@@ -1,3 +1,5 @@
+import Proxiima.Migrations
+
 /-! # Embeddings -/
 
 namespace Proxiima.Embeddings
@@ -18,7 +20,7 @@ def drainConcurrencyMax : Nat := 64
 def idleSeconds : Nat := 5
 /-- Largest configured first idle poll interval in seconds. -/
 def idleSecondsMax : Nat := 3600
-/-- Idle polling backs off to this many seconds or the initial interval if it is longer. -/
+/-- Idle poll backoff ceiling in seconds. -/
 def idleBackoffSeconds : Nat := 60
 /-- Stale claim timeout in seconds when the host leaves it unset. -/
 def staleClaimSeconds : Nat := 900
@@ -34,7 +36,7 @@ def reconcileDefaultLimit : Nat := 50000
 def reconcilePageSize : Nat := 2000
 /-- Number of owners routed per reconcile owner page. -/
 def reconcileOwnerPageSize : Nat := 1000
-/-- Minimum adapter character cap, one below the first balanced ASCII split. -/
+/-- Minimum client character cap for chunk rescue. -/
 def inputCapMin : Nat := 4095
 /-- Character cap for the canonical host when the input ceiling is unset. -/
 def inputCapDefault : Nat := 16384
@@ -42,7 +44,7 @@ def inputCapDefault : Nat := 16384
 def defaultWidth : Nat := 1024
 /-- Nested-prefix requests are off by default in the canonical host. -/
 def defaultMatryoshka : Bool := false
-/-- The sole slot bindable by a spiice embedding recipe. -/
+/-- Default embedding slot. -/
 def defaultSlot : String := "default"
 /-- Maximum sampled chunks in an owner and embedding-space canary stratum. -/
 def recallSampleCap : Nat := 32
@@ -58,11 +60,6 @@ def pgvectorMinimum : List Nat := [0, 8, 0]
 inductive Width where
   | d384 | d768 | d1024 | d1536 | d2048 | d3072
   deriving DecidableEq
-
-/-- A space keys vectors by model identity and supported width. -/
-structure Space where
-  model : String
-  width : Width
 
 /-- Component count for the 384-wide lane. -/
 def width384 : Nat := 384
@@ -91,20 +88,14 @@ def indexEncoding : Width → IndexEncoding
   | .d384 | .d768 | .d1024 | .d1536 => .vector
   | .d2048 | .d3072 => .halfvec
 
-/-- Where vectors are stored at install and subsequent writes. -/
-inductive StorageMode where
-  | postgres
-  | hostIndex
-  deriving DecidableEq
-
 /-- Parts of the selected vector storage lane. -/
 inductive VectorStoragePart where
   | heads | pgvector | localVectors
   deriving DecidableEq
 
 /-- Both lanes keep heads, and the PostgreSQL lane also installs pgvector and stores vectors locally. -/
-def vectorStorageParts : StorageMode → List VectorStoragePart
-  | .postgres => [.heads, .pgvector, .localVectors]
+def vectorStorageParts : Proxiima.Migrations.VectorLane → List VectorStoragePart
+  | .local => [.heads, .pgvector, .localVectors]
   | .hostIndex => [.heads]
 
 /-- The placeholder required and substituted by a query instruction. -/
@@ -194,7 +185,7 @@ def schemaEmbeddable : SchemaEligibility → Bool
   | .unknown | .aLayerEmbeds => true
   | .everyLayerDeclines => false
 
-/-- A consumer's route-specific input text. -/
+/-- Kinds of calls to the embedding provider. -/
 inductive ProviderCall where
   | indexing
   | query
@@ -224,16 +215,14 @@ inductive ProviderResult where
 inductive DrainAction where
   | publish
   | rescue
-  | retry
-  | pauseAndRelease
+  | release
   deriving DecidableEq
 
-/-- Only typed input refusal enters rescue, and configuration faults pause the binding. -/
+/-- Publish successful vectors, rescue input refusals, and release on other failures. -/
 def drainAction : ProviderResult → DrainAction
   | .success => .publish
   | .inputRefused => .rescue
-  | .transient => .retry
-  | .configuration => .pauseAndRelease
+  | .transient | .configuration => .release
 
 /-- Validation result from a managed client response. -/
 inductive VectorValidation where
@@ -246,13 +235,7 @@ def validateVector : (widthMatches : Bool) → (finite : Bool) → VectorValidat
   | true, false => .invalidComponent
   | true, true => .accepted
 
-/-- The registry projection read to render an embedding input. -/
-structure DeclaredText where
-  table : String
-  memoryKey : String
-  textColumn : String
-
-/-- The reason an embedding drain can return with unsettled work. -/
+/-- Outcomes of fenced release after an aborted drain. -/
 inductive ClaimRelease where
   | settled
   | alreadyFencedOut
@@ -303,7 +286,7 @@ def backlogGroup : JobState → BacklogGroup
   | .pending | .processing => .queued
   | .failed | .failedPermanent => .failed
 
-/-- Only processing diagnostics expose age, floored at zero and read from the database clock. -/
+/-- Only processing diagnostics expose claim age. -/
 def diagnosticClaimAge : JobState → Bool
   | .processing => true
   | .pending | .failed | .failedPermanent => false
@@ -336,7 +319,7 @@ inductive CandidateMetadata where
   | liveHead | allowedSchema | requestedSpace
   deriving DecidableEq
 
-/-- Candidate scans select metadata-eligible Memory heads across layers, with text resolved by the drain. -/
+/-- Metadata used to select candidate Memory heads. -/
 def candidateMetadata : List CandidateMetadata := [.liveHead, .allowedSchema, .requestedSpace]
 
 /-- The durable write steps for a completed embedding version. -/
@@ -373,11 +356,6 @@ inductive SpaceRole where
   | current | next | unrouted
   deriving DecidableEq
 
-/-- Coverage reconciliation queues work for routed spaces. -/
-def spaceReceivesJobs : SpaceRole → Bool
-  | .current | .next => true
-  | .unrouted => false
-
 /-- Purge removes only unrouted residue and leaves processing jobs to settle. -/
 def purgeJob : SpaceRole → JobState → Bool
   | .unrouted, .pending | .unrouted, .failed | .unrouted, .failedPermanent => true
@@ -400,7 +378,7 @@ inductive RecallLeg where
   | approximate
   deriving DecidableEq
 
-/-- Compare exact and approximate chunk neighbors with separate planner settings. -/
+/-- Compare exact and approximate chunk neighbors. -/
 def recallComparison : List RecallLeg := [.exact, .approximate]
 
 /-- Startup passes that precede the idle/poll cycle. -/

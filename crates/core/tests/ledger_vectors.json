@@ -1482,17 +1482,13 @@
   {"out": ["next"], "in": ["nextOnly"]},
   {"out": ["current", "next"], "in": ["moving"]}],
  "Proxiima.Embeddings.vectorStorageParts":
- [{"out": ["heads", "pgvector", "localVectors"], "in": ["postgres"]},
+ [{"out": ["heads", "pgvector", "localVectors"], "in": ["local"]},
   {"out": ["heads"], "in": ["hostIndex"]}],
  "Proxiima.Embeddings.validateVector":
  [{"out": "accepted", "in": [true, true]},
   {"out": "invalidComponent", "in": [true, false]},
   {"out": "widthFault", "in": [false, true]},
   {"out": "widthFault", "in": [false, false]}],
- "Proxiima.Embeddings.spaceReceivesJobs":
- [{"out": true, "in": ["current"]},
-  {"out": true, "in": ["next"]},
-  {"out": false, "in": ["unrouted"]}],
  "Proxiima.Embeddings.settleClaim":
  [{"out": "processing", "in": ["renew"]},
   {"out": null, "in": ["finish"]},
@@ -1566,8 +1562,8 @@
  "Proxiima.Embeddings.drainAction":
  [{"out": "publish", "in": ["success"]},
   {"out": "rescue", "in": ["inputRefused"]},
-  {"out": "retry", "in": ["transient"]},
-  {"out": "pauseAndRelease", "in": ["configuration"]}],
+  {"out": "release", "in": ["transient"]},
+  {"out": "release", "in": ["configuration"]}],
  "Proxiima.Embeddings.diagnosticClaimAge":
  [{"out": false, "in": ["pending"]},
   {"out": true, "in": ["processing"]},

@@ -114,7 +114,6 @@ pub struct EmbeddingSpace {
 
 impl EmbeddingSpace {
     #[must_use]
-    /// `Proxiima.Embeddings.Space`.
     pub fn new(model_id: impl Into<String>, dim: EmbeddingDim) -> Self {
         Self {
             model_id: model_id.into(),

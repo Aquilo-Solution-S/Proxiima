@@ -14,6 +14,9 @@ use crate::storage_ports::{EmbeddingJobHandle, EmbeddingWrite};
 use crate::{EmbeddableEntityRef, EntityKind, MemoryId, MemoryKind, OwnerId};
 
 mod control;
+#[cfg(test)]
+#[path = "embeddings/tests.rs"]
+mod tests;
 pub(crate) use control::EmbeddingControl;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -28,6 +31,23 @@ pub struct EmbeddingDrainOutcome {
 enum EmbedStep {
     Embedded,
     NothingToEmbed,
+}
+
+enum DrainAction {
+    Publish(Vec<Vec<f32>>),
+    Rescue(EmbeddingInputRefusal),
+    Release(LlmError),
+}
+
+// `Proxiima.Embeddings.drainAction`.
+fn drain_action(result: Result<Vec<Vec<f32>>, LlmError>) -> DrainAction {
+    match result {
+        Ok(vectors) => DrainAction::Publish(vectors),
+        Err(LlmError::InputRefused(refusal)) => DrainAction::Rescue(refusal),
+        Err(
+            err @ (LlmError::Retryable { .. } | LlmError::Internal(_) | LlmError::Configuration(_)),
+        ) => DrainAction::Release(err),
+    }
 }
 
 struct EmbeddingClaimHeartbeat {
@@ -540,8 +560,8 @@ impl Engine {
             .await
     }
 
-    /// `Proxiima.Embeddings.drainAction`. A one-item batch can reuse its
-    /// refusal without submitting the full input again.
+    /// A one-item batch can reuse its refusal without submitting the full
+    /// input again.
     async fn embed_claim_batch(
         &self,
         client: &BoundEmbeddingClient,
@@ -549,8 +569,8 @@ impl Engine {
         outcome: &mut EmbeddingDrainOutcome,
     ) -> Result<(), StorageError> {
         let texts: Vec<String> = batch.iter().map(|(_, text)| text.clone()).collect();
-        match client.embed_many(&texts).await {
-            Ok(vectors) => {
+        match drain_action(client.embed_many(&texts).await) {
+            DrainAction::Publish(vectors) => {
                 let stored: Vec<_> = batch
                     .iter()
                     .zip(vectors)
@@ -561,12 +581,12 @@ impl Engine {
                 outcome.processed += count;
                 Ok(())
             }
-            Err(LlmError::InputRefused(refusal)) => {
+            DrainAction::Rescue(refusal) => {
                 let known_refusal = (batch.len() == 1).then_some(refusal);
                 self.embed_claims_individually(client, batch, known_refusal, outcome)
                     .await
             }
-            Err(err) => self.release_embedding_batch(batch, &err).await,
+            DrainAction::Release(err) => self.release_embedding_batch(batch, &err).await,
         }
     }
 
@@ -742,6 +762,7 @@ impl Engine {
                 break;
             };
             let mut routed: Vec<(EmbeddingSpace, OwnerId)> = Vec::new();
+            // `Proxiima.Embeddings.writeSpaces`.
             for owner in &page {
                 match self.embedding_route(owner).await {
                     Ok(route) => routed.extend(

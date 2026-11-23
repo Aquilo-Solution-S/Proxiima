@@ -8,6 +8,7 @@ use crate::error::map_err;
 
 /// Complete the queue claim that authorized an embedding write, in the
 /// write's transaction. A write without a claim completes nothing.
+/// `Proxiima.Embeddings.settleClaim`.
 ///
 /// The delete holds the job's row lock through the embedding transaction. A
 /// stale worker either loses before writing, or commits before reclamation

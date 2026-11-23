@@ -33,7 +33,8 @@ pub struct EmbedCaps {
     /// tokens (no shared tokenizer) and not bytes (would refuse non-ASCII
     /// shorter text; see [`crate::text_bounds`]). Over-cap is
     /// [`crate::embedding::LlmError::InputRefused`] → [`crate::embedding::embed_in_chunks`];
-    /// floor is [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`].
+    /// [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`] is the floor for every
+    /// client that enforces a character cap.
     pub max_input_chars: Option<NonZeroU32>,
 }
 
@@ -53,8 +54,8 @@ impl EmbedCaps {
 
     /// Refuse, without sending, any input longer than `chars` characters.
     ///
-    /// See [`EmbedCaps::max_input_chars`] and
-    /// [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`].
+    /// Every client must use at least [`crate::embedding::MIN_EMBED_INPUT_CAP_CHARS`]
+    /// to preserve chunk rescue. See [`EmbedCaps::max_input_chars`].
     #[must_use]
     pub const fn with_max_input_chars(mut self, chars: NonZeroU32) -> Self {
         self.max_input_chars = Some(chars);

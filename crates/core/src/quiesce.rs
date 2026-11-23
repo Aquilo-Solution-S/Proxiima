@@ -42,7 +42,8 @@ pub enum FeatureStatus {
     Running,
     /// A pause was requested; the worker has not parked yet.
     Quiescing,
-    /// The worker is parked between passes.
+    /// The worker is parked at a [checkpoint](GateWorker::checkpoint)
+    /// and claims nothing.
     Quiescent,
     /// The worker task ended: runtime shutdown, or it terminated by itself.
     Stopped,

@@ -571,6 +571,14 @@ async fn one_char_under_the_floor_is_the_difference_between_split_and_terminal()
     let text = "a".repeat(2 * MIN_EMBED_INPUT_CAP_CHARS);
 
     let at_floor = CappedEmbedding::new(MIN_EMBED_INPUT_CAP_CHARS);
+    let utf8 = format!("{}é{}", "a".repeat(2047), "a".repeat(2048));
+    assert_eq!(
+        embed_in_chunks(&at_floor, &utf8)
+            .await
+            .expect("UTF-8 rescue at the cap floor"),
+        ChunkedEmbedding::Embedded(vec![vec![0.0; 4]; 2]),
+        "the next character boundary leaves both pieces at or above the split minimum",
+    );
     assert_eq!(
         embed_in_chunks(&at_floor, &text)
             .await

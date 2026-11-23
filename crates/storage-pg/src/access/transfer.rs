@@ -360,7 +360,7 @@ async fn transfer_memory_handle(
     .execute(&mut **tx)
     .await
     .map_err(map_err)?;
-    // The vectors moved with the series, but they are the destination's
+    // `Proxiima.Embeddings.transferCoverage`. The vectors moved with the series, but they are the destination's
     // only in spaces its route names: the rest go, and the head is queued
     // for each route space it has no vector in.
     purge_series_embedding_spaces_in_tx(tx, to_id, embeddings.spaces, &ts).await?;

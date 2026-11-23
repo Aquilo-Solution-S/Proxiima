@@ -744,8 +744,8 @@ mod pg_tests {
         result
     }
 
-    /// On a dense range of uncovered heads, reconcile seeks to the cursor
-    /// and keeps the memory-table work proportional to one page.
+    /// With no owner, age or schema filters and a dense range of uncovered
+    /// heads, reconcile seeks to the cursor and reads a page-sized range.
     /// See `Proxiima.Embeddings.reconcilePageSize`.
     #[tokio::test]
     async fn a_reconcile_step_reads_one_page_of_heads() -> Result<(), Box<dyn std::error::Error>> {
@@ -1590,6 +1590,7 @@ mod pg_tests {
         result
     }
 
+    /// `Proxiima.Embeddings.settleClaim`.
     #[tokio::test]
     async fn reclaimed_claim_cannot_mutate_successor_job() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1644,9 +1645,14 @@ mod pg_tests {
             );
             assert_eq!(count_fact_embeddings(pool, outcome.memory_id).await?, 0);
 
+            assert_eq!(
+                renew_embedding_jobs(pool, std::slice::from_ref(&old_claim)).await?,
+                0
+            );
             for stale in [
                 complete_embedding_job(pool, &old_claim).await,
                 fail_embedding_job(pool, &old_claim, "stale failure").await,
+                fail_embedding_job_permanently(pool, &old_claim, "stale permanent failure").await,
                 release_embedding_jobs(pool, std::slice::from_ref(&old_claim), "stale release")
                     .await,
             ] {
@@ -2053,6 +2059,179 @@ mod pg_tests {
                 }));
         let authz = authenticated_context(AuthzContext::for_subject(user_id, AuthPath::HostBearer));
         Ok((engine, authz, origin.memory_id, provider))
+    }
+
+    struct FailingDrainStorage {
+        pg: Arc<crate::PgStorage>,
+        release_attempts: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingWritePort for FailingDrainStorage {
+        async fn insert_embeddings(
+            &self,
+            _writes: &[EmbeddingWrite<'_>],
+        ) -> Result<Vec<proxiima_core::EmbeddingWriteOutcome>, StorageError> {
+            Err(StorageError::Internal("embedding write failed".into()))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl proxiima_core::EmbeddingJobPort for FailingDrainStorage {
+        async fn claim_pending_embedding_jobs(
+            &self,
+            limit: i64,
+            skip_owners: &[OwnerId],
+            skip_spaces: &[(OwnerId, EmbeddingSpace)],
+        ) -> Result<Vec<proxiima_core::EmbeddingJobClaim>, StorageError> {
+            self.pg
+                .claim_pending_embedding_jobs(limit, skip_owners, skip_spaces)
+                .await
+        }
+
+        async fn complete_embedding_job(
+            &self,
+            claim: &proxiima_core::EmbeddingJobClaim,
+        ) -> Result<(), StorageError> {
+            self.pg.complete_embedding_job(claim).await
+        }
+
+        async fn drain_vector_index_debt(&self, limit: i64) -> Result<u64, StorageError> {
+            self.pg.drain_vector_index_debt(limit).await
+        }
+
+        async fn renew_embedding_jobs(
+            &self,
+            claims: &[proxiima_core::EmbeddingJobClaim],
+        ) -> Result<u64, StorageError> {
+            self.pg.renew_embedding_jobs(claims).await
+        }
+
+        async fn reclaim_stale_embedding_jobs(
+            &self,
+            older_than_seconds: i64,
+        ) -> Result<u64, StorageError> {
+            self.pg
+                .reclaim_stale_embedding_jobs(older_than_seconds)
+                .await
+        }
+
+        async fn fail_embedding_job(
+            &self,
+            claim: &proxiima_core::EmbeddingJobClaim,
+            error: &str,
+        ) -> Result<(), StorageError> {
+            self.pg.fail_embedding_job(claim, error).await
+        }
+
+        async fn fail_embedding_job_permanently(
+            &self,
+            claim: &proxiima_core::EmbeddingJobClaim,
+            error: &str,
+        ) -> Result<(), StorageError> {
+            self.pg.fail_embedding_job_permanently(claim, error).await
+        }
+
+        async fn release_embedding_jobs(
+            &self,
+            claims: &[proxiima_core::EmbeddingJobClaim],
+            _error: &str,
+        ) -> Result<(), StorageError> {
+            self.release_attempts
+                .fetch_add(claims.len(), std::sync::atomic::Ordering::Relaxed);
+            Err(StorageError::Unavailable("embedding release failed".into()))
+        }
+
+        async fn enqueue_missing_embedding_jobs(
+            &self,
+            permit: &OwnerWritePermit,
+            space: &EmbeddingSpace,
+            limit: i64,
+            excluded: &[String],
+        ) -> Result<u64, StorageError> {
+            self.pg
+                .enqueue_missing_embedding_jobs(permit, space, limit, excluded)
+                .await
+        }
+
+        async fn count_embedding_job_status(
+            &self,
+            scope: Option<&proxiima_core::OwnerScope>,
+            owner: &OwnerId,
+        ) -> Result<proxiima_core::storage_ports::EmbeddingJobStatusCounts, StorageError> {
+            self.pg.count_embedding_job_status(scope, owner).await
+        }
+
+        async fn embedding_job_diagnostics(
+            &self,
+            scope: Option<&proxiima_core::OwnerScope>,
+            owner: &OwnerId,
+            entities: &[MemoryId],
+        ) -> Result<Vec<proxiima_core::EmbeddingJobDiagnostic>, StorageError> {
+            self.pg
+                .embedding_job_diagnostics(scope, owner, entities)
+                .await
+        }
+    }
+
+    /// `Proxiima.Embeddings.claimRecovery`.
+    #[tokio::test]
+    async fn a_failed_release_preserves_the_drain_error_and_leaves_the_claim_to_expire()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::atomic::Ordering;
+
+        let (pg, _database) = fresh_pg("proxiima_embed_lease").await;
+        let registry = SpiiceRegistry::new().freeze_or_panic_for_tests();
+        let pg = Arc::new(pg.with_spiices(&registry));
+        let storage = Arc::new(FailingDrainStorage {
+            pg: pg.clone(),
+            release_attempts: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let ports = pg
+            .clone()
+            .storage_ports_builder()
+            .embedding_job(storage.clone())
+            .embedding_write(storage.clone())
+            .build();
+        let engine = Engine::new_or_panic_for_tests(registry, ports).with_embedding_router(routed(
+            RecordingBatchEmbedding {
+                batch_widths: Arc::default(),
+            },
+        ));
+        let owner = owner_fixture();
+        let note = crate::test_fixtures::TestNote::new("Drain recovery", "A claim to recover")
+            .create(&pg, owner)
+            .await?;
+        let id = note.memory_id.into_inner();
+        crate::test_fixtures::enqueue_embedding_job(&pg, owner, id, STUB_SPACE.model_id()).await?;
+
+        let error = engine
+            .drain_embedding_jobs(1)
+            .await
+            .expect_err("embedding write failed");
+        assert!(
+            matches!(error, StorageError::Internal(ref cause) if cause == "embedding write failed"),
+            "{error:?}"
+        );
+        assert_eq!(storage.release_attempts.load(Ordering::Relaxed), 1);
+
+        let pool = pg.pool_for_tests();
+        let lease = stale_claim_seconds();
+        assert_eq!(reclaim_stale_embedding_jobs(pool, lease).await?, 0);
+        assert_eq!(job_state(pool, id).await?.0, "processing");
+
+        sqlx::query(
+            "UPDATE proxiima_core.embedding_jobs
+                SET claimed_at = now() - make_interval(secs => $2::double precision)
+              WHERE entity_id = $1",
+        )
+        .bind(id)
+        .bind(f64::from(u32::try_from(lease)?) * 2.0)
+        .execute(pool)
+        .await?;
+        assert_eq!(reclaim_stale_embedding_jobs(pool, lease).await?, 1);
+        assert_eq!(job_state(pool, id).await?.0, "pending");
+        Ok(())
     }
 
     async fn count_jobs(pool: &sqlx::PgPool, entity_id: Uuid) -> Result<i64, sqlx::Error> {

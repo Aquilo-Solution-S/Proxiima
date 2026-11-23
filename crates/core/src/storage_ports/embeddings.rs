@@ -23,7 +23,8 @@ pub trait EmbeddingTextPort: Send + Sync {
     /// `non_embeddable_schemas` are excluded exactly as in
     /// [`Self::list_memories_missing_embedding`]: a row whose schema declared
     /// [`crate::spiice::EmbeddingRecipe::Never`] has no text to embed.
-    /// Direct requests by `MemoryId` also use the exclusion.
+    /// The read applies the exclusion because a direct request by `MemoryId`
+    /// bypasses the job queue. See `Proxiima.Embeddings.schemaEmbeddable`.
     /// Empty slice = exclude nothing.
     async fn load_embedding_text(
         &self,
@@ -81,7 +82,7 @@ pub trait EmbeddingWritePort: Send + Sync {
     /// A write authorized by a queue claim also completes that claim in the
     /// same transaction, fenced on its token: a stale claim fails the whole
     /// batch with `Conflict` before anything is written, and a vector and its
-    /// completed job never exist apart.
+    /// completed job never exist apart. See `Proxiima.Embeddings.publishChunks`.
     ///
     /// Public callers cannot forge `EmbeddingWriteProof`; route through
     /// engine embedding-write APIs instead.
@@ -469,7 +470,8 @@ pub struct EmbeddingReconcileOptions<'a> {
     pub scope: EmbeddingReconcileScope,
     /// Required at the storage boundary. `None` is a constraint error.
     /// Engine `None` becomes [`EMBEDDING_RECONCILE_DEFAULT_LIMIT`]. It bounds
-    /// selected candidates (`scanned` in the outcome).
+    /// selected candidates (`scanned` in the outcome), not the memories read
+    /// to find them. See `Proxiima.Embeddings.reconcilePageSize`.
     pub limit: Option<i64>,
     /// Schema ids that declined a vector
     /// ([`crate::spiice::EmbeddingRecipe::Never`]), excluded from the scan.
@@ -555,7 +557,9 @@ pub trait EmbeddingMaintenancePort: Send + Sync {
     ) -> Result<EmbeddingOrphanSweepOutcome, StorageError>;
 
     /// Enqueue durable jobs for metadata-eligible Memory heads in the chosen
-    /// scope and space. The drain resolves text. See
+    /// scope and space. Idempotent. Requeues retryable failures, preserves
+    /// pending jobs and live claims, and reclaims expired leases. The drain
+    /// resolves text. See
     /// `Proxiima.Embeddings.candidateMetadata` and `Proxiima.Embeddings.reconcileJob`.
     async fn reconcile_embeddings(
         &self,

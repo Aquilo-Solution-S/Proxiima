@@ -1371,21 +1371,26 @@ fn plaintext_hosts_admit_only_the_named_embedding_host() {
 
 #[test]
 fn matryoshka_flag_parses_and_rejects_garbage() {
-    for raw in ["true", "1", "yes", "on"] {
-        assert!(
+    for (raw, expected) in [
+        ("true", true),
+        ("1", true),
+        ("yes", true),
+        ("on", true),
+        ("false", false),
+    ] {
+        assert_eq!(
             parse_bool_env(
                 &|key: &str| (key == PROXIIMA_EMBED_MATRYOSHKA).then(|| raw.to_string()),
                 &settings::PROXIIMA_EMBED_MATRYOSHKA
             )
-            .expect("parses")
+            .expect("parses"),
+            Some(expected),
         );
     }
-    assert!(
-        !parse_bool_env(
-            &|key: &str| (key == PROXIIMA_EMBED_MATRYOSHKA).then(|| "false".to_string()),
-            &settings::PROXIIMA_EMBED_MATRYOSHKA
-        )
-        .expect("parses")
+    assert_eq!(
+        parse_bool_env(&|_: &str| None, &settings::PROXIIMA_EMBED_MATRYOSHKA)
+            .expect("unset parses"),
+        None,
     );
     assert!(
         parse_bool_env(
@@ -1447,5 +1452,35 @@ fn embed_dim_selects_a_lane_and_refuses_the_rest() {
         let err = embedding_client_from_env(&with_dim(raw), EmbeddingRuntimePolicy::default())
             .expect_err("a width with no lane is refused");
         assert!(err.to_string().contains(PROXIIMA_EMBED_DIM), "{raw}: {err}");
+    }
+}
+
+#[test]
+fn embedding_provider_configuration_matches_ledger_vectors() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../crates/core/tests/ledger_vectors.json"
+    ))
+    .expect("parse ledger vectors");
+    for row in vectors["Proxiima.Embeddings.providerConfig"]
+        .as_array()
+        .expect("provider configuration vectors")
+    {
+        let input = |index: usize| row["in"][index].as_bool().expect("setting presence");
+        let lookup = |key: &str| {
+            match key {
+                PROXIIMA_EMBED_BASE_URL if input(0) => Some("https://example.invalid/v1"),
+                PROXIIMA_EMBED_MODEL if input(1) => Some("test-model"),
+                PROXIIMA_EMBED_MATRYOSHKA if input(2) => Some("true"),
+                _ => None,
+            }
+            .map(str::to_owned)
+        };
+        let config = match embedding_client_from_env(&lookup, EmbeddingRuntimePolicy::default()) {
+            Ok(None) => "disabled",
+            Ok(Some(_)) => "enabled",
+            Err(CliError::Runtime(ProxiimaError::Config(_))) => "refuse",
+            Err(error) => panic!("unexpected error: {error}"),
+        };
+        assert_eq!(row["out"], config, "{row}");
     }
 }

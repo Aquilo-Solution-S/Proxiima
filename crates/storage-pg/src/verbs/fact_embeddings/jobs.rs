@@ -327,6 +327,7 @@ impl ClaimExit {
     }
 }
 
+// `Proxiima.Embeddings.settleClaim`.
 async fn exit_claim<'e, E: PgExecutor<'e>>(
     pool: E,
     claim: &EmbeddingJobClaim,
@@ -354,6 +355,7 @@ async fn exit_claim<'e, E: PgExecutor<'e>>(
 }
 
 /// Delete a completed embedding job, fenced by its claim.
+/// `Proxiima.Embeddings.settleClaim`.
 ///
 /// # Errors
 ///
@@ -377,6 +379,7 @@ pub async fn complete_embedding_job<'e, E: PgExecutor<'e>>(
 }
 
 /// Refresh the lease timestamp for token- and owner-matching processing claims.
+/// `Proxiima.Embeddings.settleClaim`.
 ///
 /// Missing claims are skipped rather than treated as a conflict: a batch
 /// heartbeat includes claims that earlier steps may already have completed.
@@ -722,6 +725,7 @@ pub(crate) fn embedding_job_state(
             let seconds = claim_age_seconds.ok_or_else(|| {
                 StorageError::Internal("processing embedding job has no claim age".into())
             })?;
+            // Age comes from the database clock and is floored at zero.
             Ok(EmbeddingJobState::Processing {
                 claim_age: time::Duration::seconds(seconds.max(0)),
             })

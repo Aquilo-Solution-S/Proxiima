@@ -1972,20 +1972,10 @@ stateDiagram-v2
 - d2048
 - d3072
 
-**Space**: A space keys vectors by model identity and supported width.
-
-- model
-- width
-
 **Index encoding**: Types of the HNSW expression over the stored vector.
 
 - vector
 - halfvec
-
-**Storage mode**: Where vectors are stored at install and subsequent writes.
-
-- postgres
-- hostIndex
 
 **Vector storage part**: Parts of the selected vector storage lane.
 
@@ -2045,7 +2035,7 @@ stateDiagram-v2
 - everyLayerDeclines
 - aLayerEmbeds
 
-**Provider call**: A consumer's route-specific input text.
+**Provider call**: Kinds of calls to the embedding provider.
 
 - indexing
 - query
@@ -2067,8 +2057,7 @@ stateDiagram-v2
 
 - publish
 - rescue
-- retry
-- pauseAndRelease
+- release
 
 **Vector validation**: Validation result from a managed client response.
 
@@ -2076,13 +2065,7 @@ stateDiagram-v2
 - widthFault
 - invalidComponent
 
-**Declared text**: The registry projection read to render an embedding input.
-
-- table
-- memory key
-- text column
-
-**Claim release**: The reason an embedding drain can return with unsettled work.
+**Claim release**: Outcomes of fenced release after an aborted drain.
 
 - settled
 - alreadyFencedOut
@@ -2202,7 +2185,7 @@ stateDiagram-v2
 
 **idle seconds max** = 3600: Largest configured first idle poll interval in seconds.
 
-**idle backoff seconds** = 60: Idle polling backs off to this many seconds or the initial interval if it is longer.
+**idle backoff seconds** = 60: Idle poll backoff ceiling in seconds.
 
 **stale claim seconds** = 900: Stale claim timeout in seconds when the host leaves it unset.
 
@@ -2218,7 +2201,7 @@ stateDiagram-v2
 
 **reconcile owner page size** = 1000: Number of owners routed per reconcile owner page.
 
-**input cap min** = 4095: Minimum adapter character cap, one below the first balanced ASCII split.
+**input cap min** = 4095: Minimum client character cap for chunk rescue.
 
 **input cap default** = 16384: Character cap for the canonical host when the input ceiling is unset.
 
@@ -2226,7 +2209,7 @@ stateDiagram-v2
 
 **default matryoshka** = no: Nested-prefix requests are off by default in the canonical host.
 
-**default slot** = "default": The sole slot bindable by a spiice embedding recipe.
+**default slot** = "default": Default embedding slot.
 
 **recall sample cap** = 32: Maximum sampled chunks in an owner and embedding-space canary stratum.
 
@@ -2256,7 +2239,7 @@ stateDiagram-v2
 
 **admission order** = \[resolveRoute, enqueueWithWrite, commit, drain]: Admission queues routed work in its transaction, and provider work follows commit.
 
-**candidate metadata** = \[liveHead, allowedSchema, requestedSpace]: Candidate scans select metadata-eligible Memory heads across layers, with text resolved by the drain.
+**candidate metadata** = \[liveHead, allowedSchema, requestedSpace]: Metadata used to select candidate Memory heads.
 
 **publish chunks** = \[settleFencedClaim, lockHead, appendOrderedChunks, advanceHead]: Publish ordered chunks and advance the head in the same transaction as fenced completion.
 
@@ -2266,7 +2249,7 @@ stateDiagram-v2
 
 **transfer coverage** = \[dropOutsideDestination, queueDestinationHead]: The in-transaction steps that move embedding coverage with a series.
 
-**recall comparison** = \[exact, approximate]: Compare exact and approximate chunk neighbors with separate planner settings.
+**recall comparison** = \[exact, approximate]: Compare exact and approximate chunk neighbors.
 
 **worker start** = \[reconcile, gatedDrain]: Startup attempts reconcile once before the first gated claim.
 
@@ -2281,9 +2264,9 @@ stateDiagram-v2
 
 - index encoding: Wider lanes use half precision for the index, keeping full precision in storage.
 
-| storage mode | vector storage parts |
+| vector lane | vector storage parts |
 | --- | --- |
-| postgres | \[heads, pgvector, localVectors] |
+| local | \[heads, pgvector, localVectors] |
 | hostIndex | \[heads] |
 
 - vector storage parts: Both lanes keep heads, and the PostgreSQL lane also installs pgvector and stores vectors locally.
@@ -2353,10 +2336,10 @@ stateDiagram-v2
 | --- | --- |
 | success | publish |
 | inputRefused | rescue |
-| transient | retry |
-| configuration | pauseAndRelease |
+| transient | release |
+| configuration | release |
 
-- drain action: Only typed input refusal enters rescue, and configuration faults pause the binding.
+- drain action: Publish successful vectors, rescue input refusals, and release on other failures.
 
 | width matches | finite | validate vector |
 | --- | --- | --- |
@@ -2404,7 +2387,7 @@ stateDiagram-v2
 | failedPermanent | failed | no |
 
 - backlog group: The backlog groups pending and processing, and both kinds of failure.
-- diagnostic claim age: Only processing diagnostics expose age, floored at zero and read from the database clock.
+- diagnostic claim age: Only processing diagnostics expose claim age.
 
 | claim event | settle claim |
 | --- | --- |
@@ -2426,14 +2409,6 @@ stateDiagram-v2
 | failedPermanent | no |
 
 - reconcile job: Missing coverage can open a job or reopen a retryable failure.
-
-| space role | space receives jobs |
-| --- | --- |
-| current | yes |
-| next | yes |
-| unrouted | no |
-
-- space receives jobs: Coverage reconciliation queues work for routed spaces.
 
 | space role | job state | purge job |
 | --- | --- | --- |

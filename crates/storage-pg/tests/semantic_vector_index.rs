@@ -1,9 +1,11 @@
 //! Semantic retrieval with an independent in-memory index and real owner RLS.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use proxiima_core::storage_ports::{
-    CandidateBound, InMemoryVectorIndex, MemoryReadPort, VectorEntry, VectorIndex, VectorKey,
+    CandidateBound, EmbeddingJobPort, EmbeddingWrite, EmbeddingWritePort, EmbeddingWriteProof,
+    InMemoryVectorIndex, MemoryReadPort, VectorEntry, VectorIndex, VectorKey,
 };
 use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::query::{
@@ -15,8 +17,8 @@ use proxiima_core::{
 };
 use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
-    TestDerived, TestGoal, TestNote, create_embedding_of, create_user, fresh_pg_host_index,
-    insert_goal_grant,
+    TestDerived, TestGoal, TestNote, create_embedding_of, create_user, enqueue_embedding_job,
+    fresh_pg_host_index, insert_goal_grant,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -28,6 +30,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 struct RecordingIndex {
     inner: InMemoryVectorIndex,
     windows: Mutex<Vec<u32>>,
+    puts: AtomicUsize,
     reported_bound: Option<CandidateBound>,
     reported_score: Mutex<Option<f32>>,
 }
@@ -41,6 +44,7 @@ impl VectorIndex for RecordingIndex {
         version: i32,
         vectors: &[SpaceVector],
     ) -> Result<(), StorageError> {
+        self.puts.fetch_add(1, Ordering::Relaxed);
         self.inner.put(entity, owner, version, vectors).await
     }
 
@@ -225,6 +229,52 @@ async fn embed(
         let chunks = vec![vector(1.0).values().to_vec()];
         create_embedding_of(pg, owner, MemoryId::new(entity), "memory-index", chunks).await?;
     }
+    Ok(())
+}
+
+/// `Proxiima.Embeddings.publishChunks`.
+#[tokio::test]
+async fn a_stale_second_claim_prevents_every_host_index_put() -> TestResult {
+    let index = Arc::new(RecordingIndex::default());
+    let (pg, _database) = fresh_pg_host_index("fenced_host_index", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let space = EmbeddingSpace::new("fenced-index", EmbeddingDim::D1024);
+    for tag in ["first", "second"] {
+        let memory = seed_note(&pg, owner, tag).await?;
+        enqueue_embedding_job(&pg, owner, memory, space.model_id()).await?;
+    }
+
+    let mut claims = pg.claim_pending_embedding_jobs(2, &[], &[]).await?;
+    assert_eq!(claims.len(), 2);
+    let valid_token = std::mem::replace(&mut claims[1].claim_token, Uuid::now_v7());
+    let vectors = [SpaceVector::new(
+        space,
+        vec![1.0; EmbeddingDim::D1024.width()],
+    )?];
+    let writes = |claims: &[_; 2]| {
+        claims
+            .each_ref()
+            .map(|claim: &proxiima_core::EmbeddingJobClaim| EmbeddingWrite {
+                owner: &owner,
+                entity: EmbeddableEntityRef::Memory {
+                    kind: claim.entity_kind,
+                    memory_id: claim.entity_id,
+                },
+                vectors: &vectors,
+                proof: EmbeddingWriteProof::for_claim_for_tests(claim),
+            })
+    };
+    let mut claims: [_; 2] = claims.try_into().expect("two claims");
+    let refused = pg.insert_embeddings(&writes(&claims)).await;
+    assert!(
+        matches!(refused, Err(StorageError::Conflict(_))),
+        "{refused:?}"
+    );
+    assert_eq!(index.puts.load(Ordering::Relaxed), 0);
+
+    claims[1].claim_token = valid_token;
+    assert_eq!(pg.insert_embeddings(&writes(&claims)).await?.len(), 2);
+    assert_eq!(index.puts.load(Ordering::Relaxed), 2);
     Ok(())
 }
 

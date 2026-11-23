@@ -980,7 +980,9 @@ fn embedding_client_from_env(
         ))
     })?;
 
-    let matryoshka = parse_bool_env(lookup, &PROXIIMA_EMBED_MATRYOSHKA)?;
+    let matryoshka = parse_bool_env(lookup, &PROXIIMA_EMBED_MATRYOSHKA)?.unwrap_or(
+        proxiima_core::ledger!(Proxiima.Embeddings.defaultMatryoshka),
+    );
     let dim = embedding_dim_from_env(lookup)?.width_u32();
 
     let max_input_chars = parse_positive_u32_env(lookup, &PROXIIMA_EMBED_MAX_INPUT_CHARS)?
@@ -1017,17 +1019,19 @@ fn parse_positive_u32_env(
     })
 }
 
-fn parse_bool_env(lookup: &(impl EnvLookup + ?Sized), key: &Setting) -> Result<bool, CliError> {
-    match key.read_source(lookup) {
-        None => Ok(proxiima_core::ledger!(
-            Proxiima.Embeddings.defaultMatryoshka
-        )),
-        Some(raw) => proxiima_core::parse_bool_word(&raw).ok_or_else(|| {
-            CliError::Runtime(ProxiimaError::Config(format!(
-                "{key} must be a boolean, got {raw:?}"
-            )))
-        }),
-    }
+fn parse_bool_env(
+    lookup: &(impl EnvLookup + ?Sized),
+    key: &Setting,
+) -> Result<Option<bool>, CliError> {
+    key.read_source(lookup)
+        .map(|raw| {
+            proxiima_core::parse_bool_word(&raw).ok_or_else(|| {
+                CliError::Runtime(ProxiimaError::Config(format!(
+                    "{key} must be a boolean, got {raw:?}"
+                )))
+            })
+        })
+        .transpose()
 }
 
 fn embedding_model_from_env(lookup: &(impl EnvLookup + ?Sized)) -> Option<String> {
