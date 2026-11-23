@@ -1,14 +1,6 @@
-import Proxiima.Memory
-
 /-! # Identity -/
 
 namespace Proxiima.Identity
-
-/-- An embedding uses a Memory ID with its layer, or a Goal ID. -/
-inductive EmbeddableEntity where
-  | memory (kind : Proxiima.Memory.Kind)
-  | goal
-  deriving DecidableEq
 
 /-- An admission ID is available only when absent from both spines and the retained erase witnesses. -/
 def admissionIdAvailable : (memory : Bool) → (goal : Bool) → (erased : Bool) → Bool

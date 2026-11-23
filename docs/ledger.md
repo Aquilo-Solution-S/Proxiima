@@ -3254,11 +3254,6 @@ stateDiagram-v2
 
 ## Identity
 
-**Embeddable entity**: An embedding uses a Memory ID with its layer, or a Goal ID.
-
-- memory
-- goal
-
 **Series kind**: The kind of series whose versions align with its head.
 
 - memory
@@ -7666,6 +7661,8 @@ stateDiagram-v2
 
 Causa — Audience
 
+- Definition **has**: A role's capability predicate.
+
 ✓ **has meet** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability intersection for a role cap.
 
 ✓ **has join** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability union across roles.
@@ -7674,13 +7671,23 @@ Causa — Audience
 
 ✓ **admin has** (axioms: none): The capabilities of the unrestricted group role.
 
+- Definition **gives**: A capability inherited through group membership.
+
 ✓ **gives mono** (axioms: none): Lifting capability implication from roles to groups.
 
 ✓ **gives mount** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability resolution under a subgroup cap.
 
 ✓ **gives union** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Capability resolution across group memberships.
 
+- Definition **only**: The synthetic group used to resolve an individual grant subject.
+
+- Definition **subject**: The current membership of a grant subject.
+
+- Definition **gives**: The capability conveyed by a grant under current membership.
+
 ✓ **gives iff** (axioms: `propext`, `Classical.choice`, `Quot.sound`): The two conditions for a grant to convey a capability.
+
+- Definition **flattened**: The resolved group used for audience lookup.
 
 ✓ **flattened gives** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Equivalence of flattened lookup and per-grant authorization.
 
@@ -7702,7 +7709,29 @@ Causa — Audience
 
 Causa — Authorization
 
+- Definition **may read**: Owner-scoped memory read authorization.
+
+- Definition **may write**: Owner-scoped memory write authorization.
+
+- Definition **may read goals**: Owner-scoped Goal read authorization.
+
+- Definition **may administer**: Authorization to administer an owner.
+
+- Definition **may manage**: Authorization to change a group's membership and roles.
+
 ✓ **may write implies read** (axioms: none): Owner-scoped writes imply reads at the same memory kind.
+
+- Definition **forwarding role**: Roles available to verified forwarders.
+
+- Definition **forwarding cap**: The upper bound on a forwarded role.
+
+- Definition **preset**: `Causa.ForwardingRole → Causa.Role`
+
+- Definition **to role**: The effective role of a verified forwarder.
+
+- Definition **request has role**: Role resolution for a request at one owner.
+
+- Definition **request may read**: `Causa.OwnerState → Causa.ForwardingPolicy → Causa.User → Causa.RequestAuthority → Causa.OwnerRef → Causa.AccessKind → Prop`
 
 ✓ **forwarding role capped** (axioms: `propext`, `Quot.sound`): A forwarded role is bounded by `Causa.Role.forwardingCap`.
 
@@ -7712,11 +7741,29 @@ Causa — Authorization
 
 ✓ **forwarding role no goal work** (axioms: `propext`, `Quot.sound`)
 
+- Definition **request may work goals**: Owner-scoped Goal work authorization.
+
+- Definition **request may write goal work**: Authorization for Fact effects declared by a host-state Goal work command.
+
 Causa — Citations
+
+- Definition **blob id**: `Causa.Blob → Causa.BlobId`
+
+- Definition **blob owner**: `Causa.Blob → Causa.Owner`
+
+- Definition **memory cites**: The blob citation declared by a Memory admission.
 
 ✓ **citation owner match** (axioms: none)
 
 Causa — Compliance
+
+- Definition **abandoned**: `Causa.Owner → Prop`
+
+- Definition **unreferenced**: Absence of incoming pins from surviving Memories and Goals.
+
+- Definition **forgotten**: Whether a stored Memory is flagged as forgotten.
+
+- Definition **admits**: Authorization to issue a spiice-scoped erase for an owner.
 
 **Spiice scoped erase**: An authorized selection of series for spiice-scoped erasure.
 
@@ -7724,7 +7771,19 @@ Causa — Compliance
 - Premise **own schema**: ∀ (h : Causa.Handle), h ∈ handles → ownSchemas (seriesSchema h)
 - Premise **in owner**: Ownership of every stored version in the erase selection.
 
+- Definition **selects**: Whether the erase selection covers a stored version.
+
+- Definition **wipeable**: Eligibility for hard erasure.
+
+- Definition **pin render live**: Whether a pin resolves to a live Memory for rendering.
+
+- Definition **pin render forgotten**: `Causa.Set Causa.Memory → Causa.MemoryId → Prop`
+
 ✓ **pin render live not forgotten** (axioms: `propext`)
+
+- Definition **hard erase memory rows**: The committed Memory set after a hard erase.
+
+- Definition **hard erase memory witnesses**: The pin-witness set after a Memory hard erase.
 
 **Hard erase memory transition**: The committed-state relation for erasing one Memory admission.
 
@@ -7741,6 +7800,10 @@ Causa — Compliance
 ✓ **hard erase memory records kind** (axioms: `propext`)
 
 ✓ **hard erase memory result well formed** (axioms: `propext`)
+
+- Definition **hard erase goal rows**: The committed Goal set after a hard erase.
+
+- Definition **hard erase goal witnesses**: `Causa.Set Causa.ErasedPinTarget → Causa.Goal → Causa.Set Causa.ErasedPinTarget`
 
 **Hard erase goal transition**
 
@@ -7765,22 +7828,106 @@ Causa — Goal collaboration authority
 - Premise **no owner administration**: toGrant.role.administer = false
 - Premise **subject admitted**: Proxiima.GoalCollaboration.grantSubjectAdmitted (match toGrant.subject with \| Causa.Subject.person u =\> Proxiima.GoalCollaboration.GrantSubjectKind.person \| Causa.Subject.group o =\> Proxiima.GoalCollaboration.GrantSubjectKind.group) toGrant.role.manage = true
 
+- Definition **in force**: The epoch and expiry premises of `Proxiima.GoalCollaboration.grantInForce`.
+
+- Definition **goal route**: Capability resolution through the owner or a Goal's audience.
+
+- Definition **goal publication read admitted**: Audience authorization to read a published Memory version.
+
+- Definition **goal publication fork admitted**: Source consent to fork through a live publication for the exact readable admission.
+
+- Definition **goal read admitted**: Authorization to read the Goal itself.
+
+- Definition **goal edit admitted**: Authorization to edit a Goal under its current controller.
+
 ✓ **goal edit implies read** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Goal read authorization follows from edit authorization.
+
+- Definition **goal achieve admitted**: Authorization to achieve a Goal.
+
+- Definition **goal work write admitted**: Authorization to write Memory through a Goal work binding.
+
+- Definition **goal work read admitted**: Authorization to read Memory through a Goal work binding.
 
 ✓ **goal route is flattened** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Goal audience resolution agrees with `Causa.flattened` for grants in force.
 
 ✓ **goal work write implies read** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
+- Definition **fork admitted**: Authorization for an independent fork of a Memory version.
+
+- Definition **fork source ancestor read admitted**: `Causa.User → Causa.Memory → Prop`
+
 Causa — Pins
+
+- Definition **derive pins**: Memory pin projection under `Proxiima.Edges.pinField`.
+
+- Definition **goal reference target exists**: `Causa.Set Causa.Goal → Causa.GoalId → Prop`
+
+- Definition **retained memory reference target exists**: `Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Prop`
+
+- Definition **retained goal reference target exists**: `Causa.Set Causa.Goal → Causa.Set Causa.ErasedPinTarget → Causa.GoalId → Prop`
+
+- Definition **retained origin target exists**: `Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Prop`
+
+- Definition **resolve visible goal refs**: Read projection of Goal references under the requester's visibility.
 
 ✓ **unreadable goal reference resolves like a memory reference** (axioms: `propext`): Indistinguishability of unreadable Goal and Memory references after projection.
 
 Causa — Goals
 
+- Definition **goal text blank char**: Whitespace trimmed by the stored Goal text constraint.
+
+- Definition **goal text nonblank**: Admissibility of a present Goal prompt.
+
 **Goal**
 
 - Premise **terminal close fact**: `Proxiima.Goals.GoalState.terminal`.
 - Premise **text nonblank**: ∀ (s : Causa.Text), text = some s → Causa.GoalTextNonblank s
+
+- Definition **goal handle**: `Causa.Goal → Causa.Handle`
+
+- Definition **goal t**: `Causa.Goal → Causa.GoalId`
+
+- Definition **goal id**: `Causa.Goal → Causa.GoalId`
+
+- Definition **goal owner**: `Causa.Goal → Causa.Owner`
+
+- Definition **goal state**: `Causa.Goal → Proxiima.Goals.GoalState`
+
+- Definition **goal close fact t**: `Causa.Goal → Option Causa.MemoryId`
+
+- Definition **goal assignment**: `Causa.Goal → Option Causa.MemoryId`
+
+- Definition **goal dependencies**: `Causa.Goal → List Causa.GoalId`
+
+- Definition **goal evidence**: `Causa.Goal → List Causa.MemoryId`
+
+- Definition **goal motivated by**: `Causa.Goal → List Causa.MemoryId`
+
+- Definition **goal write act t**: `Causa.Goal → Option Causa.MemoryId`
+
+- Definition **goal motivations valid**: `Causa.Set Causa.Memory → Causa.Goal → Prop`
+
+- Definition **perspective guidance valid**: `Causa.Set Causa.Memory → Causa.Set Causa.Goal → Causa.Memory → Prop`
+
+- Definition **goal motivations retained valid**: `Causa.Set Causa.Memory → Causa.Set Causa.Goal → Causa.Set Causa.ErasedPinTarget → Causa.Goal → Prop`
+
+- Definition **perspective guidance retained valid**: `Causa.Set Causa.Memory → Causa.Set Causa.Goal → Causa.Set Causa.ErasedPinTarget → Causa.Memory → Prop`
+
+- Definition **erased targets disjoint goals**: `Causa.Set Causa.ErasedPinTarget → Causa.Set Causa.Goal → Prop`
+
+- Definition **goal declared target ids**: The version identities contained in the Goal's declared pins, one list per field of `Causa.GoalPins`.
+
+- Definition **goal id unique**: `Causa.Set Causa.Goal → Prop`
+
+- Definition **forest child of**: `Causa.GoalForest → Causa.Handle → Causa.Handle → Prop`
+
+- Definition **no open under closed**: The open ancestry invariant of a Goal forest.
+
+- Definition **parents exist**: The parent existence invariant of a Goal forest.
+
+- Definition **parent older**: The creation order invariant for parent and child series.
+
+- Definition **born below clock**: The birth clock invariant of a Goal forest.
 
 **Goal forest inv**
 
@@ -7788,6 +7935,8 @@ Causa — Goals
 - Premise **parents exist**: Causa.ParentsExist F
 - Premise **parent older**: Causa.ParentOlder F
 - Premise **born below clock**: Causa.BornBelowClock F
+
+- Definition **no open child**: No sub-goal of the series blocks its close: `Proxiima.Goals.GoalState.isOpen`.
 
 **Forest birth**: Creation of a Goal series.
 
@@ -7835,6 +7984,8 @@ Causa — Goals
 
 ✓ **goal step preserves inv** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
 
+- Definition **empty forest**: `Causa.GoalForest`
+
 ✓ **empty forest inv** (axioms: none)
 
 ✓ **reachable inv** (axioms: `propext`, `Classical.choice`, `Quot.sound`)
@@ -7845,7 +7996,35 @@ Causa — Goals
 
 ✓ **goal tree acyclic** (axioms: none): Acyclicity of the Goal tree.
 
+- Definition **owner perspectives**: The candidate pool for situated Self.
+
+- Definition **cue touches**: The cue names the admission or one of its Memory pins, including read influence and fork lineage.
+
+- Definition **situated self**: The owner's live, readable Perspective heads touched by the cue or matched by the question.
+
+- Definition **retained goal assignment valid**: `Causa.Set Causa.Goal → Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Prop`
+
+- Definition **retained goal evidence valid**: `Causa.Set Causa.Goal → Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Prop`
+
+- Definition **retained goal terminal close fact valid**: `Causa.Set Causa.Goal → Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Prop`
+
 Causa — Identity
+
+- Definition **memory id**: Identifier of one Memory version.
+
+- Definition **goal id**: `Type`
+
+- Definition **handle**: Identifier of one series.
+
+- Definition **blob id**: `Type`
+
+- Definition **content id**: Identifier of a typed sidecar payload.
+
+- Definition **cue**: The version identities admitted to a retrieval cue.
+
+- Definition **writer attribution**: Proof representation of `Proxiima.Identity.WriterAttribution`.
+
+- Definition **resolved owner**: The owner membership view used by authorization.
 
 **Owner state**: Trusted owner resolution supplied by the host.
 
@@ -7853,7 +8032,29 @@ Causa — Identity
 
 Causa — Memory
 
+- Definition **memory kind**: The ledger vocabulary used by Memory proofs.
+
+- Definition **pin target kind**: The entity kinds a pin target carries.
+
+- Definition **pin target kind**: `Causa.MemoryKind → Causa.PinTargetKind`
+
+- Definition **erased pin target t**: `Causa.ErasedPinTarget → Causa.MemoryId`
+
+- Definition **erased pin target kind**: `Causa.ErasedPinTarget → Causa.PinTargetKind`
+
 ✓ **erased pin target ext** (axioms: none)
+
+- Definition **erased pin target id unique**: `Causa.Set Causa.ErasedPinTarget → Prop`
+
+- Definition **erased pin target kind compatible**: `Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Causa.PinTargetKind → Prop`
+
+- Definition **recorded memory target kind**: `Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Causa.MemoryKind → Prop`
+
+- Definition **recorded memory target exists**: `Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Prop`
+
+- Definition **recorded goal target exists**: `Causa.Set Causa.ErasedPinTarget → Causa.GoalId → Prop`
+
+- Definition **content id**: `Causa.Content → Causa.ContentId`
 
 **Memory**: One admission in a Memory series.
 
@@ -7861,11 +8062,77 @@ Causa — Memory
 - Premise **fact origins empty**: Exclusion of grounding origins from Facts.
 - Premise **blob kind admitted**: A cited version satisfies `Proxiima.Citations.citationAllowed`.
 
+- Definition **memory handle**: `Causa.Memory → Causa.Handle`
+
+- Definition **memory t**: `Causa.Memory → Causa.MemoryId`
+
+- Definition **memory kind**: `Causa.Memory → Causa.MemoryKind`
+
+- Definition **memory owner**: `Causa.Memory → Causa.Owner`
+
+- Definition **memory origins**: `Causa.Memory → List Causa.MemoryId`
+
+- Definition **memory refs**: `Causa.Memory → List Causa.MemoryId`
+
+- Definition **memory goal refs**: `Causa.Memory → List Causa.GoalId`
+
+- Definition **memory guided by**: `Causa.Memory → List Causa.GoalId`
+
+- Definition **memory forked from**: `Causa.Memory → Option Causa.MemoryId`
+
+- Definition **memory reads**: `Causa.Memory → List Causa.MemoryId`
+
+- Definition **memory reference ids**: Memory references including the fork anchor.
+
+- Definition **memory blob id**: `Causa.Memory → Option Causa.BlobId`
+
+- Definition **memory tick**: `Causa.Memory → Causa.Instant`
+
+- Definition **memory forgotten**: `Causa.Memory → Bool`
+
+- Definition **memory id unique**: Uniqueness of Memory version identities in a store.
+
+- Definition **fork anchor aligned**: `Causa.Set Causa.Memory → Prop`
+
+- Definition **fact**: `Type`
+
+- Definition **memory head handle**: `Causa.MemoryHead → Causa.Handle`
+
+- Definition **memory head kind**: `Causa.MemoryHead → Causa.MemoryKind`
+
+- Definition **memory head owner**: `Causa.MemoryHead → Causa.Owner`
+
+- Definition **memory head t**: `Causa.MemoryHead → Causa.MemoryId`
+
+- Definition **memory head aligned**: Agreement of Memory versions with their series catalog.
+
+- Definition **memory is head**: Whether the series catalog names this admission as its head.
+
+- Definition **selects readable memory**: An exact read keeps its readable admission; a head read selects the newest readable admission of its series.
+
+- Definition **forget**: Setting the forgotten mark on the Memory row.
+
+- Definition **restore**: Clearing the mark of an admitted restore.
+
 ✓ **restore forget** (axioms: `propext`): Forget followed by an admitted restore recovers the original live Memory row.
+
+- Definition **forget in**: The Memory store after forgetting one admission.
 
 ✓ **forget in keeps row** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of the admission's identity, kind and owner through forgetting.
 
+- Definition **pin exists**: Existence of a stored Memory pin target.
+
+- Definition **pin kind is**: Kind lookup for a stored Memory pin target.
+
+- Definition **pin kind fact or abstraction**: Admissible origin target kinds for an Abstraction.
+
 ✓ **pin kind is forget in** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Preservation of target kind across forgetting.
+
+- Definition **erased targets disjoint memories**: `Causa.Set Causa.ErasedPinTarget → Causa.Set Causa.Memory → Prop`
+
+- Definition **recorded pin kind is**: `Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Causa.MemoryKind → Prop`
+
+- Definition **recorded pin kind fact or abstraction**: `Causa.Set Causa.Memory → Causa.Set Causa.ErasedPinTarget → Causa.MemoryId → Prop`
 
 **Retained origin kind valid**
 
@@ -7881,11 +8148,19 @@ Causa — Memory
 
 ## Object maintenance retry arithmetic
 
+- Definition **purge retry delay**: Retry delay in whole units with a capped exponent and a configured ceiling.
+
 ✓ **purge retry delay saturates** (axioms: `propext`, `Quot.sound`): Additional failures past the exponent cap do not increase the delay.
 
 Causa — Operators
 
 ✓ **operator inputs are origin targets** (axioms: `propext`): Memory operators admit exactly the origin target kinds of their output layer.
+
+- Definition **input kind**: `Proxiima.Memory.OperatorPhase → Causa.MemoryKind → Prop`
+
+- Definition **output memory kind**: `Proxiima.Memory.OperatorPhase → Causa.MemoryKind → Prop`
+
+- Definition **output goal allowed**: `Proxiima.Memory.OperatorPhase → Prop`
 
 **Invocation shape valid**
 
@@ -7902,11 +8177,47 @@ Causa — Operators
 
 Causa — Owner
 
+- Definition **access kind**: The memory kinds ranked by `Proxiima.OwnerAuthority.coveringCeiling`.
+
+- Definition **goal access**: The Goal capability used by the proof lattice.
+
+- Definition **meet**: The lower Goal capability.
+
+- Definition **join**: The higher Goal capability.
+
 **Role**: The capabilities supplied by a resolved membership.
 
 - Premise **write le read**: write ≤ read
 
+- Definition **may read**: `Causa.Role → Causa.AccessKind → Prop`
+
+- Definition **may write**: `Causa.Role → Causa.AccessKind → Prop`
+
+- Definition **reads goals**: The capability to read the owner's Goals.
+
+- Definition **works goals**: The capability to work on the owner's Goals.
+
+- Definition **administers**: The capability to administer an owner.
+
+- Definition **manages**: The capability to change membership and roles.
+
 ✓ **works goals reads goals** (axioms: `propext`): Goal work includes Goal read access.
+
+- Definition **of preset**: The numerical proof projection of a ledger role preset.
+
+- Definition **personal**: The role derived from personal ownership.
+
+- Definition **viewer**: The memory viewer role.
+
+- Definition **ingest**: The Fact ingest role.
+
+- Definition **editor**: The memory editor role.
+
+- Definition **admin**: The unrestricted group role.
+
+- Definition **meet**: The intersection of capabilities used to cap inherited authority.
+
+- Definition **join**: The union of capabilities used to combine membership paths.
 
 ✓ **meet capped** (axioms: `propext`, `Quot.sound`): Preservation of capability bounds under a role cap.
 
@@ -7924,7 +8235,29 @@ Causa — Owner
 
 ✓ **meet join distrib** (axioms: `propext`, `Quot.sound`): Distributivity of a role cap over a membership join.
 
+- Definition **group**: The resolved group membership view.
+
+- Definition **owner**: The group whose roles govern owner-scoped authorization.
+
+- Definition **of user**: The group derived from a personal identity.
+
+- Definition **is personal**: Recognition of a personal group.
+
+- Definition **visible**: Visibility through owner membership.
+
+- Definition **mount**: The membership of a subgroup under a role cap.
+
+- Definition **union**: The combined membership of two groups.
+
+- Definition **drop**: Membership removal for a single user.
+
 Causa — Prelude
+
+- Definition **set**: `Type → Type`
+
+- Definition **instant**: The logical insertion-time coordinate.
+
+- Definition **text**: Text carried by Memory and Goal admissions.
 
 Causa — Principles
 
@@ -7945,6 +8278,12 @@ Causa — Principles
 ✓ **principle 8 a goal never grounds** (axioms: `propext`): Principle 8 — Goal intent is outside Memory grounding.
 
 Causa — Provenance grounding
+
+- Definition **grounding from**: The origins and references that contribute to `Proxiima.Edges.groundingFields`.
+
+- Definition **pin from**: The stored pins subject to the graph's insertion order, including fork lineage.
+
+- Definition **pin from in table**: `Causa.Set Causa.Memory → Causa.Memory → Causa.Memory → Prop`
 
 **Memory graph valid**: Validity of the admitted Memory graph.
 
@@ -7997,6 +8336,10 @@ Causa — Provenance grounding
 
 Causa — Schema evolution
 
+- Definition **memory migration pins**: Exact targets of each Memory pin field, including context-only fields.
+
+- Definition **goal migration pins**: Exact targets of each Goal pin field.
+
 **Schema migration witness**: A declared conversion and the premises for validity of its retained graph.
 
 - Premise **source memory coverage**: Every source Memory has a mapped target admission, independently of the erase witnesses.
@@ -8028,6 +8371,8 @@ Causa — Schema evolution
 - Premise **terminal close valid**: Causa.RetainedGoalTerminalCloseFactValid newGoals newMemories retainedTargets
 - Premise **retained dependency targets exist**: Dependencies resolve to retained Goal identities.
 - Premise **retained write act targets exist**: Write acts resolve to retained Memory identities.
+
+- Definition **pin target exists**: A pin resolves to an admission or erase witness in its own identity space.
 
 ✓ **schema migration pins resolve** (axioms: `propext`): Every Memory and Goal pin in the retained migration graph resolves in its identity space and avoids removed identities.
 

@@ -201,7 +201,6 @@ impl TryFrom<WireEndpoint> for EdgeEndpoint {
     type Error = &'static str;
 
     fn try_from(wire: WireEndpoint) -> Result<Self, Self::Error> {
-        // `Proxiima.Identity.EmbeddableEntity`.
         match wire.entity {
             EntityRef::Memory(id) => MemoryKind::of(wire.kind)
                 .map(|kind| Self::memory(kind, id))
