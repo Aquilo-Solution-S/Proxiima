@@ -488,9 +488,7 @@ async fn unauthorized_throttled_and_silent_receivers_are_retried() {
     assert_eq!(receiver.seen().len(), 3);
 }
 
-/// A rejection whose body never ends still settles as rejected: the sink
-/// reads at most `MAX_REASON_BYTES` of it, so neither the body's size nor
-/// its length in time reaches this process.
+/// A rejection whose body never ends settles after the retained prefix fills.
 #[tokio::test]
 async fn an_endless_rejection_body_is_read_only_to_the_reason_bound() {
     let ca = Ca::new();

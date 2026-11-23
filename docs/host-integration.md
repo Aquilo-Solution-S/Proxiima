@@ -875,16 +875,21 @@ with a reason. The limits and concurrency contract live in
 
 ## Fact publication outbox
 
+Capture and delivery follow [`Proxiima.Publication`](ledger.md#publication).
+
 Implement `DurableIntake` in the host and register it with
 `RuntimeBuilder::outbox_intake`, or register named consumers with
 `outbox_consumer`. A captured listenable Fact is committed to the outbox in
 the write transaction. A consumer receives it at least once; deduplicate on
-the event id. `Ok(Accepted)` and `Ok(Rejected)` mark a record published, while
-an intake error releases it for retry, and so does an `accept` that panics: the
+the event id. Return `Ok(Accepted)` or `Ok(Rejected)` only after committing the
+decision. Either acknowledgement can settle that consumer’s lane. An intake
+error or a panic in `accept` releases the claim for retry. The
 drain logs it and carries on. Each record is its own `accept` call; the
-marks for a claimed batch are written in one transaction, at the end of the batch
-or after half the lease, whichever is first. No consumer means Facts are still
-captured until the configured pending bound is reached.
+marks for a claimed batch flush at batch end or at half the oldest accepted
+record’s renewed lease, whichever comes first. A fenced mark settles a lane;
+explicit retirement removes the consumer’s lanes and settles any record with
+no remaining debt. Without an intake, registered lanes accumulate until the
+pending bound is reached.
 
 Erase and lease takeover are checked twice: just before `accept`, and again
 when the record is marked published, under the lane lock and in the marking
@@ -904,6 +909,9 @@ the authenticated context. The host owns consumer ledgers, retention, and
 actor attribution. The typed `PublicationRecord`, `DurableIntake`, and delivery outcomes own the
 CloudEvents envelope and retry contract in rustdoc. Scheduling, execution, and
 call logging belong to the host; the outbox is its change channel.
+
+Quiesce lets an in-flight intake finish. Shutdown abandons it. Both flush
+completed decisions and release the claims they did not finish.
 
 The built-in HTTP sink reads `PROXIIMA_OUTBOX_HTTP_URL` and delivers each event
 to that receiver without following redirects. Plaintext HTTP requires loopback

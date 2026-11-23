@@ -570,6 +570,7 @@ where
         if let Some(plan) = input.publication {
             let position =
                 crate::verbs::publication_outbox::next_series_position(tx, outcome.handle).await?;
+            // `Proxiima.Publication.atomicCapture`.
             crate::verbs::publication_outbox::capture_publication_in_tx(
                 tx,
                 owner.into_inner(),

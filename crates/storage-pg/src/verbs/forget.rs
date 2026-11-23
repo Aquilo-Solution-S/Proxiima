@@ -1069,6 +1069,7 @@ async fn erase_memory_in_lifecycle(
     // memory would then walk past a record still holding the full typed
     // payload. The caller has already authorized the erase of this `t`; the
     // record is that `t`'s content whichever owner it was captured for.
+    // `Proxiima.Publication.laneLifecycle`.
     sqlx::query("DELETE FROM proxiima_core.publication_origin WHERE t = $1")
         .bind(t)
         .execute(tx.as_mut())

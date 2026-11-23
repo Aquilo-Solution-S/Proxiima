@@ -12,15 +12,7 @@ use super::{
 };
 
 impl SpiiceRegistry {
-    /// A listenable schema's captured events name a catalog entry that has
-    /// to resolve.
-    ///
-    /// The pairing is a build-time fact about the composed binary, so it is
-    /// refused at freeze rather than at the first write — the alternative is
-    /// a deployment that emits events pointing at a `dataschema` which
-    /// resolves to nothing, for the lifetime of every one of those events.
-    /// The check reads `protocol_ingress`, because that is where
-    /// `json_schema()` was recorded at registration.
+    /// Reads JSON schema metadata from typed ingress registration.
     pub(super) fn validate_listenable_schemas_publish_a_json_schema(
         &self,
     ) -> Result<(), SpiiceRegistryError> {
@@ -34,6 +26,7 @@ impl SpiiceRegistry {
                     && entry.kind == schema.kind
                     && entry.json_schema.is_some()
             });
+            // `Proxiima.Publication.schemaFreezeAdmitted`.
             if !has_json_schema {
                 return Err(SpiiceRegistryError::ListenableWithoutSchema {
                     schema_id: schema.schema_id.clone(),

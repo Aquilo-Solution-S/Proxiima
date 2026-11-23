@@ -291,10 +291,12 @@ CREATE OR REPLACE TRIGGER projection_remember_lang
     EXECUTE FUNCTION proxiima_core.remember_lexical_language();
 
 -- publication_origin
+-- `Proxiima.Publication.immutablePublication`.
 CREATE OR REPLACE TRIGGER publication_origin_identity_immutable BEFORE UPDATE ON proxiima_core.publication_origin FOR EACH ROW EXECUTE FUNCTION proxiima_core.enforce_publication_origin_immutable();
 
 
 -- publication_outbox
+-- `Proxiima.Publication.immutablePublication`.
 CREATE OR REPLACE TRIGGER publication_outbox_capture_immutable BEFORE UPDATE ON proxiima_core.publication_outbox FOR EACH ROW EXECUTE FUNCTION proxiima_core.enforce_publication_immutable();
 
 

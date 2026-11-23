@@ -650,6 +650,7 @@ impl Engine {
                 },
             ));
         };
+        // `Proxiima.Publication.typedCaptureAdmitted`.
         let mut matches = sidecars.iter().filter(|payload| {
             payload.kind == PayloadKind::Fact
                 && payload.schema_id == schema_id
@@ -680,6 +681,7 @@ impl Engine {
         let model_id = authz.trusted_model_id().map(ToOwned::to_owned);
         // Host-bound attributes ride the SAME authorization context as the
         // trusted model id: nothing the payload carries can reach them.
+        // `Proxiima.Publication.stampedProvenance`.
         let extensions = authz.publication_extensions().clone();
         Ok(Some(crate::publication::PublicationPlan::new(
             crate::publication::PublicationDraft::new(

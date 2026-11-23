@@ -104,11 +104,13 @@ erased identities.
 
 ## Publication copies
 
+The [publication ledger](ledger.md#publication) defines the lane lifecycle.
+
 Outbox records are captured typed delivery copies. Forgetting their Fact cancels
 its undelivered delivery: pending and claimed lanes are deleted, and a record
 with no delivered lane is removed; a record some consumer already delivered is
-kept, settled. A lane already claimed may still deliver once (its mark is then
-stale). Restoring the Fact does not re-enqueue. The publication origin stays.
+kept, settled. An intake that already received the event may retain it, and a later
+mark for the cancelled lane is stale. Restoring the Fact does not re-enqueue. The publication origin stays.
 Whole-owner and source erasure remove retained publication
 copies by immutable original attribution, including after the live Fact has
 transferred. Exact physical Fact erasure removes its publication copy and origin

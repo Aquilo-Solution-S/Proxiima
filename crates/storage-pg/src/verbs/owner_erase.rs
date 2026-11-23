@@ -992,6 +992,7 @@ async fn revoke_original_publications(
 ) -> Result<(u64, u64), StorageError> {
     let owner_id = owner.into_inner();
     let source = scope.source_bind();
+    // `Proxiima.Publication.laneLifecycle`.
     let publications = sqlx::query(concat!(
         "DELETE FROM proxiima_core.publication_outbox outbox
           WHERE outbox.t IN (",
