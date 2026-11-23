@@ -198,13 +198,9 @@ impl<P: FactPayload> OwnedFactWrite<P> {
 /// One transaction the Engine can attach several authorized writes to.
 /// Drop without [`Self::commit`] rolls the transaction back.
 ///
-/// The transaction is not opened by [`Engine::unit_of_work`]. Authorization
-/// and embedding run before persistence; automatic natural-key selection
-/// runs inside the storage transaction.
-/// [`crate::storage_ports::WriteSessionFactory::begin`] happens on the first
-/// write, advisory lock, forget, or host-state command. A multi-derived batch
-/// ([`Self::derive_memories`]) embeds every text before that begin, so
-/// a file of N chunks does not hold a pool slot across N provider RTTs.
+/// [`Engine::unit_of_work`] defers opening a transaction until the first
+/// operation that needs the write session. Natural-key selection and
+/// embedding-job enqueue run in that transaction.
 ///
 /// Host-state commands ([`Self::apply_host_state`]) run on the same
 /// transaction as Fact writes. Do not hold the unit open across broker or
@@ -631,6 +627,7 @@ impl Engine {
         let authz = authz.clone();
         let write = spec.to_owned_write();
         let schema_id = P::SCHEMA_ID;
+        // `Proxiima.Admission.detachedIngestOrder`.
         let task = tokio::spawn(tracing::Instrument::instrument(
             async move {
                 let ingest = engine.ingest_fact(&authz, write.as_write());
@@ -816,11 +813,19 @@ impl<'a> UnitOfWork<'a> {
     ///
     /// Storage faults from the lock.
     pub async fn advisory_xact_lock(&mut self, key: i64) -> Result<(), ProtocolError> {
-        self.ensure_session()
-            .await?
+        self.exclusive_session(key).await.map(|_| ())
+    }
+
+    async fn exclusive_session(
+        &mut self,
+        key: i64,
+    ) -> Result<&mut dyn WriteSession, ProtocolError> {
+        let session = self.ensure_session().await?;
+        session
             .advisory_xact_lock(key)
             .await
-            .map_err(|err| ProtocolError::internal(err.to_string()))
+            .map_err(|err| ProtocolError::internal(err.to_string()))?;
+        Ok(session.as_mut())
     }
 
     /// Serialize this transaction against `key` in shared mode
@@ -828,10 +833,8 @@ impl<'a> UnitOfWork<'a> {
     ///
     /// A fenced scope's writers take this; the scope's eraser takes the
     /// exclusive mode. Writers do not wait on each other, the erase waits
-    /// for all of them, and every writer after it waits for the erase. It
-    /// is NOT the mode for the read-model precondition — see
-    /// [`Self::read_own_sidecar`], which needs an exclusive holder to make
-    /// the check binding.
+    /// for all of them, and every writer after it waits for the erase.
+    /// [`Self::read_own_sidecar`] acquires its own exclusive lock.
     ///
     /// # Errors
     ///
@@ -846,13 +849,9 @@ impl<'a> UnitOfWork<'a> {
 
     /// Read `owner`'s own sidecar rows inside THIS transaction.
     ///
-    /// The read-model precondition affordance: `advisory_xact_lock` →
-    /// read → check → append, all on one snapshot. Opens the transaction
-    /// if the unit has not written yet, because a read that is not in the
-    /// transaction is exactly the thing this exists to stop being. The
-    /// exclusive mode is the one that binds it: under
-    /// [`Self::advisory_xact_lock_shared`] a second holder of the same key
-    /// reads the same absence and appends the same row.
+    /// The unit acquires the exclusive transaction lock for `key` before
+    /// reading. Use the same key for competing read/check/append operations
+    /// and append through this unit, which keeps the lock through commit.
     ///
     /// `owner` goes through the same write gate as the append that follows
     /// it, and the resolved permit — not `read` — is what scopes the rows.
@@ -866,6 +865,7 @@ impl<'a> UnitOfWork<'a> {
     /// a registered memory sidecar or declares no owner column.
     pub async fn read_own_sidecar(
         &mut self,
+        key: i64,
         owner: OwnerId,
         read: &SidecarSessionRead<'_>,
     ) -> Result<Vec<serde_json::Value>, ProtocolError> {
@@ -873,7 +873,8 @@ impl<'a> UnitOfWork<'a> {
             .engine
             .authorize_write(self.authz()?, &owner, MemoryKind::Fact)
             .await?;
-        self.ensure_session()
+        // `Proxiima.Admission.sidecarPreconditionOrder`.
+        self.exclusive_session(key)
             .await?
             .read_own_sidecar(write_permit.owner_write_permit(), read)
             .await
@@ -924,8 +925,6 @@ impl<'a> UnitOfWork<'a> {
     /// before mutation. The Postgres backend then runs the command on the
     /// live transaction — host ops may run before or after a Fact write and
     /// see this unit's uncommitted rows. Other connections do not.
-    ///
-    /// Do not hold the unit open across broker or provider network I/O.
     ///
     /// # Errors
     ///
@@ -1111,6 +1110,7 @@ impl<'a> UnitOfWork<'a> {
             .ingest_authorized_fact(&authorized, &embedding_spaces)
             .await
             .map_err(super::errors::map_fact_ingest_error)?;
+        // `Proxiima.Admission.unitEndpointLive`.
         if !outcome.idempotent_replay {
             self.written.push(outcome.memory_id);
             self.written_kinds
@@ -1497,6 +1497,7 @@ impl<'a> UnitOfWork<'a> {
     /// # Errors
     ///
     /// Storage commit faults.
+    // `Proxiima.Admission.commitsUnit`.
     pub async fn commit(mut self) -> Result<(), ProtocolError> {
         if self.poisoned {
             self.session.take();

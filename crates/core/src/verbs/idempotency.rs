@@ -9,11 +9,11 @@ use crate::text_bounds::check_trimmed_len;
 use uuid::Uuid;
 
 /// Validated tool `idempotency_key` (1..=[`IdempotencyKey::MAX_CHARS`] after trim).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IdempotencyKey(String);
 
 impl IdempotencyKey {
-    pub const MAX_CHARS: usize = 180;
+    pub const MAX_CHARS: usize = crate::ledger!(Proxiima.Admission.requestKeyMax);
 
     /// # Errors
     ///
@@ -102,6 +102,7 @@ impl KeyScope {
     /// Full `ingest_keys.source_id` for this scope's request ledger.
     #[must_use]
     pub fn ledger_source(self) -> String {
+        // `Proxiima.Admission.requestScopeUsesGoalAndSubject`.
         match self {
             Self::GoalAbstraction(goal, subject) | Self::GoalPerspective(goal, subject) => {
                 format!(
@@ -118,7 +119,8 @@ impl KeyScope {
     }
 }
 
-const FINGERPRINT_DOMAIN: &[u8] = b"proxiima-request-v1";
+const FINGERPRINT_DOMAIN: &[u8] =
+    crate::ledger!(Proxiima.Admission.requestFingerprintDomain).as_bytes();
 
 /// What a keyed request asserts. Built only through [`ContentFingerprint::builder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -202,7 +204,7 @@ impl ContentFingerprintBuilder {
         self.absent(field)
     }
 
-    /// Schema-identified payload: schema id + version + canonical JSON bytes.
+    /// Schema-identified payload; see `Proxiima.Admission.fingerprintPayload`.
     #[must_use]
     pub fn schema_payload(
         self,
@@ -219,7 +221,7 @@ impl ContentFingerprintBuilder {
         self.bytes(field, &buf)
     }
 
-    /// Sorted, deduplicated UUID set (origins, refs, …).
+    /// UUID set (origins, refs, …) under `Proxiima.Admission.fingerprintSetOrder`.
     #[must_use]
     pub fn uuid_set(mut self, field: &str, ids: impl IntoIterator<Item = Uuid>) -> Self {
         let mut ids: Vec<Uuid> = ids.into_iter().collect();
@@ -304,7 +306,8 @@ impl RequestKey {
     #[must_use]
     pub fn request_row_key(&self) -> String {
         let digest = blake3::hash(self.key.as_str().as_bytes());
-        format!("r:{}", hex::encode(digest.as_bytes()))
+        let prefix = crate::ledger!(Proxiima.Admission.requestRowPrefix);
+        format!("{prefix}{}", hex::encode(digest.as_bytes()))
     }
 
     /// `ingest_keys.ingest_key` for the fingerprint row:
@@ -316,7 +319,8 @@ impl RequestKey {
         hasher.update(&(key.len() as u64).to_be_bytes());
         hasher.update(key);
         hasher.update(self.fingerprint.as_bytes());
-        format!("f:{}", hex::encode(hasher.finalize().as_bytes()))
+        let prefix = crate::ledger!(Proxiima.Admission.fingerprintRowPrefix);
+        format!("{prefix}{}", hex::encode(hasher.finalize().as_bytes()))
     }
 }
 
@@ -345,6 +349,7 @@ pub fn judge<H: ExistingHandle>(
     stored: Option<(H, bool /* fingerprint equal */)>,
     key: &IdempotencyKey,
 ) -> Result<KeyVerdict<H>, KeyConflict> {
+    // `Proxiima.Admission.requestVerdict`.
     match stored {
         None => Ok(KeyVerdict::Fresh),
         Some((handle, true)) => Ok(KeyVerdict::Replay(handle)),
@@ -396,17 +401,88 @@ mod tests {
     use super::*;
 
     #[test]
-    fn judge_fresh_replay_conflict() {
+    fn request_verdict_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [String; 1],
+            out: String,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Admission.requestVerdict"].clone()).unwrap();
+        assert_eq!(rows.len(), 3);
         let key = IdempotencyKey::new("k").unwrap();
-        assert!(matches!(judge::<Uuid>(None, &key), Ok(KeyVerdict::Fresh)));
-        let id = Uuid::nil();
-        assert!(matches!(
-            judge(Some((id, true)), &key),
-            Ok(KeyVerdict::Replay(_))
-        ));
-        let err = judge(Some((id, false)), &key).unwrap_err();
-        assert_eq!(err.key, "k");
-        assert_eq!(err.existing, id);
+        let id = Uuid::from_u128(7);
+        for Vector {
+            input: [record],
+            out,
+        } in rows
+        {
+            let stored = match record.as_str() {
+                "absent" => None,
+                "sameFingerprint" => Some((id, true)),
+                "differentFingerprint" => Some((id, false)),
+                _ => panic!("unknown request record {record}"),
+            };
+            let verdict = match judge(stored, &key) {
+                Ok(KeyVerdict::Fresh) => "admit",
+                Ok(KeyVerdict::Replay(original)) => {
+                    assert_eq!(original, id);
+                    "replay"
+                }
+                Err(conflict) => {
+                    assert_eq!(conflict.key, key.as_str());
+                    assert_eq!(conflict.existing, id);
+                    "conflict"
+                }
+            };
+            assert_eq!(verdict, out, "{record}");
+        }
+    }
+
+    #[test]
+    fn request_scope_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [String; 1],
+            out: bool,
+        }
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> = serde_json::from_value(
+            vectors["Proxiima.Admission.requestScopeUsesGoalAndSubject"].clone(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 6);
+        let goal = crate::GoalHandle::new(Uuid::from_u128(1));
+        let subject = crate::UserId::new(Uuid::from_u128(2));
+        for Vector { input: [name], out } in rows {
+            let scope = match name.as_str() {
+                "note" => KeyScope::Note,
+                "utterance" => KeyScope::Utterance,
+                "abstraction" => KeyScope::Abstraction,
+                "perspective" => KeyScope::Perspective,
+                "goalAbstraction" => KeyScope::GoalAbstraction(goal, subject),
+                "goalPerspective" => KeyScope::GoalPerspective(goal, subject),
+                _ => panic!("unknown request scope {name}"),
+            };
+            let expected = if out {
+                format!(
+                    "core/key/{}/{}/{}",
+                    scope.as_str(),
+                    goal.into_inner(),
+                    subject.into_inner()
+                )
+            } else {
+                format!("core/key/{}", scope.as_str())
+            };
+            assert_eq!(scope.ledger_source(), expected, "{name}");
+        }
     }
 
     /// Known answer for the renamed request domain; the field framing stays frozen.

@@ -691,6 +691,11 @@ as a local `core_search_memories` hit does. The extra-store transaction is separ
 `UnitOfWork`; use host-state participation when the change must be atomic with
 a Fact write.
 
+For a sidecar read/check/append precondition, pass the advisory key to
+`UnitOfWork::read_own_sidecar(key, owner, &read)` and append through that same
+unit. Competing callers must use the same key. The read acquires the
+exclusive transaction lock and holds it through the unit's completion.
+
 ## SQL contract
 
 A spiice never queries `proxiima_core` directly, and neither does a host's

@@ -117,7 +117,7 @@ fn is_memory_identity_constraint(
 }
 
 pub(crate) fn collision_exhausted() -> StorageError {
-    StorageError::ConstraintViolation("memory UUID collided again after one retry".into())
+    StorageError::ConstraintViolation("memory UUID collision exhausted its retry allowance".into())
 }
 
 /// SQLSTATE codes that mark a transient, retry-after-rollback failure.
@@ -159,14 +159,15 @@ pub fn is_transient_conflict(err: &sqlx::Error) -> bool {
 pub const MAX_TRANSACTION_ATTEMPTS: usize = MAX_STORAGE_ATTEMPTS;
 
 /// Bounded retry budget for [`with_bounded_retry`]: the total number of
-/// attempts (initial try + retries) for a transient transaction.
-pub(crate) const MAX_STORAGE_ATTEMPTS: usize = 3;
+/// attempts (initial try plus retries) across retryable outcomes.
+pub(crate) const MAX_STORAGE_ATTEMPTS: usize =
+    proxiima_core::ledger!(Proxiima.Admission.transactionAttempts);
 
 /// Re-run `op` (a full begin→body→commit transaction) up to
-/// [`MAX_STORAGE_ATTEMPTS`] times while it fails with
-/// [`StorageError::Retryable`]. A memory ID collision gets one independent retry,
-/// even on the last transient attempt. A second collision is a constraint
-/// violation. Other outcomes, including a final `Retryable`, are returned as-is.
+/// [`MAX_STORAGE_ATTEMPTS`] times for transient errors and memory ID collisions.
+/// At most one retry can follow a collision within that budget. A collision
+/// with no attempt left is a constraint violation. Other outcomes, including
+/// a final `Retryable`, are returned as-is.
 ///
 /// `op` must be self-contained: it opens its own transaction each call, so a
 /// rolled-back deadlocked attempt leaves no partial state behind.
@@ -175,18 +176,18 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, StorageError>>,
 {
-    let mut attempt = 1;
+    let mut attempt = 0;
     let mut retried_collision = false;
     loop {
-        // `Proxiima.Goals.retryTransaction`.
+        attempt += 1;
+        let can_retry = attempt < MAX_STORAGE_ATTEMPTS;
+        // `Proxiima.Admission.retryTransaction`.
         match op().await {
-            Err(StorageError::MemoryIdCollision) if !retried_collision => {
+            Err(StorageError::MemoryIdCollision) if can_retry && !retried_collision => {
                 retried_collision = true;
             }
             Err(StorageError::MemoryIdCollision) => return Err(collision_exhausted()),
-            Err(StorageError::Retryable(_)) if attempt < MAX_STORAGE_ATTEMPTS => {
-                attempt += 1;
-            }
+            Err(StorageError::Retryable(_)) if can_retry => {}
             outcome => return outcome,
         }
     }
@@ -420,6 +421,31 @@ mod memory_collision_tests {
         .await;
         assert_eq!(result.unwrap(), 7);
         assert_eq!(attempts.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn transient_failures_and_collisions_share_the_attempt_budget() {
+        use super::MAX_STORAGE_ATTEMPTS;
+
+        for collision_index in 0..MAX_STORAGE_ATTEMPTS {
+            let mut attempts = 0;
+            let result: Result<(), StorageError> = with_bounded_retry(|| {
+                let outcome = if attempts == collision_index {
+                    Err(StorageError::MemoryIdCollision)
+                } else {
+                    Err(StorageError::Retryable("deadlock".into()))
+                };
+                attempts += 1;
+                std::future::ready(outcome)
+            })
+            .await;
+            if collision_index + 1 == MAX_STORAGE_ATTEMPTS {
+                assert!(matches!(result, Err(StorageError::ConstraintViolation(_))));
+            } else {
+                assert!(matches!(result, Err(StorageError::Retryable(_))));
+            }
+            assert_eq!(attempts, MAX_STORAGE_ATTEMPTS);
+        }
     }
 
     #[tokio::test]

@@ -9,6 +9,7 @@ pub(super) fn resolve_destination(
     space: Option<&str>,
     working_goal: Option<&str>,
 ) -> Result<crate::MemoryDestination, ToolError> {
+    // `Proxiima.Admission.selectDestination`.
     match (space, working_goal) {
         (Some(_), Some(_)) => Err(ToolError::InvalidInput(
             "space and working_goal are mutually exclusive".into(),
@@ -73,25 +74,13 @@ pub async fn dedup_resolved<'a, T: Send>(
     Ok(resolved)
 }
 
-/// Normalize an explicitly-provided idempotency key to the shared
-/// write-surface contract — trimmed, 1..=180 chars — by parsing it
-/// through the same [`IdempotencyKey`] type the goal tools use, so the
-/// memory and goal families cannot drift on cap, whitespace handling,
-/// or error text. The trimmed key is what feeds dedup (`uuid::new_v5`)
-/// and the stored payload. An omitted key (`None`) is always allowed —
-/// the caller derives one instead.
-///
-/// # Errors
-///
-/// Returns [`ToolError::InvalidInput`] when `key` is `Some` and blank
-/// after trimming or over the character cap.
-pub fn normalize_idempotency_key(key: Option<String>) -> Result<Option<String>, ToolError> {
-    key.map(|raw| {
-        IdempotencyKey::new(raw)
-            .map(IdempotencyKey::into_string)
-            .map_err(ToolError::InvalidInput)
-    })
-    .transpose()
+/// Parse an optional request key using the shared write-surface contract.
+pub(crate) fn parse_idempotency_key(
+    key: Option<&str>,
+) -> Result<Option<IdempotencyKey>, ToolError> {
+    key.map(IdempotencyKey::new)
+        .transpose()
+        .map_err(ToolError::InvalidInput)
 }
 
 /// Parse an optional caller-supplied `observed_at` backdate (RFC3339).
@@ -166,7 +155,7 @@ pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ToolError> {
 mod tests {
     use super::super::super::memory_spaces::test_ctx::ctx_for;
     use super::{
-        MAX_TAGS, ToolError, dedup_resolved, normalize_idempotency_key, normalize_tags,
+        MAX_TAGS, ToolError, dedup_resolved, normalize_tags, parse_idempotency_key,
         parse_observed_at,
     };
     use crate::catalog::MAX_OPERATOR_LABEL_CHARS;
@@ -393,14 +382,14 @@ mod tests {
     fn blank_idempotency_key_is_rejected() {
         // An empty or whitespace-only string must not slip through as a
         // real dedup key.
-        assert!(normalize_idempotency_key(Some(String::new())).is_err());
-        assert!(normalize_idempotency_key(Some("   ".into())).is_err());
+        assert!(parse_idempotency_key(Some("")).is_err());
+        assert!(parse_idempotency_key(Some("   ")).is_err());
     }
 
     #[test]
     fn idempotency_key_over_the_cap_is_rejected() {
         let key = "k".repeat(MAX_IDEMPOTENCY_KEY_CHARS + 1);
-        assert!(normalize_idempotency_key(Some(key)).is_err());
+        assert!(parse_idempotency_key(Some(&key)).is_err());
     }
 
     #[test]
@@ -409,7 +398,7 @@ mod tests {
         // the byte length is well over the character cap in both cases.
         let at_cap = "é".repeat(MAX_IDEMPOTENCY_KEY_CHARS);
         let over_cap = "é".repeat(MAX_IDEMPOTENCY_KEY_CHARS + 1);
-        assert!(normalize_idempotency_key(Some(at_cap)).is_ok());
-        assert!(normalize_idempotency_key(Some(over_cap)).is_err());
+        assert!(parse_idempotency_key(Some(&at_cap)).is_ok());
+        assert!(parse_idempotency_key(Some(&over_cap)).is_err());
     }
 }

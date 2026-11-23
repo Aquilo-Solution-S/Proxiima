@@ -14,7 +14,7 @@ use crate::AgentDerivationV1;
 
 use super::super::other_stores::{self, ResolvedMemory};
 
-use super::util::{normalize_idempotency_key, normalize_tags};
+use super::util::{normalize_tags, parse_idempotency_key};
 
 pub(crate) const MAX_SOURCE_HANDLES: usize = crate::ledger!(Proxiima.Edges.maxDeriveSources);
 const DERIVED_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
@@ -410,7 +410,7 @@ async fn prepare_derivation(
             body: &args.body,
             tags: &args.tags,
             model_id: args.model_id.as_deref(),
-            idempotency_key: args.idempotency_key.as_deref(),
+            idempotency_key: parse_idempotency_key(args.idempotency_key.as_deref())?,
         },
     )?;
     let (sources, resolved) = resolve_derive_sources(ctx, &args.source_handles, retained).await?;
@@ -430,20 +430,19 @@ pub(crate) struct AuthoredDerivation {
     pub(crate) body: String,
     pub(crate) model_id: String,
     pub(crate) tags: Vec<String>,
-    pub(crate) idempotency_key: Option<String>,
+    pub(crate) idempotency_key: Option<crate::IdempotencyKey>,
 }
 
 /// The raw, still-unvalidated authoring fields every derived-memory surface
 /// carries. Borrowed rather than owned so a caller can hand over an arg
 /// struct's fields without cloning them first; the arg structs themselves
 /// stay per-surface because they are the `JsonSchema`-derived tool contract.
-#[derive(Clone, Copy)]
 pub(crate) struct DerivationFields<'a> {
     pub(crate) title: &'a str,
     pub(crate) body: &'a str,
     pub(crate) tags: &'a [String],
     pub(crate) model_id: Option<&'a str>,
-    pub(crate) idempotency_key: Option<&'a str>,
+    pub(crate) idempotency_key: Option<crate::IdempotencyKey>,
 }
 
 /// Validate and normalize the authoring fields of a derived-memory write.
@@ -458,8 +457,6 @@ pub(crate) fn authored_derivation(
 ) -> Result<AuthoredDerivation, ToolError> {
     let title = validate_trimmed_len("title", fields.title, AUTHORING_TITLE_MAX)?.to_string();
     let body = validate_trimmed_len("body", fields.body, AUTHORING_BODY_MAX)?.to_string();
-    let idempotency_key =
-        normalize_idempotency_key(fields.idempotency_key.map(ToString::to_string))?;
     let model_id = ctx.operator_label(fields.model_id)?;
     let tags = normalize_tags(fields.tags.to_vec())?;
     Ok(AuthoredDerivation {
@@ -467,7 +464,7 @@ pub(crate) fn authored_derivation(
         body,
         model_id,
         tags,
-        idempotency_key,
+        idempotency_key: fields.idempotency_key,
     })
 }
 
@@ -525,7 +522,10 @@ pub(crate) fn derivation_sidecar(
         title: authored.title.clone(),
         body: authored.body.clone(),
         tags: authored.tags.clone(),
-        idempotency_key: authored.idempotency_key.clone(),
+        idempotency_key: authored
+            .idempotency_key
+            .as_ref()
+            .map(|key| key.as_str().to_owned()),
         source_memory_ids: sources
             .iter()
             .map(|(memory_id, _class)| memory_id.into_inner())
@@ -584,11 +584,11 @@ pub(crate) fn derive_request_key(
         supersedes_id,
         guided_by,
     );
-    let key = authored
-        .idempotency_key
-        .clone()
-        .unwrap_or_else(|| fp.to_hex());
-    let key = crate::IdempotencyKey::new(key).map_err(ToolError::InvalidInput)?;
+    // `Proxiima.Admission.DerivationRequestKey`.
+    let key = match &authored.idempotency_key {
+        Some(key) => key.clone(),
+        None => crate::IdempotencyKey::new(fp.to_hex()).map_err(ToolError::InvalidInput)?,
+    };
     Ok(crate::RequestKey::new(scope, key, fp))
 }
 
@@ -686,7 +686,7 @@ mod tests {
             body: "Golden body".into(),
             model_id: "example-model".into(),
             tags: vec!["alpha".into(), "beta".into()],
-            idempotency_key: idempotency_key.map(ToString::to_string),
+            idempotency_key: idempotency_key.map(|key| crate::IdempotencyKey::new(key).unwrap()),
         }
     }
 

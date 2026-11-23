@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AgentNoteV1, FactPayload, SidecarPayload};
 
-use super::util::{normalize_idempotency_key, normalize_tags};
+use super::util::{normalize_tags, parse_idempotency_key};
 
-pub(crate) const SOURCE_ID: &str = "core/agent";
+pub(crate) const SOURCE_ID: &str = crate::ledger!(Proxiima.Admission.rememberedNoteSource);
 pub(crate) const NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x91, 0x3e, 0xa1, 0x4c, 0x12, 0x9b, 0x4f, 0xa1, 0x86, 0x2c, 0xb7, 0x2e, 0x18, 0x5d, 0xc7, 0x77,
 ]);
@@ -121,7 +121,7 @@ impl Tool for RememberTool {
                     title: &args.title,
                     body: &args.body,
                     tags: args.tags,
-                    idempotency_key: args.idempotency_key,
+                    idempotency_key: parse_idempotency_key(args.idempotency_key.as_deref())?,
                     supersedes: args.supersedes.as_deref(),
                     citation: args.citation,
                     space: args.space.as_deref(),
@@ -145,7 +145,7 @@ pub(crate) struct NoteWriteInput<'a> {
     pub title: &'a str,
     pub body: &'a str,
     pub tags: Vec<String>,
-    pub idempotency_key: Option<String>,
+    pub idempotency_key: Option<crate::IdempotencyKey>,
     pub supersedes: Option<&'a str>,
     pub citation: Option<RememberCitation>,
     pub space: Option<&'a str>,
@@ -167,7 +167,7 @@ pub(crate) async fn prepare_note_write(
 ) -> Result<PreparedNoteWrite, ToolError> {
     let title = validate_trimmed_len("title", input.title, AUTHORING_TITLE_MAX)?;
     let body = validate_trimmed_len("body", input.body, AUTHORING_BODY_MAX)?;
-    let idempotency_key = normalize_idempotency_key(input.idempotency_key)?;
+    let idempotency_key = input.idempotency_key;
     let (space, authz) = super::super::memory_spaces::resolve_space_for_write(ctx, input.space)?;
     let tags = normalize_tags(input.tags)?;
 
@@ -175,7 +175,7 @@ pub(crate) async fn prepare_note_write(
         ctx,
         &authz,
         space.owner,
-        idempotency_key.as_deref(),
+        idempotency_key.as_ref().map(crate::IdempotencyKey::as_str),
         input.supersedes,
     )
     .await?;
@@ -185,7 +185,7 @@ pub(crate) async fn prepare_note_write(
         title: title.to_string(),
         body: body.to_string(),
         tags: tags.clone(),
-        idempotency_key: idempotency_key.clone(),
+        idempotency_key: idempotency_key.as_ref().map(|key| key.as_str().to_owned()),
     };
     let occurred_at = super::util::parse_observed_at(input.observed_at)?;
     let lexical_language = crate::lexical_language::resolve_lexical_language(
@@ -203,9 +203,7 @@ pub(crate) async fn prepare_note_write(
         draft = draft.with_handle(Some(series));
     }
 
-    if let Some(key_str) = idempotency_key.as_deref() {
-        let key =
-            crate::IdempotencyKey::new(key_str.to_string()).map_err(ToolError::InvalidInput)?;
+    if let Some(key) = idempotency_key {
         let mut fp = crate::ContentFingerprint::builder(crate::KeyScope::Note)
             .text("title", title)
             .text("body", body)

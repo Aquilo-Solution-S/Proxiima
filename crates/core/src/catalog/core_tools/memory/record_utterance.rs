@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SidecarPayload, Speaker, UtteranceV1};
 
-const SOURCE_ID: &str = "core/conversation";
+const SOURCE_ID: &str = crate::ledger!(Proxiima.Admission.utteranceSource);
 const UTTERANCE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x23, 0xa5, 0x64, 0x58, 0x2b, 0x71, 0x49, 0x29, 0x8b, 0x7d, 0xb9, 0x49, 0xd2, 0x52, 0xe2, 0x11,
 ]);
@@ -81,7 +81,8 @@ impl Tool for RecordUtteranceTool {
                 ));
             }
             let text = validate_trimmed_len("text", &args.text, AUTHORING_BODY_MAX)?;
-            let idempotency_key = super::util::normalize_idempotency_key(args.idempotency_key)?;
+            let idempotency_key =
+                super::util::parse_idempotency_key(args.idempotency_key.as_deref())?;
 
             let (_, authz) =
                 super::super::memory_spaces::resolve_space_for_write(&ctx, args.space.as_deref())?;
@@ -91,9 +92,9 @@ impl Tool for RecordUtteranceTool {
                 text: text.to_string(),
             };
             let source_instance_id = idempotency_key
-                .as_deref()
+                .as_ref()
                 .map_or_else(uuid::Uuid::now_v7, |key| {
-                    uuid::Uuid::new_v5(&UTTERANCE_NAMESPACE, key.as_bytes())
+                    uuid::Uuid::new_v5(&UTTERANCE_NAMESPACE, key.as_str().as_bytes())
                 });
             let source_id = format!("{SOURCE_ID}/{source_instance_id}");
 
@@ -107,9 +108,7 @@ impl Tool for RecordUtteranceTool {
                 ..FactWriteCommand::from_payload(source_id, &payload)
             }
             .with_lexical_language(Some(lexical_language));
-            if let Some(key_str) = &idempotency_key {
-                let key =
-                    crate::IdempotencyKey::new(key_str.clone()).map_err(ToolError::InvalidInput)?;
+            if let Some(key) = idempotency_key {
                 let fp = crate::ContentFingerprint::builder(crate::KeyScope::Utterance)
                     .text("body", text)
                     .bytes("speaker", payload.speaker.as_str().as_bytes())

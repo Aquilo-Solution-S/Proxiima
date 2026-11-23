@@ -1,4 +1,4 @@
-//! `core_episode_commit` — one transaction, explicit `bind[]`.
+//! `core_episode_commit` — write order in `Proxiima.Admission.episodeOrder`.
 
 mod bind;
 
@@ -18,7 +18,7 @@ use super::memory::interpret::{
     reject_self_subject,
 };
 use super::memory::remember::{self, NoteWriteInput};
-use super::memory::util::dedup_resolved;
+use super::memory::util::{dedup_resolved, parse_idempotency_key};
 use crate::MemoryKind;
 use crate::catalog::validate_trimmed_len;
 use crate::engine::GoalCreatePayloadWriteRequest;
@@ -35,12 +35,12 @@ use crate::{
 };
 use crate::{Tool, ToolCtx, ToolError};
 
-use bind::{BindSet, EpisodeKey, EpisodeKeyParseError, parse_bind, reject_duplicate_keys};
+use bind::{BindSet, EpisodeKey, EpisodeKeyParseError, parse_bind, parse_unique_keys};
 
-const MAX_REMEMBER: usize = 16;
-const MAX_STANCE: usize = 16;
-const MAX_GOAL: usize = 16;
-const MAX_BIND: usize = 32;
+const MAX_REMEMBER: usize = crate::ledger!(Proxiima.Admission.episodeRememberMax);
+const MAX_STANCE: usize = crate::ledger!(Proxiima.Admission.episodeStanceMax);
+const MAX_GOAL: usize = crate::ledger!(Proxiima.Admission.episodeGoalMax);
+const MAX_BIND: usize = crate::ledger!(Proxiima.Admission.episodeBindMax);
 
 #[derive(Debug, Default)]
 pub struct EpisodeCommitTool;
@@ -249,6 +249,17 @@ async fn episode_commit(
     args: EpisodeCommitArgs,
 ) -> Result<EpisodeCommitOutput, ToolError> {
     validate_episode_shape(&args)?;
+    let remembered = parse_unique_keys(
+        &args.remember,
+        |item| item.idempotency_key.as_deref(),
+        "remember",
+    )?;
+    let goals = parse_unique_keys(&args.goal, |item| item.idempotency_key.as_deref(), "goal")?;
+    let derive_key = parse_idempotency_key(
+        args.derive
+            .as_ref()
+            .and_then(|item| item.idempotency_key.as_deref()),
+    )?;
     let bind = parse_bind(
         &args.bind,
         args.remember.len(),
@@ -280,13 +291,13 @@ async fn episode_commit(
         slots: EpisodeSlots::default(),
         bound: Vec::new(),
     };
-    write.write_remembered(&args.remember).await?;
+    write.write_remembered(remembered).await?;
     let derived = match args.derive.as_ref() {
-        Some(item) => Some(write.write_derive(item).await?),
+        Some(item) => Some(write.write_derive(item, derive_key).await?),
         None => None,
     };
     write.write_stances(&args.stance).await?;
-    let goals = write.write_goals(&args.goal).await?;
+    let goals = write.write_goals(goals).await?;
     let (slots, bound) = write.commit().await?;
     Ok(EpisodeCommitOutput {
         write_act: write_act.memory_id.into_inner().to_string(),
@@ -329,32 +340,25 @@ fn validate_episode_shape(args: &EpisodeCommitArgs) -> Result<(), ToolError> {
             "at most {MAX_BIND} bind keys"
         )));
     }
-    reject_duplicate_keys(
-        args.remember
-            .iter()
-            .map(|item| item.idempotency_key.clone()),
-        "remember",
-    )?;
-    reject_duplicate_keys(
-        args.goal.iter().map(|item| item.idempotency_key.clone()),
-        "goal",
-    )?;
     Ok(())
 }
 
 impl EpisodeWrite<'_> {
-    async fn write_remembered(&mut self, items: &[EpisodeRememberItem]) -> Result<(), ToolError> {
+    async fn write_remembered(
+        &mut self,
+        items: Vec<(&EpisodeRememberItem, Option<IdempotencyKey>)>,
+    ) -> Result<(), ToolError> {
         let bind = self.bind;
         let act_id = self.act_id;
         let ctx = self.ctx;
-        for (idx, item) in items.iter().enumerate() {
+        for (idx, (item, idempotency_key)) in items.into_iter().enumerate() {
             let prepared = remember::prepare_note_write(
                 ctx,
                 NoteWriteInput {
                     title: &item.title,
                     body: &item.body,
                     tags: item.tags.clone(),
-                    idempotency_key: item.idempotency_key.clone(),
+                    idempotency_key,
                     supersedes: item.supersedes.as_deref(),
                     citation: None,
                     space: self.space,
@@ -363,8 +367,7 @@ impl EpisodeWrite<'_> {
                 },
             )
             .await?;
-            // Episode notes share core/agent and NOTE_NAMESPACE with core_remember.
-            // prepare_note_write already stamps SOURCE_ID = core/agent.
+            // The typed append reuses the prepared note's identity and source.
             let pin = bind.remember.contains(&idx);
             let draft = &prepared.draft;
             let payload = prepared.payload.clone();
@@ -400,7 +403,11 @@ impl EpisodeWrite<'_> {
         Ok(())
     }
 
-    async fn write_derive(&mut self, item: &EpisodeDeriveItem) -> Result<String, ToolError> {
+    async fn write_derive(
+        &mut self,
+        item: &EpisodeDeriveItem,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<String, ToolError> {
         let ctx = self.ctx;
         let owner = self.owner;
         let act_id = self.act_id;
@@ -412,7 +419,7 @@ impl EpisodeWrite<'_> {
                 body: &item.body,
                 tags: &item.tags,
                 model_id: item.model_id.as_deref(),
-                idempotency_key: item.idempotency_key.as_deref(),
+                idempotency_key,
             },
         )?;
         if item.source_handles.len() > MAX_SOURCE_HANDLES {
@@ -438,7 +445,10 @@ impl EpisodeWrite<'_> {
         let supersedes = derive::resolve_supersedes(
             ctx,
             kind,
-            authored.idempotency_key.as_deref(),
+            authored
+                .idempotency_key
+                .as_ref()
+                .map(IdempotencyKey::as_str),
             item.supersedes.as_deref(),
         )
         .await?;
@@ -575,21 +585,22 @@ impl EpisodeWrite<'_> {
         Ok(())
     }
 
-    async fn write_goals(&mut self, items: &[EpisodeGoalItem]) -> Result<Vec<String>, ToolError> {
+    async fn write_goals(
+        &mut self,
+        items: Vec<(&EpisodeGoalItem, Option<IdempotencyKey>)>,
+    ) -> Result<Vec<String>, ToolError> {
         let ctx = self.ctx;
         let owner = self.owner;
         let bind = self.bind;
         let act_id = self.act_id;
         let mut goals = Vec::new();
-        for (idx, item) in items.iter().enumerate() {
+        for (idx, (item, key)) in items.into_iter().enumerate() {
             let payload = encode_goal_payload(ctx, item.payload.clone())?;
             let evidence = resolve_goal_evidence(ctx, &self.slots, &item.evidence).await?;
             let motivated_by = resolve_goal_motivations(ctx, &self.slots, &item.motivated_by)?;
             let topology = GoalTopologyWrite::new(motivated_by, Vec::new(), evidence)
                 .map_err(ToolError::Protocol)?;
-            let request_id =
-                IdempotencyKey::optional_or_generated("episode_goal", item.idempotency_key.clone())
-                    .map_err(ToolError::InvalidInput)?;
+            let request_id = key.unwrap_or_else(|| IdempotencyKey::generated("episode_goal"));
             let pin = bind.goal.contains(&idx);
             let outcome = self
                 .uow
@@ -633,6 +644,7 @@ fn bound_replay_refusal(kind: &str, noun: &str) -> ToolError {
 }
 
 fn reject_bound_replay(pin: bool, replay: bool, kind: &str) -> Result<(), ToolError> {
+    // `Proxiima.Admission.acceptEpisodeItem`.
     if pin && replay {
         return Err(bound_replay_refusal(kind, "row"));
     }
@@ -732,6 +744,7 @@ fn resolve_local_slot<'a>(
     slots: &'a EpisodeSlots,
     handle: &str,
 ) -> Result<Option<&'a Slot>, ToolError> {
+    // `Proxiima.Admission.localMemorySlot`.
     match EpisodeKey::parse(handle) {
         Ok(EpisodeKey::Remember(idx)) => {
             slots.remember.get(idx).map(Some).ok_or_else(|| {
@@ -772,10 +785,81 @@ fn resolve_local_slot<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{map_bound_derived_error, map_bound_fact_error};
+    use super::{
+        EpisodeSlots, Slot, map_bound_derived_error, map_bound_fact_error, reject_bound_replay,
+        resolve_local_slot,
+    };
     use crate::ReplayDrift;
     use crate::ToolError;
     use crate::error::ProtocolError;
+
+    #[test]
+    fn bound_items_match_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            #[serde(rename = "in")]
+            input: [bool; 2],
+            out: bool,
+        }
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+        let rows: Vec<Vector> =
+            serde_json::from_value(vectors["Proxiima.Admission.acceptEpisodeItem"].clone())
+                .unwrap();
+        assert_eq!(rows.len(), 4);
+        for Vector {
+            input: [bound, replayed],
+            out,
+        } in rows
+        {
+            assert_eq!(reject_bound_replay(bound, replayed, "memory").is_ok(), out);
+        }
+    }
+
+    #[test]
+    fn local_slot_reads_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Admission.localMemorySlot"]
+            .as_array()
+            .unwrap();
+        assert_eq!(rows.len(), 8);
+        for row in rows {
+            let name = row["in"][0].as_str().unwrap();
+            let written = row["in"][1].as_bool().unwrap();
+            let mut slots = EpisodeSlots::default();
+            let slot = |class| Slot {
+                id: crate::MemoryId::new(uuid::Uuid::nil()),
+                handle: "slot".into(),
+                class,
+            };
+            let key = match name {
+                "remember" => {
+                    slots
+                        .remember
+                        .extend(written.then(|| slot(crate::MemoryKind::Fact)));
+                    "remember:0"
+                }
+                "derive" => {
+                    slots.derive = written.then(|| slot(crate::MemoryKind::Abstraction));
+                    "derive"
+                }
+                "stance" => {
+                    slots
+                        .stance
+                        .extend(written.then(|| slot(crate::MemoryKind::Perspective)));
+                    "stance:0"
+                }
+                "goal" => "goal:0",
+                _ => panic!("unknown slot {name}"),
+            };
+            assert_eq!(
+                resolve_local_slot(&slots, key).is_ok_and(|slot| slot.is_some()),
+                row["out"].as_bool().unwrap(),
+                "{key}, written={written}",
+            );
+        }
+    }
 
     /// Every drift a replay can show is, for a bound write, the refusal to
     /// replay; unbound, the idempotency conflict passes through.
