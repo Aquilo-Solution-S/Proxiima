@@ -37,8 +37,8 @@ pub struct GetMemoryArgs {
     /// Include edges touching the memory. Default: false.
     #[serde(default)]
     pub expand_neighbors: bool,
-    /// Optional space key from `core_memory_spaces`, validated (an unknown
-    /// key is invalid input) but ignored for labeling: the output always
+    /// Optional space key from `core_memory_spaces`. Local and remote reads
+    /// reject a supplied key that is unknown or unreadable. The output
     /// reports the memory's own space.
     #[serde(default)]
     pub space: Option<String>,
@@ -91,7 +91,16 @@ pub struct GetMemoryOutput {
 pub async fn get_memory(ctx: ToolCtx, args: GetMemoryArgs) -> Result<GetMemoryOutput, ToolError> {
     let memory_id = ctx.resolve_memory(&args.memory)?;
     let engine = ctx.engine();
-    if crate::memory_store_number(memory_id.into_inner()) != engine.store_number() {
+    let is_local = crate::memory_store_number(memory_id.into_inner()) == engine.store_number();
+    // `Proxiima.Query.validateReadSpace`.
+    if args.space.is_some() || is_local {
+        super::memory_spaces::resolve_space_owner(
+            &ctx,
+            args.space.as_deref(),
+            super::memory_spaces::SpaceDefault::Current,
+        )?;
+    }
+    if !is_local {
         return remote_memory_output(
             &ctx,
             memory_id.into_inner(),
@@ -100,12 +109,6 @@ pub async fn get_memory(ctx: ToolCtx, args: GetMemoryArgs) -> Result<GetMemoryOu
         )
         .await;
     }
-    // Validated for compatibility; the label comes from the memory's owner.
-    super::memory_spaces::resolve_space_owner(
-        &ctx,
-        args.space.as_deref(),
-        super::memory_spaces::SpaceDefault::Current,
-    )?;
     let response = engine
         .get_memory(
             ctx.authz(),

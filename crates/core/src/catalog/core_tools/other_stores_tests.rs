@@ -615,6 +615,35 @@ async fn read_graph(
     Ok((read, walk))
 }
 
+#[tokio::test]
+async fn a_remote_point_read_validates_space_and_reports_the_returned_owner() {
+    use super::super::get_memory::{GetMemoryArgs, VersionSelector, get_memory};
+
+    let store = Arc::new(GraphStore::new(GraphAnswer::Serves));
+    let ctx = graph_ctx(&store);
+    let args = |space| GetMemoryArgs {
+        memory: store.memory.to_string(),
+        expand_neighbors: false,
+        space,
+        version: VersionSelector::Exact,
+    };
+    let unreadable = uuid::Uuid::from_u128(42).to_string();
+    let error = get_memory(ctx.clone(), args(Some(unreadable.clone())))
+        .await
+        .expect_err("an explicit unreadable space is refused");
+    assert!(matches!(
+        error,
+        ToolError::InvalidInput(message) if message == format!("unknown memory space: {unreadable}")
+    ));
+
+    let output = get_memory(ctx, args(Some("current".into())))
+        .await
+        .expect("the explicit current space is readable");
+    let owner = RemoteMemory::fixture(store.memory).owner;
+    assert_eq!(output.owner, owner.into_inner());
+    assert_eq!(output.space, owner.to_string());
+}
+
 /// A memory of another store answers `expand_neighbors` and the
 /// ancestors walk through its store, as that store admits the caller:
 /// a refused viewer is not found, and a store that is down is refused

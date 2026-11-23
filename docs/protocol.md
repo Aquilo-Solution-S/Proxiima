@@ -89,7 +89,9 @@ nested groups, and use cases, and the
 Reads return committed rows admitted by owner or Goal authority. A `t` identifies one version;
 `handle` identifies its series. Head queries and exact-version reads are
 different operations. A Goal handle read returns its current head; explicit
-version selectors can retrieve historical rows.
+version selectors can retrieve historical rows. An explicit `space` on
+`core_get_memory` must be readable, including when the memory comes from
+another store.
 
 Search hits and single and batch memory reads report the stored `owner` UUID
 independently of the writer. Local `space` labels that home owner: `current` for the session's
