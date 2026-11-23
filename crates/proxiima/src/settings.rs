@@ -74,7 +74,7 @@ crate::settings! {
         default: "false",
     }
     PROXIIMA_MAX_REQUEST_BODY_BYTES: Integer {
-        purpose: "request body ceiling in bytes, at least 1",
+        purpose: concat!("request body ceiling in bytes, at least ", proxiima_core::ledger!(Proxiima.Transport.minBodyBytes)),
         when_needed: "listener sizing",
         default: "4194304",
     }

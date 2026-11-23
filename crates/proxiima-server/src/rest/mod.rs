@@ -545,9 +545,8 @@ fn request_arguments(body: &Bytes, instance: &str) -> Result<serde_json::Value, 
 
 /// Inject the route's action into the body.
 ///
-/// `Proxiima.Transport.narrowedAction`.
-/// Silent agreement invites a client that sets only the body field and
-/// breaks when the route changes.
+/// Refuse a body `action` even when it matches the route (`Proxiima.Transport.narrowedAction`).
+/// Accepting the duplicate would hide clients that rely on the body field and break when the route changes.
 fn inject_action(
     mut args: serde_json::Value,
     action: &str,

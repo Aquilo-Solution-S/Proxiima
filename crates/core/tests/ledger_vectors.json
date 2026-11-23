@@ -33,9 +33,6 @@
   {"out": false, "in": ["initialize", false]},
   {"out": false, "in": ["perRequest", true]},
   {"out": false, "in": ["perRequest", false]}],
- "Proxiima.Transport.defaultBind":
- [{"out": null, "in": ["facade"]},
-  {"out": "127.0.0.1:31415", "in": ["canonical"]}],
  "Proxiima.Transport.credentialFailureStatus":
  [{"out": 401, "in": ["invalidBearer"]},
   {"out": 404, "in": ["unavailableSession"]},

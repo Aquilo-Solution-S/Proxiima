@@ -31,7 +31,8 @@ part of the effective scope.
 
 MCP sessions bind the default owner and authenticated principal at initialization.
 A subsequent request with the session ID can omit `X-Proxiima-Owner` and use
-the bound owner. Each request reauthenticates the principal, rechecks access,
+the bound owner. A live binding selects the owner, and a supplied header must
+name the same owner. Each request reauthenticates the principal, rechecks access,
 and retains the credential's effective owner roles. Selecting a default does
 not confine reads or per-call space selection; credentials that
 are explicitly confined remain confined. Server-issued memory-space keys are

@@ -1058,12 +1058,11 @@ impl RuntimeBuilder {
         if let Some(bytes) = self.max_request_body_bytes {
             mcp_transport.max_request_body_bytes = bytes;
         }
-        if mcp_transport.max_request_body_bytes
-            < proxiima_core::ledger!(Proxiima.Transport.minBodyBytes)
-        {
-            return Err(ProxiimaError::Config(
-                "the request body limit must be at least 1 byte".into(),
-            ));
+        let min_body_bytes = proxiima_core::ledger!(Proxiima.Transport.minBodyBytes);
+        if mcp_transport.max_request_body_bytes < min_body_bytes {
+            return Err(ProxiimaError::Config(format!(
+                "the request body limit in bytes must be at least {min_body_bytes}"
+            )));
         }
         Ok(ServedPath {
             late_owner_access,
@@ -1214,7 +1213,7 @@ impl RuntimeBuilder {
             storage: storage_config,
             s3: self.s3,
             owner: self.owner,
-            // `Proxiima.Transport.defaultBind` leaves the facade bind unset.
+            // No bind leaves the facade without a listener.
             mcp: self.mcp_bind.map(|bind| McpSettings { bind }),
             expose_network: self.expose_network.unwrap_or(proxiima_core::ledger!(
                 Proxiima.Transport.defaultExposeNetwork

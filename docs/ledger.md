@@ -4878,11 +4878,6 @@ stateDiagram-v2
 
 ## Transport
 
-**Host**: Which application supplies the listener settings.
-
-- facade
-- canonical
-
 **Listener requirement**: Requirements for a configured serving address.
 
 - hostAuthenticator
@@ -4890,6 +4885,8 @@ stateDiagram-v2
 - loopbackWithoutExposure
 - resolvedHostsWithExposure
 - concreteOriginWithExposure
+- noWildcardHosts
+- noWildcardOriginsWithExposure
 
 **Authority source**: The inbound authority sources in order of precedence.
 
@@ -4935,7 +4932,7 @@ stateDiagram-v2
 **Browser request**: Browser request classes distinguished by the Origin guard.
 
 - noOrigin
-- invalidOrigin
+- invalidOrigin: An Origin outside the allowlist, malformed or repeated.
 - actual
 - validPreflight
 - malformedPreflight
@@ -5024,7 +5021,7 @@ stateDiagram-v2
 
 **default health endpoints** = no: The health route switch starts off.
 
-**listener requirements** = \[hostAuthenticator, noInsecureSingleOwnerMode, loopbackWithoutExposure, resolvedHostsWithExposure, concreteOriginWithExposure]: A listener requires host auth, with loopback unless public exposure is enabled and resolves a host list and names a concrete origin.
+**listener requirements** = \[hostAuthenticator, noInsecureSingleOwnerMode, loopbackWithoutExposure, resolvedHostsWithExposure, concreteOriginWithExposure, noWildcardHosts, noWildcardOriginsWithExposure]: The requirements for serving on the configured listener.
 
 **authority source** = \[host, requestAuthority]: The listener checks Host when present and otherwise checks the request URI authority.
 
@@ -5036,7 +5033,7 @@ stateDiagram-v2
 
 **public host sources** = \[explicit, publicUrl, allowedOrigins]: Public hosts come from the explicit list when present, or are derived from both the public URL and the allowed origins.
 
-**origin match** = \[concreteScheme, concreteHost, exactOrAnyPort]: Match a concrete scheme and host case-insensitively, with any port for a portless pattern.
+**origin match** = \[concreteScheme, concreteHost, exactOrAnyPort]: Match a concrete scheme, a concrete host and either an exact port or any port.
 
 **http port** = 80: Default port of an HTTP request Origin.
 
@@ -5054,7 +5051,7 @@ stateDiagram-v2
 
 **owner header** = "X-Proxiima-Owner": The owner selector's HTTP header name.
 
-**owner selection** = \[session, header, trustedDefault]: A live binding wins, otherwise the owner header wins over a trusted default.
+**owner selection** = \[session, header, trustedDefault]: A live binding selects the owner and a supplied header must name the same owner. Without a binding the header takes precedence over a trusted default.
 
 **session binding operations** = \[pruneIdle, evictOldestOfPrincipal, refuseRatherThanEvictAnotherPrincipal, closeRemovedOrRefusedTransport, refreshLiveBinding]: Binding admission prunes idle entries and evicts only its principal's oldest entries; observation refreshes a live binding.
 
@@ -5088,14 +5085,7 @@ stateDiagram-v2
 
 **projected header** = \[allowlistedNameOrPrefix, singleValue, visibleAscii]: A projected header must match the allowlist, have one value and be visible ASCII.
 
-**plaintext host exclusions** = \[wildcards, addresses, ranges, ports, schemes]: Parse exact ASCII plaintext host names before comparing them case-insensitively.
-
-| host | default bind |
-| --- | --- |
-| facade | — |
-| canonical | "127.0.0.1:31415" |
-
-- default bind: Without a supplied bind, the facade has no listener and the canonical host binds to loopback.
+**plaintext host exclusions** = \[wildcards, addresses, ranges, ports, schemes]: The exclusions for exact plaintext host names.
 
 | origin scheme | origin default port |
 | --- | --- |
@@ -5121,7 +5111,7 @@ stateDiagram-v2
 | validPreflight | preflightNoContent |
 | malformedPreflight | preflightBadRequest |
 
-- browser admission: Refuse invalid or repeated Origin headers, answer preflight at the guard, and leave actual calls on the route's auth path.
+- browser admission: The Origin guard refuses invalid origins, answers preflight, and continues for native and allowed actual requests.
 
 | route group | route guards |
 | --- | --- |

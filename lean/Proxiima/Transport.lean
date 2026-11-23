@@ -5,17 +5,6 @@ namespace Proxiima.Transport
 /-- The loopback address supplied by the canonical MCP host. -/
 def canonicalBind : String := "127.0.0.1:31415"
 
-/-- Which application supplies the listener settings. -/
-inductive Host where
-  | facade
-  | canonical
-  deriving DecidableEq
-
-/-- Without a supplied bind, the facade has no listener and the canonical host binds to loopback. -/
-def defaultBind : Host → Option String
-  | .facade => none
-  | .canonical => some canonicalBind
-
 /-- Network exposure is opt-in. -/
 def defaultExposeNetwork : Bool := false
 
@@ -32,12 +21,15 @@ inductive ListenerRequirement where
   | loopbackWithoutExposure
   | resolvedHostsWithExposure
   | concreteOriginWithExposure
+  | noWildcardHosts
+  | noWildcardOriginsWithExposure
   deriving DecidableEq
 
-/-- A listener requires host auth, with loopback unless public exposure is enabled and resolves a host list and names a concrete origin. -/
+/-- The requirements for serving on the configured listener. -/
 def listenerRequirements : List ListenerRequirement :=
   [.hostAuthenticator, .noInsecureSingleOwnerMode, .loopbackWithoutExposure,
-   .resolvedHostsWithExposure, .concreteOriginWithExposure]
+   .resolvedHostsWithExposure, .concreteOriginWithExposure, .noWildcardHosts,
+   .noWildcardOriginsWithExposure]
 
 /-- The inbound authority sources in order of precedence. -/
 inductive AuthoritySource where
@@ -74,7 +66,7 @@ inductive OriginPart where
   | exactOrAnyPort
   deriving DecidableEq
 
-/-- Match a concrete scheme and host case-insensitively, with any port for a portless pattern. -/
+/-- Match a concrete scheme, a concrete host and either an exact port or any port. -/
 def originMatch : List OriginPart := [.concreteScheme, .concreteHost, .exactOrAnyPort]
 
 /-- Default port of an HTTP request Origin. -/
@@ -134,6 +126,7 @@ def minBodyBytes : Nat := 1
 /-- Browser request classes distinguished by the Origin guard. -/
 inductive BrowserRequest where
   | noOrigin
+  /-- An Origin outside the allowlist, malformed or repeated. -/
   | invalidOrigin
   | actual
   | validPreflight
@@ -148,7 +141,7 @@ inductive OriginAction where
   | preflightBadRequest
   deriving DecidableEq
 
-/-- Refuse invalid or repeated Origin headers, answer preflight at the guard, and leave actual calls on the route's auth path. -/
+/-- The Origin guard refuses invalid origins, answers preflight, and continues for native and allowed actual requests. -/
 def browserAdmission : BrowserRequest → OriginAction
   | .noOrigin | .actual => .continueToRoute
   | .invalidOrigin => .originForbidden
@@ -215,7 +208,7 @@ inductive OwnerSource where
   | trustedDefault
   deriving DecidableEq
 
-/-- A live binding wins, otherwise the owner header wins over a trusted default. -/
+/-- A live binding selects the owner and a supplied header must name the same owner. Without a binding the header takes precedence over a trusted default. -/
 def ownerSelection : List OwnerSource := [.session, .header, .trustedDefault]
 
 /-- Transport refusal classes following credential and owner resolution. -/
@@ -331,7 +324,7 @@ inductive PlaintextHostExclusion where
   | schemes
   deriving DecidableEq
 
-/-- Parse exact ASCII plaintext host names before comparing them case-insensitively. -/
+/-- The exclusions for exact plaintext host names. -/
 def plaintextHostExclusions : List PlaintextHostExclusion := [.wildcards, .addresses, .ranges, .ports, .schemes]
 
 end Proxiima.Transport

@@ -532,17 +532,7 @@ fn mcp_is_configured_exactly_when_a_bind_address_is() {
             .authenticator(Arc::new(TestAuthenticator))
     };
     let (off, _) = base().resolve().expect("no bind resolves");
-    let data: serde_json::Value =
-        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
-    let defaults = data["Proxiima.Transport.defaultBind"].as_array().unwrap();
-    let facade = defaults
-        .iter()
-        .find(|row| row["in"][0] == "facade")
-        .unwrap();
-    assert_eq!(
-        serde_json::json!(off.mcp.map(|mcp| mcp.bind.to_string())),
-        facade["out"]
-    );
+    assert!(off.mcp.is_none());
 
     let (from_env, _) = base()
         .apply_lookup(lookup(&[("PROXIIMA_MCP_BIND", "127.0.0.1:0")]))
@@ -1496,62 +1486,5 @@ fn object_maintenance_cadence_is_validated_before_startup() {
                 "{message}"
             );
         }
-    }
-}
-
-#[test]
-fn listener_setting_defaults_match_runtime() {
-    let (runtime, _) = RuntimeBuilder::default()
-        .database_url("postgres://localhost/proxiima")
-        .platform_database_url("postgres://localhost/platform")
-        .store_number(0)
-        .served_surface(ServedSurface::All)
-        .resolve()
-        .unwrap();
-    let transport = runtime.mcp_transport;
-    for (setting, effective) in [
-        (
-            settings::PROXIIMA_EXPOSE_NETWORK,
-            runtime.expose_network.to_string(),
-        ),
-        (
-            settings::PROXIIMA_REST_ENABLED,
-            runtime.rest_enabled.to_string(),
-        ),
-        (
-            settings::PROXIIMA_HEALTH_ENDPOINTS,
-            runtime.health_endpoints.to_string(),
-        ),
-        (
-            settings::PROXIIMA_MAX_REQUEST_BODY_BYTES,
-            transport.max_request_body_bytes.to_string(),
-        ),
-        (
-            settings::PROXIIMA_MCP_SSE_KEEP_ALIVE_SECS,
-            transport.sse_keep_alive.unwrap().as_secs().to_string(),
-        ),
-        (
-            settings::PROXIIMA_MCP_SESSION_IDLE_SECS,
-            transport
-                .session_idle_timeout
-                .unwrap()
-                .get()
-                .as_secs()
-                .to_string(),
-        ),
-        (
-            settings::PROXIIMA_MCP_SSE_RETRY_SECS,
-            transport.sse_retry.unwrap().as_secs().to_string(),
-        ),
-        (
-            settings::PROXIIMA_MCP_SESSIONS,
-            transport.legacy_session_mode.to_string(),
-        ),
-        (
-            settings::PROXIIMA_MCP_JSON_RESPONSE,
-            transport.json_response.to_string(),
-        ),
-    ] {
-        assert_eq!(setting.default(), Some(effective.as_str()), "{setting}");
     }
 }

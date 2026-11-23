@@ -1492,8 +1492,9 @@ fn origins_render_explicit_port_rules_for_rmcp() {
         "http://LOCALHOST",
         "https://example.com:443",
         "https://example.com:8443",
-        "http://[::1]",
+        "http://[0:0:0:0:0:0:0:1]",
         "https://[::1]:443",
+        "https://[::ffff:192.0.2.1]",
     ])
     .unwrap();
 
@@ -1505,6 +1506,7 @@ fn origins_render_explicit_port_rules_for_rmcp() {
             "https://example.com:8443".to_string(),
             "http://[::1]:*".to_string(),
             "https://[::1]:443".to_string(),
+            "https://[::ffff:c000:201]:*".to_string(),
         ]
     );
 }
@@ -1515,6 +1517,7 @@ fn explicit_default_ports_match_portless_browser_origins() {
         ("https://example.com:443", "https://example.com"),
         ("http://example.com:80", "http://example.com"),
         ("https://[::1]:443", "https://[::1]"),
+        ("https://[0:0:0:0:0:0:0:1]:443", "https://[::1]"),
         ("http://[::1]:80", "http://[::1]"),
         ("HTTPS://EXAMPLE.COM:443", "https://example.com"),
     ] {

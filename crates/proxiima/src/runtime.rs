@@ -1270,6 +1270,8 @@ fn build_router<A: SpiiceApp>(
         edge.host_allowlist.clone(),
         config.mcp_transport.max_request_body_bytes,
     );
+    // The orchestrator probes the pod address, and the probes disclose nothing a rebinding page could use.
+    // A `merge` here would replace the guarded fallback with an unguarded one.
     health_router.fallback_service(guarded)
 }
 

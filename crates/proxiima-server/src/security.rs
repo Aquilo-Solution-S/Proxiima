@@ -98,6 +98,7 @@ impl OriginAllowlist {
             return false;
         };
         // `Proxiima.Transport.originMatch`.
+        // Parse both sides before comparison and match scheme and host case-insensitively.
         self.patterns.iter().any(|pattern| {
             pattern.scheme == parsed.scheme
                 && pattern.host == parsed.host
@@ -624,6 +625,7 @@ async fn mcp_auth(
         return unauthorized(&state, &path);
     };
     // `Proxiima.Authentication.sessionChecks`; retain verification across owner selection.
+    // Verify the bearer before any session or owner lookup so invalid credentials yield 401 regardless of headers.
     let Some(resolved) = state.auth.resolve_unbound(&token).await else {
         return unauthorized(&state, &path);
     };
@@ -707,7 +709,7 @@ async fn selected_owner(
     forwarded: Option<OwnerId>,
 ) -> OwnerSelection {
     // `Proxiima.Transport.ownerSelection` and `Proxiima.Authentication.forwardingChecks`.
-    // A supplied but malformed header refuses selection.
+    // Refuse a supplied owner header that is malformed or conflicts with the live binding.
     let owner_header = headers
         .get(PROXIIMA_OWNER_HEADER)
         .map(|raw| raw.to_str().ok().and_then(parse_owner_key));
@@ -912,10 +914,13 @@ fn parse_origin_parts(value: &str) -> Option<(String, String, Option<u16>)> {
     if host.is_empty() || (port.is_none() && host.len() != rest.len()) {
         return None;
     }
-    if let Some(ip) = host.strip_prefix('[') {
-        ip.strip_suffix(']')?.parse::<std::net::Ipv6Addr>().ok()?;
-    }
-    Some((scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), port))
+    let host = if let Some(ip) = host.strip_prefix('[') {
+        let ip = ip.strip_suffix(']')?.parse().ok()?;
+        url::Host::<String>::Ipv6(ip).to_string()
+    } else {
+        host.to_ascii_lowercase()
+    };
+    Some((scheme.to_ascii_lowercase(), host, port))
 }
 
 #[cfg(test)]

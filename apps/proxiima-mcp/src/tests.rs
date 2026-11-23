@@ -608,7 +608,7 @@ async fn maintain_blobs_in_the_serving_environment_boots_without_serving() {
 }
 
 #[test]
-fn the_canonical_listener_default_matches_the_ledger_vector() {
+fn the_canonical_listener_default_matches_the_ledger() {
     let (config, _) = ProxiimaMcpApp::configure(RuntimeBuilder::default())
         .store_number(0)
         .platform_database_url(DEFAULT_DATABASE_URL)
@@ -616,18 +616,11 @@ fn the_canonical_listener_default_matches_the_ledger_vector() {
         .served_surface(ServedSurface::All)
         .resolve()
         .expect("the canonical app resolves");
-    let data: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../crates/core/tests/ledger_vectors.json"
-    ))
-    .unwrap();
-    let defaults = data["Proxiima.Transport.defaultBind"].as_array().unwrap();
-    let canonical = defaults
-        .iter()
-        .find(|row| row["in"][0] == "canonical")
-        .unwrap();
     assert_eq!(
-        serde_json::json!(config.mcp.map(|mcp| mcp.bind.to_string())),
-        canonical["out"]
+        config.mcp.expect("the canonical app has a listener").bind,
+        proxiima_core::ledger!(Proxiima.Transport.canonicalBind)
+            .parse::<std::net::SocketAddr>()
+            .expect("the ledger bind is a socket address")
     );
 }
 

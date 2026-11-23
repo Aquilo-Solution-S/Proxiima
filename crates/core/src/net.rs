@@ -83,6 +83,7 @@ impl PlaintextHosts {
     /// Whether `host` is exactly one of the named hosts.
     #[must_use]
     pub fn contains(&self, host: &str) -> bool {
+        // Compare case-insensitively against entries validated by the parser.
         !self.0.is_empty() && self.0.contains(&host.trim().to_ascii_lowercase())
     }
 }
