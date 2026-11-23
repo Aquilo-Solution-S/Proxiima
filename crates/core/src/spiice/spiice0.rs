@@ -51,25 +51,29 @@ pub const SPIICE_ID: &str = "core";
 /// three renderers spelled three different score functions inside them.
 pub const BAND_EXACT: Band = Band {
     name: BAND_NAME_EXACT,
-    floor: 0.50,
-    ceiling: 1.00,
+    floor: percent_score(crate::ledger!(Proxiima.Search.exactFloorPercent)),
+    ceiling: percent_score(crate::ledger!(Proxiima.Search.exactCeilingPercent)),
     normalization: TS_RANK_NORMALIZATION_SCALE,
 };
 /// Rescue `any_tsq` arm: `0.25 + LEAST(ts_rank(.., 1|32) * 100, 1.0) * 0.20`.
 pub const BAND_RESCUE: Band = Band {
     name: BAND_NAME_RESCUE,
-    floor: 0.25,
-    ceiling: 0.45,
+    floor: percent_score(crate::ledger!(Proxiima.Search.rescueFloorPercent)),
+    ceiling: percent_score(crate::ledger!(Proxiima.Search.rescueCeilingPercent)),
     normalization: TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE,
 };
 /// Substring arm: the flat `0.25::real`. It admits, it does not rank —
 /// hence zero width and no `ts_rank` call to normalize.
 pub const BAND_SUBSTRING: Band = Band {
     name: BAND_NAME_SUBSTRING,
-    floor: 0.25,
-    ceiling: 0.25,
+    floor: percent_score(crate::ledger!(Proxiima.Search.substringPercent)),
+    ceiling: percent_score(crate::ledger!(Proxiima.Search.substringPercent)),
     normalization: TS_RANK_NORMALIZATION_NONE,
 };
+
+const fn percent_score(value: u8) -> f32 {
+    value as f32 / 100.0
+}
 
 const BANDS: &[Band] = &[BAND_EXACT, BAND_RESCUE, BAND_SUBSTRING];
 
@@ -83,7 +87,7 @@ const CORE_PROJECTION: ProjectionSpec = ProjectionSpec {
     table: "proxiima_core.projection",
     index: "core_projection_owner_tsv_gin",
     // The candidate budget for ONE statement over this table.
-    overfetch_k: 1_000,
+    overfetch_k: crate::ledger!(Proxiima.Search.coreProjectionCap),
     band_comparability: BandComparability::CoreBands,
     // Core IS the projection-ranking shape: `core_search_memories` ranks
     // `proxiima_core.projection` alone and joins a sidecar only to hydrate

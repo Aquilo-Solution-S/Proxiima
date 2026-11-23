@@ -477,7 +477,7 @@ impl Engine {
 /// cursor/order pairing as defense in depth for direct port callers.
 fn validate_search_request(search: &MemorySearchRequest) -> Result<(), ProtocolError> {
     if let Some(floor) = search.min_score
-        && !(floor.is_finite() && (0.0..=1.0).contains(&floor))
+        && !crate::verbs::query::valid_search_score(floor)
     {
         return Err(ProtocolError::invalid_argument(
             "min_score",
@@ -485,7 +485,7 @@ fn validate_search_request(search: &MemorySearchRequest) -> Result<(), ProtocolE
         ));
     }
     if let Some(weight) = search.semantic_weight {
-        if !(weight.is_finite() && (0.0..=1.0).contains(&weight)) {
+        if !crate::verbs::query::valid_search_score(weight) {
             return Err(ProtocolError::invalid_argument(
                 "semantic_weight",
                 "semantic_weight must be within 0.0..=1.0",

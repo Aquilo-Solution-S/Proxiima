@@ -73,11 +73,21 @@ pub(crate) fn call_sql(table: &str, substring: bool) -> Result<SqlText, StorageE
     } else {
         "t, schema_id, lexical_score"
     });
-    sql.push(" FROM ").push_ident(&name).push(
-        "($1::text, $2::bigint, $3::text[], $4::timestamptz, $5::timestamptz, \
-         $6::uuid, $7::uuid[], $8::text[], $9::boolean, $10::boolean, \
-         $11::boolean, $12::text, $13::boolean)",
-    );
+    sql.push(" FROM ").push_ident(&name).push("(");
+    for (index, argument) in ARGUMENT_TYPES.split(", ").enumerate() {
+        if index > 0 {
+            sql.push(", ");
+        }
+        let cast = match argument {
+            "timestamp with time zone" => "timestamptz",
+            other => other,
+        };
+        sql.push("$")
+            .push_u64(index as u64 + 1)
+            .push("::")
+            .push(cast);
+    }
+    sql.push(")");
     Ok(sql)
 }
 

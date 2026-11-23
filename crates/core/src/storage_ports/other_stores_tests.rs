@@ -495,3 +495,26 @@ async fn origin_batch_reads_different_stores_concurrently() {
             .all(|read| matches!(read, Ok(RemoteRead::NotFound)))
     );
 }
+
+#[test]
+fn federated_comparison_matches_ledger_vectors() {
+    use std::cmp::Ordering;
+    let ordering = |value: &serde_json::Value| match value.as_str() {
+        Some("lt") => Ordering::Less,
+        Some("eq") => Ordering::Equal,
+        Some("gt") => Ordering::Greater,
+        _ => panic!("invalid comparison: {value}"),
+    };
+    for row in query_vectors("Proxiima.Search.storeHitOrder") {
+        let inputs = &row["in"];
+        assert_eq!(
+            compare_store_hits(
+                ordering(&inputs[0]),
+                ordering(&inputs[1]),
+                ordering(&inputs[2])
+            ),
+            ordering(&row["out"]),
+            "{row}",
+        );
+    }
+}

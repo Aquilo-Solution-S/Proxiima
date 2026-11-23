@@ -18,7 +18,7 @@ use proxiima_core::{
 
 /// Candidate id lists are bounded before they ever reach a query so a
 /// pathological caller cannot force an unbounded `IN (...)`/`ANY($1)` scan.
-const MAX_AUTHZ_CANDIDATES: usize = 2_000;
+const MAX_AUTHZ_CANDIDATES: usize = proxiima_core::ledger!(Proxiima.Search.authorizedCandidateMax);
 
 /// Narrow `candidates` to the ids visible to the caller of `ctx`, optionally
 /// restricted to one `entity_kind`/`schema_id`. Heads-only,

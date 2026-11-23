@@ -71,7 +71,8 @@ use hybrid::{HYBRID_CANDIDATE_WINDOW, apply_hybrid_fusion, uses_hybrid_fusion};
 /// shard-level property and therefore the spiice's — but the request
 /// scaling has no contract home, because it is a function of the request
 /// rather than of the shard.
-const REQUEST_OVERFETCH_FACTOR: u32 = 20;
+const REQUEST_OVERFETCH_FACTOR: u32 =
+    proxiima_core::ledger!(Proxiima.Search.requestOverfetchFactor);
 
 /// The tagged semantic scan's tag-array bind…
 const SEMANTIC_TAGS_BIND: NonZeroU16 = NonZeroU16::new(7).unwrap();
@@ -201,28 +202,15 @@ pub(crate) async fn search_memories_on_connection(
             .bound
             .combine(apply_hybrid_fusion(req, &mut admitted, &hits.rows));
     }
+    // `Proxiima.Search.candidateStages`.
     let mut page = page_hits(req, limit, admitted, hits.bound);
     hydrate_snippets_on_connection(connection.as_mut(), projections, &mut page.results).await?;
     Ok(page)
 }
 
-/// The candidate budget for one statement: the request-scaling rule,
-/// clamped to what the spiice DECLARES.
-///
-/// One statement per spiice hands `merge_hits` at most `overfetch_k`.
-///
-/// For `Lexical` and `Relevance` the returned page cannot move — but the
-/// candidate-superset argument alone does not establish that. "The global
-/// top-`overfetch` by `lexical_score` contains the top-`limit` by
-/// `lexical_score`" is a claim about candidates, and admission is not
-/// candidate-preserving: it drops superseded revisions. A window spent on
-/// rows admission will drop returns fewer than `limit` results while
-/// admissible rows sat below the cut. [`admit_side_restriction`] closes
-/// that: with it the window is the global top-`overfetch` of the ADMISSIBLE
-/// set, and the superset argument holds over the set the page is drawn from.
-///
-/// Very deep non-hybrid cursor pages can still exhaust the declared cap.
-/// Hybrid uses a separate fixed candidate window on every page.
+/// The top-K window covers the requested page when the declared cap meets
+/// demand and candidate selection is complete. A cap below demand can
+/// produce a bounded page.
 fn overfetch(limit: u32, overfetch_k: u32, after: Option<SearchCursor>) -> u32 {
     let base = limit.saturating_mul(REQUEST_OVERFETCH_FACTOR).max(limit);
     // Relevance candidates are ranked from the beginning before the cursor
@@ -239,6 +227,7 @@ fn overfetch(limit: u32, overfetch_k: u32, after: Option<SearchCursor>) -> u32 {
 /// Hybrid retains one fixed window regardless of page size, cursor depth,
 /// or requested output order. Other modes retain their existing overfetch.
 fn candidate_overfetch(req: &MemorySearchRequest, limit: u32, cap: u32) -> u32 {
+    // `Proxiima.Search.candidateHorizon`.
     if uses_hybrid_fusion(req) {
         HYBRID_CANDIDATE_WINDOW.min(cap)
     } else {
@@ -295,17 +284,12 @@ fn core_search_spiices<'a>(
     projections: &'a [MemorySearchProjection],
 ) -> Vec<SpiiceScan<'a>> {
     let mut by_schema = BTreeMap::<&str, &MemorySearchProjection>::new();
+    // `Proxiima.Search.projectionRequirements`.
     for projection in projections {
         // A spiice's score enters this merge only if its spiice
         // says the score is comparable, and only if its read shape is one
         // this renderer can serve.
-        if !matches!(projection.band_comparability, BandComparability::CoreBands) {
-            continue;
-        }
-        // The same admission as before, spelled as the value it proves: a
-        // projection-ranked schema is exactly one freeze resolved render
-        // bands for.
-        if projection.render_bands.is_none() {
+        if !has_comparable_renderer_bands(projection) {
             continue;
         }
         if !payload_kind_matches(req.kind, projection.kind) {
@@ -483,6 +467,7 @@ async fn scan_one_spiice_on_connection(
             similarity_score: None,
         })
         .collect();
+    // `Proxiima.Search.usesSubstring`.
     let missing: Vec<&MemorySearchProjection> = spiice
         .schemas
         .iter()
@@ -1021,12 +1006,14 @@ fn core_band_scan(projections: &[MemorySearchProjection]) -> Option<SpiiceScan<'
     SpiiceScan::new(
         projections
             .iter()
-            .filter(|projection| {
-                matches!(projection.band_comparability, BandComparability::CoreBands)
-                    && projection.render_bands.is_some()
-            })
+            .filter(|projection| has_comparable_renderer_bands(projection))
             .collect(),
     )
+}
+
+fn has_comparable_renderer_bands(projection: &MemorySearchProjection) -> bool {
+    matches!(projection.band_comparability, BandComparability::CoreBands)
+        && projection.render_bands.is_some()
 }
 
 #[cfg(any(test, feature = "testkit"))]
@@ -1180,18 +1167,8 @@ fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> Sq
     sql
 }
 
-/// The `memory_kind` literal a request's `kind` filter selects.
-///
-/// ONE author, used by the candidate statements AND by [`admit_hits`], so
-/// the two cannot drift: a filter the admit side applies and the candidate
-/// side does not know about is a starved window. `EntityKind::Goal` selects
-/// nothing — `proxiima_core.memory_kind` has exactly three values and goals
-/// are not among them — which is also why the admit side's `parse_kind` can
-/// never drop an admitted row for being unrecognised.
-///
-/// A closed enum in, a fixed fragment out: no caller text reaches the SQL,
-/// which is why the candidate statements can RENDER this rather than bind it
-/// and still keep their eight-parameter contract.
+/// The closed Memory kind label shared by candidate selection and admission.
+/// The active candidate functions bind it as a search value.
 fn kind_literal(kind: Option<EntityKind>) -> Option<&'static str> {
     kind.and_then(proxiima_core::MemoryKind::of)
         .map(PgMemoryKind::from)
@@ -1226,17 +1203,8 @@ fn kind_literal(kind: Option<EntityKind>) -> Option<&'static str> {
 ///    tree, same row: `0.250000` at `limit = 1` and `0.545455` at
 ///    `limit = 8`. A score that depends on the page size is not a score.
 ///
-/// Restricting the candidates is what makes "the page cannot move for
-/// `Lexical` + `Relevance`" true rather than nearly true: with
-/// these predicates the window is the global top-`overfetch` of the
-/// ADMISSIBLE set, and the top-`limit` of an admissible set is contained in
-/// its own top-`overfetch` whenever `overfetch >= limit`, which
-/// [`overfetch`] guarantees. owner, `since` and `until` are already row
-/// predicates on the candidate side, and `schema_id` narrows the
-/// participating schema set in `core_search_spiices` before a statement is
-/// rendered. That the list is complete is checked mechanically by
-/// `every_admit_filter_is_mirrored_on_the_candidate_side`, not asserted
-/// here.
+/// Mirror admission predicates before limiting candidates so rejected versions
+/// cannot spend the candidate budget.
 ///
 /// # Cost
 ///
@@ -1305,18 +1273,10 @@ fn admit_side_restriction(
     Ok(sql)
 }
 
-/// The snippet, for the rows that made the page.
-///
-/// The shape `load_lineage_snippets` already runs: group the ids by
-/// `schema_id`, look the projection up, and fan out one primary-key lookup
-/// per sidecar. Same `snippet_sql` expression, same `c.t = ANY($1)` shape,
-/// same function — reused rather than restated.
-///
-/// *Identity note.* The join this replaces was an INNER JOIN, so a
-/// projection row whose sidecar row was missing dropped out of the result
-/// entirely; here it comes back with an empty snippet. The
-/// `projection_memory_id_fkey` cascade makes that state unreachable, but
-/// the difference is real.
+/// Load snippets by sidecar key for the rows that made the page, using the
+/// lineage loader. A row without a loaded snippet keeps an empty snippet.
+/// Admission checks declared sidecar presence independently of hydration.
+/// `Proxiima.Payloads.enforceStamp`.
 async fn hydrate_snippets_on_connection(
     connection: &mut PgConnection,
     projections: &[MemorySearchProjection],
@@ -1592,6 +1552,11 @@ async fn remote_nearest(
         let page = index.nearest(&route, query, window).await?;
         bound = bound.combine(page.bound);
         for candidate in page.candidates {
+            if !proxiima_core::verbs::query::valid_search_score(candidate.similarity_score) {
+                return Err(StorageError::Unavailable(
+                    "vector index nearest answered a score outside 0..=1".into(),
+                ));
+            }
             candidates
                 .entry(candidate.memory_id.into_inner())
                 .and_modify(|prior| {
@@ -1805,6 +1770,7 @@ fn page_hits(
 
 fn ranks_after_cursor(result: &MemorySearchResult, after: SearchCursor) -> bool {
     match after {
+        // `Proxiima.Search.relevanceCursorKeys`.
         SearchCursor::Relevance {
             score_bits,
             memory_id,

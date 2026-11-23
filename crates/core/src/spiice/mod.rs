@@ -54,7 +54,7 @@ pub use contract::{
     TransferLeg, TransferRule, WEIGHT_UNIFORM, WeightedField,
 };
 pub use descriptor::{SpiiceDescriptor, SpiiceProvenance};
-pub use error::SpiiceRegistryError;
+pub use error::{ProjectionRenderProperty, SpiiceRegistryError};
 pub use evolution::SchemaEvolution;
 pub use prefix::schema_id_has_prefix;
 pub use registry::SpiiceRegistry;

@@ -619,6 +619,12 @@ pub enum SpiiceRegistryError {
         declared: &'static str,
         projection_column: Option<&'static str>,
     },
+    /// A pinned union needs a first configuration to stamp on the row.
+    #[error("spiice {spiice_id} schema {schema_id} declares an empty pinned language union")]
+    EmptyProjectionLanguageUnion {
+        spiice_id: &'static str,
+        schema_id: SchemaId,
+    },
     /// A declared tag column must be backed by a memory-keyed sidecar.
     #[error(
         "spiice {spiice_id} schema {schema_id} declares tag column {tag_column}, but its \
@@ -645,8 +651,8 @@ pub enum SpiiceRegistryError {
     ProjectionRenderNotUniform {
         spiice_id: &'static str,
         schema_id: SchemaId,
-        /// `"language"` or `"bands"`.
-        property: &'static str,
+        /// Which property differs between projected schemas.
+        property: ProjectionRenderProperty,
     },
     /// A `RankSource::Projection` schema does not declare a band under a
     /// name the core renderer resolves. A `&[Band]` is an unordered set
@@ -662,15 +668,11 @@ pub enum SpiiceRegistryError {
         schema_id: SchemaId,
         missing: &'static str,
     },
-    /// A spiice claims `BandComparability::CoreBands` while one of its
-    /// schemas declares a band outside spiice #0's `[0.0, 1.0]` window.
-    /// The claim is what a cross-spiice merge compares scores on, so it has
-    /// to be earned rather than decorated.
+    /// A comparable band has an invalid or reversed score window.
     #[error(
         "spiice {spiice_id} claims BandComparability::CoreBands, but schema \
-         {schema_id} declares band {band:?} as {window}, outside spiice #0's \
-         [0, 1] window; a merge that compared those scores numerically would be \
-         comparing two different scales"
+         {schema_id} declares band {band:?} as {window}; comparable bands need finite, \
+         ordered endpoints in [0, 1]"
     )]
     ProjectionBandOutsideCoreWindow {
         spiice_id: &'static str,
@@ -680,4 +682,22 @@ pub enum SpiiceRegistryError {
         /// `f32` pair would not.
         window: String,
     },
+}
+
+/// Property rendered once for the whole spiice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionRenderProperty {
+    Language,
+    Bands,
+    RankWeights,
+}
+
+impl std::fmt::Display for ProjectionRenderProperty {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Language => "language",
+            Self::Bands => "bands",
+            Self::RankWeights => "rank_weights",
+        })
+    }
 }

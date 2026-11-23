@@ -41,6 +41,7 @@ pub const fn hybrid_degraded_to_lexical(
     no_rows: bool,
     any_semantic_score: bool,
 ) -> bool {
+    // `Proxiima.Search.warnsOnLexicalDegradation`.
     matches!(mode, SearchMode::Hybrid) && !no_rows && !any_semantic_score
 }
 
@@ -113,17 +114,28 @@ pub enum SearchOrder {
 
 /// Hard per-page cap on memory search results. Callers page past it
 /// with [`MemorySearchRequest::after`] / the MCP-level cursor.
-pub const MAX_SEARCH_PAGE_LIMIT: u32 = 50;
+pub const MAX_SEARCH_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Search.pageSizeMax);
 
 /// Hybrid fusion weight on the semantic component when the request
 /// does not override it; the lexical component gets the complement.
-pub const DEFAULT_HYBRID_SEMANTIC_WEIGHT: f32 = 0.5;
+pub const DEFAULT_HYBRID_SEMANTIC_WEIGHT: f32 = {
+    let value: u8 = crate::ledger!(Proxiima.Search.hybridSemanticWeightTenths);
+    value as f32
+} / 10.0;
 
 /// Upper bound on [`SearchCursor::Relevance`] depth (`seen`). Relevance
 /// keysets in pure lexical and semantic modes grow their overfetch with
 /// depth. Hybrid keeps a fixed candidate window and ends at its boundary.
 /// Pure-mode recency keysets push into SQL and page without a depth cap.
-pub const MAX_RELEVANCE_SEARCH_DEPTH: u32 = 5_000;
+pub const MAX_RELEVANCE_SEARCH_DEPTH: u32 = crate::ledger!(Proxiima.Search.relevanceDepthMax);
+
+/// Whether a finite score lies in the closed search interval.
+#[must_use]
+pub fn valid_search_score(score: f32) -> bool {
+    const FLOOR: u8 = crate::ledger!(Proxiima.Search.unitScoreFloor);
+    const CEILING: u8 = crate::ledger!(Proxiima.Search.unitScoreCeiling);
+    (f32::from(FLOOR)..=f32::from(CEILING)).contains(&score)
+}
 
 /// Resume point for paged memory search. The variant must match the
 /// request's `order`. A `Relevance` cursor carries the fused score of

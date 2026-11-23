@@ -29,6 +29,7 @@ struct RecordingIndex {
     inner: InMemoryVectorIndex,
     windows: Mutex<Vec<u32>>,
     reported_bound: Option<CandidateBound>,
+    reported_score: Mutex<Option<f32>>,
 }
 
 #[async_trait::async_trait]
@@ -61,6 +62,11 @@ impl VectorIndex for RecordingIndex {
         let mut page = self.inner.nearest(filter, query, window).await?;
         if let Some(bound) = self.reported_bound {
             page.bound = bound;
+        }
+        if let Some(score) = *self.reported_score.lock().unwrap() {
+            for candidate in &mut page.candidates {
+                candidate.similarity_score = score;
+            }
         }
         Ok(page)
     }
@@ -218,6 +224,41 @@ async fn embed(
     for _ in 0..versions {
         let chunks = vec![vector(1.0).values().to_vec()];
         create_embedding_of(pg, owner, MemoryId::new(entity), "memory-index", chunks).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn semantic_port_refuses_invalid_host_index_scores() -> TestResult {
+    let index = Arc::new(RecordingIndex::default());
+    let (pg, _database) = fresh_pg_host_index("semantic_invalid_index_score", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let visible = seed_note(&pg, owner, "wanted").await?;
+    index
+        .put(
+            EmbeddableEntityRef::Memory {
+                kind: proxiima_core::MemoryKind::Fact,
+                memory_id: MemoryId::new(visible),
+            },
+            owner,
+            1,
+            &[vector(1.0)],
+        )
+        .await?;
+    let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let scope = owner_scope_for_tests(&[owner]);
+    for invalid in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+        *index.reported_score.lock().unwrap() = Some(invalid);
+        let result = pg
+            .search_memories(Some(&scope), &request(owner), registry.search_projections())
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(StorageError::Unavailable(message)) if message.contains("score outside 0..=1")
+            ),
+            "score {invalid}"
+        );
     }
     Ok(())
 }

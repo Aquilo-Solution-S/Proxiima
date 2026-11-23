@@ -28,10 +28,10 @@ const DEFAULT_BODY_MAX_CHARS: usize = crate::MAX_TEXT_CAP_CHARS;
 /// Each distinct space costs one full storage search, so the space list is
 /// this tool's only per-request work multiplier; cap it like every other
 /// list argument.
-const MAX_SEARCH_SPACES: usize = 16;
+const MAX_SEARCH_SPACES: usize = crate::ledger!(Proxiima.Search.spacesMax);
 /// Matches the write-side cap of 16 distinct tags per memory — a filter
 /// larger than any storable tag set cannot narrow anything further.
-const MAX_SEARCH_TAGS: usize = 16;
+const MAX_SEARCH_TAGS: usize = crate::ledger!(Proxiima.Search.tagsMax);
 
 #[derive(Debug, Default)]
 pub struct SearchMemoriesTool;
@@ -58,11 +58,12 @@ impl From<SearchMemoriesMode> for SearchMode {
 }
 
 fn default_mode() -> SearchMemoriesMode {
+    // `Proxiima.Search.defaultMode`.
     SearchMemoriesMode::Hybrid
 }
 
 fn default_limit() -> u32 {
-    8
+    crate::ledger!(Proxiima.Search.defaultPageSize)
 }
 
 fn default_include_neighbor_edges() -> bool {
@@ -487,10 +488,12 @@ fn merge_store_hits(
         .into_iter()
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
         .map(|(mut hit, score)| {
+            // `Proxiima.Search.scoreSource`.
             hit.score = score;
             hit
         })
         .collect();
+    retain_surviving_neighbor_edges(&output.memories, &mut output.neighbor_edges);
     output.ranking = SearchRanking::Rank;
     output.unanswered = Some(unanswered);
 }
@@ -729,6 +732,7 @@ async fn plan_owner_lanes(
             None => Err(format!("{SEMANTIC_SEARCH_UNAVAILABLE} {}", space.key)),
             Some(at) => embedded[at].clone(),
         };
+        // `Proxiima.Search.laneRoute`.
         let arm = match (semantic, requested) {
             (Ok(semantic), SearchMode::Hybrid) => LaneArm::Hybrid(semantic),
             (Ok(semantic), _) => LaneArm::Semantic(semantic),
@@ -750,6 +754,7 @@ async fn plan_owner_lanes(
 fn ranking_for(lanes: &[OwnerLane]) -> SearchRanking {
     let mut keys = lanes.iter().map(OwnerLane::scoring_key);
     let first = keys.next();
+    // `Proxiima.Search.relevanceOrder`.
     if keys.all(|key| Some(key) == first) {
         SearchRanking::Score
     } else {
@@ -848,14 +853,14 @@ struct SpaceSearchResult {
 
 fn validate_score_args(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
     if let Some(floor) = args.min_score
-        && !(floor.is_finite() && (0.0..=1.0).contains(&floor))
+        && !crate::verbs::query::valid_search_score(floor)
     {
         return Err(ToolError::InvalidInput(
             "min_score must be within 0.0..=1.0".into(),
         ));
     }
     if let Some(weight) = args.semantic_weight {
-        if !(weight.is_finite() && (0.0..=1.0).contains(&weight)) {
+        if !crate::verbs::query::valid_search_score(weight) {
             return Err(ToolError::InvalidInput(
                 "semantic_weight must be within 0.0..=1.0".into(),
             ));
@@ -923,10 +928,6 @@ async fn search_one_space(
         until: prepared.until,
         order: args.order,
         min_score: args.min_score,
-        // The caller's weight, dropped when this lane degraded away from
-        // hybrid. Degradation is an availability fact, not a caller error,
-        // so the knob the run can no longer honor is discarded here rather
-        // than carried into a verb that rejects it.
         semantic_weight: weight_for_effective_mode(args.semantic_weight, mode),
         after,
         semantic: lane.arm.semantic().cloned(),
@@ -1246,17 +1247,7 @@ fn validate_body_max_chars(requested: Option<usize>) -> Result<(), ToolError> {
     Ok(())
 }
 
-/// Cap the raw list arguments before any per-item work. `spaces` and
-/// `tags` were the only uncapped list inputs on the tool surface; without
-/// a cap a single request could fan out into one storage search per
-/// listed space.
-/// Fold every filter tag to its stored form, then sort and dedup so
-/// `["Rust", "rust"]` is one predicate rather than two.
-///
-/// Blank tags are dropped rather than rejected: the write side refuses to
-/// store one, so a blank filter entry can never match, and silently ignoring
-/// it keeps an empty-string element from turning a good filter into a
-/// guaranteed-empty result.
+/// `Proxiima.Search.tagFilterStages`.
 fn fold_tag_filter(tags: &mut Vec<String>) {
     for tag in tags.iter_mut() {
         *tag = super::memory::util::fold_tag(tag);
@@ -1272,6 +1263,7 @@ fn validate_list_caps(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
             "at most {MAX_SEARCH_SPACES} spaces per search"
         )));
     }
+    // `Proxiima.Search.tagFilterStages`.
     if args.tags.len() > MAX_SEARCH_TAGS {
         return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SEARCH_TAGS} tags in the tags filter"
@@ -1317,15 +1309,7 @@ fn search_memory_output(
     }
 }
 
-/// The fusion weight to hand the search verb, given the mode the run can
-/// actually serve.
-///
-/// A caller who pairs a weight with a non-hybrid mode is rejected up front
-/// by [`validate_score_args`]. Degradation is the other case and not a
-/// caller error: a hybrid request on a deployment with no embeddings ranks
-/// lexically, and there is no semantic component left to weight. Dropping
-/// the knob here is what keeps that request servable, since the verb
-/// rejects a weight the mode cannot use.
+/// `Proxiima.Search.keepSemanticWeight`.
 fn weight_for_effective_mode(requested: Option<f32>, effective: SearchMode) -> Option<f32> {
     requested.filter(|_| matches!(effective, SearchMode::Hybrid))
 }
@@ -1352,14 +1336,7 @@ async fn embed_query_for_search(
     })
 }
 
-/// Drop neighbor edges that no longer touch a surviving (post-truncation)
-/// memory, and dedupe by the edge's own content. Per-space searches
-/// over-fetch edges against their own candidate sets; after the merged
-/// set is sorted and truncated, edges to hits that were truncated out are
-/// dangling references.
-///
-/// The dedupe key is `(source, target, kind)` because that IS the edge —
-/// there is no handle to key on, and none is needed.
+/// `Proxiima.Search.neighborEdgeEligible`.
 fn retain_surviving_neighbor_edges(memories: &[SearchMemoryOutput], edges: &mut Vec<NeighborEdge>) {
     let surviving: std::collections::HashSet<&str> = memories
         .iter()
@@ -1369,8 +1346,6 @@ fn retain_surviving_neighbor_edges(memories: &[SearchMemoryOutput], edges: &mut 
     edges.retain(|edge| {
         let touches =
             surviving.contains(edge.source.as_str()) || surviving.contains(edge.target.as_str());
-        // `&&` short-circuits: a non-touching edge is never marked seen, so a
-        // later touching duplicate is still evaluated on its own merits.
         touches && seen_edges.insert((edge.source.clone(), edge.target.clone(), edge.kind))
     });
 }

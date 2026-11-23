@@ -2273,6 +2273,7 @@ COMMENT ON FUNCTION proxiima_core.reinstall_owner_rls() IS 'Host only: re-applie
 
 -- Lexical functions
 
+-- `Proxiima.Search.retireConfiguration`.
 CREATE OR REPLACE FUNCTION proxiima_core.lexical_language_forget(config_to_forget regconfig)
  RETURNS void
  LANGUAGE plpgsql

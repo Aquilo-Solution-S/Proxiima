@@ -28,7 +28,7 @@
 //! Snowball rules.
 
 /// Sentinel accepted by write surfaces to request content detection.
-pub const LEXICAL_LANGUAGE_AUTO: &str = "auto";
+pub const LEXICAL_LANGUAGE_AUTO: &str = crate::ledger!(Proxiima.Search.lexicalAuto);
 
 /// The resolved value that asks storage for the deployment's configured
 /// text-search configuration (`proxiima_core.lexical_config()`).
@@ -42,7 +42,8 @@ pub const LEXICAL_LANGUAGE_AUTO: &str = "auto";
 /// A write carrying this is DISTINCT from a write carrying nothing: this
 /// one asked for the deployment default, and that is the distinction a
 /// `LanguagePolicy::PerRow` schema refuses to guess at.
-pub const LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT: &str = "@deployment";
+pub const LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT: &str =
+    crate::ledger!(Proxiima.Search.lexicalDeploymentDefault);
 
 /// Rejected `language` argument on a memory write surface.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -189,6 +190,7 @@ pub fn resolve_lexical_language(
     requested: Option<&str>,
     text: &str,
 ) -> Result<String, InvalidLexicalLanguage> {
+    // `Proxiima.Search.lexicalResolution`.
     let Some(requested) = requested.map(str::trim).filter(|r| !r.is_empty()) else {
         return Ok(LEXICAL_LANGUAGE_DEPLOYMENT_DEFAULT.to_string());
     };

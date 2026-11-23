@@ -14,7 +14,7 @@ use crate::pgvector::{Lane, vector};
 use crate::projection::Artifact;
 
 /// Maximum chunk window used by adaptive ANN scans.
-pub(crate) const SEMANTIC_SCAN_CAP: u32 = 1_000;
+pub(crate) const SEMANTIC_SCAN_CAP: u32 = proxiima_core::ledger!(Proxiima.Search.semanticScanCap);
 
 /// Where this store keeps its chunk vectors (#519): a closed choice every
 /// vector path matches case by case.
@@ -76,6 +76,7 @@ pub(crate) async fn local_nearest(
         .map_err(map_err)?;
     // The exact fallback still caps CHUNKS before grouping memories. A short
     // nonempty page therefore cannot prove exhaustion of distinct memories.
+    // `Proxiima.Search.chunkCandidateBound`.
     let bound = if rows.is_empty() {
         CandidateBound::Complete
     } else if rows.len() >= usize::try_from(window.min(SEMANTIC_SCAN_CAP)).unwrap_or(usize::MAX) {

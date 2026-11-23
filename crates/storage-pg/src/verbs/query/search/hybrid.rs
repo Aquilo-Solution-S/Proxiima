@@ -13,8 +13,12 @@ use super::Hit;
 /// declarations may impose a smaller lexical cap; the semantic chunk scan
 /// retains its shared 1,000-row cap. The windows never depend on page size,
 /// output order or cursor depth. Paging ends at their fused union.
-pub(super) const HYBRID_CANDIDATE_WINDOW: u32 = 1_000;
-const RRF_K: f32 = 60.0;
+pub(super) const HYBRID_CANDIDATE_WINDOW: u32 =
+    proxiima_core::ledger!(Proxiima.Search.hybridWindow);
+const RRF_K: f32 = {
+    let value: u8 = proxiima_core::ledger!(Proxiima.Search.hybridRankOffset);
+    value as f32
+};
 
 pub(super) fn uses_hybrid_fusion(req: &MemorySearchRequest) -> bool {
     req.mode == SearchMode::Hybrid && req.semantic.is_some()
@@ -34,6 +38,7 @@ pub(super) fn apply_hybrid_fusion(
         .clamp(0.0, 1.0);
     let mut fused = BTreeMap::<uuid::Uuid, f32>::new();
     let mut bound = CandidateBound::Complete;
+    // `Proxiima.Search.hybridStages`.
     for (semantic, leg_weight) in [(true, weight), (false, 1.0 - weight)] {
         let mut leg: Vec<(uuid::Uuid, f32)> = results
             .iter()

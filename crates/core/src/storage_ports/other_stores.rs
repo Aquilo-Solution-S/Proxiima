@@ -34,7 +34,10 @@ pub const MAX_REMOTE_READS_PER_STORE: usize = crate::ledger!(Proxiima.Query.maxR
 pub const MAX_LINEAGE_REMOTE_ORIGINS: usize = crate::ledger!(Proxiima.Edges.maxRemoteLeaves);
 
 /// Reciprocal-rank-fusion constant used to merge store result lists.
-pub const STORE_RRF_K: f32 = 60.0;
+pub const STORE_RRF_K: f32 = {
+    let value: u8 = crate::ledger!(Proxiima.Search.storeRankOffset);
+    value as f32
+};
 
 /// Who is asking: the store decides what this caller may see.
 #[derive(Debug, Clone, Copy)]
@@ -816,11 +819,20 @@ pub fn rrf_merge<T>(lists: Vec<Vec<T>>) -> Vec<(T, f32)> {
             scored.push((list_index, rank, item, score));
         }
     }
-    scored.sort_by(|a, b| b.3.total_cmp(&a.3).then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0)));
+    scored.sort_by(|a, b| compare_store_hits(b.3.total_cmp(&a.3), a.0.cmp(&b.0), a.1.cmp(&b.1)));
     scored
         .into_iter()
         .map(|(_, _, item, score)| (item, score))
         .collect()
+}
+
+// `Proxiima.Search.storeHitOrder`.
+fn compare_store_hits(
+    score: std::cmp::Ordering,
+    list: std::cmp::Ordering,
+    rank: std::cmp::Ordering,
+) -> std::cmp::Ordering {
+    score.then(list).then(rank)
 }
 
 #[cfg(test)]

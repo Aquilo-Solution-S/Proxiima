@@ -27,22 +27,8 @@ fn weight_arrays_differ(first: Option<[f32; 4]>, second: Option<[f32; 4]>) -> bo
 }
 
 impl SpiiceRegistry {
-    /// A search projection against the renderer that can reach it.
-    ///
-    /// A projection is not free: every write to the schema pays a
-    /// projection row and a GIN index entry. A spiice that names
-    /// `RankSource::Projection` claims the core renderer serves its rows,
-    /// so its scores must declare `BandComparability::CoreBands`. Tags
-    /// narrow participating rows; a projection without tags is reachable
-    /// by an unscoped or schema-scoped request.
-    ///
-    /// The `RankSource` gate is what makes this checkable rather than
-    /// presumptuous. `SidecarWithProjectionOwner` is the declared statement
-    /// that core's renderer does NOT serve this spiice — it ships its own
-    /// tools, which reach the projection themselves — so its declaration
-    /// says nothing about reachability and nothing here may judge it. Only
-    /// a spiice that claimed core's renderer is held to what core's
-    /// renderer will scan.
+    /// The core renderer only merges projections with comparable bands.
+    /// Custom SQL describes its own rank source in the contract.
     pub(super) fn validate_projection_is_reachable(
         contract: &crate::spiice::contract::SpiiceContract,
     ) -> Result<(), SpiiceRegistryError> {
@@ -67,33 +53,7 @@ impl SpiiceRegistry {
         Ok(())
     }
 
-    /// What the spiice's PROJECTION declares, checked against the schemas
-    /// that project into it.
-    ///
-    /// Two rules, both earning a declaration that would otherwise decorate:
-    ///
-    /// 1. `RankSource::Projection` means ONE statement serves the whole
-    ///    spiice, so every property that statement can spell only once —
-    ///    the lexical configuration, the score windows and `ts_rank`'s
-    ///    weight array — must agree across the spiice's projected schemas,
-    ///    and the renderer's three band names must all be declared.
-    ///    Deciding this at freeze rather than at query-build time is the
-    ///    point: the answer never depends on the request, and discovering
-    ///    it on a hot path would be a `StorageError` where a boot refusal
-    ///    belongs.
-    ///
-    ///    The weight array is checked alongside language and bands because
-    ///    the renderer reads all three off the spiice's FIRST participating
-    ///    schema. Unchecked, a spiice whose schemas declare different weight
-    ///    LEVELS would have one schema's array applied to every schema's
-    ///    vector, silently.
-    /// 2. `BandComparability::CoreBands` is the claim a cross-spiice merge
-    ///    compares scores on. A spiice whose bands leave spiice #0's
-    ///    `[0, 1]` window cannot make it.
-    /// 3. Every projected schema's sidecar declares a surface keyed on the
-    ///    memory `t`. The generator spells the projection's key from that
-    ///    column, so a sidecar that declares no surface — or one keyed on
-    ///    anything else — has no projection statement to generate.
+    /// Check the declarations before a renderer reads the first participating schema.
     pub(super) fn validate_contract_projection(
         contract: &crate::spiice::contract::SpiiceContract,
     ) -> Result<(), SpiiceRegistryError> {
@@ -106,8 +66,12 @@ impl SpiiceRegistry {
         for (schema, _) in contract.projected_schemas() {
             let schema_id = schema.schema_id();
             if matches!(spec.band_comparability, BandComparability::CoreBands) {
+                // `Proxiima.Search.admitComparableBand`.
                 for band in schema.search.bands() {
-                    if band.floor < 0.0 || band.ceiling > 1.0 {
+                    if !crate::verbs::query::valid_search_score(band.floor)
+                        || !crate::verbs::query::valid_search_score(band.ceiling)
+                        || band.floor > band.ceiling
+                    {
                         return Err(SpiiceRegistryError::ProjectionBandOutsideCoreWindow {
                             spiice_id: contract.spiice_id,
                             schema_id,
@@ -120,6 +84,7 @@ impl SpiiceRegistry {
             if !spec.rank_source.is_projection() {
                 continue;
             }
+            // `Proxiima.Search.requiredBands`.
             for name in CoreBandName::ALL {
                 if schema.search.band(name.as_str()).is_none() {
                     return Err(SpiiceRegistryError::ProjectionBandName {
@@ -133,18 +98,19 @@ impl SpiiceRegistry {
                 reference = Some(schema);
                 continue;
             };
+            // `Proxiima.Search.uniformProperties`.
             if first.search.language() != schema.search.language() {
                 return Err(SpiiceRegistryError::ProjectionRenderNotUniform {
                     spiice_id: contract.spiice_id,
                     schema_id,
-                    property: "language",
+                    property: crate::spiice::ProjectionRenderProperty::Language,
                 });
             }
             if first.search.bands() != schema.search.bands() {
                 return Err(SpiiceRegistryError::ProjectionRenderNotUniform {
                     spiice_id: contract.spiice_id,
                     schema_id,
-                    property: "bands",
+                    property: crate::spiice::ProjectionRenderProperty::Bands,
                 });
             }
             if weight_arrays_differ(
@@ -154,7 +120,7 @@ impl SpiiceRegistry {
                 return Err(SpiiceRegistryError::ProjectionRenderNotUniform {
                     spiice_id: contract.spiice_id,
                     schema_id,
-                    property: "rank_weights",
+                    property: crate::spiice::ProjectionRenderProperty::RankWeights,
                 });
             }
         }

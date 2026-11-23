@@ -650,6 +650,81 @@ mod other_stores {
         assert!(output.degraded_to_lexical);
     }
 
+    #[test]
+    fn federated_recency_drops_edges_when_remote_hits_displace_every_local_endpoint() {
+        let local = local_hit();
+        let mut remote = remote_hit(1);
+        remote.created_at = local.created_at + time::Duration::seconds(1);
+        let remote_id = remote.handle;
+        let mut output = SearchMemoriesOutput {
+            mode: SearchMode::Lexical,
+            degraded_to_lexical: false,
+            ranking: SearchRanking::Score,
+            neighbor_edges: vec![super::super::NeighborEdge {
+                source: local.memory.clone(),
+                target: crate::new_memory_uuid(0).to_string(),
+                kind: crate::EdgeKind::Reference,
+            }],
+            memories: vec![local],
+            next_cursor: Some("local-cursor".into()),
+            has_more: true,
+            unanswered: None,
+            inventory_unanswered: None,
+        };
+        merge_store_hits(
+            &mut output,
+            vec![(
+                1,
+                RemoteSearchResult {
+                    hits: vec![remote],
+                    degraded_to_lexical: false,
+                },
+            )],
+            Vec::new(),
+            1,
+            SearchOrder::Recency,
+            0,
+        );
+        assert_eq!(output.memories[0].memory_id, remote_id);
+        assert!(output.neighbor_edges.is_empty());
+        assert_eq!(output.next_cursor.as_deref(), Some("local-cursor"));
+        assert!(output.has_more);
+    }
+
+    #[test]
+    fn neighbor_edge_filter_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Search.neighborEdgeEligible"]
+            .as_array()
+            .unwrap();
+        for row in rows {
+            let source = local_hit();
+            let target = local_hit();
+            let edge = || super::super::NeighborEdge {
+                source: source.memory.clone(),
+                target: target.memory.clone(),
+                kind: crate::EdgeKind::Reference,
+            };
+            let mut edges = if row["in"][2].as_bool().unwrap() {
+                vec![edge(), edge()]
+            } else {
+                vec![edge()]
+            };
+            let mut page = Vec::new();
+            if row["in"][0].as_bool().unwrap() {
+                page.push(source);
+            }
+            if row["in"][1].as_bool().unwrap() {
+                page.push(target);
+            }
+            let prior_present = row["in"][2].as_bool().unwrap() && !page.is_empty();
+            super::super::retain_surviving_neighbor_edges(&page, &mut edges);
+            let expected = usize::from(prior_present) + usize::from(row["out"].as_bool().unwrap());
+            assert_eq!(edges.len(), expected, "{row}");
+        }
+    }
+
     struct CapturingStore {
         listings: std::sync::atomic::AtomicUsize,
         requests: std::sync::Mutex<Vec<RemoteSearch>>,
@@ -939,5 +1014,71 @@ mod other_stores {
             .expect("props")
             .remove("stores");
         assert_eq!(without, static_schema());
+    }
+}
+
+#[test]
+fn effective_weight_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.Search.keepSemanticWeight"]
+        .as_array()
+        .unwrap();
+    for row in rows {
+        let mode = match row["in"][0].as_str() {
+            Some("lexical") => SearchMode::Lexical,
+            Some("semantic") => SearchMode::Semantic,
+            Some("hybrid") => SearchMode::Hybrid,
+            other => panic!("unexpected search mode {other:?}"),
+        };
+        let requested = row["in"][1].as_bool().unwrap().then_some(0.75);
+        let expected = row["out"].as_bool().unwrap().then_some(0.75);
+        assert_eq!(
+            super::weight_for_effective_mode(requested, mode),
+            expected,
+            "{row}"
+        );
+    }
+}
+
+#[test]
+fn degradation_warning_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.Search.warnsOnLexicalDegradation"]
+        .as_array()
+        .unwrap();
+    for row in rows {
+        let mode = serde_json::from_value(row["in"][0].clone()).unwrap();
+        let no_rows = row["in"][1].as_bool().unwrap();
+        let positive_similarity = row["in"][2].as_bool().unwrap();
+        assert_eq!(
+            degraded_to_lexical(mode, no_rows, positive_similarity),
+            row["out"].as_bool().unwrap(),
+            "{row}",
+        );
+    }
+}
+
+#[test]
+fn relevance_order_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.Search.relevanceOrder"]
+        .as_array()
+        .unwrap();
+    for row in rows {
+        let lanes = match row["in"][0].as_str() {
+            Some("single") => vec![lane(1, None)],
+            Some("equalScale") => vec![lane(1, Some("same")), lane(2, Some("same"))],
+            Some("unequalScale") => vec![lane(1, Some("first")), lane(2, Some("second"))],
+            other => panic!("unexpected search lanes {other:?}"),
+        };
+        let expected = match row["out"].as_str() {
+            Some("score") => super::SearchRanking::Score,
+            Some("perLaneRank") => super::SearchRanking::Rank,
+            other => panic!("unexpected relevance order {other:?}"),
+        };
+        assert_eq!(super::ranking_for(&lanes), expected, "{row}");
     }
 }

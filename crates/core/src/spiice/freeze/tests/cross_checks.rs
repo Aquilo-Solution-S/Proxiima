@@ -370,7 +370,7 @@ fn each_contract_cross_check_rejects_its_own_shape() {
                 matches!(
                     err,
                     SpiiceRegistryError::ProjectionRenderNotUniform {
-                        property: "language",
+                        property: crate::spiice::ProjectionRenderProperty::Language,
                         ..
                     }
                 )
@@ -386,7 +386,7 @@ fn each_contract_cross_check_rejects_its_own_shape() {
                 matches!(
                     err,
                     SpiiceRegistryError::ProjectionRenderNotUniform {
-                        property: "bands",
+                        property: crate::spiice::ProjectionRenderProperty::Bands,
                         ..
                     }
                 )
@@ -402,7 +402,7 @@ fn each_contract_cross_check_rejects_its_own_shape() {
                 matches!(
                     err,
                     SpiiceRegistryError::ProjectionRenderNotUniform {
-                        property: "rank_weights",
+                        property: crate::spiice::ProjectionRenderProperty::RankWeights,
                         ..
                     }
                 )
@@ -1006,4 +1006,65 @@ fn no_erased_core_surface_is_excluded_from_the_export() {
         offenders.is_empty(),
         "erased but excluded from the export: {offenders:?}"
     );
+}
+
+#[test]
+fn comparable_bands_refuse_non_finite_out_of_range_and_reversed_windows() {
+    use super::projection_fixtures::{ONE_LEVEL, uniformity_contract, uniformity_schema};
+    use crate::spiice::contract::{Band, LanguagePolicy};
+    use crate::spiice::spiice0::BAND_EXACT;
+
+    for (floor, ceiling) in [
+        (-0.1, 0.5),
+        (0.0, 1.1),
+        (1.1, 1.0),
+        (0.0, -0.1),
+        (0.7, 0.5),
+        (f32::NAN, 1.0),
+        (0.0, f32::NAN),
+        (f32::INFINITY, 1.0),
+    ] {
+        let bands = Box::leak(Box::new([Band {
+            floor,
+            ceiling,
+            ..BAND_EXACT
+        }]));
+        let schemas = Box::leak(Box::new([uniformity_schema(
+            "thing",
+            "test_spiice.thing_v1",
+            ONE_LEVEL,
+            LanguagePolicy::Pinned("simple"),
+            bands,
+        )]));
+        assert!(
+            matches!(
+                SpiiceRegistry::validate_contract_projection(&uniformity_contract(schemas)),
+                Err(SpiiceRegistryError::ProjectionBandOutsideCoreWindow { .. }),
+            ),
+            "window [{floor}, {ceiling}]"
+        );
+    }
+}
+
+#[test]
+fn freeze_refuses_an_empty_pinned_language_union() {
+    use super::projection_fixtures::{
+        FIXTURE_BANDS, ONE_LEVEL, uniformity_contract, uniformity_schema,
+    };
+    use crate::spiice::contract::LanguagePolicy;
+
+    static EMPTY_UNION: crate::SpiiceContract = uniformity_contract(&[uniformity_schema(
+        "thing",
+        "test_spiice.thing_v1",
+        ONE_LEVEL,
+        LanguagePolicy::PinnedUnion(&[]),
+        FIXTURE_BANDS,
+    )]);
+    let mut registry = SpiiceRegistry::new();
+    register_uniformity_schemas(&mut registry);
+    registry.contracts.push(&EMPTY_UNION);
+    assert!(matches!(
+        registry.try_freeze().err(),
+        Some(SpiiceRegistryError::EmptyProjectionLanguageUnion { .. }),
+    ));
 }

@@ -49,6 +49,7 @@ impl CandidateBound {
     /// Combine bounds from independent candidate legs without losing a known cap.
     #[must_use]
     pub fn combine(self, other: Self) -> Self {
+        // `Proxiima.Search.combineBounds`.
         match (self, other) {
             (Self::Bounded, Self::Complete | Self::Bounded | Self::Unknown)
             | (Self::Complete | Self::Unknown, Self::Bounded) => Self::Bounded,
@@ -66,22 +67,22 @@ mod candidate_bound_tests {
 
     #[test]
     fn bounds_combine_without_losing_a_known_cap() {
-        assert_eq!(
-            CandidateBound::Complete.combine(CandidateBound::Complete),
-            CandidateBound::Complete
-        );
-        assert_eq!(
-            CandidateBound::Complete.combine(CandidateBound::Unknown),
-            CandidateBound::Unknown
-        );
-        assert_eq!(
-            CandidateBound::Unknown.combine(CandidateBound::Bounded),
-            CandidateBound::Bounded
-        );
-        assert_eq!(
-            CandidateBound::Bounded.combine(CandidateBound::Complete),
-            CandidateBound::Bounded
-        );
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Search.combineBounds"].as_array().unwrap();
+        let bound = |value: &serde_json::Value| match value.as_str() {
+            Some("complete") => CandidateBound::Complete,
+            Some("bounded") => CandidateBound::Bounded,
+            Some("unknown") => CandidateBound::Unknown,
+            _ => panic!("invalid candidate bound: {value}"),
+        };
+        for row in rows {
+            assert_eq!(
+                bound(&row["in"][0]).combine(bound(&row["in"][1])),
+                bound(&row["out"]),
+                "{row}",
+            );
+        }
     }
 }
 
@@ -128,6 +129,7 @@ impl VectorKey {
     /// The order [`VectorIndex::entries`] pages in: entity id, model id,
     /// width.
     #[must_use]
+    // `Proxiima.Search.vectorEntryKeys`.
     pub fn order(&self) -> (Uuid, &str, usize) {
         (
             self.entity_id,

@@ -28,6 +28,7 @@ pub(crate) fn set_hnsw_search_sql(tuning: &PgTuning) -> SqlText {
     sql.push_u64(u64::from(tuning.hnsw_ef_search))
         .push("; SET LOCAL hnsw.iterative_scan = ")
         .push(tuning.hnsw_iterative_scan.as_setting());
+    // `Proxiima.Search.hnswSettings`.
     if tuning.hnsw_iterative_scan != HnswIterativeScan::Off {
         sql.push("; SET LOCAL hnsw.max_scan_tuples = ")
             .push_u64(u64::from(tuning.hnsw_max_scan_tuples));
@@ -207,6 +208,43 @@ mod tests {
             );
         }
         assert!(Lane::from_stored(512).is_err());
+    }
+
+    #[test]
+    fn hnsw_session_settings_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Search.hnswSettings"].as_array().unwrap();
+        for row in rows {
+            let hnsw_iterative_scan = match row["in"][0].as_str() {
+                Some("off") => HnswIterativeScan::Off,
+                Some("strictOrder") => HnswIterativeScan::StrictOrder,
+                Some("relaxedOrder") => HnswIterativeScan::RelaxedOrder,
+                other => panic!("unexpected HNSW mode: {other:?}"),
+            };
+            let tuning = PgTuning {
+                hnsw_iterative_scan,
+                ..PgTuning::default()
+            };
+            let sql = set_hnsw_search_sql(&tuning);
+            let emitted: Vec<_> = sql
+                .as_str()
+                .split("; ")
+                .map(|setting| setting.split_once(" = ").unwrap().0)
+                .collect();
+            let expected: Vec<_> = row["out"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| match field.as_str() {
+                    Some("searchBreadth") => "SET LOCAL hnsw.ef_search",
+                    Some("iterativeScan") => "SET LOCAL hnsw.iterative_scan",
+                    Some("scanTupleCap") => "SET LOCAL hnsw.max_scan_tuples",
+                    other => panic!("unexpected HNSW setting: {other:?}"),
+                })
+                .collect();
+            assert_eq!(emitted, expected, "{row}");
+        }
     }
 
     /// Golden text: at default tuning the session settings are exactly this

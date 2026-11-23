@@ -44,22 +44,25 @@ use proxiima_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::ProxiimaError;
 
 /// Each index call's bound: a search waits on `nearest`, and a drain holds
 /// its claim's transaction across `put`.
-pub const VECTOR_INDEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const VECTOR_INDEX_REQUEST_TIMEOUT: Duration =
+    Duration::from_secs(proxiima_core::ledger!(Proxiima.Search.vectorRequestSeconds));
 
 /// The largest body [`vector_index_router`] reads: a `put` of one memory's
 /// chunks at the widest space fits many times over, and the store sends at
 /// most 500 keys per call.
-pub const VECTOR_INDEX_BODY_LIMIT: usize = 32 * 1024 * 1024;
+pub const VECTOR_INDEX_BODY_LIMIT: usize = proxiima_core::ledger!(Proxiima.Search.vectorBodyBytes);
 
 /// The fewest characters a [`VectorIndexToken`] has. 32 random bytes in hex
 /// are 64, so `openssl rand -hex 32` makes one.
-pub const VECTOR_INDEX_TOKEN_MIN_LEN: usize = 32;
+pub const VECTOR_INDEX_TOKEN_MIN_LEN: usize =
+    proxiima_core::ledger!(Proxiima.Search.vectorTokenMinChars);
 
 /// The secret a [`VectorIndexClient`] and the [`vector_index_router`] serving
 /// it share: the client sends it as a bearer token on every call, and the
@@ -260,6 +263,7 @@ impl VectorIndexClient {
     ) -> Result<Self, ProxiimaError> {
         let mut base = reqwest::Url::parse(base)
             .map_err(|err| ProxiimaError::Config(format!("vector index URL: {err}")))?;
+        // `Proxiima.Transport.outboundTransport`.
         match base.scheme() {
             "https" => {}
             "http" => validate_endpoint_url_for_hosts(
@@ -405,7 +409,7 @@ impl VectorIndex for VectorIndexClient {
             .candidates
             .into_iter()
             .map(|candidate| {
-                if !(0.0..=1.0).contains(&candidate.score) {
+                if !proxiima_core::verbs::query::valid_search_score(candidate.score) {
                     return Err(StorageError::Unavailable(
                         "vector index nearest answered a score outside 0..=1".into(),
                     ));
@@ -418,6 +422,7 @@ impl VectorIndex for VectorIndexClient {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(VectorCandidatePage::new(
             candidates,
+            // `Proxiima.Search.httpCandidateBound`.
             CandidateBound::Unknown,
         ))
     }
@@ -472,6 +477,7 @@ pub fn vector_index_router(
     token: &VectorIndexToken,
 ) -> axum::Router {
     axum::Router::new()
+        // `Proxiima.Search.vectorOperations`.
         .route("/v1/stores/{store}/put", axum::routing::post(put))
         .route("/v1/stores/{store}/delete", axum::routing::post(delete))
         .route("/v1/stores/{store}/owner", axum::routing::post(set_owner))
@@ -487,15 +493,15 @@ pub fn vector_index_router(
         .with_state(Arc::new(indexes))
 }
 
-/// The router's door: the call goes on only with the router's token.
-/// Digests are compared, not tokens, so how long the comparison takes says
-/// nothing about the token.
+/// Authenticate the request before dispatch.
 async fn authenticate(
     State(expected): State<sha2::digest::Output<Sha256>>,
     request: Request,
     next: Next,
 ) -> Response {
-    if bearer(request.headers()).is_some_and(|presented| Sha256::digest(presented) == expected) {
+    if bearer(request.headers())
+        .is_some_and(|presented| bool::from(Sha256::digest(presented).ct_eq(&expected)))
+    {
         return next.run(request).await;
     }
     let mut response = refusal(
@@ -543,6 +549,7 @@ where
     F: FnOnce(Arc<dyn VectorIndex>, B) -> Fut,
     Fut: std::future::Future<Output = Result<A, StorageError>>,
 {
+    // `Proxiima.Search.vectorErrorStatus`.
     let Some(index) = indexes.get(&store).cloned() else {
         return refusal(StatusCode::NOT_FOUND, format!("no index for store {store}"));
     };

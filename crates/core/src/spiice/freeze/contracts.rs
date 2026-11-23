@@ -435,31 +435,7 @@ impl SpiiceRegistry {
                     table,
                 });
             }
-            // `PerRow { column }` names a column the generator does not
-            // read: the generator emits one language column per projection
-            // table and names it itself. Left unchecked, a spiice could
-            // declare
-            // `PerRow { column: "row_config" }`, see no error, and get rows
-            // stamped and ranked under a column its contract never named.
-            // Consuming the payload as a constraint is the smallest honest
-            // reading of it — the generator emits one column, so declaring
-            // a different one is a need the shape cannot express, and the
-            // rule is that such a need becomes a vocabulary extension
-            // rather than a silent divergence.
-            if let Some(declared) = schema.search.per_row_language_column() {
-                let projection_column = contract
-                    .projection
-                    .spec()
-                    .and_then(|spec| spec.surface().lexical_language_column);
-                if projection_column != Some(declared) {
-                    return Err(SpiiceRegistryError::ProjectionLanguageColumn {
-                        spiice_id: contract.spiice_id,
-                        schema_id,
-                        declared,
-                        projection_column,
-                    });
-                }
-            }
+            Self::validate_projection_language(contract, schema)?;
             let registered = self.schemas.iter().find(|info| {
                 info.schema_id == schema_id
                     && info.schema_version == schema.schema_version()
@@ -501,6 +477,38 @@ impl SpiiceRegistry {
             }
         }
         self.validate_contract_tools(contract)?;
+        Ok(())
+    }
+
+    fn validate_projection_language(
+        contract: &crate::spiice::contract::SpiiceContract,
+        schema: &crate::spiice::contract::SchemaContract,
+    ) -> Result<(), SpiiceRegistryError> {
+        let schema_id = schema.schema_id();
+        // `Proxiima.Search.admitLanguagePolicy`.
+        if matches!(
+            schema.search.language(),
+            Some(crate::spiice::contract::LanguagePolicy::PinnedUnion([]))
+        ) {
+            return Err(SpiiceRegistryError::EmptyProjectionLanguageUnion {
+                spiice_id: contract.spiice_id,
+                schema_id,
+            });
+        }
+        if let Some(declared) = schema.search.per_row_language_column() {
+            let projection_column = contract
+                .projection
+                .spec()
+                .and_then(|spec| spec.surface().lexical_language_column);
+            if projection_column != Some(declared) {
+                return Err(SpiiceRegistryError::ProjectionLanguageColumn {
+                    spiice_id: contract.spiice_id,
+                    schema_id,
+                    declared,
+                    projection_column,
+                });
+            }
+        }
         Ok(())
     }
 }

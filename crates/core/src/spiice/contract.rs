@@ -75,12 +75,20 @@ impl SchemaRef {
 /// "The default weight is `D` for lexemes that have no explicit weight"
 /// (`PostgreSQL` *12.3.1*). A projection unit that declares one level is
 /// therefore rank-identical to an unweighted vector.
-pub const TSVECTOR_WEIGHT_CLASSES: [&str; 4] = ["D", "C", "B", "A"];
+pub const TSVECTOR_WEIGHT_CLASSES: [&str; 4] = crate::ledger!(Proxiima.Search.weightClasses);
 
 /// `PostgreSQL`'s default `ts_rank` weight array, `{D, C, B, A}`
 /// (*12.3.3 Ranking Search Results*). Classes a projection unit does not
 /// use keep these values.
-pub const DEFAULT_RANK_WEIGHTS: [f32; 4] = [0.1, 0.2, 0.4, 1.0];
+pub const DEFAULT_RANK_WEIGHTS: [f32; 4] = {
+    let [d, c, b, a]: [u8; 4] = crate::ledger!(Proxiima.Search.postgresWeightTenths);
+    [
+        d as f32 / 10.0,
+        c as f32 / 10.0,
+        b as f32 / 10.0,
+        a as f32 / 10.0,
+    ]
+};
 
 /// One projected column with its **relative** weight.
 ///
@@ -108,7 +116,10 @@ pub struct WeightedField {
 /// emitted vector is textually the vector an unweighted `to_tsvector`
 /// produces. Honouring non-uniform weights is a separate, measured
 /// retrieval-quality change.
-pub const WEIGHT_UNIFORM: f32 = 1.0;
+pub const WEIGHT_UNIFORM: f32 = {
+    let value: u8 = crate::ledger!(Proxiima.Search.uniformWeight);
+    value as f32
+};
 
 /// Which lexical configuration produces and ranks a row's vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -142,6 +153,7 @@ impl LanguagePolicy {
     /// The configuration stamped on the projection row when the policy
     /// fixes one, i.e. everything except [`Self::PerRow`].
     #[must_use]
+    // `Proxiima.Search.languageStamp`.
     pub const fn pinned_config(&self) -> Option<&'static str> {
         match self {
             Self::PerRow { .. } => None,
@@ -195,13 +207,14 @@ pub enum SubstringArm {
 ///
 /// A band declaring this renders NO normalization argument, so declaring
 /// the flag an arm already has cannot move that arm's score by a byte.
-pub const TS_RANK_NORMALIZATION_NONE: i32 = 0;
+pub const TS_RANK_NORMALIZATION_NONE: i32 = crate::ledger!(Proxiima.Search.normalizationNone);
 /// Flag `32` — "divides the rank by itself + 1", i.e. `rank/(rank+1)`,
 /// which is what maps an unbounded `ts_rank` onto a `[0, 1)` band.
-pub const TS_RANK_NORMALIZATION_SCALE: i32 = 32;
+pub const TS_RANK_NORMALIZATION_SCALE: i32 = crate::ledger!(Proxiima.Search.normalizationScale);
 /// Flag `1|32` — log document length, then `rank/(rank+1)`. Every rescue
 /// arm in the tree renders this one.
-pub const TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE: i32 = 1 | TS_RANK_NORMALIZATION_SCALE;
+pub const TS_RANK_NORMALIZATION_LOG_LENGTH_SCALE: i32 =
+    crate::ledger!(Proxiima.Search.normalizationLogLength) | TS_RANK_NORMALIZATION_SCALE;
 
 /// A score band — the cross-spiice merge contract. Raw `ts_rank` is not
 /// comparable across corpora; a band is.
@@ -260,9 +273,10 @@ impl Band {
     /// public so no other crate needs a copy.
     #[must_use]
     pub fn parts(self) -> (String, String) {
+        let places: usize = crate::ledger!(Proxiima.Search.bandDecimalPlaces);
         (
-            format!("{:.2}", self.floor),
-            format!("{:.2}", self.ceiling - self.floor),
+            format!("{:.places$}", self.floor),
+            format!("{:.places$}", self.ceiling - self.floor),
         )
     }
 
@@ -1304,21 +1318,8 @@ pub struct Surface {
 /// Where a spiice's search verb ranks, and therefore which shape of
 /// statement serves it.
 ///
-/// A declaration rather than prose: a deployment layer that has to know
-/// whether a shard ranks on its projection cannot read a doc comment, and a
-/// freeze check cannot scope itself to a paragraph.
-///
-/// **What this is NOT.** Freeze checks what a `Projection` claim implies
-/// about the rest of the DECLARATION — that the three band names are
-/// present, and that language, bands and the `ts_rank` weight array agree
-/// across the spiice's projected schemas, because one statement can spell
-/// each of those only once. Nothing checks the claim against the SQL a
-/// spiice actually runs: a spiice whose verbs read sidecar columns can
-/// declare [`Self::Projection`] and be believed. The consumer that reads
-/// this is core's renderer deciding whether it can serve the spiice at all,
-/// so a false claim costs that spiice a statement shape it cannot use — not
-/// a leak — but it is a declaration on trust, and `docs/host-integration.md` §Contract Reach
-/// records it as one.
+/// The generated renderer derives eligibility from resolved render bands.
+/// A spiice-owned SQL statement carries its own provenance and is reviewed with that tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RankSource {
     /// Rank the projection ALONE, then join the owning sidecar for the
@@ -1365,10 +1366,9 @@ impl RankSource {
 /// freeze error naming the schema and the band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BandComparability {
-    /// Every projected surface scores inside spiice #0's `BAND_*` windows,
-    /// so a merge may compare scores directly.
+    /// Scores share the core scale, with finite ordered band endpoints in the unit interval.
     CoreBands,
-    /// At least one arm scores outside them; `why` names which.
+    /// Scores use a different scale; `why` records why.
     Divergent { why: &'static str },
 }
 
@@ -1971,6 +1971,30 @@ mod tests {
         KeyShape, LanguagePolicy, SearchProjectionDecl, SubstringArm, Surface, TransferRule,
         WeightedField,
     };
+
+    #[test]
+    fn projection_language_stamp_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Search.languageStamp"].as_array().unwrap();
+        for row in rows {
+            let policy = match row["in"][0].as_str() {
+                Some("perRow") => LanguagePolicy::PerRow {
+                    column: "lexical_language",
+                },
+                Some("pinned") => LanguagePolicy::Pinned("english"),
+                Some("pinnedUnion") => LanguagePolicy::PinnedUnion(&["simple", "english"]),
+                other => panic!("unexpected language policy {other:?}"),
+            };
+            let expected = match row["out"].as_str() {
+                Some("rowConfig") => None,
+                Some("pinnedConfig") => Some("english"),
+                Some("firstPinnedConfig") => Some("simple"),
+                other => panic!("unexpected language source {other:?}"),
+            };
+            assert_eq!(policy.pinned_config(), expected, "{row}");
+        }
+    }
 
     fn detail_surface() -> Surface {
         let via = DbConstraint {

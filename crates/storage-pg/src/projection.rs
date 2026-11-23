@@ -46,7 +46,7 @@ use proxiima_core::{SqlText, StorageError};
 use proxiima_core::PgIdent;
 
 /// The snippet bound the search verb applies to sidecar text.
-pub(crate) const SNIPPET_BYTES: u64 = 480;
+pub(crate) const SNIPPET_BYTES: u64 = proxiima_core::ledger!(Proxiima.Search.snippetBytes);
 
 /// One emitted object and the statement that removes it.
 #[derive(Debug, Clone, PartialEq, Eq)]

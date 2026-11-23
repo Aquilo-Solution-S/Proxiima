@@ -15,8 +15,10 @@ use crate::settings::{
     PROXIIMA_PG_HNSW_EF_SEARCH, PROXIIMA_PG_HNSW_ITERATIVE_SCAN, PROXIIMA_PG_HNSW_MAX_SCAN_TUPLES,
 };
 
-pub(crate) const DEFAULT_HNSW_EF_SEARCH: u32 = 100;
-pub(crate) const DEFAULT_HNSW_MAX_SCAN_TUPLES: u32 = 20_000;
+pub(crate) const DEFAULT_HNSW_EF_SEARCH: u32 =
+    proxiima_core::ledger!(Proxiima.Search.hnswDefaultBreadth);
+pub(crate) const DEFAULT_HNSW_MAX_SCAN_TUPLES: u32 =
+    proxiima_core::ledger!(Proxiima.Search.hnswDefaultTupleCap);
 
 /// Accepted range for the two HNSW session knobs: they
 /// are interpolated into `SET LOCAL` ([`crate::pgvector::set_hnsw_search_sql`]),
@@ -30,8 +32,12 @@ pub(crate) const DEFAULT_HNSW_MAX_SCAN_TUPLES: u32 = 20_000;
 /// `hnsw.ef_search 1 .. 1000` and `hnsw.max_scan_tuples 1 .. 2147483647`.
 /// Both GUCs are declared `integer`, which is why the scan ceiling stops at
 /// `i32::MAX` rather than at `u32::MAX`.
-const HNSW_EF_SEARCH_RANGE: RangeInclusive<u32> = 1..=1_000;
-const HNSW_MAX_SCAN_TUPLES_RANGE: RangeInclusive<u32> = 1..=2_147_483_647;
+const HNSW_EF_SEARCH_RANGE: RangeInclusive<u32> =
+    proxiima_core::ledger!(Proxiima.Search.hnswEfSearchMin)
+        ..=proxiima_core::ledger!(Proxiima.Search.hnswEfSearchMax);
+const HNSW_MAX_SCAN_TUPLES_RANGE: RangeInclusive<u32> =
+    proxiima_core::ledger!(Proxiima.Search.hnswScanTuplesMin)
+        ..=proxiima_core::ledger!(Proxiima.Search.hnswScanTuplesMax);
 
 /// pgvector's `hnsw.iterative_scan` mode for the semantic branch's session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
