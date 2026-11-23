@@ -421,6 +421,30 @@ macro_rules! ledger {
     (Proxiima.ObjectMaintenance.secretDebugMarker) => {
         "[REDACTED]"
     };
+    // A worker's backoff multiplies the previous interval by this factor before applying its bounds.
+    (Proxiima.Operations.backoffMultiplier) => {
+        2
+    };
+    // Seconds a maintenance lease lasts since the last database renewal.
+    (Proxiima.Operations.maintenanceLeaseSeconds) => {
+        60
+    };
+    // Seconds between renewals of a maintenance lease.
+    (Proxiima.Operations.maintenanceRenewSeconds) => {
+        20
+    };
+    // Seconds a contributed worker has to finish after runtime cancellation.
+    (Proxiima.Operations.workerShutdownGraceSeconds) => {
+        5
+    };
+    // The stock host's service name when the environment supplies none.
+    (Proxiima.Operations.defaultServiceName) => {
+        "proxiima-mcp"
+    };
+    // The tracing target for opt-in stage timing.
+    (Proxiima.Operations.stageTimingTarget) => {
+        "proxiima::stage_timing"
+    };
     // Memory ceiling ranks in declaration order for Rust.
     (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
         [0, 1, 2, 3]

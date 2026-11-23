@@ -2789,6 +2789,384 @@ stateDiagram-v2
 
 - command succeeded: Reconciliation findings and lease contention preserve a successful exit, while a drain that leaves foreign debt fails.
 
+## Operations
+
+**Commit outcome**: Whether a storage transaction has finished successfully.
+
+- committed
+- failed
+- pending
+
+**Gate status**: The statuses of a claim gate.
+
+- running
+- quiescing
+- quiescent
+- stopped
+
+**Gate event**: The gate events a host or its sole worker can initiate.
+
+- quiesce
+- resume
+- checkpoint
+- workerEnds
+
+**Pause epoch**: What a pause observes about the epoch it joined.
+
+- closing
+- parked
+- overtaken
+- reopened
+- stopped
+
+**Pause action**: What a waiting pause returns or does next.
+
+- wait
+- complete
+- refuseResumed
+- refuseStopped
+
+**Claim boundary**: Whether a worker may proceed at a claim boundary.
+
+- opened
+- closed
+- cancelled
+
+**Pass**: The outcome of a background pass.
+
+- worked
+- idle
+- failed
+
+**Pass wait**: How the next worker pass is scheduled.
+
+- immediate
+- idleBackoff
+- failureBackoff
+
+**Backoff case**: Whether the bounds are reversed or where the doubled interval fits between them.
+
+- reversedBounds
+- belowFloor
+- withinBounds
+- aboveCeiling
+
+**Backoff interval**: Which interval survives the backoff bounds.
+
+- floor
+- doubled
+- ceiling
+
+**Lease state**: Maintenance lease state at the instant another holder tries to acquire it.
+
+- missing
+- expired
+- live
+
+**Lease holder**: Who holds the lease a caller is releasing.
+
+- caller
+- other
+- missing
+
+**Feature**: Runtime features in the vocabulary shared by startup and control.
+
+- mcp
+- spiiceWorkers
+- embeddingWorker
+- outboxPublisher
+- publishedRecordPrune
+- objectPurge
+
+**Start requirement**: The configuration or contribution needed to start a feature.
+
+- bindAddress
+- linkedWorker
+- embeddingRouter
+- outboxConsumer
+- retention
+- objectStore
+- positivePurgeInterval
+
+**Serve mode**: The listener choice for a runtime with MCP configured.
+
+- build
+- run
+
+**Worker exit report**: How an observed worker exit is reported.
+
+- degraded
+- joinDiagnostic
+- normal
+
+**Ended worker field**: Fields projected for an ended worker in anonymous readiness.
+
+- labelInFirstExitOrder
+- multiplicity
+
+**Shutdown step**: Ordered responsibilities when a runtime explicitly shuts down.
+
+- cancel
+- drainListener
+- joinWorkers
+
+**Meter step**: Stages of the stock host's metric provider lifetime.
+
+- installProvider
+- serveRuntime
+- shutdownProvider
+
+**Service name source**: The order in which the stock host chooses its service name.
+
+- explicit
+- resourceAttributes
+- stock
+
+**Sample outcome**: Possible outcomes of an in-flight metric read.
+
+- success
+- failure
+- shutdown
+
+**Sample action**: The action taken on the in-flight metric read.
+
+- store
+- clear
+- cancelRead
+
+**Tool profile**: The tool profiles the stock host accepts.
+
+- memory
+- full
+
+**Stage event**: The stage events recorded when stage timing is enabled.
+
+- start
+- finish
+- cancel
+
+**Stage end**: The possible results of dropping a timed future's guard.
+
+- finished
+- cancelled
+
+**backoff multiplier** = 2: A worker's backoff multiplies the previous interval by this factor before applying its bounds.
+
+**maintenance lease seconds** = 60: Seconds a maintenance lease lasts since the last database renewal.
+
+**maintenance renew seconds** = 20: Seconds between renewals of a maintenance lease.
+
+**boot report order** = \[mcp, spiiceWorkers, embeddingWorker, outboxPublisher, publishedRecordPrune, objectPurge]: The fixed order of the feature decisions reported per boot.
+
+**ended worker projection** = \[labelInFirstExitOrder, multiplicity]: The fields anonymous readiness projects for ended workers.
+
+**shutdown order** = \[cancel, drainListener, joinWorkers]: Cancellation propagates to child workers and listener before explicit shutdown finishes joining workers.
+
+**worker shutdown grace seconds** = 5: Seconds a contributed worker has to finish after runtime cancellation.
+
+**meter lifecycle** = \[installProvider, serveRuntime, shutdownProvider]: A configured OTLP provider wraps the runtime lifetime.
+
+**service name precedence** = \[explicit, resourceAttributes, stock]: An explicit service name takes precedence over resource attributes and then the stock name.
+
+**default service name** = "proxiima-mcp": The stock host's service name when the environment supplies none.
+
+**stage timing target** = "proxiima::stage\_timing": The tracing target for opt-in stage timing.
+
+| commit outcome | wake after commit |
+| --- | --- |
+| committed | yes |
+| failed | no |
+| pending | no |
+
+- wake after commit: Wake local drains only once a transaction commits.
+
+**gate transition**: A pause closes the gate, the worker parks at a checkpoint, resume opens it and worker exit stops it.
+
+```mermaid
+stateDiagram-v2
+  state "running" as s0
+  state "quiescing" as s1
+  state "quiescent" as s2
+  state "stopped" as s3
+  s0 --> s1 : quiesce
+  s0 --> s0 : resume
+  s0 --> s0 : checkpoint
+  s0 --> s3 : workerEnds
+  s1 --> s1 : quiesce
+  s1 --> s0 : resume
+  s1 --> s2 : checkpoint
+  s1 --> s3 : workerEnds
+  s2 --> s2 : quiesce
+  s2 --> s0 : resume
+  s2 --> s2 : checkpoint
+  s2 --> s3 : workerEnds
+  s3 --> s3 : quiesce
+  s3 --> s3 : resume
+  s3 --> s3 : checkpoint
+  s3 --> s3 : workerEnds
+```
+
+| pause epoch | pause outcome |
+| --- | --- |
+| closing | wait |
+| parked | complete |
+| overtaken | refuseResumed |
+| reopened | refuseResumed |
+| stopped | refuseStopped |
+
+- pause outcome: A pending pause waits for its own epoch and distinguishes a resumed gate from a stopped one.
+
+| claim boundary | proceed with claim |
+| --- | --- |
+| opened | yes |
+| closed | no |
+| cancelled | no |
+
+- proceed with claim: A worker proceeds only through an open gate while it is active.
+
+| pass | pass wait |
+| --- | --- |
+| worked | immediate |
+| idle | idleBackoff |
+| failed | failureBackoff |
+
+- pass wait: Progress retries immediately, while idle and failed passes back off.
+
+| pass | bool | commit ends wait |
+| --- | --- | --- |
+| worked | yes | no |
+| worked | no | no |
+| idle | yes | yes |
+| idle | no | no |
+| failed | yes | no |
+| failed | no | no |
+
+- commit ends wait: A commit interrupts only an idle wait of a worker subscribed to local writes.
+
+| backoff case | backoff bound |
+| --- | --- |
+| reversedBounds | floor |
+| belowFloor | floor |
+| withinBounds | doubled |
+| aboveCeiling | ceiling |
+
+- backoff bound: The floor takes precedence over the ceiling when the bounds are reversed.
+
+| lease state | acquire lease |
+| --- | --- |
+| missing | yes |
+| expired | yes |
+| live | no |
+
+- acquire lease: A maintenance family permits one live lease and can replace an expired lease.
+
+**renew lease**: Renewal requires a live lease owned by the caller.
+
+```mermaid
+stateDiagram-v2
+  state "yes" as s0
+  state "no" as s1
+  s0 --> s1 : missing
+  s0 --> s1 : expired
+  s0 --> s0 : live
+  s1 --> s1 : missing
+  s1 --> s1 : expired
+  s1 --> s1 : live
+```
+
+| lease holder | release lease |
+| --- | --- |
+| caller | yes |
+| other | no |
+| missing | no |
+
+- release lease: Release deletes a lease only when it belongs to the caller.
+
+| feature | feature requirements |
+| --- | --- |
+| mcp | \[bindAddress] |
+| spiiceWorkers | \[linkedWorker] |
+| embeddingWorker | \[embeddingRouter] |
+| outboxPublisher | \[outboxConsumer] |
+| publishedRecordPrune | \[outboxConsumer, retention] |
+| objectPurge | \[objectStore, positivePurgeInterval] |
+
+- feature requirements: The inputs each runtime feature requires to start.
+
+| feature | bool | claim control |
+| --- | --- | --- |
+| mcp | yes | no |
+| mcp | no | no |
+| spiiceWorkers | yes | no |
+| spiiceWorkers | no | no |
+| embeddingWorker | yes | yes |
+| embeddingWorker | no | no |
+| outboxPublisher | yes | yes |
+| outboxPublisher | no | no |
+| publishedRecordPrune | yes | no |
+| publishedRecordPrune | no | no |
+| objectPurge | yes | yes |
+| objectPurge | no | no |
+
+- claim control: Only started embedding, outbox and object purge features hand out a pause control.
+
+| gate status | gate status | joint gate status |
+| --- | --- | --- |
+| running | running | running |
+| running | quiescing | quiescing |
+| running | quiescent | quiescing |
+| running | stopped | stopped |
+| quiescing | running | quiescing |
+| quiescing | quiescing | quiescing |
+| quiescing | quiescent | quiescing |
+| quiescing | stopped | stopped |
+| quiescent | running | quiescing |
+| quiescent | quiescing | quiescing |
+| quiescent | quiescent | quiescent |
+| quiescent | stopped | stopped |
+| stopped | running | stopped |
+| stopped | quiescing | stopped |
+| stopped | quiescent | stopped |
+| stopped | stopped | stopped |
+
+- joint gate status: A stopped drain dominates, uniform running or parked drains agree and other combinations are quiescing.
+
+| serve mode | bool | binds listener |
+| --- | --- | --- |
+| build | yes | no |
+| build | no | no |
+| run | yes | yes |
+| run | no | no |
+
+- binds listener: Build hands out a router and run binds a listener when MCP is configured.
+
+| bool | bool | ready | report worker exit | request sample | served read |
+| --- | --- | --- | --- | --- | --- |
+| yes | yes | no | joinDiagnostic | no | yes |
+| yes | no | no | normal | yes | yes |
+| no | yes | yes | degraded | no | yes |
+| no | no | no | degraded | no | no |
+
+- ready: A running listener is ready while its runtime is active and the database answers.
+- report worker exit: Premature exit is degraded and a failed join during shutdown is diagnostic.
+- request sample: A collection starts a sample only if no read is outstanding.
+- served read: A declared read or a selected key is served.
+
+| sample outcome | finish sample |
+| --- | --- |
+| success | store |
+| failure | clear |
+| shutdown | cancelRead |
+
+- finish sample: A successful metrics read stores the new sample, failure clears it and shutdown cancels the read.
+
+| stage end | stage timing |
+| --- | --- |
+| finished | \[start, finish] |
+| cancelled | \[start, cancel] |
+
+- stage timing: Dropping the timing guard ends the trace whether the awaited future finished or was cancelled.
+
 ## Owner authority
 
 **Access ceiling**: The highest memory kind a role can read or write.
