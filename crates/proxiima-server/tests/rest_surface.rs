@@ -1477,6 +1477,45 @@ async fn unsupported_whole_dispatcher_method_is_405_before_body_parsing() {
 }
 
 #[tokio::test]
+async fn unresolved_dispatcher_query_advertises_available_methods() {
+    for (host, tool, unknown, write_action) in [
+        (
+            spiice_host(),
+            SPIICE_DISPATCH,
+            serde_json::json!({"action": "unknown"}),
+            "touch",
+        ),
+        (
+            argv_host(),
+            SPIICE_ARGV,
+            serde_json::json!({"argv": ["unknown"]}),
+            "approval-decide",
+        ),
+    ] {
+        let router = app(host);
+        let uri = format!("/v1/tools/{tool}");
+        let write = format!("{tool}:{write_action}");
+        let all = auth(ToolScope::All);
+        let write_only = auth(palette_of(&[&write]));
+        for body in [serde_json::json!({}), unknown] {
+            for (ctx, allow, message) in [
+                (
+                    &all,
+                    "GET, POST, QUERY",
+                    "requires selecting an available read-only action",
+                ),
+                (&write_only, "GET, POST", "unsupported for this route"),
+            ] {
+                let answer = call(&router, Method::QUERY, &uri, ctx, Some(body.clone())).await;
+                assert_eq!(answer.status, StatusCode::METHOD_NOT_ALLOWED);
+                assert_eq!(answer.header(header::ALLOW), Some(allow));
+                assert!(answer.json()["detail"].as_str().unwrap().contains(message));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn query_on_a_write_tool_is_405_with_allow() {
     let router = app(host());
     let ctx = auth(ToolScope::All);
@@ -1707,10 +1746,7 @@ async fn an_annotated_argv_read_command_keeps_role_and_query_under_a_write_tool(
     )
     .await;
     assert_eq!(read.status, StatusCode::OK, "viewer QUERY {uri}");
-    assert_eq!(
-        read.json(),
-        serde_json::json!({"argv": ["approval", "--list"]})
-    );
+    assert_eq!(read.json(), serde_json::json!({"argv": ["--list"]}));
 
     // The unannotated sibling classifies from the tool, which writes: no
     // QUERY for anyone, and no call at all for a viewer.

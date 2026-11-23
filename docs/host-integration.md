@@ -471,10 +471,12 @@ A dispatcher requires its declared action key, such as `core_upload:prepare`.
 A resource requires its template or static key, such as `resource:memory`;
 `resource:how-to` controls the guide too. A bare dispatcher does not grant its
 actions. Listings and calls use the same actual declaration, including dynamic
-host tools. Custom role shaping may narrow each policy without converting one
-into the other. Replace deployment `.tool_scope(...)` calls with
-`.served_surface(ServedSurface::...)` and `tool_palette_excluding` with
-`served_surface_excluding`; retain `ToolScope` for caller scopes.
+host tools. A tool's `openWorldHint` describes the operation's reach, independent
+of authorization reads by the scope gate. Custom role shaping may narrow each
+policy without converting one into the other. Replace deployment
+`.tool_scope(...)` calls with `.served_surface(ServedSurface::...)` and
+`tool_palette_excluding` with `served_surface_excluding`. Retain `ToolScope` for
+caller scopes.
 
 A host that records what a call did reads the key the gate decided on from
 `ToolCtx::judged`, set by the gate before it decides, so a refused call

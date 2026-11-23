@@ -20,15 +20,6 @@ pub struct ToolAnnotations {
 }
 
 impl ToolAnnotations {
-    /// Hints for a deployment-local operation. For a registered tool, use
-    /// [`super::ToolDescriptor::annotations_for_effect`] to include its declared reach.
-    #[must_use]
-    pub const fn registered(effect: ToolEffect) -> Self {
-        let mut hints = Self::host(effect);
-        hints.open_world = Some(false);
-        hints
-    }
-
     /// A host tool: no `openWorldHint`, since the host did not say what else
     /// its tool reaches.
     #[must_use]
@@ -311,25 +302,7 @@ mod effect_tests {
                 "{hint_row}"
             );
             assert_eq!(replay_row["out"], replay, "{replay_row}");
-            let hints = ToolAnnotations::registered(effect);
-            assert_eq!(hints.read_only, Some(effect.is_read_only()));
-            assert_eq!(hints.open_world, Some(false));
-            if effect.is_read_only() {
-                assert_eq!((hints.destructive, hints.idempotent), (None, None));
-            } else {
-                assert_eq!(hints.destructive, Some(effect.is_destructive()));
-                assert_eq!(
-                    hints.idempotent,
-                    Some(effect.replay() == Replay::Idempotent)
-                );
-            }
-            assert_eq!(
-                ToolAnnotations::host(effect),
-                ToolAnnotations {
-                    open_world: None,
-                    ..hints
-                }
-            );
+            assert_eq!(host.open_world, None);
         }
     }
 }

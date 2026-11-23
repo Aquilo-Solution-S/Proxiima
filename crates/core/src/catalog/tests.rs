@@ -69,7 +69,7 @@ mod manifest_tests {
             .expect("core_goal registered");
 
         let err = desc
-            .call_direct(
+            .call_ungated(
                 ctx.clone(),
                 serde_json::json!({
                     "action": "transition",
@@ -122,7 +122,7 @@ mod manifest_tests {
                 args["pending"] = pending.into();
             }
             let err = desc
-                .call_direct(ctx, args)
+                .call_ungated(ctx, args)
                 .await
                 .expect_err("a pending that does not fit the transition is refused");
             assert_eq!(err.kind(), ToolErrorKind::InvalidInput, "{transition}");
@@ -147,7 +147,7 @@ mod manifest_tests {
             .expect("core_fact registered");
 
         let err = desc
-            .call_direct(
+            .call_ungated(
                 ctx.clone(),
                 serde_json::json!({
                     "action": "citation_of_fact",

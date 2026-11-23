@@ -286,8 +286,8 @@ async fn tool_route(
     // both defer the method gate until the body is parsed.
     let dispatches_actions =
         !descriptor.action_arg_specs.is_empty() || !descriptor.argv_action_specs.is_empty();
-    if method != Method::POST && method != Method::QUERY {
-        let admits_query = if dispatches_actions {
+    let admits_query = || {
+        if dispatches_actions {
             descriptor
                 .action_arg_specs
                 .iter()
@@ -299,8 +299,10 @@ async fn tool_route(
                 })
         } else {
             descriptor.is_read_only()
-        };
-        return gate_method(&method, Allow::tool(admits_query), &instance, None)
+        }
+    };
+    if method != Method::POST && method != Method::QUERY {
+        return gate_method(&method, Allow::tool(admits_query()), &instance, None)
             .expect_err("non-invocation method is rejected")
             .into_response();
     }
@@ -321,21 +323,28 @@ async fn tool_route(
     // A whole-dispatcher invocation still names its action in the body — as
     // `action`, or as the `argv` prefix an argv-keyed tool derives its key
     // from — so method safety resolves from that action just like the
-    // narrowed route. Missing/unknown actions are writes here and are
-    // classified by the shared dispatch validator after POST reaches it.
-    if dispatches_actions {
+    // narrowed route. POST leaves action validation to the scope gate.
+    if dispatches_actions && method == Method::QUERY {
         let action = if descriptor.action_arg_specs.is_empty() {
             descriptor.argv_action(&args)
         } else {
             args.get("action").and_then(serde_json::Value::as_str)
         };
         let effect = action.and_then(|action| descriptor.action_effect(action));
-        let read_only = effect.is_some_and(proxiima_core::ToolEffect::is_read_only);
+        let Some(effect) = effect else {
+            let allow = Allow::tool(admits_query());
+            let problem = if allow.admits_query() {
+                Problem::query_action_required(&instance)
+            } else {
+                Problem::method_not_allowed(&method, &instance, None)
+            };
+            return problem.with_allow(allow.header()).into_response();
+        };
         if let Err(problem) = gate_method(
             &method,
-            Allow::tool(read_only),
+            Allow::tool(effect.is_read_only()),
             &instance,
-            action.filter(|_| effect.is_some()),
+            action,
         ) {
             return problem.into_response();
         }
@@ -494,8 +503,7 @@ fn gate_method(
     Err(Problem::method_not_allowed(method, instance, action).with_allow(allow.header()))
 }
 
-/// The methods one route answers. The `Allow` header and the `QUERY` gate both read it, so the
-/// header cannot say what the gate refuses.
+/// Available methods for a tool route or a selected dispatcher action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Allow {
     /// `/v1/tools/{tool}/{action}` for a write.

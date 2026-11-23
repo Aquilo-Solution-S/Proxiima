@@ -308,15 +308,15 @@ impl ToolCtx {
 
     /// The declared command selected for this registered argv handler.
     ///
-    /// Dispatch on its action and pass the words after its prefix to the
-    /// tool's flag validator. This is absent outside a registered argv handler.
+    /// Dispatch on its action. The handler receives only the remaining words
+    /// in its arguments. This is absent outside a registered argv handler.
     #[must_use]
     pub fn resolved_argv_action(&self) -> Option<&'static super::ArgvActionSpec> {
         match self.registered_input {
             super::tool::RegisteredInput::HandlerArgv(spec) => Some(spec),
             super::tool::RegisteredInput::Unadmitted
             | super::tool::RegisteredInput::Admitted(_)
-            | super::tool::RegisteredInput::Direct => None,
+            | super::tool::RegisteredInput::Ungated => None,
         }
     }
 
@@ -629,8 +629,8 @@ pub fn validate_search_query(query: &str) -> Result<&str, ToolError> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
-    /// The registered terminal requires the arguments admitted for this tool.
-    #[error("tool arguments were not admitted unchanged")]
+    /// The terminal requires the admitted tool, owner and arguments.
+    #[error("tool name, owner or arguments were not admitted unchanged")]
     InputNotAdmitted,
     #[error("invalid input: {0}")]
     InvalidInput(String),
@@ -727,7 +727,8 @@ pub trait Tool: Send + Sync + 'static {
     /// validation error), and the derived `tool:action` key is what the
     /// scope gate and `tools/list` both consult — one vocabulary at both
     /// doors. The registered handler receives the resolved spec via
-    /// [`ToolCtx::resolved_argv_action`]. Argv tools validate their own flags.
+    /// [`ToolCtx::resolved_argv_action`] and only the words after its prefix
+    /// in `args["argv"]`. Argv tools validate their own flags.
     ///
     /// Mutually exclusive with [`Self::ACTION_ARG_SPECS`]: registration
     /// refuses a tool declaring both, so no code path has to decide which

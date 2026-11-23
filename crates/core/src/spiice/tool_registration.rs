@@ -108,11 +108,13 @@ impl SpiiceRegistry {
             let properties = properties.clone();
             Box::pin(async move {
                 let mut ctx: crate::ToolCtx = ctx;
-                // `Proxiima.ToolSurface.ArgvResolution`.
+                // `Proxiima.ToolSurface.TerminalInput`.
                 let (resolved, mut args) = match std::mem::take(&mut ctx.registered_input) {
-                    RegisteredInput::Admitted(input) => input.into_input(T::NAME, &args)?,
-                    RegisteredInput::Direct => {
-                        (ResolvedToolInput::resolve_direct::<T>(&args)?, args)
+                    RegisteredInput::Admitted(input) => {
+                        input.into_input(T::NAME, ctx.owner(), &args)?
+                    }
+                    RegisteredInput::Ungated => {
+                        (ResolvedToolInput::resolve_ungated::<T>(&args)?, args)
                     }
                     RegisteredInput::Unadmitted | RegisteredInput::HandlerArgv(_) => {
                         return Err(ToolError::InputNotAdmitted);
@@ -126,6 +128,11 @@ impl SpiiceRegistry {
                         Some(spec.effect)
                     }
                     ResolvedToolInput::Argv(spec) => {
+                        // Resolution found the prefix in this same array.
+                        let words = args["argv"]
+                            .as_array_mut()
+                            .ok_or(ToolError::InputNotAdmitted)?;
+                        words.drain(..spec.argv_prefix.len());
                         ctx.registered_input = RegisteredInput::HandlerArgv(spec);
                         Some(spec.effect)
                     }
@@ -513,19 +520,16 @@ mod action_vocabulary_tests {
         let descriptor = frozen.mcp_tool(ArgvTool::NAME).expect("registered");
 
         let output = descriptor
-            .call_direct(
+            .call_ungated(
                 test_ctx(),
                 serde_json::json!({ "argv": ["approval", "decide", "--id", "7"] }),
             )
             .await
             .expect("declared command dispatches");
-        assert_eq!(
-            output,
-            serde_json::json!({ "argv": ["approval", "decide", "--id", "7"] })
-        );
+        assert_eq!(output, serde_json::json!({ "argv": ["--id", "7"] }));
 
         let err = descriptor
-            .call_direct(test_ctx(), serde_json::json!({ "argv": ["unknown"] }))
+            .call_ungated(test_ctx(), serde_json::json!({ "argv": ["unknown"] }))
             .await
             .expect_err("unmatched argv is refused before the tool runs");
         assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
@@ -652,7 +656,7 @@ mod unknown_field_policy_tests {
     ) -> Result<serde_json::Value, ToolError> {
         let frozen = registry();
         let descriptor = frozen.mcp_tool(tool).expect("fixture registered");
-        descriptor.call_direct(test_ctx(), args).await
+        descriptor.call_ungated(test_ctx(), args).await
     }
 
     /// The whole point of the opt-in: the echoed-back keys neither reach the

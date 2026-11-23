@@ -174,7 +174,7 @@ fn collect_how_to_path(paths: &mut BTreeMap<String, Value>) {
         request_schema: None,
         produces_schema_ids: &[],
         output_schema: None,
-        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+        annotations: ToolAnnotations::host(ToolEffect::ReadOnly),
         query_dispatches: false,
     }
     .render("get");
@@ -407,7 +407,7 @@ fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<Strin
         // read, which is why they exist as a separate concept from tools.
         produces_schema_ids: &[],
         output_schema: Some(&answer),
-        annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+        annotations: ToolAnnotations::host(ToolEffect::ReadOnly),
         query_dispatches: false,
     };
     let mut item = Map::new();

@@ -355,6 +355,14 @@ the caller cannot read, is refused as an unknown space. The example's
 [`tests/space_argument.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/spiices/example/tests/space_argument.rs)
 calls such a tool through the host.
 
+### Argv dispatchers
+
+Declare command prefixes in `Tool::ARGV_ACTION_SPECS`. Clients send the full
+`argv` array. Dispatch selects the longest matching prefix and passes the
+remaining words in the handler's `argv` field. Use
+`ToolCtx::resolved_argv_action` to dispatch on the resolved spec's `action`,
+then validate the remaining words as flags and positional arguments.
+
 ## 4. Link into the host
 
 Implement the host's `SpiiceApp` with `proxiima::spiice_app!`, behind a

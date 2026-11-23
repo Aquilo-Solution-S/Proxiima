@@ -213,7 +213,7 @@ async fn call_with(
         crate::ToolCaller::new("gate/model", "gate", "1"),
     );
     descriptor
-        .call_direct(ctx, args)
+        .call_ungated(ctx, args)
         .await
         .map_err(|err| err.to_string())
 }

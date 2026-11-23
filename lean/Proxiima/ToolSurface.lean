@@ -87,12 +87,14 @@ inductive TitleCheck where
 def titleChecks : List TitleCheck :=
   [.nonempty, .trimmed, .noControlCharacters, .withinCharacterLimit]
 
-/-- The argv resolution paths at the registered terminal. -/
-inductive ArgvResolution where
-  /-- The scope gate passes the action found by longest-prefix resolution. -/
-  | admittedLongestPrefix
-  /-- A direct call performs its own longest-prefix resolution. -/
-  | directLongestPrefix
+/-- The input the registered terminal runs or refuses. -/
+inductive TerminalInput where
+  /-- Run the scope gate's resolution for the unchanged tool, owner and arguments. -/
+  | admitted
+  /-- Resolve the arguments of an explicit ungated invocation. -/
+  | ungated
+  /-- Refuse a call without a matching admission or explicit ungated invocation. -/
+  | refused
   deriving DecidableEq
 
 /-- The three canonical key forms that enter a tool scope. -/

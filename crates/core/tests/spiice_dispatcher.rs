@@ -343,7 +343,7 @@ async fn a_spiice_dispatcher_validates_arguments_per_action_before_decode() {
     let descriptor = registry.mcp_tool(DISPATCH).expect("registered");
 
     let err = descriptor
-        .call_direct(
+        .call_ungated(
             ctx(&registry, ToolScope::All),
             serde_json::json!({ "action": "look", "id": "x", "note": "y" }),
         )
@@ -355,7 +355,7 @@ async fn a_spiice_dispatcher_validates_arguments_per_action_before_decode() {
     );
 
     let err = descriptor
-        .call_direct(
+        .call_ungated(
             ctx(&registry, ToolScope::All),
             serde_json::json!({ "action": "touch" }),
         )

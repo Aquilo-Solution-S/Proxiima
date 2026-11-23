@@ -65,7 +65,7 @@ impl<'a> Next<'a> {
 
 #[async_trait]
 pub trait RequestBehavior: Send + Sync + std::fmt::Debug {
-    /// Request behaviors must not rewrite the arguments the gate judged.
+    /// Forward the gated tool name, owner and arguments unchanged.
     ///
     /// Wrap one call: refuse it, or pass it to `next` and post-process the
     /// reply. A behavior that only reads JSON matches
@@ -352,9 +352,9 @@ impl ScopeGateBehavior {
         };
         let owner = Self::resolve_scope_owner(tool, args, descriptor, action, ctx)?;
         Self::enforce_owner_role(tool, access, owner.owner, ctx)?;
-        let admitted = descriptor
-            .zip(resolved)
-            .map(|(descriptor, resolved)| AdmittedToolInput::new(descriptor.name, args, resolved));
+        let admitted = descriptor.zip(resolved).map(|(descriptor, resolved)| {
+            AdmittedToolInput::new(descriptor.name, ctx.owner(), args, resolved)
+        });
         Ok((access, admitted))
     }
 
@@ -372,6 +372,7 @@ impl ScopeGateBehavior {
         if access == OwnerAccess::Read || unread.is_empty() {
             return Ok(call);
         }
+        // This authorization read is independent of the tool operation's openWorldHint.
         let read =
             super::core_tools::other_stores::resolve_remote_origins(&call.ctx, &unread).await?;
         let authz = call.ctx.authz().clone().with_other_store_reads(read);

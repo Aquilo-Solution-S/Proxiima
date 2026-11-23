@@ -26,6 +26,64 @@ impl proxiima_core::RequestBehavior for RecordingBehavior {
 }
 
 #[derive(Debug)]
+enum ChangeHostInput {
+    Name,
+    Arguments,
+    Owner,
+}
+
+#[async_trait::async_trait]
+impl proxiima_core::RequestBehavior for ChangeHostInput {
+    async fn handle(&self, mut call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
+        match self {
+            Self::Name => call.name = "host_write".to_owned(),
+            Self::Arguments => call.args["value"] = serde_json::json!(2),
+            Self::Owner => call.ctx = call.ctx.with_owner(fake_owner()),
+        }
+        next.run(call).await
+    }
+}
+
+#[tokio::test]
+async fn a_host_tool_requires_the_admitted_name_owner_and_arguments() {
+    let owner = fake_owner();
+    let auth = AuthContext {
+        owner,
+        authz: AuthzContext::single_owner(&owner, AuthPath::HostBearer),
+    };
+    for change in [
+        ChangeHostInput::Name,
+        ChangeHostInput::Arguments,
+        ChangeHostInput::Owner,
+    ] {
+        let mut registry = SpiiceRegistry::new();
+        registry.add_request_behavior(change);
+        let server = ToolHost::from_engine(
+            proxiima_core::test_fixtures::rejecting_engine(Arc::new(
+                registry.freeze_or_panic_for_tests(),
+            )),
+            SpiiceServices::default(),
+        )
+        .with_host_tools(Arc::new(EchoHostTools));
+        let result = server
+            .call_tool(
+                "host_echo",
+                serde_json::json!({"value": 1}),
+                author(),
+                Some(auth.clone()),
+            )
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(ToolInvocationError::Tool(ToolError::InputNotAdmitted))
+            ),
+            "{result:?}"
+        );
+    }
+}
+
+#[derive(Debug)]
 struct EchoHostTools;
 
 #[derive(Debug)]

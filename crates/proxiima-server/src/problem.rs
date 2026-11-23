@@ -260,13 +260,29 @@ impl Problem {
             || "this route".to_owned(),
             |action| format!("the selected action `{action}`"),
         );
+        Self::method_not_allowed_detail(
+            format!(
+                "{method} is unsupported for {target}. The Allow header lists the supported methods."
+            ),
+            instance,
+        )
+    }
+
+    #[cfg(feature = "rest")]
+    pub(crate) fn query_action_required(instance: &str) -> Self {
+        Self::method_not_allowed_detail(
+            "QUERY requires selecting an available read-only action. The Allow header lists the supported methods.",
+            instance,
+        )
+    }
+
+    #[cfg(feature = "rest")]
+    fn method_not_allowed_detail(detail: impl Into<String>, instance: &str) -> Self {
         Self::new(
             ProblemStatus::METHOD_NOT_ALLOWED,
             "method-not-allowed",
             "Method not allowed",
-            format!(
-                "{method} is unsupported for {target}. The Allow header lists the supported methods."
-            ),
+            detail,
             instance,
         )
     }

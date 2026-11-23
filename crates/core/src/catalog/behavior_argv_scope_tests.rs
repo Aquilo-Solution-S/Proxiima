@@ -20,8 +20,7 @@ fn palette(ids: &[&str]) -> ToolScope {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ArgvArgs {
     #[schemars(description = "command words followed by flags")]
-    #[serde(rename = "argv")]
-    _argv: Vec<String>,
+    argv: Vec<String>,
     #[schemars(description = "space to use")]
     #[serde(rename = "space")]
     _space: Option<String>,
@@ -30,6 +29,7 @@ struct ArgvArgs {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 struct ArgvOutput {
     action: &'static str,
+    argv: Vec<String>,
 }
 
 /// An argv-keyed dispatcher with two commands sharing a first word, so
@@ -73,11 +73,12 @@ impl Tool for ArgvTool {
     ];
     type Args = ArgvArgs;
     type Output = ArgvOutput;
-    fn call(ctx: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
+    fn call(ctx: ToolCtx, args: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
         Box::pin(async move {
             let spec = ctx.resolved_argv_action().expect("registered argv command");
             Ok(ArgvOutput {
                 action: spec.action,
+                argv: args.argv,
             })
         })
     }
@@ -205,7 +206,9 @@ async fn through_registered_argv(
 async fn registered_argv_handler_receives_the_longest_prefix() {
     assert_eq!(
         through_registered_argv(&[]).await.unwrap(),
-        ToolReply::Structured(serde_json::json!({ "action": "approval-decide" }))
+        ToolReply::Structured(
+            serde_json::json!({ "action": "approval-decide", "argv": ["--id", "7"] })
+        )
     );
 }
 
@@ -213,6 +216,7 @@ async fn registered_argv_handler_receives_the_longest_prefix() {
 enum ChangeInput {
     Argv,
     Space,
+    Owner,
     Context,
 }
 
@@ -222,6 +226,10 @@ impl RequestBehavior for ChangeInput {
         match self {
             Self::Argv => call.args["argv"] = serde_json::json!(["approval"]),
             Self::Space => call.args["space"] = "self".into(),
+            Self::Owner => {
+                let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
+                call.ctx = call.ctx.with_owner(owner);
+            }
             Self::Context => {
                 call.ctx = ToolCtx::new(
                     call.ctx.owner(),
@@ -238,7 +246,12 @@ impl RequestBehavior for ChangeInput {
 
 #[tokio::test]
 async fn registered_terminal_requires_the_admitted_input() {
-    for change in [ChangeInput::Argv, ChangeInput::Space, ChangeInput::Context] {
+    for change in [
+        ChangeInput::Argv,
+        ChangeInput::Space,
+        ChangeInput::Owner,
+        ChangeInput::Context,
+    ] {
         let result = through_registered_argv(&[Arc::new(change)]).await;
         assert!(matches!(result, Err(ToolError::InputNotAdmitted)));
     }

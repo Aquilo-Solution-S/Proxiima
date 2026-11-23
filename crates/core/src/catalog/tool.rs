@@ -1,7 +1,9 @@
 use futures::future::BoxFuture;
 
 use crate::authz::{KeyDeclaration, OwnerNeed, ToolAudience, ToolEffect};
-use crate::{ActionName, CapabilitySet, ScopeKey, ScopeKeyError, ToolCtx, ToolError, ToolName};
+use crate::{
+    ActionName, CapabilitySet, OwnerId, ScopeKey, ScopeKeyError, ToolCtx, ToolError, ToolName,
+};
 
 /// The longest title ([`ActionArgSpec::title`], [`ToolDescriptor::title`]),
 /// in characters: a label beside a recorded call, not a description.
@@ -100,7 +102,7 @@ pub struct ToolDescriptor {
 }
 
 impl ToolDescriptor {
-    /// Run this handler under the embedding host's own admission and policy.
+    /// Runs the handler without the scope gate or any request behaviour.
     ///
     /// This resolves the declared vocabulary and validates the arguments. The
     /// host supplies the authorization context and runs any request behaviors
@@ -109,12 +111,12 @@ impl ToolDescriptor {
     /// # Errors
     ///
     /// Returns argument validation, handler, or output serialization errors.
-    pub fn call_direct(
+    pub fn call_ungated(
         &self,
         mut ctx: ToolCtx,
         args: serde_json::Value,
     ) -> BoxFuture<'static, Result<serde_json::Value, ToolError>> {
-        ctx.registered_input = RegisteredInput::Direct;
+        ctx.registered_input = RegisteredInput::Ungated;
         (self.call)(ctx, args)
     }
 
@@ -701,7 +703,7 @@ pub(crate) enum ResolvedToolInput {
 }
 
 impl ResolvedToolInput {
-    pub(crate) fn resolve_direct<T: crate::Tool>(
+    pub(crate) fn resolve_ungated<T: crate::Tool>(
         args: &serde_json::Value,
     ) -> Result<Self, ToolError> {
         Self::resolve(
@@ -740,10 +742,11 @@ impl ResolvedToolInput {
     }
 }
 
-/// The registered input carries the tool and arguments the scope gate judged.
+/// The input binds the tool, owner and arguments the scope gate judged.
 #[derive(Clone)]
 pub(crate) struct AdmittedToolInput {
     tool: &'static str,
+    owner: OwnerId,
     args: serde_json::Value,
     resolved: ResolvedToolInput,
 }
@@ -751,11 +754,13 @@ pub(crate) struct AdmittedToolInput {
 impl AdmittedToolInput {
     pub(super) fn new(
         tool: &'static str,
+        owner: OwnerId,
         args: &serde_json::Value,
         resolved: ResolvedToolInput,
     ) -> Self {
         Self {
             tool,
+            owner,
             args: args.clone(),
             resolved,
         }
@@ -764,9 +769,10 @@ impl AdmittedToolInput {
     pub(crate) fn into_input(
         self,
         tool: &str,
+        owner: OwnerId,
         args: &serde_json::Value,
     ) -> Result<(ResolvedToolInput, serde_json::Value), ToolError> {
-        if self.tool != tool || self.args != *args {
+        if self.tool != tool || self.owner != owner || self.args != *args {
             return Err(ToolError::InputNotAdmitted);
         }
         Ok((self.resolved, self.args))
@@ -778,7 +784,7 @@ pub(crate) enum RegisteredInput {
     #[default]
     Unadmitted,
     Admitted(AdmittedToolInput),
-    Direct,
+    Ungated,
     HandlerArgv(&'static ArgvActionSpec),
 }
 

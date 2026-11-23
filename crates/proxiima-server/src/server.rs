@@ -390,10 +390,21 @@ impl ToolHost {
                     );
                 }
                 let source = Arc::clone(source);
+                let admitted_name = name.clone();
+                let admitted_args = args.clone();
+                let admitted_owner = auth.owner;
                 (
                     name,
                     Box::new(move |call| {
-                        Box::pin(async move { tool_failure_as_reply(source.call(call).await) })
+                        Box::pin(async move {
+                            if call.name != admitted_name
+                                || call.ctx.owner() != admitted_owner
+                                || call.args != admitted_args
+                            {
+                                return Err(ToolError::InputNotAdmitted);
+                            }
+                            tool_failure_as_reply(source.call(call).await)
+                        })
                     }),
                 )
             }
