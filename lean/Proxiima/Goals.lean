@@ -208,32 +208,6 @@ def predecessorArbitration : HeadComparison → CommitDecision
   | .namedStale => .conflict
   | .unnamedDrift => .retry
 
-/-- Outcomes classified by the pool-scoped storage retry loop. Retryable includes SQLSTATE 40001, 40P01 and 55P03 and application conflicts such as head or authority footprint drift. -/
-inductive TransactionOutcome where
-  | retryable
-  | memoryIdCollision
-  | other
-  deriving DecidableEq
-
-/-- Whether the applicable retry budget is still available. -/
-inductive RetryBudget where
-  | available
-  | exhausted
-  deriving DecidableEq
-
-/-- What the retry loop does with the outcome of one transaction attempt. -/
-inductive RetryAction where
-  | retry
-  | returnOutcome
-  | refuseCollision
-  deriving DecidableEq
-
-/-- Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation. -/
-def retryTransaction : TransactionOutcome → RetryBudget → RetryAction
-  | .retryable, .available | .memoryIdCollision, .available => .retry
-  | .memoryIdCollision, .exhausted => .refuseCollision
-  | .retryable, .exhausted | .other, .available | .other, .exhausted => .returnOutcome
-
 /-- The steps of Goal revision persistence, from owner fencing to target revalidation. -/
 inductive AdmissionStep where
   | fenceOwners

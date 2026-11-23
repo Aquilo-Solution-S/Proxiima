@@ -760,13 +760,6 @@
   {"out": true, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Goals.retryTransaction":
- [{"out": "retry", "in": ["retryable", "available"]},
-  {"out": "returnOutcome", "in": ["retryable", "exhausted"]},
-  {"out": "retry", "in": ["memoryIdCollision", "available"]},
-  {"out": "refuseCollision", "in": ["memoryIdCollision", "exhausted"]},
-  {"out": "returnOutcome", "in": ["other", "available"]},
-  {"out": "returnOutcome", "in": ["other", "exhausted"]}],
  "Proxiima.Goals.requestReplay":
  [{"out": "freshAdmission", "in": ["fresh"]},
   {"out": "returnOriginal", "in": ["exact"]},
@@ -1273,4 +1266,89 @@
   {"out": false, "in": ["missingMultipleAudiences"]},
   {"out": true, "in": ["listed"]},
   {"out": false, "in": ["unlisted"]},
-  {"out": false, "in": ["malformed"]}]}
+  {"out": false, "in": ["malformed"]}],
+ "Proxiima.Admission.unitEndpointLive":
+ [{"out": true, "in": ["newMemory"]},
+  {"out": true, "in": ["newGoal"]},
+  {"out": false, "in": ["forgottenReplay"]}],
+ "Proxiima.Admission.uniqueEpisodeKeys":
+ [{"out": true, "in": ["omitted"]},
+  {"out": true, "in": ["firstExplicit"]},
+  {"out": false, "in": ["repeatedExplicit"]}],
+ "Proxiima.Admission.selectDestination":
+ [{"out": {"error": "bothDestinations"}, "in": [true, true]},
+  {"out": {"ok": "ownerSpace"}, "in": [true, false]},
+  {"out": {"ok": "workingGoal"}, "in": [false, true]},
+  {"out": {"ok": "ownerSpace"}, "in": [false, false]}],
+ "Proxiima.Admission.reuseNaturalSeries":
+ [{"out": true, "in": ["liveMatch"]},
+  {"out": true, "in": ["forgottenMatch"]},
+  {"out": false, "in": ["noMatch"]}],
+ "Proxiima.Admission.retryTransaction":
+ [{"out": "retry", "in": ["transient", true, true]},
+  {"out": "retry", "in": ["transient", true, false]},
+  {"out": "returnOutcome", "in": ["transient", false, true]},
+  {"out": "returnOutcome", "in": ["transient", false, false]},
+  {"out": "refuseCollision", "in": ["identityCollision", true, true]},
+  {"out": "retry", "in": ["identityCollision", true, false]},
+  {"out": "refuseCollision", "in": ["identityCollision", false, true]},
+  {"out": "refuseCollision", "in": ["identityCollision", false, false]},
+  {"out": "returnOutcome", "in": ["other", true, true]},
+  {"out": "returnOutcome", "in": ["other", true, false]},
+  {"out": "returnOutcome", "in": ["other", false, true]},
+  {"out": "returnOutcome", "in": ["other", false, false]}],
+ "Proxiima.Admission.requestVerdict":
+ [{"out": "admit", "in": ["absent"]},
+  {"out": "replay", "in": ["sameFingerprint"]},
+  {"out": "conflict", "in": ["differentFingerprint"]}],
+ "Proxiima.Admission.requestScopeUsesGoalAndSubject":
+ [{"out": false, "in": ["note"]},
+  {"out": false, "in": ["utterance"]},
+  {"out": false, "in": ["abstraction"]},
+  {"out": false, "in": ["perspective"]},
+  {"out": true, "in": ["goalAbstraction"]},
+  {"out": true, "in": ["goalPerspective"]}],
+ "Proxiima.Admission.replayAuthority":
+ [{"out": "requestKey", "in": [true, true]},
+  {"out": "requestKey", "in": [true, false]},
+  {"out": "sourceReceipt", "in": [false, true]},
+  {"out": "none", "in": [false, false]}],
+ "Proxiima.Admission.receiptAnswers":
+ [{"out": false, "in": ["lookup", true]},
+  {"out": true, "in": ["lookup", false]},
+  {"out": true, "in": ["replay", true]},
+  {"out": true, "in": ["replay", false]}],
+ "Proxiima.Admission.localMemorySlot":
+ [{"out": true, "in": ["remember", true]},
+  {"out": false, "in": ["remember", false]},
+  {"out": true, "in": ["derive", true]},
+  {"out": false, "in": ["derive", false]},
+  {"out": true, "in": ["stance", true]},
+  {"out": false, "in": ["stance", false]},
+  {"out": false, "in": ["goal", true]},
+  {"out": false, "in": ["goal", false]}],
+ "Proxiima.Admission.factSeries":
+ [{"out": "explicitHandle", "in": [true, true]},
+  {"out": "explicitHandle", "in": [true, false]},
+  {"out": "naturalKeyMatch", "in": [false, true]},
+  {"out": "mint", "in": [false, false]}],
+ "Proxiima.Admission.cursorRequiresFactWrite":
+ [{"out": true, "in": ["load"]},
+  {"out": true, "in": ["store"]},
+  {"out": false, "in": ["age"]}],
+ "Proxiima.Admission.commitsUnit":
+ [{"out": true, "in": ["commit"]},
+  {"out": false, "in": ["drop"]},
+  {"out": false, "in": ["poisonedCommit"]}],
+ "Proxiima.Admission.appendObservation":
+ [{"out": false, "in": ["head", true]},
+  {"out": false, "in": ["head", false]},
+  {"out": true, "in": ["displacedLive", true]},
+  {"out": false, "in": ["displacedLive", false]},
+  {"out": false, "in": ["forgotten", true]},
+  {"out": false, "in": ["forgotten", false]}],
+ "Proxiima.Admission.acceptEpisodeItem":
+ [{"out": false, "in": [true, true]},
+  {"out": true, "in": [true, false]},
+  {"out": true, "in": [false, true]},
+  {"out": true, "in": [false, false]}]}

@@ -1,5 +1,369 @@
 # The ledger
 
+## Admission
+
+**Transaction outcome**: Outcomes considered by the storage transaction retry loop.
+
+- transient
+- identityCollision
+- other
+
+**Retry action**: The next action after a complete transaction attempt.
+
+- retry
+- returnOutcome
+- refuseCollision
+
+**Request record**: A retained request record is compared against the incoming fingerprint.
+
+- absent
+- sameFingerprint
+- differentFingerprint
+
+**Request verdict**: A request either admits, returns the retained identity, or conflicts with that identity.
+
+- admit
+- replay
+- conflict
+
+**Memory request scope**: The independent request-key namespaces of Memory writes.
+
+- note
+- utterance
+- abstraction
+- perspective
+- goalAbstraction
+- goalPerspective
+
+**Fingerprint set step**: The normalization applied to unordered request fingerprint fields.
+
+- sort
+- deduplicate
+
+**Fingerprint payload part**: The ordered field encoding of a present fingerprint payload.
+
+- schemaIdLength
+- schemaId
+- schemaVersion
+- canonicalJson
+
+**Series selection**: Candidate series identities for a Fact write.
+
+- explicitHandle
+- naturalKeyMatch
+- mint
+
+**Replay authority**: A claim uses the explicit request ledger, the source receipt, or no replay key.
+
+- requestKey
+- sourceReceipt
+- none
+
+**Observation status**: The most recent observation's admission status within its series.
+
+- head
+- displacedLive
+- forgotten
+
+**Receipt use**: Whether a forgotten admission is sought for a public read or exact ingest replay.
+
+- lookup: An owner-scoped lookup holds a share lock on any visible admission.
+- replay: Replay answers using the original identity and does not restore the admission.
+
+**Fact write leg**: The three payload legs that require typed Fact persistence.
+
+- sidecar
+- citation
+- publication
+
+**Episode step**: The order of the episode's writes followed by their shared commit.
+
+- writeAct
+- remember
+- derive
+- stance
+- goal
+- commit
+
+**Episode slot**: The produced slots an episode may name in its bind list.
+
+- remember
+- derive
+- stance
+- goal
+
+**Episode key match**: An episode compares explicit keys after normalization within one item family.
+
+- omitted
+- firstExplicit
+- repeatedExplicit
+
+**Sidecar precondition step**: The session steps of a sidecar precondition read.
+
+- takeExclusiveLock
+- readOwnerRows
+
+**Cursor operation**: A projector cursor's owner-scoped operation.
+
+- load
+- store
+- age
+
+**Source cursor key**: The owner and source fields of an opaque projector cursor.
+
+- owner
+- source
+
+**Detached step**: Ordered phases of deadline-bound detached ingestion.
+
+- spawnOnFirstPoll
+- runWithOriginalAuthority
+- settleWithinDeadline
+
+**Unit disposition**: How write-session changes are finalized when the unit terminates.
+
+- commit
+- drop
+- poisonedCommit
+
+**Memory write step**: The phases shared by governed Fact and derived Memory writes.
+
+- prepare
+- lock
+- claim
+- materialize
+
+**Memory lock**: The locks acquired by a new Memory admission before its durable writes.
+
+- ownerFence
+- sourceFence
+- declaredScopeFences
+- seriesHandles
+- lifecycleVersions
+
+**Ingest key part**: The durable identity of a sourced receipt lookup or replay.
+
+- owner
+- source
+- ingestKey
+
+**Write destination**: Whether the authoring request named an owner space or a working Goal.
+
+- ownerSpace
+- workingGoal
+
+**Destination refusal**: Refusal of more than one destination in an authoring request.
+
+- bothDestinations
+
+**Natural series probe**: Inputs to the decision to preserve or reselect a natural-key series.
+
+- liveMatch
+- forgottenMatch
+- noMatch
+
+**Derivation request key**: Where a tool's derived request gets its key.
+
+- typedExplicit
+- contentFingerprint
+
+**Unit endpoint**: How earlier episode endpoints can participate in later writes.
+
+- newMemory
+- newGoal
+- forgottenReplay
+
+**request key max** = 180: Maximum characters in a trimmed explicit request key.
+
+**episode remember max** = 16: Maximum remembered Facts in one episode.
+
+**episode stance max** = 16: Maximum stances in one episode.
+
+**episode goal max** = 16: Maximum Goals in one episode.
+
+**episode bind max** = 32: Maximum bind keys in one episode.
+
+**sidecar read max** = 512: Default and maximum row limit for a sidecar precondition read.
+
+**receipt index hex chars** = 64: The encoded width of the lowercase BLAKE3 digest used as a typed Fact ingest key.
+
+**request fingerprint domain** = "proxiima-request-v1": The domain prefix of a length-framed request fingerprint.
+
+**transaction attempts** = 3: Total begin-body-commit attempts in the storage retry loop.
+
+**fingerprint set order** = \[sort, deduplicate]: Request fingerprint UUID sets and normalized tags are sorted and deduplicated.
+
+**fingerprint payload** = \[schemaIdLength, schemaId, schemaVersion, canonicalJson]: A payload's schema and version precede its canonical JSON in a fingerprint field.
+
+**typed fact legs** = \[sidecar, citation, publication]: The typed route admits sidecars, citations and publication; the receipt-only route refuses all three.
+
+**episode order** = \[writeAct, remember, derive, stance, goal, commit]: An episode writes the act and all declared items in one owner unit.
+
+**sidecar precondition order** = \[takeExclusiveLock, readOwnerRows]: The sidecar precondition read takes the exclusive lock on its own transaction before reading.
+
+**source cursor key** = \[owner, source]: Cursor reads, writes and erasure key the stored bytes by the resolved owner and exact source.
+
+**detached ingest order** = \[spawnOnFirstPoll, runWithOriginalAuthority, settleWithinDeadline]: The spawned Fact ingest can finish after request cancellation, within its own deadline.
+
+**memory write order** = \[prepare, lock, claim, materialize]: Governed Memory writes prepare the candidate, lock its targets, arbitrate its claim and materialize on one transaction.
+
+**memory lock order** = \[ownerFence, sourceFence, declaredScopeFences, seriesHandles, lifecycleVersions]: Admission takes its owner, optional source and declared-scope fences before handle and version locks.
+
+**ingest key parts** = \[owner, source, ingestKey]: A sourced receipt keys its original admission by owner, source and ingest key.
+
+**request row prefix** = "r:": The index prefix for the request identity digest.
+
+**fingerprint row prefix** = "f:": The index prefix for the digest of the length-framed key and fingerprint.
+
+**utterance source** = "core/conversation": The direct observation source family for a recorded conversation turn.
+
+**remembered note source** = "core/agent": The distilled Fact source for remembered notes and episode notes.
+
+| transaction outcome | attempt left | collision retried | retry transaction |
+| --- | --- | --- | --- |
+| transient | yes | yes | retry |
+| transient | yes | no | retry |
+| transient | no | yes | returnOutcome |
+| transient | no | no | returnOutcome |
+| identityCollision | yes | yes | refuseCollision |
+| identityCollision | yes | no | retry |
+| identityCollision | no | yes | refuseCollision |
+| identityCollision | no | no | refuseCollision |
+| other | yes | yes | returnOutcome |
+| other | yes | no | returnOutcome |
+| other | no | yes | returnOutcome |
+| other | no | no | returnOutcome |
+
+- retry transaction: A collision can use one remaining attempt and every retry consumes the total budget.
+
+| request record | request verdict |
+| --- | --- |
+| absent | admit |
+| sameFingerprint | replay |
+| differentFingerprint | conflict |
+
+- request verdict: Keyed writes arbitrate by fingerprint under the owner and request namespace.
+
+| memory request scope | request scope uses goal and subject |
+| --- | --- |
+| note | no |
+| utterance | no |
+| abstraction | no |
+| perspective | no |
+| goalAbstraction | yes |
+| goalPerspective | yes |
+
+- request scope uses goal and subject: The request ledger uses Goal and subject qualifiers only for Goal-work writes.
+
+| explicit handle | natural match | fact series |
+| --- | --- | --- |
+| yes | yes | explicitHandle |
+| yes | no | explicitHandle |
+| no | yes | naturalKeyMatch |
+| no | no | mint |
+
+- fact series: Explicit handle wins over a natural-key match, otherwise the write mints.
+
+| keyed | sourced | replay authority |
+| --- | --- | --- |
+| yes | yes | requestKey |
+| yes | no | requestKey |
+| no | yes | sourceReceipt |
+| no | no | none |
+
+- replay authority: Explicit request claims take priority over the source receipt.
+
+| observation status | enabled | append observation |
+| --- | --- | --- |
+| head | yes | no |
+| head | no | no |
+| displacedLive | yes | yes |
+| displacedLive | no | no |
+| forgotten | yes | no |
+| forgotten | no | no |
+
+- append observation: Re-observation can append only a displaced live observation and only when enabled.
+
+| receipt use | forgotten | receipt answers |
+| --- | --- | --- |
+| lookup | yes | no |
+| lookup | no | yes |
+| replay | yes | yes |
+| replay | no | yes |
+
+- receipt answers: Receipt lookup hides forgotten admissions while receipt replay can return them.
+
+| episode slot | written | local memory slot |
+| --- | --- | --- |
+| remember | yes | yes |
+| remember | no | no |
+| derive | yes | yes |
+| derive | no | no |
+| stance | yes | yes |
+| stance | no | no |
+| goal | yes | no |
+| goal | no | no |
+
+- local memory slot: Only an already produced Memory slot can serve as a local Memory reference.
+
+| bound | replayed | accept episode item |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | yes |
+
+- accept episode item: A bound item requires a fresh admission that can reference the episode's write-act.
+
+| episode key match | unique episode keys |
+| --- | --- |
+| omitted | yes |
+| firstExplicit | yes |
+| repeatedExplicit | no |
+
+- unique episode keys: A repeated normalized explicit key is refused during preflight.
+
+| cursor operation | cursor requires fact write |
+| --- | --- |
+| load | yes |
+| store | yes |
+| age | no |
+
+- cursor requires fact write: Load and store require Fact write authority, while age only requires Fact read authority.
+
+| unit disposition | commits unit |
+| --- | --- |
+| commit | yes |
+| drop | no |
+| poisonedCommit | no |
+
+- commits unit: Only an explicit commit of a healthy unit makes its transaction durable.
+
+| space | goal | select destination |
+| --- | --- | --- |
+| yes | yes | refused: bothDestinations |
+| yes | no | ownerSpace |
+| no | yes | workingGoal |
+| no | no | ownerSpace |
+
+- select destination: Default to the owner space and refuse simultaneous space and working-Goal selectors.
+
+| natural series probe | reuse natural series |
+| --- | --- |
+| liveMatch | yes |
+| forgottenMatch | yes |
+| noMatch | no |
+
+- reuse natural series: An existing natural-key series can take a new version even if its predecessor is forgotten.
+
+| unit endpoint | unit endpoint live |
+| --- | --- |
+| newMemory | yes |
+| newGoal | yes |
+| forgottenReplay | no |
+
+- unit endpoint live: Written Memory and Goals supply same-unit typed endpoints; a forgotten replay supplies no live endpoint.
+
 ## Authentication
 
 **Token check**: The required checks before returning claims from an OIDC token.
@@ -1621,23 +1985,6 @@ stateDiagram-v2
 - conflict
 - retry
 
-**Transaction outcome**: Outcomes classified by the pool-scoped storage retry loop. Retryable includes SQLSTATE 40001, 40P01 and 55P03 and application conflicts such as head or authority footprint drift.
-
-- retryable
-- memoryIdCollision
-- other
-
-**Retry budget**: Whether the applicable retry budget is still available.
-
-- available
-- exhausted
-
-**Retry action**: What the retry loop does with the outcome of one transaction attempt.
-
-- retry
-- returnOutcome
-- refuseCollision
-
 **Admission step**: The steps of Goal revision persistence, from owner fencing to target revalidation.
 
 - fenceOwners
@@ -1808,17 +2155,6 @@ stateDiagram-v2
 | unnamedDrift | retry |
 
 - predecessor arbitration: A stale named predecessor conflicts and unnamed prediction drift retries the complete transaction.
-
-| transaction outcome | retry budget | retry transaction |
-| --- | --- | --- |
-| retryable | available | retry |
-| retryable | exhausted | returnOutcome |
-| memoryIdCollision | available | retry |
-| memoryIdCollision | exhausted | refuseCollision |
-| other | available | returnOutcome |
-| other | exhausted | returnOutcome |
-
-- retry transaction: Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation.
 
 | listenable | stamped | publish change fact |
 | --- | --- | --- |
