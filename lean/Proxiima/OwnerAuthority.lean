@@ -272,16 +272,6 @@ inductive OwnerListKey where
 /-- Ordering across read, write and Goal owner lists. -/
 def ownerListOrder : List OwnerListKey := [.personalFirst, .ownerId]
 
-/-- Restrictions that keep a scoped role grant from widening. -/
-inductive ScopeRestriction where
-  /-- Expired grants authorize nothing and expiry can only move earlier. -/
-  | expiry
-  /-- Explicit confinement admits only one owner and cannot add raw group roles. -/
-  | confinement
-  /-- A verified, sealed scope cannot add raw group roles. -/
-  | sealed
-  deriving DecidableEq
-
 /-- The endpoint whose role gives consent to an owner transfer. -/
 inductive TransferEndpoint where
   | source

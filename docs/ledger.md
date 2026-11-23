@@ -4967,12 +4967,6 @@ stateDiagram-v2
 - personalFirst
 - ownerId
 
-**Scope restriction**: Restrictions that keep a scoped role grant from widening.
-
-- expiry: Expired grants authorize nothing and expiry can only move earlier.
-- confinement: Explicit confinement admits only one owner and cannot add raw group roles.
-- sealed: A verified, sealed scope cannot add raw group roles.
-
 **Transfer endpoint**: The endpoint whose role gives consent to an owner transfer.
 
 - source
