@@ -921,12 +921,8 @@ macro_rules! ledger {
     (Proxiima.Search.unitScoreCeiling) => {
         1
     };
-    // The denominator offset for federated reciprocal ranks.
-    (Proxiima.Search.storeRankOffset) => {
-        60
-    };
-    // The denominator offset for hybrid reciprocal ranks.
-    (Proxiima.Search.hybridRankOffset) => {
+    // The denominator offset for hybrid and federated reciprocal ranks.
+    (Proxiima.Search.rankOffset) => {
         60
     };
     // The default semantic weight on a ten-point scale.

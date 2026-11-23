@@ -671,7 +671,7 @@ pub enum SpiiceRegistryError {
     /// A comparable band has an invalid or reversed score window.
     #[error(
         "spiice {spiice_id} claims BandComparability::CoreBands, but schema \
-         {schema_id} declares band {band:?} as {window}; comparable bands need finite, \
+         {schema_id} declares band {band:?} as {window}. Comparable bands need finite, \
          ordered endpoints in [0, 1]"
     )]
     ProjectionBandOutsideCoreWindow {

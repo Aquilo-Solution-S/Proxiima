@@ -26,11 +26,8 @@ def unitScoreFloor : Nat := 0
 /-- The upper endpoint of the search score interval. -/
 def unitScoreCeiling : Nat := 1
 
-/-- The denominator offset for federated reciprocal ranks. -/
-def storeRankOffset : Nat := 60
-
-/-- The denominator offset for hybrid reciprocal ranks. -/
-def hybridRankOffset : Nat := 60
+/-- The denominator offset for hybrid and federated reciprocal ranks. -/
+def rankOffset : Nat := 60
 
 /-- The default semantic weight on a ten-point scale. -/
 def hybridSemanticWeightTenths : Nat := 5
@@ -209,7 +206,7 @@ inductive CandidateStage where
   | hydrateSnippet
   deriving DecidableEq
 
-/-- Spend the window on admissible candidates, read visible Memories, then hydrate the selected page. -/
+/-- Spend the lexical projection window on admissible candidates, read visible Memories, then hydrate the selected page. -/
 def candidateStages : List CandidateStage :=
   [.restrictToAdmissible, .boundRankedWindow, .admitVisibleMemory, .selectPage, .hydrateSnippet]
 
@@ -328,7 +325,7 @@ inductive VectorHttpResult where
   | unknownStore
   deriving DecidableEq
 
-/-- Use distinct response statuses for refusal, unavailability and unknown stores. -/
+/-- Dispatch distinguishes input or index refusal, backend unavailability and unknown stores. -/
 def vectorErrorStatus : VectorHttpResult → Nat
   | .refused => 400
   | .unavailable => 503
@@ -376,7 +373,7 @@ inductive CandidateHorizon where
   | recencyKeyset
   deriving DecidableEq
 
-/-- Hybrid fixes the horizon in both orders; pure relevance widens within the cap and pure recency applies its keyset. -/
+/-- Hybrid fixes its horizon, pure relevance widens within the cap, and pure recency applies its keyset. -/
 def candidateHorizon : (hybridFusion : Bool) → (recency : Bool) → CandidateHorizon
   | true, true | true, false => .fixed
   | false, true => .recencyKeyset

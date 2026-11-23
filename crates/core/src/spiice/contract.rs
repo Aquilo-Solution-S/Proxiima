@@ -1368,7 +1368,7 @@ impl RankSource {
 pub enum BandComparability {
     /// Scores share the core scale, with finite ordered band endpoints in the unit interval.
     CoreBands,
-    /// Scores use a different scale; `why` records why.
+    /// Scores use a different scale for the reason recorded in `why`.
     Divergent { why: &'static str },
 }
 

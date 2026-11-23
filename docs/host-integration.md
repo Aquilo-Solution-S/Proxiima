@@ -840,7 +840,7 @@ proving exhaustion.
 Rust callers receive this metadata as `MemorySearchPage::candidate_bound` and
 `SearchReadResponse::candidate_bound`. A known candidate budget takes
 precedence when combined with an unknown source; it makes no exhaustion claim
-about the other source. `has_more` still describes continuation inside the
+about the other source. See the [Search ledger](ledger.md#search). `has_more` still describes continuation inside the
 ranking horizon. The metadata is omitted from page serialization and from
 MCP/REST responses; deserializing a page yields `Unknown`.
 

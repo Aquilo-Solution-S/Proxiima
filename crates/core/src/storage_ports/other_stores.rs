@@ -35,7 +35,7 @@ pub const MAX_LINEAGE_REMOTE_ORIGINS: usize = crate::ledger!(Proxiima.Edges.maxR
 
 /// Reciprocal-rank-fusion constant used to merge store result lists.
 pub const STORE_RRF_K: f32 = {
-    let value: u8 = crate::ledger!(Proxiima.Search.storeRankOffset);
+    let value: u8 = crate::ledger!(Proxiima.Search.rankOffset);
     value as f32
 };
 

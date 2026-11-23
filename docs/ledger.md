@@ -7017,9 +7017,7 @@ stateDiagram-v2
 
 **unit score ceiling** = 1: The upper endpoint of the search score interval.
 
-**store rank offset** = 60: The denominator offset for federated reciprocal ranks.
-
-**hybrid rank offset** = 60: The denominator offset for hybrid reciprocal ranks.
+**rank offset** = 60: The denominator offset for hybrid and federated reciprocal ranks.
 
 **hybrid semantic weight tenths** = 5: The default semantic weight on a ten-point scale.
 
@@ -7075,7 +7073,7 @@ stateDiagram-v2
 
 **hnsw scan tuples max** = 2147483647: The maximum admitted HNSW iterative scan tuple cap.
 
-**candidate stages** = \[restrictToAdmissible, boundRankedWindow, admitVisibleMemory, selectPage, hydrateSnippet]: Spend the window on admissible candidates, read visible Memories, then hydrate the selected page.
+**candidate stages** = \[restrictToAdmissible, boundRankedWindow, admitVisibleMemory, selectPage, hydrateSnippet]: Spend the lexical projection window on admissible candidates, read visible Memories, then hydrate the selected page.
 
 **projection requirements** = \[comparableScale, rendererBands, matchesRequestedKind, matchesRequestedSchema, supportsRequestedTags]: An unscoped search still requires the renderer's comparable bands and narrows only by supplied filters.
 
@@ -7217,7 +7215,7 @@ stateDiagram-v2
 | unavailable | 503 |
 | unknownStore | 404 |
 
-- vector error status: Use distinct response statuses for refusal, unavailability and unknown stores.
+- vector error status: Dispatch distinguishes input or index refusal, backend unavailability and unknown stores.
 
 | search mode | no rows | has positive semantic score | warns on lexical degradation |
 | --- | --- | --- | --- |
@@ -7243,7 +7241,7 @@ stateDiagram-v2
 | no | yes | recencyKeyset |
 | no | no | depthPlusPage |
 
-- candidate horizon: Hybrid fixes the horizon in both orders; pure relevance widens within the cap and pure recency applies its keyset.
+- candidate horizon: Hybrid fixes its horizon, pure relevance widens within the cap, and pure recency applies its keyset.
 
 | iterative scan | hnsw settings |
 | --- | --- |

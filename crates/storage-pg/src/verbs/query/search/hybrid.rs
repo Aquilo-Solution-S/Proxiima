@@ -16,7 +16,7 @@ use super::Hit;
 pub(super) const HYBRID_CANDIDATE_WINDOW: u32 =
     proxiima_core::ledger!(Proxiima.Search.hybridWindow);
 const RRF_K: f32 = {
-    let value: u8 = proxiima_core::ledger!(Proxiima.Search.hybridRankOffset);
+    let value: u8 = proxiima_core::ledger!(Proxiima.Search.rankOffset);
     value as f32
 };
 
