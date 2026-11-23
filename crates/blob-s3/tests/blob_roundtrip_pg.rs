@@ -503,6 +503,7 @@ async fn prepare_then_complete_then_read_roundtrip() {
     drop_db(&db_name).await.expect("drop db");
 }
 
+// `Proxiima.Citations.settlementLockOrder`.
 /// Every database-side upload transition holds the owner fence through its
 /// status decision. The trigger pauses each real transition, and a competing
 /// exclusive owner fence must queue on that exact key; this pins finish,

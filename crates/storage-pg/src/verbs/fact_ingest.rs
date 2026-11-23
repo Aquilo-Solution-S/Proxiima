@@ -322,8 +322,8 @@ async fn upsert_blob(
     .map_err(map_err)
 }
 
-/// `Proxiima.Citations.uploadSupportsCitation`. Prefer live rows and hold the
-/// share lock until the Fact commits so abort or expiry cannot invalidate it.
+/// Prefer live rows and hold the share lock until the Fact commits so abort
+/// or expiry cannot invalidate it.
 async fn require_staged_upload(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: uuid::Uuid,
@@ -341,6 +341,11 @@ async fn require_staged_upload(
     .fetch_optional(tx.as_mut())
     .await
     .map_err(map_err)?;
+    check_staged_upload(status)
+}
+
+// `Proxiima.Citations.uploadSupportsCitation`.
+fn check_staged_upload(status: Option<UploadStatus>) -> Result<(), StorageError> {
     match status {
         Some(UploadStatus::Pending | UploadStatus::Completed) => Ok(()),
         Some(UploadStatus::Aborted) => Err(StorageError::Conflict(
@@ -416,6 +421,7 @@ async fn verify_cited_object_ref_in_tx(
     .map_err(map_err)?;
 
     // `Proxiima.Citations.referenceAdmitted` and `Causa.citation_owner_match`.
+    // Foreign and missing objects get the same refusal.
     if !exists {
         return Err(StorageError::ConstraintViolation(format!(
             "cited object {cited_object_id} not found for this owner"
@@ -640,7 +646,6 @@ async fn admit_fact(
     let occurred_at = prepared.occurred_at();
     let mut write = draft.clone();
     if write.blob_id.is_none() {
-        // `Proxiima.Citations.citationAllowed`. This path admits Facts.
         write.blob_id = persist_citation_timeseries(tx, owner, draft, options.citation).await?;
     }
     let content_id = match (content.content_id, content.payloads) {
@@ -665,4 +670,41 @@ async fn admit_fact(
     )
     .await?;
     Ok((outcome, occurred_at, write.blob_id))
+}
+
+#[cfg(test)]
+mod citation_tests {
+    use super::{StorageError, UploadStatus, check_staged_upload};
+
+    #[test]
+    fn upload_citation_outcomes_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json"))
+                .expect("ledger vectors are valid JSON");
+        let rows = vectors["Proxiima.Citations.uploadSupportsCitation"]
+            .as_array()
+            .expect("upload citation vectors");
+        assert_eq!(rows.len(), 5);
+        for row in rows {
+            let lookup = &row["in"][0];
+            let status = if lookup == "missing" {
+                None
+            } else {
+                Some(match lookup["found"][0].as_str() {
+                    Some("pending") => UploadStatus::Pending,
+                    Some("completed") => UploadStatus::Completed,
+                    Some("aborted") => UploadStatus::Aborted,
+                    Some("expired") => UploadStatus::Expired,
+                    other => panic!("unknown upload status: {other:?}"),
+                })
+            };
+            let outcome = match check_staged_upload(status) {
+                Ok(()) => "supported",
+                Err(StorageError::Conflict(_)) => "terminalConflict",
+                Err(StorageError::ConstraintViolation(_)) => "missing",
+                Err(other) => panic!("unexpected citation error: {other:?}"),
+            };
+            assert_eq!(row["out"], outcome, "{status:?}");
+        }
+    }
 }

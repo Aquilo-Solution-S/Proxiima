@@ -980,6 +980,7 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
         );
         let plan: serde_json::Value = sqlx::query_scalar(fence)
             .bind(vec![blob])
+            .bind(proxiima_core::ledger!(Proxiima.Citations.canonicalPrefix))
             .fetch_one(&mut *tx)
             .await?;
         assert!(
@@ -993,6 +994,8 @@ async fn a_blob_erase_reads_its_uploads_through_the_blob_index() {
         let plan: serde_json::Value = sqlx::query_scalar(sweep)
             .bind(vec![blob])
             .bind(owner.into_inner())
+            .bind(proxiima_core::ledger!(Proxiima.Citations.canonicalPrefix))
+            .bind(proxiima_core::ledger!(Proxiima.Citations.transferPrefix))
             .fetch_one(&mut *tx)
             .await?;
         assert!(

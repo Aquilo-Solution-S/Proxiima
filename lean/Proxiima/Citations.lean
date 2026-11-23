@@ -1,4 +1,5 @@
 import Proxiima.Memory
+import Proxiima.ObjectMaintenance
 
 /-! # Citations -/
 
@@ -40,7 +41,7 @@ inductive ReferenceResolution where
   | missing
   deriving DecidableEq
 
-/-- Only the owner's existing cited object satisfies a reference at commit; foreign and missing objects are alike. -/
+/-- Only the owner's existing cited object satisfies a reference at commit. -/
 def referenceAdmitted : ReferenceResolution → Bool
   | .sameOwner => true
   | .otherOwner | .missing => false
@@ -72,11 +73,24 @@ inductive UploadStatus where
   | expired
   deriving DecidableEq
 
-/-- A cited upload needs a pending or completed row with the matching staged content identity. -/
-def uploadSupportsCitation : (hasStagedIdentity : Bool) → UploadStatus → Bool
-  | true, .pending | true, .completed => true
-  | false, .pending | false, .completed | false, .aborted | true, .aborted
-  | false, .expired | true, .expired => false
+/-- Whether the content-identity lookup found an upload and its current status. -/
+inductive UploadLookup where
+  | found (status : UploadStatus)
+  | missing
+  deriving DecidableEq
+
+/-- Outcomes of looking up an upload by the cited content identity. -/
+inductive UploadCitationOutcome where
+  | supported
+  | terminalConflict
+  | missing
+  deriving DecidableEq
+
+/-- A live match supports citation, a terminal match conflicts, and an absent match is missing. -/
+def uploadSupportsCitation : UploadLookup → UploadCitationOutcome
+  | .found .pending | .found .completed => .supported
+  | .found .aborted | .found .expired => .terminalConflict
+  | .missing => .missing
 
 /-- The upload Fact's receipt payload key, within its owner and schema scope. -/
 def uploadReceiptField : String := "content_hash"
@@ -134,18 +148,8 @@ inductive UploadStep where
 def uploadPublicationOrder : List UploadStep :=
   [.prepareSignedLength, .stageVerifiedCanonicalBytes, .commitCorpusAndUpload, .attemptPendingCleanup]
 
-/-- Source of bytes selected by staging an existing pending upload. -/
-inductive StageSource where
-  | transfer
-  | recordedCanonical
-  | refuseExpired
-  deriving DecidableEq
-
-/-- Prefer a recorded canonical stage even after the transfer deadline. -/
-def stageSource : (recordedCanonical : Bool) → (transferExpired : Bool) → StageSource
-  | true, false | true, true => .recordedCanonical
-  | false, false => .transfer
-  | false, true => .refuseExpired
+/-- Staging uses the recorded canonical key when present and otherwise uses the transfer key. -/
+def stageSource : List Proxiima.ObjectMaintenance.UploadKey := [.canonical, .transfer]
 
 /-- Row count returned by a write guarded by exact upload identity. -/
 inductive ChangedRows where
@@ -221,7 +225,7 @@ inductive UploadLock where
   | uploadRow
   deriving DecidableEq
 
-/-- Abort and completion take the owner fence, canonical key fence and upload row lock in that order. -/
+/-- Upload settlements take the owner fence, canonical key fence and any needed upload row lock in that order. -/
 def settlementLockOrder : List UploadLock := [.owner, .canonicalKey, .uploadRow]
 
 /-- Delivery binds exactly one registered read operation to its runtime. -/

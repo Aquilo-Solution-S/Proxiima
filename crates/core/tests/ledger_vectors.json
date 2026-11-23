@@ -1177,23 +1177,15 @@
   {"out": true, "in": ["subsequent", "hyphen"]},
   {"out": false, "in": ["subsequent", "other"]}],
  "Proxiima.Citations.uploadSupportsCitation":
- [{"out": true, "in": [true, "pending"]},
-  {"out": true, "in": [true, "completed"]},
-  {"out": false, "in": [true, "aborted"]},
-  {"out": false, "in": [true, "expired"]},
-  {"out": false, "in": [false, "pending"]},
-  {"out": false, "in": [false, "completed"]},
-  {"out": false, "in": [false, "aborted"]},
-  {"out": false, "in": [false, "expired"]}],
+ [{"out": "supported", "in": [{"found": ["pending"]}]},
+  {"out": "supported", "in": [{"found": ["completed"]}]},
+  {"out": "terminalConflict", "in": [{"found": ["aborted"]}]},
+  {"out": "terminalConflict", "in": [{"found": ["expired"]}]},
+  {"out": "missing", "in": ["missing"]}],
  "Proxiima.Citations.transferablePublication":
  [{"out": false, "in": ["missing"]},
   {"out": true, "in": ["allExact"]},
   {"out": false, "in": ["containsInvalid"]}],
- "Proxiima.Citations.stageSource":
- [{"out": "recordedCanonical", "in": [true, true]},
-  {"out": "recordedCanonical", "in": [true, false]},
-  {"out": "refuseExpired", "in": [false, true]},
-  {"out": "transfer", "in": [false, false]}],
  "Proxiima.Citations.stageOutcome":
  [{"out": "invalid", "in": ["pending", "none", true]},
   {"out": "invalid", "in": ["pending", "none", false]},

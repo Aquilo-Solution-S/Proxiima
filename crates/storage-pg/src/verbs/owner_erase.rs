@@ -2,7 +2,9 @@
 // surfaces, lifecycle) — every argument is a distinct authority the erase has to be handed, and
 // bundling them into a struct would only move the arity to its constructor.
 
-use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
+use crate::access::upload_keys::{
+    CANONICAL_PREFIX, TRANSFER_PREFIX, other_upload_implies_key_sql, upload_implied_keys_sql,
+};
 use std::collections::BTreeMap;
 
 use proxiima_core::owner_inverse::{
@@ -1067,7 +1069,7 @@ async fn lock_selected_object_keys(
         SelectionScope::Owner => sqlx::query_scalar(concat!(
             "SELECT DISTINCT k.object_key
                FROM proxiima_core.blob_uploads u ",
-            upload_implied_keys_sql!(),
+            upload_implied_keys_sql!(2, 3),
             "
               WHERE u.owner_id = $1
                 AND k.object_key IS NOT NULL
@@ -1082,6 +1084,8 @@ async fn lock_selected_object_keys(
               ORDER BY k.object_key",
         ))
         .bind(owner_id)
+        .bind(CANONICAL_PREFIX)
+        .bind(TRANSFER_PREFIX)
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err)?,
@@ -1091,12 +1095,13 @@ async fn lock_selected_object_keys(
                    FROM proxiima_core.blob_uploads u
                    JOIN selected_blobs sb ON sb.blob_id = u.blob_id
                  UNION
-                 SELECT 'objects/' || coalesce(u.mounted_from_upload_id, u.upload_id)::text
+                 SELECT $1::text || coalesce(u.mounted_from_upload_id, u.upload_id)::text
                    FROM proxiima_core.blob_uploads u
                    JOIN selected_blobs sb ON sb.blob_id = u.blob_id
              ) keys
              ORDER BY key",
         )
+        .bind(CANONICAL_PREFIX)
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err)?,
@@ -1708,7 +1713,7 @@ async fn enqueue_blob_object_keys(
             "INSERT INTO proxiima_core.cold_purge_pending (object_key, owner_id, object_store)
              SELECT DISTINCT ON (u.object_store, k.object_key) k.object_key, u.owner_id, u.object_store
                FROM proxiima_core.blob_uploads u ",
-            upload_implied_keys_sql!(),
+            upload_implied_keys_sql!(2, 3),
             "
               WHERE u.owner_id = $1
                 AND k.object_key IS NOT NULL
@@ -1726,6 +1731,8 @@ async fn enqueue_blob_object_keys(
              RETURNING object_key, object_store",
         ))
         .bind(owner_id)
+        .bind(CANONICAL_PREFIX)
+        .bind(TRANSFER_PREFIX)
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err)?,
@@ -1734,7 +1741,7 @@ async fn enqueue_blob_object_keys(
              SELECT DISTINCT ON (u.object_store, k.object_key) k.object_key, u.owner_id, u.object_store
                FROM proxiima_core.blob_uploads u
                JOIN selected_blobs sb ON sb.blob_id = u.blob_id ",
-            upload_implied_keys_sql!(),
+            upload_implied_keys_sql!(1, 2),
             "
               WHERE k.object_key IS NOT NULL
                 AND NOT EXISTS (
@@ -1755,6 +1762,8 @@ async fn enqueue_blob_object_keys(
                 SET enqueued_at = now(), next_attempt_at = now()
              RETURNING object_key, object_store",
         ))
+        .bind(CANONICAL_PREFIX)
+        .bind(TRANSFER_PREFIX)
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err)?,

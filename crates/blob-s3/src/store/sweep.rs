@@ -99,6 +99,7 @@ impl CitedBlobStore {
         use proxiima_storage_pg::access::{fences, upload_keys};
 
         let mut tx = self.begin_platform_transaction().await?;
+        // `Proxiima.Citations.settlementLockOrder`.
         fences::lock_owner_fence_shared_tx(&mut tx, owner).await?;
         fences::lock_object_keys_tx(&mut tx, &[canonical_object_key(upload_id)]).await?;
         let expired = sqlx::query(concat!(

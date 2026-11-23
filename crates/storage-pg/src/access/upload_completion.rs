@@ -207,7 +207,7 @@ pub(super) async fn ensure_series_uploads_published(
                                AND btrim(p.bucket) <> ''
                                AND btrim(p.filename) <> ''
                                AND btrim(p.mime) <> ''
-                               AND p.object_key = 'objects/' || COALESCE(
+                               AND p.object_key = $3::text || COALESCE(
                                    p.mounted_from_upload_id, p.upload_id
                                )::text
                         )
@@ -225,13 +225,14 @@ pub(super) async fn ensure_series_uploads_published(
                 AND btrim(u.bucket) <> ''
                 AND btrim(u.filename) <> ''
                 AND btrim(u.mime) <> ''
-                AND u.object_key = 'objects/' || COALESCE(
+                AND u.object_key = $3::text || COALESCE(
                     u.mounted_from_upload_id, u.upload_id
                 )::text
          )",
     )
     .bind(from_id)
     .bind(handle)
+    .bind(super::upload_keys::CANONICAL_PREFIX)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_err)?;

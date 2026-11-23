@@ -130,11 +130,7 @@ pub(super) async fn find_destination_blob(
     Ok(existing)
 }
 
-/// A blob's completed upload rows are a readable publication set only when at
-/// least one exists and every one carries exact metadata and the owner-free
-/// key minted by its upload lineage. Transfer must reject a mixed valid and
-/// malformed set: the read path's newest-row choice could otherwise select
-/// the malformed row after transfer.
+// A mixed set could make the newest-row read select a malformed row after transfer.
 // `Proxiima.Citations.transferablePublication`.
 async fn has_only_exact_upload_publications(
     tx: &mut Transaction<'_, Postgres>,
@@ -158,7 +154,7 @@ async fn has_only_exact_upload_publications(
                 AND btrim(u.filename) <> ''
                 AND btrim(u.mime) <> ''
                 AND u.object_key =
-                    'objects/' || COALESCE(u.mounted_from_upload_id, u.upload_id)::text
+                    $5::text || COALESCE(u.mounted_from_upload_id, u.upload_id)::text
                 AND ($4::uuid IS NULL OR u.upload_id = $4)
          ) AND NOT EXISTS (
              SELECT 1
@@ -176,7 +172,7 @@ async fn has_only_exact_upload_publications(
                     OR btrim(u.filename) = ''
                     OR btrim(u.mime) = ''
                     OR u.object_key IS DISTINCT FROM
-                        'objects/' || COALESCE(
+                        $5::text || COALESCE(
                             u.mounted_from_upload_id, u.upload_id
                         )::text
                 )
@@ -186,6 +182,7 @@ async fn has_only_exact_upload_publications(
     .bind(owner_id)
     .bind(content_hash)
     .bind(selected_upload_id)
+    .bind(super::upload_keys::CANONICAL_PREFIX)
     .fetch_one(&mut **tx)
     .await
     .map_err(map_err)
@@ -237,12 +234,13 @@ pub(super) async fn move_blob_rows_in_place(
             AND btrim(filename) <> ''
             AND btrim(mime) <> ''
             AND object_key =
-                'objects/' || COALESCE(mounted_from_upload_id, upload_id)::text",
+                $5::text || COALESCE(mounted_from_upload_id, upload_id)::text",
     )
     .bind(blob_id)
     .bind(to_id)
     .bind(from_id)
     .bind(content_hash)
+    .bind(super::upload_keys::CANONICAL_PREFIX)
     .execute(&mut **tx)
     .await
     .map_err(map_err)?
@@ -342,7 +340,7 @@ pub(super) async fn mount_blob_for_destination(
             AND btrim(u.filename) <> ''
             AND btrim(u.mime) <> ''
             AND u.object_key =
-                'objects/' || COALESCE(u.mounted_from_upload_id, u.upload_id)::text
+                $7::text || COALESCE(u.mounted_from_upload_id, u.upload_id)::text
             AND ($6::uuid IS NULL OR u.upload_id = $6)",
     )
     .bind(blob_id)
@@ -351,6 +349,7 @@ pub(super) async fn mount_blob_for_destination(
     .bind(from_id)
     .bind(content_hash)
     .bind(selected_upload_id)
+    .bind(super::upload_keys::CANONICAL_PREFIX)
     .execute(&mut **tx)
     .await
     .map_err(map_err)?

@@ -35,6 +35,7 @@ pub(super) fn minting_upload_id(upload_id: Uuid, mounted_from_upload_id: Option<
 }
 
 /// Use the minting upload ID so mounting a mount preserves the same key.
+/// The mount column is an argument so every caller has to read it.
 fn locator_was_minted_here(
     object_key: &str,
     upload_id: Uuid,

@@ -397,6 +397,7 @@ impl CitedBlobStore {
                 continue;
             }
             let mut tx = self.begin_reconcile_transaction().await?;
+            // `Proxiima.Citations.settlementLockOrder`.
             fences::lock_owner_fence_shared_tx(&mut tx, &OwnerId::from(claim.owner_id)).await?;
             fences::lock_object_keys_tx(&mut tx, std::slice::from_ref(&key)).await?;
             let inserted = sqlx::query(

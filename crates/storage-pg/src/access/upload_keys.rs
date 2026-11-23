@@ -5,6 +5,10 @@ use proxiima_core::{OwnerId, StorageError};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+pub(crate) const CANONICAL_PREFIX: &str =
+    proxiima_core::ledger!(Proxiima.Citations.canonicalPrefix);
+pub(crate) const TRANSFER_PREFIX: &str = proxiima_core::ledger!(Proxiima.Citations.transferPrefix);
+
 /// Every object key the upload row `u` implies, as rows of
 /// `k(object_key, key_kind, key_id)`; filter on `k.object_key IS NOT NULL`.
 ///
@@ -23,18 +27,28 @@ use uuid::Uuid;
 /// `upload_transfer_key`: `PostgreSQL`'s `uuid::text` is the same lower-case
 /// hyphenated form.
 macro_rules! upload_implied_keys_sql {
-    () => {
-        "CROSS JOIN LATERAL (VALUES
-            ('objects/' || coalesce(u.mounted_from_upload_id, u.upload_id)::text,
+    ($canonical:literal, $transfer:literal) => {
+        concat!(
+            "CROSS JOIN LATERAL (VALUES
+            ($",
+            $canonical,
+            "::text || coalesce(u.mounted_from_upload_id, u.upload_id)::text,
              'objects', coalesce(u.mounted_from_upload_id, u.upload_id)),
             (CASE WHEN u.mounted_from_upload_id IS NULL
-                  THEN 'pending/' || u.upload_id::text END,
+                  THEN $",
+            $transfer,
+            "::text || u.upload_id::text END,
              'pending', u.upload_id),
-            (CASE WHEN u.object_key <> 'objects/' || coalesce(u.mounted_from_upload_id, u.upload_id)::text
-                   AND u.object_key <> 'pending/' || u.upload_id::text
+            (CASE WHEN u.object_key <> $",
+            $canonical,
+            "::text || coalesce(u.mounted_from_upload_id, u.upload_id)::text
+                   AND u.object_key <> $",
+            $transfer,
+            "::text || u.upload_id::text
                   THEN u.object_key END,
              'recorded', NULL::uuid)
         ) AS k(object_key, key_kind, key_id)"
+        )
     };
 }
 pub(crate) use upload_implied_keys_sql;
@@ -61,7 +75,7 @@ const UPLOAD_FENCE_KEYS_SQL: &str = "\
 SELECT DISTINCT key FROM (
     SELECT object_key AS key FROM proxiima_core.blob_uploads WHERE blob_id = ANY($1::uuid[])
     UNION
-    SELECT 'objects/' || coalesce(mounted_from_upload_id, upload_id)::text
+    SELECT $2::text || coalesce(mounted_from_upload_id, upload_id)::text
       FROM proxiima_core.blob_uploads WHERE blob_id = ANY($1::uuid[])
 ) keys
 ORDER BY key";
@@ -166,6 +180,7 @@ pub(crate) async fn blob_upload_object_keys(
     }
     sqlx::query_scalar(UPLOAD_FENCE_KEYS_SQL)
         .bind(blob_ids)
+        .bind(CANONICAL_PREFIX)
         .fetch_all(&mut **tx)
         .await
         .map_err(map_err)

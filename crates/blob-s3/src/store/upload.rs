@@ -50,6 +50,9 @@ where
             {
                 attempt += 1;
             }
+            Err(BlobError::Db(error)) if proxiima_storage_pg::is_transient_conflict(&error) => {
+                return Err(proxiima_storage_pg::map_err(error).into());
+            }
             outcome => return outcome,
         }
     }
@@ -509,6 +512,7 @@ impl CitedBlobStore {
         // bytes or its owner: the key the read gate will re-derive and
         // compare against for the life of the row.
         let canonical_key = canonical_object_key(upload_id);
+        // `Proxiima.Citations.stageSource`.
         let (canonical_key, etag) = if source_object_key == pending_key {
             let body = streamed.take_bytes();
             publish_canonical(
@@ -551,21 +555,23 @@ impl CitedBlobStore {
         upload_id: Uuid,
         row: &super::rows::UploadRow,
     ) -> Result<Option<CitedBlobStaged>, BlobError> {
-        // `Proxiima.Citations.stageSource`. Expiry rechecks staging under the row lock.
+        // `Proxiima.ObjectMaintenance.mayExpire`. Expiry rechecks staging under the row lock.
         let status = if row.status == UploadStatus::Pending
             && row.expires_at < OffsetDateTime::now_utc()
         {
             // Finish or abort may have won since this snapshot. Use the
             // status observed under the expiry helper's row lock.
-            {
+            let (status, owed) = with_retried_tx(|| async {
                 let mut tx = self.begin_owner_tx(owner_scope).await?;
-                let (status, owed) =
+                let outcome =
                     mark_upload_expired_on_connection(&mut tx, &self.store_id, owner, upload_id)
                         .await?;
-                tx.commit().await.map_err(BlobError::Db)?;
-                self.purge_owed_after_commit(owed).await;
-                status
-            }
+                tx.commit().await?;
+                Ok(outcome)
+            })
+            .await?;
+            self.purge_owed_after_commit(owed).await;
+            status
         } else {
             row.status
         };
@@ -685,6 +691,7 @@ impl CitedBlobStore {
         // reference. An owner erase decides "no surviving row names this key"
         // under the same lock, so holding it here is what keeps the two
         // answers from being taken against different snapshots.
+        // `Proxiima.Citations.settlementLockOrder`.
         lock_fence_and_keys(&mut tx, owner, std::slice::from_ref(canonical_key)).await?;
         let rows_affected = sqlx::query(
             "UPDATE proxiima_core.blob_uploads \
@@ -913,7 +920,7 @@ impl CitedBlobStore {
     async fn purge_pending_upload_best_effort(&self, bucket: &str, upload_id: Uuid) {
         if let Err(error) = self.purge_pending_upload(bucket, upload_id).await {
             tracing::warn!(
-                bucket,
+                store = %self.store_id,
                 %upload_id,
                 %error,
                 "pending transfer key left in place; erasing the upload owes it"
@@ -1140,6 +1147,69 @@ impl CitedBlobStore {
 #[cfg(test)]
 #[path = "upload_read_tests.rs"]
 mod read_classification_tests;
+
+#[cfg(test)]
+mod transaction_retry_tests {
+    use super::{BlobError, with_retried_tx};
+    use proxiima_core::StorageError;
+    use sqlx::error::{DatabaseError, ErrorKind};
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("transaction conflict")]
+    struct Conflict(&'static str);
+
+    impl DatabaseError for Conflict {
+        fn message(&self) -> &'static str {
+            "transaction conflict"
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    #[tokio::test]
+    async fn exhausted_database_conflicts_reach_the_host_as_retryable() {
+        for code in ["40P01", "40001", "55P03"] {
+            let mut attempts = 0;
+            let error = with_retried_tx(|| {
+                attempts += 1;
+                async {
+                    Err::<(), _>(BlobError::Db(sqlx::Error::Database(Box::new(Conflict(
+                        code,
+                    )))))
+                }
+            })
+            .await
+            .expect_err("all attempts conflict");
+
+            assert_eq!(attempts, proxiima_storage_pg::MAX_TRANSACTION_ATTEMPTS);
+            assert!(
+                matches!(
+                    super::super::port::blob_error_to_storage(error),
+                    StorageError::Retryable(_)
+                ),
+                "{code}"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod conditional_publication_tests {

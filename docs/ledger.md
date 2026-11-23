@@ -875,6 +875,17 @@ stateDiagram-v2
 - aborted
 - expired
 
+**Upload lookup**: Whether the content-identity lookup found an upload and its current status.
+
+- found
+- missing
+
+**Upload citation outcome**: Outcomes of looking up an upload by the cited content identity.
+
+- supported
+- terminalConflict
+- missing
+
 **Publication set**: What a transfer finds in the completed source upload set.
 
 - missing
@@ -894,12 +905,6 @@ stateDiagram-v2
 - stageVerifiedCanonicalBytes
 - commitCorpusAndUpload
 - attemptPendingCleanup
-
-**Stage source**: Source of bytes selected by staging an existing pending upload.
-
-- transfer
-- recordedCanonical
-- refuseExpired
 
 **Changed rows**: Row count returned by a write guarded by exact upload identity.
 
@@ -1000,7 +1005,9 @@ stateDiagram-v2
 
 **upload publication order** = \[prepareSignedLength, stageVerifiedCanonicalBytes, commitCorpusAndUpload, attemptPendingCleanup]: Publication stages verified bytes before the atomic corpus commit and treats cleanup as best effort.
 
-**settlement lock order** = \[owner, canonicalKey, uploadRow]: Abort and completion take the owner fence, canonical key fence and upload row lock in that order.
+**stage source** = \[canonical, transfer]: Staging uses the recorded canonical key when present and otherwise uses the transfer key.
+
+**settlement lock order** = \[owner, canonicalKey, uploadRow]: Upload settlements take the owner fence, canonical key fence and any needed upload row lock in that order.
 
 **completed upload order** = \[completionDescendingNullsLast, uploadIdDescending]: Ordinary reads break completion-time ties by descending upload identity.
 
@@ -1035,23 +1042,17 @@ stateDiagram-v2
 | otherOwner | no |
 | missing | no |
 
-- reference admitted: Only the owner's existing cited object satisfies a reference at commit; foreign and missing objects are alike.
+- reference admitted: Only the owner's existing cited object satisfies a reference at commit.
 
-**upload supports citation**: A cited upload needs a pending or completed row with the matching staged content identity.
+| upload lookup | upload supports citation |
+| --- | --- |
+| found (pending) | supported |
+| found (completed) | supported |
+| found (aborted) | terminalConflict |
+| found (expired) | terminalConflict |
+| missing | missing |
 
-```mermaid
-stateDiagram-v2
-  state "yes" as s0
-  state "no" as s1
-  s0 --> s0 : pending
-  s0 --> s0 : completed
-  s0 --> s1 : aborted
-  s0 --> s1 : expired
-  s1 --> s1 : pending
-  s1 --> s1 : completed
-  s1 --> s1 : aborted
-  s1 --> s1 : expired
-```
+- upload supports citation: A live match supports citation, a terminal match conflicts, and an absent match is missing.
 
 | publication set | transferable publication |
 | --- | --- |
@@ -1060,15 +1061,6 @@ stateDiagram-v2
 | containsInvalid | no |
 
 - transferable publication: Transfer requires at least one completed upload and refuses any mixed invalid set.
-
-| recorded canonical | transfer expired | stage source |
-| --- | --- | --- |
-| yes | yes | recordedCanonical |
-| yes | no | recordedCanonical |
-| no | yes | refuseExpired |
-| no | no | transfer |
-
-- stage source: Prefer a recorded canonical stage even after the transfer deadline.
 
 | upload status | changed rows | abort outcome |
 | --- | --- | --- |

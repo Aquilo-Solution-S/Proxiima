@@ -161,8 +161,7 @@ pub(super) async fn mark_upload_expired_on_connection(
     owner: &OwnerId,
     upload_id: Uuid,
 ) -> Result<(UploadStatus, Vec<ColdPurgeEntry>), BlobError> {
-    // Fence → key → row, as abort and the stage locator write take them: a
-    // stage that is about to record its canonical locator holds this key.
+    // `Proxiima.Citations.settlementLockOrder`.
     lock_fence_and_keys(tx, owner, &[super::keys::canonical_object_key(upload_id)]).await?;
     let row = load_upload_optional_for_update(tx, owner, upload_id)
         .await?
@@ -189,8 +188,7 @@ pub(super) async fn mark_upload_expired_on_connection(
     let owed = proxiima_storage_pg::access::upload_keys::owe_terminal_upload_keys_tx(
         tx, store, owner, upload_id,
     )
-    .await
-    .map_err(|err| BlobError::State(format!("owe expired upload keys: {err}")))?;
+    .await?;
     Ok((UploadStatus::Expired, owed))
 }
 

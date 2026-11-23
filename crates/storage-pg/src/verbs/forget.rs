@@ -11,7 +11,9 @@ use proxiima_core::{
 };
 
 use crate::access::fences::lock_owner_fence_shared_tx;
-use crate::access::upload_keys::{other_upload_implies_key_sql, upload_implied_keys_sql};
+use crate::access::upload_keys::{
+    CANONICAL_PREFIX, TRANSFER_PREFIX, other_upload_implies_key_sql, upload_implied_keys_sql,
+};
 use crate::verbs::maintenance::PurgeBackoff;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -1489,6 +1491,8 @@ async fn gc_unreferenced_blobs(
     sqlx::query_as::<_, (String, String)>(GC_UNREFERENCED_BLOBS_SQL)
         .bind(cited)
         .bind(owner_id)
+        .bind(CANONICAL_PREFIX)
+        .bind(TRANSFER_PREFIX)
         .fetch_all(tx.as_mut())
         .await
         .map_err(map_err)
@@ -1518,7 +1522,7 @@ enqueued AS (
     SELECT DISTINCT ON (u.object_store, k.object_key) k.object_key, u.owner_id, u.object_store
       FROM proxiima_core.blob_uploads u
       JOIN orphans o ON o.blob_id = u.blob_id ",
-    upload_implied_keys_sql!(),
+    upload_implied_keys_sql!(3, 4),
     "
      WHERE k.object_key IS NOT NULL
        AND NOT EXISTS (
