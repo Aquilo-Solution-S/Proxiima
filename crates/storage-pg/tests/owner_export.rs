@@ -549,6 +549,36 @@ async fn export_carries_owner_scoped_opaque_blob_metadata() {
     result.expect("opaque blob export test failed");
 }
 
+#[test]
+fn exported_counts_are_derived_after_decoding_and_editing_rows() {
+    let user_id = UserId::new(Uuid::now_v7());
+    let mut bundle = proxiima_core::OwnerExportBundle {
+        operation_id: Uuid::now_v7(),
+        target: OwnerExportTarget::PersonalOwner { user_id },
+        owner: OwnerId::from(user_id),
+        derived_requester: None,
+        derived_auth_path: "System".into(),
+        exported_at: time::OffsetDateTime::UNIX_EPOCH,
+        tables: [("fixture".into(), vec![serde_json::json!({"t": 1})])].into(),
+        edges: vec![serde_json::json!({"source": 1, "target": 2})],
+    };
+    let mut wire = serde_json::to_value(&bundle).expect("export encodes");
+    assert_eq!(
+        wire["counts"],
+        serde_json::json!({"fixture": 1, "edges": 1})
+    );
+    wire["counts"] = serde_json::json!({"fixture": 99, "edges": 0});
+    bundle = serde_json::from_value(wire).expect("legacy count map decodes");
+    assert_eq!(bundle.count("fixture"), 1);
+    assert_eq!(bundle.count("edges"), 1);
+    bundle.tables.get_mut("fixture").expect("table").clear();
+    bundle.edges.clear();
+    assert_eq!(
+        serde_json::to_value(&bundle).expect("edited export encodes")["counts"],
+        serde_json::json!({"fixture": 0, "edges": 0})
+    );
+}
+
 /// The bundle carries EXACTLY the surfaces the contracts declare
 /// exportable — including the ones that came back empty.
 ///

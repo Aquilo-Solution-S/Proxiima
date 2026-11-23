@@ -1,14 +1,6 @@
 //! Spiice-scoped series erase: the storage half of
 //! `UnitOfWork::erase_own_series` (docs/data-and-erasure.md).
 //!
-//! The engine has authorized the owner and resolved the named spiice's
-//! memory schemas. This module turns the selection into a closed footprint —
-//! every version of every selected series, plus every series whose rows
-//! reference the footprint through a foreign key — refuses the footprint when
-//! any of it lies outside the owner, the schemas or the cap, locks it, and
-//! erases it through [`erase_memory_series`]. Nothing is deleted before the
-//! last refusal has been asked.
-//!
 //! It runs on the transaction `PgStorage::begin_series_erase` opened: the
 //! owner's exclusive fence is already held, and it was the transaction's
 //! first lock.
@@ -247,6 +239,7 @@ async fn close_footprint(
 }
 
 /// The first reason the footprint is out of scope, cap excluded.
+// `Proxiima.ErasureExport.seriesScope`.
 fn scope_refusal(
     footprint: &Footprint,
     owner_id: Uuid,
@@ -300,8 +293,7 @@ fn scope_refusal(
     None
 }
 
-/// An `Ids` list is erased whole or not at all: its closure over either cap
-/// is refused. Every other selection is paged, never refused for its size.
+/// Check both caps on a complete explicit selection.
 fn over_cap(footprint: &Footprint, request: &SeriesEraseRequest<'_>) -> Option<Vec<String>> {
     let series = footprint.handles().len();
     let versions = footprint.versions.len();
@@ -344,18 +336,19 @@ const ADMITTED_BEFORE_SQL: &str = concat!(
  LIMIT $4"
 );
 
-/// Series of `schema` under `owner_id` whose newest version is older than
-/// the cutoff by its own clock: `occurred_at` (`$3`) where it has one, its
-/// admission `t` (below the floor `$4`) where it has none, oldest first. A
-/// schema is one kind, so its versions either all carry `occurred_at` (a
-/// Fact) or none do, and one ordering covers both clocks.
-const OCCURRED_BEFORE_SQL: &str = concat!(
-    newest_versions_cte!(),
-    "SELECT t FROM newest
+/// Compare each series by occurrence or admission, then break ties by exact ID.
+macro_rules! occurred_before_from_newest {
+    () => {
+        "SELECT t FROM newest
  WHERE COALESCE(occurred_at < $3, t < $4)
- ORDER BY occurred_at, t
+ ORDER BY COALESCE(occurred_at, proxiima_core.memory_created_at(t)), t
  LIMIT $5"
-);
+    };
+}
+
+/// A schema can contain Facts, Abstractions and Perspectives.
+/// `Proxiima.ErasureExport.ageClock`.
+const OCCURRED_BEFORE_SQL: &str = concat!(newest_versions_cte!(), occurred_before_from_newest!());
 
 /// The smallest `UUIDv8` of the millisecond `cutoff` falls in. A `t` below
 /// it was minted in an earlier millisecond; `uuid` compares bytewise and a
@@ -444,7 +437,7 @@ async fn delete_referencing_rows(
     Ok(())
 }
 
-/// Hot memories outside the footprint whose pins name one of its versions.
+/// `Proxiima.ErasureExport.countedInboundFields`.
 const DANGLING_PINS_SQL: &str = "\
 SELECT count(*) FROM proxiima_core.memory_including_forgotten
  WHERE (origins && $1::uuid[] OR refs && $1::uuid[])
@@ -459,6 +452,7 @@ fn over(offending: Vec<String>) -> SeriesEraseRefusal {
 
 /// The page of `request`'s selection, and whether matching series were left
 /// for a later call. `Err` is a refusal.
+// `Proxiima.ErasureExport.seedVersions`.
 async fn resolve_footprint(
     tx: &mut Transaction<'_, Postgres>,
     sidecars: &PgSidecarRegistryFrozen,
@@ -547,15 +541,8 @@ async fn resolve_footprint(
     page_footprint(tx, pairs, owner_id, request, seeds).await
 }
 
-/// The series of one closure in an order any prefix of which may be erased:
-/// a series whose rows reference another series of the closure comes before
-/// it, so the seed's own series is last.
-///
-/// Ranked by the longest chain of referrers above a series: the series
-/// nothing references go first, then what only they reference. Series that
-/// reference one another (a ring) cannot be ranked; each ring is one unit,
-/// and what hangs below it is ranked as usual once the ring is placed. Each
-/// unit is a list of series handles, oldest first.
+/// `Proxiima.ErasureExport.pageUnits`. Rank by the longest chain of referrers,
+/// using the oldest handle first among equally ranked series.
 fn erase_order(closure: &Footprint) -> Vec<Vec<Uuid>> {
     let mut references: BTreeMap<Uuid, BTreeSet<Uuid>> = BTreeMap::new();
     // The distinct series that reference each series and are not placed yet.
@@ -753,14 +740,7 @@ impl Tarjan<'_> {
 /// turn, each in [`erase_order`], up to `max_versions` versions, and whether
 /// more of the selection waits.
 ///
-/// `seeds` is oldest first, one past `max_series` when more wait. A page ends
-/// at the first unit that does not fit, never skipping it for a later one, so
-/// a later seed is only reached once an older one is wholly in the page. A
-/// seed whose closure is outside scope, or holds one unit over a page, is
-/// refused before any of that closure is erased. When older seeds already
-/// fill this page, the page stands and the refusal waits for the next call,
-/// when that seed is the oldest one left: refusing it now would roll the
-/// older page back and the same call would refuse forever.
+/// The seed query reads one extra row to detect another page.
 async fn page_footprint(
     tx: &mut Transaction<'_, Postgres>,
     pairs: &[ReferencePair],
@@ -826,11 +806,8 @@ async fn page_footprint(
     Ok(Ok((page, more_seeds)))
 }
 
-/// `page` when it already holds older seeds, otherwise the refusal.
-///
-/// An empty page means this seed is the oldest one left, so the refusal is
-/// the call. A page that already closed older seeds is committed; the next
-/// call meets this seed with an empty page and refuses it then.
+/// `Proxiima.ErasureExport.blockedSeed`. Rolling back earlier work would
+/// cause every retry to meet the same blocked seed.
 fn page_or_refusal(
     page: Footprint,
     refusal: SeriesEraseRefusal,
@@ -879,6 +856,7 @@ pub(crate) async fn erase_series(
         ));
     }
 
+    // `Proxiima.ErasureExport.closureOrder`.
     lock_admissions_for_erase(tx, owner, &ts).await?;
     if footprint_grew(tx, &pairs, &footprint).await? {
         return Err(StorageError::Retryable(
@@ -1030,6 +1008,35 @@ mod tests {
         );
         closure.references.push((second, Uuid::from_u128(2)));
         assert_eq!(numbers(erase_order(&closure)), vec![vec![2], vec![1]]);
+    }
+
+    #[tokio::test]
+    async fn occurrence_and_admission_share_one_page_order() {
+        let (pg, _database) = crate::test_fixtures::fresh_pg("mixed_erase_clocks").await;
+        let instant = |second| time::OffsetDateTime::from_unix_timestamp(second).unwrap();
+        let derived = memory_uuid_floor(instant(1_790_000_000));
+        let tied_fact = memory_uuid_floor(instant(1_790_000_001));
+        let recent_fact = memory_uuid_floor(instant(1_790_000_002));
+        let old_fact = memory_uuid_floor(instant(1_790_000_003));
+        let cutoff = instant(1_790_000_004);
+        let seeds: Vec<Uuid> = sqlx::query_scalar(concat!(
+            "WITH newest AS (SELECT * FROM unnest($1::uuid[], $2::timestamptz[]) AS v(t, occurred_at)) ",
+            occurred_before_from_newest!()
+        ))
+        .bind([derived, tied_fact, recent_fact, old_fact].as_slice())
+        .bind([
+            None,
+            Some(instant(1_790_000_000)),
+            Some(instant(1_790_000_001)),
+            Some(instant(1_789_999_999)),
+        ].as_slice())
+        .bind(cutoff)
+        .bind(memory_uuid_floor(cutoff))
+        .bind(3_i64)
+        .fetch_all(pg.pool_for_tests())
+        .await
+        .expect("the next page of mixed-clock series");
+        assert_eq!(seeds, [old_fact, derived, tied_fact]);
     }
 
     #[test]

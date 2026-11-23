@@ -2067,8 +2067,8 @@ async fn export_uses_one_read_only_snapshot_and_allowlist() {
             !bundle.tables.contains_key(METADATA_TABLE),
             "excluded policy is honored"
         );
-        assert_eq!(bundle.counts.get(FACTS_TABLE), Some(&1));
-        assert_eq!(bundle.counts.get(METADATA_TABLE), None);
+        assert_eq!(bundle.counts().get(FACTS_TABLE), Some(&1));
+        assert_eq!(bundle.counts().get(METADATA_TABLE), None);
 
         for fault in [
             ExportFault::ExtraField,
@@ -2310,7 +2310,7 @@ async fn erase_fence_orders_write_session_and_export_snapshot_and_cancellation_l
         lifecycle.set_erase_gate(None);
         let bundle = export.await??;
         assert_eq!(
-            bundle.counts.get(FACTS_TABLE),
+            bundle.counts().get(FACTS_TABLE),
             Some(&0),
             "queued export sees post-erase state"
         );
@@ -2343,7 +2343,7 @@ async fn erase_fence_orders_write_session_and_export_snapshot_and_cancellation_l
             ExportAuthorization::new_for_tests(OwnerExportTarget::PersonalOwner { user_id });
         let bundle = pg.export_owner_bundle(&recovered, pg.surfaces()).await?;
         assert_eq!(
-            bundle.counts.get(FACTS_TABLE),
+            bundle.counts().get(FACTS_TABLE),
             Some(&0),
             "the pool recovers after cancellation"
         );
@@ -2762,7 +2762,7 @@ async fn an_export_queued_behind_the_fence_reads_what_its_holder_committed() {
         holder.commit().await?;
         let bundle = export.await??;
         assert_eq!(
-            bundle.counts.get(FACTS_TABLE),
+            bundle.counts().get(FACTS_TABLE),
             Some(&1),
             "the snapshot was taken after the fence holder committed"
         );

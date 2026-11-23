@@ -26,10 +26,7 @@ pub async fn export_owner_bundle(
     let owner = auth.audit().owner();
     let owner_id = owner.into_inner();
     validate_lifecycle_dispatch(surfaces, lifecycle.as_ref())?;
-    // One REPEATABLE READ READ ONLY snapshot of every table row, taken after
-    // the export/erase fence is held: an export queued behind an erase reads
-    // what the erase committed. A forgotten memory is a row like any other,
-    // marked `forgotten_at` (#488); nothing is read from an object store.
+    // Forgotten rows keep their mark. The snapshot reads no object bytes.
     let tx = platform.begin_export_snapshot().await?;
     export_owner_bundle_snapshot(tx, auth, owner, owner_id, surfaces, lifecycle.as_ref()).await
 }
@@ -77,9 +74,7 @@ async fn export_owner_bundle_snapshot(
         ));
     }
 
-    // Pins come from every memory row, forgotten or not, so a forgotten
-    // memory and Goal causal/reference declarations stay in the graph
-    // (including forgotten rows and historical versions).
+    // Project pins from the same snapshot as the exported rows.
     let mut edges = pins_from_memories(
         tables
             .get("proxiima_core.memory")
@@ -93,13 +88,6 @@ async fn export_owner_bundle_snapshot(
     edges.sort_by_key(pin_sort_key);
     edges.dedup_by(|left, right| pin_sort_key(left) == pin_sort_key(right));
 
-    // `Proxiima.HostState.ExportReceiptRule.countReturnedRows`.
-    let mut counts: BTreeMap<String, usize> = tables
-        .iter()
-        .map(|(table, rows)| (table.clone(), rows.len()))
-        .collect();
-    counts.insert("edges".to_owned(), edges.len());
-
     let bundle = OwnerExportBundle {
         operation_id: auth.audit().operation_id(),
         target: auth.audit().target().clone(),
@@ -107,7 +95,6 @@ async fn export_owner_bundle_snapshot(
         derived_requester: auth.audit().derived_requester(),
         derived_auth_path: format!("{:?}", auth.audit().derived_auth_path()),
         exported_at: auth.audit().requested_at(),
-        counts,
         tables,
         edges,
     };
@@ -386,6 +373,7 @@ pub fn export_statement_sql_for_tests(
 ///
 /// A surface with no primary key has no total order to offer and is refused
 /// rather than exported in an order nobody chose.
+// `Proxiima.ErasureExport.exportRowOrder`.
 fn order_by(surface: &Surface, primary_key: &[String]) -> Result<SqlText, StorageError> {
     if primary_key.is_empty() {
         return Err(StorageError::Internal(format!(

@@ -16,8 +16,7 @@ use crate::{GroupId, SourceId, UserId};
 enum EraseAdmission {
     /// Authorized: the token storage requires before it will delete.
     Admitted(EraseAuthorization),
-    /// Turned away, and already recorded against the operation id the caller
-    /// is handed back.
+    /// Turned away with the operation ID carried by the receipt.
     Refused(OwnerEraseOutcome),
 }
 
@@ -59,9 +58,8 @@ impl Engine {
         )
     }
 
-    /// What an authority question comes to before any port is asked: a delegated caller is
-    /// refused, a system caller is granted, and a store with no authority port refuses. Erase,
-    /// export and operator maintenance share it, so they cannot order these differently.
+    /// Shared by erase, export and operator maintenance.
+    /// `Proxiima.ErasureExport.inverseAuthority`.
     fn authority_for(&self, authz: &AuthzContext) -> Authority<'_> {
         match authz.auth_path() {
             AuthPath::Delegated => Authority::Settled(false),
@@ -74,12 +72,6 @@ impl Engine {
     }
 
     /// Whether the authority port grants this erase.
-    ///
-    /// A port FAILURE is not a verdict. Collapsing it into `false` published a
-    /// denial the port never issued: the caller got `Unauthorized` — which
-    /// reads as permanent and nobody retries — and the audit row asserted an
-    /// authorization decision that was never actually made. An unreachable
-    /// port is `internal`, which is retryable and true.
     ///
     /// # Errors
     ///
@@ -217,14 +209,12 @@ impl Engine {
         }
     }
 
-    /// The front half of every owner erase: open the audit row, check
-    /// owner-erase authority, and — when the target names a drop
-    /// event — verify it before storage can receive a deletion token.
+    /// Mint the attempt ID before checking authority or personal-drop proof.
+    /// Refusals return it to the host, which owns any durable audit record.
+    /// `Proxiima.ErasureExport.eraseReceiptOutcomes`.
     ///
-    /// Both refusals carry the operation id the caller is handed back, so an
-    /// attempt that deleted nothing is as identifiable as one that deleted
-    /// everything. Core writes no trail of either: the receipt goes to the
-    /// host, which owns whatever record its own promises require.
+    /// Drain shared-database users to one release before admitting owner erase,
+    /// because the fencing protocol can differ between releases.
     ///
     /// `drop_event` is `Some` exactly for the two personal targets. A group
     /// owner declares no drop event; its abandonment is what storage rechecks
@@ -299,7 +289,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns a protocol error when audit recording or storage execution fails.
+    /// Returns a protocol error when the authority provider or storage fails.
     pub async fn erase_group_owner(
         &self,
         authz: &AuthzContext,
@@ -328,7 +318,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns a protocol error when audit recording, drop-proof access, or storage execution fails.
+    /// Returns a protocol error when the authority provider or storage fails.
     pub async fn erase_personal_owner(
         &self,
         authz: &AuthzContext,
@@ -360,7 +350,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns a protocol error when audit recording or storage execution fails.
+    /// Returns a protocol error when the authority provider or storage fails.
     pub async fn erase_group_source_scope(
         &self,
         authz: &AuthzContext,
@@ -391,7 +381,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns a protocol error when audit recording, drop-proof access, or storage execution fails.
+    /// Returns a protocol error when the authority provider or storage fails.
     pub async fn erase_personal_source_scope(
         &self,
         authz: &AuthzContext,

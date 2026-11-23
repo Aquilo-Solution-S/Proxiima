@@ -503,7 +503,7 @@ pub struct OwnerExportRequest {
 /// `counts` is a projection of `tables`, so a new surface joins the bundle
 /// by declaring itself and nothing else. A typed field per table would put
 /// every new surface behind a hand edit here.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerExportBundle {
     pub operation_id: uuid::Uuid,
     pub target: OwnerExportTarget,
@@ -511,9 +511,6 @@ pub struct OwnerExportBundle {
     pub derived_requester: Option<UserId>,
     pub derived_auth_path: String,
     pub exported_at: time::OffsetDateTime,
-    /// Row counts, DERIVED: one entry per `tables` key, plus `edges`. A
-    /// count that disagrees with the rows beside it is not representable.
-    pub counts: BTreeMap<String, usize>,
     /// Table name → its rows, in the surface's declared key order. Every
     /// exportable surface is present, including the ones that came back
     /// empty: absence in the bundle would otherwise be indistinguishable
@@ -525,6 +522,50 @@ pub struct OwnerExportBundle {
     pub edges: Vec<serde_json::Value>,
 }
 
+// The wire count map is derived on write and discarded on read.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(remote = "OwnerExportBundle", rename = "OwnerExportBundle")]
+struct OwnerExportBundleWire {
+    operation_id: uuid::Uuid,
+    target: OwnerExportTarget,
+    owner: OwnerId,
+    derived_requester: Option<UserId>,
+    derived_auth_path: String,
+    exported_at: time::OffsetDateTime,
+    #[serde(getter = "OwnerExportBundle::counts")]
+    counts: BTreeMap<String, usize>,
+    tables: BTreeMap<String, Vec<serde_json::Value>>,
+    edges: Vec<serde_json::Value>,
+}
+
+impl From<OwnerExportBundleWire> for OwnerExportBundle {
+    fn from(wire: OwnerExportBundleWire) -> Self {
+        drop(wire.counts);
+        Self {
+            operation_id: wire.operation_id,
+            target: wire.target,
+            owner: wire.owner,
+            derived_requester: wire.derived_requester,
+            derived_auth_path: wire.derived_auth_path,
+            exported_at: wire.exported_at,
+            tables: wire.tables,
+            edges: wire.edges,
+        }
+    }
+}
+
+impl serde::Serialize for OwnerExportBundle {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        OwnerExportBundleWire::serialize(self, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OwnerExportBundle {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        OwnerExportBundleWire::deserialize(deserializer)
+    }
+}
+
 impl OwnerExportBundle {
     /// The rows exported from one table, or an empty slice when the table is
     /// not part of the bundle.
@@ -533,10 +574,26 @@ impl OwnerExportBundle {
         self.tables.get(table).map_or(&[], Vec::as_slice)
     }
 
-    /// The count recorded under `key`, or zero.
+    /// The count of the returned rows or edges under `key`, or zero.
     #[must_use]
     pub fn count(&self, key: &str) -> usize {
-        self.counts.get(key).copied().unwrap_or_default()
+        match key {
+            "edges" => self.edges.len(),
+            table => self.table(table).len(),
+        }
+    }
+
+    /// One count per returned table, plus the projected edge count.
+    /// `Proxiima.ErasureExport.exportCountSources`.
+    #[must_use]
+    pub fn counts(&self) -> BTreeMap<String, usize> {
+        let mut counts: BTreeMap<_, _> = self
+            .tables
+            .iter()
+            .map(|(table, rows)| (table.clone(), rows.len()))
+            .collect();
+        counts.insert("edges".into(), self.edges.len());
+        counts
     }
 
     /// Serialize the bundle to recursively sorted-key JSON bytes.
