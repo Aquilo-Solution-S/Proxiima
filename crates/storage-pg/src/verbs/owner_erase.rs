@@ -661,7 +661,6 @@ async fn invoke_host_lifecycle_erase(
         selection.clone(),
         expected_tables,
     );
-    // `Proxiima.HostState.lifecycleContext`.
     let receipt = lifecycle.port.erase(tx, request).await?;
     validate_erase_receipt(
         tx,

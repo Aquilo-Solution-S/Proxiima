@@ -906,7 +906,7 @@ async fn validate_prepared_memory_head(
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_err)?;
-    // `Proxiima.Memory.headReservation`.
+    // Retry if the locked head moved since reservation so a stale version is never materialized.
     if current_head != prepared.expected_head_t {
         return Err(StorageError::Retryable(
             "memory series head changed while preparing admission".into(),

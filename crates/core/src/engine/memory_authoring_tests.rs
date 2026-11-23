@@ -143,30 +143,6 @@ fn the_output_kind_names_the_derivation_phase() {
     }
 }
 
-#[test]
-fn required_origins_match_ledger_vectors() {
-    #[derive(serde::Deserialize)]
-    struct Row {
-        #[serde(rename = "in")]
-        kind: [MemoryKind; 1],
-        out: bool,
-    }
-
-    let root: serde_json::Value =
-        serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
-    let rows: Vec<Row> =
-        serde_json::from_value(root["Proxiima.Edges.requiresOrigins"].clone()).unwrap();
-    assert_eq!(rows.len(), 2);
-    for row in rows {
-        let [kind] = row.kind;
-        assert_eq!(
-            derivation_phase(kind.entity_kind(), &[]).is_err(),
-            row.out,
-            "{kind:?}"
-        );
-    }
-}
-
 /// A to-Abstraction derive that names its inputs carries a well-formed
 /// manifest and reaches storage. There is no batch input left on the
 /// request for a validator to demand: the derived-write API declares

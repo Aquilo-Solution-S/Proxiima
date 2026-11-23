@@ -134,7 +134,7 @@ pub async fn ensure_content_from_payloads(
         return Ok(None);
     }
     let mut hash = hash_sidecar_payloads(payloads)?;
-    // `Proxiima.Payloads.kindScopedHash`.
+    // Include the Memory kind in derived Content hashes to keep kinds distinct.
     if kind != crate::pg_enums::PgMemoryKind::Fact {
         hash = kind_scoped_hash(kind.label(), &hash);
     }

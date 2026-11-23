@@ -138,10 +138,8 @@ fn t_timestamp_sql(t: &'static str) -> SqlText {
 /// The columns of a goal row, as [`GoalRowDb`] reads them. `g` is the goal
 /// version and `h` its series head.
 fn goal_columns() -> SqlText {
-    // `Proxiima.Goals.clockSource`.
-    // `created_at` is this version's time (`changed_at`); `set_at` is
-    // the time of the series' first version, the
-    // least `t` among its rows. Both come from the same `t` derivation.
+    // `changed_at` comes from this version's `t`. `set_at` comes from the
+    // series' first version, the least `t` among its rows.
     let created_at = t_timestamp_sql("g.t");
     let set_at = t_timestamp_sql(
         "(SELECT series.t FROM proxiima_core.goal series \

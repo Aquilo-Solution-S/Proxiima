@@ -107,22 +107,11 @@ def decomposeRootKeyMax : Nat := 162
 /-- The prefix of each child request key, followed by the root key and zero-based index. -/
 def decomposeChildPrefix : String := "goal_decompose"
 
-/-- Whether an edit omits its pin list or supplies its replacement, including an empty list. -/
-inductive PinEdit where
-  | omitted
-  | supplied
-  deriving DecidableEq
-
 /-- Whether a revision retains or replaces a declaration. -/
 inductive RevisionField where
   | carry
   | replace
   deriving DecidableEq
-
-/-- Omitted motivation and evidence carry forward and supplied lists replace them. -/
-def editPins : PinEdit → RevisionField
-  | .omitted => .carry
-  | .supplied => .replace
 
 /-- Declaring writes supply a prompt and lifecycle changes carry the stored prompt byte for byte. -/
 def promptRevision : Event → RevisionField
@@ -133,23 +122,6 @@ def promptRevision : Event → RevisionField
 def parentRevision : Event → RevisionField
   | .set | .decompose => .replace
   | .modify | .pause .keep | .pause .discard | .resume | .achieve | .abandon => .carry
-
-/-- Source classes considered when admitting Goal evidence. -/
-inductive EvidenceSource where
-  | local
-  | otherStore
-  deriving DecidableEq
-
-/-- Where a Goal evidence target's live kind is checked. -/
-inductive EvidenceCheck where
-  | ownerTransaction
-  | callerReadAtSource
-  deriving DecidableEq
-
-/-- Exact live Facts and Abstractions are eligible as Goal evidence under `Causa.RetainedGoalEvidenceValid`. -/
-def evidenceAdmission : EvidenceSource → EvidenceCheck
-  | .local => .ownerTransaction
-  | .otherStore => .callerReadAtSource
 
 /-- Which Goal operations can supply an evidence statement, always optional. -/
 def mayDeclareEvidence : Event → Bool
@@ -277,17 +249,6 @@ def admissionOrder : List AdmissionStep :=
   [.fenceOwners, .reserveFactIdentity, .lockMemoryHandles, .lockLifecycleUnion,
    .lockGoalHeads, .revalidateTargets]
 
-/-- The only Fact admission path allowed to use a reserved Goal-change identity. -/
-inductive FactAdmission where
-  | goalTransaction
-  | ordinaryFact
-  deriving DecidableEq
-
-/-- A Goal-change Fact uses its reserved identity under the pre-held lock union, with no declared scope or read set. -/
-def reserveChangeFact : FactAdmission → Bool
-  | .goalTransaction => true
-  | .ordinaryFact => false
-
 /-- The publication admission for a fresh Goal revision. -/
 inductive ChangeFactAdmission where
   | skip
@@ -343,22 +304,5 @@ def recallActiveGoal : (hasMotivation : Bool) → (perspectiveMatches : Bool) �
 
 /-- A Goal remains owned by its original owner throughout its series. -/
 def transferGoal : Bool := false
-
-/-- The two clocks projected by a Goal version read. -/
-inductive GoalClock where
-  | setAt
-  | changedAt
-  deriving DecidableEq
-
-/-- Which revision identity supplies a projected time. -/
-inductive GoalVersionTime where
-  | firstVersion
-  | selectedVersion
-  deriving DecidableEq
-
-/-- A Goal reports its series birth and the selected version's own write time. -/
-def clockSource : GoalClock → GoalVersionTime
-  | .setAt => .firstVersion
-  | .changedAt => .selectedVersion
 
 end Proxiima.Goals

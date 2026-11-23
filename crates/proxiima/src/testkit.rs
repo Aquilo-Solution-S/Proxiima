@@ -268,8 +268,8 @@ fn fingerprint_hash(
     hash
 }
 
+// Personal fixtures act as their own user. Group fixtures act as a fresh Group admin.
 /// A verified caller acting in its own personal owner, sealed to it.
-/// `Proxiima.Repository.fixtureSubject`.
 ///
 /// # Panics
 ///
@@ -284,7 +284,6 @@ pub fn personal_authz(user: UserId) -> AuthzContext {
 }
 
 /// A fresh verified caller with the admin role on the Group `owner`, sealed to it.
-/// `Proxiima.Repository.fixtureSubject`.
 ///
 /// # Panics
 ///

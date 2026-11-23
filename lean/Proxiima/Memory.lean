@@ -50,40 +50,6 @@ def versionAction : VersionChange → VersionAction
   | .ownerTransfer => .updateOwnerAndEquivalentPointers
   | .capturedSchemaEvolution => .applyCapturedMapping
 
-/-- How a write selects its series. -/
-inductive WriteTarget where
-  | namedSeries
-  | supersedesVersion
-  deriving DecidableEq
-
-/-- The source of the series handle. -/
-inductive SeriesSource where
-  | requestedHandle
-  | targetVersionHandle
-  deriving DecidableEq
-
-/-- Supersession selects the existing series of the named version and writes no supersession pin. -/
-def seriesSource : WriteTarget → SeriesSource
-  | .namedSeries => .requestedHandle
-  | .supersedesVersion => .targetVersionHandle
-
-/-- The locked comparison of the series head against the snapshot taken before minting a greater version ID. -/
-inductive ReservedHead where
-  | unchanged
-  | moved
-  deriving DecidableEq
-
-/-- What the locked writer does after checking the reserved head. -/
-inductive HeadAction where
-  | materialize
-  | retry
-  deriving DecidableEq
-
-/-- Only the reserved head permits materialization of the minted version. -/
-def headReservation : ReservedHead → HeadAction
-  | .unchanged => .materialize
-  | .moved => .retry
-
 /-- The action for a deterministic derived-series head probe. -/
 inductive DerivedHeadAction where
   | replayStoredVersion

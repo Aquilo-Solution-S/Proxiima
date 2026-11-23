@@ -8,7 +8,7 @@ import Proxiima.GoalCollaboration
 namespace Causa
 
 open Proxiima.GoalCollaboration
-  (PublicationUse publicationForkAllowed boundWorkStateAdmitted grantSubjectAdmitted)
+  (PublicationUse boundWorkStateAdmitted grantSubjectAdmitted)
 
 structure GoalControllerEpoch where
   goal_handle : Handle
@@ -74,7 +74,7 @@ def goal_publication_fork_admitted
     (memory_owner_generation : Nat) (memory : Memory) : Prop :=
   goal_publication_read_admitted s requester publication grants
     current_controller_generation now memory_owner_generation memory ∧
-  publicationForkAllowed publication.permitted_use = true
+  publication.permitted_use = .Fork
 
 /-- Authorization to read the Goal itself. -/
 def goal_read_admitted (s : OwnerState) (requester : User) (controller : GoalControllerEpoch)

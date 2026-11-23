@@ -15,23 +15,6 @@ inductive EmbeddableEntity where
   | goal
   deriving DecidableEq
 
-/-- Which identity a read names. -/
-inductive ReadTarget where
-  | series
-  | version
-  deriving DecidableEq
-
-/-- The revision selected by an authorized read. -/
-inductive ReadRevision where
-  | readableHead
-  | exact
-  deriving DecidableEq
-
-/-- A series read selects the newest readable revision and a version read or pin keeps its exact admission. -/
-def readRevision : ReadTarget → ReadRevision
-  | .series => .readableHead
-  | .version => .exact
-
 /-- An admission ID is available only when absent from both spines and the retained erase witnesses. -/
 def admissionIdAvailable : (memory : Bool) → (goal : Bool) → (erased : Bool) → Bool
   | false, false, false => true
@@ -133,17 +116,6 @@ inductive ReceiptField where
 /-- A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes. -/
 def receiptFields : List ReceiptField := [.source, .owner, .payload]
 
-/-- JSON values whose order is relevant to canonical payload bytes. -/
-inductive JsonCollection where
-  | object
-  | array
-  deriving DecidableEq
-
-/-- Canonical JSON sorts object keys recursively and preserves array order. -/
-def sortJsonKeys : JsonCollection → Bool
-  | .object => true
-  | .array => false
-
 /-- Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch. -/
 def uuidTimestampBits : Nat := 48
 
@@ -227,16 +199,5 @@ def storeNumberLifecycle : StoreNumberState → StoreNumberEvent → StoreNumber
 def publicationCounterUpdate : (sameHandle : Bool) → (nondecreasing : Bool) → Bool
   | true, true => true
   | true, false | false, true | false, false => false
-
-/-- Whether S3 store identity comes from the operator or the configured target. -/
-inductive ObjectStoreSource where
-  | operator
-  | endpointAndBucket
-  deriving DecidableEq
-
-/-- An explicit validated identity takes precedence over derivation from endpoint and bucket. -/
-def objectStoreSource : (overridePresent : Bool) → ObjectStoreSource
-  | true => .operator
-  | false => .endpointAndBucket
 
 end Proxiima.Identity

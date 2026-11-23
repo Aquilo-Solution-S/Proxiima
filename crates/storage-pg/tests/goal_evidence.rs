@@ -45,7 +45,6 @@ fn draft(kind: MemoryKind) -> FactWriteCommand {
     }
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn perspective_evidence_is_rejected_in_tx() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -646,7 +645,6 @@ impl Fixture {
 
 /// #513 F2: operator modify (explicit and carried) and operator decompose
 /// admit Fact evidence, alone or mixed with an Abstraction.
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn operator_modify_and_decompose_accept_fact_evidence() {
     let fx = fixture().await.expect("fixture");
@@ -758,7 +756,6 @@ async fn operator_modify_and_decompose_accept_fact_evidence() {
 
 /// Supplied evidence still follows the in-transaction kind rule when omitted
 /// and empty evidence are allowed (#524).
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn operator_perspective_evidence_is_refused() {
     let fx = fixture().await.expect("fixture");
@@ -889,7 +886,6 @@ async fn unassigned_operator_goals_allow_empty_evidence_through_successors() {
 /// #526: only a read of another store's memory, witnessed by the other-stores
 /// service, lets a Goal name it; a bare foreign id is a memory this store does
 /// not hold, as for any unknown id.
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn evidence_of_another_store_without_a_read_is_refused() {
     let fx = fixture().await.expect("fixture");

@@ -96,11 +96,6 @@ inductive PublicationUse where
   | Fork
   deriving DecidableEq
 
-/-- A publication grants fork consent only with fork use. -/
-def publicationForkAllowed : PublicationUse → Bool
-  | .Read => false
-  | .Fork => true
-
 /-- The destination path of a fork. -/
 inductive ForkDestination where
   | sameOwner

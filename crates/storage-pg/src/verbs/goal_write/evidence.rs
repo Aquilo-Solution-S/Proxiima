@@ -4,7 +4,6 @@ use super::{
 };
 use crate::pg_enums::PgMemoryKind;
 
-/// `Proxiima.Goals.evidenceAdmission`.
 pub(super) async fn validate_evidence_in_owner(
     tx: &mut Transaction<'_, Postgres>,
     _owner: &OwnerId,
@@ -27,6 +26,8 @@ async fn evidence_target(
     tx: &mut Transaction<'_, Postgres>,
     item: GoalEvidenceRef,
 ) -> Result<EvidenceTarget, StorageError> {
+    // Evidence must be an exact live Fact or Abstraction. Check local targets in the owner
+    // transaction and use the caller's source read for other stores.
     let kind = if let Some(origin) = item.remote_origin() {
         origin.kind()
     } else {

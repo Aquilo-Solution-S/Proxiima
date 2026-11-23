@@ -56,17 +56,6 @@ def pinField : PinField → PinFieldSpec
   | .forkedFrom => ⟨"forked_from", .reference, .scalar, [.Fact, .Abstraction, .Perspective],
       [.Fact, .Abstraction, .Perspective], [.Fact, .Abstraction, .Perspective]⟩
 
-/-- The Memory layers admitted by derivation. -/
-inductive DerivedKind where
-  | Abstraction
-  | Perspective
-  deriving DecidableEq
-
-/-- An Abstraction requires origins; a Perspective can be grounded through references. -/
-def requiresOrigins : DerivedKind → Bool
-  | .Abstraction => true
-  | .Perspective => false
-
 /-- Local storage fields that can ground a derived Memory, per `Causa.GroundsInFact`. -/
 def groundingFields : List PinField := [.origins, .refs]
 

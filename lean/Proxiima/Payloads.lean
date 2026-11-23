@@ -117,27 +117,11 @@ def durableHashOrder : ContentHashFrame :=
   { header := [.domainLabel, .zeroByte]
     perPayload := [.utf8SchemaId, .zeroByte, .durableLengthU64Le, .canonicalDurableBytes, .zeroByte] }
 
-/-- The kind classes that share or separate Content hashes. -/
-inductive ContentHashKind where
-  | fact
-  | derived
-  deriving DecidableEq
-
-/-- A derived admission domain-separates the Content hash by kind. -/
-def kindScopedHash : ContentHashKind → Bool
-  | .fact => false
-  | .derived => true
-
 /-- The text kinds available to a typed natural key. -/
 inductive KeyText where
   | text
   | paddedText
   deriving DecidableEq
-
-/-- Only padded text discards trailing ASCII spaces. -/
-def trimKeyPadding : KeyText → Bool
-  | .text => false
-  | .paddedText => true
 
 /-- The registered scalar shapes projected into a natural key in field declaration order. -/
 inductive KeyScalar where
@@ -407,23 +391,6 @@ inductive TransferRefusalPart where
 
 /-- A schema-declared transfer refusal carries its reason and at least one enforcement site. -/
 def transferRefusalParts : List TransferRefusalPart := [.reason, .enforcementSite]
-
-/-- The missing-table and stale-policy states of a Follows sidecar. -/
-inductive FollowsTableState where
-  | missingTable
-  | stalePolicy
-  deriving DecidableEq
-
-/-- How boot classifies a Follows table that needs attention. -/
-inductive FollowsBootRefusal where
-  | internal
-  | migrationRequired
-  deriving DecidableEq
-
-/-- A missing Follows table yields Internal; stale generated policy requires migration. -/
-def followsBootRefusal : FollowsTableState → FollowsBootRefusal
-  | .missingTable => .internal
-  | .stalePolicy => .migrationRequired
 
 /-- The identifiers and behavior reconciled against core when binding a storage registration. -/
 inductive RegistrationCheck where

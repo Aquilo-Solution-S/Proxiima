@@ -268,7 +268,7 @@ pub struct ProcessEnv;
 
 impl EnvLookup for ProcessEnv {
     fn lookup(&self, setting: &Setting) -> Option<String> {
-        // `Proxiima.Configuration.mayReadProcessSetting`
+        // Process environment reads go through declarations from settings!.
         std::env::var(setting.name()).ok()
     }
 }
@@ -282,7 +282,7 @@ impl EnvLookup for ProcessEnv {
 /// ```
 pub fn env_from_pairs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |key| {
-        // `Proxiima.Configuration.winsRepeatedPair`
+        // Search backward so the last supplied value wins for a repeated setting.
         pairs
             .iter()
             .rev()
@@ -376,20 +376,10 @@ mod tests {
         }
     }
 
-    // `Proxiima.Configuration.winsRepeatedPair`
     #[test]
-    fn repeated_pair_matches_ledger_vectors() {
-        let cases: Vec<Vector<bool>> = vectors("Proxiima.Configuration.winsRepeatedPair");
-        assert_eq!(cases.len(), 2);
+    fn last_repeated_pair_wins() {
         let pairs = [("FOO", "earlier"), ("FOO", "later")];
-        let read = FOO.read(&env(&pairs)).unwrap();
-        for Vector {
-            inputs: [position],
-            out,
-        } in cases
-        {
-            assert_eq!(read == position, out, "{position}");
-        }
+        assert_eq!(FOO.read(&env(&pairs)).as_deref(), Some("later"));
     }
 
     /// Trailing newline from a here-doc or secret mount is trimmed, not rejected.

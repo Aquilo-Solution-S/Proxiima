@@ -131,11 +131,6 @@ inductive VectorLane where
   | hostIndex
   deriving DecidableEq
 
-/-- Only the local vector lane installs the pgvector migration. -/
-def installsPgvector : VectorLane → Bool
-  | .local => true
-  | .hostIndex => false
-
 /-- Whether the lane applies a core migration given its pgvector requirement. -/
 def appliesCoreMigration : VectorLane → (pgvectorOnly : Bool) → Bool
   | .local, true | .local, false | .hostIndex, false => true

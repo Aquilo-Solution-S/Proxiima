@@ -168,7 +168,7 @@ async fn invoke_host_lifecycle_export(
         .filter(|policy| policy.owner_export.carries_rows())
         .map(|policy| policy.table)
         .collect::<Vec<_>>();
-    // `Proxiima.HostState.lifecycleContext`.
+    // The lifecycle callback runs in the read-only export snapshot. Erase uses its authorized write transaction.
     let receipt = lifecycle
         .port
         .export(

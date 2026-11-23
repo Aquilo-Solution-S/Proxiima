@@ -477,7 +477,6 @@ fn layer_precedence_matches_ledger_vectors() {
     }
 }
 
-// `Proxiima.Configuration.readEnvironment`
 #[test]
 fn host_overrides_skip_lookup_for_configured_settings() {
     use std::sync::atomic::{AtomicBool, Ordering};

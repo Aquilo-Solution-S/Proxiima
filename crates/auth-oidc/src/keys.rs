@@ -123,7 +123,8 @@ impl StaticJwksResolver {
             return Err(KeyError::Config("jwks contains no keys".into()));
         }
         let mut keys = HashMap::with_capacity(set.keys.len());
-        // `Proxiima.Authentication.invalidKeyEntry`.
+        // Reject invalid entries in a pinned set to surface configuration errors.
+        // Fetched sets skip bad entries so the remaining keys stay usable.
         for (index, entry) in set.keys.into_iter().enumerate() {
             let jwk = serde_json::from_value::<Jwk>(entry).map_err(|err| {
                 KeyError::Config(format!("key {index} is not a well-formed JWK: {err}"))
@@ -470,7 +471,6 @@ impl HttpJwksResolver {
         let endpoint = self.jwks_endpoint().await?;
         let set: JwkSet = self.fetch_json(endpoint).await?;
         let mut next = HashMap::new();
-        // `Proxiima.Authentication.invalidKeyEntry`.
         for (index, entry) in set.keys.into_iter().enumerate() {
             // Tolerant parse: an unnamed, unsupported or malformed entry (a
             // wrong-typed member, an undecodable modulus, another curve, a

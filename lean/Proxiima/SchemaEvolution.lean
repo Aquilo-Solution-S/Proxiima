@@ -74,17 +74,6 @@ inductive CollaborationCheck where
 def collaborationChecks : List CollaborationCheck :=
   [.sameAuthorityOnEveryMergeContributor, .sameAuthorityOnEachSplitSuccessor, .compatibleGeneration]
 
-/-- The states of a source schema at ordinary write admission. -/
-inductive SourceSchemaState where
-  | beforeCompletion
-  | completed
-  deriving DecidableEq
-
-/-- Ordinary source writes stop when completion is recorded. -/
-def sourceWritable : SourceSchemaState → Bool
-  | .beforeCompletion => true
-  | .completed => false
-
 /-- The source lock sequence used before transformation. -/
 inductive SourceFence where
   | admissionTables

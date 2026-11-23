@@ -256,7 +256,6 @@ pub(super) fn handle_of(value: &serde_json::Value) -> TestResult<String> {
     Ok(value["handle"].as_str().ok_or("handle")?.to_owned())
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn core_goal_set_with_one_fact_points_its_evidence_at_the_fact() {
     let env = Env::new("proxiima_goal_fact_set")
@@ -274,7 +273,6 @@ async fn core_goal_set_with_one_fact_points_its_evidence_at_the_fact() {
     result.expect("set with one Fact");
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn core_goal_modify_with_fact_replacement_evidence() {
     let env = Env::new("proxiima_goal_fact_modify")
@@ -300,7 +298,6 @@ async fn core_goal_modify_with_fact_replacement_evidence() {
     result.expect("modify with Fact evidence");
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn core_goal_decompose_children_cite_facts() {
     let env = Env::new("proxiima_goal_fact_decompose")
@@ -331,7 +328,6 @@ async fn core_goal_decompose_children_cite_facts() {
     result.expect("decompose children cite Facts");
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn core_goal_set_with_mixed_fact_and_abstraction() {
     let env = Env::new("proxiima_goal_fact_mixed")
@@ -350,7 +346,6 @@ async fn core_goal_set_with_mixed_fact_and_abstraction() {
     result.expect("mixed Fact and Abstraction");
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn episode_goal_cites_a_remembered_fact_slot() {
     let env = Env::new("proxiima_goal_fact_episode_slot")
@@ -380,7 +375,6 @@ async fn episode_goal_cites_a_remembered_fact_slot() {
     result.expect("episode goal cites a remember slot");
 }
 
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn episode_goal_cites_an_existing_fact_uuid() {
     let env = Env::new("proxiima_goal_fact_episode_uuid")
@@ -411,7 +405,6 @@ async fn episode_goal_cites_an_existing_fact_uuid() {
 /// The Perspective refusal survives removing the operator kind check: set,
 /// modify, decompose child, episode `stance:N` slot and an episode
 /// Perspective uuid are each refused, and none writes a goal row.
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn perspective_evidence_is_refused_on_every_goal_write() {
     let env = Env::new("proxiima_goal_perspective_refused")

@@ -387,7 +387,7 @@ async fn prepare_modified_goal(
     ),
     StorageError,
 > {
-    // `Proxiima.Goals.editPins`.
+    // Omitted motivation and evidence lists carry forward. Supplied lists replace them, even when empty.
     let evidence = match &req.evidence {
         Some(evidence) => validate_evidence_in_owner(tx, &req.owner, evidence).await?,
         None => carried_evidence(tx, &req.owner, req.prior_goal_id, store_number).await?,

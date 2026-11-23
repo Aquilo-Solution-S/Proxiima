@@ -462,7 +462,7 @@ pub(crate) async fn persist_goal_change_fact(
         request: None,
     };
     let tables = sidecars.tables_for_payloads(std::slice::from_ref(&payload))?;
-    // `Proxiima.Goals.reserveChangeFact`.
+    // A Goal-change Fact uses its reserved identity and pre-held locks without a declared scope or read set.
     let (outcome, occurred_at) = ingest_unpinned_fact_at(
         tx,
         &prepared.owner,
@@ -727,7 +727,6 @@ async fn validate_goal_targets_live(
             ));
         }
     }
-    // `Proxiima.Goals.evidenceAdmission`.
     for evidence in draft
         .evidence_t
         .iter()

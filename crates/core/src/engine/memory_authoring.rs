@@ -154,7 +154,7 @@ fn derivation_phase(
 ) -> Result<OperatorPhase, ProtocolError> {
     let refusal = || ProtocolError::invalid_argument("origins", ORIGIN_KINDS);
     let phase = OperatorPhase::of_memory_output(kind).ok_or_else(refusal)?;
-    // `Proxiima.Edges.requiresOrigins`.
+    // An Abstraction requires origins. A Perspective can be grounded through references.
     let empty_allowed = kind == EntityKind::Perspective;
     if (origins.is_empty() && !empty_allowed)
         || origins

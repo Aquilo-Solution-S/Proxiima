@@ -114,7 +114,6 @@ natural_key_columns: NaturalKeyDeclaration::of::<DocumentFiledV1>(),
 Use `KeyField::padded_text` only when the migration column is PostgreSQL
 `CHAR(n)`. It trims database padding before comparison; `KeyField::text`
 remains an ordinary text column and does not apply that canonicalization.
-See [`Proxiima.Payloads.trimKeyPadding`](ledger.md#payloads).
 
 Implement `references()` when the payload carries node references. Ingest
 resolves the declared targets and derives pins atomically. A spiice defines

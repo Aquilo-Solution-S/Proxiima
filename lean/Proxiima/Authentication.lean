@@ -92,19 +92,6 @@ def keySource : (uri document : Bool) → KeySource
   | false, true => .inlineDocument
   | true, true => .conflict
 
-/-- How a JWKS document reached the resolver. -/
-inductive KeyDocument where
-  | pinned | fetched
-
-/-- Handling of an invalid entry in a JWKS document. -/
-inductive InvalidKeyEntry where
-  | refuseDocument | skipEntry
-
-/-- Whether an invalid key entry refuses its document or is skipped, according to the document source. -/
-def invalidKeyEntry : KeyDocument → InvalidKeyEntry
-  | .pinned => .refuseDocument
-  | .fetched => .skipEntry
-
 /-- A resolver's view of a requested key before a refresh attempt. -/
 inductive CachedKey where
   | fresh | aging | absent

@@ -1,7 +1,4 @@
-{"Proxiima.SchemaEvolution.sourceWritable":
- [{"out": true, "in": ["beforeCompletion"]},
-  {"out": false, "in": ["completed"]}],
- "Proxiima.Repository.versionAccepted":
+{"Proxiima.Repository.versionAccepted":
  [{"out": true, "in": ["initial"]},
   {"out": true, "in": ["unchanged"]},
   {"out": true, "in": ["nextPatch"]},
@@ -43,8 +40,6 @@
   {"out": true, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Repository.saveRustCache":
- [{"out": false, "in": ["pullRequest"]}, {"out": true, "in": ["verify"]}],
  "Proxiima.Repository.reviewCovers":
  [{"out": true, "in": [true, true]},
   {"out": false, "in": [true, false]},
@@ -60,17 +55,11 @@
   {"out": false, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Repository.pathSource":
- [{"out": "pullRequestApi", "in": ["pullRequest"]},
-  {"out": "verifiedToCandidate", "in": ["verify"]}],
  "Proxiima.Repository.numberedRelease":
  [{"out": "skip", "in": [true, true]},
   {"out": "tagAndPublish", "in": [true, false]},
   {"out": "refuseUnverified", "in": [false, true]},
   {"out": "refuseUnverified", "in": [false, false]}],
- "Proxiima.Repository.fixtureSubject":
- [{"out": "ownUser", "in": ["personal"]},
-  {"out": "freshAdmin", "in": ["group"]}],
  "Proxiima.Repository.dependencyPolicy":
  [{"out": "deny", "in": ["vulnerability"]},
   {"out": "deny", "in": ["yank"]},
@@ -93,8 +82,6 @@
   {"out": "keep", "in": [true, false]},
   {"out": "keepWithRedactedDiagnostic", "in": [false, true]},
   {"out": "drop", "in": [false, false]}],
- "Proxiima.Repository.cancelSupersededValidation":
- [{"out": true, "in": ["pullRequest"]}, {"out": false, "in": ["verify"]}],
  "Proxiima.Repository.advanceVerified":
  [{"out": ["verifiedFastForward", "nightlyLightweightTag"], "in": [true, true]},
   {"out": [], "in": [true, false]},
@@ -114,8 +101,6 @@
   {"out": false, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Payloads.trimKeyPadding":
- [{"out": false, "in": ["text"]}, {"out": true, "in": ["paddedText"]}],
  "Proxiima.Payloads.stampsOwner":
  [{"out": false, "in": ["none"]},
   {"out": true, "in": ["pinned"]},
@@ -145,16 +130,11 @@
  "Proxiima.Payloads.listSchemaInventory":
  [{"out": ["allPayloadKinds", "resourceAnswers"], "in": ["allKinds"]},
   {"out": ["selectedPayloadKind", "resourceAnswers"], "in": ["selectedKind"]}],
- "Proxiima.Payloads.kindScopedHash":
- [{"out": false, "in": ["fact"]}, {"out": true, "in": ["derived"]}],
  "Proxiima.Payloads.installReference":
  [{"out": "add", "in": ["none"]},
   {"out": "reuse", "in": ["compatible"]},
   {"out": "refuse", "in": ["incompatible"]},
   {"out": "refuse", "in": ["secondCascadingMemoryParent"]}],
- "Proxiima.Payloads.followsBootRefusal":
- [{"out": "internal", "in": ["missingTable"]},
-  {"out": "migrationRequired", "in": ["stalePolicy"]}],
  "Proxiima.Payloads.exportProjection":
  [{"out": "allFields", "in": ["rows"]},
   {"out": "declaredFields", "in": ["allowlist"]},
@@ -576,8 +556,6 @@
  [{"out": "publicCoreLedger", "in": ["coreDefault"]},
   {"out": "publicIdDerivedLedger", "in": ["spiiceDefault"]},
   {"out": "configuredLedger", "in": ["explicitlyConfigured"]}],
- "Proxiima.Migrations.installsPgvector":
- [{"out": true, "in": ["local"]}, {"out": false, "in": ["hostIndex"]}],
  "Proxiima.Migrations.definitionWork":
  [{"out": "reinstall", "in": ["missingOrChangedChecksum", "reject"]},
   {"out": "reinstall", "in": ["missingOrChangedChecksum", "allow"]},
@@ -607,9 +585,6 @@
   {"out": true, "in": ["latestReadableTombstone"]},
   {"out": false, "in": ["forgotten"]},
   {"out": false, "in": ["olderReadable"]}],
- "Proxiima.Memory.seriesSource":
- [{"out": "requestedHandle", "in": ["namedSeries"]},
-  {"out": "targetVersionHandle", "in": ["supersedesVersion"]}],
  "Proxiima.Memory.operatorOutput":
  [{"out": "Abstraction", "in": ["ToA"]},
   {"out": "Perspective", "in": ["AtoP"]},
@@ -639,9 +614,6 @@
   {"out": "Abstraction", "in": ["Abstraction"]},
   {"out": "Perspective", "in": ["Perspective"]},
   {"out": null, "in": ["Goal"]}],
- "Proxiima.Memory.headReservation":
- [{"out": "materialize", "in": ["unchanged"]},
-  {"out": "retry", "in": ["moved"]}],
  "Proxiima.Memory.derivedHeadAction":
  [{"out": "replayStoredVersion", "in": [true, true, true]},
   {"out": "appendVersion", "in": [true, true, false]},
@@ -665,8 +637,6 @@
   {"out": "useExisting", "in": ["matching", "validate"]},
   {"out": "refuseMismatch", "in": ["different", "migrate"]},
   {"out": "refuseMismatch", "in": ["different", "validate"]}],
- "Proxiima.Identity.sortJsonKeys":
- [{"out": true, "in": ["object"]}, {"out": false, "in": ["array"]}],
  "Proxiima.Identity.seriesContract":
  [{"out": ["handle", "owner", "schema", "kind"], "in": ["memory"]},
   {"out": ["handle", "owner", "schema"], "in": ["goal"]}],
@@ -674,17 +644,11 @@
  [{"out": "memoryCatalog", "in": ["memoryVersion"]},
   {"out": "goalCatalog", "in": ["goalVersion"]},
   {"out": "blob", "in": ["blob"]}],
- "Proxiima.Identity.readRevision":
- [{"out": "readableHead", "in": ["series"]},
-  {"out": "exact", "in": ["version"]}],
  "Proxiima.Identity.publicationCounterUpdate":
  [{"out": true, "in": [true, true]},
   {"out": false, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Identity.objectStoreSource":
- [{"out": "operator", "in": [true]},
-  {"out": "endpointAndBucket", "in": [false]}],
  "Proxiima.Identity.monotonicMint":
  [{"out": {"ok": "reseedAtClock"},
    "in": ["aheadOrUnbound", "available", "fits"]},
@@ -725,9 +689,6 @@
   {"out": "duplicate", "in": ["duplicate", "absent"]},
   {"out": "duplicate", "in": ["duplicate", "single"]},
   {"out": "duplicate", "in": ["duplicate", "duplicate"]}],
- "Proxiima.HostState.lifecycleContext":
- [{"out": "eraseTransaction", "in": ["erase"]},
-  {"out": "readOnlyExportSnapshot", "in": ["export"]}],
  "Proxiima.HostState.dispatchLeavesUnitUsable":
  [{"out": true, "in": ["permitted"]},
   {"out": true, "in": ["alreadyApplied"]},
@@ -757,9 +718,6 @@
   {"out": "refuseCollision", "in": ["memoryIdCollision", "exhausted"]},
   {"out": "returnOutcome", "in": ["other", "available"]},
   {"out": "returnOutcome", "in": ["other", "exhausted"]}],
- "Proxiima.Goals.reserveChangeFact":
- [{"out": true, "in": ["goalTransaction"]},
-  {"out": false, "in": ["ordinaryFact"]}],
  "Proxiima.Goals.requestReplay":
  [{"out": "freshAdmission", "in": ["fresh"]},
   {"out": "returnOriginal", "in": ["exact"]},
@@ -845,16 +803,11 @@
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "resume"]},
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "achieve"]},
   {"out": {"error": "wrongState"}, "in": ["Abandoned", "abandon"]}],
- "Proxiima.Goals.evidenceAdmission":
- [{"out": "ownerTransaction", "in": ["local"]},
-  {"out": "callerReadAtSource", "in": ["otherStore"]}],
  "Proxiima.Goals.editSpaceMatches":
  [{"out": true, "in": [true, true]},
   {"out": false, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": true, "in": [false, false]}],
- "Proxiima.Goals.editPins":
- [{"out": "carry", "in": ["omitted"]}, {"out": "replace", "in": ["supplied"]}],
  "Proxiima.Goals.displayAdmitted":
  [{"out": false, "in": ["blank"]},
   {"out": true, "in": ["withinBound"]},
@@ -873,9 +826,6 @@
   {"out": false, "in": ["Achieved", false]},
   {"out": true, "in": ["Abandoned", true]},
   {"out": false, "in": ["Abandoned", false]}],
- "Proxiima.Goals.clockSource":
- [{"out": "firstVersion", "in": ["setAt"]},
-  {"out": "selectedVersion", "in": ["changedAt"]}],
  "Proxiima.Goals.changeFields":
  [{"out": "plain", "in": ["set"]},
   {"out": "parent", "in": ["decompose"]},
@@ -916,8 +866,6 @@
   {"out": true, "in": ["withdraw", true, false]},
   {"out": true, "in": ["withdraw", false, true]},
   {"out": false, "in": ["withdraw", false, false]}],
- "Proxiima.GoalCollaboration.publicationForkAllowed":
- [{"out": false, "in": ["Read"]}, {"out": true, "in": ["Fork"]}],
  "Proxiima.GoalCollaboration.preferOwnerHead":
  [{"out": true, "in": [true, true]},
   {"out": false, "in": [true, false]},
@@ -994,8 +942,6 @@
   {"out": "cascaded", "in": [{"delete": [true, false]}]},
   {"out": "deleted", "in": [{"delete": [false, true]}]},
   {"out": "unreachable", "in": [{"delete": [false, false]}]}],
- "Proxiima.Edges.requiresOrigins":
- [{"out": true, "in": ["Abstraction"]}, {"out": false, "in": ["Perspective"]}],
  "Proxiima.Edges.projectTarget":
  [{"out": "visible", "in": [true, true, true]},
   {"out": "visible", "in": [true, true, false]},
@@ -1093,14 +1039,10 @@
   {"out": "platform", "in": ["operateAsPlatform"]},
   {"out": "migration", "in": ["migrate"]},
   {"out": "migration", "in": ["validateSchema"]}],
- "Proxiima.Configuration.winsRepeatedPair":
- [{"out": false, "in": ["earlier"]}, {"out": true, "in": ["later"]}],
  "Proxiima.Configuration.warnForName":
  [{"out": false, "in": ["declared"]},
   {"out": true, "in": ["unknownProductName"]},
   {"out": false, "in": ["unrelated"]}],
- "Proxiima.Configuration.useEnvironmentAuthenticator":
- [{"out": true, "in": ["omitted"]}, {"out": false, "in": ["supplied"]}],
  "Proxiima.Configuration.readsGroup":
  [{"out": true, "in": ["serving", "storage"]},
   {"out": true, "in": ["serving", "embeddingRuntime"]},
@@ -1110,10 +1052,6 @@
   {"out": true, "in": ["storageOnly", "embeddingRuntime"]},
   {"out": false, "in": ["storageOnly", "serving"]},
   {"out": false, "in": ["storageOnly", "objectStore"]}],
- "Proxiima.Configuration.readEnvironment":
- [{"out": true, "in": ["omitted"]}, {"out": false, "in": ["supplied"]}],
- "Proxiima.Configuration.mayReadProcessSetting":
- [{"out": true, "in": ["declaredSetting"]}, {"out": false, "in": ["bareName"]}],
  "Proxiima.Configuration.matchesOmission":
  [{"out": true, "in": ["omitted"]},
   {"out": true, "in": ["statedDefault"]},
@@ -1248,9 +1186,6 @@
  [{"out": true, "in": ["https"]},
   {"out": true, "in": ["loopbackHttp"]},
   {"out": false, "in": ["other"]}],
- "Proxiima.Authentication.invalidKeyEntry":
- [{"out": "refuseDocument", "in": ["pinned"]},
-  {"out": "skipEntry", "in": ["fetched"]}],
  "Proxiima.Authentication.hostShape":
  [{"out": "preserve", "in": ["identity"]},
   {"out": "preserve", "in": ["writer"]},

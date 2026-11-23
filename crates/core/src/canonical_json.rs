@@ -32,7 +32,7 @@ fn write_canonical_json(value: &serde_json::Value, out: &mut Vec<u8>) {
             }
             out.push(b']');
         }
-        // `Proxiima.Identity.sortJsonKeys`.
+        // Sort object keys at each level for stable identity, preserving array order.
         serde_json::Value::Object(map) => {
             let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
             keys.sort_unstable();
@@ -60,31 +60,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_order_matches_ledger_vectors() {
-        let ledger: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/ledger_vectors.json")).unwrap();
-        let rows = ledger["Proxiima.Identity.sortJsonKeys"].as_array().unwrap();
-        assert!(!rows.is_empty());
-        for row in rows {
-            let (input, ordered, unordered) = match row["in"][0].as_str().unwrap() {
-                "object" => (
-                    serde_json::json!({"z": {"b": 2, "a": 1}, "a": 0}),
-                    r#"{"a":0,"z":{"a":1,"b":2}}"#,
-                    r#"{"z":{"b":2,"a":1},"a":0}"#,
-                ),
-                "array" => (
-                    serde_json::json!(["z", "a"]),
-                    r#"["a","z"]"#,
-                    r#"["z","a"]"#,
-                ),
-                collection => panic!("unknown JSON collection {collection}"),
-            };
-            let expected = if row["out"].as_bool().unwrap() {
-                ordered
-            } else {
-                unordered
-            };
-            assert_eq!(canonical_json_bytes(&input), expected.as_bytes());
-        }
+    fn canonical_json_sorts_nested_object_keys_and_preserves_array_order() {
+        let input = serde_json::json!({"z": {"b": 2, "a": 1}, "a": ["z", "a"]});
+        assert_eq!(
+            canonical_json_bytes(&input),
+            br#"{"a":["z","a"],"z":{"a":1,"b":2}}"#
+        );
     }
 }

@@ -54,16 +54,6 @@
 - inlineDocument
 - conflict
 
-**Key document**: How a JWKS document reached the resolver.
-
-- pinned
-- fetched
-
-**Invalid key entry**: Handling of an invalid entry in a JWKS document.
-
-- refuseDocument
-- skipEntry
-
 **Cached key**: A resolver's view of a requested key before a refresh attempt.
 
 - fresh
@@ -392,22 +382,14 @@ stateDiagram-v2
   s1 --> s1 : other
 ```
 
-| bool | bool | key source | subject admission |
-| --- | --- | --- | --- |
-| yes | yes | conflict | allow |
-| yes | no | endpoint | refuse |
-| no | yes | inlineDocument | allow |
-| no | no | discovery | allow |
+| uri | document | key source |
+| --- | --- | --- |
+| yes | yes | conflict |
+| yes | no | endpoint |
+| no | yes | inlineDocument |
+| no | no | discovery |
 
 - key source: A pinned document requires no fetch; explicit endpoints skip discovery, and the two overrides exclude each other.
-- subject admission: Which verified subjects are admitted with or without a configured subject allowlist.
-
-| key document | invalid key entry |
-| --- | --- |
-| pinned | refuseDocument |
-| fetched | skipEntry |
-
-- invalid key entry: Whether an invalid key entry refuses its document or is skipped, according to the document source.
 
 | cached key | cached key lookup |
 | --- | --- |
@@ -416,6 +398,15 @@ stateDiagram-v2
 | absent | waitForRefresh |
 
 - cached key lookup: Aging hits may use an incumbent during refresh; absent or untrusted keys wait for the gate.
+
+| allowlist present | subject listed | subject admission |
+| --- | --- | --- |
+| yes | yes | allow |
+| yes | no | refuse |
+| no | yes | allow |
+| no | no | allow |
+
+- subject admission: Which verified subjects are admitted with or without a configured subject allowlist.
 
 | subject allowlist setting | admit subject allowlist |
 | --- | --- |
@@ -457,7 +448,7 @@ stateDiagram-v2
 
 - authenticator slot: How the selected layer supplies authentication.
 
-| bool | model claim | model label source |
+| attested | model claim | model label source |
 | --- | --- | --- |
 | yes | absent | credential |
 | yes | matching | credential |
@@ -631,15 +622,14 @@ stateDiagram-v2
 
 - request header names: Header storage and lookup normalize names and debug shows only names.
 
-| bool | bool | host tool eligible | profile denial |
-| --- | --- | --- | --- |
-| yes | yes | no | no |
-| yes | no | no | yes |
-| no | yes | yes | no |
-| no | no | no | no |
+| registered | matching name | host tool eligible |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | no |
+| no | yes | yes |
+| no | no | no |
 
 - host tool eligible: Whether the host declaration can supply the requested tool's behavior.
-- profile denial: The caller may deny a registered command while mandatory reads and unknown keys are refused.
 
 | registered name | prefix syntax | prefix check |
 | --- | --- | --- |
@@ -657,7 +647,7 @@ stateDiagram-v2
 
 - schema identity: Registrations are unique by full identity and persisted Memory selectors omit version.
 
-| bool | bool | bool | core declarations |
+| core | resources | kernel surfaces | core declarations |
 | --- | --- | --- | --- |
 | yes | yes | yes | yes |
 | yes | yes | no | yes |
@@ -690,6 +680,15 @@ stateDiagram-v2
 | migrate | headlessMigration |
 
 - core startup: The canonical core app starts a listener only for serving and migrates only on explicit request.
+
+| registered | mandatory | profile denial |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
+- profile denial: The caller may deny a registered command while mandatory reads and unknown keys are refused.
 
 | ingress shape | ingress parser count |
 | --- | --- |
@@ -740,11 +739,6 @@ stateDiagram-v2
 - missing
 - blank
 - nonblank
-
-**Read setting**: The process reader accepts a setting value rather than a bare name.
-
-- declaredSetting
-- bareName
 
 **Environment name**: Configured names distinguished by the unknown-name diagnostic.
 
@@ -797,14 +791,6 @@ stateDiagram-v2
 
 - layer precedence: In host, environment, application order, the first supplied value wins, then built-in defaults; authenticators supplied in code take precedence over environment OIDC.
 
-| presence | use environment authenticator | read environment |
-| --- | --- | --- |
-| omitted | yes | yes |
-| supplied | no | no |
-
-- use environment authenticator: An authenticator supplied by either the host or application prevents using environment OIDC.
-- read environment: Only a slot or block left unset by the host is looked up and parsed from the environment.
-
 | lookup profile | setting group | reads group |
 | --- | --- | --- |
 | serving | storage | yes |
@@ -826,13 +812,6 @@ stateDiagram-v2
 
 - lookup presence: A missing or blank setting is omitted, and nonblank text is passed to the reader trimmed.
 
-| read setting | may read process setting |
-| --- | --- |
-| declaredSetting | yes |
-| bareName | no |
-
-- may read process setting: By the `settings!` convention, process settings are read through declared settings.
-
 | environment name | warn for name |
 | --- | --- |
 | declared | no |
@@ -840,13 +819,6 @@ stateDiagram-v2
 | unrelated | no |
 
 - warn for name: Warn once per unknown product name without exposing its value or refusing startup.
-
-| pair position | wins repeated pair |
-| --- | --- |
-| earlier | no |
-| later | yes |
-
-- wins repeated pair: The last supplied pair wins when injected configuration repeats a name.
 
 | presence | presence | last configured slot |
 | --- | --- | --- |
@@ -1193,11 +1165,6 @@ stateDiagram-v2
 - abstraction
 - perspective
 
-**Derived kind**: The Memory layers admitted by derivation.
-
-- Abstraction
-- Perspective
-
 **Target projection**: The precedence of exact target states when a pin's source is readable.
 
 - visible
@@ -1290,26 +1257,18 @@ stateDiagram-v2
 
 - pin field: Each pin field's role, storage shape and admitted target kinds.
 
-| derived kind | requires origins |
-| --- | --- |
-| Abstraction | yes |
-| Perspective | no |
-
-- requires origins: An Abstraction requires origins; a Perspective can be grounded through references.
-
-| bool | bool | bool | project target | keep read pin |
-| --- | --- | --- | --- | --- |
-| yes | yes | yes | visible | no |
-| yes | yes | no | visible | no |
-| yes | no | yes | visible | no |
-| yes | no | no | visible | no |
-| no | yes | yes | forgotten | no |
-| no | yes | no | forgotten | no |
-| no | no | yes | erased | no |
-| no | no | no | redacted | yes |
+| live | forgotten | erased | project target |
+| --- | --- | --- | --- |
+| yes | yes | yes | visible |
+| yes | yes | no | visible |
+| yes | no | yes | visible |
+| yes | no | no | visible |
+| no | yes | yes | forgotten |
+| no | yes | no | forgotten |
+| no | no | yes | erased |
+| no | no | no | redacted |
 
 - project target: Live wins over readable forgotten or erased witnesses, and other targets are redacted.
-- keep read pin: Read pins yield to an origin, reference or fork anchor to the same target.
 
 | provenance | local ancestor kinds |
 | --- | --- |
@@ -1319,6 +1278,19 @@ stateDiagram-v2
 | none | \[read] |
 
 - local ancestor kinds: Local ancestor edge kinds by schema provenance; payload references are limited to declared subject fields.
+
+| origin | reference | fork anchor | keep read pin |
+| --- | --- | --- | --- |
+| yes | yes | yes | no |
+| yes | yes | no | no |
+| yes | no | yes | no |
+| yes | no | no | no |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | yes |
+
+- keep read pin: Read pins yield to an origin, reference or fork anchor to the same target.
 
 | admission | pin admission witness |
 | --- | --- |
@@ -1395,15 +1367,31 @@ stateDiagram-v2
 
 **derived delete order** = \[searchProjections, embeddingJobs, otherGeneratedLegs]: Forget deletes linked search projections and takes embedding jobs before the other generated deletes.
 
-| bool | bool | visible in scope | restore admission | repair head |
-| --- | --- | --- | --- | --- |
-| yes | yes | yes | refused: retiredSchema | newestLive |
-| yes | no | yes | refused: retiredSchema | newestLive |
-| no | yes | no | rebuild | newestForgotten |
-| no | no | yes | unchanged | — |
+| lifecycle | forgotten | visible in scope |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | no |
+| no | no | yes |
 
 - visible in scope: Whether a Memory is visible in the selected owner scope given its forgotten mark.
+
+| retired | forgotten | restore admission |
+| --- | --- | --- |
+| yes | yes | refused: retiredSchema |
+| yes | no | refused: retiredSchema |
+| no | yes | rebuild |
+| no | no | unchanged |
+
 - restore admission: Schema retirement refuses restore before the live-row no-op or the forgotten-row rebuild.
+
+| has live | has forgotten | repair head |
+| --- | --- | --- |
+| yes | yes | newestLive |
+| yes | no | newestLive |
+| no | yes | newestForgotten |
+| no | no | — |
+
 - repair head: Prefer the newest live head, keep a forgotten head while only forgotten versions remain, and remove an empty series head.
 
 | surface rule | classify surface |
@@ -1471,7 +1459,7 @@ stateDiagram-v2
 
 - audience read target: Context conveys no read; publication selects one admission and a work binding selects a series.
 
-| bool | goal access | stored guest goal access | owner goal access on audience route |
+| administers | goal access | stored guest goal access | owner goal access on audience route |
 | --- | --- | --- | --- |
 | yes | none | refused: ownerAdministration | none |
 | yes | reads | refused: ownerAdministration | reads |
@@ -1483,7 +1471,7 @@ stateDiagram-v2
 - stored guest goal access: An audience grant raises absent Goal access to read and refuses owner administration.
 - owner goal access on audience route: An owner role contributes at most Goal read to the audience route unless it administers.
 
-| grant subject kind | bool | grant subject admitted |
+| grant subject kind | manages | grant subject admitted |
 | --- | --- | --- |
 | person | yes | yes |
 | person | no | yes |
@@ -1492,17 +1480,25 @@ stateDiagram-v2
 
 - grant subject admitted: A group audience grant cannot convey Goal management.
 
-| bool | bool | grant in force | prefer owner head |
-| --- | --- | --- | --- |
-| yes | yes | yes | yes |
-| yes | no | no | no |
-| no | yes | no | no |
-| no | no | no | no |
+| current epoch | unexpired | grant in force |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
 
 - grant in force: A grant is in force while it is unexpired and of the current Goal controller epoch.
+
+| newer | independently readable | prefer owner head |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
 - prefer owner head: A newer independently readable owner head takes precedence over the latest audience-visible version.
 
-| consent change | bool | bool | sharing consent admitted |
+| consent change | goal manager | source administrator | sharing consent admitted |
 | --- | --- | --- | --- |
 | admit | yes | yes | yes |
 | admit | yes | no | no |
@@ -1528,14 +1524,7 @@ stateDiagram-v2
 
 - bound work state admitted: A binding can be read in any Goal state, and the series can be worked while the Goal is active.
 
-| publication use | publication fork allowed |
-| --- | --- |
-| Read | no |
-| Fork | yes |
-
-- publication fork allowed: A publication grants fork consent only with fork use.
-
-| fork destination | bool | fork needs publication |
+| fork destination | source administrator | fork needs publication |
 | --- | --- | --- |
 | sameOwner | yes | no |
 | sameOwner | no | no |
@@ -1546,7 +1535,7 @@ stateDiagram-v2
 
 - fork needs publication: Source administration or a direct same-owner destination suffices without publication consent.
 
-| bool | bool | bool | companion facts admitted |
+| command permitted | has pins | has citation | companion facts admitted |
 | --- | --- | --- | --- |
 | yes | yes | yes | no |
 | yes | yes | no | no |
@@ -1587,25 +1576,10 @@ stateDiagram-v2
 
 - wrongState
 
-**Pin edit**: Whether an edit omits its pin list or supplies its replacement, including an empty list.
-
-- omitted
-- supplied
-
 **Revision field**: Whether a revision retains or replaces a declaration.
 
 - carry
 - replace
-
-**Evidence source**: Source classes considered when admitting Goal evidence.
-
-- local
-- otherStore
-
-**Evidence check**: Where a Goal evidence target's live kind is checked.
-
-- ownerTransaction
-- callerReadAtSource
 
 **Request match**: The durable request comparison made under the owner and request key.
 
@@ -1673,11 +1647,6 @@ stateDiagram-v2
 - lockGoalHeads
 - revalidateTargets
 
-**Fact admission**: The only Fact admission path allowed to use a reserved Goal-change identity.
-
-- goalTransaction
-- ordinaryFact
-
 **Change fact admission**: The publication admission for a fresh Goal revision.
 
 - skip
@@ -1695,16 +1664,6 @@ stateDiagram-v2
 - blank
 - withinBound
 - oversized
-
-**Goal clock**: The two clocks projected by a Goal version read.
-
-- setAt
-- changedAt
-
-**Goal version time**: Which revision identity supplies a projected time.
-
-- firstVersion
-- selectedVersion
 
 **birth state** = Active: Set and decomposition start each new series here.
 
@@ -1798,13 +1757,6 @@ stateDiagram-v2
 
 - close fact presence: Whether close-Fact presence agrees exactly with terminal state.
 
-| pin edit | edit pins |
-| --- | --- |
-| omitted | carry |
-| supplied | replace |
-
-- edit pins: Omitted motivation and evidence carry forward and supplied lists replace them.
-
 | event | prompt revision | parent revision | may declare evidence | change fields |
 | --- | --- | --- | --- | --- |
 | set | replace | replace | yes | plain |
@@ -1820,13 +1772,6 @@ stateDiagram-v2
 - parent revision: A child keeps the parent series chosen at birth alongside its exact parent dependency under `Causa.GoalStep`.
 - may declare evidence: Which Goal operations can supply an evidence statement, always optional.
 - change fields: Decomposition alone carries the parent revision and pause alone carries a pending disposition.
-
-| evidence source | evidence admission |
-| --- | --- |
-| local | ownerTransaction |
-| otherStore | callerReadAtSource |
-
-- evidence admission: Exact live Facts and Abstractions are eligible as Goal evidence under `Causa.RetainedGoalEvidenceValid`.
 
 | request match | request replay |
 | --- | --- |
@@ -1875,24 +1820,14 @@ stateDiagram-v2
 
 - retry transaction: Transient outcomes have a three-attempt budget. A memory ID collision can retry once independently, even after the last transient retry. A second collision becomes a constraint violation.
 
-| fact admission | reserve change fact |
-| --- | --- |
-| goalTransaction | yes |
-| ordinaryFact | no |
-
-- reserve change fact: A Goal-change Fact uses its reserved identity under the pre-held lock union, with no declared scope or read set.
-
-| bool | bool | publish change fact | edit space matches | state filter | recall active goal |
-| --- | --- | --- | --- | --- | --- |
-| yes | yes | publish | yes | yes | yes |
-| yes | no | missingStamp | no | yes | no |
-| no | yes | skip | yes | yes | yes |
-| no | no | skip | yes | no | yes |
+| listenable | stamped | publish change fact |
+| --- | --- | --- |
+| yes | yes | publish |
+| yes | no | missingStamp |
+| no | yes | skip |
+| no | no | skip |
 
 - publish change fact: A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction.
-- edit space matches: An edit uses the named Goal's owner and an explicit space can only narrow that selection.
-- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
-- recall active goal: Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head.
 
 | trimmed display length | display admitted |
 | --- | --- |
@@ -1902,12 +1837,32 @@ stateDiagram-v2
 
 - display admitted: The Rust input boundary uses str::trim, counts the remaining Unicode scalar values and admits a title or prompt with length from one through its field limit.
 
-| goal clock | clock source |
-| --- | --- |
-| setAt | firstVersion |
-| changedAt | selectedVersion |
+| explicit space | same owner | edit space matches |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | yes |
+| no | no | yes |
 
-- clock source: A Goal reports its series birth and the selected version's own write time.
+- edit space matches: An edit uses the named Goal's owner and an explicit space can only narrow that selection.
+
+| filter omitted | in canonical set | state filter |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
+
+| has motivation | perspective matches | recall active goal |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | yes |
+| no | no | yes |
+
+- recall active goal: Recall includes unmotivated Active Goals and Active Goals motivated by a recalled Perspective head.
 
 ✗ **achieve needs an achieved child**, rejected: An abandoned child leaves the parent free to close.
 
@@ -1984,16 +1939,6 @@ stateDiagram-v2
 - exactManagedSurfaceSet
 - subsetOfParticipantSurfaces
 
-**Lifecycle operation**: Host lifecycle operations distinguish an erase from an export.
-
-- erase
-- export
-
-**Lifecycle context**: A lifecycle callback's transaction context.
-
-- eraseTransaction
-- readOnlyExportSnapshot
-
 **Erase receipt check**: The checks on a host erase receipt before the shared erase can commit.
 
 - sameParticipant
@@ -2047,13 +1992,6 @@ stateDiagram-v2
 
 - dispatch leaves unit usable: Business outcomes leave the shared unit usable; storage faults, a malformed reply or cancellation poison it.
 
-| lifecycle operation | lifecycle context |
-| --- | --- |
-| erase | eraseTransaction |
-| export | readOnlyExportSnapshot |
-
-- lifecycle context: The callback participates in the authorized erase transaction or in the read-only owner export snapshot.
-
 ## Identity
 
 **Series and version**: A series keeps its handle as later admissions append with immutable, time-ordered IDs.
@@ -2065,16 +2003,6 @@ stateDiagram-v2
 
 - memory
 - goal
-
-**Read target**: Which identity a read names.
-
-- series
-- version
-
-**Read revision**: The revision selected by an authorized read.
-
-- readableHead
-- exact
 
 **Series kind**: The kind of series whose versions align with its head.
 
@@ -2137,11 +2065,6 @@ stateDiagram-v2
 - owner
 - payload
 
-**Json collection**: JSON values whose order is relevant to canonical payload bytes.
-
-- object
-- array
-
 **Mint clock**: The clock relative to the greater of the last mint and the supplied revision floor.
 
 - aheadOrUnbound
@@ -2185,11 +2108,6 @@ stateDiagram-v2
 - requireMigration
 - refuseMismatch
 
-**Object store source**: Whether S3 store identity comes from the operator or the configured target.
-
-- operator
-- endpointAndBucket
-
 **receipt fields** = \[source, owner, payload]: A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes.
 
 **uuid timestamp bits** = 48: Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
@@ -2200,14 +2118,7 @@ stateDiagram-v2
 
 **store number max** = 65535: Largest 16-bit host-assigned store number in an admission UUID.
 
-| read target | read revision |
-| --- | --- |
-| series | readableHead |
-| version | exact |
-
-- read revision: A series read selects the newest readable revision and a version read or pin keeps its exact admission.
-
-| bool | bool | bool | admission id available |
+| memory | goal | erased | admission id available |
 | --- | --- | --- | --- |
 | yes | yes | yes | no |
 | yes | yes | no | no |
@@ -2254,13 +2165,6 @@ stateDiagram-v2
 
 - collect content: Collect Content only once no live or forgotten admission names it.
 
-| json collection | sort json keys |
-| --- | --- |
-| object | yes |
-| array | no |
-
-- sort json keys: Canonical JSON sorts object keys recursively and preserves array order.
-
 | mint clock | counter space | mint range | monotonic mint |
 | --- | --- | --- | --- |
 | aheadOrUnbound | available | fits | reseedAtClock |
@@ -2285,7 +2189,7 @@ stateDiagram-v2
 
 - store number lifecycle: The first migration persists the number and subsequent migrations, serving and maintenance require agreement.
 
-| bool | bool | publication counter update |
+| same handle | nondecreasing | publication counter update |
 | --- | --- | --- |
 | yes | yes | yes |
 | yes | no | no |
@@ -2293,13 +2197,6 @@ stateDiagram-v2
 | no | no | no |
 
 - publication counter update: Publication counters retain their series handle and never regress.
-
-| bool | object store source |
-| --- | --- |
-| yes | operator |
-| no | endpointAndBucket |
-
-- object store source: An explicit validated identity takes precedence over derivation from endpoint and bucket.
 
 ## Memory
 
@@ -2329,26 +2226,6 @@ stateDiagram-v2
 - updateLifecycle
 - updateOwnerAndEquivalentPointers
 - applyCapturedMapping
-
-**Write target**: How a write selects its series.
-
-- namedSeries
-- supersedesVersion
-
-**Series source**: The source of the series handle.
-
-- requestedHandle
-- targetVersionHandle
-
-**Reserved head**: The locked comparison of the series head against the snapshot taken before minting a greater version ID.
-
-- unchanged
-- moved
-
-**Head action**: What the locked writer does after checking the reserved head.
-
-- materialize
-- retry
 
 **Derived head action**: The action for a deterministic derived-series head probe.
 
@@ -2420,21 +2297,7 @@ stateDiagram-v2
 
 - version action: Observations and revisions append, and in-place changes are limited to the lifecycle, transfer and captured-evolution paths.
 
-| write target | series source |
-| --- | --- |
-| namedSeries | requestedHandle |
-| supersedesVersion | targetVersionHandle |
-
-- series source: Supersession selects the existing series of the named version and writes no supersession pin.
-
-| reserved head | head reservation |
-| --- | --- |
-| unchanged | materialize |
-| moved | retry |
-
-- head reservation: Only the reserved head permits materialization of the minted version.
-
-| bool | bool | bool | derived head action |
+| origins match | references match | guidance matches | derived head action |
 | --- | --- | --- | --- |
 | yes | yes | yes | replayStoredVersion |
 | yes | yes | no | appendVersion |
@@ -2447,7 +2310,7 @@ stateDiagram-v2
 
 - derived head action: Equal origins and references replay the stored version when guidance agrees, while changed origins permit a new revision after the forgotten-version probe.
 
-| kind | bool | occurrence source |
+| kind | supplied | occurrence source |
 | --- | --- | --- |
 | Fact | yes | supplied |
 | Fact | no | admissionTime |
@@ -2737,7 +2600,7 @@ stateDiagram-v2
 
 - core admission: Only a blank store, the baseline or the exact previous head can enter core migration.
 
-| missing version policy | bool | recorded version admitted |
+| missing version policy | shipped | recorded version admitted |
 | --- | --- | --- |
 | reject | yes | yes |
 | reject | no | no |
@@ -2767,14 +2630,7 @@ stateDiagram-v2
 
 - definition work: Newer definitions stay in place only under Allow, and an absent or changed checksum calls for reinstallation.
 
-| vector lane | installs pgvector |
-| --- | --- |
-| local | yes |
-| hostIndex | no |
-
-- installs pgvector: Only the local vector lane installs the pgvector migration.
-
-| vector lane | bool | applies core migration |
+| vector lane | pgvector only | applies core migration |
 | --- | --- | --- |
 | local | yes | yes |
 | local | no | yes |
@@ -3026,7 +2882,7 @@ stateDiagram-v2
   s3 --> s3 : no
 ```
 
-| storage actions | bool | answer |
+| storage actions | dry run | answer |
 | --- | --- | --- |
 | none | yes | refused: missingAction |
 | none | no | refused: missingAction |
@@ -3071,7 +2927,7 @@ stateDiagram-v2
 
 - claims key: Pending and completed rows claim canonical objects, and only in-flight rows claim transfer objects.
 
-| bool | bool | bool | optional s3 |
+| host policy valid | bucket set | companions valid | optional s3 |
 | --- | --- | --- | --- |
 | yes | yes | yes | configured |
 | yes | yes | no | refuse |
@@ -3084,18 +2940,16 @@ stateDiagram-v2
 
 - optional s3: Plaintext host policy is parsed even without a bucket, which otherwise opts in and requires its companion settings.
 
-| bool | bool | reconcile locator | cited object transfer | warn stuck |
-| --- | --- | --- | --- | --- |
-| yes | yes | present | reuseDestination | yes |
-| yes | no | missing | reuseDestination | no |
-| no | yes | foreign | mountSource | no |
-| no | no | foreign | moveRows | no |
+| local locator | present | reconcile locator |
+| --- | --- | --- |
+| yes | yes | present |
+| yes | no | missing |
+| no | yes | foreign |
+| no | no | foreign |
 
 - reconcile locator: A foreign locator is counted separately from a missing local object.
-- cited object transfer: Reuse identical destination metadata first, move unshared rows in place, or mount shared bytes with independent metadata.
-- warn stuck: Inputs that determine whether a stuck-debt warning is emitted.
 
-| expiry state | bool | may expire |
+| expiry state | past ttl | may expire |
 | --- | --- | --- |
 | pendingUnstaged | yes | yes |
 | pendingUnstaged | no | no |
@@ -3105,6 +2959,24 @@ stateDiagram-v2
 | terminal | no | no |
 
 - may expire: Only an unstaged pending upload past its TTL may be expired by the sweep.
+
+| destination has bytes | shared | cited object transfer |
+| --- | --- | --- |
+| yes | yes | reuseDestination |
+| yes | no | reuseDestination |
+| no | yes | mountSource |
+| no | no | moveRows |
+
+- cited object transfer: Reuse identical destination metadata first, move unshared rows in place, or mount shared bytes with independent metadata.
+
+| changed | nonzero | warn stuck |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- warn stuck: Inputs that determine whether a stuck-debt warning is emitted.
 
 | persisted store form | persisted store admitted |
 | --- | --- |
@@ -3377,7 +3249,7 @@ stateDiagram-v2
 
 - pass wait: Progress retries immediately, while idle and failed passes back off.
 
-| pass | bool | commit ends wait |
+| pass | subscribed | commit ends wait |
 | --- | --- | --- |
 | worked | yes | no |
 | worked | no | no |
@@ -3438,7 +3310,7 @@ stateDiagram-v2
 
 - feature requirements: The inputs each runtime feature requires to start.
 
-| feature | bool | claim control |
+| feature | started | claim control |
 | --- | --- | --- |
 | mcp | yes | no |
 | mcp | no | no |
@@ -3476,7 +3348,7 @@ stateDiagram-v2
 
 - joint gate status: A stopped drain dominates, uniform running or parked drains agree and other combinations are quiescing.
 
-| serve mode | bool | binds listener |
+| serve mode | configured | binds listener |
 | --- | --- | --- |
 | build | yes | no |
 | build | no | no |
@@ -3485,17 +3357,32 @@ stateDiagram-v2
 
 - binds listener: Build hands out a router and run binds a listener when MCP is configured.
 
-| bool | bool | ready | report worker exit | request sample | served read |
-| --- | --- | --- | --- | --- | --- |
-| yes | yes | no | joinDiagnostic | no | yes |
-| yes | no | no | normal | yes | yes |
-| no | yes | yes | degraded | no | yes |
-| no | no | no | degraded | no | no |
+| shutting down | database available | ready |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | no |
+| no | yes | yes |
+| no | no | no |
 
 - ready: A running listener is ready while its runtime is active and the database answers.
+
+| shutting down | failed join | report worker exit |
+| --- | --- | --- |
+| yes | yes | joinDiagnostic |
+| yes | no | normal |
+| no | yes | degraded |
+| no | no | degraded |
+
 - report worker exit: Premature exit is degraded and a failed join during shutdown is diagnostic.
+
+| collected | outstanding | request sample |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
 - request sample: A collection starts a sample only if no read is outstanding.
-- served read: A declared read or a selected key is served.
 
 | sample outcome | finish sample |
 | --- | --- |
@@ -3504,6 +3391,15 @@ stateDiagram-v2
 | shutdown | cancelRead |
 
 - finish sample: A successful metrics read stores the new sample, failure clears it and shutdown cancels the read.
+
+| mandatory | selected | served read |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- served read: A declared read or a selected key is served.
 
 | stage end | stage timing |
 | --- | --- |
@@ -3817,7 +3713,7 @@ stateDiagram-v2
 - can read: An owner role with Goal access reads the owner's Goals.
 - can work: Only the work capability admits owner Goal work.
 
-| access ceiling | access ceiling | ceiling admitted |
+| read | write | ceiling admitted |
 | --- | --- | --- |
 | none | none | yes |
 | none | fact | no |
@@ -3902,7 +3798,7 @@ stateDiagram-v2
 
 - membership consent: Adding or changing a group edge needs both groups. Detaching needs either group, and person edits need the parent.
 
-| bool | bool | preserves manager |
+| had manager | has manager | preserves manager |
 | --- | --- | --- |
 | yes | yes | yes |
 | yes | no | no |
@@ -3911,7 +3807,7 @@ stateDiagram-v2
 
 - preserves manager: An engine membership removal or replacement preserves a previously managed group.
 
-| goal work path | bool | bool | goal work admitted |
+| goal work path | works | administers | goal work admitted |
 | --- | --- | --- | --- |
 | hostBearer | yes | yes | yes |
 | hostBearer | yes | no | yes |
@@ -3990,11 +3886,6 @@ stateDiagram-v2
 
 - header
 - per payload
-
-**Content hash kind**: The kind classes that share or separate Content hashes.
-
-- fact
-- derived
 
 **Key text**: The text kinds available to a typed natural key.
 
@@ -4147,16 +4038,6 @@ stateDiagram-v2
 - reason
 - enforcementSite
 
-**Follows table state**: The missing-table and stale-policy states of a Follows sidecar.
-
-- missingTable
-- stalePolicy
-
-**Follows boot refusal**: How boot classifies a Follows table that needs attention.
-
-- internal
-- migrationRequired
-
 **Registration check**: The identifiers and behavior reconciled against core when binding a storage registration.
 
 - schemaKind
@@ -4290,16 +4171,14 @@ stateDiagram-v2
 
 **fork copy checks** = \[abstractionOrPerspective, explicitCopyPolicy, unpinnedSidecar]: The sidecar loader requires an opted-in unpinned Abstraction or Perspective schema.
 
-| bool | bool | scope selection | versioned schema available | payload subjects |
-| --- | --- | --- | --- | --- |
-| yes | yes | yes | yes | yes |
-| yes | no | no | no | no |
-| no | yes | no | no | no |
-| no | no | no | no | no |
+| declared | has scope id | scope selection |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
 
 - scope selection: The scope is present only when its kind is declared and its row ID is supplied.
-- versioned schema available: The schema resource replies only for a registered exact version with published JSON Schema.
-- payload subjects: An emitted reference can ground payload-only provenance when its field and target are eligible.
 
 | receipt presence | receipt presence |
 | --- | --- |
@@ -4309,26 +4188,21 @@ stateDiagram-v2
 
 - receipt presence: The presence byte written after a declared optional field's tag.
 
-| content hash kind | kind scoped hash |
-| --- | --- |
-| fact | no |
-| derived | yes |
-
-- kind scoped hash: A derived admission domain-separates the Content hash by kind.
-
-| key text | trim key padding |
-| --- | --- |
-| text | no |
-| paddedText | yes |
-
-- trim key padding: Only padded text discards trailing ASCII spaces.
-
 | inventory filter | list schema inventory |
 | --- | --- |
 | allKinds | \[allPayloadKinds, resourceAnswers] |
 | selectedKind | \[selectedPayloadKind, resourceAnswers] |
 
 - list schema inventory: The kind filter controls payload entries while the resource schema inventory is independent.
+
+| registered | has json schema | versioned schema available |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- versioned schema available: The schema resource replies only for a registered exact version with published JSON Schema.
 
 | surface export | erase exportable | export projection |
 | --- | --- | --- |
@@ -4365,7 +4239,7 @@ stateDiagram-v2
 
 - pinned inverse: Memory-following traversal skips pinned rows; owner inverses select by stamped owner.
 
-| sidecar owner mode | bool | enforce stamp |
+| sidecar owner mode | retired retain at source | enforce stamp |
 | --- | --- | --- |
 | none | yes | \[sidecarInsert, sidecarRepoint] |
 | none | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
@@ -4375,6 +4249,15 @@ stateDiagram-v2
 | follows | no | \[sidecarInsert, sidecarRepoint, sidecarDelete, memoryCommit] |
 
 - enforce stamp: Inserts and repoints require a declaration; reverse checks exempt pinned and retired retain-at-source sidecars.
+
+| declared field | memory target | payload subjects |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- payload subjects: An emitted reference can ground payload-only provenance when its field and target are eligible.
 
 | existing reference | install reference |
 | --- | --- |
@@ -4410,13 +4293,6 @@ stateDiagram-v2
 
 - schema id spelling: A declared schema ID must be lowercase without whitespace.
 
-| follows table state | follows boot refusal |
-| --- | --- |
-| missingTable | internal |
-| stalePolicy | migrationRequired |
-
-- follows boot refusal: A missing Follows table yields Internal; stale generated policy requires migration.
-
 ## Repository
 
 **Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
@@ -4430,16 +4306,6 @@ stateDiagram-v2
 - relevant
 - unrelated
 - unknown
-
-**Validation run**: Source of the revision to validate.
-
-- pullRequest
-- verify
-
-**Path source**: How CI obtains the paths under review.
-
-- pullRequestApi
-- verifiedToCandidate
 
 **Validation grant**: The validation job's token permissions.
 
@@ -4692,16 +4558,6 @@ stateDiagram-v2
 - platformMigration
 - scopedRuntime
 
-**Fixture owner**: The owner kind a single-owner test context acts in.
-
-- personal
-- group
-
-**Fixture subject**: Who a sealed single-owner test context acts as.
-
-- ownUser
-- freshAdmin
-
 **Trigger fixture refusal**: The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations.
 
 - invalidRegistration
@@ -4760,16 +4616,7 @@ stateDiagram-v2
 
 - validate lane: Stable required job names are present on main pull requests, and an unknown diff runs the affected lanes.
 
-| validation run | path source | cancel superseded validation | save rust cache |
-| --- | --- | --- | --- |
-| pullRequest | pullRequestApi | yes | no |
-| verify | verifiedToCandidate | no | yes |
-
-- path source: Pull requests use the GitHub API and Verify diffs its tested commit against the last verified commit.
-- cancel superseded validation: A newer PR revision supersedes the previous validation run.
-- save rust cache: Only main verification saves Rust caches.
-
-| bool | validation grants |
+| detect changes | validation grants |
 | --- | --- |
 | yes | \[contentsRead, pullRequestsRead] |
 | no | \[contentsRead] |
@@ -4798,35 +4645,54 @@ stateDiagram-v2
 
 - uses test pooler: Only serving clients are retargeted to the transaction pooler, preserving database and role.
 
-| bool | bool | bool | verify range | admin configuration |
-| --- | --- | --- | --- | --- |
-| yes | yes | yes | no | connect |
-| yes | yes | no | yes | connect |
-| yes | no | yes | no | connect |
-| yes | no | no | no | connect |
-| no | yes | yes | no | refuse |
-| no | yes | no | no | skip |
-| no | no | yes | no | refuse |
-| no | no | no | no | refuse |
+| main | extends verified | has merge | verify range |
+| --- | --- | --- | --- |
+| yes | yes | yes | no |
+| yes | yes | no | yes |
+| yes | no | yes | no |
+| yes | no | no | no |
+| no | yes | yes | no |
+| no | yes | no | no |
+| no | no | yes | no |
+| no | no | no | no |
 
 - verify range: Verify accepts a candidate from main only after checking that it extends the previously verified history without merge commits.
-- admin configuration: A blank or absent admin URL is a visible skip only in a local test that opts into skipping.
 
-| bool | bool | review covers | advance verified | numbered release | recover release | render upgrade | clone guard | stale clone collectible | collect template |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| yes | yes | yes | \[verifiedFastForward, nightlyLightweightTag] | skip | yes | yes | keep | no | no |
-| yes | no | no | \[] | tagAndPublish | no | no | keep | yes | yes |
-| no | yes | no | \[] | refuseUnverified | no | no | keepWithRedactedDiagnostic | no | no |
-| no | no | no | \[] | refuseUnverified | no | no | drop | no | no |
+| record in suffix | different address | review covers |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
 
 - review covers: Each commit since verified needs a reviewer address outside its Git author and co-author addresses, on that commit or a later one in the candidate range.
+
+| ci passed | review covered | advance verified |
+| --- | --- | --- |
+| yes | yes | \[verifiedFastForward, nightlyLightweightTag] |
+| yes | no | \[] |
+| no | yes | \[] |
+| no | no | \[] |
+
 - advance verified: Failed CI or missing review leaves both references in place.
+
+| verified | tag exists | numbered release |
+| --- | --- | --- |
+| yes | yes | skip |
+| yes | no | tagAndPublish |
+| no | yes | refuseUnverified |
+| no | no | refuseUnverified |
+
 - numbered release: A new workspace version cuts one immutable matching tag and GitHub Release when Verify reaches that candidate.
+
+| verified | tag matches workspace | recover release |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
 - recover release: A matching verified tag can publish its notes through the same workflow for backfill or recovery.
-- render upgrade: Breaking commits in the candidate range require one nonempty Upgrade footer whose continuation is retained in the rendered notes.
-- clone guard: Explicit retention preserves a clone, as does panic, which otherwise reports its redacted URL.
-- stale clone collectible: The sweeper considers stale tracked and fixture-named untracked clones and lets PostgreSQL recheck for live clients at deletion.
-- collect template: Template collection takes an exclusive lease and retains a database that has gained a client.
 
 | version step | version accepted |
 | --- | --- |
@@ -4838,6 +4704,15 @@ stateDiagram-v2
 | invalid | no |
 
 - version accepted: Stable versions use canonical ASCII components and stay at the latest release or take one valid SemVer step.
+
+| breaking | one nonempty footer | render upgrade |
+| --- | --- | --- |
+| yes | yes | yes |
+| yes | no | no |
+| no | yes | no |
+| no | no | no |
+
+- render upgrade: Breaking commits in the candidate range require one nonempty Upgrade footer whose continuation is retained in the rendered notes.
 
 | dependency input | dependency policy |
 | --- | --- |
@@ -4855,12 +4730,45 @@ stateDiagram-v2
 
 - dependency policy: Cargo-deny's configured enforcement for dependency inputs.
 
-| fixture owner | fixture subject |
-| --- | --- |
-| personal | ownUser |
-| group | freshAdmin |
+| configured | skippable | ci | admin configuration |
+| --- | --- | --- | --- |
+| yes | yes | yes | connect |
+| yes | yes | no | connect |
+| yes | no | yes | connect |
+| yes | no | no | connect |
+| no | yes | yes | refuse |
+| no | yes | no | skip |
+| no | no | yes | refuse |
+| no | no | no | refuse |
 
-- fixture subject: A personal fixture acts as its own user; a Group fixture acts as a fresh admin of that Group.
+- admin configuration: A blank or absent admin URL is a visible skip only in a local test that opts into skipping.
+
+| keep | panics | clone guard |
+| --- | --- | --- |
+| yes | yes | keep |
+| yes | no | keep |
+| no | yes | keepWithRedactedDiagnostic |
+| no | no | drop |
+
+- clone guard: Explicit retention preserves a clone, as does panic, which otherwise reports its redacted URL.
+
+| stale | live client | stale clone collectible |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
+- stale clone collectible: The sweeper considers stale tracked and fixture-named untracked clones and lets PostgreSQL recheck for live clients at deletion.
+
+| lease available | live client | collect template |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | no |
+| no | no | no |
+
+- collect template: Template collection takes an exclusive lease and retains a database that has gained a client.
 
 ## Schema evolution
 
@@ -4905,11 +4813,6 @@ stateDiagram-v2
 - sameAuthorityOnEveryMergeContributor
 - sameAuthorityOnEachSplitSuccessor
 - compatibleGeneration
-
-**Source schema state**: The states of a source schema at ordinary write admission.
-
-- beforeCompletion
-- completed
 
 **Source fence**: The source lock sequence used before transformation.
 
@@ -4972,13 +4875,6 @@ stateDiagram-v2
 **rebuild parts** = \[projections, sketches, embeddingJobsForMappedSpaces, discardObsoleteVectorsAndClaims]: Generated payload state is rebuilt and embedding spaces follow the mapping without carrying old vectors or claims.
 
 **retired drain** = \[inventoryRawAdmissionsByAscendingOwnerPages, commitEachOwnerPage, resumeFromRemainingAdmissions]: Retired Fact drain uses raw admissions and resumes at committed page boundaries.
-
-| source schema state | source writable |
-| --- | --- |
-| beforeCompletion | yes |
-| completed | no |
-
-- source writable: Ordinary source writes stop when completion is recorded.
 
 ## Causa
 

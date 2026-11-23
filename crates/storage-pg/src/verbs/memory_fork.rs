@@ -477,7 +477,8 @@ async fn check_fork_consent(
     kind: MemoryKind,
 ) -> Result<Option<Uuid>, StorageError> {
     let (goal, controller) = consent.ok_or(StorageError::NotFound)?;
-    // `Causa.goal_publication_fork_admitted` and `Proxiima.GoalCollaboration.publicationForkAllowed`.
+    // `Causa.goal_publication_fork_admitted`.
+    // Only a publication with fork use grants consent to fork.
     let publication = sqlx::query("SELECT gh.authority_generation,p.cited_upload_id FROM proxiima_core.goal_memory_publication p
         JOIN proxiima_core.goal_head gh ON gh.handle=p.goal_handle AND gh.owner_id=$3 AND gh.authority_generation=p.controller_generation
         JOIN proxiima_core.live_memory m ON m.t=p.memory_t AND m.owner_id=p.source_owner

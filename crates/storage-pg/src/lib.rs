@@ -163,6 +163,7 @@ impl VectorStorage {
     /// file name starts `pgvector` belongs to [`Self::Local`] alone.
     #[must_use]
     pub fn applies(self, migration: &sqlx::migrate::Migration) -> bool {
+        // Only the local vector lane installs pgvector, which it uses for vector storage.
         // `Proxiima.Migrations.appliesCoreMigration`
         match self {
             Self::Local => true,

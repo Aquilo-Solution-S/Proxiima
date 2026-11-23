@@ -263,7 +263,7 @@ async fn admit_derived(
     input: DerivedAdmissionInput<'_>,
 ) -> Result<DerivedOutcome, StorageError> {
     let kind = derived_kind(draft)?;
-    // `Proxiima.Memory.seriesSource`.
+    // Supersession takes the target version's existing series handle and writes no supersession pin.
     let handle = if let Some(prior) = draft.supersedes {
         let prior_handle: Option<uuid::Uuid> = sqlx::query_scalar(
             "SELECT handle FROM proxiima_core.live_memory

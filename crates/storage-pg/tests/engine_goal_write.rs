@@ -373,7 +373,6 @@ impl AuthorizationHook for RefuseKind {
 /// Evidence carried by omission is read-authorized per target: a host hook
 /// that refuses either carried target (the Fact or the Abstraction) refuses
 /// the modify and leaves the Goal as it was; with neither refused it succeeds.
-// `Proxiima.Goals.evidenceAdmission`.
 #[tokio::test]
 async fn modify_authorizes_each_carried_evidence_target() -> TestResult {
     let hook = Arc::new(RefuseKind::default());

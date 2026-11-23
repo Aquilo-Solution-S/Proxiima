@@ -78,7 +78,7 @@ impl PgSidecarRegistryFrozen {
         .fetch_all(&mut *conn)
         .await
         .map_err(map_err)?;
-        // `Proxiima.Payloads.followsBootRefusal`.
+        // A missing Follows table is an internal error. Stale policy needs a migration.
         if !absent.is_empty() {
             return Err(StorageError::Internal(format!(
                 "registered owner_follows sidecars do not exist: {absent:?}"

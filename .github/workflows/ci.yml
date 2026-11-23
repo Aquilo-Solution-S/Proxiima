@@ -3,7 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  # `Proxiima.Repository.pathSource`.
   workflow_call:
     inputs:
       base:
@@ -17,7 +16,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true # `Proxiima.Repository.cancelSupersededValidation`.
+  # A new PR revision cancels the previous validation run. Verify runs to completion.
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,6 +44,7 @@ jobs:
       # dorny/paths-filter@v4
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
         id: paths
+        # PRs use the GitHub API. Verify diffs its tested commit against the last verified commit.
         with:
           base: ${{ inputs.base }}
           ref: ${{ inputs.base != '' && github.sha || '' }}
@@ -65,7 +66,8 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
+          # Only main verification saves Rust caches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # `Proxiima.Repository.RustLane`.
       - name: rustfmt
         run: cargo fmt --all --check
@@ -228,7 +230,7 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: relax test Postgres durability, size its connections
         # Disposable database: crash safety buys nothing here. Every per-test
         # DROP DATABASE forces a checkpoint, and with fsync on each one waits
@@ -309,7 +311,7 @@ jobs:
       # Swatinem/rust-cache@v2.9.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }} # `Proxiima.Repository.saveRustCache`.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: start pgbouncer in transaction mode
         # Not a service container: PgBouncer is configured by its ini file,
         # and a service takes no file or command line. It runs as the runner

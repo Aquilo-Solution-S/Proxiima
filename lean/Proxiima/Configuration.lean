@@ -24,16 +24,6 @@ def layerPrecedence : Presence → Presence → Presence → Layer
   | .omitted, .omitted, .supplied => .application
   | .omitted, .omitted, .omitted => .builtIn
 
-/-- An authenticator supplied by either the host or application prevents using environment OIDC. -/
-def useEnvironmentAuthenticator : Presence → Bool
-  | .omitted => true
-  | .supplied => false
-
-/-- Only a slot or block left unset by the host is looked up and parsed from the environment. -/
-def readEnvironment : Presence → Bool
-  | .omitted => true
-  | .supplied => false
-
 /-- The available configuration lookup profiles. -/
 inductive LookupProfile where
   | serving
@@ -67,17 +57,6 @@ def lookupPresence : LookupText → Presence
   | .missing | .blank => .omitted
   | .nonblank => .supplied
 
-/-- The process reader accepts a setting value rather than a bare name. -/
-inductive ReadSetting where
-  | declaredSetting
-  | bareName
-  deriving DecidableEq
-
-/-- By the `settings!` convention, process settings are read through declared settings. -/
-def mayReadProcessSetting : ReadSetting → Bool
-  | .declaredSetting => true
-  | .bareName => false
-
 /-- Configured names distinguished by the unknown-name diagnostic. -/
 inductive EnvironmentName where
   | declared
@@ -95,11 +74,6 @@ inductive PairPosition where
   | earlier
   | later
   deriving DecidableEq
-
-/-- The last supplied pair wins when injected configuration repeats a name. -/
-def winsRepeatedPair : PairPosition → Bool
-  | .earlier => false
-  | .later => true
 
 /-- Given the earlier and later values in that order, tuple entries and repeated host configuration calls retain the last supplied slot value. -/
 def lastConfiguredSlot : Presence → Presence → Option PairPosition

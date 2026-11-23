@@ -103,23 +103,6 @@ inductive LifecycleRegistration where
   | subsetOfParticipantSurfaces
   deriving DecidableEq
 
-/-- Host lifecycle operations distinguish an erase from an export. -/
-inductive LifecycleOperation where
-  | erase
-  | export
-  deriving DecidableEq
-
-/-- A lifecycle callback's transaction context. -/
-inductive LifecycleContext where
-  | eraseTransaction
-  | readOnlyExportSnapshot
-  deriving DecidableEq
-
-/-- The callback participates in the authorized erase transaction or in the read-only owner export snapshot. -/
-def lifecycleContext : LifecycleOperation → LifecycleContext
-  | .erase => .eraseTransaction
-  | .export => .readOnlyExportSnapshot
-
 /-- The checks on a host erase receipt before the shared erase can commit. -/
 inductive EraseReceiptCheck where
   | sameParticipant

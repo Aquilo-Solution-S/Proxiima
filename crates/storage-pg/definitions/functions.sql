@@ -78,7 +78,7 @@ BEGIN
 END
 $function$;
 
--- `Proxiima.SchemaEvolution.sourceWritable`.
+-- Ordinary source writes stop once schema evolution records completion.
 CREATE OR REPLACE FUNCTION proxiima_core.assert_schema_evolution_source_writable()
  RETURNS trigger
  LANGUAGE plpgsql

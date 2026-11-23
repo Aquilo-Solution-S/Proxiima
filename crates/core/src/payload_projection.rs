@@ -170,7 +170,7 @@ impl<P> KeyField<P> {
     }
 
     fn atom(&self, payload: &P) -> SidecarAtom {
-        // `Proxiima.Payloads.trimKeyPadding`.
+        // Only padded text drops trailing ASCII spaces to match PostgreSQL CHAR equality.
         match self.getter {
             KeyGetter::Uuid(getter) => SidecarAtom::Uuid(getter(payload)),
             KeyGetter::Text(getter) => SidecarAtom::Text(getter(payload).to_owned()),

@@ -798,49 +798,41 @@ impl RuntimeBuilder {
         mut self,
         lookup: &dyn proxiima_core::EnvLookup,
     ) -> Result<Self, ProxiimaError> {
-        // `Proxiima.Configuration.readEnvironment`
+        // Look up and parse environment values only for slots and blocks the host left unset.
         if self.store_number.is_none() {
             self.store_number = settings::PROXIIMA_STORE_NUMBER
                 .read_source(lookup)
                 .map(|value| parse_store_number(&value))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.database_url.is_none() {
             self.database_url = settings::DATABASE_URL.read_source(lookup);
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.platform_database_url.is_none() {
             self.platform_database_url =
                 settings::PROXIIMA_PLATFORM_DATABASE_URL.read_source(lookup);
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.migration_database_url.is_none() {
             self.migration_database_url =
                 settings::PROXIIMA_MIGRATION_DATABASE_URL.read_source(lookup);
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.missing_migration_policy.is_none() {
             self.missing_migration_policy = missing_migration_policy_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.runtime_grants.is_none() {
             self.runtime_grants = settings::PROXIIMA_RUNTIME_GRANTS
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_RUNTIME_GRANTS, &raw))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.pg_pool_config.is_none() {
             self.pg_pool_config = pg_pool_config_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.pg_tuning.is_none() {
             self.pg_tuning = pg_tuning_from_lookup(lookup)?;
         }
         // The storage applies this policy to its reclaim and stale-claim
         // reads, which maintenance reports too.
-        // `Proxiima.Configuration.readEnvironment`
         if self.embedding_runtime_policy.is_none() && embedding_runtime_policy_env_is_set(lookup) {
             self.embedding_runtime_policy = Some(embedding_runtime_policy_from_lookup(lookup)?);
         }
@@ -853,11 +845,9 @@ impl RuntimeBuilder {
         &mut self,
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
-        // `Proxiima.Configuration.readEnvironment`
         if self.s3.is_none() {
             self.s3 = s3_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.mcp_bind.is_none()
             && let Some(raw) = settings::PROXIIMA_MCP_BIND.read_source(lookup)
         {
@@ -867,14 +857,12 @@ impl RuntimeBuilder {
                 ))
             })?);
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.expose_network.is_none() {
             self.expose_network = settings::PROXIIMA_EXPOSE_NETWORK
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_EXPOSE_NETWORK, &raw))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.rest_enabled.is_none() {
             self.rest_enabled = settings::PROXIIMA_REST_ENABLED
                 .read_source(lookup)
@@ -882,38 +870,31 @@ impl RuntimeBuilder {
                 .transpose()?;
         }
         self.apply_served_path_lookup(lookup)?;
-        // `Proxiima.Configuration.readEnvironment`
         if self.allowed_origins.is_none() {
             self.allowed_origins = settings::PROXIIMA_ALLOWED_ORIGINS
                 .read_source(lookup)
                 .map(|raw| parse_allowed_origins(&raw));
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.allowed_hosts.is_none() {
             self.allowed_hosts = settings::PROXIIMA_ALLOWED_HOSTS
                 .read_source(lookup)
                 .map(|raw| parse_allowed_hosts(&raw));
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.stream_max_lifetime.is_none() {
             self.stream_max_lifetime = settings::PROXIIMA_STREAM_MAX_LIFETIME
                 .read_source(lookup)
                 .map(|raw| parse_duration_seconds(&settings::PROXIIMA_STREAM_MAX_LIFETIME, &raw))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.publication.is_none() {
             self.publication = publication_config_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.published_retention.is_none() {
             self.published_retention = crate::config::published_retention_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.object_purge_interval.is_none() {
             self.object_purge_interval = crate::config::object_purge_interval_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.outbox_http.is_none() {
             self.outbox_http = crate::outbox_http::HttpIntake::from_lookup(lookup)?.map(Arc::new);
         }
@@ -926,24 +907,20 @@ impl RuntimeBuilder {
         &mut self,
         lookup: &(impl proxiima_core::EnvLookup + ?Sized),
     ) -> Result<(), ProxiimaError> {
-        // `Proxiima.Configuration.readEnvironment`
         if self.request_headers.is_none() {
             self.request_headers = settings::PROXIIMA_REQUEST_HEADERS
                 .read_source(lookup)
                 .map(|raw| raw.split(',').map(ToOwned::to_owned).collect());
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.forwarder.is_none() {
             self.forwarder = forwarder_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.health_endpoints.is_none() {
             self.health_endpoints = settings::PROXIIMA_HEALTH_ENDPOINTS
                 .read_source(lookup)
                 .map(|raw| parse_bool_value(&settings::PROXIIMA_HEALTH_ENDPOINTS, &raw))
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.max_request_body_bytes.is_none() {
             self.max_request_body_bytes = settings::PROXIIMA_MAX_REQUEST_BODY_BYTES
                 .read_source(lookup)
@@ -956,11 +933,9 @@ impl RuntimeBuilder {
                 })
                 .transpose()?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.mcp_transport.is_none() {
             self.mcp_transport = mcp_transport_from_lookup(lookup)?;
         }
-        // `Proxiima.Configuration.readEnvironment`
         if self.oidc_env.is_none()
             && self.authenticator.is_none()
             && self.platform_authenticator.is_none()
@@ -985,7 +960,7 @@ impl RuntimeBuilder {
     /// the edge and the delegation service get.
     #[cfg(feature = "auth-oidc")]
     fn env_authenticator(&mut self) -> Result<Option<LateOwnerAccess>, ProxiimaError> {
-        // `Proxiima.Configuration.useEnvironmentAuthenticator`
+        // An authenticator supplied in code takes precedence over environment OIDC.
         if self.authenticator.is_some() || self.platform_authenticator.is_some() {
             return Ok(None);
         }
@@ -1009,7 +984,6 @@ impl RuntimeBuilder {
     /// honour, refused rather than ignored.
     #[cfg(not(feature = "auth-oidc"))]
     fn env_authenticator(&mut self) -> Result<Option<LateOwnerAccess>, ProxiimaError> {
-        // `Proxiima.Configuration.useEnvironmentAuthenticator`
         if self.authenticator.is_none()
             && self.platform_authenticator.is_none()
             && self.oidc_env.take().is_some()

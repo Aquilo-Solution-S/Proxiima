@@ -21,23 +21,6 @@ def validateLane : ChangedPaths → Bool
   | .relevant | .unknown => true
   | .unrelated => false
 
-/-- Source of the revision to validate. -/
-inductive ValidationRun where
-  | pullRequest
-  | verify
-  deriving DecidableEq
-
-/-- How CI obtains the paths under review. -/
-inductive PathSource where
-  | pullRequestApi
-  | verifiedToCandidate
-  deriving DecidableEq
-
-/-- Pull requests use the GitHub API and Verify diffs its tested commit against the last verified commit. -/
-def pathSource : ValidationRun → PathSource
-  | .pullRequest => .pullRequestApi
-  | .verify => .verifiedToCandidate
-
 /-- The validation job's token permissions. -/
 inductive ValidationGrant where
   | contentsRead
@@ -48,16 +31,6 @@ inductive ValidationGrant where
 def validationGrants : (detectChanges : Bool) → List ValidationGrant
   | true => [.contentsRead, .pullRequestsRead]
   | false => [.contentsRead]
-
-/-- A newer PR revision supersedes the previous validation run. -/
-def cancelSupersededValidation : ValidationRun → Bool
-  | .pullRequest => true
-  | .verify => false
-
-/-- Only main verification saves Rust caches. -/
-def saveRustCache : ValidationRun → Bool
-  | .pullRequest => false
-  | .verify => true
 
 /-- Rust validation checks format, both feature lanes for Clippy, warning-free Rustdoc and workspace doctests. -/
 inductive RustLane where
@@ -437,23 +410,6 @@ inductive CloneRole where
   | platformMigration
   | scopedRuntime
   deriving DecidableEq
-
-/-- The owner kind a single-owner test context acts in. -/
-inductive FixtureOwner where
-  | personal
-  | group
-  deriving DecidableEq
-
-/-- Who a sealed single-owner test context acts as. -/
-inductive FixtureSubject where
-  | ownUser
-  | freshAdmin
-  deriving DecidableEq
-
-/-- A personal fixture acts as its own user; a Group fixture acts as a fresh admin of that Group. -/
-def fixtureSubject : FixtureOwner → FixtureSubject
-  | .personal => .ownUser
-  | .group => .freshAdmin
 
 /-- The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations. -/
 inductive TriggerFixtureRefusal where

@@ -964,35 +964,6 @@ mod tests {
     fn like_pattern_escapes_wildcards() {
         assert_eq!(like_pattern("a_b%c\\d"), "%a\\_b\\%c\\\\d%");
     }
-    // `Proxiima.Payloads.trimKeyPadding`.
-    #[test]
-    fn key_padding_matches_ledger_vectors() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
-                .expect("valid ledger vectors");
-        let rows = vectors["Proxiima.Payloads.trimKeyPadding"]
-            .as_array()
-            .expect("key padding vectors");
-        assert_eq!(rows.len(), 2);
-        for row in rows {
-            let kind = match row["in"][0].as_str() {
-                Some("text") => crate::KeyScalarKind::Text,
-                Some("paddedText") => crate::KeyScalarKind::PaddedText,
-                _ => panic!("unrecognized key text kind: {row}"),
-            };
-            let input = super::SidecarAtom::Text("x ".into());
-            let expected = if row["out"].as_bool().expect("Boolean decision") {
-                "x"
-            } else {
-                "x "
-            };
-            assert_eq!(
-                super::bind_key_prefix_atom(kind, &input),
-                Some(super::SidecarAtom::Text(expected.into())),
-            );
-        }
-    }
-
     #[test]
     fn key_prefix_is_parsed_by_declared_type_and_equality() {
         use super::{SidecarAtom, bind_key_prefix_atom};
@@ -1010,6 +981,10 @@ mod tests {
                 &SidecarAtom::Text(uuid::Uuid::nil().to_string())
             )
             .is_none()
+        );
+        assert_eq!(
+            bind_key_prefix_atom(KeyScalarKind::Text, &SidecarAtom::Text("x  ".into())),
+            Some(SidecarAtom::Text("x  ".into()))
         );
         assert_eq!(
             bind_key_prefix_atom(KeyScalarKind::PaddedText, &SidecarAtom::Text("x  ".into())),

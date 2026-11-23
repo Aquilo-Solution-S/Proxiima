@@ -169,7 +169,6 @@ async fn digest_can_use_core_superseding_derived_authoring() {
             .await
             .expect("memory read");
         let snapshot = read.memory.expect("the version is readable");
-        // `Proxiima.Identity.readRevision`.
         assert_eq!(snapshot.memory_id, expected);
         assert_eq!(snapshot.series, old_handle);
     }

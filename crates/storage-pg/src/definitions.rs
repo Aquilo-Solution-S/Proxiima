@@ -70,7 +70,6 @@ fn files(vectors: VectorStorage) -> Vec<SqlText> {
         SqlText::new(VIEWS),
     ];
     // Install vector candidate functions only when vectors live in this database.
-    // `Proxiima.Migrations.installsPgvector`
     if vectors == VectorStorage::Local {
         files.push(SqlText::new(VECTOR));
     }
@@ -278,22 +277,15 @@ mod tests {
     use crate::test_fixtures::fresh_pg;
 
     #[test]
-    fn vector_definitions_match_ledger_vectors() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
-        for row in vectors["Proxiima.Migrations.installsPgvector"]
-            .as_array()
-            .unwrap()
-        {
-            let lane = match row["in"][0].as_str().unwrap() {
-                "local" => VectorStorage::Local,
-                "hostIndex" => VectorStorage::HostIndex,
-                value => panic!("unknown vector lane {value}"),
-            };
+    fn only_local_vector_storage_installs_vector_definitions() {
+        for (lane, expected) in [
+            (VectorStorage::Local, true),
+            (VectorStorage::HostIndex, false),
+        ] {
             assert_eq!(
-                row["out"],
                 files(lane).iter().any(|sql| sql.as_str() == VECTOR),
-                "{row}"
+                expected,
+                "{lane:?}"
             );
         }
     }
