@@ -79,7 +79,8 @@ pub struct ResolvedMemorySpace {
 
 /// Resolve the memory space a write lands in, and narrow the caller's
 /// authorization to that space's Owner. The space key is a selector; the
-/// narrowing is the gate. See `Proxiima.OwnerAuthority.spaceWriteOrder`.
+/// narrowing confines the write to that Owner, and the concrete verb's own
+/// gate still decides it. See `Proxiima.OwnerAuthority.spaceWriteOrder`.
 ///
 /// # Errors
 ///

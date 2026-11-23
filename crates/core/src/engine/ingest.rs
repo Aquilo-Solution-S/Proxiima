@@ -418,9 +418,9 @@ impl Engine {
         let mut deferred_kinds: Vec<(OwnerId, Vec<(MemoryId, EntityKind)>)> = Vec::new();
         for target in targets {
             // A repeated declaration names the same endpoint, and the first
-            // occurrence already validated and admitted it. Skipping here and
-            // not at the push below is what keeps a duplicate off the read
-            // path: layering and `authorize_entry_read` all run once.
+            // occurrence already admitted it. Skipping here and not at the
+            // push below keeps a duplicate out of admission: each distinct
+            // target is checked once.
             if out.contains(target) {
                 continue;
             }

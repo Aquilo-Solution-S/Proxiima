@@ -1054,7 +1054,7 @@ impl Engine {
         resolved.extend(retained_declared);
         let mut references = Vec::new();
         for reference in declared {
-            // `Proxiima.Edges.pinField` resolves each declared pin to an exact version.
+            // Each declared pin resolves to the exact version it names, of the kind it declares.
             let target = match reference.target.entity() {
                 crate::EntityRef::Memory(id) => {
                     let actual = resolved

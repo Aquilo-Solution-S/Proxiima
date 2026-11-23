@@ -489,7 +489,7 @@ goal_test!(
             .transition(paused.goal_id, GoalState::Active, "pause-3")
             .await?;
 
-        let mut previous_change = None;
+        let mut previous = None;
         for (id, state) in [
             (first.goal_id, GoalState::Active),
             (paused.goal_id, GoalState::Paused),
@@ -512,14 +512,18 @@ goal_test!(
                 minted_at(id),
                 "the change time is this version's own"
             );
-            if let Some(previous) = previous_change {
-                // Times have millisecond resolution; the id order is strict.
+            if let Some((previous_id, previous_change)) = previous {
                 assert!(
-                    row.changed_at >= previous,
+                    id > previous_id,
+                    "each version's id follows the one before it"
+                );
+                // Times have millisecond resolution, so two versions may share one.
+                assert!(
+                    row.changed_at >= previous_change,
                     "a later version never changed before the one before it"
                 );
             }
-            previous_change = Some(row.changed_at);
+            previous = Some((id, row.changed_at));
         }
 
         let listing = h.heads().await?;

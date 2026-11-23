@@ -192,6 +192,8 @@ impl MemoryFilter {
                     .push_u64(at)
                     .push("::uuid[])");
             }
+            // A Fact matches a reference to any readable revision of a selected series,
+            // before the page limit.
             Self::ReferencedGoalHandles(_) => {
                 sql.push(
                     " AND m.kind = 'fact' \
