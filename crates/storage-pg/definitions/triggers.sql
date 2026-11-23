@@ -252,6 +252,7 @@ CREATE OR REPLACE TRIGGER memory_align_head BEFORE INSERT ON proxiima_core.memor
 -- `Causa.restore_forget`.
 CREATE OR REPLACE TRIGGER memory_append_only BEFORE UPDATE ON proxiima_core.memory FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_owner_or_append_only();
 
+-- Cognitive writes leave existing cited-object data intact. See `Proxiima.SchemaEvolution` for captured remaps.
 CREATE OR REPLACE TRIGGER blob_schema_evolution_guard
     BEFORE UPDATE ON proxiima_core.blob
     FOR EACH ROW EXECUTE FUNCTION proxiima_core.schema_evolution_blob_guard();

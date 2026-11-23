@@ -273,9 +273,6 @@ fn reject_unstamped_memory_tables(
     Ok(())
 }
 
-/// Resolve the write's citation to a `blob_id`: the draft's hint and an
-/// inline object both upsert a blob; a reference verifies the existing
-/// object and returns its id.
 async fn persist_citation_timeseries(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -299,7 +296,7 @@ async fn persist_citation_timeseries(
     }
 }
 
-// `Proxiima.Identity.schemaAuthority`.
+// `Proxiima.Identity.schemaAuthority` and `Proxiima.Citations.inlineKey`.
 async fn upsert_blob(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,
@@ -325,11 +322,8 @@ async fn upsert_blob(
     .map_err(map_err)
 }
 
-/// An uploaded-blob citation stands on bytes this owner staged or finished.
-/// The upload row is share-locked, so an abort or expiry decides before or
-/// after this Fact, never between the check and the commit. A live upload
-/// of the content wins over an ended one; an owner whose only upload of it
-/// ended hears which way it ended.
+/// `Proxiima.Citations.uploadSupportsCitation`. Prefer live rows and hold the
+/// share lock until the Fact commits so abort or expiry cannot invalidate it.
 async fn require_staged_upload(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: uuid::Uuid,
@@ -421,8 +415,7 @@ async fn verify_cited_object_ref_in_tx(
     .await
     .map_err(map_err)?;
 
-    // Absent and other-owner are deliberately the same message: whether
-    // the row exists under a foreign owner must not be observable.
+    // `Proxiima.Citations.referenceAdmitted` and `Causa.citation_owner_match`.
     if !exists {
         return Err(StorageError::ConstraintViolation(format!(
             "cited object {cited_object_id} not found for this owner"
@@ -506,6 +499,7 @@ where
         sidecar,
     )
     .await?;
+    // `Proxiima.Citations.uploadPublicationOrder`.
     if let Some(upload_id) = upload {
         let cited_object_id = outcome.cited_object_id.ok_or_else(|| {
             StorageError::Internal("upload completion requires a cited object".into())
@@ -646,6 +640,7 @@ async fn admit_fact(
     let occurred_at = prepared.occurred_at();
     let mut write = draft.clone();
     if write.blob_id.is_none() {
+        // `Proxiima.Citations.citationAllowed`. This path admits Facts.
         write.blob_id = persist_citation_timeseries(tx, owner, draft, options.citation).await?;
     }
     let content_id = match (content.content_id, content.payloads) {

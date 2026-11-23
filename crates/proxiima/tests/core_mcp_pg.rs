@@ -2679,8 +2679,7 @@ async fn facade_core_citation_readback_is_owner_scoped() {
             citation["citation"]["cited_object_schema_id"],
             TestCitedObject::SCHEMA_ID
         );
-        // A citation is exactly the cited object and its schema; nothing
-        // else rides on the wire.
+        // `Proxiima.Citations.CitationProjection`.
         let mut citation_keys: Vec<&str> = citation["citation"]
             .as_object()
             .expect("citation object")

@@ -135,6 +135,7 @@ pub(super) async fn find_destination_blob(
 /// key minted by its upload lineage. Transfer must reject a mixed valid and
 /// malformed set: the read path's newest-row choice could otherwise select
 /// the malformed row after transfer.
+// `Proxiima.Citations.transferablePublication`.
 async fn has_only_exact_upload_publications(
     tx: &mut Transaction<'_, Postgres>,
     blob_id: uuid::Uuid,

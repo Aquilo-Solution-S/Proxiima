@@ -361,9 +361,7 @@ enum RememberCitationDrafts {
     },
 }
 
-/// Enforce the citation arity: exactly one of `cited_object_id` XOR the
-/// full inline triple (`object_schema_id` + `object_schema_version` +
-/// `object_payload`).
+/// `Proxiima.Citations.citationInput`.
 fn remember_citation_drafts(
     citation: RememberCitation,
 ) -> Result<RememberCitationDrafts, ToolError> {
@@ -410,4 +408,35 @@ fn remember_citation_drafts(
 
 fn encode_json_payload(value: &serde_json::Value) -> Vec<u8> {
     canonical_json_bytes(value)
+}
+
+#[cfg(test)]
+mod citation_tests {
+    use super::*;
+
+    #[test]
+    fn citation_input_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+        let rows = vectors["Proxiima.Citations.citationInput"]
+            .as_array()
+            .unwrap();
+        for row in rows {
+            let has_reference = row["in"][0].as_bool().unwrap();
+            let inline = row["in"][1].as_str().unwrap();
+            let draft = RememberCitation {
+                cited_object_id: has_reference.then(|| uuid::Uuid::nil().to_string()),
+                object_schema_id: (inline != "absent").then(|| "core/test".into()),
+                object_schema_version: (inline == "complete").then_some(1),
+                object_payload: (inline == "complete").then(|| serde_json::json!({})),
+            };
+            let actual = remember_citation_drafts(draft)
+                .ok()
+                .map(|draft| match draft {
+                    RememberCitationDrafts::Inline { .. } => "inlineObject",
+                    RememberCitationDrafts::ByRef { .. } => "reference",
+                });
+            assert_eq!(actual, row["out"].as_str(), "{row}");
+        }
+    }
 }

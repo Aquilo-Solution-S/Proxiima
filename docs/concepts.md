@@ -137,15 +137,8 @@ payload can itself disclose source information.
 
 ## Citations
 
-`blob_id` is an optional citation on Facts and Abstractions. Perspectives do
-not cite. A citation is bibliographic or artefact provenance, not a graph node,
-pin, or proof that the cited material is true. Its storage and ownership
-contract is part of the data and erasure surface.
-
-A Goal publication of a Fact citing an uploaded object captures its completed
-upload. The audience reads that object version through the exact publication;
-a later upload does not silently change the shared file or its metadata.
-Revoking the publication removes this route as well.
+Citations record provenance and select stored artifacts. See
+[`Proxiima.Citations`](ledger.md#citations).
 
 ## Self
 

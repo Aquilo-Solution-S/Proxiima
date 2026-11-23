@@ -16,6 +16,9 @@ use super::CitedBlobStore;
 use super::dto::CitedBlobUploadPrepareTs;
 use crate::error::BlobError;
 
+const MAX_FILENAME_BYTES: usize = proxiima_core::ledger!(Proxiima.Citations.maxFilenameBytes);
+const MAX_MEDIA_TYPE_BYTES: usize = proxiima_core::ledger!(Proxiima.Citations.maxMediaTypeBytes);
+
 pub(super) fn presign_config(ttl_seconds: u64) -> Result<PresigningConfig, BlobError> {
     PresigningConfig::expires_in(Duration::from_secs(ttl_seconds))
         .map_err(|e| BlobError::Config(format!("invalid presign TTL: {e}")))
@@ -64,7 +67,6 @@ pub(super) fn validate_prepare(
     if req.filename.trim().is_empty() {
         return Err(BlobError::State("filename is required".into()));
     }
-    const MAX_FILENAME_BYTES: usize = proxiima_core::ledger!(Proxiima.Citations.maxFilenameBytes);
     if req.filename.len() > MAX_FILENAME_BYTES {
         return Err(BlobError::State(format!(
             "filename exceeds {MAX_FILENAME_BYTES} bytes"
@@ -73,8 +75,6 @@ pub(super) fn validate_prepare(
     if req.mime.trim().is_empty() {
         return Err(BlobError::State("mime is required".into()));
     }
-    const MAX_MEDIA_TYPE_BYTES: usize =
-        proxiima_core::ledger!(Proxiima.Citations.maxMediaTypeBytes);
     if req.mime.len() > MAX_MEDIA_TYPE_BYTES {
         return Err(BlobError::State(format!(
             "mime exceeds {MAX_MEDIA_TYPE_BYTES} bytes"

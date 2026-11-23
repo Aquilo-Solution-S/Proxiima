@@ -101,6 +101,93 @@ pub(super) fn abort_transition_decision(
 mod tests {
     use super::*;
 
+    fn replay_transition_vectors(
+        rule: &str,
+        outcome: impl Fn(UploadStatus, u64, bool) -> &'static str,
+    ) {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../core/tests/ledger_vectors.json")).unwrap();
+        for row in vectors[rule].as_array().unwrap() {
+            let status = match row["in"][0].as_str().unwrap() {
+                "pending" => UploadStatus::Pending,
+                "completed" => UploadStatus::Completed,
+                "aborted" => UploadStatus::Aborted,
+                "expired" => UploadStatus::Expired,
+                unknown => panic!("unknown upload status: {unknown}"),
+            };
+            let rows = match row["in"][1].as_str().unwrap() {
+                "none" => 0,
+                "one" => 1,
+                "many" => 2,
+                unknown => panic!("unknown affected row count: {unknown}"),
+            };
+            let same_or_present = row["in"].get(2).and_then(serde_json::Value::as_bool);
+            assert_eq!(
+                outcome(status, rows, same_or_present.unwrap_or(false)),
+                row["out"].as_str().unwrap(),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn abort_outcome_matches_ledger_vectors() {
+        replay_transition_vectors("Proxiima.Citations.abortOutcome", |status, rows, _| {
+            match abort_transition_decision(status, rows) {
+                Ok(AbortTransitionDecision::WonPending) => "wonPending",
+                Ok(AbortTransitionDecision::Completed) => "completed",
+                Ok(AbortTransitionDecision::AlreadyAborted) => "alreadyAborted",
+                Ok(AbortTransitionDecision::AlreadyExpired) => "alreadyExpired",
+                Err(_) => "invalid",
+            }
+        });
+    }
+
+    #[test]
+    fn completion_outcome_matches_ledger_vectors() {
+        replay_transition_vectors(
+            "Proxiima.Citations.completionOutcome",
+            |status, rows, same| {
+                let object = Uuid::nil();
+                let observed = if same { object } else { Uuid::max() };
+                match finish_transition_decision(status, Some(observed), object, rows) {
+                    Ok(FinishTransitionDecision::WonPending) => "wonPending",
+                    Ok(FinishTransitionDecision::AlreadyFinished) => "sameObjectReplay",
+                    Err(BlobError::Storage(proxiima_core::StorageError::Conflict(_))) => {
+                        match status {
+                            UploadStatus::Aborted => "aborted",
+                            UploadStatus::Expired => "expired",
+                            status => panic!("unexpected conflict for {status:?}"),
+                        }
+                    }
+                    Err(_) => "invalid",
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn stage_outcome_matches_ledger_vectors() {
+        replay_transition_vectors(
+            "Proxiima.Citations.stageOutcome",
+            |status, rows, has_object| {
+                let object = Uuid::nil();
+                match stage_locator_decision(status, has_object.then_some(object), rows) {
+                    Ok(StageLocatorDecision::Staged) => "staged",
+                    Ok(StageLocatorDecision::Replay(id)) if id == object => "replay",
+                    Ok(StageLocatorDecision::RepairTerminal(UploadStatus::Aborted)) => {
+                        "repairAborted"
+                    }
+                    Ok(StageLocatorDecision::RepairTerminal(UploadStatus::Expired)) => {
+                        "repairExpired"
+                    }
+                    Ok(decision) => panic!("unexpected stage outcome: {decision:?}"),
+                    Err(_) => "invalid",
+                }
+            },
+        );
+    }
+
     #[test]
     fn finish_transition_decision_is_race_idempotent() {
         let object = Uuid::now_v7();

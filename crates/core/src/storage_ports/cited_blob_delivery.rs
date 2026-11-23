@@ -99,6 +99,7 @@ impl CitedBlobDeliveryService {
         operation: ScopeKey,
         authority: &DelegationRuntimeAuthority,
     ) -> Result<Self, CitedBlobDeliveryBindingError> {
+        // `Proxiima.Citations.bindDelivery`.
         if !read.is_bound_to(authority) {
             return Err(CitedBlobDeliveryBindingError::RuntimeMismatch);
         }

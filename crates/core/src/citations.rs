@@ -1,7 +1,4 @@
 //! Core cited-object schemas.
-//!
-//! A Fact reaches a cited object through `memory.blob_id` (0..1): the
-//! citation is that column plus the cited object's own schema.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,14 +13,16 @@ pub const UPLOADED_BLOB_SCHEMA_ID: &str = "core/uploaded-blob-v1";
 /// Canonical object key shared by staging and transactional publication.
 #[must_use]
 pub fn uploaded_blob_object_key(upload_id: uuid::Uuid) -> String {
-    format!("objects/{upload_id}")
+    const PREFIX: &str = crate::ledger!(Proxiima.Citations.canonicalPrefix);
+    format!("{PREFIX}{upload_id}")
 }
 
 /// The key a holder's presigned PUT writes for one upload, before staging
 /// publishes it under [`uploaded_blob_object_key`].
 #[must_use]
 pub fn upload_transfer_key(upload_id: uuid::Uuid) -> String {
-    format!("pending/{upload_id}")
+    const PREFIX: &str = crate::ledger!(Proxiima.Citations.transferPrefix);
+    format!("{PREFIX}{upload_id}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

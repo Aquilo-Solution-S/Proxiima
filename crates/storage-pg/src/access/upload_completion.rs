@@ -87,6 +87,7 @@ pub async fn complete_upload_in_tx(
     upload_id: Uuid,
     cited_object_id: Uuid,
 ) -> Result<String, StorageError> {
+    // `Proxiima.Citations.settlementLockOrder`.
     let key = proxiima_core::citations::uploaded_blob_object_key(upload_id);
     crate::access::fences::lock_owner_fence_shared_tx(tx, owner).await?;
     crate::access::fences::lock_object_keys_tx(tx, std::slice::from_ref(&key)).await?;

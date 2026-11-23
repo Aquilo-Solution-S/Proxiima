@@ -98,6 +98,7 @@ async fn verify_body(
     Ok(bytes)
 }
 
+// `Proxiima.Citations.verifiedReadOrder`.
 async fn collect_record_bytes(
     store: &CitedBlobStore,
     row: &BlobReadRecord,

@@ -1,30 +1,15 @@
 //! Where an owner's cited bytes live in S3.
-//!
-//! **Keys carry no owner, and there is exactly one scheme.** A key is
-//! minted once from the server-minted `blob_uploads.upload_id` that names
-//! the row it belongs to, and never changes again — an owner transfer is an
-//! `owner_id` update on the row and nothing else.
-//!
-//! That is also what makes the read gate safe without a prefix: a locator
-//! is honoured only when it is byte-for-byte the key this store would mint
-//! for THAT row's own id. Only the upload lane writes locator rows, and the
-//! gate does not rely on it: a row this store did not mint can only ever
-//! vouch for its own object, because the key is derived from its primary
-//! key.
-//!
-//! Every key is owner-free and derived from the row's primary key. There is
-//! no second branch to fall back to: a key that does not derive this way is
-//! not readable, by design.
-
 use uuid::Uuid;
 
 use super::CitedBlobStore;
 
 /// Bucket-wide prefix for completed cited blobs.
-pub(super) const CANONICAL_OBJECT_PREFIX: &str = "objects/";
+pub(super) const CANONICAL_OBJECT_PREFIX: &str =
+    proxiima_core::ledger!(Proxiima.Citations.canonicalPrefix);
 
 /// Bucket-wide prefix for in-flight transfer keys.
-pub(super) const PENDING_OBJECT_PREFIX: &str = "pending/";
+pub(super) const PENDING_OBJECT_PREFIX: &str =
+    proxiima_core::ledger!(Proxiima.Citations.transferPrefix);
 
 /// In-flight bytes for one upload. The upload id already names exactly one
 /// `blob_uploads` row.
@@ -49,21 +34,7 @@ pub(super) fn minting_upload_id(upload_id: Uuid, mounted_from_upload_id: Option<
     mounted_from_upload_id.unwrap_or(upload_id)
 }
 
-/// Is `object_key` the locator this store minted for this upload row?
-///
-/// The key half of the one rule [`CitedBlobStore::mints_locator`] applies,
-/// because every surface that trusts a stored locator must agree on what
-/// "ours" means. `owner` is not consulted:
-/// the row's own columns decide, and the owner predicates in the SQL decide
-/// who may reach the row at all.
-///
-/// The mount column is a parameter rather than a lookup so that no caller
-/// can reach this function without having read it — a caller that fetched
-/// only `upload_id` would silently reject every mounted row, and a
-/// verified-read path that rejects a legitimate row is a data-loss bug
-/// wearing a security bug's clothes. It stays a derivation from the row's
-/// own columns, which is the property the exact-equality test protects:
-/// nothing here is a stored locator taken on trust.
+/// Use the minting upload ID so mounting a mount preserves the same key.
 fn locator_was_minted_here(
     object_key: &str,
     upload_id: Uuid,
@@ -73,13 +44,7 @@ fn locator_was_minted_here(
 }
 
 impl CitedBlobStore {
-    /// Did this store mint the locator a row names: its object store, its
-    /// bucket, and the key derived from the row's own columns?
-    ///
-    /// The ONE rule shared by delivery admission, the verified read and both of
-    /// reconcile's foreign-locator counts. A locator that fails it is not
-    /// this store's to deliver, read or repair, and is answered like a
-    /// missing row.
+    /// Shared by delivery, verified collection and reconcile.
     pub(super) fn mints_locator(
         &self,
         object_store: &str,
@@ -88,6 +53,7 @@ impl CitedBlobStore {
         upload_id: Uuid,
         mounted_from_upload_id: Option<Uuid>,
     ) -> bool {
+        // `Proxiima.Citations.locatorFields`.
         object_store == self.store_id.as_str()
             && bucket == self.config.bucket
             && locator_was_minted_here(object_key, upload_id, mounted_from_upload_id)

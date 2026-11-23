@@ -1,9 +1,7 @@
 //! The completed upload a blob's ordinary reads resolve.
 
-// Both aliases are part of this private query fragment: `b` is the blob
-// being resolved and `u` is its newest completed, owner-matching upload.
-// Keep the stored upload id and mounted provenance intact; callers apply
-// the same locator gate to the resulting coordinates.
+// `Proxiima.Citations.completedUploadOrder`. The query fragment joins blob
+// alias `b` to completed-upload alias `u` with its minting identity intact.
 macro_rules! with_live_blob_upload {
     ($prefix:literal, $suffix:literal) => {
         concat!(

@@ -122,7 +122,7 @@ pub struct CitedBlobHeld {
 /// carries a filename and a mime per hit. A caller with more digests than
 /// this asks more than once; the answer does not depend on how the batch was
 /// cut, because each digest is resolved independently.
-pub const MAX_HELD_BLOB_DIGESTS: usize = 1000;
+pub const MAX_HELD_BLOB_DIGESTS: usize = crate::ledger!(Proxiima.Citations.maxHeldDigests);
 
 /// Cited-blob upload/read capability implemented by the blob backend
 /// (`CitedBlobStore` in `proxiima-blob-s3`). Each method re-authorizes

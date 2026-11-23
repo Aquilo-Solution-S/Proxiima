@@ -46,19 +46,12 @@ impl FactPayload for UploadV1 {
     const SCHEMA_ID: &'static str = "core/upload-v1";
     const SCHEMA_VERSION: u32 = 1;
 
-    /// The content hash alone.
-    ///
-    /// The other three fields are FUNCTIONS of it: for one owner, the
-    /// store resolves a content hash to exactly one cited object, and
-    /// reports that object's filename, mime, and length. Keying on them
-    /// too would add no discrimination while creating a way for one file
-    /// to acquire two upload Facts if that derivation ever shifted. One
-    /// file, one upload Fact, per owner — the same identity the blob lane
-    /// already dedups on, so the Fact replays exactly when the upload
-    /// does.
     fn receipt_key(&self) -> Vec<u8> {
         let mut key = PayloadKeyBuilder::new(Self::SCHEMA_ID, Self::SCHEMA_VERSION);
-        key.field_str("content_hash", &self.content_hash);
+        key.field_str(
+            crate::ledger!(Proxiima.Citations.uploadReceiptField),
+            &self.content_hash,
+        );
         key.finish()
     }
 
@@ -69,12 +62,7 @@ impl FactPayload for UploadV1 {
         )
     }
 
-    // `sidecar_table` stays at its `None` default. The description of the
-    // artefact is already stored, once, on its completed
-    // `proxiima_core.blob_uploads` row, and the citation this Fact carries is
-    // how a reader reaches it. A sidecar here would be a second
-    // copy of that row under a second identity, and the two would disagree
-    // the first time one of them was corrected.
+    // The completed upload already stores the artifact description.
 }
 
 impl PayloadProjection for UploadV1 {

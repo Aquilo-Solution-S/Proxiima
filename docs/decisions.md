@@ -72,38 +72,11 @@ authority through
 routes through [`goal_publication_read_admitted`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/lean/Causa/EdgeAuthorization.lean).
 HTTP admission, caching, and transfer lifetime remain runtime contracts.
 
-Each external download request enters Proxiima's existing authorization path
-for the authenticated caller, requested operation, and exact cited object.
-The host's trusted gateway or CDN transfers bytes from private object storage;
-Proxiima need only resolve and authorize the request. The delivery provider
-does not define another membership or publication policy. Goal access selects
-the publication's captured upload, never a later private upload of the same
-bytes.
-
-The gateway obtains a fresh Proxiima decision for every new request, including
-cache hits, retries, metadata reads, and ranges. A previous download's
-authorization decision is not cached or reused. Clients receive a protected
-resource URL, not a reusable storage read capability; private-origin access
-prevents bypassing admission. An admitted transfer may finish after revocation.
-Later requests re-enter authorization under the caller's existing authority
-model; the documented lifetime of an already-redeemed delegated phase is unchanged. This does not promise cancellation
-of active streams or recall of bytes already delivered.
-
-A host binds `CitedBlobDeliveryService` to one registered read operation;
-its constructor requires the matching boot witness and refuses unknown or
-write keys, and each admission checks the
-existing capability policy before resolving data authority.
-`CitedBlobDeliveryService::authorize_delivery` produces a request-scoped admission;
-its private construction and consuming `into_parts` method keep it separate
-from serialized tool results. The backend reuses the owner-scoped and exact
-Goal-publication queries used by verified reads. Its delivery port requires a
-privately constructed permit carrying the checked caller and exact request;
-the runtime keeps its concrete store and boot witness on built/running host
-handles, outside the shared request context.
-Host transport tests must
-exercise admission on cache hits, retries and ranges; this is a host integration
-obligation because core does not run the delivery gateway. See the
+The trusted host supplies the byte transport for cited downloads. See
+[`Proxiima.Citations`](ledger.md#citations) and the
 [host integration contract](host-integration.md#blob-download-delivery).
+Host transport tests exercise fresh admission on cache hits, retries and ranges
+because the byte transport runs in the consuming host.
 
 Prior art: NGINX [`auth_request`](https://nginx.org/en/docs/http/ngx_http_auth_request_module.html)
 gates delivery on an authorization subrequest. CloudFront's

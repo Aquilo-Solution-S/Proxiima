@@ -229,6 +229,7 @@ impl CitedBlobReadService {
         if scope.is_expired() {
             return Err(CitedBlobReadError::AccessDenied);
         }
+        // Mint a fresh consuming permit only after checking this request.
         let target = self
             .port
             .authorize_delivery(CitedBlobDeliveryPermit::new(

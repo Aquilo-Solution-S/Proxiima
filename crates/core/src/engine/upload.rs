@@ -1,27 +1,4 @@
-//! Completing an upload: the artefact and the record of its arrival, in
-//! one write.
-//!
-//! [`Engine::complete_upload_as_fact`] and its expectation-bearing sibling
-//! are the two entries to one completion verb. [`CitedBlobPort`] stages bytes
-//! and records the transfer locator and SHA-256 audit digest while returning
-//! the BLAKE3 content address, but it writes no corpus
-//! rows, so a caller reaching past the Engine would leave the corpus with
-//! nothing in it.
-//!
-//! The shape follows from where the transaction has to be. Persisting a
-//! cited object is a Fact write with an inline citation — storage already
-//! upserts the object on `(owner, schema, content_hash)` — so once the
-//! Fact carries the artefact as its citation, the two cannot come apart.
-//! What could not be in that transaction is the object-store work:
-//! streaming, hashing, and copying an S3 object is not a database
-//! statement and must not hold a transaction open while it runs. Hence the
-//! split: [`CitedBlobPort::stage_upload`] before, then one corpus transaction
-//! that also settles the upload row.
-//!
-//! The blob port arrives as an argument rather than as an `Engine` field.
-//! The store is host-wired and optional (a host without S3 has none), while
-//! the `Engine` is not; making it a field would push that optionality into
-//! every construction site to serve one verb.
+//! Upload completion through the optional host-wired blob port.
 
 use super::Engine;
 use super::errors::map_write_storage_error;
@@ -219,9 +196,7 @@ impl Engine {
         A: EngineAuthority + ?Sized,
     {
         let _operation = self.operation_authority(authority)?;
-        // Staging does the object-store half and stops: bytes verified,
-        // moved to the canonical key derived from `upload_id`; no corpus rows
-        // are written here. Everything below this line is one transaction.
+        // `Proxiima.Citations.uploadPublicationOrder`.
         let staged = blobs
             .stage_upload(authority, owner, upload_id)
             .await
@@ -261,12 +236,6 @@ impl Engine {
         // about the document, which nobody has read yet.
         let draft = FactWriteCommand::from_payload(UPLOAD_SOURCE_ID, &payload);
 
-        // Inline, carrying the artefact's full typed payload. Storage
-        // upserts the cited object on `(owner, schema, content_hash)` —
-        // the same key the blob lane deduplicates on — and writes the Fact
-        // that cites it, all in the one transaction. That is the point of
-        // the split: the artefact and the record of its arrival are now the
-        // same write.
         let cited_object = InlineCitedObjectDraft {
             schema_id: SchemaId::new(UPLOADED_BLOB_SCHEMA_ID.to_string()),
             schema_version: SchemaVersion::new(UploadedBlobPayload::SCHEMA_VERSION),
@@ -306,9 +275,7 @@ impl Engine {
             )
         })?;
 
-        // The corpus transaction already completed the row. This call only
-        // retries expendable pending-key cleanup; its failure cannot undo
-        // or report failure for the committed Fact.
+        // Retry pending-key cleanup after the corpus commit.
         if let Err(error) = blobs
             .finish_upload(authority, owner, &upload_id.to_string(), cited_object_id)
             .await
@@ -337,6 +304,7 @@ fn validate_staged_payload(
     expectation: &UploadCompletionExpectation,
     staged: &crate::citations::UploadedBlobPayload,
 ) -> Result<(), ProtocolError> {
+    // `Proxiima.Citations.expectationOrder`.
     if staged.content_hash != *expectation.content_hash() {
         return Err(ProtocolError::invalid_argument(
             "content_hash",

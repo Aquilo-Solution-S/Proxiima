@@ -13,8 +13,7 @@ use super::rows::{
 };
 
 impl CitedBlobStore {
-    /// Resolve authority and the exact upload in one owner-scoped transaction.
-    /// Both host delivery and verified byte reads enter through this boundary.
+    /// Resolve both delivery and verified reads through `Proxiima.Citations.selectUpload`.
     pub(super) async fn authorize_read_record(
         &self,
         authz: &AuthzContext,

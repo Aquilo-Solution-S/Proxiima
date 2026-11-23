@@ -456,3 +456,40 @@ async fn shared_read_service_cannot_bind_with_a_fabricated_boot() {
     );
     assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn delivery_binding_matches_ledger_vectors() {
+    use super::super::{CitedBlobDeliveryBindingError, CitedBlobDeliveryService};
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+    let rows = vectors["Proxiima.Citations.bindDelivery"]
+        .as_array()
+        .unwrap();
+    let runtime = DelegationRuntimeAuthority::new(DelegationRuntimeBinding::fresh());
+    let other = DelegationRuntimeAuthority::new(DelegationRuntimeBinding::fresh());
+    let read = CitedBlobReadService::new_runtime(Arc::new(RecordingRead::default()), &runtime);
+    let registry = crate::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    for row in rows {
+        let authority = if row["in"][0].as_bool().unwrap() {
+            &runtime
+        } else {
+            &other
+        };
+        let key = if row["in"][1].as_bool().unwrap() {
+            "core_memory_spaces"
+        } else {
+            "core_upload:prepare"
+        };
+        let key = crate::ScopeKey::parse(key).unwrap();
+        let outcome = match CitedBlobDeliveryService::bind(read.clone(), &registry, key, authority)
+        {
+            Ok(_) => "bound",
+            Err(CitedBlobDeliveryBindingError::RuntimeMismatch) => "runtimeMismatch",
+            Err(CitedBlobDeliveryBindingError::NotRegisteredRead { .. }) => {
+                "operationNotRegisteredRead"
+            }
+        };
+        assert_eq!(outcome, row["out"].as_str().unwrap(), "{row}");
+    }
+}

@@ -31,6 +31,7 @@ pub(crate) async fn facts_citing_object_on_connection(
         .map(OwnerId::into_inner)
         .collect();
     let fetch = i64::from(limit).saturating_add(1);
+    // `Proxiima.Citations.citingFactOrder`.
     let rows: Vec<(uuid::Uuid, time::OffsetDateTime)> = sqlx::query_as("SELECT m.t, proxiima_core.memory_created_at(m.t) FROM proxiima_core.live_memory m WHERE m.blob_id = $1 AND m.owner_id = ANY($2::uuid[]) AND m.kind = 'fact' AND ($3::timestamptz IS NULL OR (proxiima_core.memory_created_at(m.t), m.t) < ($3::timestamptz, $4::uuid)) ORDER BY 2 DESC, m.t DESC LIMIT $5")
         .bind(cited_object_id).bind(&owner_ids).bind(after.map(|c| c.created_at)).bind(after.map(|c| c.memory_id.into_inner())).bind(fetch)
         .fetch_all(&mut *connection).await.map_err(map_err)?;

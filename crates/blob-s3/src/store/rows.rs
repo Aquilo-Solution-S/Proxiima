@@ -194,6 +194,7 @@ pub(super) async fn mark_upload_expired_on_connection(
     Ok((UploadStatus::Expired, owed))
 }
 
+// `Proxiima.Citations.storedMetadataChecks`.
 pub(super) async fn load_staged_payload_on_connection(
     pool: &mut sqlx::PgConnection,
     owner: &OwnerId,
@@ -313,6 +314,7 @@ pub(super) async fn load_blob_read_record_on_connection(
     row.map(|row| decode_blob_read_record(&row)).transpose()
 }
 
+// `Proxiima.Citations.storedMetadataChecks`.
 fn decode_blob_read_record(row: &sqlx::postgres::PgRow) -> Result<BlobReadRecord, BlobError> {
     let sha256 = completed_sha256(row)?;
     Ok(BlobReadRecord {

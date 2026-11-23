@@ -61,7 +61,8 @@ impl StreamedObject {
 /// allocator for that much up front. The in-loop length check bounds how far
 /// the buffer can actually grow, so starting small costs a few reallocations
 /// at worst.
-const INITIAL_RESERVE_CEILING: usize = 8 * 1024 * 1024;
+const INITIAL_RESERVE_CEILING: usize =
+    proxiima_core::ledger!(Proxiima.Citations.maxInitialStageReserve);
 
 pub(super) async fn hash_uploaded_object(
     body: aws_sdk_s3::primitives::ByteStream,
