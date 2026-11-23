@@ -1961,6 +1961,509 @@ stateDiagram-v2
 
 - pin admission witness: Fresh pins require a live readable target, while a retained pin requires an exact captured source pin.
 
+## Embeddings
+
+**Width**: The widths the store indexes.
+
+- d384
+- d768
+- d1024
+- d1536
+- d2048
+- d3072
+
+**Space**: A space keys vectors by model identity and supported width.
+
+- model
+- width
+
+**Index encoding**: Types of the HNSW expression over the stored vector.
+
+- vector
+- halfvec
+
+**Storage mode**: Where vectors are stored at install and subsequent writes.
+
+- postgres
+- hostIndex
+
+**Vector storage part**: Parts of the selected vector storage lane.
+
+- heads
+- pgvector
+- localVectors
+
+**Query wording**: Instruction source for a search query.
+
+- named
+- default
+- original
+
+**Route**: An owner route has zero, one or two bindings with different spaces.
+
+- absent
+- current
+- nextOnly
+- moving
+
+**Route position**: A position in the owner route.
+
+- current
+- next
+
+**Route use**: Entry points that resolve the data owner's embedding route.
+
+- write
+- drain
+- search
+- reconcile
+- purge
+
+**Route failure**: What the engine does when the owner route lookup refuses.
+
+- refuse
+- release
+- lexical
+- skip
+
+**Provider config**: Embedding configuration outcomes for the canonical host.
+
+- disabled
+- enabled
+- refuse
+
+**Admission phase**: The phases of admitting ordinary embedding work.
+
+- resolveRoute
+- enqueueWithWrite
+- commit
+- drain
+
+**Schema eligibility**: The closed embedding eligibility state of a schema ID.
+
+- unknown
+- everyLayerDeclines
+- aLayerEmbeds
+
+**Provider call**: A consumer's route-specific input text.
+
+- indexing
+- query
+
+**Client state**: The client gate state observed at dispatch.
+
+- ready
+- backingOff
+- paused
+
+**Provider result**: The final provider outcome that the drain may receive.
+
+- success
+- inputRefused
+- transient
+- configuration
+
+**Drain action**: Actions following a provider result at the drain.
+
+- publish
+- rescue
+- retry
+- pauseAndRelease
+
+**Vector validation**: Validation result from a managed client response.
+
+- accepted
+- widthFault
+- invalidComponent
+
+**Declared text**: The registry projection read to render an embedding input.
+
+- table
+- memory key
+- text column
+
+**Claim release**: The reason an embedding drain can return with unsettled work.
+
+- settled
+- alreadyFencedOut
+- storageFailure
+
+**Claim recovery**: How outstanding claims cease to belong to a returned drain.
+
+- settled
+- leaseExpiry
+
+**Job state**: Stored states of a durable job.
+
+- pending
+- processing
+- failed
+- failedPermanent
+
+**Claim availability**: The routing or lock state of a candidate in the claim queue.
+
+- available
+- locked
+- ownerExcluded
+- spaceBlocked
+
+**Backlog group**: The two status groups in an owner's backlog read.
+
+- queued
+- failed
+
+**Claim event**: Events on a token-fenced processing claim.
+
+- renew
+- finish
+- retryableFailure
+- permanentFailure
+- release
+- expire
+
+**Reconcile job**: Whether a reconcile target already has a job.
+
+- absent
+- pending
+- processing
+- failed
+- failedPermanent
+
+**Candidate metadata**: Metadata examined by the missing-embedding read and reconcile before text resolution.
+
+- liveHead
+- allowedSchema
+- requestedSpace
+
+**Chunk write**: The durable write steps for a completed embedding version.
+
+- settleFencedClaim
+- lockHead
+- appendOrderedChunks
+- advanceHead
+
+**Host write**: The order of host-index publication for an embedding key.
+
+- settleDebt
+- pushVersion
+- commit
+
+**Index repair**: Stages of repairing a host-index key during reconciliation.
+
+- comparePages
+- lockKey
+- compareCurrentHead
+- repair
+
+**Space role**: The presence of a stored space on the current owner route.
+
+- current
+- next
+- unrouted
+
+**Transfer step**: Transfer drops non-destination coverage before queueing for the destination live head.
+
+- dropOutsideDestination
+- queueDestinationHead
+
+**Recall leg**: The two methods compared by the owner-and-space stratified recall canary.
+
+- exact
+- approximate
+
+**Worker pass**: Startup passes that precede the idle/poll cycle.
+
+- reconcile
+- gatedDrain
+
+**Failure status**: The provider responses that distinguish input and configuration failures.
+
+- http400
+- http401
+- http403
+- http404
+- http413
+- http422
+- other
+
+**request seconds** = 120: Request timeout in seconds when the host leaves it unset.
+
+**request seconds max** = 3600: Longest request timeout in seconds.
+
+**batch size** = 32: Texts per provider batch when the host leaves it unset.
+
+**batch size max** = 1024: Maximum texts per provider batch.
+
+**drain concurrency** = 1: Concurrent provider batches when the host leaves it unset.
+
+**drain concurrency max** = 64: Maximum concurrent provider batches in one drain.
+
+**idle seconds** = 5: First idle poll interval in seconds when the host leaves it unset.
+
+**idle seconds max** = 3600: Largest configured first idle poll interval in seconds.
+
+**idle backoff seconds** = 60: Idle polling backs off to this many seconds or the initial interval if it is longer.
+
+**stale claim seconds** = 900: Stale claim timeout in seconds when the host leaves it unset.
+
+**stale claim seconds max** = 86400: Largest stale claim timeout in seconds.
+
+**heartbeat divisor** = 3: Divide the stale claim interval by this number for heartbeat and reclaim throttling.
+
+**diagnostics max** = 256: Largest number of memory IDs in a diagnostics request.
+
+**reconcile default limit** = 50000: Default candidate budget for startup and engine reconciliation.
+
+**reconcile page size** = 2000: Page cardinality and downstream probes per head relation in one reconcile page.
+
+**reconcile owner page size** = 1000: Number of owners routed per reconcile owner page.
+
+**input cap min** = 4095: Minimum adapter character cap, one below the first balanced ASCII split.
+
+**input cap default** = 16384: Character cap for the canonical host when the input ceiling is unset.
+
+**default width** = 1024: The vector width when the canonical host leaves it unset.
+
+**default matryoshka** = no: Nested-prefix requests are off by default in the canonical host.
+
+**default slot** = "default": The sole slot bindable by a spiice embedding recipe.
+
+**recall sample cap** = 32: Maximum sampled chunks in an owner and embedding-space canary stratum.
+
+**recall neighbors** = 10: Neighbors compared by the recall canary.
+
+**error body prefix bytes** = 512: Maximum prefix bytes collected for a provider error diagnostic.
+
+**pgvector minimum** = \[0, 8, 0]: Minimum pgvector version accepted by the PostgreSQL vector lane.
+
+**width384** = 384: Component count for the 384-wide lane.
+
+**width768** = 768: Component count for the 768-wide lane.
+
+**width1024** = 1024: Component count for the 1024-wide lane.
+
+**width1536** = 1536: Component count for the 1536-wide lane.
+
+**width2048** = 2048: Component count for the 2048-wide lane.
+
+**width3072** = 3072: Component count for the 3072-wide lane.
+
+**indexed widths** = \[384, 768, 1024, 1536, 2048, 3072]: Widths by component count, in ascending order.
+
+**query placeholder** = "{query}": The placeholder required and substituted by a query instruction.
+
+**query newline escape** = "\\\\n": The environment sequence expanded to a newline in the query template.
+
+**admission order** = \[resolveRoute, enqueueWithWrite, commit, drain]: Admission queues routed work in its transaction, and provider work follows commit.
+
+**candidate metadata** = \[liveHead, allowedSchema, requestedSpace]: Candidate scans select metadata-eligible Memory heads across layers, with text resolved by the drain.
+
+**publish chunks** = \[settleFencedClaim, lockHead, appendOrderedChunks, advanceHead]: Publish ordered chunks and advance the head in the same transaction as fenced completion.
+
+**host publication** = \[settleDebt, pushVersion, commit]: Old key debt is settled before the new version is pushed and accepted before completion.
+
+**index repair** = \[comparePages, lockKey, compareCurrentHead, repair]: A page difference authorizes repair only after the key lock and a fresh head comparison.
+
+**transfer coverage** = \[dropOutsideDestination, queueDestinationHead]: The in-transaction steps that move embedding coverage with a series.
+
+**recall comparison** = \[exact, approximate]: Compare exact and approximate chunk neighbors with separate planner settings.
+
+**worker start** = \[reconcile, gatedDrain]: Startup attempts reconcile once before the first gated claim.
+
+| width | index encoding |
+| --- | --- |
+| d384 | vector |
+| d768 | vector |
+| d1024 | vector |
+| d1536 | vector |
+| d2048 | halfvec |
+| d3072 | halfvec |
+
+- index encoding: Wider lanes use half precision for the index, keeping full precision in storage.
+
+| storage mode | vector storage parts |
+| --- | --- |
+| postgres | \[heads, pgvector, localVectors] |
+| hostIndex | \[heads] |
+
+- vector storage parts: Both lanes keep heads, and the PostgreSQL lane also installs pgvector and stores vectors locally.
+
+| named | has default | query wording |
+| --- | --- | --- |
+| yes | yes | named |
+| yes | no | named |
+| no | yes | default |
+| no | no | original |
+
+- query wording: A search takes its named instruction, then the default, then the original query.
+
+| route | write spaces | search space |
+| --- | --- | --- |
+| absent | \[] | — |
+| current | \[current] | current |
+| nextOnly | \[next] | — |
+| moving | \[current, next] | current |
+
+- write spaces: Queue each admission in current-then-next order where those spaces exist.
+- search space: Search uses the current owner binding while the next space fills.
+
+| route use | route failure |
+| --- | --- |
+| write | refuse |
+| drain | release |
+| search | lexical |
+| reconcile | skip |
+| purge | refuse |
+
+- route failure: Route failures refuse writes and purge, yield lexical search, and release or skip maintenance work.
+
+| endpoint | model | override set | provider config |
+| --- | --- | --- | --- |
+| yes | yes | yes | enabled |
+| yes | yes | no | enabled |
+| yes | no | yes | refuse |
+| yes | no | no | refuse |
+| no | yes | yes | refuse |
+| no | yes | no | refuse |
+| no | no | yes | refuse |
+| no | no | no | disabled |
+
+- provider config: Both endpoint and model enable embeddings, and a partial configuration refuses startup.
+
+| schema eligibility | schema embeddable |
+| --- | --- |
+| unknown | yes |
+| everyLayerDeclines | no |
+| aLayerEmbeds | yes |
+
+- schema embeddable: An ID is excluded only when every registered layer declines embeddings.
+
+| client state | provider call | admit call |
+| --- | --- | --- |
+| ready | indexing | yes |
+| ready | query | yes |
+| backingOff | indexing | no |
+| backingOff | query | yes |
+| paused | indexing | no |
+| paused | query | no |
+
+- admit call: Queries bypass transient indexing backoff, while configuration pauses block both call kinds.
+
+| provider result | drain action |
+| --- | --- |
+| success | publish |
+| inputRefused | rescue |
+| transient | retry |
+| configuration | pauseAndRelease |
+
+- drain action: Only typed input refusal enters rescue, and configuration faults pause the binding.
+
+| width matches | finite | validate vector |
+| --- | --- | --- |
+| yes | yes | accepted |
+| yes | no | invalidComponent |
+| no | yes | widthFault |
+| no | no | widthFault |
+
+- validate vector: A wrong width pauses the managed binding, and nonfinite components at the expected width are retryable.
+
+| claim release | claim recovery |
+| --- | --- |
+| settled | settled |
+| alreadyFencedOut | settled |
+| storageFailure | leaseExpiry |
+
+- claim recovery: An aborted drain attempts fenced release and falls back to lease expiry if release fails.
+
+| job state | claim availability | claim eligible |
+| --- | --- | --- |
+| pending | available | yes |
+| pending | locked | no |
+| pending | ownerExcluded | no |
+| pending | spaceBlocked | no |
+| processing | available | no |
+| processing | locked | no |
+| processing | ownerExcluded | no |
+| processing | spaceBlocked | no |
+| failed | available | no |
+| failed | locked | no |
+| failed | ownerExcluded | no |
+| failed | spaceBlocked | no |
+| failedPermanent | available | no |
+| failedPermanent | locked | no |
+| failedPermanent | ownerExcluded | no |
+| failedPermanent | spaceBlocked | no |
+
+- claim eligible: Claim only pending rows whose locks and owner-space bindings permit work.
+
+| job state | backlog group | diagnostic claim age |
+| --- | --- | --- |
+| pending | queued | no |
+| processing | queued | yes |
+| failed | failed | no |
+| failedPermanent | failed | no |
+
+- backlog group: The backlog groups pending and processing, and both kinds of failure.
+- diagnostic claim age: Only processing diagnostics expose age, floored at zero and read from the database clock.
+
+| claim event | settle claim |
+| --- | --- |
+| renew | processing |
+| finish | — |
+| retryableFailure | failed |
+| permanentFailure | failedPermanent |
+| release | pending |
+| expire | pending |
+
+- settle claim: When its fence matches, a claim can renew, disappear, fail or return to pending.
+
+| reconcile job | reconcile job |
+| --- | --- |
+| absent | yes |
+| pending | no |
+| processing | no |
+| failed | yes |
+| failedPermanent | no |
+
+- reconcile job: Missing coverage can open a job or reopen a retryable failure.
+
+| space role | space receives jobs |
+| --- | --- |
+| current | yes |
+| next | yes |
+| unrouted | no |
+
+- space receives jobs: Coverage reconciliation queues work for routed spaces.
+
+| space role | job state | purge job |
+| --- | --- | --- |
+| current | pending | no |
+| current | processing | no |
+| current | failed | no |
+| current | failedPermanent | no |
+| next | pending | no |
+| next | processing | no |
+| next | failed | no |
+| next | failedPermanent | no |
+| unrouted | pending | yes |
+| unrouted | processing | no |
+| unrouted | failed | yes |
+| unrouted | failedPermanent | yes |
+
+- purge job: Purge removes only unrouted residue and leaves processing jobs to settle.
+
+| failure status | provider failure |
+| --- | --- |
+| http400 | configuration |
+| http401 | configuration |
+| http403 | configuration |
+| http404 | configuration |
+| http413 | inputRefused |
+| http422 | inputRefused |
+| other | transient |
+
+- provider failure: Classify the HTTP status independently of its body.
+
 ## Erasure and export
 
 **Owner erase evidence**: The evidence that a target owner may be erased.

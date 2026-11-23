@@ -289,6 +289,142 @@ macro_rules! ledger {
     (Proxiima.Edges.finePinLockBudget) => {
         256
     };
+    // Request timeout in seconds when the host leaves it unset.
+    (Proxiima.Embeddings.requestSeconds) => {
+        120
+    };
+    // Longest request timeout in seconds.
+    (Proxiima.Embeddings.requestSecondsMax) => {
+        3600
+    };
+    // Texts per provider batch when the host leaves it unset.
+    (Proxiima.Embeddings.batchSize) => {
+        32
+    };
+    // Maximum texts per provider batch.
+    (Proxiima.Embeddings.batchSizeMax) => {
+        1024
+    };
+    // Concurrent provider batches when the host leaves it unset.
+    (Proxiima.Embeddings.drainConcurrency) => {
+        1
+    };
+    // Maximum concurrent provider batches in one drain.
+    (Proxiima.Embeddings.drainConcurrencyMax) => {
+        64
+    };
+    // First idle poll interval in seconds when the host leaves it unset.
+    (Proxiima.Embeddings.idleSeconds) => {
+        5
+    };
+    // Largest configured first idle poll interval in seconds.
+    (Proxiima.Embeddings.idleSecondsMax) => {
+        3600
+    };
+    // Idle polling backs off to this many seconds or the initial interval if it is longer.
+    (Proxiima.Embeddings.idleBackoffSeconds) => {
+        60
+    };
+    // Stale claim timeout in seconds when the host leaves it unset.
+    (Proxiima.Embeddings.staleClaimSeconds) => {
+        900
+    };
+    // Largest stale claim timeout in seconds.
+    (Proxiima.Embeddings.staleClaimSecondsMax) => {
+        86400
+    };
+    // Divide the stale claim interval by this number for heartbeat and reclaim throttling.
+    (Proxiima.Embeddings.heartbeatDivisor) => {
+        3
+    };
+    // Largest number of memory IDs in a diagnostics request.
+    (Proxiima.Embeddings.diagnosticsMax) => {
+        256
+    };
+    // Default candidate budget for startup and engine reconciliation.
+    (Proxiima.Embeddings.reconcileDefaultLimit) => {
+        50000
+    };
+    // Page cardinality and downstream probes per head relation in one reconcile page.
+    (Proxiima.Embeddings.reconcilePageSize) => {
+        2000
+    };
+    // Number of owners routed per reconcile owner page.
+    (Proxiima.Embeddings.reconcileOwnerPageSize) => {
+        1000
+    };
+    // Minimum adapter character cap, one below the first balanced ASCII split.
+    (Proxiima.Embeddings.inputCapMin) => {
+        4095
+    };
+    // Character cap for the canonical host when the input ceiling is unset.
+    (Proxiima.Embeddings.inputCapDefault) => {
+        16384
+    };
+    // The vector width when the canonical host leaves it unset.
+    (Proxiima.Embeddings.defaultWidth) => {
+        1024
+    };
+    // Nested-prefix requests are off by default in the canonical host.
+    (Proxiima.Embeddings.defaultMatryoshka) => {
+        false
+    };
+    // The sole slot bindable by a spiice embedding recipe.
+    (Proxiima.Embeddings.defaultSlot) => {
+        "default"
+    };
+    // Maximum sampled chunks in an owner and embedding-space canary stratum.
+    (Proxiima.Embeddings.recallSampleCap) => {
+        32
+    };
+    // Neighbors compared by the recall canary.
+    (Proxiima.Embeddings.recallNeighbors) => {
+        10
+    };
+    // Maximum prefix bytes collected for a provider error diagnostic.
+    (Proxiima.Embeddings.errorBodyPrefixBytes) => {
+        512
+    };
+    // Minimum pgvector version accepted by the PostgreSQL vector lane.
+    (Proxiima.Embeddings.pgvectorMinimum) => {
+        [0, 8, 0]
+    };
+    // Component count for the 384-wide lane.
+    (Proxiima.Embeddings.width384) => {
+        384
+    };
+    // Component count for the 768-wide lane.
+    (Proxiima.Embeddings.width768) => {
+        768
+    };
+    // Component count for the 1024-wide lane.
+    (Proxiima.Embeddings.width1024) => {
+        1024
+    };
+    // Component count for the 1536-wide lane.
+    (Proxiima.Embeddings.width1536) => {
+        1536
+    };
+    // Component count for the 2048-wide lane.
+    (Proxiima.Embeddings.width2048) => {
+        2048
+    };
+    // Component count for the 3072-wide lane.
+    (Proxiima.Embeddings.width3072) => {
+        3072
+    };
+    // Widths by component count, in ascending order.
+    (Proxiima.Embeddings.indexedWidths) => {
+        [384, 768, 1024, 1536, 2048, 3072]
+    };
+    // The placeholder required and substituted by a query instruction.
+    (Proxiima.Embeddings.queryPlaceholder) => {
+        "{query}"
+    };
+    // The environment sequence expanded to a newline in the query template.
+    (Proxiima.Embeddings.queryNewlineEscape) => {
+        "\\n"
+    };
     // The shortest configurable retention in days.
     (Proxiima.ErasureExport.minKeepDays) => {
         1
