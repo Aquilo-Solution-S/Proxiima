@@ -52,7 +52,7 @@ pub mod action {
 }
 
 pub mod resource {
-    pub const HOW_TO: &str = "resource:how-to";
+    pub const HOW_TO: &str = crate::ledger!(Proxiima.ToolSurface.guideScopeKey);
     pub const MEMORY: &str = "resource:memory";
     pub const MEMORIES: &str = "resource:memories";
     pub const MEMORY_LINEAGE: &str = "resource:memory-lineage";
@@ -67,6 +67,6 @@ pub mod resource {
 }
 
 pub mod profile {
-    pub const FULL: &str = "full";
-    pub const MEMORY: &str = "memory";
+    pub const FULL: &str = crate::ledger!(Proxiima.ToolSurface.fullProfile);
+    pub const MEMORY: &str = crate::ledger!(Proxiima.ToolSurface.memoryProfile);
 }

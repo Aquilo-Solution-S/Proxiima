@@ -79,6 +79,7 @@ impl ToolListNotifier {
     /// `owner` and to no one else. Returns how many it reached; a listener
     /// that can no longer be reached is dropped.
     pub async fn notify(&self, owner: &OwnerId) -> usize {
+        // `Proxiima.ToolSurface.listChangeDelivery`.
         let listeners = {
             let mut map = self.lock();
             let Some(entries) = map.get_mut(owner) else {
@@ -99,6 +100,7 @@ impl ToolListNotifier {
     }
 
     pub(crate) fn register_session(&self, owner: OwnerId, peer: Peer<RoleServer>) {
+        // `Proxiima.ToolSurface.listChangeListeners`.
         self.insert(owner, Listener::Session(peer));
     }
 

@@ -50,6 +50,7 @@ impl ToolEffect {
     /// [`Self::ReadOnly`] replays as [`Replay::Idempotent`].
     #[must_use]
     pub const fn replay(self) -> Replay {
+        // `Proxiima.ToolSurface.replayOf`.
         match self {
             Self::ReadOnly => Replay::Idempotent,
             Self::Additive(replay) | Self::Destructive(replay) => replay,
@@ -161,6 +162,7 @@ impl KeyDeclaration {
     /// the owner-role gate and every listing share.
     #[must_use]
     pub const fn owner_access(self) -> OwnerAccess {
+        // `Proxiima.ToolSurface.ownerRequirement`.
         match (self.is_read(), self.need) {
             (true, OwnerNeed::Memory | OwnerNeed::GoalWork) => OwnerAccess::Read,
             (false, OwnerNeed::Memory) => OwnerAccess::Write,
@@ -188,6 +190,36 @@ pub(crate) const ALL_EFFECTS: [ToolEffect; 5] = [
 #[cfg(test)]
 mod tests {
     use super::{ALL_EFFECTS, Replay, ToolEffect};
+
+    #[test]
+    fn owner_requirement_matches_ledger_vectors() {
+        use super::{KeyDeclaration, OwnerNeed};
+        use crate::OwnerAccess;
+
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.ToolSurface.ownerRequirement"]
+            .as_array()
+            .unwrap()
+        {
+            let read_only = row["in"][0].as_bool().unwrap();
+            let goal_work = row["in"][1].as_bool().unwrap();
+            let declaration = KeyDeclaration {
+                need: if goal_work {
+                    OwnerNeed::GoalWork
+                } else {
+                    OwnerNeed::Memory
+                },
+                ..KeyDeclaration::shared(read_only.then_some(ToolEffect::ReadOnly))
+            };
+            let actual = match declaration.owner_access() {
+                OwnerAccess::Read => "read",
+                OwnerAccess::Write => "factWrite",
+                OwnerAccess::GoalWork => "goalWork",
+            };
+            assert_eq!(row["out"], actual, "{row}");
+        }
+    }
 
     /// A lattice join: commutative, idempotent, associative, with
     /// `ReadOnly` as its bottom — so a dispatcher's effect does not depend

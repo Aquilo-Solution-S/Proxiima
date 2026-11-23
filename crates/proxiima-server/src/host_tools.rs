@@ -10,7 +10,8 @@ use crate::auth::AuthContext;
 
 /// Longest host `instructions` contribution served, in characters. A longer
 /// one is omitted with a warning, as an invalid host tool is.
-pub const MAX_HOST_INSTRUCTIONS_CHARS: usize = 4096;
+pub const MAX_HOST_INSTRUCTIONS_CHARS: usize =
+    proxiima_core::ledger!(Proxiima.ToolSurface.maxHostInstructionsChars);
 
 /// One tool a host serves. Flat: its palette key is its name, and the
 /// scope gate classifies it by its `effect`.

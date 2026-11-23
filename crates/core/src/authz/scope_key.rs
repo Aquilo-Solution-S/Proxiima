@@ -21,7 +21,7 @@ use super::provider_safe_tool_name;
 
 /// The reserved first segment of a resource key, and so the one tool name
 /// that cannot head an action.
-const RESOURCE_PREFIX: &str = "resource";
+const RESOURCE_PREFIX: &str = crate::ledger!(Proxiima.ToolSurface.resourceKeyPrefix);
 const SEPARATOR: char = ':';
 
 /// Which part of a key an error is about.
@@ -74,6 +74,7 @@ pub enum ScopeKeyError {
 /// A name every part of a key is made of: non-empty, no `:`, and its own
 /// provider-safe form.
 fn validate_name(part: ScopeKeyPart, text: &str) -> Result<(), ScopeKeyError> {
+    // `Proxiima.ToolSurface.keyPartChecks`.
     if text.is_empty() {
         Err(ScopeKeyError::Empty(part))
     } else if text.contains(SEPARATOR) {

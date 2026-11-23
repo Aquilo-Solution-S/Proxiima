@@ -633,6 +633,9 @@ Inside an authenticated Proxiima write callback, use
 memberships instead. That session derives its subject from the sealed write
 permit; it does not accept the platform gateway's caller-selected footprint.
 
+When advertising tool-list changes, notify the affected owner on every replica
+after each mutation that changes their tool surface.
+
 ## Other stores and HTTP
 
 For exhaustive tag enumeration, call `Engine::query` with `QueryRequest::tags`

@@ -25,6 +25,7 @@ impl SpiiceRegistry {
         for tool in &self.mcp_tools {
             let dispatcher =
                 !tool.action_arg_specs.is_empty() || !tool.argv_action_specs.is_empty();
+            // `Proxiima.ToolSurface.effectSource`.
             match (dispatcher, tool.effect) {
                 (false, None) => {
                     return Err(SpiiceRegistryError::UndeclaredToolBehavior { name: tool.name });
@@ -115,6 +116,7 @@ impl SpiiceRegistry {
     /// validators and the scope gate read `args["action"]`, REST injects
     /// `"action"` before dispatch.
     pub(super) fn validate_dispatcher_action_specs(&self) -> Result<(), SpiiceRegistryError> {
+        // `Proxiima.ToolSurface.taggedAgreement`.
         for tool in &self.mcp_tools {
             let Some(dispatcher) = &tool.dispatcher_schema else {
                 if tool.action_arg_specs.is_empty() {

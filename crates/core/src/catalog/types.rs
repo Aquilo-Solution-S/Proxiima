@@ -21,7 +21,7 @@ pub const MAX_OPERATOR_LABEL_CHARS: usize =
 
 /// Recorded operator label when neither the authenticated edge nor the
 /// caller names one.
-pub const UNKNOWN_OPERATOR_LABEL: &str = "unknown";
+pub const UNKNOWN_OPERATOR_LABEL: &str = crate::ledger!(Proxiima.ToolSurface.unknownOperator);
 
 /// The caller named a model and the authenticated token names a different
 /// one. Refused rather than silently overridden: the caller believes it is

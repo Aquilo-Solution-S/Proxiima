@@ -125,6 +125,7 @@ impl ToolReply {
     /// The reply itself when it is [`Self::Content`], [`Self::Failure`] or
     /// [`Self::StructuredFailure`].
     pub fn into_structured(self) -> Result<serde_json::Value, Self> {
+        // `Proxiima.ToolSurface.jsonReply`.
         match self {
             Self::Structured(value) => Ok(value),
             other @ (Self::Content(_) | Self::Failure(_) | Self::StructuredFailure { .. }) => {
@@ -173,7 +174,32 @@ mod tests {
         };
         assert_eq!(
             structured_failure.clone().into_structured(),
-            Err(structured_failure)
+            Err(structured_failure.clone())
         );
+        let cases = [
+            (
+                "structured",
+                ToolReply::Structured(serde_json::json!({"a": 1})),
+            ),
+            ("content", ToolReply::Content(Vec::new())),
+            ("failure", ToolReply::Failure(Vec::new())),
+            ("structuredFailure", structured_failure),
+        ];
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.ToolSurface.jsonReply"]
+            .as_array()
+            .unwrap()
+        {
+            let (_, reply) = cases
+                .iter()
+                .find(|(name, _)| row["in"][0] == *name)
+                .unwrap();
+            assert_eq!(
+                reply.clone().into_structured().is_ok(),
+                row["out"].as_bool().unwrap(),
+                "{row}"
+            );
+        }
     }
 }

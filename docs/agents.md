@@ -1,10 +1,7 @@
 # Agents
 
-This page is the compact operating ritual for an agent using Proxiima. The
-running host is authoritative for available actions and resources: read
-`proxiima://how-to` for current guidance and discover the catalog with
-`tools/list`, `proxiima://tools`, or `/v1/openapi.json`. Those surfaces can
-change with the host build, so this page does not copy their schemas.
+Discover the running host's actions and schemas through the surfaces described in
+the [`Proxiima.ToolSurface` ledger](ledger.md#tool-surface).
 
 ## Session ritual
 

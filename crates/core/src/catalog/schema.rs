@@ -177,6 +177,7 @@ fn strip_nonstandard_formats(value: &mut serde_json::Value) {
 /// projection's `OpenAPI` document.
 #[must_use]
 pub fn mcp_wire_output_schema(schema: &serde_json::Value) -> serde_json::Value {
+    // `Proxiima.ToolSurface.schemaAnnotations`.
     let mut wire = schema.clone();
     if let Some(root) = wire.as_object_mut() {
         root.remove("$schema");

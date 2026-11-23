@@ -228,6 +228,7 @@ pub fn build_instructions(
 /// one would push Proxiima's own guidance out of the client's context.
 #[must_use]
 pub(crate) fn compose_instructions(generated: &str, host: Option<&str>) -> Option<String> {
+    // `Proxiima.ToolSurface.instructionOrder`.
     let host = host.filter(|text| !text.trim().is_empty());
     let host = host.filter(|text| {
         let chars = text.chars().count();

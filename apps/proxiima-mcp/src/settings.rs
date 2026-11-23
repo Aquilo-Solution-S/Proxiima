@@ -64,6 +64,10 @@ mod tests {
     /// named, so the environment names both.
     #[test]
     fn declared_defaults_are_what_the_readers_do_unset() {
+        assert_eq!(
+            super::PROXIIMA_TOOL_PROFILE.default(),
+            Some(proxiima_core::ledger!(Proxiima.ToolSurface.memoryProfile))
+        );
         let registered = crate::registered_tool_ids().expect("registered keys");
         let base = [
             ("PROXIIMA_EMBED_BASE_URL", "http://127.0.0.1:1/v1"),
