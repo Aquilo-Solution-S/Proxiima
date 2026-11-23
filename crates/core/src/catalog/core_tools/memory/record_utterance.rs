@@ -62,6 +62,7 @@ pub struct RecordUtteranceOutput {
 pub struct RecordUtteranceTool;
 
 impl Tool for RecordUtteranceTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_RECORD_UTTERANCE;
     const TITLE: &'static str = "Record an utterance";
     const DESCRIPTION: &'static str = "Append one raw conversation turn (utterance) as a Fact. Use `core_remember` for distilled observations rather than verbatim transcript.";

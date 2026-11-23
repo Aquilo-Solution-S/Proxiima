@@ -55,6 +55,7 @@ enum DispatchArgs {
 struct DispatchTool;
 
 impl Tool for DispatchTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = DISPATCH;
     const DESCRIPTION: &'static str = "A spiice dispatcher declared through proxiima_spiice!.";
@@ -72,7 +73,7 @@ impl Tool for DispatchTool {
             action: "touch",
             allowed_fields: &["id", "note"],
             required_fields: &["id"],
-            effect: ToolEffect::Additive(Replay::NonIdempotent),
+            effect: ToolEffect::Destructive(Replay::NonIdempotent),
             audience: ToolAudience::Shared,
             need: OwnerNeed::Memory,
             title: "Test action",
@@ -297,6 +298,43 @@ async fn an_unknown_action_on_a_spiice_dispatcher_is_refused_at_the_gate() {
     );
 }
 
+#[derive(Debug)]
+struct SelectTouch;
+
+#[async_trait::async_trait]
+impl RequestBehavior for SelectTouch {
+    async fn handle(&self, mut call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
+        call.args["action"] = "touch".into();
+        next.run(call).await
+    }
+}
+
+#[tokio::test]
+async fn registered_dispatch_requires_the_action_judged_by_the_gate() {
+    let mut registry = SpiiceRegistry::new();
+    register(&mut registry).expect("the spiice registers");
+    registry.add_request_behavior(SelectTouch);
+    let registry = Arc::new(registry.freeze_or_panic_for_tests());
+    let call = registry.mcp_tool(DISPATCH).unwrap().call;
+    let result = Next::new(
+        registry.request_behaviors(),
+        Box::new(move |request| {
+            Box::pin(async move {
+                call(request.ctx, request.args)
+                    .await
+                    .map(ToolReply::Structured)
+            })
+        }),
+    )
+    .run(ToolCall {
+        name: DISPATCH.into(),
+        args: serde_json::json!({ "action": "look", "id": "x" }),
+        ctx: viewer_ctx(&registry, ToolScope::All),
+    })
+    .await;
+    assert!(matches!(result, Err(ToolError::InputNotAdmitted)));
+}
+
 /// Strict pre-decode validation is a dispatcher property: arguments are
 /// checked per action before decode.
 #[tokio::test]
@@ -304,23 +342,25 @@ async fn a_spiice_dispatcher_validates_arguments_per_action_before_decode() {
     let registry = frozen();
     let descriptor = registry.mcp_tool(DISPATCH).expect("registered");
 
-    let err = (descriptor.call)(
-        ctx(&registry, ToolScope::All),
-        serde_json::json!({ "action": "look", "id": "x", "note": "y" }),
-    )
-    .await
-    .expect_err("`note` belongs to `touch`, not to `look`");
+    let err = descriptor
+        .call_direct(
+            ctx(&registry, ToolScope::All),
+            serde_json::json!({ "action": "look", "id": "x", "note": "y" }),
+        )
+        .await
+        .expect_err("`note` belongs to `touch`, not to `look`");
     assert!(
         matches!(err, ToolError::InvalidInput(ref message) if message.contains("note")),
         "got {err:?}",
     );
 
-    let err = (descriptor.call)(
-        ctx(&registry, ToolScope::All),
-        serde_json::json!({ "action": "touch" }),
-    )
-    .await
-    .expect_err("`touch` requires `id`");
+    let err = descriptor
+        .call_direct(
+            ctx(&registry, ToolScope::All),
+            serde_json::json!({ "action": "touch" }),
+        )
+        .await
+        .expect_err("`touch` requires `id`");
     assert!(
         matches!(err, ToolError::InvalidInput(ref message) if message.contains("id")),
         "got {err:?}",

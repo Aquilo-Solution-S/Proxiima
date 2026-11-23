@@ -267,7 +267,7 @@ pub struct ToolCtx {
     services: SpiiceServices,
     engine: Arc<Engine>,
     judged: crate::catalog::JudgedKey,
-    pub(crate) admitted_argv: Option<super::tool::AdmittedArgv>,
+    pub(crate) registered_input: super::tool::RegisteredInput,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -301,9 +301,23 @@ impl ToolCtx {
             services,
             engine,
             judged: crate::catalog::JudgedKey::default(),
-            admitted_argv: None,
+            registered_input: super::tool::RegisteredInput::Unadmitted,
         }
         .with_bound_model_id()
+    }
+
+    /// The declared command selected for this registered argv handler.
+    ///
+    /// Dispatch on its action and pass the words after its prefix to the
+    /// tool's flag validator. This is absent outside a registered argv handler.
+    #[must_use]
+    pub fn resolved_argv_action(&self) -> Option<&'static super::ArgvActionSpec> {
+        match self.registered_input {
+            super::tool::RegisteredInput::HandlerArgv(spec) => Some(spec),
+            super::tool::RegisteredInput::Unadmitted
+            | super::tool::RegisteredInput::Admitted(_)
+            | super::tool::RegisteredInput::Direct => None,
+        }
     }
 
     fn with_bound_model_id(mut self) -> Self {
@@ -615,6 +629,9 @@ pub fn validate_search_query(query: &str) -> Result<&str, ToolError> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
+    /// The registered terminal requires the arguments admitted for this tool.
+    #[error("tool arguments were not admitted unchanged")]
+    InputNotAdmitted,
     #[error("invalid input: {0}")]
     InvalidInput(String),
     /// A well-formed reference to an entity that does not exist or is not
@@ -687,7 +704,7 @@ pub trait Tool: Send + Sync + 'static {
     /// second answer nothing reads.
     const EFFECT: Option<crate::catalog::ToolEffect> = None;
     /// Whether any operation of this tool can reach outside the deployment.
-    const OPEN_WORLD: bool = false;
+    const OPEN_WORLD: bool;
     /// The actions this tool dispatches, or `&[]` for a flat tool.
     ///
     /// This is THE enumeration of a dispatcher's action set — the scope
@@ -709,8 +726,8 @@ pub trait Tool: Send + Sync + 'static {
     /// each spec's `argv_prefix`, the set is closed (unmatched argv is a
     /// validation error), and the derived `tool:action` key is what the
     /// scope gate and `tools/list` both consult — one vocabulary at both
-    /// doors. Flag validation past the action key stays with the tool's own
-    /// dispatch.
+    /// doors. The registered handler receives the resolved spec via
+    /// [`ToolCtx::resolved_argv_action`]. Argv tools validate their own flags.
     ///
     /// Mutually exclusive with [`Self::ACTION_ARG_SPECS`]: registration
     /// refuses a tool declaring both, so no code path has to decide which

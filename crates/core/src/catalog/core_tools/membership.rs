@@ -132,6 +132,7 @@ fn member_fingerprint(group: GroupId) -> String {
 }
 
 impl Tool for CoreMembershipTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_MEMBERSHIP;
     const TITLE: &'static str = "Memberships";
     const DESCRIPTION: &'static str =

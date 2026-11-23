@@ -10,7 +10,7 @@ use crate::OwnerAccess;
 /// | Reader | Derived answer |
 /// |---|---|
 /// | owner-role gate | [`Self::ReadOnly`] needs read access, anything else write |
-/// | MCP / REST / `OpenAPI` hints | `ToolAnnotations::registered`, `ToolAnnotations::host` |
+/// | MCP / REST / `OpenAPI` hints | `ToolDescriptor::annotations_for_effect`, `ToolAnnotations::host` |
 /// | REST `QUERY` | admitted for [`Self::ReadOnly`] only |
 /// | [`crate::UnitOfWork::erase_own_series`] | admits only a call whose action is [`Self::Destructive`] |
 ///
@@ -203,18 +203,17 @@ mod tests {
             .unwrap()
         {
             let read_only = row["in"][0].as_bool().unwrap();
-            let goal_work = row["in"][1].as_bool().unwrap();
             let declaration = KeyDeclaration {
-                need: if goal_work {
-                    OwnerNeed::GoalWork
-                } else {
-                    OwnerNeed::Memory
+                need: match row["in"][1].as_str().unwrap() {
+                    "memory" => OwnerNeed::Memory,
+                    "goalWork" => OwnerNeed::GoalWork,
+                    other => panic!("unknown owner need: {other}"),
                 },
                 ..KeyDeclaration::shared(read_only.then_some(ToolEffect::ReadOnly))
             };
             let actual = match declaration.owner_access() {
                 OwnerAccess::Read => "read",
-                OwnerAccess::Write => "factWrite",
+                OwnerAccess::Write => "memoryWrite",
                 OwnerAccess::GoalWork => "goalWork",
             };
             assert_eq!(row["out"], actual, "{row}");

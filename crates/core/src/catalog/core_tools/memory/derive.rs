@@ -188,6 +188,7 @@ pub struct DeriveOutput {
 pub struct DeriveTool;
 
 impl Tool for DeriveTool {
+    const OPEN_WORLD: bool = true;
     const NAME: &'static str = protocol_tool::CORE_DERIVE;
     const TITLE: &'static str = "Derive a memory";
     const DESCRIPTION: &'static str = "Author a memory made from others: an Abstraction \

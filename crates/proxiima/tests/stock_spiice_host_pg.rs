@@ -99,6 +99,7 @@ struct ProbeOutput {
 struct Probe;
 
 impl Tool for Probe {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = PROBE_TOOL;
     const DESCRIPTION: &'static str =

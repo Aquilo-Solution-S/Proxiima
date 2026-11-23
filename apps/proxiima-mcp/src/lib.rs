@@ -810,6 +810,7 @@ fn resolve_served_surface(
     // an explicit PROXIIMA_TOOL_PROFILE=full.
     let profile = match profile_name {
         Some(name) => parse_tool_profile(name)?,
+        // An unset profile serves the `Proxiima.Operations.ToolProfile.memory` profile.
         None => ToolProfile::Memory,
     };
     let registered_ids = registered.all.as_slice();

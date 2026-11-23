@@ -81,6 +81,7 @@ pub struct InterpretOutput {
 pub struct InterpretTool;
 
 impl Tool for InterpretTool {
+    const OPEN_WORLD: bool = true;
     const NAME: &'static str = protocol_tool::CORE_INTERPRET;
     const TITLE: &'static str = "Interpret memories";
     const DESCRIPTION: &'static str = "Author a Perspective that interprets memories of any \

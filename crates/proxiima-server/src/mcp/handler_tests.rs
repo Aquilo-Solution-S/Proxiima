@@ -607,6 +607,7 @@ fn not_authorized_lists_a_spiice_dispatchers_allowed_actions() {
     struct StubOutput {}
 
     impl Tool for StubDispatchTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_dispatch";
         const DESCRIPTION: &'static str = "A spiice dispatcher.";

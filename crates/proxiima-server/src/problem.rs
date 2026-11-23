@@ -61,7 +61,7 @@ problem_statuses! {
     INTERNAL_SERVER_ERROR => "Internal error. The detail is deliberately generic.",
     SERVICE_UNAVAILABLE => "A caller-actionable precondition is unavailable; retry is meaningful.",
     #[cfg(feature = "rest")]
-    METHOD_NOT_ALLOWED => "This method is unsupported on the route. The Allow header lists the supported methods.",
+    METHOD_NOT_ALLOWED => "This method is unsupported on the route or for the selected action. The Allow header lists the supported methods.",
 }
 
 /// One RFC 9457 problem document plus the response metadata that travels
@@ -251,13 +251,21 @@ impl Problem {
     /// A route that does not serve `method`. The caller adds `Allow`: the
     /// route knows which methods it serves.
     #[cfg(feature = "rest")]
-    pub(crate) fn method_not_allowed(method: &axum::http::Method, instance: &str) -> Self {
+    pub(crate) fn method_not_allowed(
+        method: &axum::http::Method,
+        instance: &str,
+        action: Option<&str>,
+    ) -> Self {
+        let target = action.map_or_else(
+            || "this route".to_owned(),
+            |action| format!("the selected action `{action}`"),
+        );
         Self::new(
             ProblemStatus::METHOD_NOT_ALLOWED,
             "method-not-allowed",
             "Method not allowed",
             format!(
-                "{method} is not allowed here; the Allow header names the methods this route serves"
+                "{method} is unsupported for {target}. The Allow header lists the supported methods."
             ),
             instance,
         )

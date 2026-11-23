@@ -31,6 +31,7 @@ pub struct RetentionRow {
 pub struct RetentionTool;
 
 impl Tool for RetentionTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_RETENTION;
     const TITLE: &'static str = "Retention";
     const DESCRIPTION: &'static str =
@@ -83,6 +84,7 @@ pub struct SetRetentionOutput {
 pub struct SetRetentionTool;
 
 impl Tool for SetRetentionTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_SET_RETENTION;
     const TITLE: &'static str = "Set retention";
     const DESCRIPTION: &'static str =

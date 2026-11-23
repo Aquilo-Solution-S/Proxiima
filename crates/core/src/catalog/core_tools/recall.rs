@@ -103,6 +103,7 @@ pub enum RecallReason {
 }
 
 impl Tool for RecallTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_RECALL;
     const TITLE: &'static str = "Recall a memory";
     const DESCRIPTION: &'static str = "Recall what is known about a question and/or subject handles: short sketches of the subjects, Perspectives about them, question matches, Active Goals assigned to recalled Perspectives, and the selected owner's unassigned Active Goals. No bodies; use core_search_memories for filtered search.";

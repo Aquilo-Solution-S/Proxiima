@@ -50,6 +50,7 @@ type Reply = Pin<Box<dyn Future<Output = Result<ActedOn, ToolError>> + Send>>;
 struct SpaceReadTool;
 
 impl Tool for SpaceReadTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = READ_TOOL;
     const TITLE: &'static str = "Read a space";
     const DESCRIPTION: &'static str = "Report the owner a space key names, for a read.";
@@ -72,6 +73,7 @@ impl Tool for SpaceReadTool {
 struct SpaceWriteTool;
 
 impl Tool for SpaceWriteTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = WRITE_TOOL;
     const TITLE: &'static str = "Write a space";
     const DESCRIPTION: &'static str = "Report the owner a space key names, for a write.";

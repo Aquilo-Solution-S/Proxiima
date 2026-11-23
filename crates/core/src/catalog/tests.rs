@@ -68,17 +68,18 @@ mod manifest_tests {
             .find(|tool| tool.name == protocol_tool::CORE_GOAL)
             .expect("core_goal registered");
 
-        let err = (desc.call)(
-            ctx,
-            serde_json::json!({
-                "action": "transition",
-                "goal": goal,
-                "transition": "pause",
-                "title": "belongs to set/modify",
-            }),
-        )
-        .await
-        .expect_err("foreign action field must be rejected before execution");
+        let err = desc
+            .call_direct(
+                ctx.clone(),
+                serde_json::json!({
+                    "action": "transition",
+                    "goal": goal,
+                    "transition": "pause",
+                    "title": "belongs to set/modify",
+                }),
+            )
+            .await
+            .expect_err("foreign action field must be rejected before execution");
         assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         let message = err.to_string();
         assert!(message.contains("title"), "message: {message}");
@@ -120,7 +121,8 @@ mod manifest_tests {
             if let Some(pending) = pending {
                 args["pending"] = pending.into();
             }
-            let err = (desc.call)(ctx, args)
+            let err = desc
+                .call_direct(ctx, args)
                 .await
                 .expect_err("a pending that does not fit the transition is refused");
             assert_eq!(err.kind(), ToolErrorKind::InvalidInput, "{transition}");
@@ -144,17 +146,18 @@ mod manifest_tests {
             .find(|tool| tool.name == protocol_tool::CORE_FACT)
             .expect("core_fact registered");
 
-        let err = (desc.call)(
-            ctx,
-            serde_json::json!({
-                "action": "citation_of_fact",
-                "fact": fact,
-                "confirm": true,
-                "expect_handle": "F:wrong",
-            }),
-        )
-        .await
-        .expect_err("foreign action fields must be rejected before execution");
+        let err = desc
+            .call_direct(
+                ctx.clone(),
+                serde_json::json!({
+                    "action": "citation_of_fact",
+                    "fact": fact,
+                    "confirm": true,
+                    "expect_handle": "F:wrong",
+                }),
+            )
+            .await
+            .expect_err("foreign action fields must be rejected before execution");
         assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
         let message = err.to_string();
         assert!(message.contains("confirm"), "message: {message}");

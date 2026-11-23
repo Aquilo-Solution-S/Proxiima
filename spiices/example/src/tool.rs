@@ -54,6 +54,7 @@ pub struct ListNotebooksOutput {
 pub struct ListNotebooksTool;
 
 impl Tool for ListNotebooksTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = LIST_NOTEBOOKS_TOOL;
     const TITLE: &'static str = "List notebooks";
     const DESCRIPTION: &'static str =

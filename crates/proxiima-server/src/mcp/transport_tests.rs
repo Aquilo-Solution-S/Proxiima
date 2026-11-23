@@ -681,6 +681,7 @@ struct StubOutput {
 }
 
 impl proxiima_core::Tool for StubTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-stub_ping";
     const DESCRIPTION: &'static str = "Answers with the calling client's name.";
@@ -1057,6 +1058,7 @@ const SEND_TOOL: &str = "proxiima-stub_send";
 const SEND_FAILURE: &str = "send refused: token sk-live-1234 rejected (retry after 60s)";
 
 impl proxiima_core::Tool for SendTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = SEND_TOOL;
     const TITLE: &'static str = "Send";
     const DESCRIPTION: &'static str = "Answers the outcome it is asked for.";
@@ -1214,6 +1216,10 @@ async fn registered_tool_reach_reaches_mcp_tool_list() {
             true,
         ),
         (proxiima_core::protocol::tool::CORE_UPLOAD, false, true),
+        (proxiima_core::protocol::tool::CORE_THINK, true, true),
+        (proxiima_core::protocol::tool::CORE_DERIVE, false, true),
+        (proxiima_core::protocol::tool::CORE_INTERPRET, false, true),
+        (proxiima_core::protocol::tool::CORE_GOAL, false, true),
         (
             proxiima_core::protocol::tool::CORE_MEMORY_SPACES,
             true,

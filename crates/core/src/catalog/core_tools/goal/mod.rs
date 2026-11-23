@@ -245,6 +245,7 @@ pub enum CoreGoalOutput {
 }
 
 impl Tool for CoreGoalTool {
+    const OPEN_WORLD: bool = true;
     const NAME: &'static str = protocol_tool::CORE_GOAL;
     const TITLE: &'static str = "Goals";
     const DESCRIPTION: &'static str = "Write Goals: create, decompose, transition, edit, achieve, share, publish, or bind work. Use the latest head handle. Motivations and evidence are optional; pause needs pending=keep or discard.";

@@ -31,6 +31,8 @@ pub struct CoreToolInfo {
     /// over its actions. `Some` for every tool of a frozen registry; its
     /// MCP hints reflect the tool declaration and the visible effects.
     pub effect: Option<ToolEffect>,
+    /// Whether any operation of the tool can reach outside the deployment.
+    pub open_world: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -262,6 +264,7 @@ fn tool_info_from_descriptor(descriptor: &ToolDescriptor) -> CoreToolInfo {
         args_schema: descriptor.args_schema.clone(),
         output_schema: descriptor.output_schema.clone(),
         effect: descriptor.effect(),
+        open_world: descriptor.open_world,
     }
 }
 
@@ -283,6 +286,7 @@ mod tests {
     }
 
     impl Tool for LabelEchoTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "test_label_echo";
         const DESCRIPTION: &'static str = "echo the resolved operator label";
@@ -323,6 +327,7 @@ mod tests {
     }
 
     impl Tool for MarkerTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "test_marker";
         const DESCRIPTION: &'static str = "test marker";

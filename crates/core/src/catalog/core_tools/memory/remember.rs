@@ -102,6 +102,7 @@ pub struct RememberOutput {
 pub struct RememberTool;
 
 impl Tool for RememberTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_REMEMBER;
     const TITLE: &'static str = "Remember a fact";
     const DESCRIPTION: &'static str =

@@ -46,6 +46,7 @@ pub enum CoreFactOutput {
 }
 
 impl Tool for CoreFactTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_FACT;
     const TITLE: &'static str = "Facts";
     const DESCRIPTION: &'static str = "Read citations: the cited object behind one Fact, or \

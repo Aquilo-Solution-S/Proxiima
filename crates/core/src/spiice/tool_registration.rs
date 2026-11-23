@@ -1,10 +1,11 @@
 use super::{
     CallFn, SpiiceRegistry, SpiiceRegistryError, Tool, ToolDescriptor, ToolOrigin,
-    mcp_output_schema, mcp_tool_schema, validate_action_args,
+    mcp_output_schema, mcp_tool_schema,
 };
 use crate::ToolError;
 use crate::catalog::prepare_flat_tool_args;
 use crate::catalog::schema::undescribed_property_names;
+use crate::catalog::tool::{RegisteredInput, ResolvedToolInput};
 use futures::future::BoxFuture;
 
 /// Top-level property names advertised by the flat tool's `Args` schema. This
@@ -103,41 +104,41 @@ impl SpiiceRegistry {
             .collect();
         // Tool registrations live for the process lifetime; leaking the
         // closure preserves the descriptor's copyable call-handle semantics.
-        let call: CallFn = Box::leak(Box::new(move |ctx, mut args| -> BoxFuture<'static, _> {
+        let call: CallFn = Box::leak(Box::new(move |ctx, args| -> BoxFuture<'static, _> {
             let properties = properties.clone();
             Box::pin(async move {
                 let mut ctx: crate::ToolCtx = ctx;
-                let admitted_argv = ctx.admitted_argv.take();
+                // `Proxiima.ToolSurface.ArgvResolution`.
+                let (resolved, mut args) = match std::mem::take(&mut ctx.registered_input) {
+                    RegisteredInput::Admitted(input) => input.into_input(T::NAME, &args)?,
+                    RegisteredInput::Direct => {
+                        (ResolvedToolInput::resolve_direct::<T>(&args)?, args)
+                    }
+                    RegisteredInput::Unadmitted | RegisteredInput::HandlerArgv(_) => {
+                        return Err(ToolError::InputNotAdmitted);
+                    }
+                };
                 let mut ignored = Vec::new();
                 // `Proxiima.ToolSurface.actionArgumentSource`.
-                let effect = if !T::ACTION_ARG_SPECS.is_empty() {
-                    validate_action_args(T::NAME, T::ACTION_ARG_SPECS, &args)?;
-                    let action = args.get("action").and_then(serde_json::Value::as_str);
-                    T::ACTION_ARG_SPECS
-                        .iter()
-                        .find(|spec| Some(spec.action) == action)
-                        .map(|spec| spec.effect)
-                } else if !T::ARGV_ACTION_SPECS.is_empty() {
-                    Some(match admitted_argv {
-                        Some(resolved) => resolved.effect(T::NAME, &args)?,
-                        None => {
-                            crate::catalog::resolve_argv_action(
-                                T::NAME,
-                                T::ARGV_ACTION_SPECS,
-                                &args,
-                            )?
-                            .effect
-                        }
-                    })
-                } else {
-                    // `Proxiima.ToolSurface.flatArguments`.
-                    ignored = prepare_flat_tool_args(
-                        T::NAME,
-                        &properties,
-                        &mut args,
-                        <T as Tool>::UNKNOWN_FIELD_POLICY,
-                    )?;
-                    <T as Tool>::EFFECT
+                let effect = match resolved {
+                    ResolvedToolInput::Tagged(spec) => {
+                        spec.validate_fields(T::NAME, &args)?;
+                        Some(spec.effect)
+                    }
+                    ResolvedToolInput::Argv(spec) => {
+                        ctx.registered_input = RegisteredInput::HandlerArgv(spec);
+                        Some(spec.effect)
+                    }
+                    ResolvedToolInput::Flat(effect) => {
+                        // `Proxiima.ToolSurface.flatArguments`.
+                        ignored = prepare_flat_tool_args(
+                            T::NAME,
+                            &properties,
+                            &mut args,
+                            <T as Tool>::UNKNOWN_FIELD_POLICY,
+                        )?;
+                        effect
+                    }
                 };
                 // Every transport reaches the handler through this closure,
                 // so stamping here is what lets a verb ask which tool — and
@@ -186,6 +187,7 @@ impl SpiiceRegistry {
 fn validate_argument_policy<T: Tool>() -> Result<(), SpiiceRegistryError> {
     let tagged = !T::ACTION_ARG_SPECS.is_empty();
     let argv = !T::ARGV_ACTION_SPECS.is_empty();
+    // Registration fixes one action vocabulary for every call.
     if tagged && argv {
         return Err(SpiiceRegistryError::ConflictingActionVocabularies { name: T::NAME });
     }
@@ -341,6 +343,7 @@ mod action_vocabulary_tests {
     struct ArgvTool;
 
     impl Tool for ArgvTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_cli";
         const DESCRIPTION: &'static str = "An argv-keyed fixture dispatcher.";
@@ -359,6 +362,7 @@ mod action_vocabulary_tests {
     struct BothVocabularies;
 
     impl Tool for BothVocabularies {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_both";
         const DESCRIPTION: &'static str = "A fixture declaring both spec kinds.";
@@ -390,6 +394,7 @@ mod action_vocabulary_tests {
     struct OwnerOnlyFlatTool;
 
     impl crate::Tool for OwnerOnlyFlatTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_admin";
         const DESCRIPTION: &'static str = "A flat fixture in the owner-only class.";
@@ -507,18 +512,20 @@ mod action_vocabulary_tests {
         let frozen = registry.freeze_or_panic_for_tests();
         let descriptor = frozen.mcp_tool(ArgvTool::NAME).expect("registered");
 
-        let output = (descriptor.call)(
-            test_ctx(),
-            serde_json::json!({ "argv": ["approval", "decide", "--id", "7"] }),
-        )
-        .await
-        .expect("declared command dispatches");
+        let output = descriptor
+            .call_direct(
+                test_ctx(),
+                serde_json::json!({ "argv": ["approval", "decide", "--id", "7"] }),
+            )
+            .await
+            .expect("declared command dispatches");
         assert_eq!(
             output,
             serde_json::json!({ "argv": ["approval", "decide", "--id", "7"] })
         );
 
-        let err = (descriptor.call)(test_ctx(), serde_json::json!({ "argv": ["unknown"] }))
+        let err = descriptor
+            .call_direct(test_ctx(), serde_json::json!({ "argv": ["unknown"] }))
             .await
             .expect_err("unmatched argv is refused before the tool runs");
         assert_eq!(err.kind(), ToolErrorKind::InvalidInput);
@@ -552,6 +559,7 @@ mod unknown_field_policy_tests {
     struct TolerantEcho<const READ_ONLY: bool>;
 
     impl<const READ_ONLY_TOOL: bool> Tool for TolerantEcho<READ_ONLY_TOOL> {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_tolerant";
         const DESCRIPTION: &'static str = "A flat fixture tolerating unknown argument fields.";
@@ -602,6 +610,7 @@ mod unknown_field_policy_tests {
     struct TolerantScalar;
 
     impl Tool for TolerantScalar {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_tolerant_scalar";
         const DESCRIPTION: &'static str = "A tolerating flat fixture answering with a scalar.";
@@ -618,6 +627,7 @@ mod unknown_field_policy_tests {
     struct StrictEcho;
 
     impl Tool for StrictEcho {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_strict";
         const DESCRIPTION: &'static str = "A flat fixture keeping the default guard.";
@@ -642,7 +652,7 @@ mod unknown_field_policy_tests {
     ) -> Result<serde_json::Value, ToolError> {
         let frozen = registry();
         let descriptor = frozen.mcp_tool(tool).expect("fixture registered");
-        (descriptor.call)(test_ctx(), args).await
+        descriptor.call_direct(test_ctx(), args).await
     }
 
     /// The whole point of the opt-in: the echoed-back keys neither reach the

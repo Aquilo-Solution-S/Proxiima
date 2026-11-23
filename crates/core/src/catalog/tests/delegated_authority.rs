@@ -38,6 +38,7 @@ struct WorkerOutput {}
 struct WorkerTool;
 
 impl Tool for WorkerTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = TOOL_NAME;
     const DESCRIPTION: &'static str = "delegation test worker";
@@ -63,6 +64,7 @@ enum DispatcherArgs {
 struct DispatcherTool;
 
 impl Tool for DispatcherTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = DISPATCHER_TOOL_NAME;
     const DESCRIPTION: &'static str = "delegation dispatcher test worker";

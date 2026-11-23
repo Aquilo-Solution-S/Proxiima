@@ -29,7 +29,7 @@ impl ToolError {
     #[must_use]
     pub fn kind(&self) -> ToolErrorKind {
         match self {
-            Self::InvalidInput(_) => ToolErrorKind::InvalidInput,
+            Self::InvalidInput(_) | Self::InputNotAdmitted => ToolErrorKind::InvalidInput,
             Self::NotFound(_) => ToolErrorKind::NotFound,
             Self::NotAuthorized(_) | Self::LayeringViolation(_) | Self::Unavailable(_) => {
                 ToolErrorKind::InvalidRequest

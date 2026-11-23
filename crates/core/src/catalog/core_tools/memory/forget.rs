@@ -23,6 +23,7 @@ pub struct ForgetOutput {
 pub struct ForgetTool;
 
 impl Tool for ForgetTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_FORGET;
     const TITLE: &'static str = "Forget a memory";
     const DESCRIPTION: &'static str = "Hide a memory from search, recall, walks and other stores until core_restore; erase removes it.";

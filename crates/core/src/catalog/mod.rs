@@ -16,7 +16,7 @@ mod error;
 mod ids;
 mod manifest;
 mod reply;
-mod tool;
+pub(crate) mod tool;
 mod types;
 
 #[cfg(test)]
@@ -47,13 +47,13 @@ pub use reply::{ToolContent, ToolReply};
 pub use schema::{
     ActionSchema, DispatcherSchema, mcp_wire_output_schema, normalize_mcp_output_schema,
 };
+#[cfg(test)]
+pub(crate) use tool::validate_action_args;
 pub use tool::{
     ActionArgSpec, ArgvActionSpec, CallFn, MAX_TITLE_CHARS, ToolDescriptor, ToolOrigin,
     UnknownFieldPolicy,
 };
-pub(crate) use tool::{
-    prepare_flat_tool_args, resolve_argv_action, title_problem, validate_action_args,
-};
+pub(crate) use tool::{prepare_flat_tool_args, title_problem};
 pub(crate) use types::JudgedKey;
 pub use types::{
     MAX_OPERATOR_LABEL_CHARS, OperatorLabelConflict, UNKNOWN_OPERATOR_LABEL, resolve_operator_label,

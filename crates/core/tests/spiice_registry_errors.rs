@@ -19,6 +19,7 @@ impl<T> Tool for OutputFixture<T>
 where
     T: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test_output";
     const DESCRIPTION: &'static str = "output schema fixture";
@@ -117,6 +118,7 @@ struct EmptyArgs {}
 struct DemoTool;
 
 impl Tool for DemoTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test_demo";
     const DESCRIPTION: &'static str = "test";
@@ -134,6 +136,7 @@ impl Tool for DemoTool {
 struct WrongPrefixTool;
 
 impl Tool for WrongPrefixTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "wrong_demo";
     const DESCRIPTION: &'static str = "test";
@@ -151,6 +154,7 @@ impl Tool for WrongPrefixTool {
 struct ProviderUnsafeTool;
 
 impl Tool for ProviderUnsafeTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test/demo";
     const DESCRIPTION: &'static str = "test";
@@ -261,6 +265,7 @@ macro_rules! stub_tool {
         struct $tool;
 
         impl Tool for $tool {
+            const OPEN_WORLD: bool = false;
             const TITLE: &'static str = "Test tool";
             const NAME: &'static str = $name;
             const DESCRIPTION: &'static str = "test";

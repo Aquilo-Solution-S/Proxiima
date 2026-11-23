@@ -35,6 +35,7 @@ struct EchoOutput {
 }
 
 impl Tool for EchoTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = TOOL;
     const DESCRIPTION: &'static str = "Return the fixture argument without storage access.";

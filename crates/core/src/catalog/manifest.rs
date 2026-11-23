@@ -248,6 +248,10 @@ mod effect_tests {
         for (name, hints) in [
             (crate::protocol::tool::CORE_SEARCH_MEMORIES, (true, true)),
             (crate::protocol::tool::CORE_UPLOAD, (false, true)),
+            (crate::protocol::tool::CORE_THINK, (true, true)),
+            (crate::protocol::tool::CORE_DERIVE, (false, true)),
+            (crate::protocol::tool::CORE_INTERPRET, (false, true)),
+            (crate::protocol::tool::CORE_GOAL, (false, true)),
             (crate::protocol::tool::CORE_MEMORY_SPACES, (true, false)),
         ] {
             let annotations = registry.mcp_tool(name).unwrap().annotations().unwrap();

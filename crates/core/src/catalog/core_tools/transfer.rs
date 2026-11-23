@@ -40,6 +40,7 @@ pub struct TransferOutput {
 }
 
 impl Tool for CoreTransferTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_TRANSFER;
     const TITLE: &'static str = "Transfer ownership";
     const DESCRIPTION: &'static str =

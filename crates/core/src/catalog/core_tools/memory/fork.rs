@@ -28,6 +28,7 @@ pub struct ForkOutput {
 pub struct ForkTool;
 
 impl Tool for ForkTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_FORK;
     const TITLE: &'static str = "Fork a memory version";
     const DESCRIPTION: &'static str = "Create an independently owned Abstraction or Perspective series from one exact version. A typed schema must opt in; source fork permission and destination write permission are both required.";

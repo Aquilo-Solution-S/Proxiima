@@ -6,7 +6,6 @@
 
 use crate::authz::{AuthorizationHook, OwnerResolver};
 use crate::catalog::schema::{mcp_output_schema, mcp_tool_schema};
-use crate::catalog::validate_action_args;
 use crate::scope::ScopeKind;
 use crate::verbs::schema::{
     PayloadKind, ProtocolPayload, ProtocolPayloadIngress, ProtocolPayloadIngressEntry,

@@ -925,7 +925,7 @@ async fn cross_space_derive_succeeds_when_sources_readable() {
 /// The facade projects the descriptor's output schema, like the MCP handler
 /// and the REST document already do. A host that bound a call's result off
 /// this listing had to guess its shape.
-fn assert_facade_projects_output_schema(registry: &SpiiceRegistryFrozen, tool: &CoreToolInfo) {
+fn assert_facade_projects_descriptor(registry: &SpiiceRegistryFrozen, tool: &CoreToolInfo) {
     let descriptor = registry
         .list_mcp_tools()
         .iter()
@@ -939,6 +939,7 @@ fn assert_facade_projects_output_schema(registry: &SpiiceRegistryFrozen, tool: &
         tool.name
     );
     assert_eq!(tool.output_schema, descriptor.output_schema);
+    assert_eq!(tool.open_world, descriptor.open_world);
 }
 
 #[tokio::test]
@@ -973,7 +974,7 @@ async fn facade_lists_and_dispatches_core_mcp_tools() {
             .find(|tool| tool.name == "core_recall")
             .expect("core_recall registered");
         assert_eq!(recall.effect, Some(ToolEffect::ReadOnly));
-        assert_facade_projects_output_schema(built.host().registry(), recall);
+        assert_facade_projects_descriptor(built.host().registry(), recall);
         let search = listed
             .iter()
             .find(|tool| tool.name == "core_search_memories")
@@ -986,7 +987,7 @@ async fn facade_lists_and_dispatches_core_mcp_tools() {
             "known core tool has a non-empty args schema"
         );
         assert_eq!(search.effect, Some(ToolEffect::ReadOnly));
-        assert_facade_projects_output_schema(built.host().registry(), search);
+        assert_facade_projects_descriptor(built.host().registry(), search);
         let remember = listed
             .iter()
             .find(|tool| tool.name == "core_remember")

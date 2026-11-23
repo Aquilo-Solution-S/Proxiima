@@ -245,7 +245,7 @@ impl Operation<'_> {
             operation.insert("description".to_string(), json!(self.description));
         }
         // Silence means write, matching `ToolDescriptor::is_read_only` —
-        // so read-only is always stated. The other two hints carry no such
+        // so read-only is always stated. Other hints carry no such
         // default, and inventing one would misreport a tool that said nothing.
         operation.insert(
             "x-proxiima-read-only".to_string(),
@@ -256,6 +256,13 @@ impl Operation<'_> {
         }
         if let Some(idempotent) = self.annotations.idempotent {
             operation.insert("x-proxiima-idempotent".to_string(), json!(idempotent));
+        }
+        if matches!(
+            self.target,
+            OperationTarget::Tool(_) | OperationTarget::Action { .. }
+        ) && let Some(open_world) = self.annotations.open_world
+        {
+            operation.insert("x-proxiima-open-world".to_string(), json!(open_world));
         }
         if !self.parameters.is_empty() {
             operation.insert("parameters".to_string(), json!(self.parameters));
@@ -497,6 +504,7 @@ fn responses(
 /// tool can write payloads without echoing them. Resources have no
 /// descriptor; theirs is the schema of the answer type their contract names.
 fn success_response(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Value {
+    // OpenAPI keeps the documented result schema.
     let mut schema = if let Some(Value::Object(map)) = output_schema {
         map.clone()
     } else {

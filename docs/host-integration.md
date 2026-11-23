@@ -511,6 +511,12 @@ key and the action's `ActionArgSpec::title` (`ArgvActionSpec::title` for
 an argv dispatcher) for `tool:action`, so the host keeps no word list of its
 own.
 
+### Tool-list notifications
+
+Use `CoreMcpTools::with_tool_list_notifier` or `ToolHost::with_tool_list_notifier`
+to advertise tool-list changes. Call `ToolListNotifier::notify` for the affected
+owner on every replica after each mutation that changes their tool surface.
+
 ### Forwarded owner access
 
 An embedded host may install an `OwnerAccessPort` and an optional forwarder
@@ -632,9 +638,6 @@ Inside an authenticated Proxiima write callback, use
 `PgHostStateSession::authority_memberships` for the current subject's effective
 memberships instead. That session derives its subject from the sealed write
 permit; it does not accept the platform gateway's caller-selected footprint.
-
-When advertising tool-list changes, notify the affected owner on every replica
-after each mutation that changes their tool surface.
 
 ## Other stores and HTTP
 

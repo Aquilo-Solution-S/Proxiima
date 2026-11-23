@@ -215,8 +215,11 @@ serves MCP; build a REST-capable host explicitly when needed.
 
 Resource URIs map from `proxiima://x` to `/v1/resources/x`; template arguments
 become path or query parameters. The instructional `proxiima://how-to` resource
-also answers at `/v1/how-to` when its caller key is admitted. Tool and action `ToolEffect` declarations choose allowed methods;
-write actions reject `QUERY` with `405` and an `Allow` header.
+also answers at `/v1/how-to` when its caller key is admitted. Tool and action
+`ToolEffect` declarations choose allowed methods. A whole-dispatcher `QUERY`
+that selects a write returns `405` with the selected action's `Allow` header.
+The `proxiima://tools` catalog exposes each registered tool's reach as
+`open_world`. OpenAPI tool operations expose it as `x-proxiima-open-world`.
 
 A narrowed action route injects `action`; including it in that route's body
 is invalid even if the values agree. Unknown actions return `404`. The
@@ -265,6 +268,7 @@ own fallback.
 | Insufficient authority; refused Host, Origin, or owner selection | 403 |
 | Missing or invisible entity / route; unknown or expired MCP session | 404 |
 | Invalid input or unknown schema; malformed Host or CORS preflight | 400 |
+| Tool input requires unchanged admission (`input-not-admitted`) | 400 |
 | Idempotency, storage, or suppression conflict | 409 |
 | Request body over the listener's limit | 413 |
 | Layering violation | 422 |

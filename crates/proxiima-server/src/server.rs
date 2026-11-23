@@ -407,6 +407,7 @@ impl ToolHost {
         let observer = ctx.clone();
         let reply = async {
             // `Proxiima.ToolSurface.callChecks`.
+            // Refuse NUL before a behavior can log it or a tool can pass it to storage.
             reject_nul_in_args(&args)?;
             let reply = self
                 .dispatch_through_behaviors(name.clone(), args, ctx, terminal)

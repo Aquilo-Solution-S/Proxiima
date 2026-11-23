@@ -51,6 +51,7 @@ fn erase_from(ctx: ToolCtx, args: &GateArgs) -> BoxFuture<'static, Result<GateOu
 struct WipeTool;
 
 impl Tool for WipeTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "gate_fixture_wipe";
     const DESCRIPTION: &'static str = "A tool that declares it destroys data.";
@@ -66,6 +67,7 @@ impl Tool for WipeTool {
 struct TouchTool;
 
 impl Tool for TouchTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "gate_fixture_touch";
     const DESCRIPTION: &'static str = "A tool that declares it destroys nothing.";
@@ -92,6 +94,7 @@ enum MixedArgs {
 struct MixedTool;
 
 impl Tool for MixedTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "gate_fixture_mixed";
     const DESCRIPTION: &'static str = "A dispatcher with one destructive action.";
@@ -128,6 +131,7 @@ impl Tool for MixedTool {
 struct StrayTool;
 
 impl Tool for StrayTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "gate_fixture_stray";
     const DESCRIPTION: &'static str = "A destructive tool the contract does not name.";
@@ -208,7 +212,8 @@ async fn call_with(
         crate::SpiiceServices::default(),
         crate::ToolCaller::new("gate/model", "gate", "1"),
     );
-    (descriptor.call)(ctx, args)
+    descriptor
+        .call_direct(ctx, args)
         .await
         .map_err(|err| err.to_string())
 }

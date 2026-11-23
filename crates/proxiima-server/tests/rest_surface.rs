@@ -60,6 +60,7 @@ struct CallerContextOutput {
 struct CallerContextTool;
 
 impl proxiima_core::Tool for CallerContextTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = CALLER_CONTEXT_TOOL;
     const DESCRIPTION: &'static str = "Echo transport-neutral caller context.";
@@ -118,6 +119,7 @@ struct StubDispatchTool;
 struct StubDispatchOutput {}
 
 impl proxiima_core::Tool for StubDispatchTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_DISPATCH;
     const DESCRIPTION: &'static str = "A spiice dispatcher.";
@@ -172,6 +174,7 @@ struct StubArgvOutput {
 }
 
 impl proxiima_core::Tool for StubArgvTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = SPIICE_ARGV;
     const DESCRIPTION: &'static str = "An argv-keyed spiice dispatcher.";
@@ -1721,6 +1724,12 @@ async fn an_annotated_argv_read_command_keeps_role_and_query_under_a_write_tool(
     .await;
     assert_eq!(retryable_write.status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(retryable_write.header(header::ALLOW), Some("GET, POST"));
+    assert!(
+        retryable_write.json()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("selected action `approval-decide`")
+    );
 
     let viewer_write = call(
         &router,
@@ -2085,4 +2094,41 @@ async fn the_openapi_document_is_caller_scoped_and_never_shared_cacheable() {
         Some("private, no-store")
     );
     assert!(answer.json()["openapi"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn registry_reach_is_projected_into_catalog_and_openapi_operations() {
+    let host = host();
+    let router = app(host.clone());
+    let ctx = auth(ToolScope::All);
+    let catalog = host
+        .read_resource("proxiima://tools", author(), Some(ctx.clone()))
+        .await
+        .expect("catalog");
+    let openapi = get(&router, "/v1/openapi.json", &ctx).await.json();
+    for (name, open_world) in [
+        (protocol_tool::CORE_SEARCH_MEMORIES, true),
+        (protocol_tool::CORE_UPLOAD, true),
+        (protocol_tool::CORE_THINK, true),
+        (protocol_tool::CORE_DERIVE, true),
+        (protocol_tool::CORE_INTERPRET, true),
+        (protocol_tool::CORE_GOAL, true),
+        (protocol_tool::CORE_MEMORY_SPACES, false),
+    ] {
+        let row = catalog["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["tool_id"] == name)
+            .unwrap();
+        assert_eq!(row["open_world"], open_world, "{name}");
+        for action in row["actions"].as_array().unwrap() {
+            assert_eq!(action["annotations"]["open_world"], open_world, "{name}");
+        }
+        assert_eq!(
+            openapi["paths"][format!("/v1/tools/{name}")]["post"]["x-proxiima-open-world"],
+            open_world,
+            "{name}"
+        );
+    }
 }

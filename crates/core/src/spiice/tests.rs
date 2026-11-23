@@ -11,6 +11,7 @@ struct EmptyDemoArgs {}
 struct Demo;
 
 impl Tool for Demo {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-test_demo";
     const DESCRIPTION: &'static str = "test";
@@ -188,6 +189,7 @@ fn add_mcp_tool_rejects_unprefixed_tool_name() {
     struct Bad;
 
     impl Tool for Bad {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "wrong/demo";
         const DESCRIPTION: &'static str = "x";

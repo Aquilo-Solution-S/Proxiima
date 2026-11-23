@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 
 use super::core_tools::memory_spaces::{ResolvedMemorySpace, SpaceDefault, resolve_space_owner};
+use super::tool::{AdmittedToolInput, RegisteredInput, ResolvedToolInput};
 use super::{KeyDeclaration, OwnerNeed, Replay, ToolDescriptor, ToolEffect, ToolReply};
 use crate::{ActionName, OwnerAccess, ScopeKey, ToolCtx, ToolError};
 
@@ -64,6 +65,8 @@ impl<'a> Next<'a> {
 
 #[async_trait]
 pub trait RequestBehavior: Send + Sync + std::fmt::Debug {
+    /// Request behaviors must not rewrite the arguments the gate judged.
+    ///
     /// Wrap one call: refuse it, or pass it to `next` and post-process the
     /// reply. A behavior that only reads JSON matches
     /// [`ToolReply::Structured`] and returns the other variants unchanged.
@@ -274,8 +277,7 @@ impl ScopeGateBehavior {
         tool: &str,
         args: &serde_json::Value,
         ctx: &ToolCtx,
-    ) -> Result<(OwnerAccess, Option<super::tool::AdmittedArgv>), ToolError> {
-        let mut admitted_argv = None;
+    ) -> Result<(OwnerAccess, Option<AdmittedToolInput>), ToolError> {
         // `Proxiima.ToolSurface.callChecks`.
         ctx.judged_cell().clear();
         let capabilities = ctx.authz().capabilities();
@@ -302,81 +304,58 @@ impl ScopeGateBehavior {
         // resource's — and the owner-role gate reads that same value. Each
         // records that key on the context before it decides on it, so a
         // refusal carries the key too.
-        let access = match descriptor {
-            Some(descriptor) if !descriptor.action_arg_specs.is_empty() => {
-                // A registered tool's name is a `ToolName`: `try_freeze` checked.
-                let Ok(ScopeKey::Tool(tool_name)) = &key else {
-                    return Err(ToolError::NotAuthorized(tool.to_string()));
-                };
-                let requested = args.get("action").and_then(serde_json::Value::as_str);
-                let declared = descriptor.declaration(requested);
-                let Some(action) = requested else {
-                    return Err(ToolError::InvalidInput(format!(
-                        "tool {tool} requires string action"
-                    )));
-                };
-                // A declared action is an `ActionName` (also checked at
-                // freeze), so text that is none is no declared action.
-                let known = ActionName::parse(action).ok().filter(|name| {
-                    descriptor
-                        .action_arg_specs
-                        .iter()
-                        .any(|spec| spec.action == name.as_str())
-                });
-                let Some(action) = known else {
-                    return Err(ToolError::InvalidInput(format!(
-                        "unknown action {action:?} for tool {tool}"
-                    )));
-                };
-                Self::record_action(tool_name, &action, ctx)?;
-                if !capabilities.admits_action(tool_name, &action, declared) {
-                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
-                }
-                declared.owner_access()
-            }
-            Some(descriptor) if !descriptor.argv_action_specs.is_empty() => {
-                let Ok(ScopeKey::Tool(tool_name)) = &key else {
-                    return Err(ToolError::NotAuthorized(tool.to_string()));
-                };
-                let spec = super::resolve_argv_action(tool, descriptor.argv_action_specs, args)?;
-                let action = spec.action;
-                let declared = descriptor.declaration(Some(action));
-                let Ok(action_name) = ActionName::parse(action) else {
-                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
-                };
-                Self::record_action(tool_name, &action_name, ctx)?;
-                if !capabilities.admits_action(tool_name, &action_name, declared) {
-                    return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
-                }
-                // `Proxiima.ToolSurface.argvResolutionSource`.
-                admitted_argv = Some(super::tool::AdmittedArgv::new(
+        let resolved = descriptor
+            .map(|descriptor| {
+                ResolvedToolInput::resolve(
                     descriptor.name,
-                    spec,
-                    args["argv"].clone(),
-                ));
-                declared.owner_access()
+                    descriptor.action_arg_specs,
+                    descriptor.argv_action_specs,
+                    descriptor.effect,
+                    args,
+                    |action| {
+                        ToolError::InvalidInput(format!(
+                            "unknown action {action:?} for tool {tool}"
+                        ))
+                    },
+                )
+            })
+            .transpose()?;
+        let action = resolved.and_then(ResolvedToolInput::action);
+        let access = if let (Some(descriptor), Some(action)) = (descriptor, action) {
+            let Ok(ScopeKey::Tool(tool_name)) = &key else {
+                return Err(ToolError::NotAuthorized(tool.to_string()));
+            };
+            let action = ActionName::parse(action)
+                .map_err(|_| ToolError::NotAuthorized(format!("{tool}:{action}")))?;
+            let declared = descriptor.declaration(Some(action.as_str()));
+            Self::record_action(tool_name, &action, ctx)?;
+            if !capabilities.admits_action(tool_name, &action, declared) {
+                return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
             }
-            _ => {
-                let declared = Self::flat_declaration(tool, key.as_ref().ok(), descriptor, ctx);
-                if let Ok(key) = &key {
-                    ctx.judged_cell().record(key.clone());
-                }
-                let allowed = match &key {
-                    Ok(key) => capabilities.admits(key, declared),
-                    Err(_) => {
-                        matches!(capabilities.tool_scope, crate::ToolScope::All)
-                            && matches!(capabilities.served_surface, crate::ServedSurface::All)
-                    }
-                };
-                if !allowed {
-                    return Err(ToolError::NotAuthorized(tool.to_string()));
-                }
-                declared.owner_access()
+            declared.owner_access()
+        } else {
+            let declared = Self::flat_declaration(tool, key.as_ref().ok(), descriptor, ctx);
+            if let Ok(key) = &key {
+                ctx.judged_cell().record(key.clone());
             }
+            let allowed = match &key {
+                Ok(key) => capabilities.admits(key, declared),
+                Err(_) => {
+                    matches!(capabilities.tool_scope, crate::ToolScope::All)
+                        && matches!(capabilities.served_surface, crate::ServedSurface::All)
+                }
+            };
+            if !allowed {
+                return Err(ToolError::NotAuthorized(tool.to_string()));
+            }
+            declared.owner_access()
         };
-        let owner = Self::resolve_scope_owner(tool, args, ctx)?;
+        let owner = Self::resolve_scope_owner(tool, args, descriptor, action, ctx)?;
         Self::enforce_owner_role(tool, access, owner.owner, ctx)?;
-        Ok((access, admitted_argv))
+        let admitted = descriptor
+            .zip(resolved)
+            .map(|(descriptor, resolved)| AdmittedToolInput::new(descriptor.name, args, resolved));
+        Ok((access, admitted))
     }
 
     /// Read the host read set's other-store reads (#677) through the
@@ -419,9 +398,11 @@ impl ScopeGateBehavior {
     fn resolve_scope_owner(
         tool: &str,
         args: &serde_json::Value,
+        descriptor: Option<&ToolDescriptor>,
+        action: Option<&str>,
         ctx: &ToolCtx,
     ) -> Result<ResolvedMemorySpace, ToolError> {
-        let Some(properties) = Self::space_properties(tool, args, ctx) else {
+        let Some(properties) = Self::space_properties(descriptor, action) else {
             return Ok(ResolvedMemorySpace {
                 key: "current".into(),
                 label: "Current owner".into(),
@@ -441,20 +422,15 @@ impl ScopeGateBehavior {
     }
 
     fn space_properties(
-        tool: &str,
-        args: &serde_json::Value,
-        ctx: &ToolCtx,
+        descriptor: Option<&ToolDescriptor>,
+        action: Option<&str>,
     ) -> Option<Vec<String>> {
-        let descriptor = ctx.registry().mcp_tool(tool)?;
-        let schema = descriptor
-            .action_arg_specs
-            .is_empty()
-            .then_some(&descriptor.args_schema)
-            .or_else(|| {
-                args.get("action")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|action| descriptor.action_argument_schema(action))
-            });
+        let descriptor = descriptor?;
+        let schema = if descriptor.action_arg_specs.is_empty() {
+            Some(&descriptor.args_schema)
+        } else {
+            action.and_then(|action| descriptor.action_argument_schema(action))
+        };
         let properties = schema
             .and_then(|schema| schema.get("properties"))
             .and_then(serde_json::Value::as_object)
@@ -524,8 +500,9 @@ impl ScopeGateBehavior {
 #[async_trait]
 impl RequestBehavior for ScopeGateBehavior {
     async fn handle(&self, mut call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
-        let (access, admitted_argv) = Self::admit(&call.name, &call.args, &call.ctx)?;
-        call.ctx.admitted_argv = admitted_argv;
+        let (access, admitted) = Self::admit(&call.name, &call.args, &call.ctx)?;
+        call.ctx.registered_input =
+            admitted.map_or(RegisteredInput::Unadmitted, RegisteredInput::Admitted);
         next.run(Self::read_other_store_reads(call, access).await?)
             .await
     }
@@ -564,6 +541,7 @@ mod owner_role_tests {
     struct DeclaredReadTool;
 
     impl Tool for DeclaredReadTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_search";
         const DESCRIPTION: &'static str = "A spiice read tool that declares itself read-only.";
@@ -582,6 +560,7 @@ mod owner_role_tests {
     struct SilentTool;
 
     impl Tool for SilentTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_silent";
         const DESCRIPTION: &'static str = "A spiice tool that declares no annotations.";

@@ -25,6 +25,7 @@ struct Output {}
 struct Flat;
 
 impl Tool for Flat {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Observed flat tool";
     const NAME: &'static str = FLAT;
     const DESCRIPTION: &'static str = "Retains its context.";
@@ -58,6 +59,7 @@ enum DispatchArgs {
 struct Dispatch;
 
 impl Tool for Dispatch {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Observed dispatcher";
     const NAME: &'static str = DISPATCH;
     const DESCRIPTION: &'static str = "Exercises action scope decisions.";

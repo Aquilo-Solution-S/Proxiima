@@ -1,3 +1,5 @@
+import Proxiima.Operations
+
 /-! # Tool surface -/
 
 namespace Proxiima.ToolSurface
@@ -14,10 +16,10 @@ def maxHostInstructionsChars : Nat := 4096
 /-- The recorded label when neither the authenticated caller nor the call names a model. -/
 def unknownOperator : String := "unknown"
 
-/-- The canonical deployment profile for agents and the default when unset. -/
+/-- The wire spelling of `Proxiima.Operations.ToolProfile.memory`. -/
 def memoryProfile : String := "memory"
 
-/-- The canonical deployment profile that includes every registered command. -/
+/-- The wire spelling of `Proxiima.Operations.ToolProfile.full`. -/
 def fullProfile : String := "full"
 
 /-- The reserved head of a resource scope key. -/
@@ -78,23 +80,20 @@ def taggedAgreement : List TaggedCheck :=
 
 /-- Checks on the presentation title of a tool or action. -/
 inductive TitleCheck where
-  | nonempty | trimmed | singleLine | noControlCharacters | withinCharacterLimit
+  | nonempty | trimmed | noControlCharacters | withinCharacterLimit
   deriving DecidableEq
 
-/-- A title must be nonempty, trimmed, single-line, control-free and within the character limit. -/
+/-- A title must be nonempty, trimmed, control-free and within the character limit. -/
 def titleChecks : List TitleCheck :=
-  [.nonempty, .trimmed, .singleLine, .noControlCharacters, .withinCharacterLimit]
+  [.nonempty, .trimmed, .noControlCharacters, .withinCharacterLimit]
 
 /-- The argv resolution paths at the registered terminal. -/
 inductive ArgvResolution where
   /-- The scope gate passes the action found by longest-prefix resolution. -/
   | admittedLongestPrefix
   /-- A direct call performs its own longest-prefix resolution. -/
-  | resolveLongestPrefix
+  | directLongestPrefix
   deriving DecidableEq
-
-/-- The registered terminal uses the gate's argv resolution or resolves argv on direct entry. -/
-def argvResolutionSource : List ArgvResolution := [.admittedLongestPrefix, .resolveLongestPrefix]
 
 /-- The three canonical key forms that enter a tool scope. -/
 inductive KeyForm where
@@ -143,21 +142,26 @@ def listingChecks : List ListingCheck := [.callerScope, .servedSurface, .ownerAc
 
 /-- Whether a call reads or may write and whether its write is Goal work. -/
 inductive AccessRequirement where
-  | read | goalWork | factWrite
+  | read | goalWork | memoryWrite
+  deriving DecidableEq
+
+/-- The owner work a tool declares. -/
+inductive OwnerNeed where
+  | memory | goalWork
   deriving DecidableEq
 
 /-- A read needs read access; other calls require the declared kind of owner work. -/
-def ownerRequirement : (readOnly goalWork : Bool) → AccessRequirement
-  | true, true | true, false => .read
-  | false, true => .goalWork
-  | false, false => .factWrite
+def ownerRequirement : (readOnly : Bool) → OwnerNeed → AccessRequirement
+  | true, .memory | true, .goalWork => .read
+  | false, .goalWork => .goalWork
+  | false, .memory => .memoryWrite
 
 /-- Replay behavior of an action that may write. -/
 inductive Replay where
   | idempotent | nonIdempotent
   deriving DecidableEq
 
-/-- Ordered kinds of tool effect with their replay behavior. -/
+/-- Kinds of tool effect with replay behavior for writes. -/
 inductive Effect where
   | readOnly | additive (replay : Replay) | destructive (replay : Replay)
   deriving DecidableEq
@@ -180,22 +184,6 @@ def effectHints : Effect → EffectHints
   | .additive .nonIdempotent => ⟨false, some false, some false⟩
   | .destructive .idempotent => ⟨false, some true, some true⟩
   | .destructive .nonIdempotent => ⟨false, some true, some false⟩
-
-/-- Schema projection contexts that distinguish description handling. -/
-inductive SchemaProjection where
-  | mcpInput | mcpOutput | openApi
-  deriving DecidableEq
-
-/-- Which schema annotations a client projection keeps. -/
-inductive SchemaAnnotations where
-  | argumentDescriptions | validationOnly | documentedSchema
-  deriving DecidableEq
-
-/-- MCP inputs keep argument descriptions and MCP outputs keep validation; OpenAPI keeps documentation. -/
-def schemaAnnotations : SchemaProjection → SchemaAnnotations
-  | .mcpInput => .argumentDescriptions
-  | .mcpOutput => .validationOnly
-  | .openApi => .documentedSchema
 
 /-- The typed reply forms an entered tool can produce. -/
 inductive Reply where
@@ -225,7 +213,7 @@ inductive ListChangeListener where
   | initializedSession | selectedSubscription
   deriving DecidableEq
 
-/-- Either listener type registers under the authenticated owner. -/
+/-- Sessions and selected subscriptions listen for tool-list changes. -/
 def listChangeListeners : List ListChangeListener := [.initializedSession, .selectedSubscription]
 
 /-- Owner-channel delivery steps for a tool-list change. -/
@@ -241,7 +229,7 @@ inductive CatalogSource where
   | frozenRegistry | hostSource
   deriving DecidableEq
 
-/-- The registry owns registered names and a single host source can add distinct flat names. -/
+/-- A tools listing draws from the frozen registry and the host tool source. -/
 def mcpCatalogSources : List CatalogSource := [.frozenRegistry, .hostSource]
 
 /-- The stages of preparing a derived registered tool schema. -/

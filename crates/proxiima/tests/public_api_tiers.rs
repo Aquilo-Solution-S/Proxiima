@@ -583,6 +583,7 @@ struct TierLabelledOutput {
 }
 
 impl proxiima::spiice::Tool for TierLabelledTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "tier_labelled";
     const DESCRIPTION: &'static str = "resolve an operator label from a spiice tool";

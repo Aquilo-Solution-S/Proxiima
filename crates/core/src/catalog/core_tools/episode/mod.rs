@@ -231,6 +231,7 @@ struct EpisodeWrite<'a> {
 }
 
 impl Tool for EpisodeCommitTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_EPISODE_COMMIT;
     const TITLE: &'static str = "Commit an episode";
     const DESCRIPTION: &'static str = "Write several items in one transaction, in this order: Facts (remember), one Abstraction (derive), interpretation Perspectives (stance), Active Goals (goal); at least one item. Later items can name earlier ones by 0-based key (`remember:N`, `derive`, `stance:N`). Also writes a write-act Fact; items listed in bind reference it.";

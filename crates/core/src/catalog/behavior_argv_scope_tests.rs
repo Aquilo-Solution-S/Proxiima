@@ -22,6 +22,14 @@ struct ArgvArgs {
     #[schemars(description = "command words followed by flags")]
     #[serde(rename = "argv")]
     _argv: Vec<String>,
+    #[schemars(description = "space to use")]
+    #[serde(rename = "space")]
+    _space: Option<String>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct ArgvOutput {
+    action: &'static str,
 }
 
 /// An argv-keyed dispatcher with two commands sharing a first word, so
@@ -33,6 +41,7 @@ struct ArgvArgs {
 struct ArgvTool;
 
 impl Tool for ArgvTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "proxiima-stub_cli";
     const DESCRIPTION: &'static str = "An argv-keyed fixture dispatcher.";
@@ -63,9 +72,14 @@ impl Tool for ArgvTool {
         },
     ];
     type Args = ArgvArgs;
-    type Output = super::StubOutput;
-    fn call(_: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
-        Box::pin(async { Ok(super::StubOutput {}) })
+    type Output = ArgvOutput;
+    fn call(ctx: ToolCtx, _: Self::Args) -> BoxFuture<'static, Result<Self::Output, ToolError>> {
+        Box::pin(async move {
+            let spec = ctx.resolved_argv_action().expect("registered argv command");
+            Ok(ArgvOutput {
+                action: spec.action,
+            })
+        })
     }
 }
 
@@ -157,47 +171,76 @@ fn title_lookup_matches_ledger_vectors() {
     assert_eq!(descriptor.title_of(&key), Some("Test action"));
 }
 
+async fn through_registered_argv(
+    behaviors: &[Arc<dyn RequestBehavior>],
+) -> Result<ToolReply, ToolError> {
+    let ctx = argv_ctx(ToolScope::All);
+    let call = ctx
+        .registry()
+        .mcp_tool(ArgvTool::NAME)
+        .expect("registered")
+        .call;
+    let next = Next::new(
+        behaviors,
+        Box::new(move |request| {
+            Box::pin(async move {
+                call(request.ctx, request.args)
+                    .await
+                    .map(ToolReply::Structured)
+            })
+        }),
+    );
+    ScopeGateBehavior.handle(
+        ToolCall {
+            name: ArgvTool::NAME.to_owned(),
+            args: serde_json::json!({"argv": ["approval", "decide", "--id", "7"], "space": "current"}),
+            ctx,
+        },
+        next,
+    )
+    .await
+}
+
 #[tokio::test]
-async fn registered_terminal_uses_the_admitted_argv() {
-    for change in [false, true] {
-        let ctx = argv_ctx(ToolScope::All);
-        let call = ctx
-            .registry()
-            .mcp_tool(ArgvTool::NAME)
-            .expect("registered")
-            .call;
-        let next = Next::new(
-            &[],
-            Box::new(move |mut request| {
-                Box::pin(async move {
-                    if change {
-                        request.args["argv"] = serde_json::json!(["approval", "decide"]);
-                    }
-                    call(request.ctx, request.args)
-                        .await
-                        .map(ToolReply::Structured)
-                })
-            }),
-        );
-        let result = ScopeGateBehavior
-            .handle(
-                ToolCall {
-                    name: ArgvTool::NAME.to_owned(),
-                    args: serde_json::json!({"argv": ["approval"]}),
-                    ctx,
-                },
-                next,
-            )
-            .await;
-        if change {
-            assert!(matches!(result, Err(ToolError::InvalidInput(ref reason))
-                if reason == "argv changed after authorization"));
-        } else {
-            assert_eq!(
-                result.unwrap(),
-                ToolReply::Structured(serde_json::json!({}))
-            );
+async fn registered_argv_handler_receives_the_longest_prefix() {
+    assert_eq!(
+        through_registered_argv(&[]).await.unwrap(),
+        ToolReply::Structured(serde_json::json!({ "action": "approval-decide" }))
+    );
+}
+
+#[derive(Debug)]
+enum ChangeInput {
+    Argv,
+    Space,
+    Context,
+}
+
+#[async_trait::async_trait]
+impl RequestBehavior for ChangeInput {
+    async fn handle(&self, mut call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
+        match self {
+            Self::Argv => call.args["argv"] = serde_json::json!(["approval"]),
+            Self::Space => call.args["space"] = "self".into(),
+            Self::Context => {
+                call.ctx = ToolCtx::new(
+                    call.ctx.owner(),
+                    call.ctx.authz().clone(),
+                    crate::SpiiceServices::default(),
+                    call.ctx.caller().clone(),
+                    call.ctx.engine().clone(),
+                );
+            }
         }
+        next.run(call).await
+    }
+}
+
+#[tokio::test]
+async fn registered_terminal_requires_the_admitted_input() {
+    for change in [ChangeInput::Argv, ChangeInput::Space, ChangeInput::Context] {
+        let result = through_registered_argv(&[Arc::new(change)]).await;
+        assert!(matches!(result, Err(ToolError::InputNotAdmitted)));
     }
 }
 

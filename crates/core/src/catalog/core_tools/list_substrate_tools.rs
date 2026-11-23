@@ -16,6 +16,8 @@ pub struct SubstrateToolItem {
     pub tool_id: String,
     pub source: String,
     pub description: String,
+    /// Whether any operation of the tool can reach outside the deployment.
+    pub open_world: bool,
     pub actions: Vec<SubstrateToolActionItem>,
 }
 
@@ -71,6 +73,7 @@ pub(super) fn scoped_substrate_tools(ctx: &ToolCtx) -> Vec<SubstrateToolItem> {
             tool_id: desc.name.to_string(),
             source: substrate_tool_source(desc),
             description: desc.description.to_string(),
+            open_world: desc.open_world,
             actions: substrate_tool_actions(ctx, desc),
         });
     }

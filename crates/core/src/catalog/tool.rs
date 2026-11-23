@@ -95,10 +95,29 @@ pub struct ToolDescriptor {
     pub audience: ToolAudience,
     /// Whether any operation of this tool can reach outside the deployment.
     pub open_world: bool,
+    /// The registered terminal. Requires the scope gate to admit this input.
     pub call: CallFn,
 }
 
 impl ToolDescriptor {
+    /// Run this handler under the embedding host's own admission and policy.
+    ///
+    /// This resolves the declared vocabulary and validates the arguments. The
+    /// host supplies the authorization context and runs any request behaviors
+    /// it requires. Use the tool host to dispatch through the scope gate.
+    ///
+    /// # Errors
+    ///
+    /// Returns argument validation, handler, or output serialization errors.
+    pub fn call_direct(
+        &self,
+        mut ctx: ToolCtx,
+        args: serde_json::Value,
+    ) -> BoxFuture<'static, Result<serde_json::Value, ToolError>> {
+        ctx.registered_input = RegisteredInput::Direct;
+        (self.call)(ctx, args)
+    }
+
     /// What this tool does as a whole: a flat tool's declaration, a
     /// dispatcher's [`ToolEffect::join`](crate::catalog::ToolEffect::join) over
     /// every action.
@@ -183,10 +202,9 @@ impl ToolDescriptor {
     /// The action key one `{argv, …}` payload resolves to, or `None` when
     /// this tool is not argv-keyed or the argv matches no declared command.
     ///
-    /// The same longest-prefix resolution the scope gate and the terminal
-    /// dispatch run, exposed so a caller outside this crate classifies the
-    /// action it is actually about to invoke. `None` is the unclassifiable
-    /// case and every caller must read it as a write.
+    /// Uses the scope gate's longest-prefix resolver so a host can classify
+    /// the action it is about to invoke. Treat an unclassifiable action as a
+    /// write.
     #[must_use]
     pub fn argv_action(&self, args: &serde_json::Value) -> Option<&'static str> {
         if self.argv_action_specs.is_empty() {
@@ -589,108 +607,185 @@ pub(crate) fn resolve_argv_action(
         })
 }
 
+#[cfg(test)]
 pub(crate) fn validate_action_args(
     tool_name: &str,
-    specs: &[ActionArgSpec],
+    specs: &'static [ActionArgSpec],
     args: &serde_json::Value,
 ) -> Result<(), ToolError> {
     if specs.is_empty() {
         return Ok(());
     }
-    let object = args.as_object().ok_or_else(|| {
-        ToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
-    })?;
-    let action = object
+    resolve_tagged_action(tool_name, specs, args, |action| {
+        unsupported_tagged_action(tool_name, specs, action)
+    })?
+    .validate_fields(tool_name, args)
+}
+
+fn resolve_tagged_action(
+    tool: &str,
+    specs: &'static [ActionArgSpec],
+    args: &serde_json::Value,
+    unknown: impl FnOnce(&str) -> ToolError,
+) -> Result<&'static ActionArgSpec, ToolError> {
+    let action = args
         .get("action")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            ToolError::InvalidInput(format!(
-                "{tool_name} arguments must include string field `action`"
-            ))
-        })?;
-    let spec = specs
+        .ok_or_else(|| ToolError::InvalidInput(format!("tool {tool} requires string action")))?;
+    specs
         .iter()
         .find(|spec| spec.action == action)
-        .ok_or_else(|| {
-            let supported = specs
-                .iter()
-                .map(|spec| spec.action)
-                .collect::<Vec<_>>()
-                .join(", ");
-            ToolError::InvalidInput(format!(
-                "{tool_name} action `{action}` is not supported; expected one of: {supported}"
-            ))
+        .ok_or_else(|| unknown(action))
+}
+
+fn unsupported_tagged_action(tool: &str, specs: &[ActionArgSpec], action: &str) -> ToolError {
+    let supported = specs
+        .iter()
+        .map(|spec| spec.action)
+        .collect::<Vec<_>>()
+        .join(", ");
+    ToolError::InvalidInput(format!(
+        "{tool} action `{action}` is not supported; expected one of: {supported}"
+    ))
+}
+
+impl ActionArgSpec {
+    pub(crate) fn validate_fields(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Result<(), ToolError> {
+        let object = args.as_object().ok_or_else(|| {
+            ToolError::InvalidInput(format!("{tool_name} arguments must be a JSON object"))
         })?;
+        let action = self.action;
+        let allowed = self
+            .allowed_fields
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut unexpected = object
+            .keys()
+            .filter(|field| field.as_str() != "action" && !allowed.contains(field.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unexpected.is_empty() {
+            unexpected.sort();
+            return Err(ToolError::InvalidInput(format!(
+                "{tool_name} action `{action}` does not accept field(s): {}",
+                unexpected.join(", ")
+            )));
+        }
 
-    let allowed = spec
-        .allowed_fields
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut unexpected = object
-        .keys()
-        .filter(|field| field.as_str() != "action" && !allowed.contains(field.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !unexpected.is_empty() {
-        unexpected.sort();
-        return Err(ToolError::InvalidInput(format!(
-            "{tool_name} action `{action}` does not accept field(s): {}",
-            unexpected.join(", ")
-        )));
+        let missing = self
+            .required_fields
+            .iter()
+            .copied()
+            .filter(|field| !object.contains_key(*field))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(ToolError::InvalidInput(format!(
+                "{tool_name} action `{action}` requires field(s): {}",
+                missing.join(", ")
+            )));
+        }
+        Ok(())
     }
-
-    let missing = spec
-        .required_fields
-        .iter()
-        .copied()
-        .filter(|field| !object.contains_key(*field))
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        return Err(ToolError::InvalidInput(format!(
-            "{tool_name} action `{action}` requires field(s): {}",
-            missing.join(", ")
-        )));
-    }
-    Ok(())
 }
 
-/// The command admitted by the scope gate, bound to the argv it judged.
+#[derive(Clone, Copy)]
+pub(crate) enum ResolvedToolInput {
+    Flat(Option<ToolEffect>),
+    Tagged(&'static ActionArgSpec),
+    Argv(&'static ArgvActionSpec),
+}
+
+impl ResolvedToolInput {
+    pub(crate) fn resolve_direct<T: crate::Tool>(
+        args: &serde_json::Value,
+    ) -> Result<Self, ToolError> {
+        Self::resolve(
+            T::NAME,
+            T::ACTION_ARG_SPECS,
+            T::ARGV_ACTION_SPECS,
+            T::EFFECT,
+            args,
+            |action| unsupported_tagged_action(T::NAME, T::ACTION_ARG_SPECS, action),
+        )
+    }
+
+    pub(crate) fn resolve(
+        tool: &str,
+        tagged: &'static [ActionArgSpec],
+        argv_specs: &'static [ArgvActionSpec],
+        effect: Option<ToolEffect>,
+        args: &serde_json::Value,
+        unknown_tagged_action: impl FnOnce(&str) -> ToolError,
+    ) -> Result<Self, ToolError> {
+        if !tagged.is_empty() {
+            resolve_tagged_action(tool, tagged, args, unknown_tagged_action).map(Self::Tagged)
+        } else if !argv_specs.is_empty() {
+            resolve_argv_action(tool, argv_specs, args).map(Self::Argv)
+        } else {
+            Ok(Self::Flat(effect))
+        }
+    }
+
+    pub(super) fn action(self) -> Option<&'static str> {
+        match self {
+            Self::Flat(_) => None,
+            Self::Tagged(spec) => Some(spec.action),
+            Self::Argv(spec) => Some(spec.action),
+        }
+    }
+}
+
+/// The registered input carries the tool and arguments the scope gate judged.
 #[derive(Clone)]
-pub(crate) struct AdmittedArgv {
+pub(crate) struct AdmittedToolInput {
     tool: &'static str,
-    spec: &'static ArgvActionSpec,
-    argv: serde_json::Value,
+    args: serde_json::Value,
+    resolved: ResolvedToolInput,
 }
 
-impl AdmittedArgv {
+impl AdmittedToolInput {
     pub(super) fn new(
         tool: &'static str,
-        spec: &'static ArgvActionSpec,
-        argv: serde_json::Value,
+        args: &serde_json::Value,
+        resolved: ResolvedToolInput,
     ) -> Self {
-        Self { tool, spec, argv }
+        Self {
+            tool,
+            args: args.clone(),
+            resolved,
+        }
     }
 
-    pub(crate) fn effect(
-        &self,
+    pub(crate) fn into_input(
+        self,
         tool: &str,
         args: &serde_json::Value,
-    ) -> Result<ToolEffect, ToolError> {
-        // A behavior can replace arguments before reaching the terminal.
-        if self.tool != tool || args.get("argv") != Some(&self.argv) {
-            return Err(ToolError::InvalidInput(
-                "argv changed after authorization".into(),
-            ));
+    ) -> Result<(ResolvedToolInput, serde_json::Value), ToolError> {
+        if self.tool != tool || self.args != *args {
+            return Err(ToolError::InputNotAdmitted);
         }
-        Ok(self.spec.effect)
+        Ok((self.resolved, self.args))
     }
+}
+
+#[derive(Clone, Default)]
+pub(crate) enum RegisteredInput {
+    #[default]
+    Unadmitted,
+    Admitted(AdmittedToolInput),
+    Direct,
+    HandlerArgv(&'static ArgvActionSpec),
 }
 
 /// Validate a *flat* (non-dispatcher) MCP tool's arguments: coerce the
 /// `space`/`spaces` arity aliases against the tool's schema, then apply the
 /// tool's [`UnknownFieldPolicy`] to every top-level key not declared as a
-/// schema property. Dispatcher tools run [`validate_action_args`] instead.
+/// schema property. Tagged dispatchers validate against their selected action instead.
 ///
 /// Under the default [`UnknownFieldPolicy::Refuse`] an undeclared key is a
 /// validation error: a mistyped `space` on `core_search_memories` would
@@ -867,6 +962,7 @@ mod flat_tool_tests {
     struct CallerTool;
 
     impl Tool for CallerTool {
+        const OPEN_WORLD: bool = false;
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-test_caller";
         const DESCRIPTION: &'static str = "Echo generic caller context.";

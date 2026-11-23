@@ -36,6 +36,7 @@ pub(crate) struct ArgsSchema {
 /// field incompatible schemas: the flat `inputSchema` could not describe
 /// both.
 pub(crate) fn mcp_tool_schema<T: JsonSchema>() -> ArgsSchema {
+    // MCP input schemas keep argument descriptions for the caller.
     let mut value = generated_schema::<T>(SchemaSettings::draft2020_12());
     let dispatcher = derive_dispatcher(&value).unwrap_or_else(|error| {
         panic!(
@@ -177,7 +178,6 @@ fn strip_nonstandard_formats(value: &mut serde_json::Value) {
 /// projection's `OpenAPI` document.
 #[must_use]
 pub fn mcp_wire_output_schema(schema: &serde_json::Value) -> serde_json::Value {
-    // `Proxiima.ToolSurface.schemaAnnotations`.
     let mut wire = schema.clone();
     if let Some(root) = wire.as_object_mut() {
         root.remove("$schema");

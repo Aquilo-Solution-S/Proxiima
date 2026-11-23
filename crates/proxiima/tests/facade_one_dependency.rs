@@ -115,6 +115,7 @@ struct OwnerOnlyOutput {
 }
 
 impl proxiima::spiice::Tool for OwnerOnlyTool {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Test tool";
     const NAME: &'static str = "facade_owner_only";
     const DESCRIPTION: &'static str = "declare tool consts through the facade";

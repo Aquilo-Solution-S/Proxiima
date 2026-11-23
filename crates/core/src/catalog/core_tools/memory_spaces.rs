@@ -33,6 +33,7 @@ pub struct MemorySpaceAccessOutput {
 pub struct MemorySpacesTool;
 
 impl Tool for MemorySpacesTool {
+    const OPEN_WORLD: bool = false;
     const NAME: &'static str = protocol_tool::CORE_MEMORY_SPACES;
     const TITLE: &'static str = "Memory spaces";
     const DESCRIPTION: &'static str = "List the memory spaces you can use and their keys (`current` or an owner's `<uuid>`) for other tools' space/spaces arguments.";

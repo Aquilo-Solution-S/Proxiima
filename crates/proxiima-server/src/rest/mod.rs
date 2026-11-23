@@ -92,7 +92,7 @@ pub fn router(host: ToolHost, public_url: Option<String>) -> Router {
 
 #[allow(clippy::unused_async, reason = "axum handlers must be futures")]
 async fn method_not_allowed(method: Method, uri: Uri) -> Problem {
-    Problem::method_not_allowed(&method, uri.path())
+    Problem::method_not_allowed(&method, uri.path(), None)
 }
 
 #[allow(clippy::unused_async, reason = "axum handlers must be futures")]
@@ -300,13 +300,17 @@ async fn tool_route(
         } else {
             descriptor.is_read_only()
         };
-        return gate_method(&method, Allow::tool(admits_query), &instance)
+        return gate_method(&method, Allow::tool(admits_query), &instance, None)
             .expect_err("non-invocation method is rejected")
             .into_response();
     }
     if !dispatches_actions
-        && let Err(problem) =
-            gate_method(&method, Allow::tool(descriptor.is_read_only()), &instance)
+        && let Err(problem) = gate_method(
+            &method,
+            Allow::tool(descriptor.is_read_only()),
+            &instance,
+            None,
+        )
     {
         return problem.into_response();
     }
@@ -325,8 +329,14 @@ async fn tool_route(
         } else {
             args.get("action").and_then(serde_json::Value::as_str)
         };
-        let read_only = action.is_some_and(|action| descriptor.action_is_read_only(action));
-        if let Err(problem) = gate_method(&method, Allow::tool(read_only), &instance) {
+        let effect = action.and_then(|action| descriptor.action_effect(action));
+        let read_only = effect.is_some_and(proxiima_core::ToolEffect::is_read_only);
+        if let Err(problem) = gate_method(
+            &method,
+            Allow::tool(read_only),
+            &instance,
+            action.filter(|_| effect.is_some()),
+        ) {
             return problem.into_response();
         }
     }
@@ -369,7 +379,7 @@ async fn action_route(
             .into_response();
     }
     let allow = Allow::action(descriptor.action_is_read_only(&action));
-    if let Err(problem) = gate_method(&method, allow, &instance) {
+    if let Err(problem) = gate_method(&method, allow, &instance, Some(&action)) {
         return problem.into_response();
     }
     let args = match request_arguments(&body, &instance) {
@@ -471,12 +481,17 @@ fn find_descriptor<'a>(state: &'a RestState, tool: &str) -> Option<&'a ToolDescr
 /// `POST` is retained alongside `QUERY` rather than replaced: middleboxes
 /// routinely reject unrecognized methods, and a read that is unreachable
 /// through a customer proxy is worse than a read with imprecise semantics.
-fn gate_method(method: &Method, allow: Allow, instance: &str) -> Result<(), Problem> {
+fn gate_method(
+    method: &Method,
+    allow: Allow,
+    instance: &str,
+    action: Option<&str>,
+) -> Result<(), Problem> {
     // `Proxiima.Transport.restActionMethod`.
     if *method == Method::POST || (allow.admits_query() && *method == Method::QUERY) {
         return Ok(());
     }
-    Err(Problem::method_not_allowed(method, instance).with_allow(allow.header()))
+    Err(Problem::method_not_allowed(method, instance, action).with_allow(allow.header()))
 }
 
 /// The methods one route answers. The `Allow` header and the `QUERY` gate both read it, so the
@@ -625,12 +640,17 @@ mod tests {
 
     #[test]
     fn method_gate_admits_query_only_for_reads() {
-        assert!(gate_method(&Method::POST, Allow::tool(false), "/v1/tools/x").is_ok());
-        assert!(gate_method(&Method::POST, Allow::tool(true), "/v1/tools/x").is_ok());
-        assert!(gate_method(&Method::QUERY, Allow::tool(true), "/v1/tools/x").is_ok());
+        assert!(gate_method(&Method::POST, Allow::tool(false), "/v1/tools/x", None).is_ok());
+        assert!(gate_method(&Method::POST, Allow::tool(true), "/v1/tools/x", None).is_ok());
+        assert!(gate_method(&Method::QUERY, Allow::tool(true), "/v1/tools/x", None).is_ok());
 
-        let denied = gate_method(&Method::QUERY, Allow::action(false), "/v1/tools/x/y")
-            .expect_err("QUERY on a write must be refused");
+        let denied = gate_method(
+            &Method::QUERY,
+            Allow::action(false),
+            "/v1/tools/x/y",
+            Some("y"),
+        )
+        .expect_err("QUERY on a write must be refused");
         let json = denied.to_json();
         assert_eq!(json["status"], 405);
         assert_eq!(
@@ -638,7 +658,7 @@ mod tests {
             "https://proxiima.dev/errors/method-not-allowed"
         );
 
-        assert!(gate_method(&Method::DELETE, Allow::tool(true), "/v1/tools/x").is_err());
+        assert!(gate_method(&Method::DELETE, Allow::tool(true), "/v1/tools/x", None).is_err());
     }
 
     #[test]
@@ -656,7 +676,7 @@ mod tests {
                 choice => panic!("unknown action method: {choice}"),
             };
             let allow = Allow::action(row["in"][1].as_bool().unwrap());
-            let result = gate_method(&method, allow, "/v1/tools/x/y");
+            let result = gate_method(&method, allow, "/v1/tools/x/y", Some("y"));
             assert_eq!(result.is_ok(), row["out"].as_bool().unwrap(), "{row}");
         }
     }
@@ -672,7 +692,7 @@ mod tests {
         ] {
             assert_eq!(allow.header().contains("QUERY"), allow.admits_query());
             assert_eq!(
-                gate_method(&Method::QUERY, allow, "/v1/tools/x").is_ok(),
+                gate_method(&Method::QUERY, allow, "/v1/tools/x", None).is_ok(),
                 allow.admits_query()
             );
         }

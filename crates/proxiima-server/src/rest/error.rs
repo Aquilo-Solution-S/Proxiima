@@ -54,6 +54,11 @@ pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
 fn tool_problem(err: &ToolError, instance: &str) -> Problem {
     let (status, slug, title) = match err {
         ToolError::InvalidInput(_) => (Status::BAD_REQUEST, "invalid-input", "Invalid input"),
+        ToolError::InputNotAdmitted => (
+            Status::BAD_REQUEST,
+            "input-not-admitted",
+            "Tool input not admitted",
+        ),
         ToolError::NotFound(_) => (Status::NOT_FOUND, "not-found", "Not found"),
         ToolError::NotAuthorized(_) => (Status::FORBIDDEN, "not-authorized", "Not authorized"),
         ToolError::LayeringViolation(_) => (

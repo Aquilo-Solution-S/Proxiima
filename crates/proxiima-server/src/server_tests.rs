@@ -1011,6 +1011,7 @@ struct BoardOutput {}
 struct Board;
 
 impl Tool for Board {
+    const OPEN_WORLD: bool = false;
     const TITLE: &'static str = "Board";
     const NAME: &'static str = "plan_board";
     const DESCRIPTION: &'static str = "Two writes, one of them Goal work.";
