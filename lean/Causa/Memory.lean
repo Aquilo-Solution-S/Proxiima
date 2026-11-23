@@ -2,6 +2,7 @@ import Causa.Prelude
 import Causa.Owner
 import Causa.Identity
 import Proxiima.Memory
+import Proxiima.Citations
 import Proxiima.ForgetRestore
 
 /-! Causa — Memory -/
@@ -107,10 +108,8 @@ structure Memory where
   guided_by_only_perspective : kind ≠ .Perspective → guided_by = []
   /-- Exclusion of grounding origins from Facts. -/
   fact_origins_empty : kind = .Fact → origins = []
-  /-- Exclusion of blob citations from Perspectives. -/
-  perspective_never_cites : kind = .Perspective → blob_id = none
-  /-- The kinds eligible to cite a blob. -/
-  blob_fa_only : blob_id ≠ none → kind = .Fact ∨ kind = .Abstraction
+  /-- A cited version satisfies `Proxiima.Citations.citationAllowed`. -/
+  blob_kind_admitted : blob_id ≠ none → Proxiima.Citations.citationAllowed kind = true
 
 def memory_handle : Memory → Handle := Memory.handle
 def memory_t : Memory → MemoryId := Memory.t

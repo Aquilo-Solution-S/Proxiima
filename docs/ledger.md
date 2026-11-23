@@ -833,6 +833,340 @@ stateDiagram-v2
 
 - delegate blob operation: Verified collection needs a positive bound and owner reconciliation requires owner authority.
 
+## Citations
+
+**Citation source**: The two ways a supplied citation resolves an object.
+
+- reference
+- inlineObject
+
+**Inline fields**: Completeness of the inline schema, version and payload triple.
+
+- absent
+- incomplete
+- complete
+
+**Citation projection**: The two projected fields of a version's citation.
+
+- object id
+- schema id
+
+**Reference resolution**: How a referenced object relates to the owner of the writing version.
+
+- sameOwner
+- otherOwner
+- missing
+
+**Inline key field**: The fields that identify an inline cited object.
+
+- owner
+- schema
+- contentHash
+
+**Citing fact sort key**: The descending keyset order of the visible Facts citing an object.
+
+- createdAtDescending
+- memoryIdDescending
+
+**Upload status**: Storage status of a transfer row.
+
+- pending
+- completed
+- aborted
+- expired
+
+**Publication set**: What a transfer finds in the completed source upload set.
+
+- missing
+- allExact
+- containsInvalid
+
+**Expectation field**: The metadata fixed for a prepared upload.
+
+- contentHash
+- byteLength
+- mediaType
+- filename
+
+**Upload step**: Steps of upload publication from signing to transfer-copy retirement.
+
+- prepareSignedLength
+- stageVerifiedCanonicalBytes
+- commitCorpusAndUpload
+- attemptPendingCleanup
+
+**Stage source**: Source of bytes selected by staging an existing pending upload.
+
+- transfer
+- recordedCanonical
+- refuseExpired
+
+**Changed rows**: Row count returned by a write guarded by exact upload identity.
+
+- none
+- one
+- many
+
+**Abort outcome**: Outcomes of classifying a guarded abort.
+
+- wonPending
+- completed
+- alreadyAborted
+- alreadyExpired
+- invalid
+
+**Completion outcome**: Outcomes of classifying a guarded completion.
+
+- wonPending
+- sameObjectReplay
+- aborted
+- expired
+- invalid
+
+**Stage outcome**: Outcomes of classifying a guarded canonical locator write.
+
+- staged
+- replay
+- repairAborted
+- repairExpired
+- invalid
+
+**Upload lock**: Locks acquired to settle an upload.
+
+- owner
+- canonicalKey
+- uploadRow
+
+**Binding outcome**: Delivery binds exactly one registered read operation to its runtime.
+
+- runtimeMismatch
+- operationNotRegisteredRead
+- bound
+
+**Read route**: The common authority routes of verified collection and host delivery.
+
+- owner
+- goalPublication
+
+**Read selection**: The selected upload identity for one authorized read.
+
+- latestCompleted
+- exactCaptured
+
+**Completed upload sort key**: Ordering keys for completed uploads on the owner route.
+
+- completionDescendingNullsLast
+- uploadIdDescending
+
+**Metadata check**: The integrity checks for stored read and staged metadata.
+
+- nonnegativeLength
+- fullDigests
+- storedTimestampWhenRequired
+
+**Verified read step**: Byte disclosure steps for an in-process read.
+
+- authorizeAndResolveExactRecord
+- checkDeclaredLengthAgainstCeiling
+- enforceStreamingBound
+- verifyLengthAndDigests
+- releaseBytes
+
+**Locator field**: Exact locator checks required before honoring a stored record.
+
+- store
+- bucket
+- canonicalMintingKey
+
+**inline key** = \[owner, schema, contentHash]: The owner, schema and content hash deduplicate an inline cited object.
+
+**citing fact order** = \[createdAtDescending, memoryIdDescending]: Citing Facts page strictly beyond the last row in this order.
+
+**upload receipt field** = "content\_hash": The upload Fact's receipt payload key, within its owner and schema scope.
+
+**expectation order** = \[contentHash, byteLength, mediaType, filename]: Completion compares these fields to the staged metadata in order before admitting the Fact.
+
+**max filename bytes** = 255: Largest prepared filename in bytes.
+
+**max media type bytes** = 127: Largest prepared media type in bytes.
+
+**max initial stage reserve** = 8388608: Largest initial reservation for a retained upload body in bytes.
+
+**max held digests** = 1000: Largest digest batch for a held-object lookup.
+
+**canonical prefix** = "objects/": Prefix of the canonical key derived from a server-issued upload ID.
+
+**transfer prefix** = "pending/": Prefix of the transfer key a prepared upload signs.
+
+**upload publication order** = \[prepareSignedLength, stageVerifiedCanonicalBytes, commitCorpusAndUpload, attemptPendingCleanup]: Publication stages verified bytes before the atomic corpus commit and treats cleanup as best effort.
+
+**settlement lock order** = \[owner, canonicalKey, uploadRow]: Abort and completion take the owner fence, canonical key fence and upload row lock in that order.
+
+**completed upload order** = \[completionDescendingNullsLast, uploadIdDescending]: Ordinary reads break completion-time ties by descending upload identity.
+
+**stored metadata checks** = \[nonnegativeLength, fullDigests, storedTimestampWhenRequired]: Reads require stored length, full digests and the timestamp required by the row's state.
+
+**verified read order** = \[authorizeAndResolveExactRecord, checkDeclaredLengthAgainstCeiling, enforceStreamingBound, verifyLengthAndDigests, releaseBytes]: Verified reads admit before provider access and release only complete, digest-verified bytes.
+
+**locator fields** = \[store, bucket, canonicalMintingKey]: Require the configured store and bucket and the canonical key of the upload that minted the bytes.
+
+| kind | citation allowed |
+| --- | --- |
+| Fact | yes |
+| Abstraction | yes |
+| Perspective | no |
+
+- citation allowed: Which Memory kinds can carry their one optional cited object.
+
+| has reference | inline fields | citation input |
+| --- | --- | --- |
+| yes | absent | reference |
+| yes | incomplete | — |
+| yes | complete | — |
+| no | absent | — |
+| no | incomplete | — |
+| no | complete | inlineObject |
+
+- citation input: Accept an existing object or a complete inline triple, with neither overlap nor incomplete input.
+
+| reference resolution | reference admitted |
+| --- | --- |
+| sameOwner | yes |
+| otherOwner | no |
+| missing | no |
+
+- reference admitted: Only the owner's existing cited object satisfies a reference at commit; foreign and missing objects are alike.
+
+**upload supports citation**: A cited upload needs a pending or completed row with the matching staged content identity.
+
+```mermaid
+stateDiagram-v2
+  state "yes" as s0
+  state "no" as s1
+  s0 --> s0 : pending
+  s0 --> s0 : completed
+  s0 --> s1 : aborted
+  s0 --> s1 : expired
+  s1 --> s1 : pending
+  s1 --> s1 : completed
+  s1 --> s1 : aborted
+  s1 --> s1 : expired
+```
+
+| publication set | transferable publication |
+| --- | --- |
+| missing | no |
+| allExact | yes |
+| containsInvalid | no |
+
+- transferable publication: Transfer requires at least one completed upload and refuses any mixed invalid set.
+
+| recorded canonical | transfer expired | stage source |
+| --- | --- | --- |
+| yes | yes | recordedCanonical |
+| yes | no | recordedCanonical |
+| no | yes | refuseExpired |
+| no | no | transfer |
+
+- stage source: Prefer a recorded canonical stage even after the transfer deadline.
+
+| upload status | changed rows | abort outcome |
+| --- | --- | --- |
+| pending | none | invalid |
+| pending | one | wonPending |
+| pending | many | invalid |
+| completed | none | completed |
+| completed | one | wonPending |
+| completed | many | invalid |
+| aborted | none | alreadyAborted |
+| aborted | one | wonPending |
+| aborted | many | invalid |
+| expired | none | alreadyExpired |
+| expired | one | wonPending |
+| expired | many | invalid |
+
+- abort outcome: Abort preserves completed bytes and classifies a missed update against the locked status.
+
+| upload status | changed rows | same object | completion outcome |
+| --- | --- | --- | --- |
+| pending | none | yes | invalid |
+| pending | none | no | invalid |
+| pending | one | yes | wonPending |
+| pending | one | no | wonPending |
+| pending | many | yes | invalid |
+| pending | many | no | invalid |
+| completed | none | yes | sameObjectReplay |
+| completed | none | no | invalid |
+| completed | one | yes | invalid |
+| completed | one | no | invalid |
+| completed | many | yes | invalid |
+| completed | many | no | invalid |
+| aborted | none | yes | aborted |
+| aborted | none | no | aborted |
+| aborted | one | yes | invalid |
+| aborted | one | no | invalid |
+| aborted | many | yes | invalid |
+| aborted | many | no | invalid |
+| expired | none | yes | expired |
+| expired | none | no | expired |
+| expired | one | yes | invalid |
+| expired | one | no | invalid |
+| expired | many | yes | invalid |
+| expired | many | no | invalid |
+
+- completion outcome: Completion replays the same finished object and refuses terminal failure or a contradictory write.
+
+| upload status | changed rows | has object | stage outcome |
+| --- | --- | --- | --- |
+| pending | none | yes | invalid |
+| pending | none | no | invalid |
+| pending | one | yes | staged |
+| pending | one | no | staged |
+| pending | many | yes | invalid |
+| pending | many | no | invalid |
+| completed | none | yes | replay |
+| completed | none | no | invalid |
+| completed | one | yes | invalid |
+| completed | one | no | invalid |
+| completed | many | yes | invalid |
+| completed | many | no | invalid |
+| aborted | none | yes | repairAborted |
+| aborted | none | no | repairAborted |
+| aborted | one | yes | invalid |
+| aborted | one | no | invalid |
+| aborted | many | yes | invalid |
+| aborted | many | no | invalid |
+| expired | none | yes | repairExpired |
+| expired | none | no | repairExpired |
+| expired | one | yes | invalid |
+| expired | one | no | invalid |
+| expired | many | yes | invalid |
+| expired | many | no | invalid |
+
+- stage outcome: A lost stage replays a completed upload with an object or repairs the terminal canonical copy.
+
+| runtime matches | registered read | bind delivery |
+| --- | --- | --- |
+| yes | yes | bound |
+| yes | no | operationNotRegisteredRead |
+| no | yes | runtimeMismatch |
+| no | no | runtimeMismatch |
+
+- bind delivery: A foreign runtime is refused first; the bound operation must be an exact registered read.
+
+| read route | upload status | select upload |
+| --- | --- | --- |
+| owner | pending | — |
+| owner | completed | latestCompleted |
+| owner | aborted | — |
+| owner | expired | — |
+| goalPublication | pending | — |
+| goalPublication | completed | exactCaptured |
+| goalPublication | aborted | — |
+| goalPublication | expired | — |
+
+- select upload: Owner reads choose the latest completed upload; Goal reads use the captured upload.
+
 ## Composition
 
 **Header supplier**: The supplier of a request header service.
@@ -5675,8 +6009,7 @@ Causa — Memory
 
 - Premise **guided by only perspective**: Restriction of Goal guidance to Perspectives.
 - Premise **fact origins empty**: Exclusion of grounding origins from Facts.
-- Premise **perspective never cites**: Exclusion of blob citations from Perspectives.
-- Premise **blob fa only**: The kinds eligible to cite a blob.
+- Premise **blob kind admitted**: A cited version satisfies `Proxiima.Citations.citationAllowed`.
 
 ✓ **restore forget** (axioms: `propext`): Forget followed by an admitted restore recovers the original live Memory row.
 

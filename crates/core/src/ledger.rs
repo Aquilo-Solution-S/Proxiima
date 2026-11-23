@@ -149,6 +149,34 @@ macro_rules! ledger {
     (Proxiima.Authentication.maxDelegatedCommandChars) => {
         200
     };
+    // The upload Fact's receipt payload key, within its owner and schema scope.
+    (Proxiima.Citations.uploadReceiptField) => {
+        "content_hash"
+    };
+    // Largest prepared filename in bytes.
+    (Proxiima.Citations.maxFilenameBytes) => {
+        255
+    };
+    // Largest prepared media type in bytes.
+    (Proxiima.Citations.maxMediaTypeBytes) => {
+        127
+    };
+    // Largest initial reservation for a retained upload body in bytes.
+    (Proxiima.Citations.maxInitialStageReserve) => {
+        8388608
+    };
+    // Largest digest batch for a held-object lookup.
+    (Proxiima.Citations.maxHeldDigests) => {
+        1000
+    };
+    // Prefix of the canonical key derived from a server-issued upload ID.
+    (Proxiima.Citations.canonicalPrefix) => {
+        "objects/"
+    };
+    // Prefix of the transfer key a prepared upload signs.
+    (Proxiima.Citations.transferPrefix) => {
+        "pending/"
+    };
     // The case-insensitive boolean words that read as true after trimming.
     (Proxiima.Configuration.trueWords) => {
         ["1", "true", "yes", "on"]
