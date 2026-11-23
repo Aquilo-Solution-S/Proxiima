@@ -154,7 +154,7 @@ inductive UploadKey where
   | canonical
   deriving DecidableEq
 
-/-- Abort and expiry owe both implied keys in the status transaction. -/
+/-- The two implied keys owed when an upload ends. -/
 def terminalUploadDebt : List UploadKey := [.transfer, .canonical]
 
 /-- The phases of checking and deleting a provider page. -/
@@ -333,7 +333,7 @@ inductive CommandCompletion where
   | failed
   deriving DecidableEq
 
-/-- Reconciliation findings and lease contention preserve a successful exit, while a drain that leaves foreign debt fails. -/
+/-- Completion and lease contention exit successfully. Foreign debt left by a drain and command failures exit non-zero. -/
 def commandSucceeded : CommandCompletion → Bool
   | .completed | .leaseContended => true
   | .foreignDebtLeft | .failed => false

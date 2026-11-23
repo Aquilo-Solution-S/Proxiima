@@ -738,7 +738,8 @@ async fn validate_erase_receipt(
 ) -> Result<(), StorageError> {
     use std::collections::{BTreeMap as Map, BTreeSet};
 
-    // `Proxiima.HostState.EraseReceiptCheck`.
+    // The receipt names this participant, owner, scope and selection, lists each
+    // table once and reports zero counts for retained tables. Counts fit bigint.
     if receipt.participant != lifecycle.descriptor.participant_id()
         || receipt.owner != owner
         || &receipt.scope != scope

@@ -623,7 +623,7 @@ impl WriteSession for PgWriteSession {
             }
         }
         crate::access::fences::lock_owner_fence_shared_tx(&mut self.tx, permit.owner()).await?;
-        // `Proxiima.HostState.SharedWriteSession.liveDispatch`.
+        // The participant runs on the unit's own transaction.
         registered
             .participant
             .apply(

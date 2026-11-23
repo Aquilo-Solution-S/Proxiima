@@ -108,7 +108,7 @@ impl OwnerTransactions {
         caller: &AuthzContext,
         owner: OwnerId,
     ) -> Result<OwnerTransaction, StorageError> {
-        // `Proxiima.OwnerAuthority.ScopeRestriction.confinement`.
+        // Explicit confinement admits only one owner and adds no raw group roles.
         let caller = caller.clone().narrowed_to_owner(owner);
         let scope = caller
             .as_ref()

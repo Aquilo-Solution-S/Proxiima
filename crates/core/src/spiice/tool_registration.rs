@@ -108,7 +108,8 @@ impl SpiiceRegistry {
             let properties = properties.clone();
             Box::pin(async move {
                 let mut ctx: crate::ToolCtx = ctx;
-                // `Proxiima.ToolSurface.TerminalInput`.
+                // Run the admitted input unchanged, resolve an explicit ungated call,
+                // refuse anything else.
                 let (resolved, mut args) = match std::mem::take(&mut ctx.registered_input) {
                     RegisteredInput::Admitted(input) => {
                         input.into_input(T::NAME, ctx.owner(), &args)?

@@ -53,7 +53,7 @@ inductive PrefixSyntax where
   | underscore
   deriving DecidableEq
 
-/-- Declared schema names are slash-prefixed and declared tools are underscore-prefixed. -/
+/-- Schema IDs continue the spiice name with a slash, tool names with an underscore. -/
 def prefixSyntax : RegisteredName → PrefixSyntax
   | .typedSchema | .opaqueCitation => .slash
   | .tool => .underscore
@@ -133,26 +133,6 @@ inductive TagCharacter where
 def capabilityTagCharacter : TagPosition → TagCharacter → Bool
   | .first, .asciiLowercase | .subsequent, .asciiLowercase | .subsequent, .asciiDigit | .subsequent, .hyphen => true
   | .first, .asciiDigit | .first, .hyphen | .first, .other | .subsequent, .other => false
-
-/-- Ways the canonical app composes the core. -/
-inductive CoreCommand where
-  | serve
-  | maintenance
-  | migrate
-  deriving DecidableEq
-
-/-- How a core command reaches storage. -/
-inductive CoreStartup where
-  | listenerWithValidation
-  | headlessWithValidation
-  | headlessMigration
-  deriving DecidableEq
-
-/-- The canonical core app starts a listener only for serving and migrates only on explicit request. -/
-def coreStartup : CoreCommand → CoreStartup
-  | .serve => .listenerWithValidation
-  | .maintenance => .headlessWithValidation
-  | .migrate => .headlessMigration
 
 /-- The caller may deny a registered command while mandatory reads and unknown keys are refused. -/
 def profileDenial : (registered : Bool) → (mandatory : Bool) → Bool

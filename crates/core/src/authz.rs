@@ -1305,7 +1305,7 @@ impl AuthzContext {
     /// caller-controlled payload would make the caller its own authorizer.
     #[must_use]
     pub fn with_host_resolved_role(mut self, group: GroupId, role: Role) -> Option<Self> {
-        // `Proxiima.OwnerAuthority.ScopeRestriction.sealed`.
+        // A verified, sealed scope adds no raw group roles.
         let OwnerScopeState::Unsealed(grant) = self.owner_scope else {
             return None;
         };

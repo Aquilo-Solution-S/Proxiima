@@ -636,7 +636,7 @@
 
 **scope sources** = \[verifiedCredential, singleOwnerBoot]: The verified-credential and personal-owner boot paths that seal owner authority.
 
-**engine permits** = \[entryRead, write]: The engine permit families subject to `Proxiima.OwnerAuthority.ScopeRestriction.expiry`.
+**engine permits** = \[entryRead, write]: The engine permit families an expired grant does not authorize.
 
 **max trusted model chars** = 120: The Unicode character limit for credential-attested and caller-supplied model labels and for the retained portion of an echoed label.
 
@@ -845,11 +845,6 @@ stateDiagram-v2
 - absent
 - incomplete
 - complete
-
-**Citation projection**: The two projected fields of a version's citation.
-
-- object id
-- schema id
 
 **Reference resolution**: How a referenced object relates to the owner of the writing version.
 
@@ -1231,18 +1226,6 @@ stateDiagram-v2
 - hyphen
 - other
 
-**Core command**: Ways the canonical app composes the core.
-
-- serve
-- maintenance
-- migrate
-
-**Core startup**: How a core command reaches storage.
-
-- listenerWithValidation
-- headlessWithValidation
-- headlessMigration
-
 **Agreement check**: The agreement checks between a linked registry and a declared contract.
 
 - declaredSchemaHasRegistration
@@ -1298,7 +1281,7 @@ stateDiagram-v2
 | opaqueCitation | slash | registration |
 | tool | underscore | compileTime |
 
-- prefix syntax: Declared schema names are slash-prefixed and declared tools are underscore-prefixed.
+- prefix syntax: Schema IDs continue the spiice name with a slash, tool names with an underscore.
 - prefix check: Typed schemas and tool names are checked at compile time, and opaque IDs at registration.
 
 | schema identity use | schema identity |
@@ -1333,14 +1316,6 @@ stateDiagram-v2
 | subsequent | other | no |
 
 - capability tag character: A tag starts with a lowercase ASCII letter and may continue with those letters, digits or hyphens.
-
-| core command | core startup |
-| --- | --- |
-| serve | listenerWithValidation |
-| maintenance | headlessWithValidation |
-| migrate | headlessMigration |
-
-- core startup: The canonical core app starts a listener only for serving and migrates only on explicit request.
 
 | registered | mandatory | profile denial |
 | --- | --- | --- |
@@ -3408,26 +3383,6 @@ stateDiagram-v2
 - single
 - duplicate
 
-**Participant requirement**: The frozen participant has a nonempty identity and a nonempty set of distinct declared state surfaces.
-
-- namedParticipant
-- atLeastOneSurface
-- namedSurfaces
-- distinctSurfaces
-- declaredStateSurfaces
-
-**Command requirement**: A command names the frozen participant and a nonempty, duplicate-free subset of its registered state surfaces.
-
-- sameParticipant
-- atLeastOneSurface
-- distinctSurfaces
-- registeredSurfaces
-
-**Request binding**: A dispatched request agrees exactly with the stamped participant and command table list.
-
-- participant
-- commandTables
-
 **Unit kind**: The unit's authority at the ordinary host-state entry point.
 
 - ordinary
@@ -3441,17 +3396,6 @@ stateDiagram-v2
 - fixedOwner
 - refuse
 
-**Maintenance binding**: Maintenance authority belongs to one engine boot and its frozen participant, and each opened unit fixes one owner.
-
-- boot
-- participant
-- owner
-
-**Maintenance operation**: A maintenance unit exposes only host-state commands and commit.
-
-- applyHostState
-- commit
-
 **Dispatch result**: Results of dispatch after the write session has opened.
 
 - permitted
@@ -3460,37 +3404,6 @@ stateDiagram-v2
 - storageFault
 - invalidReply
 - cancelled
-
-**Shared write session**: Host-state work and cognitive writes share the unit's transaction and its completion.
-
-- liveDispatch
-- commitTogether
-- rollbackTogether
-
-**Lifecycle registration**: Lifecycle callback registration binds the participant and exactly its frozen managed surfaces.
-
-- sameParticipant
-- exactManagedSurfaceSet
-- subsetOfParticipantSurfaces
-
-**Erase receipt check**: The checks on a host erase receipt before the shared erase can commit.
-
-- sameParticipant
-- sameOwner
-- sameScope
-- samePhysicalFacts
-- sameOriginalCopies
-- uniqueExactTables
-- zeroCountsForRetainedTables
-- countsFitBigint
-
-**Export receipt rule**: The checks and count source for a host export receipt.
-
-- sameParticipant
-- sameOwner
-- uniqueExactTables
-- declaredRowShape
-- countReturnedRows
 
 | registration | registration | merge registration |
 | --- | --- | --- |
@@ -4381,7 +4294,7 @@ stateDiagram-v2
 
 **purge order** = \[persistUnclaimedDebt, commit, readCurrentVersion, deleteExactKey, settleObservedVersion]: Liveness and debt commit together before provider I/O, with settlement limited to the observed debt version.
 
-**terminal upload debt** = \[transfer, canonical]: Abort and expiry owe both implied keys in the status transaction.
+**terminal upload debt** = \[transfer, canonical]: The two implied keys owed when an upload ends.
 
 **exact version deletion** = \[checkCursor, collectExactVersionIds, deleteVersions, checkAcknowledgements]: Check the cursor, collect exact version IDs, delete those versions, then check acknowledgements.
 
@@ -4529,7 +4442,7 @@ stateDiagram-v2
 | foreignDebtLeft | no |
 | failed | no |
 
-- command succeeded: Reconciliation findings and lease contention preserve a successful exit, while a drain that leaves foreign debt fails.
+- command succeeded: Completion and lease contention exit successfully. Foreign debt left by a drain and command failures exit non-zero.
 
 ## Operations
 
@@ -4676,11 +4589,6 @@ stateDiagram-v2
 - clear
 - cancelRead
 
-**Tool profile**: The tool profiles the stock host accepts.
-
-- memory
-- full
-
 **Stage event**: The stage events recorded when stage timing is enabled.
 
 - start
@@ -4706,7 +4614,7 @@ stateDiagram-v2
 
 **worker shutdown grace seconds** = 5: Seconds a contributed worker has to finish after runtime cancellation.
 
-**meter lifecycle** = \[installProvider, serveRuntime, shutdownProvider]: A configured OTLP provider wraps the runtime lifetime.
+**meter lifecycle** = \[installProvider, serveRuntime, shutdownProvider]: The meter provider wraps the runtime lifetime.
 
 **service name precedence** = \[explicit, resourceAttributes, stock]: An explicit service name takes precedence over resource attributes and then the stock name.
 
@@ -4880,7 +4788,7 @@ stateDiagram-v2
 | run | yes | yes |
 | run | no | no |
 
-- binds listener: Build hands out a router and run binds a listener when MCP is configured.
+- binds listener: Only run binds a listener, and only when MCP is configured.
 
 | shutting down | database available | ready |
 | --- | --- | --- |
@@ -6964,7 +6872,7 @@ stateDiagram-v2
 - commitEachOwnerPage
 - resumeFromRemainingAdmissions
 
-**schedule inputs** = \[owningMigrationAnchors, explicitDependencies, crossSchemaProducers, earlierAnchorsInOwningLane]: These inputs determine the acyclic schedule before writes.
+**schedule inputs** = \[owningMigrationAnchors, explicitDependencies, crossSchemaProducers, earlierAnchorsInOwningLane]: The inputs that order one composed host's evolution steps.
 
 **conversion inputs** = \[ownedSourceAdmissionsIncludingForgotten, earlierMappingsForOwner, earlierForeignMappingsForReferencedTargets]: The transform receives one owner's historical admissions and only the earlier mappings it may inspect.
 
@@ -7482,12 +7390,6 @@ stateDiagram-v2
 - noControlCharacters
 - withinCharacterLimit
 
-**Terminal input**: The input the registered terminal runs or refuses.
-
-- admitted: Run the scope gate's resolution for the unchanged tool, owner and arguments.
-- ungated: Resolve the arguments of an explicit ungated invocation.
-- refused: Refuse a call without a matching admission or explicit ungated invocation.
-
 **Key form**: The three canonical key forms that enter a tool scope.
 
 - tool
@@ -7602,9 +7504,9 @@ stateDiagram-v2
 
 **unknown operator** = "unknown": The recorded label when neither the authenticated caller nor the call names a model.
 
-**memory profile** = "memory": The wire spelling of `Proxiima.Operations.ToolProfile.memory`.
+**memory profile** = "memory": The wire spelling of the memory tool profile.
 
-**full profile** = "full": The wire spelling of `Proxiima.Operations.ToolProfile.full`.
+**full profile** = "full": The wire spelling of the full tool profile.
 
 **resource key prefix** = "resource": The reserved head of a resource scope key.
 

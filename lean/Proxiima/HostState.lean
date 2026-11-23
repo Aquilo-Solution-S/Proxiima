@@ -17,29 +17,6 @@ def mergeRegistration : Registration → Registration → Registration
   | .duplicate, .absent | .duplicate, .single | .duplicate, .duplicate
   | .absent, .duplicate | .single, .duplicate => .duplicate
 
-/-- The frozen participant has a nonempty identity and a nonempty set of distinct declared state surfaces. -/
-inductive ParticipantRequirement where
-  | namedParticipant
-  | atLeastOneSurface
-  | namedSurfaces
-  | distinctSurfaces
-  | declaredStateSurfaces
-  deriving DecidableEq
-
-/-- A command names the frozen participant and a nonempty, duplicate-free subset of its registered state surfaces. -/
-inductive CommandRequirement where
-  | sameParticipant
-  | atLeastOneSurface
-  | distinctSurfaces
-  | registeredSurfaces
-  deriving DecidableEq
-
-/-- A dispatched request agrees exactly with the stamped participant and command table list. -/
-inductive RequestBinding where
-  | participant
-  | commandTables
-  deriving DecidableEq
-
 /-- The unit's authority at the ordinary host-state entry point. -/
 inductive UnitKind where
   | ordinary
@@ -61,19 +38,6 @@ def commandAdmission : UnitKind → Admission
   | .maintenance => .fixedOwner
   | .goalWork | .system => .refuse
 
-/-- Maintenance authority belongs to one engine boot and its frozen participant, and each opened unit fixes one owner. -/
-inductive MaintenanceBinding where
-  | boot
-  | participant
-  | owner
-  deriving DecidableEq
-
-/-- A maintenance unit exposes only host-state commands and commit. -/
-inductive MaintenanceOperation where
-  | applyHostState
-  | commit
-  deriving DecidableEq
-
 /-- Results of dispatch after the write session has opened. -/
 inductive DispatchResult where
   | permitted
@@ -88,40 +52,5 @@ inductive DispatchResult where
 def dispatchLeavesUnitUsable : DispatchResult → Bool
   | .permitted | .alreadyApplied | .refused => true
   | .storageFault | .invalidReply | .cancelled => false
-
-/-- Host-state work and cognitive writes share the unit's transaction and its completion. -/
-inductive SharedWriteSession where
-  | liveDispatch
-  | commitTogether
-  | rollbackTogether
-  deriving DecidableEq
-
-/-- Lifecycle callback registration binds the participant and exactly its frozen managed surfaces. -/
-inductive LifecycleRegistration where
-  | sameParticipant
-  | exactManagedSurfaceSet
-  | subsetOfParticipantSurfaces
-  deriving DecidableEq
-
-/-- The checks on a host erase receipt before the shared erase can commit. -/
-inductive EraseReceiptCheck where
-  | sameParticipant
-  | sameOwner
-  | sameScope
-  | samePhysicalFacts
-  | sameOriginalCopies
-  | uniqueExactTables
-  | zeroCountsForRetainedTables
-  | countsFitBigint
-  deriving DecidableEq
-
-/-- The checks and count source for a host export receipt. -/
-inductive ExportReceiptRule where
-  | sameParticipant
-  | sameOwner
-  | uniqueExactTables
-  | declaredRowShape
-  | countReturnedRows
-  deriving DecidableEq
 
 end Proxiima.HostState

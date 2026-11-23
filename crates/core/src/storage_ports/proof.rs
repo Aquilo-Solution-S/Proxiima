@@ -275,11 +275,9 @@ impl HostStateWritePermit {
         self.authority_read_scope.as_ref()
     }
 
-    /// Whether this request carries exactly the participant and table scope
-    /// already stamped into the permit by the engine.
+    /// Whether the request carries exactly the stamped participant and table list.
     #[must_use]
     pub fn matches_request(&self, request: &crate::storage_ports::HostStateRequest) -> bool {
-        // `Proxiima.HostState.RequestBinding`.
         self.participant_id == request.participant_id() && self.tables == request.tables()
     }
 }

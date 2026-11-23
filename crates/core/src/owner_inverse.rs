@@ -560,7 +560,6 @@ impl OwnerExportBundle {
     }
 
     /// One count per returned table, plus the projected edge count.
-    /// `Proxiima.HostState.ExportReceiptRule.countReturnedRows`.
     #[must_use]
     pub fn counts(&self) -> BTreeMap<String, usize> {
         let mut counts: BTreeMap<_, _> = self

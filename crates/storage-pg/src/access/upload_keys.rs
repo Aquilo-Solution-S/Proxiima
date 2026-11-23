@@ -88,8 +88,9 @@ pub fn upload_fence_keys_sql_for_tests() -> &'static str {
     UPLOAD_FENCE_KEYS_SQL
 }
 
-/// Owe an upload's transfer key and its canonical object in the transaction
-/// that ends the upload (abort, expiry, or a stage that lost to either).
+/// Owe an upload's transfer key and its canonical object when the upload
+/// ends (abort, expiry, or a stage that lost to either). Owed in the caller's
+/// status transaction.
 ///
 /// The caller holds the owner fence, the canonical key's object fence and the
 /// row lock, and has just made the row terminal: one outcome per upload means

@@ -65,6 +65,7 @@ impl MigrationStorage for PgMigrationStorage {
 }
 
 /// `Proxiima.SchemaEvolution.scheduleInputs`.
+/// Refuses a cycle, or an anchor or dependency with no source, before the first write.
 pub(crate) fn schema_evolution_schedule<'a>(
     sources: &[&NamedMigrator],
     evolutions: &'a [SchemaEvolution],

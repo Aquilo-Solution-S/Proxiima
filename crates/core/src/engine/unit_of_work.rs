@@ -301,7 +301,7 @@ pub struct GoalWorkOutcome<T> {
     pub facts: Vec<FactIngestOutcome>,
 }
 
-// `Proxiima.HostState.ParticipantRequirement`.
+// The participant needs a nonempty id and a nonempty set of distinct declared tables.
 fn validate_registration(
     registry: &crate::verbs::schema::SpiiceRegistryFrozen,
     descriptor: HostStateParticipantDescriptor,
@@ -347,7 +347,7 @@ fn validate_registration(
     Ok(())
 }
 
-// `Proxiima.HostState.CommandRequirement`.
+// A command names the frozen participant and a nonempty, duplicate-free subset of its tables.
 fn validate_host_state_command<C: HostStateCommand>(
     engine: &Engine,
     descriptor: HostStateParticipantDescriptor,
@@ -522,7 +522,7 @@ impl Engine {
         authority: &HostStateMaintenanceAuthority,
         owner: OwnerId,
     ) -> Result<HostStateUnitOfWork<'a>, ProtocolError> {
-        // `Proxiima.HostState.MaintenanceBinding`.
+        // Maintenance authority belongs to this engine boot and its frozen participant.
         if authority.system_binding != self.system_authority_binding {
             return Err(ProtocolError::forbidden(
                 "host-state maintenance authority belongs to a different engine",
@@ -1707,7 +1707,6 @@ fn erase_storage_error(err: crate::storage::StorageError) -> SeriesEraseError {
     }
 }
 
-// `Proxiima.HostState.MaintenanceOperation`.
 impl HostStateUnitOfWork<'_> {
     /// Execute a command for this unit's fixed owner and captured participant.
     ///

@@ -167,7 +167,7 @@ async fn invoke_host_lifecycle_export(
             ),
         )
         .await?;
-    // `Proxiima.HostState.ExportReceiptRule`.
+    // The receipt names this participant and owner and lists each included table once.
     if receipt.participant != lifecycle.descriptor.participant_id() || receipt.owner != owner {
         return Err(StorageError::Internal(
             "host lifecycle export receipt has a foreign participant or owner".into(),

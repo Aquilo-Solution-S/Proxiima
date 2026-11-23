@@ -332,7 +332,7 @@ refusal. The request deadline covers the provider call.
 `proxiima::serve` and `RunningProxiima::until_shutdown_signal` drain on
 SIGTERM/SIGINT: readiness fails, listeners stop accepting, requests and streams
 finish, then workers join. The runtime requests abort if a contributed worker
-exceeds the shutdown grace (5 s by default, see
+exceeds the shutdown grace (5 s, see
 [`Proxiima.Operations`](ledger.md#operations)) or the runtime is dropped.
 Set the orchestrator's grace above the longest allowed request. The earlier of token expiry and the configured maximum
 stream lifetime starts the final drain for authenticated streams. The wrapper

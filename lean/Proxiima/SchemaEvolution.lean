@@ -10,7 +10,7 @@ inductive ScheduleInput where
   | earlierAnchorsInOwningLane
   deriving DecidableEq
 
-/-- These inputs determine the acyclic schedule before writes. -/
+/-- The inputs that order one composed host's evolution steps. -/
 def scheduleInputs : List ScheduleInput :=
   [.owningMigrationAnchors, .explicitDependencies, .crossSchemaProducers, .earlierAnchorsInOwningLane]
 

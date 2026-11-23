@@ -29,11 +29,6 @@ def citationInput : (hasReference : Bool) → InlineFields → Option CitationSo
   | false, .complete => some .inlineObject
   | false, .absent | false, .incomplete | true, .incomplete | true, .complete => none
 
-/-- The two projected fields of a version's citation. -/
-structure CitationProjection where
-  objectId : String
-  schemaId : String
-
 /-- How a referenced object relates to the owner of the writing version. -/
 inductive ReferenceResolution where
   | sameOwner

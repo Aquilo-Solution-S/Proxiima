@@ -16,10 +16,10 @@ def maxHostInstructionsChars : Nat := 4096
 /-- The recorded label when neither the authenticated caller nor the call names a model. -/
 def unknownOperator : String := "unknown"
 
-/-- The wire spelling of `Proxiima.Operations.ToolProfile.memory`. -/
+/-- The wire spelling of the memory tool profile. -/
 def memoryProfile : String := "memory"
 
-/-- The wire spelling of `Proxiima.Operations.ToolProfile.full`. -/
+/-- The wire spelling of the full tool profile. -/
 def fullProfile : String := "full"
 
 /-- The reserved head of a resource scope key. -/
@@ -86,16 +86,6 @@ inductive TitleCheck where
 /-- A title must be nonempty, trimmed, control-free and within the character limit. -/
 def titleChecks : List TitleCheck :=
   [.nonempty, .trimmed, .noControlCharacters, .withinCharacterLimit]
-
-/-- The input the registered terminal runs or refuses. -/
-inductive TerminalInput where
-  /-- Run the scope gate's resolution for the unchanged tool, owner and arguments. -/
-  | admitted
-  /-- Resolve the arguments of an explicit ungated invocation. -/
-  | ungated
-  /-- Refuse a call without a matching admission or explicit ungated invocation. -/
-  | refused
-  deriving DecidableEq
 
 /-- The three canonical key forms that enter a tool scope. -/
 inductive KeyForm where

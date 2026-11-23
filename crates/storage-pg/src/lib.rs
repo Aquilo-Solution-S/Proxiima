@@ -894,7 +894,7 @@ impl PgHostStateEraseContext {
     }
 }
 
-// `Proxiima.HostState.LifecycleRegistration`.
+// Callbacks bind the frozen participant and exactly its managed surfaces.
 fn validate_host_lifecycle_registration(
     surfaces: &proxiima_core::owner_inverse::OwnerSurfaces,
     registered: Option<&RegisteredHostStateParticipant>,

@@ -174,7 +174,7 @@ inductive ServeMode where
   | build | run
   deriving DecidableEq
 
-/-- Build hands out a router and run binds a listener when MCP is configured. -/
+/-- Only run binds a listener, and only when MCP is configured. -/
 def bindsListener : ServeMode → (configured : Bool) → Bool
   | .run, true => true
   | .run, false | .build, true | .build, false => false
@@ -219,7 +219,7 @@ inductive MeterStep where
   | installProvider | serveRuntime | shutdownProvider
   deriving DecidableEq
 
-/-- A configured OTLP provider wraps the runtime lifetime. -/
+/-- The meter provider wraps the runtime lifetime. -/
 def meterLifecycle : List MeterStep := [.installProvider, .serveRuntime, .shutdownProvider]
 
 /-- The order in which the stock host chooses its service name. -/
@@ -253,11 +253,6 @@ def finishSample : SampleOutcome → SampleAction
   | .success => .store
   | .failure => .clear
   | .shutdown => .cancelRead
-
-/-- The tool profiles the stock host accepts. -/
-inductive ToolProfile where
-  | memory | full
-  deriving DecidableEq
 
 /-- A declared read or a selected key is served. -/
 def servedRead : (mandatory : Bool) → (selected : Bool) → Bool

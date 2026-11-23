@@ -271,7 +271,8 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     }
     let config = parse_args(args).map_err(cli_error(usage))?;
     init_logging(LogSink::Stdout);
-    // `Proxiima.Operations.meterLifecycle`
+    // `Proxiima.Operations.meterLifecycle`.
+    // Install the meter provider only when OTLP is configured.
     let metrics = telemetry::install(&proxiima_core::ProcessEnv)?;
     let served = serve(config).await;
     if let Some(metrics) = metrics {
@@ -280,7 +281,7 @@ pub async fn run<I: IntoIterator<Item = String>>(args: I) -> Result<(), CliError
     served
 }
 
-// `Proxiima.Composition.coreStartup`.
+// Only `serve` binds a listener.
 async fn serve(config: McpConfig) -> Result<(), CliError> {
     let running = run_with_handle(config).await?;
     let addr = running
@@ -298,7 +299,6 @@ async fn serve(config: McpConfig) -> Result<(), CliError> {
 /// Bring the database to this binary: the migrate step a deployment runs
 /// before it starts or replaces the servers. Serving and maintenance only
 /// validate the schema it leaves.
-// `Proxiima.Composition.coreStartup`.
 async fn run_migrate(
     config: MigrateConfig,
     lookup: impl EnvLookup + Send + Sync,
@@ -346,6 +346,7 @@ async fn run_maintain_blobs(
     };
     built.shutdown().await;
     // `Proxiima.ObjectMaintenance.commandSucceeded`.
+    // Reported findings, `missing` included, still exit 0.
     let outcome = outcome?;
 
     println!(
@@ -491,7 +492,6 @@ async fn run_maintain(
 /// The runtime of `migrate` and the maintenance commands on `database_url`:
 /// configured from the storage settings of `lookup` only, so the server's
 /// own environment neither starts nor refuses anything here.
-// `Proxiima.Composition.coreStartup`.
 fn maintenance_app<'env>(
     database_url: String,
     lookup: impl EnvLookup + Send + Sync + 'env,
@@ -810,7 +810,6 @@ fn resolve_served_surface(
     // an explicit PROXIIMA_TOOL_PROFILE=full.
     let profile = match profile_name {
         Some(name) => parse_tool_profile(name)?,
-        // An unset profile serves the `Proxiima.Operations.ToolProfile.memory` profile.
         None => ToolProfile::Memory,
     };
     let registered_ids = registered.all.as_slice();
@@ -843,7 +842,6 @@ fn resolve_served_surface(
 }
 
 fn parse_tool_profile(raw: &str) -> Result<ToolProfile, CliError> {
-    // `Proxiima.Operations.ToolProfile`
     match raw.trim() {
         protocol_profile::FULL => Ok(ToolProfile::Full),
         protocol_profile::MEMORY => Ok(ToolProfile::Memory),

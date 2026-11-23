@@ -243,7 +243,7 @@ def scopeSources : List ScopeSource := [.verifiedCredential, .singleOwnerBoot]
 inductive EnginePermit where
   | entryRead | write
 
-/-- The engine permit families subject to `Proxiima.OwnerAuthority.ScopeRestriction.expiry`. -/
+/-- The engine permit families an expired grant does not authorize. -/
 def enginePermits : List EnginePermit := [.entryRead, .write]
 
 /-- The Unicode character limit for credential-attested and caller-supplied model labels and for the retained portion of an echoed label. -/

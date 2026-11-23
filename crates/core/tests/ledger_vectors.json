@@ -1810,10 +1810,6 @@
   {"out": false, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Composition.coreStartup":
- [{"out": "listenerWithValidation", "in": ["serve"]},
-  {"out": "headlessWithValidation", "in": ["maintenance"]},
-  {"out": "headlessMigration", "in": ["migrate"]}],
  "Proxiima.Composition.coreDeclarations":
  [{"out": {"ok": true}, "in": [true, true, true]},
   {"out": {"ok": true}, "in": [true, true, false]},

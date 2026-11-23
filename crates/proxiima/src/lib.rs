@@ -92,8 +92,8 @@
 //! }
 //! ```
 //!
-//! The maintenance unit exposes the methods in `Proxiima.HostState.MaintenanceOperation`.
-//! The following cognitive operations are unavailable on that unit.
+//! The maintenance unit exposes only `apply_host_state` and `commit`. It has
+//! no cognitive write or read methods:
 //!
 //! ```compile_fail,E0599
 //! # use proxiima_core::FactPayload;

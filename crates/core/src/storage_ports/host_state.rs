@@ -1,7 +1,10 @@
 //! Typed host-state participation inside a [`super::WriteSession`].
 //!
 //! Core stays backend-neutral: a command is an opaque payload plus the
-//! tables it will touch.
+//! tables it will touch. The Postgres session dispatches that payload to a
+//! startup-registered participant on the **same** transaction it already
+//! holds. The participant never escapes the transaction, and Spiice SDK /
+//! tools never receive SQL, a pool, or a generic administration surface.
 
 use std::any::Any;
 use std::fmt;

@@ -1161,11 +1161,11 @@ macro_rules! ledger {
     (Proxiima.ToolSurface.unknownOperator) => {
         "unknown"
     };
-    // The wire spelling of `Proxiima.Operations.ToolProfile.memory`.
+    // The wire spelling of the memory tool profile.
     (Proxiima.ToolSurface.memoryProfile) => {
         "memory"
     };
-    // The wire spelling of `Proxiima.Operations.ToolProfile.full`.
+    // The wire spelling of the full tool profile.
     (Proxiima.ToolSurface.fullProfile) => {
         "full"
     };

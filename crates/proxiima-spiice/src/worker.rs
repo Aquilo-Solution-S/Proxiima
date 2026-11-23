@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 /// token, so it fires when the runtime shuts down, but cancelling it
 /// only reaches this context's clones. Every worker spawned from this
 /// context MUST observe it and terminate when it is cancelled. The runtime
-/// aborts a contributed task that exceeds its shutdown grace (5 s by default,
+/// aborts a contributed task that exceeds its shutdown grace (5 s,
 /// `Proxiima.Operations.workerShutdownGraceSeconds`) or whose runtime is dropped.
 ///
 /// `service::<T>()` resolves from the same composed service set used by MCP
