@@ -77,7 +77,9 @@ pub struct ResolvedMemorySpace {
     pub owner: OwnerId,
 }
 
-/// Resolve and narrow under `Proxiima.OwnerAuthority.spaceWriteOrder`.
+/// Resolve the memory space a write lands in, and narrow the caller's
+/// authorization to that space's Owner. The space key is a selector; the
+/// narrowing is the gate. See `Proxiima.OwnerAuthority.spaceWriteOrder`.
 ///
 /// # Errors
 ///
@@ -116,7 +118,7 @@ pub fn resolve_space_owner(
     raw: Option<&str>,
     default: SpaceDefault,
 ) -> Result<ResolvedMemorySpace, ToolError> {
-    // `Proxiima.OwnerAuthority.SpaceDefault`.
+    // An omitted key uses the session's bound owner or the authenticated principal.
     let default_owner = match default {
         SpaceDefault::Current => ctx.owner(),
         SpaceDefault::Identity => ctx.authz().principal(),

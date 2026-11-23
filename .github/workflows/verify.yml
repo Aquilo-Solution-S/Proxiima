@@ -1,6 +1,6 @@
 name: Verify
 
-# `Proxiima.Repository.VerificationTarget`. GitHub keeps one pending run per group.
+# Verify serializes candidates at the selected main event's commit. GitHub keeps one pending run per group.
 on:
   push:
     branches: [main]

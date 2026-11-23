@@ -80,7 +80,7 @@ impl<'connection> PgHostStateSession<'_, 'connection> {
                 "host-state authority read scope has expired".into(),
             ));
         }
-        // `Proxiima.OwnerAuthority.MembershipRead.unitSubject`.
+        // Fence the unit's authenticated subject as a person.
         let subject = scope.subject();
         let rows = sqlx::query_as::<_, AuthorityRow>(
             "SELECT group_id, read_ceiling, write_ceiling, goal_access, administers, manage

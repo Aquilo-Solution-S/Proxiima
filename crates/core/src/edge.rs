@@ -33,6 +33,7 @@ pub enum EdgeKind {
 
 impl EdgeKind {
     /// Every kind, in projection order: origins, references, then reads.
+    /// Projection preserves field order within each kind.
     // `Proxiima.Edges.pinOrder`.
     pub const ALL: [Self; 3] = [Self::Origin, Self::Reference, Self::Read];
 

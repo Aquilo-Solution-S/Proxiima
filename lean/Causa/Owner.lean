@@ -42,9 +42,9 @@ structure Role where
 def Role.mayRead  (x : Role) (k : AccessKind) : Prop := (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ x.read
 def Role.mayWrite (x : Role) (k : AccessKind) : Prop := (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ x.write
 /-- The capability to read the owner's Goals. -/
-def Role.readsGoals (x : Role) : Prop := x.goals ≠ .none
+def Role.readsGoals (x : Role) : Prop := x.goals.canRead = true
 /-- The capability to work on the owner's Goals. -/
-def Role.worksGoals (x : Role) : Prop := x.goals = .works
+def Role.worksGoals (x : Role) : Prop := x.goals.canWork = true
 /-- The capability to administer an owner. -/
 def Role.administers (x : Role) : Prop := x.administer = true
 /-- The capability to change membership and roles. -/
@@ -52,8 +52,9 @@ def Role.manages (x : Role) : Prop := x.manage = true
 
 /-- Goal work includes Goal read access. -/
 theorem Role.worksGoals_readsGoals (x : Role) (h : x.worksGoals) : x.readsGoals := by
-  simp only [Role.worksGoals] at h
-  simp [Role.readsGoals, h]
+  cases hgoals : x.goals <;>
+    simp_all [Role.worksGoals, Role.readsGoals, Proxiima.OwnerAuthority.GoalAccess.canWork,
+      Proxiima.OwnerAuthority.GoalAccess.canRead]
 
 /-- The numerical proof projection of a ledger role preset. -/
 def Role.ofPreset (preset : RolePreset) : Role :=
@@ -94,7 +95,8 @@ theorem Role.meet_capped (x cap : Role) :
   · simp only [Role.worksGoals, Role.meet, GoalAccess.meet]
     generalize x.goals = a
     generalize cap.goals = c
-    cases a <;> cases c <;> simp [Proxiima.OwnerAuthority.GoalAccess.rank]
+    cases a <;> cases c <;> simp [Proxiima.OwnerAuthority.GoalAccess.rank,
+      Proxiima.OwnerAuthority.GoalAccess.canWork]
   · simp only [Role.administers, Role.meet, Bool.and_eq_true]
     exact fun h => h.2
   · simp only [Role.manages, Role.meet, Bool.and_eq_true]

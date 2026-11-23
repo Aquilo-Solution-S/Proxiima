@@ -56,7 +56,7 @@ pub(crate) async fn ancestor_edges(
     let mut grounded: Vec<(MemoryId, &'static [&'static str])> = Vec::new();
     let mut visible = Vec::with_capacity(pins.len());
     let mut reads = Vec::new();
-    // `Proxiima.Edges.localAncestorKinds`.
+    // `Proxiima.Edges.localAncestorKinds`. Payload references use only declared subject fields.
     for node in pins {
         visible.push(node.id);
         reads.extend(node.reads.iter().map(|read| AncestorEdge {

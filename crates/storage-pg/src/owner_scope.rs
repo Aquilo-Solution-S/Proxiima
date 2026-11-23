@@ -56,7 +56,7 @@ pub(crate) async fn finish_transaction<T>(
 /// The transaction-local owner settings of `scope`, name and text value:
 /// the one list [`bind_owner_scope`] writes and [`live_memory_owners_as`]
 /// hands to `proxiima_core.live_memory_owners_as`.
-// `Proxiima.OwnerAuthority.OwnerAccessRule`
+// RLS applies separate ceilings for memory reads and writes, alongside Goal and admin permissions.
 fn owner_scope_settings(scope: &OwnerScope) -> [(&'static str, String); 12] {
     // The text form PostgreSQL gives `uuid[]::text`, which the RLS policies
     // cast back with `::uuid[]`.

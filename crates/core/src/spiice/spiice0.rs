@@ -95,7 +95,7 @@ const CORE_PROJECTION: ProjectionSpec = ProjectionSpec {
     rank_source: RankSource::Projection,
 };
 
-/// `Proxiima.Goals.transferGoal`. The refusal is held in three places, with the
+/// A Goal never transfers. The refusal is held in three places, with the
 /// DDL leg in the trigger that freezes `goal_head.owner_id`.
 const GOAL_NOT_TRANSFERABLE: TransferRule = TransferRule::NotTransferable {
     why: "a goal series cannot change owner: goal intent remains with its owner, \

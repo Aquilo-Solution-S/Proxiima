@@ -59,7 +59,7 @@ def pinField : PinField → PinFieldSpec
 /-- Local storage fields that can ground a derived Memory, per `Causa.GroundsInFact`. -/
 def groundingFields : List PinField := [.origins, .refs]
 
-/-- Pin projection groups kinds in this order and preserves field order within each kind. -/
+/-- The order of pin kinds in a projection. -/
 def pinOrder : List PinKind := [.origin, .reference, .read]
 
 /-- The precedence of exact target states when a pin's source is readable. -/
@@ -77,11 +77,6 @@ def projectTarget : (live forgotten erased : Bool) → TargetProjection
   | false, false, true => .erased
   | false, false, false => .redacted
 
-/-- A historical witness stores only the exact version identity and its kind. -/
-structure ErasedTarget where
-  version : String
-  kind : EntityKind
-
 /-- The origin or subject declaration a schema contributes to ancestor traversal. -/
 inductive Provenance where
   | undeclared
@@ -90,7 +85,7 @@ inductive Provenance where
   | none
   deriving DecidableEq
 
-/-- Local ancestor edge kinds by schema provenance; payload references are limited to declared subject fields. -/
+/-- Local ancestor pin kinds by schema provenance. -/
 def localAncestorKinds : Provenance → List PinKind
   | .undeclared | .originEdges => [.origin, .read]
   | .payloadOnly => [.reference, .read]
@@ -105,7 +100,7 @@ def keepReadPin : (origin reference forkAnchor : Bool) → Bool
   | true, true, true | true, true, false | true, false, true | true, false, false
   | false, true, true | false, true, false | false, false, true => false
 
-/-- The continuation key for a pin page, compared newest first and exclusive of the cursor. -/
+/-- The components of a pin-page continuation key. -/
 inductive PageKey where
   | sourceTime
   | sourceId
@@ -133,9 +128,6 @@ inductive AdmissionWitness where
 def pinAdmissionWitness : Admission → AdmissionWitness
   | .fresh => .liveReadableTarget
   | .forkRevision | .schemaEvolution => .capturedSourcePin
-
-/-- Whether neighbor edges are expanded when the request omits the flag. -/
-def defaultNeighborExpansion : Bool := false
 
 /-- The pin kinds compared for external-edge replay. -/
 def externalReplayKinds : List PinKind := [.origin, .reference]

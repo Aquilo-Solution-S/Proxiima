@@ -123,8 +123,11 @@ impl std::str::FromStr for GoalState {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalTransitionKind {
+    /// Active to Paused. `pending` says what happens to the queued work.
     Pause { pending: PendingWork },
+    /// Paused to Active.
     Resume,
+    /// Active or Paused to Abandoned; refused while a decompose child is Active or Paused.
     Abandon,
 }
 
@@ -439,7 +442,10 @@ impl GoalPayloadWrite {
     ///
     /// # Errors
     ///
-    /// Returns the typed title or prompt refusal when display admission fails.
+    /// Returns [`GoalWriteBuildError::InvalidTitle`] when `title` is blank after
+    /// trimming or exceeds [`MAX_GOAL_TITLE_CHARS`]. Returns
+    /// [`GoalWriteBuildError::InvalidText`] when `text` is blank after trimming
+    /// or exceeds [`MAX_GOAL_TEXT_CHARS`].
     pub fn from_payload<P>(
         title: impl AsRef<str>,
         text: impl AsRef<str>,
@@ -560,7 +566,10 @@ impl<P> GoalCreateRequest<P> {
 pub struct GoalAtomicContext<'a> {
     pub registry: &'a crate::SpiiceRegistryFrozen,
     pub author_self_perspective_id: Option<MemoryId>,
-    /// The stamp used to capture the change Fact when its schema is listenable.
+    /// For a fresh revision, storage writes the change Fact when its schema
+    /// is listenable in `registry`. The engine supplies the stamp then,
+    /// and storage refuses a listenable schema without it. The stamp is
+    /// `None` in an unlistenable deployment.
     pub publication: Option<PublicationStamp<'a>>,
 }
 

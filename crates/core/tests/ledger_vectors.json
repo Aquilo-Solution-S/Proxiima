@@ -731,11 +731,6 @@
   {"out": false, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": true, "in": [false, false]}],
- "Proxiima.OwnerAuthority.ownerSpine":
- [{"out": "memory", "in": [{"memory": ["Fact"]}]},
-  {"out": "memory", "in": [{"memory": ["Abstraction"]}]},
-  {"out": "memory", "in": [{"memory": ["Perspective"]}]},
-  {"out": "goal", "in": ["goal"]}],
  "Proxiima.OwnerAuthority.membershipConsent":
  [{"out": "hostBootstrap", "in": ["bootstrapFirstAdmin", "personal"]},
   {"out": "hostBootstrap", "in": ["bootstrapFirstAdmin", "group"]},
@@ -1310,15 +1305,6 @@
   {"out": "returnOriginal", "in": ["allExact"]},
   {"out": "conflict", "in": ["mixed"]},
   {"out": "conflict", "in": ["conflicting"]}],
- "Proxiima.Goals.closeFactPresence":
- [{"out": false, "in": ["Active", true]},
-  {"out": true, "in": ["Active", false]},
-  {"out": false, "in": ["Paused", true]},
-  {"out": true, "in": ["Paused", false]},
-  {"out": true, "in": ["Achieved", true]},
-  {"out": false, "in": ["Achieved", false]},
-  {"out": true, "in": ["Abandoned", true]},
-  {"out": false, "in": ["Abandoned", false]}],
  "Proxiima.Goals.changeFields":
  [{"out": "plain", "in": ["set"]},
   {"out": "parent", "in": ["decompose"]},
@@ -1328,11 +1314,6 @@
   {"out": "plain", "in": ["resume"]},
   {"out": "plain", "in": ["achieve"]},
   {"out": "plain", "in": ["abandon"]}],
- "Proxiima.Goals.blocksClose":
- [{"out": true, "in": ["Active"]},
-  {"out": true, "in": ["Paused"]},
-  {"out": false, "in": ["Achieved"]},
-  {"out": false, "in": ["Abandoned"]}],
  "Proxiima.Goals.GoalState.terminal":
  [{"out": false, "in": ["Active"]},
   {"out": false, "in": ["Paused"]},

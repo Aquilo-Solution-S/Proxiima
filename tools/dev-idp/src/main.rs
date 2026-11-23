@@ -164,7 +164,6 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
     let bind: SocketAddr = bind
         .parse()
         .map_err(|_| ArgError::Message(format!("--bind is not an address:port: {bind}")))?;
-    // `Proxiima.Repository.DevIssuerInput`.
     if !bind.ip().is_loopback() {
         return Err(ArgError::Message(format!(
             "--bind must be loopback; {bind} would expose a token-minting issuer on the network"
@@ -195,7 +194,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<Config, ArgError
     })
 }
 
-/// `Proxiima.Repository.DevSigner`.
+/// Use an ephemeral signer without a path, otherwise load or create the persisted key.
 fn load_or_create_key(path: Option<&PathBuf>) -> Result<RsaKeyPair, String> {
     let Some(path) = path else {
         return generate_key();
@@ -226,7 +225,7 @@ fn read_key(path: &std::path::Path) -> Result<Option<RsaKeyPair>, String> {
     }
 }
 
-/// `Proxiima.Repository.DevSigner`. The key is staged in a private file and hard-linked into place,
+/// The key is staged in a private file and hard-linked into place,
 /// so another process sees no file or a whole key; a link conflict reads the stored file.
 fn create_key(path: &std::path::Path) -> Result<RsaKeyPair, String> {
     let key = generate_key()?;
@@ -273,7 +272,6 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Whole seconds since the Unix epoch at `time`; a clock before the epoch is refused, not read as 0.
-// `Proxiima.Repository.DevClaims`.
 fn epoch_secs(time: SystemTime) -> Result<u64, String> {
     time.duration_since(UNIX_EPOCH)
         .map(|since| since.as_secs())
@@ -282,7 +280,6 @@ fn epoch_secs(time: SystemTime) -> Result<u64, String> {
 
 /// The JWKS this issuer publishes: one RSA key, by `n`/`e`, exactly the shape
 /// `HttpJwksResolver` materializes.
-// `Proxiima.Repository.DevClaims`.
 fn jwks(key: &RsaKeyPair) -> String {
     let components: PublicKeyComponents<Vec<u8>> = key.public_key().into();
     serde_json::json!({
@@ -299,7 +296,6 @@ fn jwks(key: &RsaKeyPair) -> String {
 }
 
 /// Mint an RS256 bearer for `config`'s subject, issued at `now` (seconds since the epoch).
-// `Proxiima.Repository.DevClaims`.
 fn mint(key: &RsaKeyPair, issuer: &str, config: &Config, now: u64) -> Result<String, String> {
     let header = serde_json::json!({ "alg": "RS256", "kid": KID, "typ": "JWT" });
     let claims = serde_json::json!({

@@ -380,7 +380,7 @@ fn goal_filters(req: &QueryRequest, visible_motivations: Option<&[uuid::Uuid]>) 
     if let Some(schema) = &req.schema_id {
         filters.push(GoalFilter::Schema(schema.as_str().to_owned()));
     }
-    // `Proxiima.Goals.stateFilter`.
+    // `Proxiima.Goals.stateFilter`. Other streams ignore the state filter.
     if !req.goal_states.is_empty() {
         filters.push(GoalFilter::States(
             req.goal_states.iter().copied().collect(),

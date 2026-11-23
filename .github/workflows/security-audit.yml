@@ -1,4 +1,4 @@
-# `Proxiima.Repository.DependencyCheck`. New advisories can arrive between source changes.
+# New advisories can arrive between source changes.
 name: security-audit
 
 on:

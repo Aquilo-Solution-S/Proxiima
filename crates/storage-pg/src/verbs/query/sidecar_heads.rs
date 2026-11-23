@@ -45,7 +45,8 @@ pub(crate) async fn sidecar_heads_by_key_on_connection(
     sql.push(
         "::uuid[]) UNION ALL SELECT v.memory_t, v.memory_handle, v.owner_id FROM goal_visible v",
     );
-    // `Proxiima.Memory.statefulHeadVisible`.
+    // `Proxiima.Memory.statefulHeadVisible`. Natural-key prefix reads page the
+    // newest readable Fact per series, including Goal publications and spiice tombstones.
     sql.push(
         "), visible AS (
              SELECT DISTINCT ON (handle) t, handle, owner_id

@@ -70,8 +70,8 @@ impl AccessCeiling {
 
     #[must_use]
     pub const fn rank(self) -> u8 {
-        const RANKS: [u8; 4] = crate::ledger!(Proxiima.OwnerAuthority.memoryCeilingRanks);
-        RANKS[self as usize]
+        // `Proxiima.OwnerAuthority.AccessCeiling.rank`.
+        self as u8
     }
 
     /// The lowest ceiling that covers `kind`: a memory kind's place on the
@@ -142,8 +142,8 @@ impl GoalAccess {
 
     #[must_use]
     pub const fn rank(self) -> u8 {
-        const RANKS: [u8; 3] = crate::ledger!(Proxiima.OwnerAuthority.goalAccessRanks);
-        RANKS[self as usize]
+        // `Proxiima.OwnerAuthority.GoalAccess.rank`.
+        self as u8
     }
 }
 
@@ -289,13 +289,11 @@ impl Role {
 
     #[must_use]
     pub const fn may_read(self, kind: MemoryKind) -> bool {
-        // `Proxiima.OwnerAuthority.OwnerAccessRule.memoryCeilings`.
         self.read.allows(kind)
     }
 
     #[must_use]
     pub const fn may_write(self, kind: MemoryKind) -> bool {
-        // `Proxiima.OwnerAuthority.OwnerAccessRule.memoryCeilings`.
         self.write.allows(kind)
     }
 
@@ -443,7 +441,7 @@ impl OwnerRoles {
     /// several relations in one group) resolves to the [`Role::join`] of its
     /// roles, whatever order the resolver yields them in.
     ///
-    /// See `Proxiima.OwnerAuthority.OwnerResolution` and `Causa.Owner.ofUser`.
+    /// See `Causa.Owner.ofUser`.
     ///
     /// # Errors
     ///
@@ -475,8 +473,6 @@ impl OwnerRoles {
     /// earlier entry rather than joining it: a later answer after a demotion is
     /// never widened by the stale one. The subject's own id is a kernel rule,
     /// never a resolver's answer, so an answer naming it is dropped.
-    ///
-    /// See `Proxiima.OwnerAuthority.OwnerResolution`.
     #[must_use]
     pub fn with_group_role(mut self, group: GroupId, role: Role) -> Self {
         let owner = OwnerId::from(group);
@@ -513,7 +509,6 @@ impl OwnerRoles {
 
     #[must_use]
     pub fn role_for(&self, owner: &OwnerId) -> Option<Role> {
-        // `Proxiima.OwnerAuthority.OwnerAccessRule.roleOfOwner`.
         // Access comes from a role on the owner: queries, tags, lists and pins create no audience, pins grant no target access, and nesting gathers no memories.
         self.roles.get(owner).copied()
     }
@@ -686,7 +681,6 @@ pub trait OwnerAccessPort: Send + Sync {
         subject: UserId,
         group: GroupId,
     ) -> Result<Option<Role>, AccessError> {
-        // `Proxiima.OwnerAuthority.OwnerResolution.eagerGroupLookup`.
         Ok(self
             .resolve_roles_for_subject(subject)
             .await?
@@ -763,6 +757,7 @@ impl std::str::FromStr for Relation {
     type Err = RelationParseError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        // Accept the lowercase storage labels in any ASCII case.
         Self::ALL
             .into_iter()
             .find(|relation| relation.as_str().eq_ignore_ascii_case(raw))

@@ -384,7 +384,7 @@ fn open_children(result: Result<GoalWriteOutcome, StorageError>, what: &str) -> 
 }
 
 /// F1: decompose P into A, B; achieving P names both open children.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn achieving_a_parent_with_active_children_names_them() {
     let tree = Tree::new().await.expect("fixture");
@@ -400,7 +400,7 @@ async fn achieving_a_parent_with_active_children_names_them() {
 }
 
 /// F2: a Paused child is open and is named by its current head t.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn a_paused_child_is_open_and_named_by_its_head() {
     let tree = Tree::new().await.expect("fixture");
@@ -439,7 +439,7 @@ async fn all_abandoned_children_admit_the_parent() {
 
 /// F4: children of an older parent version count after modify, pause and
 /// resume.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn children_of_an_older_parent_version_count() {
     let tree = Tree::new().await.expect("fixture");
@@ -460,7 +460,7 @@ async fn children_of_an_older_parent_version_count() {
 }
 
 /// F5: a refusal writes nothing.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn a_refused_achieve_writes_nothing() {
     let tree = Tree::new().await.expect("fixture");
@@ -597,7 +597,7 @@ async fn decompose_sets_the_parent_edge_and_versions_carry_it() {
 }
 
 /// G1-G3: no children, all Achieved, Achieved plus Abandoned: Ok.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn closed_children_or_none_admit_the_parent() {
     let tree = Tree::new().await.expect("fixture");
@@ -624,7 +624,7 @@ async fn closed_children_or_none_admit_the_parent() {
 }
 
 /// G4: a plain topology dependency is not a child.
-// `Proxiima.Goals.blocksClose`.
+// `Proxiima.Goals.GoalState.isOpen`.
 #[tokio::test]
 async fn a_plain_dependency_is_not_a_child() {
     let tree = Tree::new().await.expect("fixture");

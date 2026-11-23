@@ -31,10 +31,12 @@ theorem Role.has_meet (x y : Role) (c : Capability) :
   | write k => simp only [Role.has, Role.mayWrite, Role.meet]; omega
   | readsGoals =>
     simp only [Role.has, Role.readsGoals, Role.meet]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank,
+      Proxiima.OwnerAuthority.GoalAccess.canRead]
   | worksGoals =>
     simp only [Role.has, Role.worksGoals, Role.meet]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.meet, Proxiima.OwnerAuthority.GoalAccess.rank,
+      Proxiima.OwnerAuthority.GoalAccess.canWork]
   | administers => simp [Role.has, Role.administers, Role.meet]
   | manages => simp [Role.has, Role.manages, Role.meet]
 
@@ -46,10 +48,12 @@ theorem Role.has_join (x y : Role) (c : Capability) :
   | write k => simp only [Role.has, Role.mayWrite, Role.join]; omega
   | readsGoals =>
     simp only [Role.has, Role.readsGoals, Role.join]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank,
+      Proxiima.OwnerAuthority.GoalAccess.canRead]
   | worksGoals =>
     simp only [Role.has, Role.worksGoals, Role.join]
-    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank]
+    cases x.goals <;> cases y.goals <;> simp [GoalAccess.join, Proxiima.OwnerAuthority.GoalAccess.rank,
+      Proxiima.OwnerAuthority.GoalAccess.canWork]
   | administers => simp [Role.has, Role.administers, Role.join]
   | manages => simp [Role.has, Role.manages, Role.join]
 
@@ -63,7 +67,7 @@ theorem Role.admin_has (c : Capability) : Role.admin.has c := by
   cases c with
   | read k => change (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ 3; cases k <;> decide
   | write k => change (Proxiima.OwnerAuthority.coveringCeiling k).rank ≤ 3; cases k <;> decide
-  | readsGoals => change Proxiima.OwnerAuthority.GoalAccess.works ≠ .none; decide
+  | readsGoals => rfl
   | worksGoals => rfl
   | administers => rfl
   | manages => rfl

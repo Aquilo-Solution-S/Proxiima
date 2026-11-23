@@ -5,12 +5,20 @@ import Causa.Memory
 import Causa.Goals
 import Causa.Edges
 import Proxiima.Memory
+import Proxiima.Edges
 
 /-! Causa — Operators -/
 
 namespace Causa
 
-open Proxiima.Memory (OperatorPhase operatorAdmitsInput operatorOutput memoryKind)
+open Proxiima.Memory (OperatorPhase operatorAdmitsInput operatorOutput memoryKind EntityKind)
+open Proxiima.Edges (pinField)
+
+/-- Memory operators admit exactly the origin target kinds of their output layer. -/
+theorem operator_inputs_are_origin_targets (k : EntityKind) :
+    operatorAdmitsInput .ToA k = decide (k ∈ (pinField .origins).abstraction) ∧
+    operatorAdmitsInput .AtoP k = decide (k ∈ (pinField .origins).perspective) := by
+  cases k <;> decide
 
 def OperatorPhase.inputKind (phase : OperatorPhase) : MemoryKind → Prop
   | .Fact => operatorAdmitsInput phase .Fact = true

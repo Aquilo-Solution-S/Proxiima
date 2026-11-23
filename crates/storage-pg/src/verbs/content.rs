@@ -66,7 +66,8 @@ pub async fn ensure_content(
     content_hash: &[u8; CONTENT_HASH_BYTES],
 ) -> Result<Uuid, StorageError> {
     let content_id = Uuid::now_v7();
-    // `Proxiima.Identity.OwnerScopedContent`. Omit `RETURNING` and a conflict target to avoid reading the new row.
+    // `Proxiima.Identity.OwnerScopedContent`. Admissions may share immutable Content
+    // while keeping distinct admission IDs. Omit `RETURNING` and a conflict target to avoid reading the new row.
     let inserted = sqlx::query(
         "INSERT INTO proxiima_core.content (content_id, owner_id, schema_id, content_hash)
          VALUES ($1, $2, $3, $4)

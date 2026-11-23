@@ -82,8 +82,7 @@ impl FromStr for OwnerId {
     /// A prefixed (`kind:<uuid>`), braced, URN or simple form is refused like
     /// any malformed id.
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        const OWNER_ID_BYTES: usize = crate::ledger!(Proxiima.OwnerAuthority.ownerIdBytes);
-        if raw.len() != OWNER_ID_BYTES {
+        if raw.len() != uuid::fmt::Hyphenated::LENGTH {
             return Err(OwnerIdParseError);
         }
         Uuid::try_parse(raw)

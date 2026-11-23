@@ -237,10 +237,6 @@ macro_rules! ledger {
     (Proxiima.DatabaseAuthority.transientSqlstates) => {
         ["40P01", "40001", "55P03"]
     };
-    // Whether neighbor edges are expanded when the request omits the flag.
-    (Proxiima.Edges.defaultNeighborExpansion) => {
-        false
-    };
     // The largest host read set, counted in distinct exact versions.
     (Proxiima.Edges.maxReadPins) => {
         1024
@@ -489,10 +485,6 @@ macro_rules! ledger {
     (Proxiima.Goals.operatorAuthorship) => {
         "system_operator"
     };
-    // A Goal remains owned by its original owner throughout its series.
-    (Proxiima.Goals.transferGoal) => {
-        false
-    };
     // Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
     (Proxiima.Identity.uuidTimestampBits) => {
         48
@@ -500,14 +492,6 @@ macro_rules! ledger {
     // Counter width in the time-ordered UUIDv8 layout.
     (Proxiima.Identity.uuidCounterBits) => {
         12
-    };
-    // Smallest host-assigned store number in an admission UUID.
-    (Proxiima.Identity.storeNumberMin) => {
-        0
-    };
-    // Largest 16-bit host-assigned store number in an admission UUID.
-    (Proxiima.Identity.storeNumberMax) => {
-        65535
     };
     // The greatest allowed future occurrence offset, in minutes relative to the admission clock.
     (Proxiima.Memory.futureOccurrenceMinutes) => {
@@ -692,18 +676,6 @@ macro_rules! ledger {
     // The tracing target for opt-in stage timing.
     (Proxiima.Operations.stageTimingTarget) => {
         "proxiima::stage_timing"
-    };
-    // Memory ceiling ranks in declaration order for Rust.
-    (Proxiima.OwnerAuthority.memoryCeilingRanks) => {
-        [0, 1, 2, 3]
-    };
-    // Goal capability ranks in declaration order for Rust.
-    (Proxiima.OwnerAuthority.goalAccessRanks) => {
-        [0, 1, 2]
-    };
-    // The hyphenated owner UUID's length in bytes.
-    (Proxiima.OwnerAuthority.ownerIdBytes) => {
-        36
     };
     // The key selecting the session's current memory space.
     (Proxiima.OwnerAuthority.currentSpaceKey) => {

@@ -25,7 +25,7 @@ async fn insert_version(
     .map(|_| ())
 }
 
-// `Proxiima.Goals.transferGoal`.
+// A Goal never transfers.
 #[tokio::test]
 async fn a_scope_of_another_owner_cannot_join_the_series() {
     let (database, admin, runtime, platform, platform_role, runtime_role, _password) =

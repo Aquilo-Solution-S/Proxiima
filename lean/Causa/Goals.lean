@@ -39,7 +39,7 @@ structure Goal where
   pins          : GoalPins
   parent_handle : Option Handle
   tick          : Instant
-  /-- `Proxiima.Goals.closeFactPresence`. -/
+  /-- `Proxiima.Goals.GoalState.terminal`. -/
   terminal_close_fact :
     state.terminal = true ↔ pins.close_fact_t.isSome = true
   text_nonblank :
@@ -151,10 +151,10 @@ structure GoalForestInv (F : GoalForest) : Prop where
   parentOlder       : ParentOlder F
   bornBelowClock    : BornBelowClock F
 
-/-- No sub-goal of the series blocks its close: `Proxiima.Goals.blocksClose`. -/
+/-- No sub-goal of the series blocks its close: `Proxiima.Goals.GoalState.isOpen`. -/
 def NoOpenChild (F : GoalForest) (x : Handle) : Prop :=
   ∀ (c : Handle) (s : GoalState), F.parent c = some x → F.state c = some s →
-    Proxiima.Goals.blocksClose s = false
+    Proxiima.Goals.GoalState.isOpen s = false
 
 /-- Creation of a Goal series. -/
 structure ForestBirth (F F' : GoalForest) (x : Handle) (parent : Option Handle) : Prop where

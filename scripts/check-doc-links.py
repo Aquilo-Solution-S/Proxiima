@@ -71,7 +71,7 @@ def is_ignored_scheme(target: str) -> bool:
     return target.startswith(("http://", "https://", "mailto:", "proxiima://"))
 
 
-# `Proxiima.Repository.MarkdownLinkRefusal`.
+# Local targets and headings must resolve. Site links stay inside docs and name files.
 def main() -> int:
     paths = [Path(arg) for arg in sys.argv[1:]] if len(sys.argv) > 1 else markdown_files()
     failures: list[str] = []

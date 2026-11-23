@@ -24,7 +24,6 @@ docs:
   - '**/*.rs'
   - '**/*.sh'
   - '**/*.yml'
-# `Proxiima.Repository.DependencyCheck`.
 dependencies:
   - '**/Cargo.toml'
   - 'Cargo.lock'

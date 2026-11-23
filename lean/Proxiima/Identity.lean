@@ -4,11 +4,6 @@ import Proxiima.Memory
 
 namespace Proxiima.Identity
 
-/-- A series keeps its handle as later admissions append with immutable, time-ordered IDs. -/
-structure SeriesAndVersion where
-  handle : String
-  t : String
-
 /-- An embedding uses a Memory ID with its layer, or a Goal ID. -/
 inductive EmbeddableEntity where
   | memory (kind : Proxiima.Memory.Kind)
@@ -35,7 +30,7 @@ inductive HeadField where
   | schema
   deriving DecidableEq
 
-/-- Versions align with their series head via `goal_schema_head_alignment` for Goals. Memory accepts intermediate images allowed by `schema_evolution_intermediate_memory_image_permits`. -/
+/-- The fields shared by the versions and head of each series kind. -/
 def seriesContract : SeriesKind → List HeadField
   | .memory => [.handle, .owner, .schema, .kind]
   | .goal => [.handle, .owner, .schema]
@@ -64,7 +59,7 @@ def schemaAuthority : SchemaRecord → SchemaAuthority
 structure WriterAttribution where
   /-- The attested principal UUID. -/
   «by» : String
-  /-- An attested caller UUID or null for a direct write, always present on serialized reads. -/
+  /-- An optional attested caller UUID. -/
   via : Option String
 
 /-- Events that capture or retain writer attribution. -/
@@ -88,7 +83,7 @@ def versionWriter : WriterEvent → WriterSource
   | .admission | .revision => .attested
   | .replay | .transfer | .forget | .restore => .stored
 
-/-- Owner, schema and hash key immutable Content inserted or reused under admission-scoped visibility. Admissions can share Content while retaining distinct admission identities. -/
+/-- The owner, schema and hash that key Content. -/
 structure OwnerScopedContent where
   owner : String
   schema : String
@@ -113,7 +108,7 @@ inductive ReceiptField where
   | payload
   deriving DecidableEq
 
-/-- A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes. -/
+/-- The ordered components of a Fact receipt digest. -/
 def receiptFields : List ReceiptField := [.source, .owner, .payload]
 
 /-- Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch. -/
@@ -147,7 +142,7 @@ inductive MintRange where
   | overflow
   deriving DecidableEq
 
-/-- A mint that exceeds the timestamp range leaves the generator unchanged. -/
+/-- The refusal of a timestamp outside the admission ID range. -/
 inductive MintRefusal where
   | timestampOverflow
   deriving DecidableEq
@@ -160,12 +155,6 @@ def monotonicMint : MintClock → CounterSpace → MintRange → Except MintRefu
   | .aheadOrUnbound, .available, .fits | .aheadOrUnbound, .exhausted, .fits => .ok .reseedAtClock
   | .atOrBehind, .available, .fits => .ok .incrementCounter
   | .atOrBehind, .exhausted, .fits => .ok .reseedNextMillisecond
-
-/-- Smallest host-assigned store number in an admission UUID. -/
-def storeNumberMin : Nat := 0
-
-/-- Largest 16-bit host-assigned store number in an admission UUID. -/
-def storeNumberMax : Nat := 65535
 
 /-- The persisted store number relative to the configured number. -/
 inductive StoreNumberState where

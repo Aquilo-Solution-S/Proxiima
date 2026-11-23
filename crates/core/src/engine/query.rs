@@ -103,7 +103,6 @@ impl Engine {
         &self,
         authz: &AuthzContext,
     ) -> Result<Vec<OwnerId>, ProtocolError> {
-        // `Proxiima.OwnerAuthority.OwnerAccessRule.sidecarScan`.
         self.authorize_read(authz).await
     }
 

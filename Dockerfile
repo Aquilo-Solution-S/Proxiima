@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
-# `Proxiima.Repository.ImageBuild`. Native crypto dependencies require cmake and pkg-config.
+# Native crypto dependencies require cmake and pkg-config.
 FROM rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/*.sources \
     && apt-get update \
@@ -13,7 +13,6 @@ RUN cargo build --release --locked -p proxiima-mcp \
 # Distroless cc image: glibc + libstdc++ (for aws-lc) + ca-certificates
 # (for outbound TLS to Zitadel/S3/embeddings), non-root by default.
 FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa AS runtime
-# `Proxiima.Repository.ImageEvidence`.
 ARG VERSION=0.0.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="proxiima-mcp" \

@@ -123,7 +123,7 @@ fn expand_hops<'a>(nodes: impl IntoIterator<Item = &'a PinNode>) -> Vec<PinHop> 
 }
 
 fn hop_key(hop: &PinHop) -> HopKey {
-    // `Proxiima.Edges.pageKey`.
+    // `Proxiima.Edges.pageKey`. Pages compare newest first and exclude the cursor.
     (
         pin_created_at(hop.source_id),
         hop.source_id.into_inner(),

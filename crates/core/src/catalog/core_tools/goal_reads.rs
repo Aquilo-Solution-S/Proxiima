@@ -14,7 +14,7 @@ use crate::verbs::query::{EntityKind, QueryCursor, QueryPage, QueryRequest, Supe
 use crate::{ToolCtx, ToolError};
 
 /// The shared `{v, fp, c}` cursor envelope carries the Goal keyset in `c`.
-/// The fingerprint excludes page length, which can vary for the same state set.
+/// The fingerprint binds the canonical state set. Page length can vary for that set.
 const GOAL_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
     version: 2,
     source: "proxiima://goals page",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Preview release notes offline. `Proxiima.Repository.ReleaseNotes`.
+# Preview release notes offline.
 set -euo pipefail
 
 if ! command -v git-cliff >/dev/null 2>&1; then

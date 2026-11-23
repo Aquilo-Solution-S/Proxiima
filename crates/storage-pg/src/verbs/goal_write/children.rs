@@ -46,7 +46,7 @@ mod tests {
         uuid::Uuid::from_u128(n)
     }
 
-    // `Proxiima.Goals.blocksClose`.
+    // `Proxiima.Goals.GoalState.isOpen`.
     #[test]
     fn child_states_match_ledger_vectors() {
         #[derive(serde::Deserialize)]
@@ -60,7 +60,7 @@ mod tests {
             serde_json::from_str(include_str!("../../../../core/tests/ledger_vectors.json"))
                 .expect("ledger vectors are valid JSON");
         let rows: Vec<Vector> =
-            serde_json::from_value(vectors["Proxiima.Goals.blocksClose"].clone())
+            serde_json::from_value(vectors["Proxiima.Goals.GoalState.isOpen"].clone())
                 .expect("the ledger emits child states");
         let cases: std::collections::BTreeSet<_> = rows.iter().map(|row| row.states[0]).collect();
         assert_eq!(

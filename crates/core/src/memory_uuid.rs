@@ -33,7 +33,7 @@ impl Generator {
         });
         let previous = self.previous.max(floor);
         let seed = u16::from_be_bytes([random[6], random[7]]) & MAX_COUNTER;
-        // `Proxiima.Identity.monotonicMint`.
+        // `Proxiima.Identity.monotonicMint`. A timestamp overflow leaves the generator unchanged.
         let (millis, counter) = match previous {
             Some((millis, counter)) if clock_millis <= millis => {
                 if counter == MAX_COUNTER {

@@ -410,7 +410,7 @@ impl Engine {
         to_owner: OwnerId,
     ) -> Result<(), ProtocolError> {
         self.operation_authority(authz)?;
-        // `Proxiima.Goals.transferGoal`.
+        // A Goal never transfers.
         if matches!(entity, EntityId::Goal(_)) {
             return Err(ProtocolError::invalid_argument(
                 "entity",
@@ -615,7 +615,6 @@ fn with_parent_caller<'a>(
     permit: MembershipWritePermit<'a>,
     authz: &AuthzContext,
 ) -> MembershipWritePermit<'a> {
-    // `Proxiima.OwnerAuthority.MembershipEndpoint`.
     match permit.endpoint_authority() {
         MembershipEndpointAuthority::Parent => permit.with_caller(authz.subject()),
         MembershipEndpointAuthority::Member => permit,

@@ -359,7 +359,8 @@ fn redacted_db_url(name: &str) -> String {
     }
 }
 
-/// `Proxiima.Repository.CloneNamePart`. The sweep reads the UUID timestamp.
+/// Append a `UUIDv7` to a prefix bounded by PostgreSQL's identifier limit.
+/// The sweep reads the UUID timestamp.
 #[must_use]
 pub fn unique_db_name(prefix: &str) -> String {
     const UUID_BYTES: usize = 32;
@@ -814,7 +815,6 @@ fn role_url_from_admin(admin: &str, database: &str, role: &str) -> Result<url::U
 /// role's default privileges — the shape the runtime RLS guard requires.
 #[derive(Debug)]
 #[must_use]
-/// `Proxiima.Repository.CloneRole`.
 pub struct SplitRoleDb {
     guard: DbGuard,
     runtime_url: String,
@@ -909,7 +909,7 @@ impl SplitRoleDb {
 }
 
 /// A host-selected family of templates for [`ensure_template_in`].
-/// `Proxiima.Repository.TemplateFamilyRule`. Families have no global registry.
+/// Families have no global registry.
 ///
 /// ```compile_fail,E0451
 /// // `new` is the only way in: a family is validated or it does not exist.
@@ -922,7 +922,7 @@ pub struct TemplateFamily {
 
 impl TemplateFamily {
     /// Validate a lowercase ASCII identifier prefix that starts with a letter
-    /// and ends with an underscore. `Proxiima.Repository.TemplateFamilyRule`.
+    /// and ends with an underscore.
     /// The prefix is at most 47 bytes and must be disjoint from the built-in families.
     ///
     /// # Errors
@@ -970,7 +970,7 @@ impl TemplateFamily {
         format!("{}{hash:0TEMPLATE_HASH_DIGITS$x}", self.prefix)
     }
 
-    /// `Proxiima.Repository.TemplateFamilyRule`. An exact suffix also separates nested families.
+    /// An exact suffix also separates nested families.
     fn owns(&self, name: &str) -> bool {
         name.strip_prefix(self.prefix.as_str()).is_some_and(|hash| {
             hash.len() == TEMPLATE_HASH_DIGITS
@@ -1174,7 +1174,7 @@ pub async fn drop_stale_templates_in(
 /// The body of [`ensure_template`] and [`ensure_template_in`]. `family` is
 /// `None` for a template named by hand, whose built-in family (if any) is
 /// read off its name. The returned lease is held on `conn`.
-// `Proxiima.Repository.TemplateLifecycle`.
+// Build in staging under a lock. Publish only on success and keep a lease until the clone exists.
 async fn ensure_template_collecting<F, Fut>(
     template: &str,
     family: Option<&TemplateFamily>,
@@ -1610,7 +1610,7 @@ async fn record_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Erro
     Ok(())
 }
 
-/// `Proxiima.Repository.CloneRegistration`. The UUID sweep covers surviving untracked fixture names.
+/// Clean up a clone if registration fails. The UUID sweep covers surviving untracked fixture names.
 async fn record_new_db(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Error> {
     if let Err(error) = record_db(conn, name).await {
         if let Err(cleanup_error) = drop_db_on(conn, name).await {
@@ -1642,7 +1642,8 @@ async fn drop_db_on(conn: &mut PgConnection, name: &str) -> Result<(), sqlx::Err
     Ok(())
 }
 
-// `Proxiima.Repository.staleCloneCollectible`.
+// `Proxiima.Repository.staleCloneCollectible`. Sweep tracked clones and untracked fixture names.
+// PostgreSQL rechecks for live clients when dropping each candidate.
 async fn sweep_stale_on(conn: &mut PgConnection) -> Result<usize, sqlx::Error> {
     ensure_catalog(conn).await?;
     let start = process_start(conn).await?;
@@ -1925,7 +1926,6 @@ pub fn is_connection_exhaustion(message: &str) -> bool {
 /// connections from an operation that stalled for another reason. The
 /// budget is read over a superuser admin connection, which the reserved
 /// slots normally still admit; when even that fails, the message says so.
-/// `Proxiima.Repository.ConnectionDiagnostic`.
 pub async fn describe_connection_error(context: &str, error: &dyn fmt::Display) -> String {
     let message = format!("{context}: {error}");
     if !is_connection_exhaustion(&message) {

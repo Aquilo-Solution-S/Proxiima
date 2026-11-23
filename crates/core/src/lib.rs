@@ -1,7 +1,7 @@
 //! Proxiima engine core.
 extern crate self as proxiima_core;
 
-/// Server release version. `Proxiima.Repository.VersionSource`.
+/// Server release version, inherited from the Cargo workspace.
 pub const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod access;

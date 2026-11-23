@@ -9,7 +9,6 @@ rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/Aquilo-Solution-S/proxiima"
 
-# `Proxiima.Repository.WorkspaceLint`.
 [workspace.lints.rust]
 warnings = "deny"
 unsafe_code = "deny"
@@ -54,7 +53,7 @@ boon = "0.6"
 toml = "1.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 # Enable the AWS-LC backend to avoid a panic at the first RS256 sign.
-# `Proxiima.Repository.CryptoProvider`.
+# TLS and JWT use AWS-LC. S3 requests use regional SigV4.
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 aws-lc-rs = "1.15.0"
 base64 = "0.23"
@@ -76,7 +75,6 @@ aws-sdk-s3 = { version = "1.79.0", default-features = false, features = [
     "rt-tokio",
 ] }
 
-# `Proxiima.Repository.ReleaseProfile`.
 [profile.release]
 lto = "thin"
 codegen-units = 1

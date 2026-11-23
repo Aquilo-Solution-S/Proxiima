@@ -1258,7 +1258,6 @@ impl AuthzContext {
     /// `None` when the context carries no role for `owner`.
     #[must_use]
     pub fn with_default_owner(mut self, owner: OwnerId) -> Option<Self> {
-        // `Proxiima.OwnerAuthority.DefaultOwnerRule.selectAccessibleOwner`.
         self.role_for_owner(&owner)?;
         self.default_owner = Some(owner);
         Some(self)
@@ -1284,7 +1283,6 @@ impl AuthzContext {
     #[must_use]
     pub fn narrowed_to_owner(mut self, owner: OwnerId) -> Option<Self> {
         self.owner_scope = self.owner_scope.narrowed(owner)?;
-        // `Proxiima.OwnerAuthority.DefaultOwnerRule.clearOnNarrow`.
         self.default_owner = None;
         Some(self)
     }

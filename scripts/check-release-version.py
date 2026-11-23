@@ -28,7 +28,6 @@ def read_workspace_version(manifest: dict) -> str:
     return version
 
 
-# `Proxiima.Repository.VersionSource`.
 def uninherited_members(manifest: dict, read_member: Callable[[str], dict]) -> list[str]:
     """Workspace members whose `[package].version` is not `version.workspace = true`."""
     return [

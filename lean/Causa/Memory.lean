@@ -13,7 +13,7 @@ namespace Causa
 /-- The ledger vocabulary used by Memory proofs. -/
 abbrev MemoryKind := Proxiima.Memory.Kind
 
-/-- The ledger vocabulary used by `Proxiima.Edges.ErasedTarget`. -/
+/-- The entity kinds a pin target carries. -/
 abbrev PinTargetKind := Proxiima.Memory.EntityKind
 
 def MemoryKind.pinTargetKind : MemoryKind → PinTargetKind
@@ -21,7 +21,7 @@ def MemoryKind.pinTargetKind : MemoryKind → PinTargetKind
   | .Abstraction => .Abstraction
   | .Perspective => .Perspective
 
-/-- The retained identity of a hard-erased pin target. -/
+/-- A historical witness stores only the exact version identity and its kind. -/
 structure ErasedPinTarget where
   t    : MemoryId
   kind : PinTargetKind

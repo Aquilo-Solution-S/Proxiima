@@ -44,7 +44,6 @@ pub const TEMPLATE_STORE_NUMBER: u16 = proxiima_core::ledger!(Proxiima.Repositor
 /// A migrated, split-role template database a host suite clones once per
 /// test.
 ///
-/// `Proxiima.Repository.TemplateLifecycle` and `Proxiima.Repository.CloneRole`.
 /// Boot clones with [`TEMPLATE_STORE_NUMBER`]. The caller fingerprint can mark
 /// seed inputs the migrators do not carry.
 ///
@@ -218,7 +217,7 @@ impl HostTemplate {
     }
 }
 
-/// `Proxiima.Repository.TemplateFingerprintInput`. Length framing separates successive inputs.
+/// The validated host lineup and its length-framed inputs define the template fingerprint.
 fn fingerprint_hash(
     fingerprint: &str,
     vectors: VectorStorage,
@@ -312,7 +311,7 @@ pub fn shared_authz(owners: &[OwnerId]) -> AuthzContext {
     ))
 }
 
-/// Compare generated sidecar triggers with migration SQL. `Proxiima.Repository.TriggerFixtureRefusal`.
+/// Compare generated sidecar triggers with migration SQL.
 ///
 /// Boot compares the same statements with the live database.
 ///

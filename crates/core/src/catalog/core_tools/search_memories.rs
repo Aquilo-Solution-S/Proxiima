@@ -64,10 +64,6 @@ fn default_limit() -> u32 {
     crate::ledger!(Proxiima.Search.defaultPageSize)
 }
 
-fn default_include_neighbor_edges() -> bool {
-    crate::ledger!(Proxiima.Edges.defaultNeighborExpansion)
-}
-
 fn default_supersession() -> SearchMemoriesSupersession {
     SearchMemoriesSupersession::HeadsOnly
 }
@@ -149,7 +145,7 @@ pub struct SearchMemoriesArgs {
         description = "Hybrid reciprocal-rank fusion weight on the semantic leg in 0..=1; the lexical leg gets the complement. Defaults to 0.5. Only valid with mode=hybrid."
     )]
     pub semantic_weight: Option<f32>,
-    #[serde(default = "default_include_neighbor_edges")]
+    #[serde(default)]
     #[schemars(
         description = "Also return one-hop pins (source, target, kind) touching the exact result versions."
     )]

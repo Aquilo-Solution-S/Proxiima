@@ -967,7 +967,7 @@ BEGIN
 END;
 $function$;
 
--- `Proxiima.Edges.ErasedTarget` and `Causa.principle_6_erasure_leaves_no_dangling_pin`.
+-- `Causa.ErasedPinTarget` and `Causa.principle_6_erasure_leaves_no_dangling_pin`.
 CREATE OR REPLACE FUNCTION proxiima_core.record_erased_pin_target(target uuid, target_kind proxiima_core.pin_target_kind)
  RETURNS void
  LANGUAGE plpgsql
@@ -1210,7 +1210,7 @@ REVOKE ALL ON FUNCTION proxiima_core.lock_authority_targets(uuid[], uuid[]) FROM
 
 -- The authenticated subject's authority projection is distinct from memory
 -- owner reach. VOLATILE gives the query after a lock wait a fresh snapshot.
--- `Proxiima.OwnerAuthority.MembershipRead.unitSubject`.
+-- This read uses the unit's own authenticated person.
 CREATE OR REPLACE FUNCTION proxiima_core.read_subject_authority(p_subject uuid)
  RETURNS TABLE(group_id uuid, read_ceiling proxiima_core.memory_ceiling,
                write_ceiling proxiima_core.memory_ceiling,
@@ -1257,7 +1257,7 @@ EXCEPTION WHEN OTHERS THEN
 END
 $function$;
 
--- `Proxiima.OwnerAuthority.groupForest`.
+-- `Proxiima.OwnerAuthority.groupForest`. A parent can have multiple children at any nesting depth.
 CREATE OR REPLACE FUNCTION proxiima_core.group_edge_before_write()
  RETURNS trigger
  LANGUAGE plpgsql

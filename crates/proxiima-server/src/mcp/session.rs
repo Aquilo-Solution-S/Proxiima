@@ -258,7 +258,7 @@ impl McpSessionBindings {
 
 #[must_use]
 pub fn parse_owner_key(raw: &str) -> Option<OwnerId> {
-    // `Proxiima.OwnerAuthority.ownerIdBytes`; OwnerId owns the wire parser.
+    // OwnerId owns the wire parser.
     raw.parse().ok()
 }
 

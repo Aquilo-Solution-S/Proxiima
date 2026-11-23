@@ -166,7 +166,6 @@ impl Engine {
     where
         A: EngineAuthority + ?Sized,
     {
-        // `Proxiima.OwnerAuthority.OwnerAccessRule.exactWriteCeiling`.
         let kind = self
             .operation_authority(authority)?
             .authz()
@@ -301,7 +300,7 @@ impl Engine {
                 ),
             );
         }
-        // `Proxiima.OwnerAuthority.ownerGateOrder`.
+        // `Proxiima.OwnerAuthority.ownerGateOrder`. Host vetoes run in registration order.
         let resolved = match self.registry.resolve_owner(authz, owner) {
             Ok(resolved) => resolved,
             Err(err) => return refuse(owner, AuthzOutcome::DeniedResolution, err),
@@ -325,7 +324,7 @@ impl Engine {
         Ok(resolved)
     }
 
-    /// `Proxiima.OwnerAuthority.OwnerRead.set`.
+    /// Veto each candidate owner once at Fact-read standing. Storage applies the actual kind ceiling.
     ///
     /// # Errors
     ///
@@ -428,7 +427,6 @@ impl Engine {
     }
 
     /// Keep this veto aligned with the stored owner used by the storage filter.
-    /// `Proxiima.OwnerAuthority.OwnerRead.exact`.
     fn veto_read(
         &self,
         authz: &AuthzContext,

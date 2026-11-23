@@ -29,8 +29,10 @@ pub(super) fn entity_kind(stored: &str) -> Result<EntityKind, StorageError> {
     }
 }
 
-/// Transfer under `Proxiima.OwnerAuthority.transferOrder` and
-/// `Proxiima.OwnerAuthority.SidecarTransfer`.
+/// Transfer under `Proxiima.OwnerAuthority.transferOrder`, changing every version and the head
+/// in place while preserving identities, writer attribution and forgotten status.
+/// Follow surfaces move with the series. Retained sidecars stay with their
+/// row owner for export and erasure; transfer and forget/restore skip them.
 ///
 /// Returns `true` iff a row under `from_owner` matched and was updated.
 ///
@@ -39,7 +41,7 @@ pub(super) fn entity_kind(stored: &str) -> Result<EntityKind, StorageError> {
 /// (`emb.owner_id`) stays Tesla-valve. `ingest_keys` for those `t`s are
 /// deleted so the prior owner can mint a new series.
 ///
-/// `Proxiima.Goals.transferGoal` and `Proxiima.OwnerAuthority.transferAdmitted`.
+/// A Goal never transfers. See `Proxiima.OwnerAuthority.transferAdmitted`.
 ///
 /// # Errors
 ///

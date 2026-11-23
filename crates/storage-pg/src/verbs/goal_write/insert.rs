@@ -205,7 +205,7 @@ pub(super) async fn prepare_goal_insert<'a>(
         store_number,
     )
     .await?;
-    // `Proxiima.Goals.closeFactPresence`.
+    // `Proxiima.Goals.GoalState.terminal`.
     let close_fact = match &preparation {
         GoalWritePreparation::New(_)
             if matches!(draft.state, GoalState::Achieved | GoalState::Abandoned) =>
@@ -274,7 +274,7 @@ pub(super) async fn persist_prepared_goal_insert(
             prepared.expected_prior,
         )
         .await?;
-        // `Proxiima.Goals.publishChangeFact`.
+        // Append the change Fact after the Goal in the same transaction.
         if let (GoalWritePreparation::New(write), Some(fact)) =
             (&prepared.preparation, &prepared.change_fact)
         {

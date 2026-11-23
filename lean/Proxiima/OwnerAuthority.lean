@@ -4,8 +4,6 @@ import Proxiima.Identity
 
 namespace Proxiima.OwnerAuthority
 
-open Proxiima.Identity (EmbeddableEntity)
-
 /-- The highest memory kind a role can read or write. -/
 inductive AccessCeiling where
   | none | fact | abstraction | perspective
@@ -17,11 +15,6 @@ def AccessCeiling.rank : AccessCeiling → Nat
   | .fact => 1
   | .abstraction => 2
   | .perspective => 3
-
-/-- Memory ceiling ranks in declaration order for Rust. -/
-def memoryCeilingRanks : List Nat :=
-  [AccessCeiling.rank .none, AccessCeiling.rank .fact, AccessCeiling.rank .abstraction,
-   AccessCeiling.rank .perspective]
 
 /-- The lowest ceiling covering each of the three memory kinds. -/
 def coveringCeiling : Proxiima.Memory.Kind → AccessCeiling
@@ -46,10 +39,6 @@ def GoalAccess.rank : GoalAccess → Nat
   | .none => 0
   | .reads => 1
   | .works => 2
-
-/-- Goal capability ranks in declaration order for Rust. -/
-def goalAccessRanks : List Nat :=
-  [GoalAccess.rank .none, GoalAccess.rank .reads, GoalAccess.rank .works]
 
 /-- An owner role with Goal access reads the owner's Goals. -/
 def GoalAccess.canRead : GoalAccess → Bool
@@ -84,7 +73,7 @@ inductive Relation where
   | admin | editor | viewer | ingest
   deriving DecidableEq
 
-/-- Relation labels are stored lowercase and parsed without ASCII case distinctions. -/
+/-- The lowercase storage label of a membership relation. -/
 def relationLabel : Relation → String
   | .admin => "admin"
   | .editor => "editor"
@@ -119,9 +108,6 @@ def rolePresets : Preset → RolePreset
   | .member .viewer => ⟨.perspective, .none, .works, false, false, rfl⟩
   | .member .ingest => ⟨.fact, .fact, .none, false, false, rfl⟩
 
-/-- The hyphenated owner UUID's length in bytes. -/
-def ownerIdBytes : Nat := 36
-
 /-- The key selecting the session's current memory space. -/
 def currentSpaceKey : String := "current"
 
@@ -129,14 +115,6 @@ def currentSpaceKey : String := "current"
 inductive SpaceKey where
   | current
   | ownerUuid
-  deriving DecidableEq
-
-/-- The owner selected when a tool omits its space argument. -/
-inductive SpaceDefault where
-  /-- The session-bound owner. -/
-  | current
-  /-- The request's authenticated principal owner. -/
-  | identity
   deriving DecidableEq
 
 /-- Write selection resolves the space and narrows to its owner before the concrete verb checks its own authority. -/
@@ -173,17 +151,6 @@ def registerOwner : RegistrationState → Registration → Option OwnerKind
   | .registered .group, .createGroup => some .group
   | .registered .personal, .createGroup => none
 
-/-- The spine selected for a stored entity's owner probe. -/
-inductive OwnerSpine where
-  | memory
-  | goal
-  deriving DecidableEq
-
-/-- A typed owner probe searches only the spine for its entity kind. -/
-def ownerSpine : EmbeddableEntity → OwnerSpine
-  | .memory .Fact | .memory .Abstraction | .memory .Perspective => .memory
-  | .goal => .goal
-
 /-- The invariants checked when an edge is written to the group forest. -/
 inductive GroupForestInvariant where
   /-- A subgroup has at most one parent. -/
@@ -194,7 +161,7 @@ inductive GroupForestInvariant where
   | acyclic
   deriving DecidableEq
 
-/-- Multiple children and arbitrary nesting depth are allowed under these group edge invariants. -/
+/-- The invariants of a group containment edge. -/
 def groupForest : List GroupForestInvariant := [.singleParent, .distinctEndpoints, .acyclic]
 
 /-- Authorization facts obtained without changing the caller's transaction or treating the facts as permits. -/
@@ -209,16 +176,6 @@ inductive AuthorityFact where
 def authorityFacts : List AuthorityFact :=
   [.currentPersonRole, .directRelations, .registeredOwnerKind, .containment]
 
-/-- The available membership read shapes. -/
-inductive MembershipRead where
-  /-- Written relations and the parent edge, from the caller's snapshot. -/
-  | direct
-  /-- Current roles compose upward under `Causa.Group.mount` and `Causa.Group.union`. Fenced person reads require a person. -/
-  | fencedEffective
-  /-- A host-state unit reads and fences only its own authenticated subject, who must be a person. -/
-  | unitSubject
-  deriving DecidableEq
-
 /-- The steps that protect a declared membership authority footprint in a caller-owned read-committed transaction. -/
 inductive AuthorityFenceStep where
   | lockGroupTrees
@@ -230,17 +187,9 @@ inductive AuthorityFenceStep where
   | verifyDirectGroupRoots
   deriving DecidableEq
 
-/-- The group authority locks persist through transaction completion and footprint drift requires retrying the transaction. -/
+/-- Membership authority fence steps, in order. -/
 def authorityFenceOrder : List AuthorityFenceStep :=
   [.lockGroupTrees, .verifyRoots, .lockOwnerKinds, .lockPersonProjections, .verifyDirectGroupRoots]
-
-/-- Engine group edits carry authority for both endpoints while storage resolves member kind under the tree fence. -/
-inductive MembershipEndpoint where
-  /-- Recheck a named caller's management after locking when the parent has stored managers. -/
-  | parent
-  /-- Detach under the subgroup's admission when the request is authorized on that endpoint. -/
-  | member
-  deriving DecidableEq
 
 /-- The closed effects of group membership administration. -/
 inductive MembershipChange where
@@ -278,13 +227,13 @@ def preservesManager : (hadManager hasManager : Bool) → Bool
   | true, false => false
   | false, false | false, true | true, true => true
 
-/-- A membership cursor orders by member ID then relation and resumes strictly after that pair. -/
+/-- The components of a member-page cursor. -/
 inductive MemberPageKey where
   | memberId
   | relation
   deriving DecidableEq
 
-/-- The ordered key of a member page, with one excess row read to detect continuation. -/
+/-- The ordered key of a member page. -/
 def memberPageOrder : List MemberPageKey := [.memberId, .relation]
 
 /-- A resolved owner gate checks the effect before running ordered host vetoes and observing the decision. -/
@@ -295,20 +244,8 @@ inductive OwnerGateStep where
   | observe
   deriving DecidableEq
 
-/-- One optional resolver precedes the role gate. Hooks veto in registration order and observers receive the outcome. -/
+/-- Owner gate steps, in order. -/
 def ownerGateOrder : List OwnerGateStep := [.resolve, .checkEffect, .hostVeto, .observe]
-
-/-- Owner roles give ordinary access to the whole owning scope, and the owner resolver is separate from Goal audience grants. -/
-inductive OwnerAccessRule where
-  /-- Every Memory series and Goal has one durable owner, resolved to the caller's role for that owner. -/
-  | roleOfOwner
-  /-- Direction-specific ceilings bound memory reads and writes, including in storage, independently of Goal work and administration. -/
-  | memoryCeilings
-  /-- A write by exact ID cannot reveal a row above the write ceiling. -/
-  | exactWriteCeiling
-  /-- Readable owners can prefilter a sidecar scan. No authority yields a refusal, and an all-vetoed set is empty. -/
-  | sidecarScan
-  deriving DecidableEq
 
 /-- The request paths with different owner Goal-work requirements. -/
 inductive GoalWorkPath where
@@ -326,24 +263,6 @@ def goalWorkAdmitted : GoalWorkPath → (works administers : Bool) → Bool
   | .system, false, true | .system, false, false
   | .delegated, true, false | .system, true, false => false
 
-/-- The read gate's treatment of a candidate owner's stored identity. -/
-inductive OwnerRead where
-  /-- Veto each candidate once at Fact-read standing and let storage apply the actual kind ceiling. -/
-  | set
-  /-- Veto the stored owner for the actual kind. Absent, unreadable and vetoed targets have the same public absence. -/
-  | exact
-  deriving DecidableEq
-
-/-- The authority used to interpret an entity's bare owner reference. -/
-inductive OwnerResolution where
-  /-- The principal's own ID has a derived singleton role and refuses a resolver override. -/
-  | personal
-  /-- A fresh full group membership resolution replaces the prior role. -/
-  | group
-  /-- The default single-group lookup uses the host's eager map, where an absent role grants no access. -/
-  | eagerGroupLookup
-  deriving DecidableEq
-
 /-- Owner lists put the subject's owner first and then sort by owner ID. -/
 inductive OwnerListKey where
   | personalFirst
@@ -352,12 +271,6 @@ inductive OwnerListKey where
 
 /-- Ordering across read, write and Goal owner lists. -/
 def ownerListOrder : List OwnerListKey := [.personalFirst, .ownerId]
-
-/-- A selected default must already be in scope and explicit narrowing clears the default. -/
-inductive DefaultOwnerRule where
-  | selectAccessibleOwner
-  | clearOnNarrow
-  deriving DecidableEq
 
 /-- Restrictions that keep a scoped role grant from widening. -/
 inductive ScopeRestriction where
@@ -431,7 +344,7 @@ inductive TransferStep where
   | moveSeries
   deriving DecidableEq
 
-/-- An authorized transfer changes all versions and the head in place, preserving identities, writer attribution and forgotten status. -/
+/-- Owner transfer admission steps, in order. -/
 def transferOrder : List TransferStep :=
   [.checkEntityKind, .refuseOwnPersonalDestination, .findVisibleSource, .authorizeSource, .authorizeDestination,
    .checkSchema, .refuseSameOwner, .applyVetoes, .resolveDestinationEmbeddings, .moveSeries]
@@ -459,13 +372,5 @@ inductive TransferFence where
 /-- A stale capture cannot transfer a replacement series at the same handle. -/
 def capturedTransfer : List TransferFence :=
   [.lockBothOwners, .lockSeriesVersions, .requireSelectedVersion, .compareHeadOwner]
-
-/-- The ownership outcomes of declared transfer surfaces. -/
-inductive SidecarTransfer where
-  /-- Move keyed data with its series under the destination owner. -/
-  | follows
-  /-- Export and erasure follow the row's own owner. Transfer and forget/restore skip the row. -/
-  | retainAtSource
-  deriving DecidableEq
 
 end Proxiima.OwnerAuthority

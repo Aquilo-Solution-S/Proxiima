@@ -93,7 +93,7 @@ inductive StatefulVersion where
   | olderReadable
   deriving DecidableEq
 
-/-- Natural-key prefix reads page the newest readable Fact per series, including a visible Goal publication or spiice tombstone. -/
+/-- Stateful reads select the latest readable version, including a tombstone. -/
 def statefulHeadVisible : StatefulVersion → Bool
   | .latestReadable | .latestReadableTombstone => true
   | .forgotten | .olderReadable => false
@@ -126,7 +126,7 @@ inductive InterpretationKeyField where
   | sortedRemoteSubjectHandles
   deriving DecidableEq
 
-/-- The handle hashes the local key and folds in sorted remote handles when present, so reasserting the same interpretation lands on one memory. -/
+/-- The ordered components of the deterministic interpretation handle. -/
 def interpretationKey : List InterpretationKeyField :=
   [.destinationNamespace, .operatorLabel, .claim, .confidence, .localSubjectVersions,
    .sortedRemoteSubjectHandles]

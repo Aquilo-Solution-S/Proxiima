@@ -111,7 +111,8 @@ theorem forwarding_role_no_goal_work (s : OwnerState) (p : ForwardingPolicy)
   obtain ⟨x, rfl⟩ := forwarding_role_capped s p r c o role h
   intro hw
   have := (Role.meet_capped x Role.forwardingCap).1 hw
-  simp [Role.worksGoals, Role.forwardingCap, Role.ofPreset, Proxiima.Authentication.forwardingCap] at this
+  simp [Role.worksGoals, Role.forwardingCap, Role.ofPreset, Proxiima.Authentication.forwardingCap,
+    Proxiima.OwnerAuthority.GoalAccess.canWork] at this
 
 /-- Owner-scoped Goal work authorization. -/
 def request_may_work_goals (s : OwnerState) (p : ForwardingPolicy) (r : User)

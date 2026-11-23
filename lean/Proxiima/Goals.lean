@@ -79,18 +79,8 @@ def stateLabel : GoalState → String
   | .Achieved => "Achieved"
   | .Abandoned => "Abandoned"
 
-/-- Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike. -/
-def blocksClose : GoalState → Bool
-  | .Active | .Paused => true
-  | .Achieved | .Abandoned => false
-
 /-- An abandoned child leaves the parent free to close. -/
-theorem not_achieve_needs_an_achieved_child : blocksClose .Abandoned = false := by decide
-
-/-- Whether close-Fact presence agrees exactly with terminal state. -/
-def closeFactPresence : GoalState → Bool → Bool
-  | .Achieved, true | .Abandoned, true | .Active, false | .Paused, false => true
-  | .Active, true | .Paused, true | .Achieved, false | .Abandoned, false => false
+theorem not_achieve_needs_an_achieved_child : GoalState.isOpen .Abandoned = false := by decide
 
 /-- The largest trimmed Goal title in characters. -/
 def titleMax : Nat := 240
@@ -152,7 +142,7 @@ inductive ReplayAction where
   | conflict
   deriving DecidableEq
 
-/-- After authority, exact replay returns the original before mutable targets and creates no second write. -/
+/-- Fresh requests enter admission, exact replays return the original, and differing or undeclared requests conflict. -/
 def requestReplay : RequestMatch → ReplayAction
   | .fresh => .freshAdmission
   | .exact => .returnOriginal
@@ -218,7 +208,7 @@ inductive AdmissionStep where
   | revalidateTargets
   deriving DecidableEq
 
-/-- Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head. -/
+/-- Goal revision persistence steps, in order. -/
 def admissionOrder : List AdmissionStep :=
   [.fenceOwners, .reserveFactIdentity, .lockMemoryHandles, .lockLifecycleUnion,
    .lockGoalHeads, .revalidateTargets]
@@ -230,7 +220,7 @@ inductive ChangeFactAdmission where
   | missingStamp
   deriving DecidableEq
 
-/-- A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction. -/
+/-- A listenable fresh revision emits a change Fact when stamped and is refused without a stamp. -/
 def publishChangeFact : (listenable : Bool) → (stamped : Bool) → ChangeFactAdmission
   | false, false | false, true => .skip
   | true, false => .missingStamp
@@ -266,7 +256,7 @@ def editSpaceMatches : (explicitSpace : Bool) → (sameOwner : Bool) → Bool
   | false, false | false, true | true, true => true
   | true, false => false
 
-/-- Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter. -/
+/-- Goal queries select every state when the filter is omitted, otherwise the union of the supplied labels. -/
 def stateFilter : (filterOmitted : Bool) → (inCanonicalSet : Bool) → Bool
   | true, false | true, true | false, true => true
   | false, false => false
@@ -275,8 +265,5 @@ def stateFilter : (filterOmitted : Bool) → (inCanonicalSet : Bool) → Bool
 def recallActiveGoal : (hasMotivation : Bool) → (perspectiveMatches : Bool) → Bool
   | false, true | false, false | true, true => true
   | true, false => false
-
-/-- A Goal remains owned by its original owner throughout its series. -/
-def transferGoal : Bool := false
 
 end Proxiima.Goals

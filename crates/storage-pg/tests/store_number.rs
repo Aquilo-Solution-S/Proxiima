@@ -6,8 +6,6 @@ use proxiima_storage_pg::test_fixtures::create_core_db;
 use proxiima_storage_pg::{PgMigrationStorage, PgPlatformScope, PgPoolConfig, PgStorage, PgTuning};
 use uuid::Uuid;
 
-const STORE_NUMBER_MIN: i32 = proxiima_core::ledger!(Proxiima.Identity.storeNumberMin);
-const STORE_NUMBER_MAX: i32 = proxiima_core::ledger!(Proxiima.Identity.storeNumberMax);
 const UUID_TIMESTAMP_BITS: usize = proxiima_core::ledger!(Proxiima.Identity.uuidTimestampBits);
 
 fn draft() -> FactWriteCommand {
@@ -34,12 +32,9 @@ fn draft() -> FactWriteCommand {
 async fn assert_store_number_bounds(
     scope: &PgPlatformScope,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (number, allowed) in [
-        (STORE_NUMBER_MIN - 1, false),
-        (STORE_NUMBER_MIN, true),
-        (STORE_NUMBER_MAX, true),
-        (STORE_NUMBER_MAX + 1, false),
-    ] {
+    let min = i32::from(u16::MIN);
+    let max = i32::from(u16::MAX);
+    for (number, allowed) in [(min - 1, false), (min, true), (max, true), (max + 1, false)] {
         let mut tx = scope.begin().await?;
         let result =
             sqlx::query("INSERT INTO proxiima_core.store_identity (store_number) VALUES ($1)")
@@ -49,7 +44,7 @@ async fn assert_store_number_bounds(
         if allowed {
             result?;
         } else {
-            let error = result.expect_err("number outside the ledger range must be refused");
+            let error = result.expect_err("number outside the u16 range must be refused");
             assert_eq!(
                 error
                     .as_database_error()

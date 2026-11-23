@@ -39,7 +39,6 @@ jobs:
       release: ${{ steps.paths.outputs.release }}
       all: ${{ steps.paths.outputs.all }}
     steps:
-      # `Proxiima.Repository.WorkflowPin`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # dorny/paths-filter@v4
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
@@ -68,7 +67,6 @@ jobs:
         with:
           # Only main verification saves Rust caches.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # `Proxiima.Repository.RustLane`.
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
@@ -172,7 +170,7 @@ jobs:
     steps:
       # actions/checkout@v7
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # `Proxiima.Repository.ImageEvidence`.
+      # Build without publishing and check the version and revision labels.
       - name: build image
         run: |
           docker build \
@@ -208,7 +206,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-      # `Proxiima.Repository.ObjectFixture`. RustFS is available under Apache-2.0.
+      # Use a versioned bucket for object integration tests. RustFS is available under Apache-2.0.
       s3:
         image: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
         env:
@@ -217,7 +215,6 @@ jobs:
         ports:
           - 9000:9000
     env:
-      # `Proxiima.Repository.PostgresFixture`.
       PROXIIMA_TEST_PG_URL: postgres://proxiima:proxiima@localhost:5432/proxiima
       PROXIIMA_S3_ENDPOINT_URL: http://localhost:9000
       PROXIIMA_S3_BUCKET: proxiima-cited-blobs
@@ -273,7 +270,6 @@ jobs:
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
           tool: nextest
-      # `Proxiima.Repository.TestFeatureLane`.
       - name: build
         run: cargo build --workspace --all-targets --all-features --locked
       - name: test
@@ -379,8 +375,7 @@ jobs:
         with:
           tool: nextest
       - name: test through pgbouncer, each binary through the pooler
-        # `Proxiima.Repository.PoolerVerification`. A binary that silently connected
-        # directly would pass without exercising PgBouncer, so each one must log in through it.
+        # Check that each selected test binary logs in through PgBouncer.
         run: |
           log="$RUNNER_TEMP/pgbouncer/pgbouncer.log"
           logins() { grep -c 'login attempt:' "$log" || true; }

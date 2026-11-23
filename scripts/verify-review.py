@@ -53,7 +53,7 @@ class Repo:
         return out.decode("utf-8", errors="replace")
 
 
-# `Proxiima.Repository.ReviewAddress`.
+# Compare only the final angle-bracket address, case-insensitively.
 def address(value: str) -> str | None:
     found = TRAILING_ADDRESS.search(value)
     return found.group(1).lower() if found else None

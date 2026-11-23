@@ -1833,11 +1833,6 @@ stateDiagram-v2
 - erased
 - redacted
 
-**Erased target**: A historical witness stores only the exact version identity and its kind.
-
-- version
-- kind
-
 **Provenance**: The origin or subject declaration a schema contributes to ancestor traversal.
 
 - undeclared
@@ -1845,7 +1840,7 @@ stateDiagram-v2
 - payloadOnly
 - none
 
-**Page key**: The continuation key for a pin page, compared newest first and exclusive of the cursor.
+**Page key**: The components of a pin-page continuation key.
 
 - sourceTime
 - sourceId
@@ -1865,13 +1860,11 @@ stateDiagram-v2
 
 **grounding fields** = \[origins, refs]: Local storage fields that can ground a derived Memory, per `Causa.GroundsInFact`.
 
-**pin order** = \[origin, reference, read]: Pin projection groups kinds in this order and preserves field order within each kind.
+**pin order** = \[origin, reference, read]: The order of pin kinds in a projection.
 
 **local descendant kinds** = \[origin, read]: Local descendant traversal follows origins and read context.
 
 **page key** = \[sourceTime, sourceId, targetId, kind]: The pin page key in comparison order.
-
-**default neighbor expansion** = no: Whether neighbor edges are expanded when the request omits the flag.
 
 **external replay kinds** = \[origin, reference]: The pin kinds compared for external-edge replay.
 
@@ -1938,7 +1931,7 @@ stateDiagram-v2
 | payloadOnly | \[reference, read] |
 | none | \[read] |
 
-- local ancestor kinds: Local ancestor edge kinds by schema provenance; payload references are limited to declared subject fields.
+- local ancestor kinds: Local ancestor pin kinds by schema provenance.
 
 | origin | reference | fork anchor | keep read pin |
 | --- | --- | --- | --- |
@@ -3251,21 +3244,18 @@ stateDiagram-v2
 
 **operator authorship** = "system\_operator": Operators use their authorship category in the durable command and its replay identity.
 
-**admission order** = \[fenceOwners, reserveFactIdentity, lockMemoryHandles, lockLifecycleUnion, lockGoalHeads, revalidateTargets]: Goal revision persistence reserves lifecycle Facts before locking the sorted Memory and lifecycle sets and comparing the prepared head.
+**admission order** = \[fenceOwners, reserveFactIdentity, lockMemoryHandles, lockLifecycleUnion, lockGoalHeads, revalidateTargets]: Goal revision persistence steps, in order.
 
-**transfer goal** = no: A Goal remains owned by its original owner throughout its series.
-
-| goal state | is open | terminal | state label | blocks close |
-| --- | --- | --- | --- | --- |
-| Active | yes | no | "Active" | yes |
-| Paused | yes | no | "Paused" | yes |
-| Achieved | no | yes | "Achieved" | no |
-| Abandoned | no | yes | "Abandoned" | no |
+| goal state | is open | terminal | state label |
+| --- | --- | --- | --- |
+| Active | yes | no | "Active" |
+| Paused | yes | no | "Paused" |
+| Achieved | no | yes | "Achieved" |
+| Abandoned | no | yes | "Abandoned" |
 
 - is open: Whether the series can take another version.
 - terminal: Whether a Goal version requires a close Fact and ends its series.
 - state label: The label projected on Goal reads.
-- blocks close: Whether a sub-goal in this state keeps its parent from closing, achieved or abandoned alike.
 
 **lifecycle**: Admission by existing head state, returning the new version state or the new child state for decomposition.
 
@@ -3312,19 +3302,6 @@ stateDiagram-v2
 | Abandoned | achieve | refused: wrongState |
 | Abandoned | abandon | refused: wrongState |
 
-| goal state | bool | close fact presence |
-| --- | --- | --- |
-| Active | yes | no |
-| Active | no | yes |
-| Paused | yes | no |
-| Paused | no | yes |
-| Achieved | yes | yes |
-| Achieved | no | no |
-| Abandoned | yes | yes |
-| Abandoned | no | no |
-
-- close fact presence: Whether close-Fact presence agrees exactly with terminal state.
-
 | event | prompt revision | parent revision | may declare evidence | change fields |
 | --- | --- | --- | --- | --- |
 | set | replace | replace | yes | plain |
@@ -3348,7 +3325,7 @@ stateDiagram-v2
 | different | conflict |
 | missingDeclaration | conflict |
 
-- request replay: After authority, exact replay returns the original before mutable targets and creates no second write.
+- request replay: Fresh requests enter admission, exact replays return the original, and differing or undeclared requests conflict.
 
 | decompose replay | decompose replay |
 | --- | --- |
@@ -3384,7 +3361,7 @@ stateDiagram-v2
 | no | yes | skip |
 | no | no | skip |
 
-- publish change fact: A listenable fresh revision requires a stamp and emits its change Fact after the Goal in the same transaction.
+- publish change fact: A listenable fresh revision emits a change Fact when stamped and is refused without a stamp.
 
 | trimmed display length | display admitted |
 | --- | --- |
@@ -3410,7 +3387,7 @@ stateDiagram-v2
 | no | yes | yes |
 | no | no | no |
 
-- state filter: Goal queries select all states when the filter is omitted and otherwise select the union of supplied labels. The resource accepts comma-separated case-insensitive labels, refuses empty members and binds the canonical set into its cursor. Other streams ignore the filter.
+- state filter: Goal queries select every state when the filter is omitted, otherwise the union of the supplied labels.
 
 | has motivation | perspective matches | recall active goal |
 | --- | --- | --- |
@@ -3551,11 +3528,6 @@ stateDiagram-v2
 
 ## Identity
 
-**Series and version**: A series keeps its handle as later admissions append with immutable, time-ordered IDs.
-
-- handle
-- t
-
 **Embeddable entity**: An embedding uses a Memory ID with its layer, or a Goal ID.
 
 - memory
@@ -3588,7 +3560,7 @@ stateDiagram-v2
 **Writer attribution**: An admission stores the attested writer separately from its owner and credential subject.
 
 - by: The attested principal UUID.
-- via: An attested caller UUID or null for a direct write, always present on serialized reads.
+- via: An optional attested caller UUID.
 
 **Writer event**: Events that capture or retain writer attribution.
 
@@ -3604,7 +3576,7 @@ stateDiagram-v2
 - attested
 - stored
 
-**Owner scoped content**: Owner, schema and hash key immutable Content inserted or reused under admission-scoped visibility. Admissions can share Content while retaining distinct admission identities.
+**Owner scoped content**: The owner, schema and hash that key Content.
 
 - owner
 - schema
@@ -3643,7 +3615,7 @@ stateDiagram-v2
 - fits
 - overflow
 
-**Mint refusal**: A mint that exceeds the timestamp range leaves the generator unchanged.
+**Mint refusal**: The refusal of a timestamp outside the admission ID range.
 
 - timestampOverflow
 
@@ -3665,15 +3637,11 @@ stateDiagram-v2
 - requireMigration
 - refuseMismatch
 
-**receipt fields** = \[source, owner, payload]: A Fact receipt is a 32-byte BLAKE3 digest of source, owner UUID bytes and schema receipt payload separated by zero bytes.
+**receipt fields** = \[source, owner, payload]: The ordered components of a Fact receipt digest.
 
 **uuid timestamp bits** = 48: Timestamp width in the time-ordered UUIDv8 layout, in milliseconds since the Unix epoch.
 
 **uuid counter bits** = 12: Counter width in the time-ordered UUIDv8 layout.
-
-**store number min** = 0: Smallest host-assigned store number in an admission UUID.
-
-**store number max** = 65535: Largest 16-bit host-assigned store number in an admission UUID.
 
 | memory | goal | erased | admission id available |
 | --- | --- | --- | --- |
@@ -3693,7 +3661,7 @@ stateDiagram-v2
 | memory | \[handle, owner, schema, kind] |
 | goal | \[handle, owner, schema] |
 
-- series contract: Versions align with their series head via `goal_schema_head_alignment` for Goals. Memory accepts intermediate images allowed by `schema_evolution_intermediate_memory_image_permits`.
+- series contract: The fields shared by the versions and head of each series kind.
 
 | schema record | schema authority |
 | --- | --- |
@@ -3834,7 +3802,7 @@ stateDiagram-v2
 
 **confidence default** = 80: The interpretation confidence used when the tool receives no score.
 
-**interpretation key** = \[destinationNamespace, operatorLabel, claim, confidence, localSubjectVersions, sortedRemoteSubjectHandles]: The handle hashes the local key and folds in sorted remote handles when present, so reasserting the same interpretation lands on one memory.
+**interpretation key** = \[destinationNamespace, operatorLabel, claim, confidence, localSubjectVersions, sortedRemoteSubjectHandles]: The ordered components of the deterministic interpretation handle.
 
 | entity kind | memory kind |
 | --- | --- |
@@ -3885,7 +3853,7 @@ stateDiagram-v2
 | forgotten | no |
 | olderReadable | no |
 
-- stateful head visible: Natural-key prefix reads page the newest readable Fact per series, including a visible Goal publication or spiice tombstone.
+- stateful head visible: Stateful reads select the latest readable version, including a tombstone.
 
 | operator phase | entity kind | operator admits input |
 | --- | --- | --- |
@@ -5011,11 +4979,6 @@ stateDiagram-v2
 - current
 - ownerUuid
 
-**Space default**: The owner selected when a tool omits its space argument.
-
-- current: The session-bound owner.
-- identity: The request's authenticated principal owner.
-
 **Space write step**: Write selection resolves the space and narrows to its owner before the concrete verb checks its own authority.
 
 - resolve
@@ -5037,11 +5000,6 @@ stateDiagram-v2
 - unregistered
 - registered
 
-**Owner spine**: The spine selected for a stored entity's owner probe.
-
-- memory
-- goal
-
 **Group forest invariant**: The invariants checked when an edge is written to the group forest.
 
 - singleParent: A subgroup has at most one parent.
@@ -5055,12 +5013,6 @@ stateDiagram-v2
 - registeredOwnerKind
 - containment
 
-**Membership read**: The available membership read shapes.
-
-- direct: Written relations and the parent edge, from the caller's snapshot.
-- fencedEffective: Current roles compose upward under `Causa.Group.mount` and `Causa.Group.union`. Fenced person reads require a person.
-- unitSubject: A host-state unit reads and fences only its own authenticated subject, who must be a person.
-
 **Authority fence step**: The steps that protect a declared membership authority footprint in a caller-owned read-committed transaction.
 
 - lockGroupTrees
@@ -5068,11 +5020,6 @@ stateDiagram-v2
 - lockOwnerKinds
 - lockPersonProjections
 - verifyDirectGroupRoots: Re-read direct groups and refuse any root outside the locked footprint.
-
-**Membership endpoint**: Engine group edits carry authority for both endpoints while storage resolves member kind under the tree fence.
-
-- parent: Recheck a named caller's management after locking when the parent has stored managers.
-- member: Detach under the subgroup's admission when the request is authorized on that endpoint.
 
 **Membership change**: The closed effects of group membership administration.
 
@@ -5089,7 +5036,7 @@ stateDiagram-v2
 - bothGroups: Administration and management on the parent, and management on the subgroup.
 - eitherGroup: Administration and management on the selected endpoint, with the parent tried first.
 
-**Member page key**: A membership cursor orders by member ID then relation and resumes strictly after that pair.
+**Member page key**: The components of a member-page cursor.
 
 - memberId
 - relation
@@ -5101,39 +5048,16 @@ stateDiagram-v2
 - hostVeto
 - observe
 
-**Owner access rule**: Owner roles give ordinary access to the whole owning scope, and the owner resolver is separate from Goal audience grants.
-
-- roleOfOwner: Every Memory series and Goal has one durable owner, resolved to the caller's role for that owner.
-- memoryCeilings: Direction-specific ceilings bound memory reads and writes, including in storage, independently of Goal work and administration.
-- exactWriteCeiling: A write by exact ID cannot reveal a row above the write ceiling.
-- sidecarScan: Readable owners can prefilter a sidecar scan. No authority yields a refusal, and an all-vetoed set is empty.
-
 **Goal work path**: The request paths with different owner Goal-work requirements.
 
 - hostBearer
 - delegated
 - system
 
-**Owner read**: The read gate's treatment of a candidate owner's stored identity.
-
-- set: Veto each candidate once at Fact-read standing and let storage apply the actual kind ceiling.
-- exact: Veto the stored owner for the actual kind. Absent, unreadable and vetoed targets have the same public absence.
-
-**Owner resolution**: The authority used to interpret an entity's bare owner reference.
-
-- personal: The principal's own ID has a derived singleton role and refuses a resolver override.
-- group: A fresh full group membership resolution replaces the prior role.
-- eagerGroupLookup: The default single-group lookup uses the host's eager map, where an absent role grants no access.
-
 **Owner list key**: Owner lists put the subject's owner first and then sort by owner ID.
 
 - personalFirst
 - ownerId
-
-**Default owner rule**: A selected default must already be in scope and explicit narrowing clears the default.
-
-- selectAccessibleOwner
-- clearOnNarrow
 
 **Scope restriction**: Restrictions that keep a scoped role grant from widening.
 
@@ -5195,34 +5119,23 @@ stateDiagram-v2
 - requireSelectedVersion
 - compareHeadOwner
 
-**Sidecar transfer**: The ownership outcomes of declared transfer surfaces.
-
-- follows: Move keyed data with its series under the destination owner.
-- retainAtSource: Export and erasure follow the row's own owner. Transfer and forget/restore skip the row.
-
-**memory ceiling ranks** = \[0, 1, 2, 3]: Memory ceiling ranks in declaration order for Rust.
-
-**goal access ranks** = \[0, 1, 2]: Goal capability ranks in declaration order for Rust.
-
-**owner id bytes** = 36: The hyphenated owner UUID's length in bytes.
-
 **current space key** = "current": The key selecting the session's current memory space.
 
 **space write order** = \[resolve, narrow, authorizeVerb]: The admission order of a write into a selected space.
 
-**group forest** = \[singleParent, distinctEndpoints, acyclic]: Multiple children and arbitrary nesting depth are allowed under these group edge invariants.
+**group forest** = \[singleParent, distinctEndpoints, acyclic]: The invariants of a group containment edge.
 
 **authority facts** = \[currentPersonRole, directRelations, registeredOwnerKind, containment]: An authority session fences the declared targets before returning role, registry and topology facts.
 
-**authority fence order** = \[lockGroupTrees, verifyRoots, lockOwnerKinds, lockPersonProjections, verifyDirectGroupRoots]: The group authority locks persist through transaction completion and footprint drift requires retrying the transaction.
+**authority fence order** = \[lockGroupTrees, verifyRoots, lockOwnerKinds, lockPersonProjections, verifyDirectGroupRoots]: Membership authority fence steps, in order.
 
-**member page order** = \[memberId, relation]: The ordered key of a member page, with one excess row read to detect continuation.
+**member page order** = \[memberId, relation]: The ordered key of a member page.
 
-**owner gate order** = \[resolve, checkEffect, hostVeto, observe]: One optional resolver precedes the role gate. Hooks veto in registration order and observers receive the outcome.
+**owner gate order** = \[resolve, checkEffect, hostVeto, observe]: Owner gate steps, in order.
 
 **owner list order** = \[personalFirst, ownerId]: Ordering across read, write and Goal owner lists.
 
-**transfer order** = \[checkEntityKind, refuseOwnPersonalDestination, findVisibleSource, authorizeSource, authorizeDestination, checkSchema, refuseSameOwner, applyVetoes, resolveDestinationEmbeddings, moveSeries]: An authorized transfer changes all versions and the head in place, preserving identities, writer attribution and forgotten status.
+**transfer order** = \[checkEntityKind, refuseOwnPersonalDestination, findVisibleSource, authorizeSource, authorizeDestination, checkSchema, refuseSameOwner, applyVetoes, resolveDestinationEmbeddings, moveSeries]: Owner transfer admission steps, in order.
 
 **captured transfer** = \[lockBothOwners, lockSeriesVersions, requireSelectedVersion, compareHeadOwner]: A stale capture cannot transfer a replacement series at the same handle.
 
@@ -5298,7 +5211,7 @@ stateDiagram-v2
 | viewer | "viewer" |
 | ingest | "ingest" |
 
-- relation label: Relation labels are stored lowercase and parsed without ASCII case distinctions.
+- relation label: The lowercase storage label of a membership relation.
 
 | member add relation | member add relation |
 | --- | --- |
@@ -5330,15 +5243,6 @@ stateDiagram-v2
 | registered (group) | createGroup | group |
 
 - register owner: The first owner registration fixes the kind. Explicit group creation refuses a personal ID.
-
-| embeddable entity | owner spine |
-| --- | --- |
-| memory (Fact) | memory |
-| memory (Abstraction) | memory |
-| memory (Perspective) | memory |
-| goal | goal |
-
-- owner spine: A typed owner probe searches only the spine for its entity kind.
 
 | membership change | owner kind | membership consent |
 | --- | --- | --- |
@@ -6727,12 +6631,6 @@ stateDiagram-v2
 
 ## Repository
 
-**Cla event**: An outside contribution uses the CLA assistant on a new, reopened or updated main pull request, subject to its configured exemptions.
-
-- opened
-- reopened
-- synchronize
-
 **Changed paths**: Evidence used to decide which validation lanes run.
 
 - relevant
@@ -6744,91 +6642,17 @@ stateDiagram-v2
 - contentsRead
 - pullRequestsRead
 
-**Rust lane**: Rust validation checks format, both feature lanes for Clippy, warning-free Rustdoc and workspace doctests.
-
-- format
-- allFeaturesClippy
-- defaultClippy
-- rustdoc
-- doctest
-
-**Test feature lane**: Rust tests exercise the all-feature workspace and the default substrate host, running both lanes with `--run-ignored all`.
-
-- allFeaturesWorkspace
-- defaultSubstrateHost
-
-**Public documentation**: The public guide publishes the configured navigation and Mermaid diagrams and excludes local planning pages.
-
-- configuredNavigation
-- mermaidFences
-- excludePlanningPages
-
-**Issue entry point**: The repository offers a blank issue and routes contribution and security reports to the documented entry points.
-
-- blankIssue
-- securityPolicy
-- contributionGuide
-
 **Documentation lane**: The docs jobs and when they run.
 
 - markdownLinks
 - mkdocs
 - leanLedger
 
-**Markdown link refusal**: A local Markdown target must exist, a heading reference must resolve and a site link must stay within the docs directory.
-
-- missingTarget
-- missingHeading
-- escapesDocs
-- siteDirectoryTarget
-
-**Image evidence**: Validation builds the production-shaped image without publishing it and compares both OCI labels with the version and commit it tested.
-
-- build
-- workspaceVersion
-- testedRevision
-
-**Workflow pin**: The immutable references for third-party code selected by CI.
-
-- actionCommit
-- serviceImageDigest
-
-**Postgres fixture**: PostgreSQL tests use a disposable pgvector server with reduced durability and an explicit admin endpoint.
-
-- pgvector
-- explicitAdmin
-- disposableDurability
-
-**Object fixture**: Object integration tests use a versioned fixture bucket and separately probe the HTTP listener.
-
-- httpListenerResponds
-- versionedBucket
-- selectedObjectTests
-
 **Postgres fixture client**: What uses the test pooler when it is configured.
 
 - serving
 - migration
 - admin
-
-**Pooler verification**: The pooler lane checks its package signing key and version floor, exercises SCRAM and startup settings, and requires every selected test binary to log in through the pooler.
-
-- packageKey
-- versionFloor
-- scram
-- startupSettings
-- dedicatedSuites
-- hostBoot
-
-**Verification target**: Verify uses the selected main event's commit and serializes runs without cancelling work already in flight.
-
-- mainPush
-- mainDispatch
-
-**Review address**: Review and co-author records use a final angle-bracket address compared case-insensitively.
-
-- trailingAddress
-- malformed
 
 **Verified ref**: The references that move together to the tested commit after CI and review pass.
 
@@ -6841,11 +6665,6 @@ stateDiagram-v2
 - skip
 - tagAndPublish
 
-**Version source**: Cargo workspace members inherit the workspace version, which the server reports from its build metadata.
-
-- workspaceManifest
-- cargoPackageVersion
-
 **Version step**: The candidate's stable SemVer relationship to the canonical released tags fetched by CI.
 
 - initial
@@ -6854,56 +6673,6 @@ stateDiagram-v2
 - nextMinor
 - nextMajor
 - invalid
-
-**Release notes**: Release notes are rendered by git-cliff from Conventional Commits and are previewable offline.
-
-- groupConventionalCommits
-- omitConfiguredCategories
-- renderOfflineLinks
-- publishGitHubRelease
-
-**Workspace lint**: Build-time workspace lint policy inherited by its Rust member crates.
-
-- denyWarnings
-- denyUnsafe
-- denyMissingDebug
-- denyPedantic
-- allowNamedExceptions
-
-**Test dependency**: Test-only schema and manifest helpers are dev dependencies, and the example dependency graph checks the SDK boundary.
-
-- boon
-- toml
-- exampleSdkBoundary
-
-**Crypto provider**: The selected TLS and JWT provider is AWS-LC and the object backend uses regional SigV4.
-
-- awsLcTls
-- awsLcJwt
-- regionalSigV4
-
-**Release profile**: The release Cargo profile uses thin LTO, one codegen unit, stripping and optimized build scripts.
-
-- thinLto
-- singleCodegenUnit
-- strip
-- optimizeBuildScripts
-
-**Image build**: The image builds the default substrate binary under the workspace compiler and lockfile, using matching Debian libraries and a non-root runtime.
-
-- substrateBinary
-- workspaceCompiler
-- lockedDependencies
-- httpsPackageSources
-- matchingDebianLibraries
-- nonrootUser
-
-**Dependency check**: Dependency policies run on dependency changes, with a separate scheduled and manual advisory check.
-
-- advisories
-- licenses
-- bans
-- sources
 
 **Dependency input**: Dependency input selected for the repository's allow or refuse decision.
 
@@ -6925,106 +6694,17 @@ stateDiagram-v2
 - warn
 - deny
 
-**Loopback fixture**: The disposable development services expose configurable ports on loopback.
-
-- postgres
-- objectStore
-
-**Core fixture**: Shared core test fixtures are exported only in tests or with the testkit feature and use the public authentication and tool-context entry points.
-
-- sealedAuthentication
-- ordinaryToolContext
-
 **Admin configuration**: What the test database harness does when its only admin URL setting is present or absent.
 
 - connect
 - skip
 - refuse
 
-**Clone name part**: Each clone name carries a UUIDv7, with the prefix truncated to fit PostgreSQL's identifier limit.
-
-- boundedPrefix
-- uuidV7
-
 **Clone disposition**: The guard's decision on an isolated tracked test clone.
 
 - drop
 - keep
 - keepWithRedactedDiagnostic
-
-**Clone registration**: Failed registration attempts cleanup and reports a cleanup failure. Fixture-named survivors can be swept without a record.
-
-- track
-- cleanUpAfterFailure
-- reportCleanupFailure
-
-**Template family rule**: A custom template uses a valid bounded prefix disjoint from built-in and staging families and owns only names with its exact hexadecimal suffix.
-
-- boundedPrefix
-- noReservedOverlap
-- exactHashSuffix
-
-**Template lifecycle**: A validated test template is staged under a build lock, published only on success and leased until its clone exists.
-
-- lockBuild
-- buildStaging
-- publishSuccess
-- cleanUpFailure
-- leaseThroughClone
-- collectIdlePrevious
-
-**Template fingerprint input**: The validated host lineup and its length-framed inputs define its template fingerprint.
-
-- hostFingerprint
-- vectorStorageKind
-- definitions
-- release
-- storeNumber
-- searchDefinitions
-- migrationSources
-- spiiceSchemas
-- followsTables
-
-**Clone role**: A split-role clone runs migrations as platform and serves through a non-owning runtime role subject to owner row security.
-
-- platformMigration
-- scopedRuntime
-
-**Trigger fixture refusal**: The spiice trigger test refuses a failed registration, an empty artifact set or a generated artifact absent from its migrations.
-
-- invalidRegistration
-- emptyArtifacts
-- missingArtifact
-
-**Connection diagnostic**: Connection exhaustion diagnostics use the admin connection to describe the server's connection budget.
-
-- exhaustionClassification
-- adminConnectionBudget
-
-**Dev issuer input**: The development issuer admits a loopback bind and nonblank normalized subject and audience.
-
-- loopbackBind
-- fixedPort
-- nonblankSubject
-- nonblankAudience
-- subjectDerivedUser
-
-**Dev signer**: The development issuer loads a persisted signer, links a whole private key into place when the file is missing, reads the winning file after a link conflict, or uses an in-memory signer in ephemeral mode.
-
-- loadExisting
-- createExclusively
-- loadConcurrentWinner
-- ephemeral
-
-**Dev claims**: The development issuer publishes one RSA JWK and signs timed RS256 claims, refusing clocks before the Unix epoch.
-
-- rsaJwk
-- rs256
-- issuer
-- audience
-- subject
-- expiry
-- validEpoch
 
 **clone grace seconds** = 300: Minimum age in seconds for stale test clones considered by the sweeper.
 
@@ -7046,7 +6726,7 @@ stateDiagram-v2
 | unrelated | no |
 | unknown | yes |
 
-- validate lane: Stable required job names are present on main pull requests, and an unknown diff runs the affected lanes.
+- validate lane: Relevant and unknown diffs run the lane.
 
 | detect changes | validation grants |
 | --- | --- |
@@ -7191,7 +6871,7 @@ stateDiagram-v2
 | no | yes | no |
 | no | no | no |
 
-- stale clone collectible: The sweeper considers stale tracked and fixture-named untracked clones and lets PostgreSQL recheck for live clients at deletion.
+- stale clone collectible: Only stale clones without live clients are collectible.
 
 | lease available | live client | collect template |
 | --- | --- | --- |
@@ -8433,7 +8113,7 @@ Causa — Goals
 
 **Goal**
 
-- Premise **terminal close fact**: `Proxiima.Goals.closeFactPresence`.
+- Premise **terminal close fact**: `Proxiima.Goals.GoalState.terminal`.
 - Premise **text nonblank**: ∀ (s : Causa.Text), text = some s → Causa.GoalTextNonblank s
 
 **Goal forest inv**
@@ -8538,6 +8218,8 @@ Causa — Memory
 ✓ **purge retry delay saturates** (axioms: `propext`, `Quot.sound`): Additional failures past the exponent cap do not increase the delay.
 
 Causa — Operators
+
+✓ **operator inputs are origin targets** (axioms: `propext`): Memory operators admit exactly the origin target kinds of their output layer.
 
 **Invocation shape valid**
 

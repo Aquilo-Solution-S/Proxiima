@@ -737,7 +737,8 @@ pub(crate) async fn resolve_goal_command_replay_on(
     }
 }
 
-/// `Proxiima.Goals.requestReplay`.
+/// `Proxiima.Goals.requestReplay`. Resolve after authority and before checking
+/// mutable targets. An exact replay returns the original without a second write.
 pub(super) async fn resolve_goal_replay(
     conn: &mut PgConnection,
     owner: &OwnerId,

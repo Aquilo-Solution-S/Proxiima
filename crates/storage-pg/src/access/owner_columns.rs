@@ -979,7 +979,6 @@ pub(crate) async fn home_owner<'e>(
     // `visible_home_owner`. A union over both spines on the bare uuid lets a
     // caller relabel a Memory as a Goal (or vice versa) and resolve the owner
     // space off the wrong spine, so each arm asks its own spine only.
-    // `Proxiima.OwnerAuthority.ownerSpine`.
     let row: Option<uuid::Uuid> = match entity {
         EntityId::Memory(memory_id) => {
             sqlx::query_scalar(
