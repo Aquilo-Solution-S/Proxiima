@@ -1173,6 +1173,54 @@ macro_rules! ledger {
     (Proxiima.Search.authorizedCandidateMax) => {
         2000
     };
+    // The shared character limit on tool and action titles.
+    (Proxiima.ToolSurface.maxTitleChars) => {
+        60
+    };
+    // The longest host tool name in characters.
+    (Proxiima.ToolSurface.maxHostToolNameChars) => {
+        128
+    };
+    // The longest host instructions contribution in characters.
+    (Proxiima.ToolSurface.maxHostInstructionsChars) => {
+        4096
+    };
+    // The recorded label when neither the authenticated caller nor the call names a model.
+    (Proxiima.ToolSurface.unknownOperator) => {
+        "unknown"
+    };
+    // The wire spelling of `Proxiima.Operations.ToolProfile.memory`.
+    (Proxiima.ToolSurface.memoryProfile) => {
+        "memory"
+    };
+    // The wire spelling of `Proxiima.Operations.ToolProfile.full`.
+    (Proxiima.ToolSurface.fullProfile) => {
+        "full"
+    };
+    // The reserved head of a resource scope key.
+    (Proxiima.ToolSurface.resourceKeyPrefix) => {
+        "resource"
+    };
+    // Canonical scope key for the synthesized usage guide.
+    (Proxiima.ToolSurface.guideScopeKey) => {
+        "resource:how-to"
+    };
+    // OpenAPI version with a fixed QUERY operation field.
+    (Proxiima.ToolSurface.openApiVersion) => {
+        "3.2.0"
+    };
+    // JSON Schema dialect embedded in the REST projection.
+    (Proxiima.ToolSurface.openApiSchemaDialect) => {
+        "https://json-schema.org/draft/2020-12/schema"
+    };
+    // Cache policy on caller-scoped REST responses and problem documents.
+    (Proxiima.ToolSurface.privateCacheControl) => {
+        "private, no-store"
+    };
+    // Canonical prefix of a problem type URI.
+    (Proxiima.ToolSurface.problemTypePrefix) => {
+        "https://proxiima.dev/errors/"
+    };
     // The loopback address supplied by the canonical MCP host.
     (Proxiima.Transport.canonicalBind) => {
         "127.0.0.1:31415"

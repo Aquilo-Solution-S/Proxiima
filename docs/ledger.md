@@ -7768,6 +7768,259 @@ stateDiagram-v2
 
 - retire configuration: The retirement routine may remove a non-default configuration without references.
 
+## Tool surface
+
+**Dispatch**: The vocabulary a registered tool uses to select an effect and scope key.
+
+- flat
+- taggedAction
+- argv
+
+**Effect source**: Whether an effect belongs to the tool itself or to its selected action.
+
+- tool
+- selectedAction
+
+**Flat argument step**: Operations on flat arguments and their successful result.
+
+- coerceSpaceAliases
+- applyUnknownFieldPolicy
+- deserialize
+- reportDroppedKeys
+
+**Tagged check**: The contract check on a registered tagged action.
+
+- actionDiscriminator
+- uniqueExactActionSet
+- matchingAllowedFields
+- matchingRequiredFields
+
+**Title check**: Checks on the presentation title of a tool or action.
+
+- nonempty
+- trimmed
+- noControlCharacters
+- withinCharacterLimit
+
+**Terminal input**: The input the registered terminal runs or refuses.
+
+- admitted: Run the scope gate's resolution for the unchanged tool, owner and arguments.
+- ungated: Resolve the arguments of an explicit ungated invocation.
+- refused: Refuse a call without a matching admission or explicit ungated invocation.
+
+**Key form**: The three canonical key forms that enter a tool scope.
+
+- tool
+- actionLeaf
+- resource
+
+**Key part check**: Distinct checks on a canonical key part.
+
+- nonempty
+- noSeparator
+- providerSafe
+
+**Title key**: Tool title lookup outcomes by key relation.
+
+- ownTool
+- declaredAction
+- unknownAction
+- foreignTool
+- resource
+
+**Call check**: Checks a request passes before entering the registered terminal.
+
+- rejectNul
+- deriveKey
+- recordKey
+- admitCapabilities
+- admitSelectedOwner
+
+**Listing check**: Independent checks for including a key in the caller's listed surface.
+
+- callerScope
+- servedSurface
+- ownerAccess
+- requestBehaviors
+
+**Access requirement**: Whether a call reads or may write and whether its write is Goal work.
+
+- read
+- goalWork
+- memoryWrite
+
+**Owner need**: The owner work a tool declares.
+
+- memory
+- goalWork
+
+**Replay**: Replay behavior of an action that may write.
+
+- idempotent
+- nonIdempotent
+
+**Effect**: Kinds of tool effect with replay behavior for writes.
+
+- readOnly
+- additive
+- destructive
+
+**Effect hints**: The MCP read, destructive and idempotent hints carried for an effect.
+
+- read only
+- destructive
+- idempotent
+
+**Reply**: The typed reply forms an entered tool can produce.
+
+- structured
+- content
+- failure
+- structuredFailure
+
+**Instruction source**: Text sources composing MCP instructions, in rendering order.
+
+- visibleSurface
+- boundedHostContribution
+
+**List change listener**: The listener types for tool-list changes.
+
+- initializedSession
+- selectedSubscription
+
+**List change step**: Owner-channel delivery steps for a tool-list change.
+
+- selectOwner
+- discardClosed
+- send
+- discardFailed
+
+**Catalog source**: The sources used when composing a host tools listing.
+
+- frozenRegistry
+- hostSource
+
+**Schema preparation**: The stages of preparing a derived registered tool schema.
+
+- deriveInput
+- inlineReferences
+- normalizeInputRoot
+- deriveOutputAsSerialized
+- validateOutputRoot
+
+**Action argument source**: The registered vocabulary entries an authorization leaf can resolve.
+
+- selectedTaggedFields
+- argvEnvelope
+- flatEnvelope
+
+**max title chars** = 60: The shared character limit on tool and action titles.
+
+**max host tool name chars** = 128: The longest host tool name in characters.
+
+**max host instructions chars** = 4096: The longest host instructions contribution in characters.
+
+**unknown operator** = "unknown": The recorded label when neither the authenticated caller nor the call names a model.
+
+**memory profile** = "memory": The wire spelling of `Proxiima.Operations.ToolProfile.memory`.
+
+**full profile** = "full": The wire spelling of `Proxiima.Operations.ToolProfile.full`.
+
+**resource key prefix** = "resource": The reserved head of a resource scope key.
+
+**guide scope key** = "resource:how-to": Canonical scope key for the synthesized usage guide.
+
+**open api version** = "3.2.0": OpenAPI version with a fixed QUERY operation field.
+
+**open api schema dialect** = "https://json-schema.org/draft/2020-12/schema": JSON Schema dialect embedded in the REST projection.
+
+**private cache control** = "private, no-store": Cache policy on caller-scoped REST responses and problem documents.
+
+**problem type prefix** = "https://proxiima.dev/errors/": Canonical prefix of a problem type URI.
+
+**flat arguments** = \[coerceSpaceAliases, applyUnknownFieldPolicy, deserialize, reportDroppedKeys]: Normalize aliases before judging fields; report dropped keys on a successful result.
+
+**tagged agreement** = \[actionDiscriminator, uniqueExactActionSet, matchingAllowedFields, matchingRequiredFields]: Freeze requires a unique, exact action set with matching allowed and required fields.
+
+**title checks** = \[nonempty, trimmed, noControlCharacters, withinCharacterLimit]: A title must be nonempty, trimmed, control-free and within the character limit.
+
+**key part checks** = \[nonempty, noSeparator, providerSafe]: Key parts must be nonempty and preserve their provider-safe spelling without the key separator.
+
+**call checks** = \[rejectNul, deriveKey, recordKey, admitCapabilities, admitSelectedOwner]: The shared request path rejects NUL before the gate and records the judged key before deciding.
+
+**listing checks** = \[callerScope, servedSurface, ownerAccess, requestBehaviors]: Listings intersect caller scope, deployment policy, owner access and behavior visibility.
+
+**instruction order** = \[visibleSurface, boundedHostContribution]: Generated instructions precede a bounded host contribution.
+
+**list change listeners** = \[initializedSession, selectedSubscription]: Sessions and selected subscriptions listen for tool-list changes.
+
+**list change delivery** = \[selectOwner, discardClosed, send, discardFailed]: A tool-list change addresses only its owner's live listeners and discards failed deliveries.
+
+**mcp catalog sources** = \[frozenRegistry, hostSource]: A tools listing draws from the frozen registry and the host tool source.
+
+**schema preparation** = \[deriveInput, inlineReferences, normalizeInputRoot, deriveOutputAsSerialized, validateOutputRoot]: Registration inlines input schemas, normalizes the MCP root and derives output for serialization.
+
+| dispatch | effect source | tool key form | action argument source |
+| --- | --- | --- | --- |
+| flat | tool | tool | flatEnvelope |
+| taggedAction | selectedAction | actionLeaf | selectedTaggedFields |
+| argv | selectedAction | actionLeaf | argvEnvelope |
+
+- effect source: Flat tools declare their own effect and dispatchers declare effects per action.
+- tool key form: A flat tool contributes its tool key and either dispatcher contributes action leaves.
+- action argument source: Registered argument validation selects fields from the action or the tool envelope.
+
+| dispatch | read only | tolerant fields allowed |
+| --- | --- | --- |
+| flat | yes | yes |
+| flat | no | no |
+| taggedAction | yes | no |
+| taggedAction | no | no |
+| argv | yes | no |
+| argv | no | no |
+
+- tolerant fields allowed: Only a flat tool that declares a read may opt into dropping unknown keys.
+
+| title key | title key admitted |
+| --- | --- |
+| ownTool | yes |
+| declaredAction | yes |
+| unknownAction | no |
+| foreignTool | no |
+| resource | no |
+
+- title key admitted: A title is available only for the tool's own key and its declared actions.
+
+| read only | owner need | owner requirement |
+| --- | --- | --- |
+| yes | memory | read |
+| yes | goalWork | read |
+| no | memory | memoryWrite |
+| no | goalWork | goalWork |
+
+- owner requirement: A read needs read access; other calls require the declared kind of owner work.
+
+| effect | replay of | effect hints |
+| --- | --- | --- |
+| readOnly | idempotent | read only: yes, destructive: —, idempotent: — |
+| additive (idempotent) | idempotent | read only: no, destructive: no, idempotent: yes |
+| additive (nonIdempotent) | nonIdempotent | read only: no, destructive: no, idempotent: no |
+| destructive (idempotent) | idempotent | read only: no, destructive: yes, idempotent: yes |
+| destructive (nonIdempotent) | nonIdempotent | read only: no, destructive: yes, idempotent: no |
+
+- replay of: Reads replay idempotently; writes use their declared replay behavior.
+- effect hints: Read annotations omit both write hints; write annotations carry destructive and replay hints.
+
+| reply | json reply | reply with output schema |
+| --- | --- | --- |
+| structured | yes | yes |
+| content | no | no |
+| failure | no | yes |
+| structuredFailure | no | no |
+
+- json reply: Only structured success can become a JSON-only answer.
+- reply with output schema: Which reply form a tool with an output schema may return successfully.
+
 ## Transport
 
 **Listener requirement**: Requirements for a configured serving address.

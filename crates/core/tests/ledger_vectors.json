@@ -47,6 +47,63 @@
  [{"out": "refuseEarly", "in": ["aboveLimit"]},
   {"out": "limitReads", "in": ["withinLimit"]},
   {"out": "limitReads", "in": ["unavailable"]}],
+ "Proxiima.ToolSurface.toolKeyForm":
+ [{"out": "tool", "in": ["flat"]},
+  {"out": "actionLeaf", "in": ["taggedAction"]},
+  {"out": "actionLeaf", "in": ["argv"]}],
+ "Proxiima.ToolSurface.tolerantFieldsAllowed":
+ [{"out": true, "in": ["flat", true]},
+  {"out": false, "in": ["flat", false]},
+  {"out": false, "in": ["taggedAction", true]},
+  {"out": false, "in": ["taggedAction", false]},
+  {"out": false, "in": ["argv", true]},
+  {"out": false, "in": ["argv", false]}],
+ "Proxiima.ToolSurface.titleKeyAdmitted":
+ [{"out": true, "in": ["ownTool"]},
+  {"out": true, "in": ["declaredAction"]},
+  {"out": false, "in": ["unknownAction"]},
+  {"out": false, "in": ["foreignTool"]},
+  {"out": false, "in": ["resource"]}],
+ "Proxiima.ToolSurface.replyWithOutputSchema":
+ [{"out": true, "in": ["structured"]},
+  {"out": false, "in": ["content"]},
+  {"out": true, "in": ["failure"]},
+  {"out": false, "in": ["structuredFailure"]}],
+ "Proxiima.ToolSurface.replayOf":
+ [{"out": "idempotent", "in": ["readOnly"]},
+  {"out": "idempotent", "in": [{"additive": ["idempotent"]}]},
+  {"out": "nonIdempotent", "in": [{"additive": ["nonIdempotent"]}]},
+  {"out": "idempotent", "in": [{"destructive": ["idempotent"]}]},
+  {"out": "nonIdempotent", "in": [{"destructive": ["nonIdempotent"]}]}],
+ "Proxiima.ToolSurface.ownerRequirement":
+ [{"out": "read", "in": [true, "memory"]},
+  {"out": "read", "in": [true, "goalWork"]},
+  {"out": "memoryWrite", "in": [false, "memory"]},
+  {"out": "goalWork", "in": [false, "goalWork"]}],
+ "Proxiima.ToolSurface.jsonReply":
+ [{"out": true, "in": ["structured"]},
+  {"out": false, "in": ["content"]},
+  {"out": false, "in": ["failure"]},
+  {"out": false, "in": ["structuredFailure"]}],
+ "Proxiima.ToolSurface.effectSource":
+ [{"out": "tool", "in": ["flat"]},
+  {"out": "selectedAction", "in": ["taggedAction"]},
+  {"out": "selectedAction", "in": ["argv"]}],
+ "Proxiima.ToolSurface.effectHints":
+ [{"out": {"readOnly": true, "idempotent": null, "destructive": null},
+   "in": ["readOnly"]},
+  {"out": {"readOnly": false, "idempotent": true, "destructive": false},
+   "in": [{"additive": ["idempotent"]}]},
+  {"out": {"readOnly": false, "idempotent": false, "destructive": false},
+   "in": [{"additive": ["nonIdempotent"]}]},
+  {"out": {"readOnly": false, "idempotent": true, "destructive": true},
+   "in": [{"destructive": ["idempotent"]}]},
+  {"out": {"readOnly": false, "idempotent": false, "destructive": true},
+   "in": [{"destructive": ["nonIdempotent"]}]}],
+ "Proxiima.ToolSurface.actionArgumentSource":
+ [{"out": "flatEnvelope", "in": ["flat"]},
+  {"out": "selectedTaggedFields", "in": ["taggedAction"]},
+  {"out": "argvEnvelope", "in": ["argv"]}],
  "Proxiima.Search.warnsOnLexicalDegradation":
  [{"out": false, "in": ["lexical", true, true]},
   {"out": false, "in": ["lexical", true, false]},
