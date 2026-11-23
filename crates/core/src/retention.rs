@@ -1,11 +1,7 @@
 //! Retention: how long one owner keeps one schema's memory
 //! (docs/data-and-erasure.md).
 //!
-//! One [`Retention`] row per owner and schema. Unset keeps for good, and
-//! nothing inherits: a group's row is its own. The row is set by whoever may
-//! erase that owner's memory by hand (`Engine::set_retention`), and the host's
-//! clock ages each series by its newest version's `occurred_at`, else its
-//! admission time ([`crate::verbs::own_erase::SeriesSelection::OccurredBefore`]).
+//! An unset policy keeps indefinitely. The host chooses when to apply it.
 
 use crate::{OwnerId, SchemaId};
 
@@ -16,8 +12,8 @@ use crate::{OwnerId, SchemaId};
 pub struct KeepDays(u16);
 
 impl KeepDays {
-    pub const MIN: u16 = 1;
-    pub const MAX: u16 = 36_500;
+    pub const MIN: u16 = crate::ledger!(Proxiima.ErasureExport.minKeepDays);
+    pub const MAX: u16 = crate::ledger!(Proxiima.ErasureExport.maxKeepDays);
 
     /// # Errors
     /// [`KeepDaysOutOfRange`] for a value outside `1..=36500`.

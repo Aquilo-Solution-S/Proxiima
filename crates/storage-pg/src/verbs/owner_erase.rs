@@ -540,6 +540,7 @@ async fn erase_selected(
 
     let content_ids = selected_content_ids(tx, owner, scope).await?;
     let memories = delete_selected_memories(tx, owner, scope).await?;
+    // `Proxiima.ErasureExport.contentCollectionOrder`.
     super::content::gc_unreferenced_content_batch(tx, &content_ids).await?;
     // The three deletes above and the Goal delete below repeat the
     // owner/source predicate as a backstop. Under the scope fence that

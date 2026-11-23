@@ -289,6 +289,38 @@ macro_rules! ledger {
     (Proxiima.Edges.finePinLockBudget) => {
         256
     };
+    // The shortest configurable retention in days.
+    (Proxiima.ErasureExport.minKeepDays) => {
+        1
+    };
+    // The longest configurable retention in days.
+    (Proxiima.ErasureExport.maxKeepDays) => {
+        36500
+    };
+    // The series ceiling for an explicit erase or the seed window of an erase page.
+    (Proxiima.ErasureExport.maxEraseSeries) => {
+        256
+    };
+    // The maximum versions erased in one call.
+    (Proxiima.ErasureExport.maxEraseVersions) => {
+        1024
+    };
+    // The default export and bulk erase fence wait in seconds.
+    (Proxiima.ErasureExport.fenceWaitSeconds) => {
+        5
+    };
+    // The route that receives forwarded retention erase requests.
+    (Proxiima.ErasureExport.retentionErasePath) => {
+        "/retention/erase"
+    };
+    // The signed claim inspected by the receiving retention host.
+    (Proxiima.ErasureExport.vouchClaim) => {
+        "vouch"
+    };
+    // The vouch value accepted for a verified forwarded retention caller.
+    (Proxiima.ErasureExport.retentionVouch) => {
+        "retention"
+    };
     // The largest trimmed Goal title in characters.
     (Proxiima.Goals.titleMax) => {
         240

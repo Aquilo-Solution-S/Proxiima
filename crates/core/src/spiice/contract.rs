@@ -1053,26 +1053,10 @@ pub enum TransferLeg {
 }
 
 impl TransferLeg {
-    /// Classify one surface against a spiice's declared bespoke list.
+    /// Classify one surface as in `Proxiima.ErasureExport.classifyTransfer`.
     ///
-    /// THE classifier. `validate_transfer_legs` calls it at freeze and
-    /// `OwnerSurfaces::for_registry` calls it once per surface at registry
-    /// time; the verb reads the resolved answer and never re-derives one.
-    ///
-    /// The three arms that say NO STATEMENT RUNS — `StaysOnKey`,
-    /// `RetainAtSource`, `NotTransferable` — win over the bespoke list,
-    /// exactly as `Cascade` and `Never` do on the erase side. A spiice that
-    /// declares one of those AND names a hand-written leg is contradicting
-    /// itself, and `validate_transfer_legs` refuses that rather than
-    /// letting this pick a winner.
-    ///
-    /// For the three that DO move rows, the exemption list is consulted
-    /// first. That ordering is what lets `memory_head` and `blob_uploads`
-    /// be `Follow` and still be hand-written: both are keyed on a single
-    /// column (`handle`, `upload_id`) that is not an entity `t`, so a
-    /// generated `WHERE <column> = ANY($1)` would match nothing at all —
-    /// silently. Unclaimed, they are [`Self::Unreachable`] and freeze says
-    /// so.
+    /// Freeze and the resolved transfer surface set share this classifier.
+    /// Freeze checks the bespoke claims and reserves bespoke and dedupe for core.
     #[must_use]
     pub fn derive(surface: &Surface, bespoke: &[&'static str]) -> Self {
         match surface.transfer {

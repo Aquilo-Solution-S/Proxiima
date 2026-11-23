@@ -518,3 +518,201 @@ pub(super) static DERIVED_FROM_MEMORY: SpiiceContract = erase_fixture(
     )],
     &[],
 );
+
+#[test]
+fn erase_legs_match_ledger_vectors() {
+    use crate::spiice::contract::{EraseLeg, HostStateEraseDisposition};
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Declaration {
+        Keyed([bool; 2]),
+        Owned([bool; 2]),
+        Cascade,
+        HostState,
+        Retain,
+    }
+
+    #[derive(Debug, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Leg {
+        Keyed,
+        OwnerOnly,
+        OwnerAndSource,
+        Bespoke,
+        Cascade,
+        HostState,
+        Retained,
+        Unreachable,
+    }
+
+    #[derive(Deserialize)]
+    struct Row {
+        #[serde(rename = "in")]
+        input: [Declaration; 1],
+        out: Leg,
+    }
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<Row> =
+        serde_json::from_value(vectors["Proxiima.ErasureExport.classifyErase"].clone()).unwrap();
+    assert_eq!(rows.len(), 11);
+    let table = "fixture.surface";
+    let single_home = KeyShape::MemoryT { column: "t" };
+    let entity = KeyShape::EntityT { column: "t" };
+    for Row {
+        input: [declaration],
+        out,
+    } in rows
+    {
+        let (key, erase, bespoke, source_attributed) = match declaration {
+            Declaration::Keyed([home, bespoke]) => (
+                if home { single_home } else { entity },
+                EraseRule::ByKey,
+                bespoke,
+                false,
+            ),
+            Declaration::Owned([attributed, bespoke]) => {
+                (single_home, EraseRule::ByOwner, bespoke, attributed)
+            }
+            Declaration::Cascade => (
+                single_home,
+                EraseRule::Cascade {
+                    via: DbConstraint {
+                        relation: table,
+                        name: "fixture_fk",
+                    },
+                },
+                false,
+                false,
+            ),
+            Declaration::HostState => (
+                single_home,
+                EraseRule::HostState {
+                    whole_owner: HostStateEraseDisposition::Erase,
+                    source: HostStateEraseDisposition::Retain,
+                    exact_fact: HostStateEraseDisposition::Retain,
+                },
+                false,
+                false,
+            ),
+            Declaration::Retain => (entity, EraseRule::Never { why: "fixture" }, false, false),
+        };
+        let mut surface = state_surface(table, key, erase, ExportRule::Rows);
+        if source_attributed {
+            surface.transfer = TransferRule::RetainAtSource { why: "fixture" };
+        }
+        let bespoke_tables: &[&str] = if bespoke { &[table] } else { &[] };
+        let actual = match EraseLeg::derive(&surface, bespoke_tables) {
+            EraseLeg::Keyed(_) => Leg::Keyed,
+            EraseLeg::Owned {
+                source_scoped: None,
+            } => Leg::OwnerOnly,
+            EraseLeg::Owned {
+                source_scoped: Some(_),
+            } => Leg::OwnerAndSource,
+            EraseLeg::Bespoke => Leg::Bespoke,
+            EraseLeg::Cascade => Leg::Cascade,
+            EraseLeg::HostState => Leg::HostState,
+            EraseLeg::Never { .. } => Leg::Retained,
+            EraseLeg::Unreachable => Leg::Unreachable,
+        };
+        assert_eq!(actual, out);
+    }
+}
+
+#[test]
+fn transfer_legs_match_ledger_vectors() {
+    use crate::spiice::contract::TransferLeg;
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Declaration {
+        Follow([bool; 2]),
+        Drop([bool; 2]),
+        Dedupe([bool; 1]),
+        StayOnKey,
+        RetainAtSource,
+        RefuseTransfer,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Row {
+        #[serde(rename = "in")]
+        input: [Declaration; 1],
+        out: String,
+    }
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<Row> =
+        serde_json::from_value(vectors["Proxiima.ErasureExport.classifyTransfer"].clone()).unwrap();
+    assert_eq!(rows.len(), 13);
+
+    let table = "fixture.surface";
+    let version = KeyShape::EntityT { column: "t" };
+    for Row {
+        input: [declaration],
+        out,
+    } in rows
+    {
+        let (rule, key, bespoke) = match declaration {
+            Declaration::Follow([supported, bespoke]) => (
+                TransferRule::Follow,
+                if supported {
+                    version
+                } else {
+                    KeyShape::OwnerId
+                },
+                bespoke,
+            ),
+            Declaration::Drop([supported, bespoke]) => (
+                TransferRule::Drop { why: "fixture" },
+                if supported {
+                    version
+                } else {
+                    KeyShape::OwnerId
+                },
+                bespoke,
+            ),
+            Declaration::Dedupe([bespoke]) => (
+                TransferRule::FollowOrDedupe {
+                    dedupe_key: &["digest"],
+                    remaps: &[],
+                },
+                KeyShape::OwnerId,
+                bespoke,
+            ),
+            Declaration::StayOnKey => (TransferRule::StaysOnKey, version, true),
+            Declaration::RetainAtSource => (
+                TransferRule::RetainAtSource { why: "fixture" },
+                version,
+                true,
+            ),
+            Declaration::RefuseTransfer => (
+                TransferRule::NotTransferable {
+                    why: "fixture",
+                    enforced_by: &[],
+                },
+                version,
+                true,
+            ),
+        };
+        let mut surface = state_surface(table, key, EraseRule::ByOwner, ExportRule::Rows);
+        surface.transfer = rule;
+        let bespoke_tables: &[&str] = if bespoke { &[table] } else { &[] };
+        let actual = match TransferLeg::derive(&surface, bespoke_tables) {
+            TransferLeg::Rehomed { .. } => "follow",
+            TransferLeg::Dropped { .. } => "drop",
+            TransferLeg::Deduped { .. } => "dedupe",
+            TransferLeg::Bespoke => "bespoke",
+            TransferLeg::StaysOnKey => "stayOnKey",
+            TransferLeg::Retained { .. } => "retained",
+            TransferLeg::Refused { .. } => "refused",
+            TransferLeg::Unreachable => "unreachable",
+        };
+        assert_eq!(actual, out);
+    }
+}

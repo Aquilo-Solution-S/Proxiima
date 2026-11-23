@@ -190,6 +190,62 @@ fn engine_with(erase: Arc<FixedOutcomeErase>, drop_proof: Option<Arc<DropVerifie
     Engine::compose_or_panic_for_tests(storage, |_| {})
 }
 
+#[test]
+fn inverse_authority_matches_ledger_vectors() {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Route {
+        Delegated,
+        System,
+        Host([bool; 1]),
+    }
+
+    #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Action {
+        Refuse,
+        Grant,
+        AskHost,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Vector {
+        #[serde(rename = "in")]
+        route: [Route; 1],
+        out: Action,
+    }
+
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+    let rows: Vec<Vector> =
+        serde_json::from_value(vectors["Proxiima.ErasureExport.inverseAuthority"].clone()).unwrap();
+    assert_eq!(rows.len(), 4);
+    let without_provider = engine_with(Arc::new(FixedOutcomeErase::completed()), None);
+    let with_provider = Engine::compose_or_panic_for_tests(
+        StoragePorts::rejecting_with_erase_authority(Arc::new(PermissiveAdmin::default())),
+        |_| {},
+    );
+    for Vector {
+        route: [route],
+        out,
+    } in rows
+    {
+        let (path, engine) = match route {
+            Route::Delegated => (AuthPath::Delegated, &with_provider),
+            Route::System => (AuthPath::System, &without_provider),
+            Route::Host([false]) => (AuthPath::HostBearer, &without_provider),
+            Route::Host([true]) => (AuthPath::HostBearer, &with_provider),
+        };
+        let authz = AuthzContext::for_subject(UserId::new(uuid::Uuid::now_v7()), path);
+        let actual = match engine.authority_for(&authz) {
+            super::Authority::Settled(false) => Action::Refuse,
+            super::Authority::Settled(true) => Action::Grant,
+            super::Authority::Ask(_) => Action::AskHost,
+        };
+        assert_eq!(actual, out);
+    }
+}
+
 #[tokio::test]
 async fn raw_delegated_maintenance_is_denied_before_admin_or_storage() {
     let admin = Arc::new(PermissiveAdmin::default());

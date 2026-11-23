@@ -40,6 +40,33 @@ async fn rows_of(pool: &sqlx::PgPool, owner: UserId) -> Result<i64, sqlx::Error>
 }
 
 #[tokio::test]
+async fn retention_database_bounds_match_the_ledger() {
+    let (pg, _database) = proxiima_storage_pg::test_fixtures::fresh_pg("retention_bounds").await;
+    let owner = person_with_rows(&pg).await.expect("retention rows");
+    let min = i32::from(KeepDays::MIN);
+    let max = i32::from(KeepDays::MAX);
+    for (days, valid) in [(min - 1, false), (min, true), (max, true), (max + 1, false)] {
+        let result =
+            sqlx::query("UPDATE proxiima_core.retention SET keep_days = $1 WHERE owner_id = $2")
+                .bind(days)
+                .bind(owner.into_inner())
+                .execute(pg.pool_for_tests())
+                .await;
+        if valid {
+            assert_eq!(result.expect("bound admitted").rows_affected(), 2);
+        } else {
+            assert_eq!(
+                result
+                    .expect_err("out-of-range day refused")
+                    .as_database_error()
+                    .and_then(|error| error.constraint()),
+                Some("retention_keep_days_chk"),
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn owner_export_carries_the_rows_and_owner_erase_takes_them()
 -> Result<(), Box<dyn std::error::Error>> {
     let name = format!("proxiima_test_retention_{}", Uuid::now_v7().simple());

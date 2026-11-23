@@ -23,10 +23,12 @@ use proxiima_server::AuthContext;
 use serde::{Deserialize, Serialize};
 
 /// The route the home's retention tick calls.
-pub const RETENTION_ERASE_PATH: &str = "/retention/erase";
+pub const RETENTION_ERASE_PATH: &str =
+    proxiima_core::ledger!(Proxiima.ErasureExport.retentionErasePath);
 
 /// The signed claim that makes a forwarded call the home's retention.
-const VOUCH_CLAIM: &str = "vouch";
+const VOUCH_CLAIM: &str = proxiima_core::ledger!(Proxiima.ErasureExport.vouchClaim);
+const RETENTION_VOUCH: &str = proxiima_core::ledger!(Proxiima.ErasureExport.retentionVouch);
 
 /// What a forwarded credential vouches for, parsed where it enters. The
 /// home owns the set; a value this host does not know is refused.
@@ -42,7 +44,7 @@ impl Vouch {
             .and_then(|claims| claims.get(VOUCH_CLAIM))
         {
             None => Ok(None),
-            Some(serde_json::Value::String(vouch)) if vouch == "retention" => {
+            Some(serde_json::Value::String(vouch)) if vouch == RETENTION_VOUCH => {
                 Ok(Some(Self::Retention))
             }
             Some(_) => Err(Refusal::NotVouched(
@@ -141,8 +143,8 @@ async fn erase(
     let owner = vouched_owner(&auth)?;
     let request: EraseRequest =
         serde_json::from_slice(&body).map_err(|err| Refusal::BadRequest(err.to_string()))?;
-    // A retention keeps at least a day, so its cutoff lies in the past; a
-    // later one would take the schema whole.
+    // The issuing home owns the minimum retention horizon before vouching.
+    // `Proxiima.ErasureExport.remoteAdmission`.
     if request.cutoff > time::OffsetDateTime::now_utc() {
         return Err(Refusal::BadRequest(
             "the cutoff lies after this host's clock".into(),
@@ -155,6 +157,7 @@ async fn erase(
         schema_id: schema.to_string(),
         ..EraseAnswer::default()
     };
+    // `Proxiima.ErasureExport.retentionPageOrder`.
     loop {
         let mut unit = host
             .engine

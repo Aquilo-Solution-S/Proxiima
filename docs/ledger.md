@@ -1961,6 +1961,465 @@ stateDiagram-v2
 
 - pin admission witness: Fresh pins require a live readable target, while a retained pin requires an exact captured source pin.
 
+## Erasure and export
+
+**Owner erase evidence**: The evidence that a target owner may be erased.
+
+- personal
+- other
+
+**Owner erase admission**: The preconditions storage distinguishes while holding the membership fence.
+
+- allow
+- missingDropProof
+- stillLive
+
+**Authority route**: Outcomes of the shared owner-inverse authority route.
+
+- delegated
+- system
+- host
+
+**Authority action**: The action to take before storage admission.
+
+- refuse
+- grant
+- askHost
+
+**Operation receipt**: How owner erase outcomes reach the host.
+
+- completed
+- notFound
+- unauthorized
+- refused
+
+**Authority rows**: Which authority rows are selected by an erase.
+
+- exactOwner
+- erasedSubject
+
+**Bulk scope**: The scope of a bulk inverse.
+
+- owner
+- source
+
+**Selection key**: The fields used to scope explicitly attributable bulk rows.
+
+- owner
+- source
+
+**Completion step**: Stages that turn an authorized physical erase into a completed receipt.
+
+- settleHostIndex
+- commitDatabaseAndColdDebt
+- attemptColdPurge
+- reportOutstandingDebt
+
+**Series authority**: The access route of an own-series erase.
+
+- ownerAdmin
+- system
+- hostState
+- goalWork
+
+**Series scope check**: The required parts of scoped erase admission.
+
+- oneOwner
+- nonCoreSpiice
+- ownMemorySchemas
+- invokingActionIsDeclaredDestructive
+
+**Series transaction**: How a scoped inverse handles its exclusive transaction.
+
+- refuse
+- runAndKeepForCommit
+- runAndRollback
+
+**Selection versions**: The version or versions examined by a selector.
+
+- explicit
+- newestIncludingForgotten
+- oldestMatchingSidecar
+- newestWithDeclaredClock
+
+**Selector**: The supported scoped erase selectors.
+
+- ids
+- admittedBefore
+- occurredBefore
+- sidecarEquals
+- declaredBefore
+
+**Age clock**: The selected series age clock.
+
+- admission
+- occurrenceOrAdmission
+- declared
+
+**Age selector**: The age selections and their effective clocks.
+
+- admittedBefore
+- occurredBefore
+- declaredBefore
+
+**Closure step**: The steps that close and erase a scoped relational footprint.
+
+- expandWholeSeries
+- includeKeyedRestrictReferrers
+- orderDependantsBeforeTargets
+- lockAndRecheck
+- deleteInternalReferenceRows
+- deleteVersions
+
+**Page unit**: The indivisible units of a scoped erase page.
+
+- series
+- mutuallyReferringSeries
+
+**Blocked seed action**: The actions taken when a seed cannot be included in a page.
+
+- refuse
+- returnEarlierPage
+
+**Selection lock**: Acquisition order for a Memory erase selection, using sorted distinct identities at each stage.
+
+- seriesHandle
+- versionLifecycle
+- admissionRow
+
+**Blob liveness check**: Liveness checks before a cited object becomes cold debt.
+
+- noSurvivingAdmission
+- noSurvivingUploadAlias
+
+**Retention operation**: The operations on the owner-and-schema retention row.
+
+- set
+- clear
+- list
+- inventory
+
+**Retention authority**: The witness used by each retention operation.
+
+- ownerEraseAdmin
+- readableOwners
+- system
+
+**Retention key part**: The identity of one retention policy row.
+
+- owner
+- schema
+
+**Remote admission**: A remote retention request must establish forwarded authority, a retention vouch and owner binding.
+
+- forwardedOwner
+- signedRetentionVouch
+- sameRequestOwner
+- cutoffNotFuture
+
+**Retention page step**: The loop order for a remotely requested retention erase.
+
+- eraseEligibleSeries
+- commitPage
+- sumReceipt
+- repeatWhileMore
+
+**Fence use**: The two operations sharing the export and erase table fence.
+
+- export
+- erase
+
+**Export snapshot step**: The steps that establish an export snapshot.
+
+- takeSharedEraseFence
+- readRepeatableReadOnlySnapshot
+
+**Selected head disposition**: The possible repairs to a head after deleting its selected admissions.
+
+- keepNewestRemaining
+- remove
+
+**Export order part**: The order used for a generated export surface.
+
+- declaredKey
+- remainingPrimaryKey
+
+**Export count source**: The sources of the counts on an owner export bundle.
+
+- tableRows
+- projectedEdges
+
+**Publication copy selector**: Publication copies reached by a bulk erase.
+
+- selectedPhysicalFacts
+- originalOwnerAndSource
+
+**Erase declaration**: The erase declarations and evidence used to derive a physical leg.
+
+- keyed
+- owned
+- cascade
+- hostState
+- retain
+
+**Erase leg**: The one physical leg or deliberate retention for a declared surface.
+
+- keyed
+- ownerOnly
+- ownerAndSource
+- bespoke
+- cascade
+- hostState
+- retained
+- unreachable
+
+**Transfer declaration**: The policy and key evidence used to derive a transfer leg.
+
+- follow
+- drop
+- dedupe
+- stayOnKey
+- retainAtSource
+- refuseTransfer
+
+**Transfer leg**: The one leg selected for a surface during a Memory series transfer.
+
+- follow
+- drop
+- dedupe
+- bespoke
+- stayOnKey
+- retained
+- refused
+- unreachable
+
+**Content collection step**: The bulk content inverse begins with selected admissions and checks what survives.
+
+- collectContentIds
+- deleteSelectedAdmissions
+- collectContentWithoutSurvivingAdmission
+
+**Bulk inverse step**: Stages of applying and accounting for a sealed bulk erase.
+
+- seedDeclaredCounters
+- applyDeclaredKeyedAndOwnedLegs
+- verifySelectedRowsDeleted
+- readDeclaredCounts
+
+**Declared clock candidate**: The row accepted from a declared timestamp selection.
+
+- newestWithTimestamp
+- newestWithoutTimestamp
+- historicalWithTimestamp
+
+**min keep days** = 1: The shortest configurable retention in days.
+
+**max keep days** = 36500: The longest configurable retention in days.
+
+**max erase series** = 256: The series ceiling for an explicit erase or the seed window of an erase page.
+
+**max erase versions** = 1024: The maximum versions erased in one call.
+
+**fence wait seconds** = 5: The default export and bulk erase fence wait in seconds.
+
+**retention erase path** = "/retention/erase": The route that receives forwarded retention erase requests.
+
+**vouch claim** = "vouch": The signed claim inspected by the receiving retention host.
+
+**retention vouch** = "retention": The vouch value accepted for a verified forwarded retention caller.
+
+**erase receipt outcomes** = \[completed, notFound, unauthorized, refused]: The outcomes carrying the operation ID minted for the attempt.
+
+**completion order** = \[settleHostIndex, commitDatabaseAndColdDebt, attemptColdPurge, reportOutstandingDebt]: Index settlement is synchronous and cold-object work is attempted after database commit.
+
+**series scope** = \[oneOwner, nonCoreSpiice, ownMemorySchemas, invokingActionIsDeclaredDestructive]: The scoped inverse checks the owner's footprint and the invoking spiice and action.
+
+**closure order** = \[expandWholeSeries, includeKeyedRestrictReferrers, orderDependantsBeforeTargets, lockAndRecheck, deleteInternalReferenceRows, deleteVersions]: Whole series and keyed restricting referrers form the closure checked before delete.
+
+**page units** = \[series, mutuallyReferringSeries]: A page may split its ordered closure only between these units.
+
+**counted inbound fields** = \[origins, refs]: The surviving Memory pin fields counted in a scoped erase receipt.
+
+**selection lock order** = \[seriesHandle, versionLifecycle, admissionRow]: Handle and lifecycle locks precede row locks on the complete footprint.
+
+**blob liveness** = \[noSurvivingAdmission, noSurvivingUploadAlias]: Blob deletion checks remaining citations and object deletion separately checks remaining aliases.
+
+**retention key** = \[owner, schema]: The retention row key and inventory order.
+
+**remote admission** = \[forwardedOwner, signedRetentionVouch, sameRequestOwner, cutoffNotFuture]: The remote retention checks performed before the series selection.
+
+**retention page order** = \[eraseEligibleSeries, commitPage, sumReceipt, repeatWhileMore]: Remote retention commits each page before adding its receipt to the answer.
+
+**export snapshot order** = \[takeSharedEraseFence, readRepeatableReadOnlySnapshot]: Export waits for the shared erase fence before taking its repeatable read snapshot.
+
+**selected head dispositions** = \[keepNewestRemaining, remove]: A selected head follows the latest remaining version or disappears when its series is empty.
+
+**export row order** = \[declaredKey, remainingPrimaryKey]: The declared key followed by the remaining primary key columns produces a total export order.
+
+**export count sources** = \[tableRows, projectedEdges]: Export counts are computed from the returned rows and edges.
+
+**publication copy selectors** = \[selectedPhysicalFacts, originalOwnerAndSource]: Both physical identity and original attribution select delivery copies, including copies that followed a transfer.
+
+**content collection order** = \[collectContentIds, deleteSelectedAdmissions, collectContentWithoutSurvivingAdmission]: Shared content is collected after the selected admissions are gone.
+
+**bulk inverse** = \[seedDeclaredCounters, applyDeclaredKeyedAndOwnedLegs, verifySelectedRowsDeleted, readDeclaredCounts]: Bulk erase uses registry-selected inverse legs and returns a complete tally only after the sealed rows are gone.
+
+| owner erase evidence | admit owner erase |
+| --- | --- |
+| personal (yes) | allow |
+| personal (no) | missingDropProof |
+| other (yes) | stillLive |
+| other (no) | allow |
+
+- admit owner erase: A registered personal owner needs verified drop proof and any other owner must have no members.
+
+| authority route | inverse authority |
+| --- | --- |
+| delegated | refuse |
+| system | grant |
+| host (yes) | askHost |
+| host (no) | refuse |
+
+- inverse authority: The system route grants directly, the host route consults its provider when present, and delegated or unconfigured requests are refused.
+
+| bulk scope | bulk selection key | grant selection |
+| --- | --- | --- |
+| owner | \[owner] | \[exactOwner, erasedSubject] |
+| source | \[owner, source] | \[] |
+
+- bulk selection key: A source narrows the owner selection to rows attributable to it.
+- grant selection: Source erase leaves owner-level grants in place and owner erase removes exact owner and subject grants.
+
+| bulk scope | selected | retained citation | erase blob |
+| --- | --- | --- | --- |
+| owner | yes | yes | yes |
+| owner | yes | no | yes |
+| owner | no | yes | no |
+| owner | no | no | no |
+| source | yes | yes | no |
+| source | yes | no | yes |
+| source | no | yes | no |
+| source | no | no | no |
+
+- erase blob: Whether a blob belongs to the erase scope.
+
+| series authority | series authority |
+| --- | --- |
+| ownerAdmin | yes |
+| system | yes |
+| hostState | no |
+| goalWork | no |
+
+- series authority: Owner administrators and system authority can issue scoped erasure.
+
+| unused | dry run | series transaction |
+| --- | --- | --- |
+| yes | yes | runAndRollback |
+| yes | no | runAndKeepForCommit |
+| no | yes | refuse |
+| no | no | refuse |
+
+- series transaction: Scoped erase requires an unused unit, then runs the same inverse for either mode.
+
+| selector | seed versions |
+| --- | --- |
+| ids | explicit |
+| admittedBefore | newestIncludingForgotten |
+| occurredBefore | newestIncludingForgotten |
+| sidecarEquals | oldestMatchingSidecar |
+| declaredBefore | newestWithDeclaredClock |
+
+- seed versions: The seed versions considered by each selector before expansion.
+
+| age selector | age clock |
+| --- | --- |
+| admittedBefore | admission |
+| occurredBefore | occurrenceOrAdmission |
+| declaredBefore | declared |
+
+- age clock: Time-based selectors compare and order by the same effective clock, then by exact version ID.
+
+| paged | has earlier work | blocked seed |
+| --- | --- | --- |
+| yes | yes | returnEarlierPage |
+| yes | no | refuse |
+| no | yes | refuse |
+| no | no | refuse |
+
+- blocked seed: Explicit selections refuse as a whole, and paged selections stop before a blocked seed if earlier work fits.
+
+| retention operation | retention authority |
+| --- | --- |
+| set | ownerEraseAdmin |
+| clear | ownerEraseAdmin |
+| list | readableOwners |
+| inventory | system |
+
+- retention authority: Retention edits take erase administration, listing takes scoped read authority, and inventory takes system authority.
+
+| fence use | fence use | compatible fence |
+| --- | --- | --- |
+| export | export | yes |
+| export | erase | no |
+| erase | export | no |
+| erase | erase | yes |
+
+- compatible fence: The combinations admitted to run concurrently by the fence.
+
+| erase declaration | classify erase |
+| --- | --- |
+| keyed (yes, yes) | bespoke |
+| keyed (yes, no) | keyed |
+| keyed (no, yes) | bespoke |
+| keyed (no, no) | unreachable |
+| owned (yes, yes) | bespoke |
+| owned (yes, no) | ownerAndSource |
+| owned (no, yes) | bespoke |
+| owned (no, no) | ownerOnly |
+| cascade | cascade |
+| hostState | hostState |
+| retain | retained |
+
+- classify erase: A keyed erase needs a single selected home or a bespoke leg, while generated owner erase narrows by source only for source-attributable surfaces.
+
+| transfer declaration | classify transfer |
+| --- | --- |
+| follow (yes, yes) | bespoke |
+| follow (yes, no) | follow |
+| follow (no, yes) | bespoke |
+| follow (no, no) | unreachable |
+| drop (yes, yes) | bespoke |
+| drop (yes, no) | drop |
+| drop (no, yes) | bespoke |
+| drop (no, no) | unreachable |
+| dedupe (yes) | dedupe |
+| dedupe (no) | unreachable |
+| stayOnKey | stayOnKey |
+| retainAtSource | retained |
+| refuseTransfer | refused |
+
+- classify transfer: Generated follow and drop require a version key, follow also needs an owner column, and dedupe needs a bespoke orchestrator.
+
+| owner surface | store wide | core relation classified |
+| --- | --- | --- |
+| yes | yes | no |
+| yes | no | yes |
+| no | yes | yes |
+| no | no | no |
+
+- core relation classified: Each live core base relation belongs to exactly one lifecycle partition.
+
+| declared clock candidate | before cutoff | declared clock candidate |
+| --- | --- | --- |
+| newestWithTimestamp | yes | yes |
+| newestWithTimestamp | no | no |
+| newestWithoutTimestamp | yes | no |
+| newestWithoutTimestamp | no | no |
+| historicalWithTimestamp | yes | no |
+| historicalWithTimestamp | no | no |
+
+- declared clock candidate: A declared clock admits only the newest version with a timestamp before the cutoff.
+
 ## Forget and restore
 
 **Retained part**: The parts retained when a Memory is forgotten.

@@ -3,6 +3,7 @@ import Causa.Owner
 import Causa.Memory
 import Causa.Authorization
 import Causa.EdgeAuthorization
+import Proxiima.ErasureExport
 
 /-! Causa — Compliance -/
 
@@ -10,10 +11,18 @@ namespace Causa
 
 def abandoned (o : Owner) : Prop := ∀ u : User, o u = none
 
-/-- Absence of incoming origins or Memory references for a version identity. -/
+/-- The Memory targets named by a field used in the scoped erase receipt. -/
+def eraseReceiptTargets (m : Memory) : Proxiima.Edges.PinField → List MemoryId
+  | .origins => memory_origins m
+  | .refs => memory_refs m
+  | .reads => memory_reads m
+  | .forkedFrom => (memory_forked_from m).toList
+  | .goalRefs | .guidedBy => []
+
+/-- Absence of incoming receipt-counted pins from the supplied surviving Memories. -/
 def unreferenced (memories : Set Memory) (id : MemoryId) : Prop :=
-  ∀ m : Memory, m ∈ memories →
-    id ∉ memory_origins m ∧ id ∉ memory_reference_ids m
+  ∀ m : Memory, m ∈ memories → ∀ field ∈ Proxiima.ErasureExport.countedInboundFields,
+    id ∉ eraseReceiptTargets m field
 
 /-- Whether a stored Memory is flagged as forgotten. -/
 def forgotten (memories : Set Memory) (id : MemoryId) : Prop :=

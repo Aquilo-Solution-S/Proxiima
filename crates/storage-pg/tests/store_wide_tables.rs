@@ -1,10 +1,4 @@
-//! The shipped store-wide list against the migrated core schema (#478).
-//!
-//! Every surface enumerator (erase partition, export bundle, transfer sweep)
-//! walks DECLARED surfaces, so a forgotten table is invisible to all of
-//! them. This starts at the catalog instead: every `proxiima_core` base table
-//! is a spiice #0 surface or a `STORE_WIDE_TABLES` entry with a reason, and
-//! the list names nothing stale and nothing declared.
+//! Check `Proxiima.ErasureExport.coreRelationClassified` from the migrated catalog.
 
 use std::collections::BTreeSet;
 

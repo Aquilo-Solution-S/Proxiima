@@ -11,7 +11,9 @@ use crate::error::map_err;
 
 /// Default bound on the export/erase fence wait, matching the erase body's
 /// own wait for that fence.
-pub(crate) const EXPORT_ERASE_FENCE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const EXPORT_ERASE_FENCE_LOCK_TIMEOUT: Duration = Duration::from_secs(
+    proxiima_core::ledger!(Proxiima.ErasureExport.fenceWaitSeconds),
+);
 
 /// A validated platform connection pool. Request handlers cannot promote an
 /// owner witness into this capability: its constructor checks database identity
@@ -212,6 +214,7 @@ impl PgPlatformScope {
     /// connection's default (the role, database or startup value), so only
     /// the fence wait is bounded. (`SET LOCAL`, like `LOCK TABLE`, takes no
     /// snapshot; reading the prior value would.)
+    /// `Proxiima.ErasureExport.exportSnapshotOrder`.
     pub(crate) async fn begin_export_snapshot(
         &self,
     ) -> Result<Transaction<'static, Postgres>, StorageError> {
@@ -222,6 +225,7 @@ impl PgPlatformScope {
             .map_err(map_err)?;
         let fence_wait = self.fence_lock_timeout();
         set_local_lock_timeout(transaction.as_mut(), fence_wait).await?;
+        // `Proxiima.ErasureExport.compatibleFence`.
         sqlx::query("LOCK TABLE proxiima_core.export_erase_fence IN SHARE MODE")
             .execute(&mut *transaction)
             .await

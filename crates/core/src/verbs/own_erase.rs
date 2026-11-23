@@ -11,7 +11,7 @@ use crate::{MemoryId, OwnerId, SchemaId};
 /// Series one call selects: the most seeds a paged selection takes, and the
 /// most series an `Ids` list may close over. The series that reference a
 /// seed are not counted; [`MAX_ERASE_VERSIONS_PER_CALL`] bounds them.
-pub const MAX_ERASE_SERIES_PER_CALL: usize = 256;
+pub const MAX_ERASE_SERIES_PER_CALL: usize = crate::ledger!(Proxiima.ErasureExport.maxEraseSeries);
 
 /// Versions one call may erase: a page.
 ///
@@ -19,9 +19,10 @@ pub const MAX_ERASE_SERIES_PER_CALL: usize = 256;
 /// erase-witness trigger each take one lock per erased row, so an unbounded
 /// set can exhaust the shared lock table. A selection other than
 /// [`SeriesSelection::Ids`] whose reference closure is larger is erased
-/// across calls, referrers first, never refused; re-erasing an erased series
-/// is a no-op, so calling again is safe.
-pub const MAX_ERASE_VERSIONS_PER_CALL: usize = 1024;
+/// across calls, referrers first. An indivisible unit over the cap is refused
+/// before deleting any of that unit. Re-erasing an erased series is a no-op.
+pub const MAX_ERASE_VERSIONS_PER_CALL: usize =
+    crate::ledger!(Proxiima.ErasureExport.maxEraseVersions);
 
 /// What one [`crate::UnitOfWork::erase_own_series`] call selects.
 ///
@@ -53,7 +54,7 @@ pub enum SeriesSelection {
         schema: SchemaId,
         cutoff: time::OffsetDateTime,
     },
-    /// Every series of `schema` with a hot version whose row in the
+    /// Every series of `schema` with a version whose row in the
     /// schema's sidecar matches every `(column, value)` pair, oldest match
     /// first, in pages. The predicates are `AND`-joined equality over
     /// the sidecar's own columns — the
