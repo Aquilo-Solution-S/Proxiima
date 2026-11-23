@@ -30,8 +30,10 @@ and checks its required role at the command boundary. Kind restrictions remain
 part of the effective scope.
 
 MCP sessions bind the default owner and authenticated principal at initialization.
-Subsequent requests require the same principal, recheck access, and retain the credential's effective owner roles. Selecting a
-default does not confine reads or per-call space selection; credentials that
+A subsequent request with the session ID can omit `X-Proxiima-Owner` and use
+the bound owner. Each request reauthenticates the principal, rechecks access,
+and retains the credential's effective owner roles. Selecting a default does
+not confine reads or per-call space selection; credentials that
 are explicitly confined remain confined. Server-issued memory-space keys are
 selectors resolved through the same context. Missing and unreadable entity
 references have the same public result. A readable source keeps its pins even
@@ -245,6 +247,8 @@ preflight, body size, bearer, owner selection, MCP session) are the same
 problem documents, identical on `/mcp`, `/v1` and host-mounted routes; their
 `type`s are in
 [`problem.rs`](https://github.com/Aquilo-Solution-S/proxiima/blob/main/crates/proxiima-server/src/problem.rs).
+The listener refuses an over-limit declared `Content-Length` before
+authentication and bounds streamed bodies as the route reads them.
 A `401` also carries its `WWW-Authenticate` challenge. Under `/v1/`, a path
 no route matches is a `404` problem and a method a route does not serve a
 `405` problem with `Allow`; paths outside `/v1/` and `/mcp` keep the host's

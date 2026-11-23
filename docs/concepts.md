@@ -72,7 +72,7 @@ Listing and invocation read the same catalog declaration. See [capability admiss
 
 | Mechanism | Purpose | Boundary |
 |---|---|---|
-| MCP transport session | Bind protocol requests to a principal and default owner | Later requests reauthenticate and must agree with the binding |
+| MCP transport session | [Listener admission](ledger.md#transport) | [Credential and session agreement](ledger.md#authentication) |
 | Writer `via` | [Writer attribution](ledger.md#identity) | The authenticator supplies it independently of the MCP transport session |
 | Delegation grant and redeemed phase | Let queued work run one bounded command | One owner and command, finite expiry, recorded role ceiling, fresh checks at redemption |
 

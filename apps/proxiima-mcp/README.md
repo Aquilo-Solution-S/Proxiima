@@ -11,7 +11,11 @@ the local issuer, migrate with the platform role, and then start the MCP server.
 ## Auth
 
 - MCP bearer auth is host/OIDC only. Local means a local issuer, not a bypass.
-- MCP initialize: send `X-Proxiima-Owner: personal:<USER_ID>` or another authorized owner key.
+- MCP initialize without a trusted owner default: send the authorized owner's
+  bare hyphenated UUID, for example
+  `X-Proxiima-Owner: 0193c7b2-49bb-7d1b-a6f5-b960e8bf0abe`.
+  See [owner selection](../../docs/protocol.md#owner-scope) and
+  the [owner UUID rule](../../docs/ledger.md#owner-authority).
 - Configure OIDC/host auth per [`docs/configuration.md`](../../docs/configuration.md) and [`docs/operate.md`](../../docs/operate.md).
 
 ## Tool Profiles

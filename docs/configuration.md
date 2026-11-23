@@ -26,6 +26,8 @@ When S3 is configured, set `PROXIIMA_OBJECT_PURGE_INTERVAL_SECS` at or below
 maintenance. With the default interval of 60 seconds, a shorter upload TTL
 causes startup to fail. See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaintenance).
 
+See [`Proxiima.Transport`](ledger.md#transport) for listener and MCP defaults.
+
 <!-- settings:begin -->
 
 | Setting | Purpose | When needed | Type | Default |
@@ -36,7 +38,7 @@ causes startup to fail. See [`Proxiima.ObjectMaintenance`](ledger.md#objectmaint
 | PROXIIMA_STORE_NUMBER | immutable host-assigned store number, 0 to 65535, persisted by the migrate step and checked by every boot | required for migrate, boot and maintenance | integer |  |
 | PROXIIMA_MISSING_MIGRATION_POLICY | missing-version policy: `reject` or `allow` | releases intentionally share a database | choice | `reject` |
 | PROXIIMA_RUNTIME_GRANTS | runtime grants of the migrate step; serving never grants | owner-RLS deployment | boolean | `false` |
-| PROXIIMA_MCP_BIND | MCP listener address; no listener when unset | serving MCP | socket address |  |
+| PROXIIMA_MCP_BIND | MCP listener address; unset leaves facade hosts without a listener and the canonical host uses its loopback default | serving MCP | socket address |  |
 | PROXIIMA_EXPOSE_NETWORK | non-loopback exposure gate | public listener | boolean | `false` |
 | PROXIIMA_REST_ENABLED | REST projection switch | serving `/v1` | boolean | `false` |
 | PROXIIMA_ALLOWED_ORIGINS | CORS origin allowlist (no port = any port; an explicit port also matches a browser Origin that omits it when it is the scheme default, HTTP 80 or HTTPS 443) | browser clients | comma-separated list |  |

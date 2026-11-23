@@ -1258,20 +1258,12 @@ fn build_router<A: SpiiceApp>(
         .merge(retention_router)
         .merge(app_router)
         .layer(auth_layer);
-    // Merged after the auth layer, so these routes carry none. A method and
-    // path already served above makes axum panic here, at boot, before
-    // anything listens.
+    // `Proxiima.Transport.routeGuards`; overlapping method/path pairs panic at merge.
     let mut router = protected_router.merge(public_router);
     if let Some(md) = &edge.resource_metadata {
         router = router.merge(proxiima_server::public_discovery_router(md));
     }
-    // Apply listener-wide guards only after anonymous OAuth metadata has been
-    // merged, so CORS covers public metadata and preflights. Health probes sit
-    // outside the guards: an orchestrator probes the pod address, not a
-    // public host, and the probes disclose nothing a rebinding page could use.
-    // Everything else, the fallback included, falls through to the guarded
-    // router; a `merge` here would replace its guarded fallback with an
-    // unguarded one.
+    // A fallback service puts the listener guards on unmatched routes as well.
     let guarded = guard_listener(
         router,
         edge.origin_allowlist.clone(),
@@ -1287,6 +1279,7 @@ fn build_router<A: SpiiceApp>(
 /// off every problem document's `instance`.
 #[cfg(feature = "rest")]
 fn rest_router(host: &ToolHost, config: &crate::RuntimeConfig) -> Router {
+    // `Proxiima.Transport.restExposure`.
     if !config.rest_enabled {
         return Router::new();
     }
@@ -1306,6 +1299,7 @@ fn rest_router(host: &ToolHost, config: &crate::RuntimeConfig) -> Router {
 #[cfg(not(feature = "rest"))]
 fn rest_router(host: &ToolHost, config: &crate::RuntimeConfig) -> Router {
     let _ = host;
+    // `Proxiima.Transport.restExposure`.
     if config.rest_enabled {
         tracing::warn!(
             "PROXIIMA_REST_ENABLED is set but this binary was built without the `rest` \

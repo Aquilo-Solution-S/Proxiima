@@ -73,8 +73,10 @@ brought to its release. Run `migrate` again after updating to a release that
 ships migrations.
 
 The host serves `http://127.0.0.1:31415/mcp`. A successful MCP
-`initialize` response carries `Mcp-Session-Id`. Both authentication headers
-are required on client requests:
+`initialize` response carries `Mcp-Session-Id`. Send the bearer on every
+request. When initializing without a trusted owner default, send
+`X-Proxiima-Owner` with the owner's bare UUID. Later requests with the
+session ID can omit the owner header and use the bound owner:
 
 ```sh
 curl -sS -D- -o/dev/null -X POST "$PROXIIMA_PUBLIC_URL/mcp" \
